@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/ipfs"
-	"athena/internal/storage"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/ipfs"
+	"vidra-core/internal/storage"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

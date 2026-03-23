@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // RegistrationRepository provides data access for user registration requests.

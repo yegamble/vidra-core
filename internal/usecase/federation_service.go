@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/metrics"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/metrics"
 )
 
 // FederationService processes federation jobs and performs periodic ingestion.

@@ -11,9 +11,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/port"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 )
 
 type ActivityPubHandlers struct {
@@ -121,9 +121,9 @@ func (h *ActivityPubHandlers) NodeInfo20(w http.ResponseWriter, r *http.Request)
 	nodeInfo := domain.NodeInfo{
 		Version: "2.0",
 		Software: domain.NodeInfoSoftware{
-			Name:       "athena",
+			Name:       "vidra",
 			Version:    "1.0.0",
-			Repository: "https://github.com/yourusername/athena",
+			Repository: "https://github.com/yourusername/vidra",
 		},
 		Protocols:         []string{"activitypub"},
 		Services:          domain.NodeInfoServices{Inbound: []string{}, Outbound: []string{}},
@@ -135,7 +135,7 @@ func (h *ActivityPubHandlers) NodeInfo20(w http.ResponseWriter, r *http.Request)
 			LocalPosts: int(videoCount),
 		},
 		Metadata: map[string]interface{}{
-			"nodeName":        "Athena",
+			"nodeName":        "Vidra Core",
 			"nodeDescription": h.cfg.ActivityPubInstanceDescription,
 		},
 	}

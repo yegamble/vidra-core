@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: athena
+namespace: vidra
 
 # Base resources
 resources:
@@ -23,7 +23,7 @@ nameSuffix: -blue
 
 # Resource limits (production capacity)
 replicas:
-- name: athena-api
+- name: vidra-api
   count: 3
-- name: athena-encoding-worker
+- name: vidra-encoding-worker
   count: 2

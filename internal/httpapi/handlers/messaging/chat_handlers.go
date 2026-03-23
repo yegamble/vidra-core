@@ -1,7 +1,7 @@
 package messaging
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,12 +12,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"athena/internal/chat"
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/port"
-	"athena/internal/repository"
-	"athena/internal/usecase"
+	"vidra-core/internal/chat"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase"
 )
 
 type ChatHandlers struct {

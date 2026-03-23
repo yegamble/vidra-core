@@ -576,12 +576,12 @@ cat > scripts/warm-cache.sh <<'EOF'
 #!/bin/bash
 # Run on runner startup or daily via cron
 
-cd /path/to/athena
+cd /path/to/vidra
 git pull origin main
 
 # Build project to populate cache
-go build -o /tmp/athena ./cmd/server
-rm /tmp/athena
+go build -o /tmp/vidra ./cmd/server
+rm /tmp/vidra
 
 echo "Cache warmed at $(date)"
 EOF
@@ -590,7 +590,7 @@ chmod +x scripts/warm-cache.sh
 
 # Add to crontab
 crontab -e
-# Add: 0 1 * * * /path/to/athena/scripts/warm-cache.sh
+# Add: 0 1 * * * /path/to/vidra/scripts/warm-cache.sh
 ```
 
 **Time Saved:** 30-60 seconds per build

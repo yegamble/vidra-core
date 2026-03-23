@@ -1,6 +1,6 @@
 # Blue/Green Deployment Strategy: Executive Summary
 
-**Project:** Athena Decentralized Video Platform
+**Project:** Vidra Core Decentralized Video Platform
 **Date:** 2025-11-17
 **Status:** Strategic Plan Complete, Ready for Implementation
 
@@ -8,7 +8,7 @@
 
 ## The Challenge
 
-Athena is a **federated video platform** competing with PeerTube and integrating with BlueSky/Mastodon. Current deployment model causes:
+Vidra Core is a **federated video platform** competing with PeerTube and integrating with BlueSky/Mastodon. Current deployment model causes:
 
 - **Downtime during releases** (5-15 minutes per deployment)
 - **Risk of failed deployments** affecting federation (external instances see 503 errors)
@@ -91,7 +91,7 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 
 ## Technical Highlights
 
-### For the Athena Platform Specifically
+### For the Vidra Core Platform Specifically
 
 1. **Federation-Aware:**
    - ActivityPub endpoints remain accessible during switchover
@@ -252,7 +252,7 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 - **Rollback:** Instant
 - **Risk:** Low
 - **Cost:** High (cloud vendor lock-in)
-- **Verdict:** ⚠️ Overkill for Athena's scale
+- **Verdict:** ⚠️ Overkill for Vidra Core's scale
 
 ---
 
@@ -325,15 +325,15 @@ Athena is a **federated video platform** competing with PeerTube and integrating
 
 All implementation details available in:
 
-- **Strategy:** `/home/user/athena/docs/deployment/BLUE_GREEN_DEPLOYMENT_STRATEGY.md` (17,000 words)
-- **Implementation:** `/home/user/athena/docs/deployment/BLUE_GREEN_IMPLEMENTATION_GUIDE.md` (9,000 words)
-- **Quick Start:** `/home/user/athena/docs/deployment/BLUE_GREEN_QUICK_START.md` (1,500 words)
-- **Kubernetes Manifests:** `/home/user/athena/k8s/overlays/{blue,green}/`
-- **GitHub Actions Workflow:** `/home/user/athena/.github/workflows/blue-green-deploy.yml`
-- **Rollback Script:** `/home/user/athena/scripts/rollback-deployment.sh`
+- **Strategy:** `/home/user/vidra/docs/deployment/BLUE_GREEN_DEPLOYMENT_STRATEGY.md` (17,000 words)
+- **Implementation:** `/home/user/vidra/docs/deployment/BLUE_GREEN_IMPLEMENTATION_GUIDE.md` (9,000 words)
+- **Quick Start:** `/home/user/vidra/docs/deployment/BLUE_GREEN_QUICK_START.md` (1,500 words)
+- **Kubernetes Manifests:** `/home/user/vidra/k8s/overlays/{blue,green}/`
+- **GitHub Actions Workflow:** `/home/user/vidra/.github/workflows/blue-green-deploy.yml`
+- **Rollback Script:** `/home/user/vidra/scripts/rollback-deployment.sh`
 
 ---
 
-**Prepared by:** Athena Project Management Team
+**Prepared by:** Vidra Core Project Management Team
 **Date:** 2025-11-17
 **Status:** Ready for Approval

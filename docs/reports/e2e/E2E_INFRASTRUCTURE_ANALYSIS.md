@@ -40,7 +40,7 @@ Network: ci-network (bridge)
 docker compose -f docker-compose.ci.yml up -d
 
 # Tests run from host
-DATABASE_URL=postgres://test_user:test_password@localhost:5432/athena_test
+DATABASE_URL=postgres://test_user:test_password@localhost:5432/vidra_test
 REDIS_URL=redis://localhost:6379/0
 make test-integration-ci
 
@@ -78,7 +78,7 @@ Services:
   - redis-test: 6380:6379
   - ipfs-test: 15001:5001
   - clamav-test: 3310:3310
-  - app-test: 18080:8080 (Athena API)
+  - app-test: 18080:8080 (Vidra Core API)
   - newman: (test runner)
 Network: test-network (bridge)
 ```
@@ -87,13 +87,13 @@ Network: test-network (bridge)
 
 ```bash
 # Unique project name for isolation
-COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml up -d
+COMPOSE_PROJECT_NAME=vidra-test docker compose -f docker-compose.test.yml up -d
 
 # Newman runs inside network, talks to app-test:8080
 docker compose -f docker-compose.test.yml run --rm newman
 
 # Cleanup
-COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml down -v
+COMPOSE_PROJECT_NAME=vidra-test docker compose -f docker-compose.test.yml down -v
 ```
 
 **Success Factors**:
@@ -116,7 +116,7 @@ COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml down 
 **Characteristics**:
 
 - Services run on **non-standard ports** (5433, 6380, 9000/9001, 3311, 8080)
-- Application runs **inside Docker** (athena-api-e2e)
+- Application runs **inside Docker** (vidra-api-e2e)
 - Tests run **from host**, connecting to `localhost:8080`
 - **Hybrid pattern**: Some services containerized, tests on host
 
@@ -128,8 +128,8 @@ Services:
   - redis-e2e: 6380:6379
   - minio-e2e: 9000:9000, 9001:9001
   - clamav-e2e: 3311:3310
-  - athena-api-e2e: 8080:8080
-Network: athena-e2e-network
+  - vidra-api-e2e: 8080:8080
+Network: vidra-e2e-network
 Volumes: Named volumes (persistent)
 ```
 
@@ -138,7 +138,7 @@ Volumes: Named volumes (persistent)
 ```bash
 # Start environment
 cd tests/e2e
-COMPOSE_PROJECT_NAME=athena-e2e-${RUN_ID} docker compose up -d
+COMPOSE_PROJECT_NAME=vidra-e2e-${RUN_ID} docker compose up -d
 
 # Wait for API
 timeout 180 bash -c 'until curl -sf http://localhost:8080/health; do sleep 5; done'
@@ -148,7 +148,7 @@ cd tests/e2e
 go test -v -timeout 30m ./scenarios/...
 
 # Cleanup
-COMPOSE_PROJECT_NAME=athena-e2e-${RUN_ID} docker compose down -v
+COMPOSE_PROJECT_NAME=vidra-e2e-${RUN_ID} docker compose down -v
 ```
 
 ---
@@ -161,10 +161,10 @@ COMPOSE_PROJECT_NAME=athena-e2e-${RUN_ID} docker compose down -v
 | **App Container** | No (tests mock) | Yes | Yes |
 | **Port Strategy** | Standard (5432) | Non-standard (5433) | Non-standard (5433) |
 | **Network Pattern** | Host→Container | Container→Container | Host→Container |
-| **Working Directory** | Root `/home/user/athena` | Root `/home/user/athena` | Subdirectory `tests/e2e/` |
+| **Working Directory** | Root `/home/user/vidra` | Root `/home/user/vidra` | Subdirectory `tests/e2e/` |
 | **Compose File** | `docker-compose.ci.yml` | `docker-compose.test.yml` | `tests/e2e/docker-compose.yml` |
 | **Volume Strategy** | tmpfs (ephemeral) | tmpfs (ephemeral) | Named volumes (persistent) |
-| **Project Name** | None | `athena-test` | `athena-e2e-${RUN_ID}` |
+| **Project Name** | None | `vidra-test` | `vidra-e2e-${RUN_ID}` |
 | **Cleanup** | Down -v | Down -v | Down -v |
 
 ---
@@ -203,7 +203,7 @@ testVideoPath = "../../postman/test-files/videos/test-video.mp4"
 
 ```yaml
 # tests/e2e/docker-compose.yml
-athena-api-e2e:
+vidra-api-e2e:
   ports:
     - "8080:8080"  # ⚠️ Conflicts with dev server
 ```
@@ -341,11 +341,11 @@ steps:
 
   - name: Wait for services
     run: |
-      timeout 60 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d athena_test; do sleep 2; done'
+      timeout 60 bash -c 'until docker exec $(docker compose -f docker-compose.ci.yml ps -q postgres-ci) pg_isready -U test_user -d vidra_test; do sleep 2; done'
 
   - name: Run tests
     env:
-      DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test
+      DATABASE_URL: postgres://test_user:test_password@localhost:5432/vidra_test
     run: make test-integration-ci
 
   - name: Cleanup
@@ -383,7 +383,7 @@ steps:
   - name: Start test environment
     run: |
       cd tests/e2e  # ⚠️ Changes directory
-      COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose up -d
+      COMPOSE_PROJECT_NAME=vidra-e2e-${{ github.run_id }} docker compose up -d
 
   - name: Wait for API
     run: |
@@ -400,7 +400,7 @@ steps:
     if: always()
     run: |
       cd tests/e2e
-      COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose down -v
+      COMPOSE_PROJECT_NAME=vidra-e2e-${{ github.run_id }} docker compose down -v
 ```
 
 **Potential Issues**:
@@ -446,7 +446,7 @@ steps:
 
 ```yaml
 # tests/e2e/docker-compose.yml
-athena-api-e2e:
+vidra-api-e2e:
   ports:
     - "18080:8080"  # Match postman-e2e pattern
 ```
@@ -512,7 +512,7 @@ redis-e2e:
 
 ```yaml
 # tests/e2e/docker-compose.yml
-athena-api-e2e:
+vidra-api-e2e:
   build:
     context: ../..  # ✅ Repo root
     dockerfile: Dockerfile
@@ -529,7 +529,7 @@ athena-api-e2e:
 **Current E2E Pattern**:
 
 ```
-Host → localhost:8080 → Container (athena-api-e2e)
+Host → localhost:8080 → Container (vidra-api-e2e)
 ```
 
 **Consider**:
@@ -614,7 +614,7 @@ Container (test runner) → Container (API) [same network]
 docker compose -f docker-compose.ci.yml up -d
 
 # Run tests
-DATABASE_URL=postgres://test_user:test_password@localhost:5432/athena_test \
+DATABASE_URL=postgres://test_user:test_password@localhost:5432/vidra_test \
 REDIS_URL=redis://localhost:6379/0 \
 make test-integration-ci
 
@@ -642,14 +642,14 @@ cd tests/e2e && make fixtures
 
 # Start environment
 cd tests/e2e
-COMPOSE_PROJECT_NAME=athena-e2e docker compose up -d
+COMPOSE_PROJECT_NAME=vidra-e2e docker compose up -d
 
 # Run tests
 E2E_BASE_URL=http://localhost:8080 go test -v ./scenarios/...
 
 # Cleanup
 cd tests/e2e
-COMPOSE_PROJECT_NAME=athena-e2e docker compose down -v
+COMPOSE_PROJECT_NAME=vidra-e2e docker compose down -v
 ```
 
 ### E2E Tests (Recommended)
@@ -668,12 +668,12 @@ go test -v -timeout 30m ./tests/e2e/scenarios/...
 ### Working Test Files
 
 ```
-/home/user/athena/
+/home/user/vidra/
 ├── docker-compose.ci.yml          # Integration tests ✅
 ├── docker-compose.test.yml        # Postman E2E ✅
 ├── Makefile                       # Has working postman-e2e target
 ├── postman/
-│   ├── athena-auth.postman_collection.json
+│   ├── vidra-auth.postman_collection.json
 │   └── test-files/
 │       └── videos/
 │           └── test-video.mp4     # Test fixture (19KB)
@@ -685,7 +685,7 @@ go test -v -timeout 30m ./tests/e2e/scenarios/...
 ### E2E Test Files
 
 ```
-/home/user/athena/tests/e2e/
+/home/user/vidra/tests/e2e/
 ├── docker-compose.yml             # E2E environment
 ├── Makefile                       # E2E-specific commands
 ├── helpers.go                     # Test utilities

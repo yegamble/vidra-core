@@ -30,4 +30,4 @@ runs:
       id: set-outputs
       shell: bash
       run: |
-        echo "database-url=postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable" >> $GITHUB_OUTPUT
+        echo "database-url=postgres://test_user:test_password@postgres:5432/vidra_test?sslmode=disable" >> $GITHUB_OUTPUT

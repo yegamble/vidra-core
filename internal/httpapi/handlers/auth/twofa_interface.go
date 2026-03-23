@@ -3,7 +3,7 @@ package auth
 import (
 	"context"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 type TwoFAServiceInterface interface {

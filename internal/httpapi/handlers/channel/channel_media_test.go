@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/middleware"
+	"vidra-core/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

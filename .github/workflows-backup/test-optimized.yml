@@ -26,7 +26,7 @@ concurrency:
 env:
   GO_VERSION: "1.24"
   GO111MODULE: on
-  CI_DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+  CI_DATABASE_URL: postgres://test_user:test_password@localhost:5432/vidra_test?sslmode=disable
   CI_REDIS_URL: redis://localhost:6379/0
   CI_JWT_SECRET: test-jwt-secret-for-ci
 
@@ -68,7 +68,7 @@ jobs:
       postgres:
         image: postgres:15-alpine
         env:
-          POSTGRES_DB: athena_test
+          POSTGRES_DB: vidra_test
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
         ports:
@@ -191,16 +191,16 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build binary
-        run: go build -v -o bin/athena ./cmd/server
+        run: go build -v -o bin/vidra ./cmd/server
 
       - name: Test binary
-        run: ./bin/athena --help || true
+        run: ./bin/vidra --help || true
 
       - name: Upload binary as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: athena-binary
-          path: bin/athena
+          name: vidra-binary
+          path: bin/vidra
           retention-days: 7
 
   migrations:
@@ -211,7 +211,7 @@ jobs:
       postgres:
         image: postgres:15-alpine
         env:
-          POSTGRES_DB: athena_test
+          POSTGRES_DB: vidra_test
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
         ports:
@@ -240,7 +240,7 @@ jobs:
       - name: Smoke check tables
         env:
           PGPASSWORD: test_password
-        run: psql -h localhost -U test_user -d athena_test -c '\dt'
+        run: psql -h localhost -U test_user -d vidra_test -c '\dt'
 
   docker:
     name: Docker Build
@@ -262,7 +262,7 @@ jobs:
         with:
           context: .
           push: false
-          tags: athena:test
+          tags: vidra:test
           # OPTIMIZATION: Use GitHub Actions cache
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -304,7 +304,7 @@ jobs:
         if: failure()
         run: |
           mkdir -p artifacts
-          COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml logs --no-color > artifacts/compose-logs.txt || true
+          COMPOSE_PROJECT_NAME=vidra-test docker compose -f docker-compose.test.yml logs --no-color > artifacts/compose-logs.txt || true
 
       - name: Upload compose logs
         if: failure()

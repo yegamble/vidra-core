@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Player Settings
+  title: Vidra Core API - Player Settings
   description: |
     Endpoints for managing per-video and per-channel player settings.
 

@@ -195,9 +195,9 @@ func TestNodeInfoJSONRoundTrip(t *testing.T) {
 	nodeInfo := NodeInfo{
 		Version: "2.0",
 		Software: NodeInfoSoftware{
-			Name:       "athena",
+			Name:       "vidra",
 			Version:    "1.0.0",
-			Repository: "https://github.com/example/athena",
+			Repository: "https://github.com/example/vidra",
 			Homepage:   "https://example.com",
 		},
 		Protocols: []string{"activitypub"},

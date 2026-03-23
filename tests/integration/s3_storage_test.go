@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/storage"
+	"vidra-core/internal/storage"
 )
 
 // minioConfig returns the S3Config for the test MinIO instance.
@@ -24,7 +24,7 @@ import (
 func minioConfig() storage.S3Config {
 	return storage.S3Config{
 		Endpoint:  "http://localhost:19100",
-		Bucket:    "athena-test",
+		Bucket:    "vidra-test",
 		AccessKey: "minioadmin",
 		SecretKey: "minioadmin",
 		Region:    "us-east-1",
@@ -52,7 +52,7 @@ func TestS3Storage_Upload_Download(t *testing.T) {
 	backend := newMinioBackend(t)
 	ctx := context.Background()
 	key := uniqueKey("upload-download")
-	content := "Hello, Athena S3 integration test!"
+	content := "Hello, Vidra Core S3 integration test!"
 
 	// Upload
 	err := backend.Upload(ctx, key, strings.NewReader(content), "text/plain")

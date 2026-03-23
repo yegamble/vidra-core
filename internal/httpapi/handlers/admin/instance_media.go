@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
 )
 
 // InstanceMediaHandlers provides instance avatar/banner upload endpoints.

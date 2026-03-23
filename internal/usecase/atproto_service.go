@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
 )
 
 // AtprotoPublisher publishes activity to ATProto (optional).

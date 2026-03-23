@@ -54,7 +54,7 @@ Investigation into E2E test failures revealed **2 critical issues** blocking tes
 
 ### 1. Login Field Mismatch ⚠️ CRITICAL
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go:82`
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go:82`
 
 **Problem:**
 
@@ -80,14 +80,14 @@ payload := map[string]interface{}{
 
 **Files to Change:**
 
-- `/Users/yosefgamble/github/athena/tests/e2e/helpers.go:119`
-- OR `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go:82-89`
+- `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go:119`
+- OR `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go:82-89`
 
 ---
 
 ### 2. Type Assertion Without Validation ⚠️ CRITICAL
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go:82-84`
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go:82-84`
 
 **Problem:**
 
@@ -118,7 +118,7 @@ if !ok {
 
 ### 3. Validation Config Missing from E2E ⚠️ CRITICAL
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml`
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml`
 
 **Problem:** Missing critical environment variables:
 
@@ -276,22 +276,22 @@ VALIDATION_LOG_EVENTS: "true"
 
 ### Core Application Files
 
-1. `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` - Authentication handlers
-2. `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go` - Video CRUD & upload
-3. `/Users/yosefgamble/github/athena/internal/domain/video.go` - Video domain models
-4. `/Users/yosefgamble/github/athena/internal/validation/checksum.go` - Validation logic
-5. `/Users/yosefgamble/github/athena/internal/config/config.go` - Configuration
+1. `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go` - Authentication handlers
+2. `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go` - Video CRUD & upload
+3. `/Users/yosefgamble/github/vidra/internal/domain/video.go` - Video domain models
+4. `/Users/yosefgamble/github/vidra/internal/validation/checksum.go` - Validation logic
+5. `/Users/yosefgamble/github/vidra/internal/config/config.go` - Configuration
 
 ### Test Files
 
-6. `/Users/yosefgamble/github/athena/tests/e2e/helpers.go` - E2E test client
-7. `/Users/yosefgamble/github/athena/tests/e2e/scenarios/video_workflow_test.go` - E2E scenarios
-8. `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml` - E2E environment
+6. `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go` - E2E test client
+7. `/Users/yosefgamble/github/vidra/tests/e2e/scenarios/video_workflow_test.go` - E2E scenarios
+8. `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml` - E2E environment
 
 ### Configuration Files
 
-9. `/Users/yosefgamble/github/athena/.env.example` - Example environment variables
-10. `/Users/yosefgamble/github/athena/.env.test` - Test environment variables
+9. `/Users/yosefgamble/github/vidra/.env.example` - Example environment variables
+10. `/Users/yosefgamble/github/vidra/.env.test` - Test environment variables
 
 ---
 
@@ -346,7 +346,7 @@ VALIDATION_LOG_EVENTS: "true"
 
    ```yaml
    # Edit tests/e2e/docker-compose.yml
-   # Add under athena-api-e2e.environment:
+   # Add under vidra-api-e2e.environment:
    VALIDATION_STRICT_MODE: "false"
    VALIDATION_TEST_MODE: "true"
    VALIDATION_ALLOWED_ALGORITHMS: "sha256"
@@ -408,14 +408,14 @@ E2E_BASE_URL=http://localhost:18080 go test -v ./tests/e2e/scenarios/...
 git add -A
 git commit -m "fix(e2e): Address critical E2E test blockers"
 git push origin HEAD
-# Monitor: https://github.com/yegamble/athena/actions
+# Monitor: https://github.com/yegamble/vidra-core/actions
 ```
 
 ### Postman Testing (Future)
 
 ```bash
 # Run comprehensive Postman collection
-newman run Athena_E2E.postman_collection.json \\
+newman run Vidra Core_E2E.postman_collection.json \\
   --environment E2E_Environment.postman_environment.json \\
   --reporters cli,htmlextra \\
   --bail

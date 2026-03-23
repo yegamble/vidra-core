@@ -43,10 +43,10 @@ while IFS= read -r line; do
   fi
 
   # Compute per-package coverage from the func output.
-  # Extract all function lines for this package (prefix "athena/<PKG>/")
+  # Extract all function lines for this package (prefix "vidra-core/<PKG>/")
   # and compute the average coverage.
   PKG_COVERAGE="$(echo "${FUNC_OUTPUT}" \
-    | grep "^athena/${PKG}/" \
+    | grep "^vidra/${PKG}/" \
     | grep -v '^total:' \
     | awk '
       {
@@ -63,7 +63,7 @@ while IFS= read -r line; do
   # If no coverage data found, the package might have 0% or no test files
   if [[ -z "${PKG_COVERAGE}" ]]; then
     # Check if the package appears at all in the coverage file
-    if grep -q "athena/${PKG}/" "${COVERAGE_FILE}" 2>/dev/null; then
+    if grep -q "vidra-core/${PKG}/" "${COVERAGE_FILE}" 2>/dev/null; then
       PKG_COVERAGE="0.0"
     else
       echo "  SKIP  ${PKG} (not in coverage profile)"

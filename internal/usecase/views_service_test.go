@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 type MockViewsRepository struct {

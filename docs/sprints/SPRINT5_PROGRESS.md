@@ -9,7 +9,7 @@
 
 ## Overview
 
-Sprint 5 implements live streaming infrastructure, enabling Athena to accept RTMP streams from broadcasting software (OBS, Streamlabs, etc.) and serve them as HLS streams to viewers. This includes stream authentication, viewer tracking, and real-time state management.
+Sprint 5 implements live streaming infrastructure, enabling Vidra Core to accept RTMP streams from broadcasting software (OBS, Streamlabs, etc.) and serve them as HLS streams to viewers. This includes stream authentication, viewer tracking, and real-time state management.
 
 ## Progress Tracker
 
@@ -383,11 +383,11 @@ LIVE_HLS_WINDOW_SIZE=10             # Number of segments in window
 
 ```
 === Domain Tests ===
-ok      athena/internal/domain  0.234s
+ok      vidra/internal/domain  0.234s
 coverage: 100.0% of statements
 
 === Repository Tests ===
-ok      athena/internal/repository      0.189s
+ok      vidra/internal/repository      0.189s
 coverage: 100.0% of statements
 
 Total: 63 tests, all passing
@@ -719,4 +719,4 @@ Sprint 5 is **100% complete** with all components fully implemented and tested:
 ---
 
 *Completed: 2025-10-20*
-*Athena PeerTube Backend - Video Platform in Go*
+*Vidra Core PeerTube Backend - Video Platform in Go*

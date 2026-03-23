@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 )
 
 // configResetRepo is the minimal interface needed for config reset and homepage management.
@@ -173,7 +173,7 @@ type publicStatsResponse struct {
 func (h *InstanceHandlers) GetPublicConfig(w http.ResponseWriter, r *http.Request) {
 	resp := publicConfigResponse{
 		Instance: publicConfigInstance{
-			Name:              "Athena Instance",
+			Name:              "Vidra Core Instance",
 			ShortDescription:  "",
 			Description:       "",
 			IsNSFW:            false,

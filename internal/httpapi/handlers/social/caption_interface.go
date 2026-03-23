@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/google/uuid"
 )

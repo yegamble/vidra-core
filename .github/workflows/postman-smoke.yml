@@ -30,19 +30,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build app image
-        run: docker build -t athena:latest .
+        run: docker build -t vidra:latest .
 
       - name: Start test services
         run: |
-          COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test \
+          COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test \
             up -d postgres-test redis-test app-test
 
       - name: Wait for services to be healthy
         run: |
           echo "Waiting for postgres-test..."
           for i in $(seq 1 60); do
-            if docker exec $(COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test ps -q postgres-test) \
-              pg_isready -U test_user -d athena_test >/dev/null 2>&1; then
+            if docker exec $(COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test ps -q postgres-test) \
+              pg_isready -U test_user -d vidra_test >/dev/null 2>&1; then
               echo "postgres-test is ready"
               break
             fi
@@ -51,7 +51,7 @@ jobs:
 
           echo "Waiting for redis-test..."
           for i in $(seq 1 60); do
-            if docker exec $(COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test ps -q redis-test) \
+            if docker exec $(COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test ps -q redis-test) \
               redis-cli ping >/dev/null 2>&1; then
               echo "redis-test is ready"
               break
@@ -62,7 +62,7 @@ jobs:
           echo "Waiting for app-test health..."
           for i in $(seq 1 60); do
             status=$(docker inspect --format='{{json .State.Health.Status}}' \
-              $(COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test ps -q app-test) 2>/dev/null | tr -d '"')
+              $(COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test ps -q app-test) 2>/dev/null | tr -d '"')
             if [ "$status" = "healthy" ]; then
               echo "app-test is healthy"
               break
@@ -72,7 +72,7 @@ jobs:
 
       - name: Run Newman smoke tests
         run: |
-          COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test \
+          COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test \
             run --rm newman
 
       - name: Upload test results
@@ -86,7 +86,7 @@ jobs:
       - name: Collect logs on failure
         if: failure()
         run: |
-          COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test logs app-test > postman-failure.log 2>&1
+          COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test logs app-test > postman-failure.log 2>&1
           echo "--- Last 50 lines of app-test logs ---"
           tail -50 postman-failure.log
 
@@ -101,4 +101,4 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test down -v --remove-orphans
+          COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test down -v --remove-orphans

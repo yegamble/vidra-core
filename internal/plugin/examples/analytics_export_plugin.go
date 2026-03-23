@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/plugin"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/plugin"
 )
 
 // AnalyticsExportPlugin exports analytics events to a file
@@ -36,7 +36,7 @@ func NewAnalyticsExportPlugin() *AnalyticsExportPlugin {
 	return &AnalyticsExportPlugin{
 		name:          "analytics-export",
 		version:       "1.0.0",
-		author:        "Athena Team",
+		author:        "Vidra Core Team",
 		description:   "Exports analytics events to JSON files",
 		enabled:       false,
 		batchSize:     100,

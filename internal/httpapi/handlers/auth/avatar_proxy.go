@@ -10,9 +10,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	ipfspkg "athena/internal/ipfs"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	ipfspkg "vidra-core/internal/ipfs"
 )
 
 // ipfsHTTPClient is a shared client for all IPFS API calls, enabling connection reuse.

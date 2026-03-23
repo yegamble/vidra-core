@@ -9,8 +9,8 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 
-	"athena/internal/middleware"
-	"athena/internal/port"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
 )
 
 func withRoleContext(req *http.Request, role string) *http.Request {

@@ -2,7 +2,7 @@
 
 ## Overview
 
-A comprehensive, portable validation system has been implemented for the Athena project that works across:
+A comprehensive, portable validation system has been implemented for the Vidra Core project that works across:
 
 - **All Claude instances** (Code CLI, Web interface, API)
 - **All platforms** (macOS, Linux, Windows)
@@ -255,7 +255,7 @@ The validation system has been tested on:
 
 ```
 ========================================
-Athena Validation Suite
+Vidra Core Validation Suite
 ========================================
 
 [1] Go Installation Check

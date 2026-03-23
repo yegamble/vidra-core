@@ -18,10 +18,10 @@ func TestMetricsHandler_IncludesSchedulerMetrics(t *testing.T) {
 
 	body := rr.Body.String()
 	for _, substr := range []string{
-		"athena_scheduler_enabled",
-		"athena_scheduler_interval_seconds",
-		"athena_scheduler_burst",
-		"athena_scheduler_last_tick_unixtime",
+		"vidra_scheduler_enabled",
+		"vidra_scheduler_interval_seconds",
+		"vidra_scheduler_burst",
+		"vidra_scheduler_last_tick_unixtime",
 	} {
 		if !strings.Contains(body, substr) {
 			t.Fatalf("expected metrics output to contain %q", substr)

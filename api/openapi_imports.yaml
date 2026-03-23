@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Video Imports
+  title: Vidra Core API - Video Imports
   description: |
     Endpoints for importing videos from external URLs.
 

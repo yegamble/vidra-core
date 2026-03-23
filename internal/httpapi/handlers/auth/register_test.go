@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func TestRegister_Success(t *testing.T) {

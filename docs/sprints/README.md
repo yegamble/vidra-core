@@ -1,6 +1,6 @@
 # Sprint Documentation
 
-This directory contains comprehensive documentation for all completed sprints in the Athena project.
+This directory contains comprehensive documentation for all completed sprints in the Vidra Core project.
 
 ## 🎉 Project Complete - 100% Feature Delivery
 

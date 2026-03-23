@@ -1,13 +1,13 @@
 package federation
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/go-chi/chi/v5"
 )

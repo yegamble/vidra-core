@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/port"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

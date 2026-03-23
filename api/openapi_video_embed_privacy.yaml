@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Video Embed Privacy
+  title: Vidra Core API - Video Embed Privacy
   description: Endpoints for managing video embed privacy and domain whitelisting
   version: 1.0.0
 

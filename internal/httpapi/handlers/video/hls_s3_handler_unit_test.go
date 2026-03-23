@@ -1,11 +1,11 @@
 package video
 
 import (
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/storage"
-	"athena/internal/usecase"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/storage"
+	"vidra-core/internal/usecase"
 	"context"
 	"errors"
 	"io"

@@ -20,7 +20,7 @@ The E2E tests are failing with HTTP 400 errors due to:
 
 ### Option A: Update E2E Test (EASIER - Recommended)
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/helpers.go`
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go`
 
 **Change Line 119:**
 
@@ -45,7 +45,7 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
     }
 ```
 
-**Also update test calls** in `/Users/yosefgamble/github/athena/tests/e2e/scenarios/video_workflow_test.go` line 132:
+**Also update test calls** in `/Users/yosefgamble/github/vidra/tests/e2e/scenarios/video_workflow_test.go` line 132:
 
 ```diff
 - userID2, token2 := client2.Login(t, username, password)
@@ -56,7 +56,7 @@ func (c *TestClient) Login(t *testing.T, username, password string) (userID, tok
 
 ### Option B: Update Login Handler (MORE ROBUST)
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go`
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go`
 
 **Change Lines 82-89:**
 
@@ -111,9 +111,9 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 
 ## Fix #2: Add Validation Environment Variables
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml`
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml`
 
-**Add these lines under `athena-api-e2e.environment`** (around line 115):
+**Add these lines under `vidra-api-e2e.environment`** (around line 115):
 
 ```diff
     # Logging
@@ -136,7 +136,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 +   RATE_LIMIT_WINDOW: "60"
 +
 +   # Storage
-+   STORAGE_DIR: "/tmp/athena-e2e-storage"
++   STORAGE_DIR: "/tmp/vidra-e2e-storage"
 +
 +   # ClamAV Fallback
 +   CLAMAV_FALLBACK_MODE: "warn"  # Don't block E2E if ClamAV slow
@@ -155,7 +155,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
   run: |
     echo "Checking database tables..."
     docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e \\
-      psql -U athena_test -d athena_e2e -c "\\dt" | grep -E "users|videos|upload_sessions" || {
+      psql -U vidra_test -d vidra_e2e -c "\\dt" | grep -E "users|videos|upload_sessions" || {
         echo "ERROR: Critical tables missing"
         docker compose -f tests/e2e/docker-compose.yml logs postgres-e2e
         exit 1
@@ -166,7 +166,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
     echo "Testing API health endpoint..."
     curl -f http://localhost:18080/health || {
       echo "ERROR: API health check failed"
-      docker compose -f tests/e2e/docker-compose.yml logs athena-api-e2e
+      docker compose -f tests/e2e/docker-compose.yml logs vidra-api-e2e
       exit 1
     }
 ```
@@ -189,7 +189,7 @@ sleep 30
 
 # Verify database
 docker compose -f tests/e2e/docker-compose.yml exec postgres-e2e \\
-  psql -U athena_test -d athena_e2e -c "\\dt" | grep users
+  psql -U vidra_test -d vidra_e2e -c "\\dt" | grep users
 
 # Verify API
 curl http://localhost:18080/health
@@ -216,7 +216,7 @@ go test -v ./tests/e2e/scenarios/...
     video_workflow_test.go:202: Search functionality test completed successfully
 --- PASS: TestVideoSearchFunctionality (3.12s)
 PASS
-ok      athena/tests/e2e/scenarios      8.801s
+ok      vidra/tests/e2e/scenarios      8.801s
 ```
 
 ---
@@ -239,7 +239,7 @@ Fixes E2E test failures with HTTP 400 errors."
 git push origin HEAD
 ```
 
-**Monitor:** <https://github.com/yegamble/athena/actions>
+**Monitor:** <https://github.com/yegamble/vidra-core/actions>
 
 ---
 

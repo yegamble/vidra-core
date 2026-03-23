@@ -44,7 +44,7 @@ func TestLoadCommonFields(t *testing.T) {
 			setupMode: false,
 			envVars: map[string]string{
 				"REQUIRE_IPFS":            "false",
-				"STORAGE_DIR":             "/tmp/athena",
+				"STORAGE_DIR":             "/tmp/vidra",
 				"IPFS_API":                "http://ipfs:5001",
 				"MAX_UPLOAD_SIZE":         "1048576", // 1MB
 				"VIDEO_QUALITIES":         "360p,720p",
@@ -55,8 +55,8 @@ func TestLoadCommonFields(t *testing.T) {
 				if cfg.RequireIPFS != false {
 					t.Errorf("expected RequireIPFS false, got %v", cfg.RequireIPFS)
 				}
-				if cfg.StorageDir != "/tmp/athena" {
-					t.Errorf("expected StorageDir /tmp/athena, got %q", cfg.StorageDir)
+				if cfg.StorageDir != "/tmp/vidra" {
+					t.Errorf("expected StorageDir /tmp/vidra, got %q", cfg.StorageDir)
 				}
 				if cfg.IPFSApi != "http://ipfs:5001" {
 					t.Errorf("expected IPFSApi http://ipfs:5001, got %q", cfg.IPFSApi)

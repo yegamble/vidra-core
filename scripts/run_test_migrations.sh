@@ -6,7 +6,7 @@ export PGPASSWORD=test_password
 PGHOST=localhost
 PGPORT=5433
 PGUSER=test_user
-PGDATABASE=athena_test
+PGDATABASE=vidra_test
 
 echo "Running migrations on test database..."
 

@@ -1,4 +1,4 @@
-# S3 and CloudFront Module for Athena Platform
+# S3 and CloudFront Module for Vidra Core Platform
 # Creates S3 buckets for video storage with CloudFront CDN for delivery
 
 locals {

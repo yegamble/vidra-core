@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/jmoiron/sqlx"
 )

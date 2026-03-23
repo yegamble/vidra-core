@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-Sprint 14 successfully implemented a comprehensive video redundancy system for Athena, enabling automatic distribution of videos across peer instances for improved reliability and availability. The system includes ActivityPub-based instance discovery, automatic redundancy policies, manual redundancy management, and comprehensive health monitoring.
+Sprint 14 successfully implemented a comprehensive video redundancy system for Vidra Core, enabling automatic distribution of videos across peer instances for improved reliability and availability. The system includes ActivityPub-based instance discovery, automatic redundancy policies, manual redundancy management, and comprehensive health monitoring.
 
 ### Key Achievements
 
@@ -371,7 +371,7 @@ type ActivityPubActor struct {
 
 ```bash
 $ go test -short ./internal/domain -run "Redundancy|InstancePeer|VideoRedundancy"
-ok      athena/internal/domain  0.198s
+ok      vidra/internal/domain  0.198s
 ```
 
 All 42 tests passing with 100% coverage of domain logic.
@@ -495,7 +495,7 @@ func calculateNextSyncTime(attemptCount int, baseDelayMinutes int) time.Time {
 ### Register Instance Peer
 
 ```bash
-curl -X POST https://api.athena.example.com/api/v1/admin/redundancy/instances \
+curl -X POST https://api.vidra.example.com/api/v1/admin/redundancy/instances \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -508,7 +508,7 @@ curl -X POST https://api.athena.example.com/api/v1/admin/redundancy/instances \
 ### Discover Instance
 
 ```bash
-curl -X POST https://api.athena.example.com/api/v1/admin/redundancy/instances/discover \
+curl -X POST https://api.vidra.example.com/api/v1/admin/redundancy/instances/discover \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -519,7 +519,7 @@ curl -X POST https://api.athena.example.com/api/v1/admin/redundancy/instances/di
 ### Create Manual Redundancy
 
 ```bash
-curl -X POST https://api.athena.example.com/api/v1/admin/redundancy/create \
+curl -X POST https://api.vidra.example.com/api/v1/admin/redundancy/create \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -533,7 +533,7 @@ curl -X POST https://api.athena.example.com/api/v1/admin/redundancy/create \
 ### Create Automatic Policy
 
 ```bash
-curl -X POST https://api.athena.example.com/api/v1/admin/redundancy/policies \
+curl -X POST https://api.vidra.example.com/api/v1/admin/redundancy/policies \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -551,7 +551,7 @@ curl -X POST https://api.athena.example.com/api/v1/admin/redundancy/policies \
 ### Get Redundancy Statistics
 
 ```bash
-curl https://api.athena.example.com/api/v1/admin/redundancy/stats \
+curl https://api.vidra.example.com/api/v1/admin/redundancy/stats \
   -H "Authorization: Bearer $TOKEN"
 
 # Response:
@@ -577,7 +577,7 @@ curl https://api.athena.example.com/api/v1/admin/redundancy/stats \
 ### Get Video Health
 
 ```bash
-curl https://api.athena.example.com/api/v1/redundancy/videos/123e4567-e89b-12d3-a456-426614174000/health
+curl https://api.vidra.example.com/api/v1/redundancy/videos/123e4567-e89b-12d3-a456-426614174000/health
 
 # Response:
 {
@@ -733,7 +733,7 @@ SYNC_LOG_CLEANUP_INTERVAL=86400  # seconds
 
 ```bash
 $ go test -short ./internal/domain -run "Redundancy"
-ok      athena/internal/domain  0.198s
+ok      vidra/internal/domain  0.198s
 ```
 
 All 42 tests passing with no failures.
@@ -801,7 +801,7 @@ $ golangci-lint run ./internal/domain/redundancy.go ./internal/repository/redund
 
 ## Conclusion
 
-Sprint 14 successfully delivered a production-ready video redundancy system for Athena. The implementation includes:
+Sprint 14 successfully delivered a production-ready video redundancy system for Vidra Core. The implementation includes:
 
 ✅ **Complete Database Schema** - 4 tables, 17 indexes, 5 PostgreSQL functions
 ✅ **Domain Models** - Full validation and business logic
@@ -843,7 +843,7 @@ Sprint 14 successfully delivered a production-ready video redundancy system for 
 - **Unit Tests**: ✅ Comprehensive Coverage
 - **Documentation**: ✅ Complete
 
-The video redundancy system provides a solid foundation for distributing videos across peer instances, improving reliability and availability for Athena users.
+The video redundancy system provides a solid foundation for distributing videos across peer instances, improving reliability and availability for Vidra Core users.
 
 ---
 

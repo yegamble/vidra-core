@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // CircuitState represents the state of a circuit breaker

@@ -12,7 +12,7 @@ Type: Feature
 
 ## Summary
 
-**Goal:** Address ~24 code health items across the Athena codebase: N+1 query optimizations, bug fixes, security hardening, code quality refactoring, and test improvements.
+**Goal:** Address ~24 code health items across the Vidra Core codebase: N+1 query optimizations, bug fixes, security hardening, code quality refactoring, and test improvements.
 
 **Architecture:** Surgical, per-file changes. No architectural shifts. Each task is independently testable.
 
@@ -250,7 +250,7 @@ These items from the original list are already implemented — no work needed:
 
 - **SFTPConfig**: `type SFTPConfig struct { Host string; Port int; User string; Password string; KeyPath string; Path string; KnownHostsFile string }`. `NewSFTPBackend(cfg SFTPConfig)`.
 - **S3Config**: `type S3Config struct { Bucket string; Region string; Prefix string; Endpoint string; AccessKey string; SecretKey string }`. `NewS3Backend(cfg S3Config)`.
-- **TOFU persistence**: Read known hosts from `KnownHostsFile` during `NewSFTPBackend()` construction (before `sync.Once` in `initClient`). Store in `knownHostKey` field. In `buildHostKeyCallback`, when `knownHostKey == ""` and TOFU accepts a key, write it to `KnownHostsFile` (default: `~/.ssh/known_hosts_athena` or configurable). Use `os.OpenFile` with `O_CREATE|O_APPEND`. **Critical:** The known_hosts file must be read at construction time, not inside `initClient`, because `sync.Once` means `initClient` only runs once — if it reads from file inside `sync.Once`, later file writes won't be visible on reconnection without recreating the backend.
+- **TOFU persistence**: Read known hosts from `KnownHostsFile` during `NewSFTPBackend()` construction (before `sync.Once` in `initClient`). Store in `knownHostKey` field. In `buildHostKeyCallback`, when `knownHostKey == ""` and TOFU accepts a key, write it to `KnownHostsFile` (default: `~/.ssh/known_hosts_vidra` or configurable). Use `os.OpenFile` with `O_CREATE|O_APPEND`. **Critical:** The known_hosts file must be read at construction time, not inside `initClient`, because `sync.Once` means `initClient` only runs once — if it reads from file inside `sync.Once`, later file writes won't be visible on reconnection without recreating the backend.
 - **Callers:** Search with `Grep` for `NewSFTPBackend(` and `NewS3Backend(` to find all call sites. Update them to pass config structs.
 
 **Definition of Done:**

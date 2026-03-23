@@ -18,7 +18,7 @@ Worktree: No
 
 ## Summary
 
-**Goal:** Fix security bugs, auth wiring issues, and code quality gaps across the Athena codebase — covering P0 auth wiring, P1 security/ownership gaps, P2 stubbed features, and numerous code-quality improvements.
+**Goal:** Fix security bugs, auth wiring issues, and code quality gaps across the Vidra Core codebase — covering P0 auth wiring, P1 security/ownership gaps, P2 stubbed features, and numerous code-quality improvements.
 
 **Architecture:** Surgical fixes across existing files. No new packages or architectural changes. Groups related fixes by subsystem.
 

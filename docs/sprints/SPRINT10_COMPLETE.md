@@ -454,10 +454,10 @@ Response:
 
 ```bash
 # Using psql
-psql -h localhost -U athena_user -d athena < migrations/050_create_analytics_tables.sql
+psql -h localhost -U vidra_user -d vidra < migrations/050_create_analytics_tables.sql
 
 # Or using atlas
-atlas migrate apply --dir "file://migrations" --url "postgres://athena_user:password@localhost:5432/athena"
+atlas migrate apply --dir "file://migrations" --url "postgres://vidra_user:password@localhost:5432/vidra"
 ```
 
 ## Acceptance Criteria

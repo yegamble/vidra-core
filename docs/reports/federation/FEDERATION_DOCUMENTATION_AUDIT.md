@@ -1,7 +1,7 @@
 # Federation Documentation Audit Report
 
 **Date:** 2025-11-30
-**Project:** Athena Video Platform
+**Project:** Vidra Core Video Platform
 **Auditor:** Federation Protocol Auditor
 **Scope:** Documentation accuracy vs. actual implementation
 
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-This audit compares federation-related documentation against the actual codebase implementation to identify inaccuracies, outdated information, and missing documentation. The Athena platform implements both ActivityPub (W3C standard) and AT Protocol (BlueSky), with ActivityPub being significantly more mature.
+This audit compares federation-related documentation against the actual codebase implementation to identify inaccuracies, outdated information, and missing documentation. The Vidra Core platform implements both ActivityPub (W3C standard) and AT Protocol (BlueSky), with ActivityPub being significantly more mature.
 
 ### Key Findings
 
@@ -48,7 +48,7 @@ This audit compares federation-related documentation against the actual codebase
 **Evidence:**
 
 ```
-File: /Users/yosefgamble/github/athena/internal/usecase/activitypub/service.go
+File: /Users/yosefgamble/github/vidra/internal/usecase/activitypub/service.go
 Line Count: 1,954 lines (up from claimed 1,193)
 Key Methods Implemented:
 - BuildVideoObject() - Lines 1203-1366 (164 lines)
@@ -62,7 +62,7 @@ Key Methods Implemented:
 
 #### INACCURACY #1: Video Publishing Claims
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/FEDERATION_AUDIT_REPORT.md`
+**Documentation Location:** `/Users/yosefgamble/github/vidra/FEDERATION_AUDIT_REPORT.md`
 
 **Claimed (Lines 232-241):**
 
@@ -111,7 +111,7 @@ func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
 
 #### INACCURACY #2: Production Readiness Claims
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/FEDERATION_AUDIT_REPORT.md` (Line 1108)
+**Documentation Location:** `/Users/yosefgamble/github/vidra/FEDERATION_AUDIT_REPORT.md` (Line 1108)
 
 **Claimed:**
 
@@ -132,7 +132,7 @@ func (s *Service) PublishVideo(ctx context.Context, videoID string) error {
 
 #### INACCURACY #3: Test Coverage Claims
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md` (Line 5)
+**Documentation Location:** `/Users/yosefgamble/github/vidra/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md` (Line 5)
 
 **Claimed:**
 
@@ -211,14 +211,14 @@ grep -r "webfinger|nodeinfo" api/*.yaml
 
 ### 2.2 Federation OpenAPI Discrepancies
 
-**File:** `/Users/yosefgamble/github/athena/api/openapi_federation.yaml`
+**File:** `/Users/yosefgamble/github/vidra/api/openapi_federation.yaml`
 
 **Issue:** Title claims "ATProto federation" but includes generic "Federation API" endpoints
 
 **Line 3-4:**
 
 ```yaml
-title: Athena Federation API
+title: Vidra Core Federation API
 description: ATProto federation endpoints for cross-platform content syndication
 ```
 
@@ -227,7 +227,7 @@ description: ATProto federation endpoints for cross-platform content syndication
 **Recommended Fix:**
 
 ```yaml
-title: Athena Federation API
+title: Vidra Core Federation API
 description: |
   Federation API for cross-platform content syndication.
   Supports:
@@ -241,7 +241,7 @@ description: |
 
 ### 3.1 Documented vs. Actual Configuration
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/README.md` (Lines 42-50)
+**Documentation Location:** `/Users/yosefgamble/github/vidra/docs/federation/README.md` (Lines 42-50)
 
 **Documented Configuration:**
 
@@ -317,7 +317,7 @@ ACTIVITYPUB_MAX_ACTIVITIES_PER_PAGE=20
 
 ### 3.2 AT Protocol Configuration Accuracy
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/ATPROTO_SETUP.md` (Lines 91-105)
+**Documentation Location:** `/Users/yosefgamble/github/vidra/docs/federation/ATPROTO_SETUP.md` (Lines 91-105)
 
 **Documented Configuration:**
 ```bash
@@ -369,7 +369,7 @@ cfg.EnableATProtoLabeler                // ❌ NOT DOCUMENTED
 
 ### 4.1 Outdated Claims
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/docs/PEERTUBE_COMPAT.md`
+**Documentation Location:** `/Users/yosefgamble/github/vidra/docs/PEERTUBE_COMPAT.md`
 
 **File Analysis:**
 
@@ -386,8 +386,8 @@ Status: Contains outdated roadmap and "missing" features
 **Documented Status:**
 
 ```
-- Athena: GET /api/v1/videos → list public videos (Covered/Partial: payload shape likely differs)
-- Athena: GET /api/v1/videos/search → search videos (Covered/Partial)
+- Vidra Core: GET /api/v1/videos → list public videos (Covered/Partial: payload shape likely differs)
+- Vidra Core: GET /api/v1/videos/search → search videos (Covered/Partial)
 ```
 
 **Actual Status:** Fully implemented with PeerTube-compatible pagination
@@ -434,7 +434,7 @@ Comments
 
 ### 4.2 Federation Feature Claims vs. Reality
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/README.md` (Lines 11-16)
+**Documentation Location:** `/Users/yosefgamble/github/vidra/docs/federation/README.md` (Lines 11-16)
 
 **Claimed ActivityPub Features:**
 
@@ -474,7 +474,7 @@ case domain.ActivityTypeView:
 
 ### 5.1 Inbound Activity Support
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/README.md`
+**Documentation Location:** `/Users/yosefgamble/github/vidra/docs/federation/README.md`
 
 **Claimed:** "Full PeerTube-compatible federation"
 
@@ -517,7 +517,7 @@ t.Skip("TODO: Parent comment author delivery not yet implemented")
 
 ### 6.1 Claimed Compatibility
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/README.md` (Lines 59-66)
+**Documentation Location:** `/Users/yosefgamble/github/vidra/docs/federation/README.md` (Lines 59-66)
 
 **Claimed:**
 
@@ -565,7 +565,7 @@ Note: Real-world federation testing with production instances is pending.
 
 ### 7.1 Documented Endpoints vs. Implemented
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/README.md` (Lines 18-24)
+**Documentation Location:** `/Users/yosefgamble/github/vidra/docs/federation/README.md` (Lines 18-24)
 
 **Documented Endpoints:**
 
@@ -608,7 +608,7 @@ r.Get("/users/{username}/following", ...)                   // ❌ NOT DOCUMENTE
 
 ### 8.1 HTTP Signatures Documentation
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md` (Lines 208-217)
+**Documentation Location:** `/Users/yosefgamble/github/vidra/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md` (Lines 208-217)
 
 **Documented Limitations:**
 
@@ -667,7 +667,7 @@ if cfg.EnableActivityPub && cfg.ActivityPubKeyEncryptionKey == "" {
 **Documentation Status:**
 
 - Migration 061: `encrypt_activitypub_private_keys.sql` exists
-- Security implementation: `/Users/yosefgamble/github/athena/internal/security/activitypub_key_encryption.go` exists
+- Security implementation: `/Users/yosefgamble/github/vidra/internal/security/activitypub_key_encryption.go` exists
 - User documentation: MISSING
 
 **Impact:** Users cannot start ActivityPub without this undocumented env var
@@ -702,7 +702,7 @@ Store it securely (e.g., in your secrets management system).
 
 ### 9.1 Outdated Test Metrics
 
-**Documentation Location:** `/Users/yosefgamble/github/athena/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md`
+**Documentation Location:** `/Users/yosefgamble/github/vidra/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md`
 
 **Claimed (Line 5):**
 ```markdown
@@ -781,14 +781,14 @@ a7e4436 fix: Update ActivityPub federation delivery pattern to async queue
 
 #### FIX #1: Add ActivityPub OpenAPI Specification
 
-**File to Create:** `/Users/yosefgamble/github/athena/api/openapi_activitypub.yaml`
+**File to Create:** `/Users/yosefgamble/github/vidra/api/openapi_activitypub.yaml`
 
 **Required Content:**
 
 ```yaml
 openapi: 3.0.3
 info:
-  title: Athena ActivityPub API
+  title: Vidra Core ActivityPub API
   description: W3C ActivityPub federation endpoints (PeerTube-compatible)
   version: 1.0.0
 
@@ -824,7 +824,7 @@ paths:
 
 #### FIX #2: Update Configuration Documentation
 
-**File to Update:** `/Users/yosefgamble/github/athena/docs/federation/README.md`
+**File to Update:** `/Users/yosefgamble/github/vidra/docs/federation/README.md`
 
 **Add Section:**
 
@@ -890,7 +890,7 @@ ENABLE_ATPROTO_LABELER=false                       # Content labeling
 ---
 
 #### FIX #3: Update FEDERATION_AUDIT_REPORT.md
-**File to Update:** `/Users/yosefgamble/github/athena/FEDERATION_AUDIT_REPORT.md`
+**File to Update:** `/Users/yosefgamble/github/vidra/FEDERATION_AUDIT_REPORT.md`
 
 **Sections to Revise:**
 1. **Section 2.6 (Lines 217-246):** Update video publishing status from "NOT IMPLEMENTED" to "FULLY IMPLEMENTED"
@@ -906,7 +906,7 @@ ENABLE_ATPROTO_LABELER=false                       # Content labeling
 
 #### ENHANCEMENT #1: Add Security Considerations Section
 
-**File to Update:** `/Users/yosefgamble/github/athena/docs/federation/README.md`
+**File to Update:** `/Users/yosefgamble/github/vidra/docs/federation/README.md`
 
 **Add Section:**
 ```markdown
@@ -945,7 +945,7 @@ The current implementation has the following known limitations:
 
 #### ENHANCEMENT #2: Add Endpoint Reference
 
-**File to Create:** `/Users/yosefgamble/github/athena/docs/federation/ACTIVITYPUB_ENDPOINTS.md`
+**File to Create:** `/Users/yosefgamble/github/vidra/docs/federation/ACTIVITYPUB_ENDPOINTS.md`
 
 **Content:**
 
@@ -1058,7 +1058,7 @@ The current implementation has the following known limitations:
 
 #### UPDATE #1: PEERTUBE_COMPAT.md
 
-**File to Update:** `/Users/yosefgamble/github/athena/docs/PEERTUBE_COMPAT.md`
+**File to Update:** `/Users/yosefgamble/github/vidra/docs/PEERTUBE_COMPAT.md`
 
 **Changes:**
 
@@ -1112,7 +1112,7 @@ Comments
 
 #### UPDATE #2: Test Coverage Document
 
-**File to Update:** `/Users/yosefgamble/github/athena/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md`
+**File to Update:** `/Users/yosefgamble/github/vidra/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md`
 
 **Add Section (after line 186):**
 

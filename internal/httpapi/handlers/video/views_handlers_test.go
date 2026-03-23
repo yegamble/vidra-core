@@ -17,12 +17,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/testutil"
-	"athena/internal/usecase"
-	ucviews "athena/internal/usecase/views"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase"
+	ucviews "vidra-core/internal/usecase/views"
 )
 
 func TestViewsHandler_GetUserEngagement(t *testing.T) {

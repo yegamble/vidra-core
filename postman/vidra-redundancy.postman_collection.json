@@ -1,0 +1,391 @@
+{
+  "info": {
+    "name": "Vidra Core Redundancy API",
+    "description": "Test collection for redundancy management: instance peers, policies, video redundancies, and health stats.\n\nUses admin routes for redundancy management.\n\n## Environment Variables Required\n- `baseUrl` - API base URL\n- `admin_access_token` - Admin JWT access token\n\n## Variables Set During Run\n- `redundancy_peer_id` - UUID of registered peer\n- `redundancy_policy_id` - UUID of created policy",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Instance Peers",
+      "item": [
+        {
+          "name": "List Instance Peers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Response has data', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/peers",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "peers"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register Instance Peer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 201', () => {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Peer created', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "  pm.expect(body.data).to.have.property('id');",
+                  "});",
+                  "pm.environment.set('redundancy_peer_id', body.data.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"instance_url\": \"https://peer-test.example.com\",\n  \"auto_accept_redundancy\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/peers",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "peers"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Peer Details",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Peer details returned', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "  pm.expect(body.data).to.have.property('id');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/peers/{{redundancy_peer_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "peers", "{{redundancy_peer_id}}"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Redundancy Policies",
+      "item": [
+        {
+          "name": "List Redundancy Policies",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Policies list returned', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/policies",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "policies"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Policy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 201', () => {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Policy created', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "  pm.expect(body.data).to.have.property('id');",
+                  "});",
+                  "pm.environment.set('redundancy_policy_id', body.data.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strategy\": \"most-views\",\n  \"min_views\": 10,\n  \"min_lifetime\": 86400,\n  \"max_size\": 1073741824,\n  \"enabled\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/policies",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "policies"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Policy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Policy details returned', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/policies/{{redundancy_policy_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "policies", "{{redundancy_policy_id}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Policy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Policy updated', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"min_views\": 20,\n  \"enabled\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/policies/{{redundancy_policy_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "policies", "{{redundancy_policy_id}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Policy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 204', () => {",
+                  "  pm.expect([200, 204]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/policies/{{redundancy_policy_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "policies", "{{redundancy_policy_id}}"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Stats & Health",
+      "item": [
+        {
+          "name": "Get Redundancy Stats",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Stats returned', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "stats"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Evaluate Policies",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Evaluation result returned', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/evaluate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "evaluate"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Error: No Auth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/redundancy/peers",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "redundancy", "peers"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

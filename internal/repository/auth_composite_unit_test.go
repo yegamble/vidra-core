@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/usecase"
+	"vidra-core/internal/usecase"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

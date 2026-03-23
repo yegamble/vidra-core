@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/importer"
-	"athena/internal/repository"
-	importuc "athena/internal/usecase/import"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/importer"
+	"vidra-core/internal/repository"
+	importuc "vidra-core/internal/usecase/import"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
@@ -36,7 +36,7 @@ func TestImportIntegration_EndToEnd(t *testing.T) {
 	// Setup test database connection
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
+		dbURL = "postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable"
 	}
 
 	db, err := sqlx.Connect("postgres", dbURL)
@@ -44,7 +44,7 @@ func TestImportIntegration_EndToEnd(t *testing.T) {
 	defer db.Close()
 
 	// Create test storage directory
-	storageDir := "/tmp/athena-integration-test"
+	storageDir := "/tmp/vidra-integration-test"
 	require.NoError(t, os.MkdirAll(storageDir+"/imports", 0750))
 	defer os.RemoveAll(storageDir)
 
@@ -326,7 +326,7 @@ func TestImportIntegration_DatabaseOperations(t *testing.T) {
 
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
+		dbURL = "postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable"
 	}
 
 	db, err := sqlx.Connect("postgres", dbURL)

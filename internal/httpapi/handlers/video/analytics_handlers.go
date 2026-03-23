@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	"athena/internal/repository"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

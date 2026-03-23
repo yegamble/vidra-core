@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // mockTokenStore is an in-memory token store for testing.

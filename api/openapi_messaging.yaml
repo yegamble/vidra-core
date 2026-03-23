@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Messaging API
+  title: Vidra Core Messaging API
   description: |
     Direct messaging and end-to-end encrypted (E2EE) messaging endpoints.
 

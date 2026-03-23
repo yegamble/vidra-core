@@ -2579,10 +2579,10 @@
     ],
     "info": {
       "_postman_id": "a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa",
-      "name": "Athena Auth API",
+      "name": "Vidra Core Auth API",
       "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
       "description": {
-        "content": "Postman collection for Athena user auth API: register, login, refresh, logout with positive and negative tests.",
+        "content": "Postman collection for Vidra Core user auth API: register, login, refresh, logout with positive and negative tests.",
         "type": "text/plain"
       }
     }

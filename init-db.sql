@@ -1,4 +1,4 @@
--- Enable required PostgreSQL extensions for Athena video platform
+-- Enable required PostgreSQL extensions for Vidra Core video platform
 -- As specified in CLAUDE.md
 
 -- UUID generation extension

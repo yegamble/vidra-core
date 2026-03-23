@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"strings"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	ucn "athena/internal/usecase/notification"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	ucn "vidra-core/internal/usecase/notification"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

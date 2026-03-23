@@ -1,4 +1,4 @@
-# Athena Codebase Integration Audit — Findings
+# Vidra Core Codebase Integration Audit — Findings
 
 **Date:** 2026-02-21
 **Auditor:** Spec-implement phase (automated)
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-Athena is a feature-rich Go backend with 74 test packages, ~4,200 test functions across 374 test files, and 69.9% overall unit test coverage. The codebase implements PeerTube-compatible video hosting, ActivityPub federation, ATProto (BlueSky) integration, IPFS P2P distribution, and IOTA Rebased payment stubs.
+Vidra Core is a feature-rich Go backend with 74 test packages, ~4,200 test functions across 374 test files, and 69.9% overall unit test coverage. The codebase implements PeerTube-compatible video hosting, ActivityPub federation, ATProto (BlueSky) integration, IPFS P2P distribution, and IOTA Rebased payment stubs.
 
 **Phase 1 of this audit** established a Docker-based mock service infrastructure and comprehensive integration test suite. The setup wizard E2E tests, external service connection tests, S3 backend tests, and ATProto service tests all pass cleanly against in-process or Docker mock servers.
 
@@ -174,7 +174,7 @@ func() (int, error) { return 10, nil }, // TODO: Replace with real queue service
 
 ### 3.1 `TestUnit_Follow_SuccessWithPDS` — Pre-existing Failure
 
-**Package:** `athena/internal/httpapi/handlers/social`
+**Package:** `vidra/internal/httpapi/handlers/social`
 **Severity:** Medium — test failure, handler 500 error
 
 **Symptom:** The test sets up a fake ATProto PDS with `createRecord` and `getAuthorFeed` endpoints, then calls `SocialHandler.Follow()`. The handler returns HTTP 500 instead of 200.
@@ -266,7 +266,7 @@ As part of this audit, the following test infrastructure was added:
 | Service | Port | Purpose |
 |---------|------|---------|
 | `minio` | 19100 | S3-compatible storage |
-| `minio-init` | — | Creates `athena-test` bucket |
+| `minio-init` | — | Creates `vidra-test` bucket |
 | `mock-atproto-pds` | 19200 | ATProto PDS mock |
 | `mock-activitypub` | 19300 | ActivityPub inbox mock |
 | `mailpit-integration` | 19400/19401 | SMTP test server |

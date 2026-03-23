@@ -1,4 +1,4 @@
-# Project: Athena
+# Project: Vidra Core
 
 **Last Updated:** 2026-03-21
 
@@ -231,4 +231,4 @@ See subdirectory CLAUDE.md files for detailed guidance:
 - Audio transcription (Whisper)
 - Kubernetes and Terraform deployment
 - Video Studio Editing: server-side FFmpeg pipeline (cut, intro, outro, watermark)
-- Migration ETL: PeerTube dump → Athena import pipeline with dry-run and cancel support
+- Migration ETL: PeerTube dump → Vidra Core import pipeline with dry-run and cancel support

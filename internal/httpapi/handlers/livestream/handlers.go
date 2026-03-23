@@ -1,9 +1,9 @@
 package livestream
 
 import (
-	"athena/internal/config"
-	"athena/internal/livestream"
-	"athena/internal/repository"
+	"vidra-core/internal/config"
+	"vidra-core/internal/livestream"
+	"vidra-core/internal/repository"
 )
 
 type LivestreamHandlers struct {

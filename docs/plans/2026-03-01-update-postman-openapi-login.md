@@ -20,7 +20,7 @@ Type: Feature
 
 ## Summary
 
-**Goal:** Add Postman E2E test requests for username-based login to the `athena-auth` collection, covering happy path and negative cases for the recently implemented login-with-username feature.
+**Goal:** Add Postman E2E test requests for username-based login to the `vidra-auth` collection, covering happy path and negative cases for the recently implemented login-with-username feature.
 
 **Architecture:** The OpenAPI spec (`api/openapi.yaml`) is already fully updated from the prior implementation spec — it has the `username` field on `LoginRequest`, both email and username examples, and the updated endpoint description. No OpenAPI changes needed. The Postman auth collection currently only has email-based login requests and needs new requests for: (1) login by username, (2) missing both email and username, and (3) both fields simultaneously (email priority).
 
@@ -30,7 +30,7 @@ Type: Feature
 
 ### In Scope
 
-- Add "Login with Username" request to `athena-auth` Postman collection
+- Add "Login with Username" request to `vidra-auth` Postman collection
 - Add "Login - Missing Both Email and Username (400)" negative test
 - Add "Login - Both Email and Username Uses Email (200)" edge case test
 - Update "Login" request description to mention username option
@@ -38,7 +38,7 @@ Type: Feature
 ### Out of Scope
 
 - OpenAPI spec changes (already complete from prior spec)
-- `athena-frontend-api-gaps` collection (setup requests use email for backward compat, still work fine)
+- `vidra-frontend-api-gaps` collection (setup requests use email for backward compat, still work fine)
 - Other Postman collections (no login requests)
 - Environment variable changes (already have `username` variable)
 - Code changes (implementation already complete and verified)
@@ -50,10 +50,10 @@ Type: Feature
 
 ## Context for Implementer
 
-- **Patterns to follow:** Existing Login request at `postman/athena-auth.postman_collection.json:117` — follow the same JSON structure for request objects with `name`, `request`, `event` (prerequest + test scripts), and `description`
+- **Patterns to follow:** Existing Login request at `postman/vidra-auth.postman_collection.json:117` — follow the same JSON structure for request objects with `name`, `request`, `event` (prerequest + test scripts), and `description`
 - **Conventions:** All requests use `{{baseUrl}}` for the host. Test scripts use `pm.test()` with descriptive messages. Response envelope is `{ data: ..., error: ..., success: ... }` (see Register test at line 96-109 for the unwrapping pattern). Negative tests check status code and verify error structure.
 - **Key files:**
-  - `postman/athena-auth.postman_collection.json` — The auth Postman collection (only file to modify)
+  - `postman/vidra-auth.postman_collection.json` — The auth Postman collection (only file to modify)
   - `postman/test-env.json` — Environment with `username`, `email`, `password` variables
 - **Gotchas:**
   - The collection JSON uses escaped newlines in raw body strings (e.g., `"{\n  \"email\": ...}"`)
@@ -75,13 +75,13 @@ Type: Feature
 
 ### Task 1: Add username login requests to Postman auth collection
 
-**Objective:** Add three new requests to the Auth folder in `athena-auth.postman_collection.json`: a username-based login happy path, a missing-both-identifiers negative test, and a both-fields-present edge case test. Also update the existing "Login" request description.
+**Objective:** Add three new requests to the Auth folder in `vidra-auth.postman_collection.json`: a username-based login happy path, a missing-both-identifiers negative test, and a both-fields-present edge case test. Also update the existing "Login" request description.
 
 **Dependencies:** None
 
 **Files:**
 
-- Modify: `postman/athena-auth.postman_collection.json`
+- Modify: `postman/vidra-auth.postman_collection.json`
 
 **Key Decisions / Notes:**
 
@@ -101,7 +101,7 @@ Type: Feature
 
 **Definition of Done:**
 
-- [ ] `postman/athena-auth.postman_collection.json` has "Login with Username" request that sends `{"username": ..., "password": ...}`
+- [ ] `postman/vidra-auth.postman_collection.json` has "Login with Username" request that sends `{"username": ..., "password": ...}`
 - [ ] Collection has "Login - Missing Both Email and Username (400)" request expecting 400 status
 - [ ] Collection has "Login - Both Email and Username Uses Email (200)" request sending both fields
 - [ ] Existing "Login" request description updated to mention username option
@@ -110,10 +110,10 @@ Type: Feature
 
 **Verify:**
 
-- `python3 -m json.tool postman/athena-auth.postman_collection.json > /dev/null` — JSON valid
-- `grep -c '"Login with Username"' postman/athena-auth.postman_collection.json` — returns 1
-- `grep -c '"Login - Missing Both Email and Username"' postman/athena-auth.postman_collection.json` — returns 1
-- `grep -c '"Login - Both Email and Username Uses Email"' postman/athena-auth.postman_collection.json` — returns 1
+- `python3 -m json.tool postman/vidra-auth.postman_collection.json > /dev/null` — JSON valid
+- `grep -c '"Login with Username"' postman/vidra-auth.postman_collection.json` — returns 1
+- `grep -c '"Login - Missing Both Email and Username"' postman/vidra-auth.postman_collection.json` — returns 1
+- `grep -c '"Login - Both Email and Username Uses Email"' postman/vidra-auth.postman_collection.json` — returns 1
 
 ## Testing Strategy
 
@@ -139,7 +139,7 @@ Type: Feature
 
 ### Artifacts (what must EXIST to support those truths)
 
-- `postman/athena-auth.postman_collection.json` — Updated with 3 new requests in the Auth folder
+- `postman/vidra-auth.postman_collection.json` — Updated with 3 new requests in the Auth folder
 
 ### Key Links (critical connections that must be WIRED)
 

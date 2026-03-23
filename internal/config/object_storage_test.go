@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"athena/internal/storage"
+	"vidra-core/internal/storage"
 
 	"github.com/stretchr/testify/assert"
 )

@@ -1,14 +1,14 @@
 # Documentation Reorganization Report
 
 **Date**: November 17, 2025
-**Project**: Athena - PeerTube Backend in Go
+**Project**: Vidra Core - PeerTube Backend in Go
 **Task**: Comprehensive documentation maintenance and organization
 
 ---
 
 ## Executive Summary
 
-Successfully reorganized and updated the entire documentation structure for the Athena project, moving from a flat structure with 37+ markdown files in the root directory to a well-organized hierarchical structure under `/docs/`. This reorganization improves discoverability, maintainability, and provides a better developer experience.
+Successfully reorganized and updated the entire documentation structure for the Vidra Core project, moving from a flat structure with 37+ markdown files in the root directory to a well-organized hierarchical structure under `/docs/`. This reorganization improves discoverability, maintainability, and provides a better developer experience.
 
 **Key Achievements**:
 
@@ -27,7 +27,7 @@ Successfully reorganized and updated the entire documentation structure for the 
 
 | Source (Root) | Destination | Size | Description |
 |---------------|-------------|------|-------------|
-| `SECURITY.md` | `docs/security/SECURITY.md` | 11.9 KB | Security policy and CVE-ATHENA-2025-001 |
+| `SECURITY.md` | `docs/security/SECURITY.md` | 11.9 KB | Security policy and CVE-VIDRA-2025-001 |
 | `SECURITY_ADVISORY.md` | `docs/security/SECURITY_ADVISORY.md` | 8.0 KB | Credential exposure mitigation |
 | `SECURITY_E2EE.md` | `docs/security/SECURITY_E2EE.md` | 23.4 KB | End-to-end encryption implementation |
 | `SECURITY_PENTEST_REPORT.md` | `docs/security/SECURITY_PENTEST_REPORT.md` | 20.6 KB | Penetration testing results |
@@ -144,9 +144,9 @@ Successfully reorganized and updated the entire documentation structure for the 
 
 | File | Location | Changes Made |
 |------|----------|--------------|
-| **README.md** | `/home/user/athena/` | - Updated project status to 88%<br>- Added recent achievements section<br>- Reorganized documentation structure<br>- Updated links to moved files<br>- Enhanced feature completion table<br>- Added production readiness assessment |
+| **README.md** | `/home/user/vidra/` | - Updated project status to 88%<br>- Added recent achievements section<br>- Reorganized documentation structure<br>- Updated links to moved files<br>- Enhanced feature completion table<br>- Added production readiness assessment |
 | **CLAUDE.md** | `/docs/architecture/` | - Updated "Go-Atlas" → "Goose" (3 occurrences)<br>- Line 5: Overview section<br>- Line 47: Database migrations<br>- Line 579: Summary section |
-| **SECURITY.md** | `/docs/security/` | - Already contained CVE-ATHENA-2025-001 (verified accurate)<br>- No changes needed |
+| **SECURITY.md** | `/docs/security/` | - Already contained CVE-VIDRA-2025-001 (verified accurate)<br>- No changes needed |
 
 ### Link Updates
 
@@ -177,7 +177,7 @@ Successfully reorganized and updated the entire documentation structure for the 
    - **What was wrong**: No mention of recent critical fixes
    - **What was corrected**: Added "Recent Achievements" section documenting:
      - Migration from Atlas to Goose
-     - CVE-ATHENA-2025-001 P1 security fix
+     - CVE-VIDRA-2025-001 P1 security fix
      - Pre-commit hooks implementation
      - Code quality improvements
      - Claude Code hooks
@@ -322,7 +322,7 @@ Successfully reorganized and updated the entire documentation structure for the 
 ### Before (Flat Structure)
 
 ```
-/home/user/athena/
+/home/user/vidra/
 ├── README.md
 ├── SECURITY.md
 ├── SECURITY_ADVISORY.md
@@ -367,7 +367,7 @@ Successfully reorganized and updated the entire documentation structure for the 
 ### After (Hierarchical Structure)
 
 ```
-/home/user/athena/
+/home/user/vidra/
 ├── README.md (UPDATED)
 └── docs/
     ├── API_EXAMPLES.md

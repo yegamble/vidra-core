@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/google/uuid"
 )

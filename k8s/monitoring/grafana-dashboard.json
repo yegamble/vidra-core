@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Athena Video Platform Monitoring Dashboard",
+  "description": "Vidra Core Video Platform Monitoring Dashboard",
   "editable": true,
   "gnetId": null,
   "graphTooltip": 1,
@@ -69,7 +69,7 @@
       },
       "targets": [
         {
-          "expr": "rate(athena_http_requests_total[5m])",
+          "expr": "rate(vidra_http_requests_total[5m])",
           "legendFormat": "{{method}} {{path}} - {{status}}",
           "refId": "A"
         }
@@ -124,7 +124,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, rate(athena_http_request_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, rate(vidra_http_request_duration_seconds_bucket[5m]))",
           "legendFormat": "p99 Latency",
           "refId": "A"
         }
@@ -191,17 +191,17 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(athena_http_requests_total{status=~\"2..\"}[5m])) by (method)",
+          "expr": "sum(rate(vidra_http_requests_total{status=~\"2..\"}[5m])) by (method)",
           "legendFormat": "2xx ({{method}})",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(athena_http_requests_total{status=~\"4..\"}[5m])) by (method)",
+          "expr": "sum(rate(vidra_http_requests_total{status=~\"4..\"}[5m])) by (method)",
           "legendFormat": "4xx ({{method}})",
           "refId": "B"
         },
         {
-          "expr": "sum(rate(athena_http_requests_total{status=~\"5..\"}[5m])) by (method)",
+          "expr": "sum(rate(vidra_http_requests_total{status=~\"5..\"}[5m])) by (method)",
           "legendFormat": "5xx ({{method}})",
           "refId": "C"
         }
@@ -213,7 +213,7 @@
   "refresh": "10s",
   "schemaVersion": 27,
   "style": "dark",
-  "tags": ["athena", "video", "platform"],
+  "tags": ["vidra", "video", "platform"],
   "templating": {
     "list": []
   },
@@ -223,7 +223,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Athena Platform Overview",
-  "uid": "athena-platform",
+  "title": "Vidra Core Platform Overview",
+  "uid": "vidra-platform",
   "version": 1
 }

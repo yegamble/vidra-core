@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-This document outlines the credential rotation strategy for the Athena platform following the discovery of `.env` files in the git history. While the exposed credentials appear to be development/example values, we must rotate all credentials as a security best practice.
+This document outlines the credential rotation strategy for the Vidra Core platform following the discovery of `.env` files in the git history. While the exposed credentials appear to be development/example values, we must rotate all credentials as a security best practice.
 
 ## Credentials Found in Git History
 
@@ -44,11 +44,11 @@ Based on `.env.example`, the following credential types may have been exposed:
 ```bash
 # Step 1: Create new database user
 sudo -u postgres psql
-CREATE USER athena_user_new WITH PASSWORD 'new-secure-password-here';
-GRANT ALL PRIVILEGES ON DATABASE athena TO athena_user_new;
+CREATE USER vidra_user_new WITH PASSWORD 'new-secure-password-here';
+GRANT ALL PRIVILEGES ON DATABASE vidra TO vidra_user_new;
 
 # Step 2: Update application configuration
-export DATABASE_URL="postgres://athena_user_new:new-secure-password@host:5432/athena?sslmode=require"
+export DATABASE_URL="postgres://vidra_user_new:new-secure-password@host:5432/vidra?sslmode=require"
 
 # Step 3: Test new credentials
 psql $DATABASE_URL -c "SELECT 1;"
@@ -60,7 +60,7 @@ psql $DATABASE_URL -c "SELECT 1;"
 
 # Step 5: Revoke old credentials (AFTER verifying new ones work)
 sudo -u postgres psql
-DROP USER athena_user;
+DROP USER vidra_user;
 ```
 
 ### 2. JWT Secret Rotation ⚠️
@@ -76,7 +76,7 @@ echo "JWT_SECRET=$NEW_JWT_SECRET" >> .env
 
 # Restart application
 # Note: All users will be logged out
-systemctl restart athena
+systemctl restart vidra
 ```
 
 **User Impact:**
@@ -99,7 +99,7 @@ CONFIG REWRITE
 export REDIS_URL="redis://:new-secure-redis-password@localhost:6379/0"
 
 # Step 3: Restart application
-systemctl restart athena
+systemctl restart vidra
 ```
 
 ### 4. ActivityPub Key Encryption Key 🔐
@@ -139,8 +139,8 @@ brew install bfg  # macOS
 # or download from https://rtyley.github.io/bfg-repo-cleaner/
 
 # Clone a fresh mirror
-git clone --mirror https://github.com/yegamble/athena.git athena-mirror
-cd athena-mirror
+git clone --mirror https://github.com/yegamble/vidra-core.git vidra-mirror
+cd vidra-mirror
 
 # Remove .env files from history
 bfg --delete-files .env
@@ -215,7 +215,7 @@ brew install git-secrets  # macOS
 # or follow: https://github.com/awslabs/git-secrets
 
 # Initialize in repository
-cd /path/to/athena
+cd /path/to/vidra
 git secrets --install
 git secrets --register-aws  # Prevents AWS credentials
 git secrets --add-provider -- cat .gitignore  # Prevents patterns in .gitignore
@@ -329,7 +329,7 @@ After rotation, monitor for:
 
 **Security Team Contact:**
 
-- Email: <security@athena.example.com>
+- Email: <security@vidra.example.com>
 - Slack: #security-incidents
 
 **Escalation:**

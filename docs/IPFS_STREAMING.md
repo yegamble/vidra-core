@@ -2,7 +2,7 @@
 
 ## Overview
 
-Athena supports optional IPFS-based streaming for HLS (HTTP Live Streaming) content. This feature allows videos to be delivered through IPFS gateways instead of (or in addition to) the local filesystem, providing:
+Vidra Core supports optional IPFS-based streaming for HLS (HTTP Live Streaming) content. This feature allows videos to be delivered through IPFS gateways instead of (or in addition to) the local filesystem, providing:
 
 - **Decentralized delivery** - Content distributed across IPFS network
 - **CDN-like performance** - Multiple gateway redundancy

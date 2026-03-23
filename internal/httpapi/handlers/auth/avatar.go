@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 	"bufio"
 	"bytes"
 	"context"
@@ -28,11 +28,11 @@ import (
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/security"
-	"athena/internal/storage"
-	"athena/pkg/imageutil"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/security"
+	"vidra-core/internal/storage"
+	"vidra-core/pkg/imageutil"
 )
 
 type ipfsAddResponse struct {

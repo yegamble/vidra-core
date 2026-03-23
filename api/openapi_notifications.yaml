@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Notifications API
+  title: Vidra Core Notifications API
   description: User notification management endpoints including listing, read status, and batch operations
   version: 1.0.0
 

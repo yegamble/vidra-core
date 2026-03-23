@@ -50,7 +50,7 @@ Created comprehensive unit tests for the plugin manager in `internal/plugin/mana
 --- PASS: TestManager_RegisterPlugin (0.00s)
 ...
 PASS
-ok   athena/internal/plugin 0.210s
+ok   vidra/internal/plugin 0.210s
 ```
 
 **Notes:**
@@ -127,7 +127,7 @@ PermissionRegisterAPIRoutes
 
 ```bash
 $ go test -short ./...
-ok   athena/internal/plugin 0.740s
+ok   vidra/internal/plugin 0.740s
 ...
 660 total tests passing
 ```
@@ -308,7 +308,7 @@ Response:
 All tests run in <1 second:
 
 ```bash
-ok   athena/internal/plugin 0.740s
+ok   vidra/internal/plugin 0.740s
 ```
 
 No performance regressions detected in existing tests.

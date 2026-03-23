@@ -14,7 +14,7 @@ services:
     ports:
       - "9090:9090"
     networks:
-      - athena-network
+      - vidra-network
 
   grafana:
     image: grafana/grafana:latest
@@ -26,7 +26,7 @@ services:
     ports:
       - "3000:3000"
     networks:
-      - athena-network
+      - vidra-network
     depends_on:
       - prometheus
 
@@ -37,7 +37,7 @@ services:
       - REDIS_ADDR=redis://redis:6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
     networks:
-      - athena-network
+      - vidra-network
     depends_on:
       - redis
 
@@ -45,16 +45,16 @@ services:
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter
     environment:
-      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/athena?sslmode=disable"
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/vidra?sslmode=disable"
     networks:
-      - athena-network
+      - vidra-network
     depends_on:
       - postgres
 
 networks:
-  athena-network:
+  vidra-network:
     external: true
-    name: athena_athena-network # Adjust based on main docker-compose project name
+    name: vidra_vidra-network # Adjust based on main docker-compose project name
 
 volumes:
   prometheus_data:

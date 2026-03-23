@@ -1,6 +1,6 @@
 # Error Handling Patterns
 
-Project-specific error conventions for Athena.
+Project-specific error conventions for Vidra Core.
 
 ## Sentinel Errors
 
@@ -9,7 +9,7 @@ Use predefined sentinel errors from `internal/domain/errors.go` for common cases
 **Standard errors** (`internal/domain/errors.go`):
 
 ```go
-import "athena/internal/domain"
+import "vidra-core/internal/domain"
 
 // Check for specific errors
 if errors.Is(err, domain.ErrNotFound) {
@@ -100,7 +100,7 @@ For errors needing structured details (code, message, context).
 **Basic usage:**
 
 ```go
-import "athena/internal/domain"
+import "vidra-core/internal/domain"
 
 // Simple error
 err := domain.NewDomainError("UPLOAD_FAILED", "Failed to upload video")

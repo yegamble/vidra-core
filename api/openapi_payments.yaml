@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
-  title: Athena IOTA Payments API
-  description: IOTA cryptocurrency payment integration for Athena video platform
+  title: Vidra Core IOTA Payments API
+  description: IOTA cryptocurrency payment integration for Vidra Core video platform
   version: 1.0.0
 servers:
   - url: /api/v1

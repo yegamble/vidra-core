@@ -1,7 +1,7 @@
 package admin
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -90,7 +90,7 @@ func (h *InstanceHandlers) GetInstanceAbout(w http.ResponseWriter, r *http.Reque
 
 	// Build instance info from configs with default values
 	info := domain.InstanceInfo{
-		Name:               "Athena Instance",
+		Name:               "Vidra Core Instance",
 		Version:            "1.0.0",
 		TotalUsers:         totalUsers,
 		TotalVideos:        totalVideos,
@@ -140,7 +140,7 @@ func (h *InstanceHandlers) GetInstanceAbout(w http.ResponseWriter, r *http.Reque
 
 	// Ensure defaults are set if still empty after config parsing
 	if info.Name == "" {
-		info.Name = "Athena Instance"
+		info.Name = "Vidra Core Instance"
 	}
 	if info.Version == "" {
 		info.Version = "1.0.0"
@@ -344,7 +344,7 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 		Title:        video.Title,
 		AuthorName:   uploader.DisplayName,
 		AuthorURL:    fmt.Sprintf("%s/users/%s", r.Host, uploader.ID),
-		ProviderName: "Athena Video Platform",
+		ProviderName: "Vidra Core Video Platform",
 		ProviderURL:  fmt.Sprintf("https://%s", r.Host),
 		Width:        width,
 		Height:       height,

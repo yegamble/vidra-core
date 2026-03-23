@@ -11,8 +11,8 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-NAMESPACE="${NAMESPACE:-athena}"
-SERVICE_NAME="athena-api"
+NAMESPACE="${NAMESPACE:-vidra}"
+SERVICE_NAME="vidra-api"
 
 # Functions
 log_info() {
@@ -33,8 +33,8 @@ detect_current_active() {
 }
 
 detect_deployments() {
-    BLUE_PODS=$(kubectl get pods -l app=athena,component=api,version=blue -n ${NAMESPACE} --no-headers 2>/dev/null | wc -l)
-    GREEN_PODS=$(kubectl get pods -l app=athena,component=api,version=green -n ${NAMESPACE} --no-headers 2>/dev/null | wc -l)
+    BLUE_PODS=$(kubectl get pods -l app=vidra,component=api,version=blue -n ${NAMESPACE} --no-headers 2>/dev/null | wc -l)
+    GREEN_PODS=$(kubectl get pods -l app=vidra,component=api,version=green -n ${NAMESPACE} --no-headers 2>/dev/null | wc -l)
 
     echo "blue:${BLUE_PODS},green:${GREEN_PODS}"
 }
@@ -43,7 +43,7 @@ detect_deployments() {
 main() {
     echo ""
     echo "=========================================="
-    echo "  ATHENA DEPLOYMENT ROLLBACK"
+    echo "  VIDRA DEPLOYMENT ROLLBACK"
     echo "=========================================="
     echo ""
 
@@ -89,12 +89,12 @@ main() {
     # Check if target environment has running pods
     if [ "$ROLLBACK_TO" = "blue" ] && [ "$BLUE_PODS" -eq 0 ]; then
         log_warn "Blue environment has no running pods. Scaling up..."
-        kubectl scale deployment athena-api-blue --replicas=3 -n ${NAMESPACE}
+        kubectl scale deployment vidra-api-blue --replicas=3 -n ${NAMESPACE}
         log_info "Waiting for Blue pods to be ready..."
         kubectl wait --for=condition=ready pod -l version=blue --timeout=120s -n ${NAMESPACE}
     elif [ "$ROLLBACK_TO" = "green" ] && [ "$GREEN_PODS" -eq 0 ]; then
         log_warn "Green environment has no running pods. Scaling up..."
-        kubectl scale deployment athena-api-green --replicas=3 -n ${NAMESPACE}
+        kubectl scale deployment vidra-api-green --replicas=3 -n ${NAMESPACE}
         log_info "Waiting for Green pods to be ready..."
         kubectl wait --for=condition=ready pod -l version=green --timeout=120s -n ${NAMESPACE}
     fi
@@ -108,7 +108,7 @@ main() {
         -i \
         -n ${NAMESPACE} \
         --timeout=30s \
-        -- curl -f http://athena-api-${ROLLBACK_TO}/health; then
+        -- curl -f http://vidra-api-${ROLLBACK_TO}/health; then
         log_error "Health check failed on ${ROLLBACK_TO} environment"
         log_error "Rollback aborted for safety"
         exit 1
@@ -133,7 +133,7 @@ main() {
 
     # Remove canary ingress if exists
     log_info "Cleaning up canary ingress (if exists)..."
-    kubectl delete ingress athena-ingress-${CURRENT_ACTIVE}-canary -n ${NAMESPACE} 2>/dev/null || true
+    kubectl delete ingress vidra-ingress-${CURRENT_ACTIVE}-canary -n ${NAMESPACE} 2>/dev/null || true
 
     # Post-rollback verification
     log_info "Running post-rollback verification..."
@@ -144,7 +144,7 @@ main() {
         -i \
         -n ${NAMESPACE} \
         --timeout=30s \
-        -- sh -c "curl -f http://athena-api/health && curl -f http://athena-api/ready"; then
+        -- sh -c "curl -f http://vidra-api/health && curl -f http://vidra-api/ready"; then
         log_info "Post-rollback verification: PASSED"
     else
         log_warn "Post-rollback verification failed, but traffic switch is complete"

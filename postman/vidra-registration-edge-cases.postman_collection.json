@@ -1,0 +1,927 @@
+{
+  "info": {
+    "name": "Vidra Core Registration Edge Cases & Security Tests",
+    "description": "Comprehensive edge case and security testing for /auth/register endpoint. Tests username length limits, special characters, duplicate detection, and various attack vectors.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "registration-edge-cases-2025"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://app-test:8080",
+      "type": "string"
+    },
+    {
+      "key": "random_suffix",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "test_username_50",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "test_username_51",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "test_email",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Setup: Generate Random Suffix",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Generate random suffix for unique test data",
+              "const timestamp = Date.now();",
+              "const random = Math.floor(Math.random() * 100000);",
+              "pm.collectionVariables.set('random_suffix', `${timestamp}_${random}`);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        },
+        "description": "Health check to verify API is running and generate test variables"
+      },
+      "response": []
+    },
+    {
+      "name": "Baseline: Valid Registration",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const suffix = pm.collectionVariables.get('random_suffix');",
+              "pm.collectionVariables.set('test_username_valid', `valid_${suffix}`.substring(0, 30));",
+              "pm.collectionVariables.set('test_email', `valid_${suffix}@example.com`);"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 201 Created', function() {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "",
+              "pm.test('Response has user data', function() {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data).to.have.property('user');",
+              "    pm.expect(jsonData.data.user).to.have.property('id');",
+              "    pm.expect(jsonData.data.user).to.have.property('username');",
+              "});",
+              "",
+              "pm.test('Response has access token', function() {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data).to.have.property('access_token');",
+              "    pm.expect(jsonData.data.access_token).to.be.a('string');",
+              "});",
+              "",
+              "pm.test('Username matches request', function() {",
+              "    const jsonData = pm.response.json();",
+              "    const requestBody = JSON.parse(pm.request.body.raw);",
+              "    pm.expect(jsonData.data.user.username).to.equal(requestBody.username);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{test_username_valid}}\",\n  \"email\": \"{{test_email}}\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Baseline test with valid credentials. Should succeed with 201 Created."
+      },
+      "response": []
+    },
+    {
+      "name": "Edge Case: Username Exactly 50 Characters",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Create username exactly 50 chars",
+              "const suffix = pm.collectionVariables.get('random_suffix');",
+              "const base = 'user50_';",
+              "const remaining = 50 - base.length - suffix.length;",
+              "const padding = 'x'.repeat(Math.max(0, remaining));",
+              "let username50 = (base + padding + suffix).substring(0, 50);",
+              "",
+              "pm.collectionVariables.set('test_username_50', username50);",
+              "pm.collectionVariables.set('test_email', `${username50}@example.com`);",
+              "",
+              "console.log('Username length:', username50.length);",
+              "console.log('Username:', username50);"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 201 Created', function() {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "",
+              "pm.test('Username is exactly 50 characters', function() {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data.user.username.length).to.equal(50);",
+              "});",
+              "",
+              "pm.test('Username stored correctly without truncation', function() {",
+              "    const jsonData = pm.response.json();",
+              "    const requestBody = JSON.parse(pm.request.body.raw);",
+              "    pm.expect(jsonData.data.user.username).to.equal(requestBody.username);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{test_username_50}}\",\n  \"email\": \"{{test_email}}\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test boundary condition: username at maximum allowed length (50 chars)"
+      },
+      "response": []
+    },
+    {
+      "name": "Edge Case: Username 51 Characters (Should Fail)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Create username exactly 51 chars",
+              "const suffix = pm.collectionVariables.get('random_suffix');",
+              "const base = 'user51_';",
+              "const remaining = 51 - base.length - suffix.length;",
+              "const padding = 'x'.repeat(Math.max(0, remaining));",
+              "let username51 = (base + padding + suffix).substring(0, 51);",
+              "",
+              "pm.collectionVariables.set('test_username_51', username51);",
+              "pm.collectionVariables.set('test_email', `${suffix}@example.com`);",
+              "",
+              "console.log('Username length:', username51.length);",
+              "console.log('Username:', username51);"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 400 Bad Request or 409 Conflict', function() {",
+              "    pm.expect(pm.response.code).to.be.oneOf([400, 409, 500]);",
+              "});",
+              "",
+              "pm.test('Response contains error message', function() {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('error');",
+              "});",
+              "",
+              "pm.test('Error indicates username issue', function() {",
+              "    const jsonData = pm.response.json();",
+              "    const errorMsg = JSON.stringify(jsonData).toLowerCase();",
+              "    pm.expect(errorMsg).to.match(/username|too long|invalid|exceeds/);",
+              "});",
+              "",
+              "// WARNING: If this test returns 201, there's a security vulnerability!",
+              "if (pm.response.code === 201) {",
+              "    console.error('❌ SECURITY VULNERABILITY: Username > 50 chars was accepted!');",
+              "    console.error('Database truncation may cause collisions');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{test_username_51}}\",\n  \"email\": \"{{test_email}}\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test that usernames exceeding 50 characters are properly rejected. Should return 400 Bad Request with validation error."
+      },
+      "response": []
+    },
+    {
+      "name": "Edge Case: Username 100 Characters",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const username100 = 'a'.repeat(100);",
+              "pm.collectionVariables.set('test_username_100', username100);",
+              "pm.collectionVariables.set('test_email', `${Date.now()}@example.com`);"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 400 Bad Request', function() {",
+              "    pm.expect(pm.response.code).to.be.oneOf([400, 409, 500]);",
+              "});",
+              "",
+              "pm.test('Registration rejected', function() {",
+              "    pm.expect(pm.response.code).to.not.equal(201);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{test_username_100}}\",\n  \"email\": \"{{test_email}}\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test extreme case: 100 character username"
+      },
+      "response": []
+    },
+    {
+      "name": "Edge Case: Username with Forward Slash",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const suffix = pm.collectionVariables.get('random_suffix');",
+              "pm.collectionVariables.set('test_username_slash', `test/user_${suffix}`);",
+              "pm.collectionVariables.set('test_email', `slash_${suffix}@example.com`);"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// This should ideally be rejected, but check what actually happens",
+              "if (pm.response.code === 201) {",
+              "    console.warn('⚠️ WARNING: Username with \"/\" was accepted - potential path traversal risk');",
+              "    pm.test('Username stored with slash', function() {",
+              "        const jsonData = pm.response.json();",
+              "        pm.expect(jsonData.data.user.username).to.include('/');",
+              "    });",
+              "} else {",
+              "    pm.test('Username with special char rejected', function() {",
+              "        pm.expect(pm.response.code).to.be.oneOf([400, 422]);",
+              "    });",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{test_username_slash}}\",\n  \"email\": \"{{test_email}}\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test if special characters like \"/\" are properly validated"
+      },
+      "response": []
+    },
+    {
+      "name": "Edge Case: Username with Special Characters",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Document actual behavior",
+              "if (pm.response.code === 201) {",
+              "    console.warn('⚠️ Special characters allowed in username');",
+              "} else {",
+              "    pm.test('Special characters rejected', function() {",
+              "        pm.expect(pm.response.code).to.equal(400);",
+              "    });",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"test@user#123\",\n  \"email\": \"special@example.com\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test various special characters in username"
+      },
+      "response": []
+    },
+    {
+      "name": "Duplicate: Same Username (409 Expected)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Use a fixed username to ensure duplicate",
+              "pm.collectionVariables.set('duplicate_username', 'duplicate_test_user');",
+              "pm.collectionVariables.set('test_email', `unique_${Date.now()}@example.com`);"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 409 Conflict', function() {",
+              "    pm.response.to.have.status(409);",
+              "});",
+              "",
+              "pm.test('Error indicates username conflict', function() {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.error.code).to.equal('USER_EXISTS');",
+              "    pm.expect(jsonData.error.message).to.include('Username');",
+              "});",
+              "",
+              "pm.test('Response time is acceptable', function() {",
+              "    pm.expect(pm.response.responseTime).to.be.below(1000);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{duplicate_username}}\",\n  \"email\": \"{{test_email}}\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Attempt to register with a username that already exists. Should return 409 Conflict. Run this test AFTER the first 'duplicate_test_user' registration."
+      },
+      "response": []
+    },
+    {
+      "name": "Duplicate: Same Email (409 Expected)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const suffix = pm.collectionVariables.get('random_suffix');",
+              "pm.collectionVariables.set('test_username', `user_${suffix}`);",
+              "pm.collectionVariables.set('duplicate_email', 'duplicate@example.com');"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 409 Conflict', function() {",
+              "    pm.response.to.have.status(409);",
+              "});",
+              "",
+              "pm.test('Error indicates email conflict', function() {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.error.code).to.equal('USER_EXISTS');",
+              "    pm.expect(jsonData.error.message).to.include('Email');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{test_username}}\",\n  \"email\": \"{{duplicate_email}}\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Attempt to register with an email that already exists. Should return 409 Conflict."
+      },
+      "response": []
+    },
+    {
+      "name": "Validation: Missing Username",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 400 Bad Request', function() {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "",
+              "pm.test('Error indicates missing field', function() {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.error.code).to.equal('MISSING_FIELDS');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test missing required field: username"
+      },
+      "response": []
+    },
+    {
+      "name": "Validation: Missing Email",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 400 Bad Request', function() {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "",
+              "pm.test('Error indicates missing field', function() {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.error.code).to.equal('MISSING_FIELDS');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"testuser\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test missing required field: email"
+      },
+      "response": []
+    },
+    {
+      "name": "Validation: Missing Password",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 400 Bad Request', function() {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "",
+              "pm.test('Error indicates missing field', function() {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.error.code).to.equal('MISSING_FIELDS');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"testuser\",\n  \"email\": \"test@example.com\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test missing required field: password"
+      },
+      "response": []
+    },
+    {
+      "name": "Validation: Invalid Email Format",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Currently may be accepted - document actual behavior",
+              "if (pm.response.code === 201) {",
+              "    console.warn('⚠️ WARNING: Invalid email format was accepted');",
+              "    pm.test('Invalid email accepted (validation missing)', function() {",
+              "        pm.expect(pm.response.code).to.equal(201);",
+              "    });",
+              "} else {",
+              "    pm.test('Invalid email rejected', function() {",
+              "        pm.expect(pm.response.code).to.equal(400);",
+              "    });",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"testuser_invalidemail\",\n  \"email\": \"not-an-email\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test email format validation"
+      },
+      "response": []
+    },
+    {
+      "name": "Security: SQL Injection Attempt in Username",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('SQL injection prevented', function() {",
+              "    // Should either reject the input or safely store it",
+              "    pm.expect(pm.response.code).to.be.oneOf([201, 400]);",
+              "});",
+              "",
+              "pm.test('No SQL error in response', function() {",
+              "    const body = pm.response.text();",
+              "    pm.expect(body.toLowerCase()).to.not.include('sql');",
+              "    pm.expect(body.toLowerCase()).to.not.include('syntax');",
+              "    pm.expect(body.toLowerCase()).to.not.include('query');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin' OR '1'='1\",\n  \"email\": \"sqlinject@example.com\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test SQL injection protection in username field"
+      },
+      "response": []
+    },
+    {
+      "name": "Security: XSS Attempt in Username",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('XSS payload handled safely', function() {",
+              "    pm.expect(pm.response.code).to.be.oneOf([201, 400]);",
+              "});",
+              "",
+              "if (pm.response.code === 201) {",
+              "    pm.test('Script tags properly escaped in response', function() {",
+              "        const jsonData = pm.response.json();",
+              "        const username = jsonData.data.user.username;",
+              "        // Username should be stored as-is or rejected, never executed",
+              "        pm.expect(username).to.be.a('string');",
+              "    });",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"<script>alert('XSS')</script>\",\n  \"email\": \"xss@example.com\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test XSS protection in username field"
+      },
+      "response": []
+    },
+    {
+      "name": "Performance: Rate Limit Test (5 per minute)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// First 5 requests should succeed or get normal errors",
+              "// 6th request should get rate limited",
+              "pm.test('Response received', function() {",
+              "    pm.expect(pm.response.code).to.be.oneOf([201, 400, 409, 429]);",
+              "});",
+              "",
+              "if (pm.response.code === 429) {",
+              "    pm.test('Rate limit enforced', function() {",
+              "        console.log('✓ Rate limit working - got 429 Too Many Requests');",
+              "        pm.expect(pm.response.code).to.equal(429);",
+              "    });",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"ratelimit_{{$randomInt}}\",\n  \"email\": \"ratelimit_{{$randomInt}}@example.com\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test rate limiting (5 requests per 60 seconds). Run this 6+ times rapidly to trigger rate limit."
+      },
+      "response": []
+    },
+    {
+      "name": "Edge Case: E2E Test Name Format",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Simulate E2E test username generation",
+              "const testName = 'scenarios/TestVideoUploadWorkflow';",
+              "const timestamp = Date.now() * 1000000; // Nanoseconds",
+              "const username = `testuser_${testName}_${timestamp}`;",
+              "",
+              "pm.collectionVariables.set('e2e_username', username);",
+              "pm.collectionVariables.set('test_email', `${Date.now()}@example.com`);",
+              "",
+              "console.log('E2E Username:', username);",
+              "console.log('Length:', username.length);"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const username = pm.collectionVariables.get('e2e_username');",
+              "",
+              "pm.test('E2E username length check', function() {",
+              "    console.log('Username length:', username.length);",
+              "    if (username.length > 50) {",
+              "        console.error('❌ E2E username exceeds 50 chars!');",
+              "    }",
+              "});",
+              "",
+              "if (username.length > 50) {",
+              "    pm.test('Long E2E username properly rejected', function() {",
+              "        pm.expect(pm.response.code).to.not.equal(201);",
+              "    });",
+              "} else {",
+              "    pm.test('Valid E2E username accepted', function() {",
+              "        pm.expect(pm.response.code).to.equal(201);",
+              "    });",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{e2e_username}}\",\n  \"email\": \"{{test_email}}\",\n  \"password\": \"SecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Test the actual format used by E2E tests to reproduce the 409 collision issue"
+      },
+      "response": []
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global pre-request script",
+          "console.log('Starting test:', pm.info.requestName);"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global test script",
+          "pm.test('Response time is reasonable', function() {",
+          "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+          "});",
+          "",
+          "pm.test('Response has proper Content-Type', function() {",
+          "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+          "});"
+        ]
+      }
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-# VPC and Networking Module for Athena Platform
+# VPC and Networking Module for Vidra Core Platform
 # Creates VPC with public/private subnets, NAT gateways, and security groups
 
 locals {

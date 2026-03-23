@@ -88,7 +88,7 @@ ENABLE_S3=true
 
 # Backblaze B2 Configuration
 S3_ENDPOINT=https://s3.us-west-000.backblazeb2.com
-S3_BUCKET=athena-videos
+S3_BUCKET=vidra-videos
 S3_ACCESS_KEY=005552b994877250000000009
 S3_SECRET_KEY=K005bVFj899WnCZ61liiumVwa8Epwco
 S3_REGION=us-west-000
@@ -100,7 +100,7 @@ S3_REGION=us-west-000
 
 The current credentials are failing with 403 Forbidden because either:
 
-1. The bucket "athena-videos" doesn't exist
+1. The bucket "vidra-videos" doesn't exist
 2. The application key doesn't have access to it
 
 **To fix this:**
@@ -108,15 +108,15 @@ The current credentials are failing with 403 Forbidden because either:
 1. Log into your Backblaze account at <https://www.backblaze.com/b2/>
 2. Navigate to "Buckets"
 3. Either:
-   - Create a new bucket named `athena-videos` (must be globally unique)
+   - Create a new bucket named `vidra-videos` (must be globally unique)
    - Find the existing bucket name and update `.env` with the correct name
 4. Ensure the bucket is in the correct region (us-west-000)
 5. Verify your application key has access to this bucket
 
-**Alternative:** You can use a different bucket name. If "athena-videos" is taken, try:
+**Alternative:** You can use a different bucket name. If "vidra-videos" is taken, try:
 
-- `athena-videos-<your-company>`
-- `<your-company>-athena-videos`
+- `vidra-videos-<your-company>`
+- `<your-company>-vidra-videos`
 - Any unique name you prefer
 
 Update `.env` with the correct bucket name:
@@ -356,7 +356,7 @@ s3_signed_url_generations_total
                         v
 ┌───────────────────────────────────────────────────────────┐
 │            Backblaze B2 (Cold Tier)                       │
-│  s3://athena-videos/videos/{id}/                          │
+│  s3://vidra-videos/videos/{id}/                          │
 │    - {variant}.mp4                                        │
 │    - hls/master.m3u8                                      │
 │    - hls/{variant}/index.m3u8                             │

@@ -24,11 +24,11 @@
 Five packages failed to build due to network connectivity issues downloading the `github.com/RoaringBitmap/roaring@v1.2.3` dependency:
 
 ```
-athena/cmd/server                          [setup failed]
-athena/internal/app                        [setup failed]
-athena/internal/httpapi                    [setup failed]
-athena/internal/httpapi/handlers/video     [setup failed]
-athena/internal/torrent                    [setup failed]
+vidra/cmd/server                          [setup failed]
+vidra/internal/app                        [setup failed]
+vidra/internal/httpapi                    [setup failed]
+vidra/internal/httpapi/handlers/video     [setup failed]
+vidra/internal/torrent                    [setup failed]
 ```
 
 **Root Cause**: DNS resolution failure - unable to connect to `storage.googleapis.com` on `[::1]:53`
@@ -43,7 +43,7 @@ athena/internal/torrent                    [setup failed]
 
 Two packages have failing integration tests due to missing database connectivity:
 
-#### `athena/internal/httpapi/handlers/auth` (Coverage: 21.9%)
+#### `vidra/internal/httpapi/handlers/auth` (Coverage: 21.9%)
 
 **Duration**: 85.286s
 **Failed Tests**:
@@ -58,7 +58,7 @@ Two packages have failing integration tests due to missing database connectivity
 
 ---
 
-#### `athena/internal/httpapi/handlers/messaging` (Coverage: N/A)
+#### `vidra/internal/httpapi/handlers/messaging` (Coverage: N/A)
 
 **Duration**: 50.097s
 **Failed Tests**:
@@ -86,55 +86,55 @@ Two packages have failing integration tests due to missing database connectivity
 
 | Package | Coverage | Duration | Notes |
 |---------|----------|----------|-------|
-| `athena/internal/middleware` | 95.4% | 0.867s | Excellent coverage |
-| `athena/internal/config` | 91.9% | 0.018s | Excellent coverage |
-| `athena/internal/scheduler` | 90.6% | 1.856s | Excellent coverage |
-| `athena/internal/worker` | 86.9% | 0.234s | Strong coverage |
-| `athena/internal/activitypub` | 82.4% | 2.989s | ActivityPub federation well-tested |
-| `athena/pkg/strutil` | 77.8% | 0.023s | Good utility coverage |
-| `athena/internal/metrics` | 76.5% | 0.025s | Good observability coverage |
-| `athena/internal/plugin` | 73.7% | 0.184s | Good plugin system coverage |
+| `vidra/internal/middleware` | 95.4% | 0.867s | Excellent coverage |
+| `vidra/internal/config` | 91.9% | 0.018s | Excellent coverage |
+| `vidra/internal/scheduler` | 90.6% | 1.856s | Excellent coverage |
+| `vidra/internal/worker` | 86.9% | 0.234s | Strong coverage |
+| `vidra/internal/activitypub` | 82.4% | 2.989s | ActivityPub federation well-tested |
+| `vidra/pkg/strutil` | 77.8% | 0.023s | Good utility coverage |
+| `vidra/internal/metrics` | 76.5% | 0.025s | Good observability coverage |
+| `vidra/internal/plugin` | 73.7% | 0.184s | Good plugin system coverage |
 
 ### Medium Coverage (40-70%)
 
 | Package | Coverage | Duration | Notes |
 |---------|----------|----------|-------|
-| `athena/internal/crypto` | 69.8% | 0.345s | E2EE crypto primitives |
-| `athena/internal/domain` | 63.4% | 0.080s | Domain models and business logic |
-| `athena/internal/livestream` | 35.9% | 5.929s | Livestream handlers (room for improvement) |
-| `athena/internal/livestream` | 57.1% | 0.043s | LiveStream domain |
-| `athena/internal/usecase` | 48.9% | 62.689s | Core business logic |
-| `athena/internal/usecase/activitypub` | 48.7% | 0.549s | AP federation use cases |
-| `athena/internal/security` | 47.4% | 0.034s | Security utilities |
-| `athena/internal/ipfs` | 46.0% | 0.042s | IPFS integration |
-| `athena/internal/validation` | 42.0% | 0.024s | Input validation |
+| `vidra/internal/crypto` | 69.8% | 0.345s | E2EE crypto primitives |
+| `vidra/internal/domain` | 63.4% | 0.080s | Domain models and business logic |
+| `vidra/internal/livestream` | 35.9% | 5.929s | Livestream handlers (room for improvement) |
+| `vidra/internal/livestream` | 57.1% | 0.043s | LiveStream domain |
+| `vidra/internal/usecase` | 48.9% | 62.689s | Core business logic |
+| `vidra/internal/usecase/activitypub` | 48.7% | 0.549s | AP federation use cases |
+| `vidra/internal/security` | 47.4% | 0.034s | Security utilities |
+| `vidra/internal/ipfs` | 46.0% | 0.042s | IPFS integration |
+| `vidra/internal/validation` | 42.0% | 0.024s | Input validation |
 
 ### Low Coverage (<40%)
 
 | Package | Coverage | Duration | Notes |
 |---------|----------|----------|-------|
-| `athena/internal/chat` | 39.1% | 0.036s | Live chat server |
-| `athena/internal/email` | 35.2% | 0.026s | Email service |
-| `athena/internal/usecase/captiongen` | 29.8% | 0.056s | Caption generation |
-| `athena/internal/usecase/encoding` | 27.3% | 0.114s | Video encoding |
-| `athena/internal/storage` | 16.8% | 0.039s | Storage layer |
-| `athena/internal/httpapi/handlers/federation` | 14.8% | 10.197s | Federation handlers |
-| `athena/internal/testutil` | 12.7% | 0.040s | Test utilities |
-| `athena/internal/repository` | 9.6% | 330.813s | Database repositories |
-| `athena/internal/httpapi/handlers/channel` | 7.3% | 20.053s | Channel handlers |
+| `vidra/internal/chat` | 39.1% | 0.036s | Live chat server |
+| `vidra/internal/email` | 35.2% | 0.026s | Email service |
+| `vidra/internal/usecase/captiongen` | 29.8% | 0.056s | Caption generation |
+| `vidra/internal/usecase/encoding` | 27.3% | 0.114s | Video encoding |
+| `vidra/internal/storage` | 16.8% | 0.039s | Storage layer |
+| `vidra/internal/httpapi/handlers/federation` | 14.8% | 10.197s | Federation handlers |
+| `vidra/internal/testutil` | 12.7% | 0.040s | Test utilities |
+| `vidra/internal/repository` | 9.6% | 330.813s | Database repositories |
+| `vidra/internal/httpapi/handlers/channel` | 7.3% | 20.053s | Channel handlers |
 
 ### Zero Coverage (Untested or Stubs)
 
 | Package | Coverage | Duration | Notes |
 |---------|----------|----------|-------|
-| `athena/internal/generated` | 0.0% | 0.025s | Generated code (OpenAPI) |
-| `athena/internal/httpapi/handlers/moderation` | 0.0% | 45.083s | Moderation handlers |
-| `athena/internal/httpapi/handlers/social` | 0.0% | 15.074s | Social features |
-| `athena/internal/usecase/import` | 0.0% | 0.042s | Video import |
-| `athena/pkg/imageutil` | 0.0% | 0.015s | Image utilities |
-| `athena/cmd/s3migrate` | 0.0% | N/A | CLI utility |
-| `athena/cmd/s3test` | 0.0% | N/A | CLI utility |
-| `athena/cmd/test_email` | 0.0% | N/A | CLI utility |
+| `vidra/internal/generated` | 0.0% | 0.025s | Generated code (OpenAPI) |
+| `vidra/internal/httpapi/handlers/moderation` | 0.0% | 45.083s | Moderation handlers |
+| `vidra/internal/httpapi/handlers/social` | 0.0% | 15.074s | Social features |
+| `vidra/internal/usecase/import` | 0.0% | 0.042s | Video import |
+| `vidra/pkg/imageutil` | 0.0% | 0.015s | Image utilities |
+| `vidra/cmd/s3migrate` | 0.0% | N/A | CLI utility |
+| `vidra/cmd/s3test` | 0.0% | N/A | CLI utility |
+| `vidra/cmd/test_email` | 0.0% | N/A | CLI utility |
 
 ---
 
@@ -216,11 +216,11 @@ TestSendMessageHandler_Unauthorized_...         (SKIP - DB not available)
 
 **Slowest Packages**:
 
-1. `athena/internal/repository` - 330.813s (5.5 minutes)
-2. `athena/internal/httpapi/handlers/auth` - 85.286s
-3. `athena/internal/usecase` - 62.689s
-4. `athena/internal/httpapi/handlers/messaging` - 50.097s
-5. `athena/internal/httpapi/handlers/moderation` - 45.083s
+1. `vidra/internal/repository` - 330.813s (5.5 minutes)
+2. `vidra/internal/httpapi/handlers/auth` - 85.286s
+3. `vidra/internal/usecase` - 62.689s
+4. `vidra/internal/httpapi/handlers/messaging` - 50.097s
+5. `vidra/internal/httpapi/handlers/moderation` - 45.083s
 
 **Total Test Duration**: ~620 seconds (~10.3 minutes)
 
@@ -363,6 +363,6 @@ The test environment limitations (no database, no network) prevent ~20% of the c
 
 ## Files Generated
 
-- `/home/user/athena/coverage.out` - Full coverage profile
-- `/home/user/athena/test_output.log` - Complete test output
-- `/home/user/athena/TEST_BASELINE_REPORT.md` - This report
+- `/home/user/vidra/coverage.out` - Full coverage profile
+- `/home/user/vidra/test_output.log` - Complete test output
+- `/home/user/vidra/TEST_BASELINE_REPORT.md` - This report

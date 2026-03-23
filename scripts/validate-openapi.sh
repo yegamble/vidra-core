@@ -141,7 +141,7 @@ echo "Step 4: Testing schema compilation"
 echo "------------------------------------"
 
 # Try generating a TypeScript client to test schema validity
-TEST_OUTPUT="/tmp/athena-openapi-test-$$"
+TEST_OUTPUT="/tmp/vidra-openapi-test-$$"
 mkdir -p "$TEST_OUTPUT"
 
 if command -v openapi-generator-cli &> /dev/null; then

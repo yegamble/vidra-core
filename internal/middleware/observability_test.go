@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/obs"
+	"vidra-core/internal/obs"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"

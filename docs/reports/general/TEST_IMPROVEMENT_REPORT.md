@@ -1,11 +1,11 @@
-# Test Coverage Improvement Report - Athena Decentralized Video Platform
+# Test Coverage Improvement Report - Vidra Core Decentralized Video Platform
 
 **Date:** 2025-11-17
 **Focus Areas:** Hybrid Storage Tier Transitions & End-to-End Workflow Testing
 
 ## Executive Summary
 
-This report details comprehensive testing improvements made to the Athena platform, focusing on three high-priority areas:
+This report details comprehensive testing improvements made to the Vidra Core platform, focusing on three high-priority areas:
 
 1. **Hybrid Storage Tier Transitions** - Complete test coverage for Local/S3/IPFS migrations
 2. **End-to-End Workflow Tests** - Framework for testing complete user journeys
@@ -17,9 +17,9 @@ This report details comprehensive testing improvements made to the Athena platfo
 
 #### New Files Created
 
-- **`/home/user/athena/internal/storage/ipfs_backend.go`** - IPFS storage backend implementation
-- **`/home/user/athena/internal/storage/hybrid_storage_test.go`** - Comprehensive hybrid storage tests
-- **`/home/user/athena/internal/usecase/migration/s3_migration_service_test.go`** - S3 migration service tests
+- **`/home/user/vidra/internal/storage/ipfs_backend.go`** - IPFS storage backend implementation
+- **`/home/user/vidra/internal/storage/hybrid_storage_test.go`** - Comprehensive hybrid storage tests
+- **`/home/user/vidra/internal/usecase/migration/s3_migration_service_test.go`** - S3 migration service tests
 
 #### Tests Added
 
@@ -57,7 +57,7 @@ This report details comprehensive testing improvements made to the Athena platfo
 
 #### New Files Created
 
-- **`/home/user/athena/tests/e2e/workflows_test.go`** - Comprehensive E2E test framework
+- **`/home/user/vidra/tests/e2e/workflows_test.go`** - Comprehensive E2E test framework
 
 #### E2E Test Categories Implemented
 
@@ -121,8 +121,8 @@ This report details comprehensive testing improvements made to the Athena platfo
 
 - **Problem:** Multiple test files had conflicting helper functions with identical names but different signatures
 - **Files Fixed:**
-  - `/home/user/athena/internal/repository/iota_repository_test.go`
-  - `/home/user/athena/internal/repository/views_repository_test.go`
+  - `/home/user/vidra/internal/repository/iota_repository_test.go`
+  - `/home/user/vidra/internal/repository/views_repository_test.go`
 - **Solution:** Renamed helper functions to be unique per test file:
   - `createTestUser` → `createTestUserForIOTA`
   - `createTestVideo` → `createTestVideoForIOTA`
@@ -136,7 +136,7 @@ This report details comprehensive testing improvements made to the Athena platfo
 **3. Dependency Issues:**
 
 - **Fixed:** Missing prometheus dependency for observability tests
-- **Command:** `go get -t athena/internal/middleware`
+- **Command:** `go get -t vidra/internal/middleware`
 
 ## Test Results
 
@@ -170,9 +170,9 @@ PASS: TestE2ETestHelpers (0.00s)
 
 **Packages Tested:**
 
-- ✅ `athena/internal/storage` - 16 tests PASS
-- ✅ `athena/internal/usecase/migration` - 10 tests PASS
-- ✅ `athena/tests/e2e` - 10 tests PASS (8 tests + 2 working E2E examples)
+- ✅ `vidra/internal/storage` - 16 tests PASS
+- ✅ `vidra/internal/usecase/migration` - 10 tests PASS
+- ✅ `vidra/tests/e2e` - 10 tests PASS (8 tests + 2 working E2E examples)
 
 **Total New Tests:** 36 tests
 **Pass Rate:** 100% (36/36)
@@ -333,16 +333,16 @@ The test infrastructure is now significantly more robust, with comprehensive cov
 
 **New Files:**
 
-- `/home/user/athena/internal/storage/ipfs_backend.go`
-- `/home/user/athena/internal/storage/hybrid_storage_test.go`
-- `/home/user/athena/internal/usecase/migration/s3_migration_service_test.go`
-- `/home/user/athena/tests/e2e/workflows_test.go`
-- `/home/user/athena/TEST_IMPROVEMENT_REPORT.md`
+- `/home/user/vidra/internal/storage/ipfs_backend.go`
+- `/home/user/vidra/internal/storage/hybrid_storage_test.go`
+- `/home/user/vidra/internal/usecase/migration/s3_migration_service_test.go`
+- `/home/user/vidra/tests/e2e/workflows_test.go`
+- `/home/user/vidra/TEST_IMPROVEMENT_REPORT.md`
 
 **Modified Files:**
 
-- `/home/user/athena/internal/repository/iota_repository_test.go`
-- `/home/user/athena/internal/repository/views_repository_test.go`
+- `/home/user/vidra/internal/repository/iota_repository_test.go`
+- `/home/user/vidra/internal/repository/views_repository_test.go`
 
 ---
 **Report Generated:** 2025-11-17

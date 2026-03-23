@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/security"
-	"athena/internal/usecase/redundancy"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/security"
+	"vidra-core/internal/usecase/redundancy"
 )
 
 // TestSSRFProtection_VideoImport tests SSRF protection for video import functionality

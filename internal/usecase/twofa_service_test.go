@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // MockTwoFAUserRepo is a mock implementation of UserRepository for 2FA testing

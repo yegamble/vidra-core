@@ -3,9 +3,9 @@ package app
 import (
 	"path/filepath"
 
-	"athena/internal/importer"
-	"athena/internal/repository"
-	ucimport "athena/internal/usecase/import"
+	"vidra-core/internal/importer"
+	"vidra-core/internal/repository"
+	ucimport "vidra-core/internal/usecase/import"
 )
 
 // WireImportDependencies initializes the import-related dependencies

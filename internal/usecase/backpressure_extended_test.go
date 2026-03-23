@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func TestShouldThrottle_EmergencyStop(t *testing.T) {

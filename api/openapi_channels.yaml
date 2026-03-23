@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Channels & Subscriptions API
+  title: Vidra Core Channels & Subscriptions API
   description: Channel management, subscriptions, and channel media endpoints
   version: 1.0.0
 

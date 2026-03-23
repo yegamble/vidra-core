@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // MigrationJobRepository defines the interface for migration job persistence

@@ -1,7 +1,7 @@
 # Federation Protocol Implementation Audit Report
 
 **Date:** 2025-11-17
-**Project:** Athena Video Platform
+**Project:** Vidra Core Video Platform
 **Auditor:** Federation Protocol Auditor Agent
 **Scope:** Complete federation protocol compliance and implementation status
 
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-The Athena video platform implements a **hybrid federation approach** supporting both **ActivityPub** (W3C standard) and **AT Protocol** (BlueSky). The implementation is **production-ready for ActivityPub basic features** but **incomplete for full PeerTube compatibility**. AT Protocol integration is in **BETA status (75% complete)** and not recommended for production.
+The Vidra Core video platform implements a **hybrid federation approach** supporting both **ActivityPub** (W3C standard) and **AT Protocol** (BlueSky). The implementation is **production-ready for ActivityPub basic features** but **incomplete for full PeerTube compatibility**. AT Protocol integration is in **BETA status (75% complete)** and not recommended for production.
 
 ### Overall Compliance Score
 
@@ -29,14 +29,14 @@ The Athena video platform implements a **hybrid federation approach** supporting
 
 **Implementation Files:**
 
-- `/home/user/athena/internal/usecase/activitypub/service.go` (1,193 lines)
-- `/home/user/athena/internal/activitypub/httpsig.go` (HTTP Signatures)
-- `/home/user/athena/internal/httpapi/handlers/federation/activitypub.go`
-- `/home/user/athena/internal/worker/activitypub_delivery.go`
+- `/home/user/vidra/internal/usecase/activitypub/service.go` (1,193 lines)
+- `/home/user/vidra/internal/activitypub/httpsig.go` (HTTP Signatures)
+- `/home/user/vidra/internal/httpapi/handlers/federation/activitypub.go`
+- `/home/user/vidra/internal/worker/activitypub_delivery.go`
 
 **Database Schema:**
 
-- `/home/user/athena/migrations/044_add_activitypub_support.sql`
+- `/home/user/vidra/migrations/044_add_activitypub_support.sql`
 - 9 tables: `ap_actor_keys`, `ap_remote_actors`, `ap_activities`, `ap_followers`, `ap_delivery_queue`, `ap_received_activities`, `ap_video_reactions`, `ap_video_shares`
 
 **Test Coverage:** 90% (115+ test cases, 450+ assertions)
@@ -47,13 +47,13 @@ The Athena video platform implements a **hybrid federation approach** supporting
 
 **Implementation Files:**
 
-- `/home/user/athena/internal/usecase/atproto_service.go`
-- `/home/user/athena/internal/repository/atproto_repository.go`
-- `/home/user/athena/docs/federation/ATPROTO_SETUP.md`
+- `/home/user/vidra/internal/usecase/atproto_service.go`
+- `/home/user/vidra/internal/repository/atproto_repository.go`
+- `/home/user/vidra/docs/federation/ATPROTO_SETUP.md`
 
 **Database Schema:**
 
-- `/home/user/athena/migrations/036_add_atproto_federation.sql`
+- `/home/user/vidra/migrations/036_add_atproto_federation.sql`
 - Tables: `federation_jobs`, `federated_posts`, `federation_actors`, `atproto_sessions`
 
 **Limitations (Documented):**
@@ -77,7 +77,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 | `/.well-known/host-meta` | ✅ Complete | 100% | XRD format |
 | `/nodeinfo/2.0` | ✅ Complete | 100% | Full instance metadata |
 
-**Code Reference:** `/home/user/athena/internal/httpapi/handlers/federation/activitypub.go:37-156`
+**Code Reference:** `/home/user/vidra/internal/httpapi/handlers/federation/activitypub.go:37-156`
 
 **Strengths:**
 
@@ -100,7 +100,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 | `/users/{username}/following` | ✅ Complete | 100% | Paginated following list |
 | `/inbox` (shared) | ✅ Complete | 100% | Shared inbox for efficiency |
 
-**Code Reference:** `/home/user/athena/internal/httpapi/handlers/federation/activitypub.go:158-298`
+**Code Reference:** `/home/user/vidra/internal/httpapi/handlers/federation/activitypub.go:158-298`
 
 **Actor Object Structure:**
 
@@ -140,7 +140,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 
 ### 2.3 HTTP Signatures ✅ IMPLEMENTED
 
-**Code Reference:** `/home/user/athena/internal/activitypub/httpsig.go`
+**Code Reference:** `/home/user/vidra/internal/activitypub/httpsig.go`
 
 **Compliance:** 95% (W3C HTTP Signatures draft-cavage-http-signatures-12)
 
@@ -186,7 +186,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 | `Remove` | ❌ Missing | N/A | Playlist/Collection | Not implemented |
 | `View` | ❌ Missing | N/A | Video | Analytics tracking not implemented |
 
-**Code Reference:** `/home/user/athena/internal/usecase/activitypub/service.go:239-543`
+**Code Reference:** `/home/user/vidra/internal/usecase/activitypub/service.go:239-543`
 
 **Strengths:**
 
@@ -205,7 +205,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 ### 2.5 Outbound Publishing (Activity Delivery)
 
 **Delivery Worker:** ✅ IMPLEMENTED
-**Code Reference:** `/home/user/athena/internal/worker/activitypub_delivery.go`
+**Code Reference:** `/home/user/vidra/internal/worker/activitypub_delivery.go`
 
 **Features:**
 
@@ -258,7 +258,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 | `BuildVideoObject` | ❌ Stub | Returns "not yet implemented" |
 | `CreateVideoActivity` | ❌ Stub | Returns "not yet implemented" |
 
-**Code Reference:** `/home/user/athena/internal/usecase/activitypub/service.go:1170-1193`
+**Code Reference:** `/home/user/vidra/internal/usecase/activitypub/service.go:1170-1193`
 
 **Critical Issue:** Video federation is **completely missing** despite comment federation being implemented. This breaks the core value proposition of PeerTube federation.
 
@@ -270,7 +270,7 @@ The Athena video platform implements a **hybrid federation approach** supporting
 
 Based on PeerTube specification and reference implementation:
 
-| Feature Category | PeerTube | Athena | Gap |
+| Feature Category | PeerTube | Vidra Core | Gap |
 |-----------------|----------|--------|-----|
 | **Actor Discovery** | ✅ | ✅ | None |
 | **WebFinger** | ✅ | ✅ | None |
@@ -343,13 +343,13 @@ Based on PeerTube specification and reference implementation:
 }
 ```
 
-**Athena Implementation:** ❌ NOT IMPLEMENTED
+**Vidra Core Implementation:** ❌ NOT IMPLEMENTED
 
-The `VideoObject` domain model exists (`/home/user/athena/internal/domain/activitypub.go:103-136`) with all required fields, but the builder function is a stub.
+The `VideoObject` domain model exists (`/home/user/vidra/internal/domain/activitypub.go:103-136`) with all required fields, but the builder function is a stub.
 
 ### 3.3 PeerTube-Specific Extensions
 
-**Missing from Athena:**
+**Missing from Vidra Core:**
 
 1. **PeerTube Context:** `https://joinpeertube.org/ns` not included in `@context`
 2. **Video State:** No state field (Draft, Published, Processing)
@@ -362,7 +362,7 @@ The `VideoObject` domain model exists (`/home/user/athena/internal/domain/activi
 
 **Torrent System:** ✅ EXISTS (not federated)
 
-- Files: `/home/user/athena/internal/torrent/generator.go`, `client.go`, `seeder.go`, `tracker.go`
+- Files: `/home/user/vidra/internal/torrent/generator.go`, `client.go`, `seeder.go`, `tracker.go`
 - Database: `torrent_repository.go`
 - **Gap:** Torrents not integrated into ActivityPub VideoObject URLs
 
@@ -533,7 +533,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 
 **Existing:**
 
-- `/home/user/athena/internal/httpapi/handlers/federation/redundancy_handlers.go` (447 lines)
+- `/home/user/vidra/internal/httpapi/handlers/federation/redundancy_handlers.go` (447 lines)
 - Redundancy repository and domain models
 
 **Gap:** Redundancy not exposed via ActivityPub activities
@@ -546,7 +546,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 
 ### 5.1 Current Status: BETA (75% Complete)
 
-**Documentation:** `/home/user/athena/docs/federation/ATPROTO_SETUP.md`
+**Documentation:** `/home/user/vidra/docs/federation/ATPROTO_SETUP.md`
 
 **Implemented Features:**
 
@@ -569,12 +569,12 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 
 1. ❌ No video upload to BlueSky (only external links, BlueSky limit: 1min/50MB)
 2. ❌ No automatic discovery of BlueSky users
-3. ❌ Cannot follow BlueSky users from Athena
-4. ❌ Cannot import BlueSky content to Athena
+3. ❌ Cannot follow BlueSky users from Vidra Core
+4. ❌ Cannot import BlueSky content to Vidra Core
 5. ⚠️ Manual syndication only (auto-sync disabled by default)
 6. ❌ No webhook support
 7. ❌ Comments on BlueSky posts not synced back
-8. ❌ Cannot reply to BlueSky comments from Athena
+8. ❌ Cannot reply to BlueSky comments from Vidra Core
 9. ⚠️ One-way syndication only
 
 **Architectural Issues:**
@@ -596,7 +596,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 **Phase 3 (Target: Q3 2025):**
 
 - [ ] Federation discovery
-- [ ] Follow BlueSky users from Athena
+- [ ] Follow BlueSky users from Vidra Core
 - [ ] Real-time webhook support
 - [ ] Full bidirectional sync
 
@@ -702,7 +702,7 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 **Identified Issues:**
 
 1. **No Digest Verification (MEDIUM SEVERITY)**
-   - **File:** `/home/user/athena/internal/activitypub/httpsig.go:28-93`
+   - **File:** `/home/user/vidra/internal/activitypub/httpsig.go:28-93`
    - **Issue:** Signature is verified, but digest is not checked
    - **Attack:** Request body could be modified after signing
    - **Fix Required:** Verify `Digest` header matches request body SHA-256
@@ -754,7 +754,7 @@ func (v *HTTPSignatureVerifier) VerifyRequest(r *http.Request, publicKeyPEM stri
 
 #### 6.2.2 SSRF Protection ✅ IMPLEMENTED
 
-**Code:** `/home/user/athena/internal/usecase/activitypub/service.go:117-120`
+**Code:** `/home/user/vidra/internal/usecase/activitypub/service.go:117-120`
 
 ```go
 // SSRF Protection: Validate URL before fetching
@@ -774,8 +774,8 @@ if err := s.urlValidator.ValidateURL(actorURI); err != nil {
 
 #### 6.2.4 Private Key Security ✅ IMPLEMENTED
 
-**Migration:** `/home/user/athena/migrations/061_encrypt_activitypub_private_keys.sql`
-**Implementation:** `/home/user/athena/internal/security/activitypub_key_encryption.go`
+**Migration:** `/home/user/vidra/migrations/061_encrypt_activitypub_private_keys.sql`
+**Implementation:** `/home/user/vidra/internal/security/activitypub_key_encryption.go`
 
 **Features:**
 
@@ -927,8 +927,8 @@ if strings.Contains(accept, "application/ld+json") {
 
 **Files to Modify:**
 
-- `/home/user/athena/internal/usecase/activitypub/service.go`
-- `/home/user/athena/internal/domain/activitypub.go` (validation)
+- `/home/user/vidra/internal/usecase/activitypub/service.go`
+- `/home/user/vidra/internal/domain/activitypub.go` (validation)
 - Add integration tests
 
 #### Priority 2: Fix HTTP Signature Security (HIGH)
@@ -945,7 +945,7 @@ if strings.Contains(accept, "application/ld+json") {
 
 **File to Modify:**
 
-- `/home/user/athena/internal/activitypub/httpsig.go`
+- `/home/user/vidra/internal/activitypub/httpsig.go`
 
 #### Priority 3: Remote Video Ingestion (CRITICAL)
 
@@ -962,8 +962,8 @@ if strings.Contains(accept, "application/ld+json") {
 
 **Files to Create/Modify:**
 
-- `/home/user/athena/internal/repository/remote_video_repository.go` (new)
-- `/home/user/athena/internal/usecase/activitypub/service.go`
+- `/home/user/vidra/internal/repository/remote_video_repository.go` (new)
+- `/home/user/vidra/internal/usecase/activitypub/service.go`
 
 ### 8.2 Short-Term Goals (1-2 Months)
 
@@ -1063,23 +1063,23 @@ if strings.Contains(accept, "application/ld+json") {
 
 **Test Files:**
 
-- `/home/user/athena/internal/activitypub/httpsig_test.go` (373 lines, 25+ tests)
-- `/home/user/athena/internal/usecase/activitypub/service_test.go` (850+ lines, 20+ tests)
-- `/home/user/athena/internal/httpapi/handlers/federation/activitypub_test.go` (200+ lines)
-- `/home/user/athena/internal/httpapi/handlers/federation/activitypub_integration_test.go` (600+ lines, 25+ tests)
-- `/home/user/athena/internal/repository/activitypub_repository_test.go` (500+ lines, 30+ tests)
-- `/home/user/athena/internal/worker/activitypub_delivery_test.go` (650+ lines, 20+ tests)
+- `/home/user/vidra/internal/activitypub/httpsig_test.go` (373 lines, 25+ tests)
+- `/home/user/vidra/internal/usecase/activitypub/service_test.go` (850+ lines, 20+ tests)
+- `/home/user/vidra/internal/httpapi/handlers/federation/activitypub_test.go` (200+ lines)
+- `/home/user/vidra/internal/httpapi/handlers/federation/activitypub_integration_test.go` (600+ lines, 25+ tests)
+- `/home/user/vidra/internal/repository/activitypub_repository_test.go` (500+ lines, 30+ tests)
+- `/home/user/vidra/internal/worker/activitypub_delivery_test.go` (650+ lines, 20+ tests)
 
 **Total:** 115+ test cases, 450+ assertions
 
-**Coverage Report:** `/home/user/athena/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md`
+**Coverage Report:** `/home/user/vidra/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md`
 
 **AT Protocol:** ⚠️ LIMITED
 
 **Test Files:**
 
-- `/home/user/athena/internal/usecase/atproto_service_test.go`
-- `/home/user/athena/internal/usecase/federation_service_test.go`
+- `/home/user/vidra/internal/usecase/atproto_service_test.go`
+- `/home/user/vidra/internal/usecase/federation_service_test.go`
 
 **Coverage:** Estimated 40-50%
 
@@ -1261,45 +1261,45 @@ if strings.Contains(accept, "application/ld+json") {
 
 **ActivityPub:**
 
-- `/home/user/athena/internal/usecase/activitypub/service.go` (1,193 lines) - Main service
-- `/home/user/athena/internal/activitypub/httpsig.go` (300+ lines) - HTTP signatures
-- `/home/user/athena/internal/httpapi/handlers/federation/activitypub.go` (310 lines) - HTTP handlers
-- `/home/user/athena/internal/worker/activitypub_delivery.go` (172 lines) - Delivery worker
-- `/home/user/athena/internal/repository/activitypub_repository.go` - Database layer
-- `/home/user/athena/internal/domain/activitypub.go` (334 lines) - Domain models
+- `/home/user/vidra/internal/usecase/activitypub/service.go` (1,193 lines) - Main service
+- `/home/user/vidra/internal/activitypub/httpsig.go` (300+ lines) - HTTP signatures
+- `/home/user/vidra/internal/httpapi/handlers/federation/activitypub.go` (310 lines) - HTTP handlers
+- `/home/user/vidra/internal/worker/activitypub_delivery.go` (172 lines) - Delivery worker
+- `/home/user/vidra/internal/repository/activitypub_repository.go` - Database layer
+- `/home/user/vidra/internal/domain/activitypub.go` (334 lines) - Domain models
 
 **AT Protocol:**
 
-- `/home/user/athena/internal/usecase/atproto_service.go` - AT Protocol service
-- `/home/user/athena/internal/repository/atproto_repository.go` - Database layer
-- `/home/user/athena/internal/usecase/federation_service.go` (150+ lines) - Federation orchestration
+- `/home/user/vidra/internal/usecase/atproto_service.go` - AT Protocol service
+- `/home/user/vidra/internal/repository/atproto_repository.go` - Database layer
+- `/home/user/vidra/internal/usecase/federation_service.go` (150+ lines) - Federation orchestration
 
 **Database Migrations:**
 
-- `/home/user/athena/migrations/044_add_activitypub_support.sql` (156 lines)
-- `/home/user/athena/migrations/036_add_atproto_federation.sql` (67 lines)
-- `/home/user/athena/migrations/037_create_federation_actors.sql` (26 lines)
-- `/home/user/athena/migrations/061_encrypt_activitypub_private_keys.sql`
+- `/home/user/vidra/migrations/044_add_activitypub_support.sql` (156 lines)
+- `/home/user/vidra/migrations/036_add_atproto_federation.sql` (67 lines)
+- `/home/user/vidra/migrations/037_create_federation_actors.sql` (26 lines)
+- `/home/user/vidra/migrations/061_encrypt_activitypub_private_keys.sql`
 
 **Configuration:**
 
-- `/home/user/athena/internal/config/*.go` - Config structs
+- `/home/user/vidra/internal/config/*.go` - Config structs
 - Environment variables: `ENABLE_ACTIVITYPUB`, `ACTIVITYPUB_DOMAIN`, etc.
 
 **Documentation:**
 
-- `/home/user/athena/docs/federation/README.md` - Federation overview
-- `/home/user/athena/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md` - Test coverage report
-- `/home/user/athena/docs/federation/ATPROTO_SETUP.md` - AT Protocol setup guide
+- `/home/user/vidra/docs/federation/README.md` - Federation overview
+- `/home/user/vidra/docs/federation/ACTIVITYPUB_TEST_COVERAGE.md` - Test coverage report
+- `/home/user/vidra/docs/federation/ATPROTO_SETUP.md` - AT Protocol setup guide
 
 **Tests:**
 
-- `/home/user/athena/internal/activitypub/httpsig_test.go` (373 lines)
-- `/home/user/athena/internal/usecase/activitypub/service_test.go` (850+ lines)
-- `/home/user/athena/internal/httpapi/handlers/federation/activitypub_test.go` (200+ lines)
-- `/home/user/athena/internal/httpapi/handlers/federation/activitypub_integration_test.go` (600+ lines)
-- `/home/user/athena/internal/repository/activitypub_repository_test.go` (500+ lines)
-- `/home/user/athena/internal/worker/activitypub_delivery_test.go` (650+ lines)
+- `/home/user/vidra/internal/activitypub/httpsig_test.go` (373 lines)
+- `/home/user/vidra/internal/usecase/activitypub/service_test.go` (850+ lines)
+- `/home/user/vidra/internal/httpapi/handlers/federation/activitypub_test.go` (200+ lines)
+- `/home/user/vidra/internal/httpapi/handlers/federation/activitypub_integration_test.go` (600+ lines)
+- `/home/user/vidra/internal/repository/activitypub_repository_test.go` (500+ lines)
+- `/home/user/vidra/internal/worker/activitypub_delivery_test.go` (650+ lines)
 
 ---
 

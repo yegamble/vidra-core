@@ -9,11 +9,11 @@ import (
 	"net/url"
 	"time"
 
-	"athena/internal/activitypub"
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/port"
-	"athena/internal/security"
+	"vidra-core/internal/activitypub"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
+	"vidra-core/internal/security"
 )
 
 const (

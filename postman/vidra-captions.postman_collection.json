@@ -1,0 +1,281 @@
+{
+  "info": {
+    "name": "Vidra Core Video Captions API",
+    "description": "Test collection for video caption management: list, upload (SRT/VTT), get content, update, delete, and auto-generate.\n\nRequires a video to exist (uses video_id from prior collections).\n\n## Environment Variables Required\n- `baseUrl` - API base URL\n- `access_token` - JWT access token\n- `video_id` - UUID of an existing video\n\n## Variables Set During Run\n- `caption_id` - UUID of the created caption\n- `caption_id_2` - UUID of second caption (different language)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List Video Captions (empty)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200', () => {",
+              "  pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('Response has data array', () => {",
+              "  pm.expect(body).to.have.property('success', true);",
+              "  pm.expect(body).to.have.property('data');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/captions",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "videos", "{{video_id}}", "captions"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Upload Caption File (English SRT)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 or 201', () => {",
+              "  pm.expect([200, 201]).to.include(pm.response.code);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('Caption returned with id', () => {",
+              "  pm.expect(body).to.have.property('success', true);",
+              "  pm.expect(body.data).to.have.property('id');",
+              "  pm.expect(body.data).to.have.property('language');",
+              "});",
+              "pm.environment.set('caption_id', body.data.id);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"language\": \"en\",\n  \"content\": \"1\\n00:00:01,000 --> 00:00:04,000\\nHello, welcome to this video.\\n\\n2\\n00:00:05,000 --> 00:00:08,000\\nThis is a test caption file.\",\n  \"format\": \"srt\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/captions",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "videos", "{{video_id}}", "captions"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "List Captions (verify uploaded)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200', () => {",
+              "  pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('At least one caption exists', () => {",
+              "  pm.expect(body).to.have.property('success', true);",
+              "  const captions = Array.isArray(body.data) ? body.data : (body.data.data || []);",
+              "  pm.expect(captions.length).to.be.at.least(1);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/captions",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "videos", "{{video_id}}", "captions"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Caption Content",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200', () => {",
+              "  pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "pm.test('Content returned', () => {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body).to.have.property('success', true);",
+              "  pm.expect(body.data).to.be.ok;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/captions/{{caption_id}}/content",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "videos", "{{video_id}}", "captions", "{{caption_id}}", "content"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Upload Caption (French VTT)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 or 201', () => {",
+              "  pm.expect([200, 201]).to.include(pm.response.code);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('French caption created', () => {",
+              "  pm.expect(body).to.have.property('success', true);",
+              "  pm.expect(body.data).to.have.property('id');",
+              "});",
+              "pm.environment.set('caption_id_2', body.data.id);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"language\": \"fr\",\n  \"content\": \"WEBVTT\\n\\n00:00:01.000 --> 00:00:04.000\\nBonjour, bienvenue dans cette vid\\u00e9o.\\n\\n00:00:05.000 --> 00:00:08.000\\nCeci est un fichier de sous-titres test.\",\n  \"format\": \"vtt\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/captions",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "videos", "{{video_id}}", "captions"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Delete Caption",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 or 204', () => {",
+              "  pm.expect([200, 204]).to.include(pm.response.code);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/captions/{{caption_id_2}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "videos", "{{video_id}}", "captions", "{{caption_id_2}}"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Auto-Generate Captions",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Caption generation may not be configured; accept 200/201/202/404/501",
+              "pm.test('Status is valid response', () => {",
+              "  pm.expect([200, 201, 202, 400, 404, 501, 503]).to.include(pm.response.code);",
+              "});",
+              "if (pm.response.code >= 200 && pm.response.code < 300) {",
+              "  const body = pm.response.json();",
+              "  pm.test('Generation response has data', () => {",
+              "    pm.expect(body).to.have.property('success', true);",
+              "  });",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"language\": \"en\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/captions/generate",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "videos", "{{video_id}}", "captions", "generate"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Error: Caption for Non-Existent Video",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 404', () => {",
+              "  pm.expect(pm.response.code).to.equal(404);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('Error response structure', () => {",
+              "  pm.expect(body.success).to.be.false;",
+              "  pm.expect(body).to.have.property('error');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/videos/00000000-0000-0000-0000-000000000000/captions",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "videos", "00000000-0000-0000-0000-000000000000", "captions"]
+        }
+      },
+      "response": []
+    }
+  ]
+}

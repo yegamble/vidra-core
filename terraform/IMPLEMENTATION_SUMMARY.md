@@ -1,8 +1,8 @@
-# Athena Platform - Terraform Implementation Summary
+# Vidra Core Platform - Terraform Implementation Summary
 
 ## What Was Created
 
-A complete, production-ready Terraform infrastructure for deploying the Athena video platform to AWS. This implementation includes:
+A complete, production-ready Terraform infrastructure for deploying the Vidra Core video platform to AWS. This implementation includes:
 
 ### Core Infrastructure Modules (6 modules)
 
@@ -76,7 +76,7 @@ Scale to 10x with instance upgrades: ~$5,000/month
 ## File Structure
 
 ```
-/home/user/athena/terraform/
+/home/user/vidra/terraform/
 ├── README.md                          # Main documentation
 ├── DEPLOYMENT_GUIDE.md                # Step-by-step deployment
 ├── ARCHITECTURE_SUMMARY.md            # Architecture decisions
@@ -142,14 +142,14 @@ helm version                    # Verify helm installed
 ### Step 1: Bootstrap Backend (2 minutes)
 
 ```bash
-cd /home/user/athena/terraform
+cd /home/user/vidra/terraform
 make bootstrap ENV=production REGION=us-east-1
 ```
 
 Creates:
 
-- S3 bucket: `athena-terraform-state-production`
-- DynamoDB table: `athena-terraform-locks`
+- S3 bucket: `vidra-terraform-state-production`
+- DynamoDB table: `vidra-terraform-locks`
 - Backend config: `environments/production/backend.hcl`
 
 ### Step 2: Configure Variables (5 minutes)
@@ -218,10 +218,10 @@ This script:
 make kubectl-config ENV=production
 
 # Check pods
-kubectl get pods -n athena-production
+kubectl get pods -n vidra-production
 
 # Check services
-kubectl get svc -n athena-production
+kubectl get svc -n vidra-production
 
 # Get outputs
 make outputs ENV=production
@@ -487,14 +487,14 @@ make get-redis-password ENV=production
 
 ```bash
 # Database
-POD=$(kubectl get pod -l app=athena,component=api -o jsonpath='{.items[0].metadata.name}')
+POD=$(kubectl get pod -l app=vidra,component=api -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -it $POD -- psql $DATABASE_URL
 
 # Redis
 kubectl exec -it $POD -- redis-cli -h $REDIS_ENDPOINT -a $REDIS_PASSWORD
 
 # Application logs
-kubectl logs -f deployment/athena-api -n athena-production
+kubectl logs -f deployment/vidra-api -n vidra-production
 ```
 
 ### Update Infrastructure
@@ -515,8 +515,8 @@ make apply ENV=production
 ```bash
 # Restore from RDS snapshot
 aws rds restore-db-instance-from-db-snapshot \
-  --db-instance-identifier athena-production-postgres-restored \
-  --db-snapshot-identifier rds:athena-production-postgres-2025-01-17-03-00
+  --db-instance-identifier vidra-production-postgres-restored \
+  --db-snapshot-identifier rds:vidra-production-postgres-2025-01-17-03-00
 
 # Restore EFS from backup
 aws backup start-restore-job \
@@ -556,13 +556,13 @@ make apply ENV=production
 
 ```bash
 # Check pod status
-kubectl describe pod <pod-name> -n athena-production
+kubectl describe pod <pod-name> -n vidra-production
 
 # Check logs
-kubectl logs <pod-name> -n athena-production
+kubectl logs <pod-name> -n vidra-production
 
 # Check events
-kubectl get events -n athena-production --sort-by='.lastTimestamp'
+kubectl get events -n vidra-production --sort-by='.lastTimestamp'
 ```
 
 ### Issue: Can't connect to database
@@ -573,17 +573,17 @@ aws ec2 describe-security-groups --group-ids <rds-sg-id>
 
 # Test from pod
 kubectl run -it --rm debug --image=postgres:15 --restart=Never -- bash
-psql -h <rds-endpoint> -U athenaadmin -d athena
+psql -h <rds-endpoint> -U vidraadmin -d vidra
 ```
 
 ## Support
 
 ### Documentation
 
-- `/home/user/athena/terraform/README.md`: Main documentation
-- `/home/user/athena/terraform/DEPLOYMENT_GUIDE.md`: Step-by-step guide
-- `/home/user/athena/terraform/ARCHITECTURE_SUMMARY.md`: Architecture details
-- `/home/user/athena/terraform/FILE_STRUCTURE.md`: File reference
+- `/home/user/vidra/terraform/README.md`: Main documentation
+- `/home/user/vidra/terraform/DEPLOYMENT_GUIDE.md`: Step-by-step guide
+- `/home/user/vidra/terraform/ARCHITECTURE_SUMMARY.md`: Architecture details
+- `/home/user/vidra/terraform/FILE_STRUCTURE.md`: File reference
 
 ### Getting Help
 
@@ -595,7 +595,7 @@ psql -h <rds-endpoint> -U athenaadmin -d athena
 
 ## Conclusion
 
-You now have a complete, production-ready Terraform infrastructure for the Athena video platform. This implementation provides:
+You now have a complete, production-ready Terraform infrastructure for the Vidra Core video platform. This implementation provides:
 
 - **Enterprise-grade architecture**: Multi-AZ, auto-scaling, encrypted, monitored
 - **Cost-optimized**: 24% cheaper than baseline through spot instances and optimization

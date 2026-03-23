@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the fixes implemented to resolve DNS resolution issues and port conflicts in the Athena test infrastructure.
+This document describes the fixes implemented to resolve DNS resolution issues and port conflicts in the Vidra Core test infrastructure.
 
 ## Issues Resolved
 
@@ -16,7 +16,7 @@ This document describes the fixes implemented to resolve DNS resolution issues a
 
 #### A. Test Helper with Mocked DHT Configuration
 
-Created `/home/user/athena/internal/torrent/test_helper.go`:
+Created `/home/user/vidra/internal/torrent/test_helper.go`:
 
 - `SetupTestDNS()`: Configures DNS resolver to use Google's public DNS (8.8.8.8)
 - `MockedDHTConfig()`: Returns a torrent client config with DHT disabled for unit tests
@@ -24,14 +24,14 @@ Created `/home/user/athena/internal/torrent/test_helper.go`:
 
 #### B. Client Code Improvements
 
-Updated `/home/user/athena/internal/torrent/client.go`:
+Updated `/home/user/vidra/internal/torrent/client.go`:
 
 - Added logic to skip setting ListenHost for test addresses
 - Prevents DNS lookups for localhost addresses
 
 #### C. Test Main Function
 
-Created `/home/user/athena/internal/torrent/main_test.go`:
+Created `/home/user/vidra/internal/torrent/main_test.go`:
 
 - Sets up test environment before running tests
 - Disables DHT, PEX, and trackers through environment variables
@@ -39,7 +39,7 @@ Created `/home/user/athena/internal/torrent/main_test.go`:
 
 #### D. DNS Fix Script
 
-Created `/home/user/athena/scripts/fix-dns.sh`:
+Created `/home/user/vidra/scripts/fix-dns.sh`:
 
 - Provides system-level DNS configuration options
 - Suggests using GOPROXY=direct for Go module downloads
@@ -68,7 +68,7 @@ Created `/home/user/athena/scripts/fix-dns.sh`:
 
 #### B. Test Environment Setup Script
 
-Created `/home/user/athena/scripts/test-setup.sh`:
+Created `/home/user/vidra/scripts/test-setup.sh`:
 
 - Checks DNS resolution
 - Verifies port availability
@@ -80,7 +80,7 @@ Created `/home/user/athena/scripts/test-setup.sh`:
 
 **Improvements**:
 
-- All test services use the `athena-test` COMPOSE_PROJECT_NAME
+- All test services use the `vidra-test` COMPOSE_PROJECT_NAME
 - Test containers are properly namespaced
 - Networks are isolated with `test-network`
 - Cleanup is automatic and comprehensive
@@ -89,17 +89,17 @@ Created `/home/user/athena/scripts/test-setup.sh`:
 
 ### Created Files
 
-1. `/home/user/athena/internal/torrent/test_helper.go` - Test helpers for torrent tests
-2. `/home/user/athena/internal/torrent/main_test.go` - Test main function for setup/teardown
-3. `/home/user/athena/scripts/test-setup.sh` - Test environment setup script
-4. `/home/user/athena/scripts/fix-dns.sh` - DNS resolution fix script
-5. `/home/user/athena/docs/test-infrastructure-fixes.md` - This documentation
+1. `/home/user/vidra/internal/torrent/test_helper.go` - Test helpers for torrent tests
+2. `/home/user/vidra/internal/torrent/main_test.go` - Test main function for setup/teardown
+3. `/home/user/vidra/scripts/test-setup.sh` - Test environment setup script
+4. `/home/user/vidra/scripts/fix-dns.sh` - DNS resolution fix script
+5. `/home/user/vidra/docs/test-infrastructure-fixes.md` - This documentation
 
 ### Modified Files
 
-1. `/home/user/athena/internal/torrent/client_test.go` - Added DNS setup and new mocked tests
-2. `/home/user/athena/internal/torrent/client.go` - Fixed ListenHost handling for tests
-3. `/home/user/athena/Makefile` - Enhanced test targets with comprehensive cleanup
+1. `/home/user/vidra/internal/torrent/client_test.go` - Added DNS setup and new mocked tests
+2. `/home/user/vidra/internal/torrent/client.go` - Fixed ListenHost handling for tests
+3. `/home/user/vidra/Makefile` - Enhanced test targets with comprehensive cleanup
 
 ## Usage Guide
 

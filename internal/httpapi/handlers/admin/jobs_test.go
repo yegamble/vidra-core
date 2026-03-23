@@ -9,7 +9,7 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // mockJobRepo satisfies JobRepository for tests.

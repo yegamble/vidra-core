@@ -14,10 +14,10 @@ import (
 	chi "github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"athena/internal/app"
-	"athena/internal/config"
-	appMiddleware "athena/internal/middleware"
-	"athena/internal/setup"
+	"vidra-core/internal/app"
+	"vidra-core/internal/config"
+	appMiddleware "vidra-core/internal/middleware"
+	"vidra-core/internal/setup"
 )
 
 var (

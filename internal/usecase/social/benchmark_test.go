@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/security"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/security"
 
 	"github.com/stretchr/testify/mock"
 )

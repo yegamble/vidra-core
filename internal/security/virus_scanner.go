@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"athena/internal/config"
+	"vidra-core/internal/config"
 
 	"github.com/dutchcoders/go-clamd"
 	"github.com/rs/zerolog/log"
@@ -162,7 +162,7 @@ func (s *VirusScanner) ScanFile(ctx context.Context, filePath string) (*ScanResu
 
 	// Scan with retries
 	//
-	// SECURITY NOTE (CVE-ATHENA-2025-001 FIX):
+	// SECURITY NOTE (CVE-VIDRA-2025-001 FIX):
 	// This retry logic prevents a critical vulnerability where exhausted retries
 	// without a valid scan response could fall through to fallback mode handling,
 	// potentially allowing infected files to bypass scanning.

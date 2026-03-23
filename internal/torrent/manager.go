@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/repository"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -141,7 +141,7 @@ func NewManager(
 	// Create generator
 	generatorConfig := &GeneratorConfig{
 		PieceLength: 262144, // 256KB for WebTorrent
-		CreatedBy:   "Athena/1.0",
+		CreatedBy:   "Vidra Core/1.0",
 		Trackers: []string{
 			"wss://tracker.openwebtorrent.com",
 			"wss://tracker.btorrent.xyz",

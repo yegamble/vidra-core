@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 type Response struct {

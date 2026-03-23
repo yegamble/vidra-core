@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"athena/internal/config"
-	"athena/internal/domain"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
 )
 
 type ChecksumValidator struct {

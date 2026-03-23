@@ -2,7 +2,7 @@
 
 ## Overview
 
-Athena uses [Goose](https://github.com/pressly/goose) for database migration management. Goose is a robust, lightweight migration tool that supports both SQL and Go migrations.
+Vidra Core uses [Goose](https://github.com/pressly/goose) for database migration management. Goose is a robust, lightweight migration tool that supports both SQL and Go migrations.
 
 - **Simple & Reliable**: No external dependencies or cloud accounts required.
 - **SQL-First**: Write standard SQL for your migrations.
@@ -80,7 +80,7 @@ make migrate-test
 For production, you can run `goose` directly against your production database URL:
 
 ```bash
-export DATABASE_URL="postgres://user:pass@prod-host:5432/athena?sslmode=require"
+export DATABASE_URL="postgres://user:pass@prod-host:5432/vidra?sslmode=require"
 goose -dir migrations postgres "$DATABASE_URL" up
 ```
 

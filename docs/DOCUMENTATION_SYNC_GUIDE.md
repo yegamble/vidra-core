@@ -27,18 +27,18 @@
 ## Documentation Structure Overview
 
 ```
-/root/athena/
+/root/vidra/
 ├── api/                           # OpenAPI specifications
 │   ├── README.md                  # API documentation index
 │   ├── openapi.yaml               # Main API spec (auth, videos, core)
 │   ├── openapi_*.yaml             # Modular specs by domain (18 files)
 │   └── [other OpenAPI files]
 ├── postman/                       # E2E test collections
-│   ├── athena-auth.postman_collection.json
-│   ├── athena-uploads.postman_collection.json
-│   ├── athena-imports.postman_collection.json
-│   ├── athena-virus-scanner-tests.postman_collection.json
-│   └── athena-analytics.postman_collection.json
+│   ├── vidra-auth.postman_collection.json
+│   ├── vidra-uploads.postman_collection.json
+│   ├── vidra-imports.postman_collection.json
+│   ├── vidra-virus-scanner-tests.postman_collection.json
+│   └── vidra-analytics.postman_collection.json
 ├── docs/
 │   ├── architecture/
 │   │   └── CLAUDE.md              # Architectural patterns & guidelines
@@ -60,8 +60,8 @@
 
 #### Steps
 
-1. **Implement handler** in `/root/athena/internal/httpapi/handlers/`
-2. **Register route** in `/root/athena/internal/httpapi/routes.go`
+1. **Implement handler** in `/root/vidra/internal/httpapi/handlers/`
+2. **Register route** in `/root/vidra/internal/httpapi/routes.go`
 3. **Choose OpenAPI file** based on domain:
    - Auth/OAuth → `openapi.yaml` or `openapi_auth_2fa.yaml`
    - Uploads → `openapi_uploads.yaml`
@@ -112,7 +112,7 @@
    - Include positive and negative test cases
    - Save example responses
 
-7. **Update `/root/athena/api/README.md`**:
+7. **Update `/root/vidra/api/README.md`**:
    - Add endpoint to coverage table
    - Update endpoint count
    - Note any special features
@@ -317,7 +317,7 @@ func (h *CommentHandlers) GetCommentCount(w http.ResponseWriter, r *http.Request
 
 #### Steps
 
-1. **Create sprint completion document** in `/root/athena/docs/sprints/`
+1. **Create sprint completion document** in `/root/vidra/docs/sprints/`
    - Document all features added
    - Note breaking changes
    - Include code statistics

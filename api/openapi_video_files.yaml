@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Video Files & Source Management
+  title: Vidra Core API - Video Files & Source Management
   description: Endpoints for video file management, source replacement, and overviews
   version: 1.0.0
 

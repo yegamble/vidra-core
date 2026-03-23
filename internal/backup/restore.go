@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/database"
+	"vidra-core/internal/database"
 
 	_ "github.com/lib/pq"
 )

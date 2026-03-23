@@ -26,9 +26,9 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	coreplugin "athena/internal/plugin"
-	"athena/internal/repository"
+	"vidra-core/internal/domain"
+	coreplugin "vidra-core/internal/plugin"
+	"vidra-core/internal/repository"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"

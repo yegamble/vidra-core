@@ -9,7 +9,7 @@ Type: Feature
 
 ## Summary
 
-**Goal:** Close remaining PeerTube parity gaps: runner/plugin/import success-path lifecycle coverage, Athena-only extension E2E validation (payments, IPFS, ATProto), a simulated import lifecycle E2E scenario, and keep OpenAPI specs + Postman E2E tests in lockstep with all Go changes.
+**Goal:** Close remaining PeerTube parity gaps: runner/plugin/import success-path lifecycle coverage, Vidra Core-only extension E2E validation (payments, IPFS, ATProto), a simulated import lifecycle E2E scenario, and keep OpenAPI specs + Postman E2E tests in lockstep with all Go changes.
 
 **Architecture:** Additive test and specification layer on existing handlers/services. No new endpoints or schema changes needed — all handler code already exists. New work is: Go unit tests, OpenAPI spec entries, dedicated Postman collections, and documentation updates.
 
@@ -21,19 +21,19 @@ Type: Feature
 
 **Workstream A — Runner Success-Path Lifecycle:**
 1. Go unit tests for full runner job lifecycle (register → request job → accept → update → success/error → upload files)
-2. Dedicated `athena-runners.postman_collection.json` with success-path E2E
+2. Dedicated `vidra-runners.postman_collection.json` with success-path E2E
 3. Verify runner OpenAPI spec completeness
 
 **Workstream B — Plugin Success-Path Lifecycle:**
 4. Go unit tests for plugin install → get → settings → update → uninstall roundtrip
-5. Dedicated `athena-plugins.postman_collection.json` with success-path E2E
+5. Dedicated `vidra-plugins.postman_collection.json` with success-path E2E
 
 **Workstream C — Import Positive-Path Lifecycle:**
 6. Audit existing import handler tests (24 test functions exist — identify gaps only) and fill any missing positive-path coverage
-7. Create `athena-import-lifecycle.postman_collection.json` with success-path requests
+7. Create `vidra-import-lifecycle.postman_collection.json` with success-path requests
 
-**Workstream D — Athena-Only Extension Validation:**
-8. `athena-payments.postman_collection.json` for crypto payments E2E
+**Workstream D — Vidra Core-Only Extension Validation:**
+8. `vidra-payments.postman_collection.json` for crypto payments E2E
 9. IPFS flow Postman requests + Go test coverage
 10. ATProto interop Postman requests + Go test verification
 
@@ -49,7 +49,7 @@ Type: Feature
 - Database schema or migration changes
 - Real PeerTube instance federation tests (mock only)
 - Frontend changes
-- External runner infrastructure (Athena uses in-process FFmpeg)
+- External runner infrastructure (Vidra Core uses in-process FFmpeg)
 - Full imported-instance behavior verification (deferred — requires real federation)
 
 ## Context for Implementer
@@ -62,7 +62,7 @@ Type: Feature
   - Plugin handlers: `internal/httpapi/handlers/plugin/plugin_handlers.go` — `NewPluginHandler` constructor takes `pluginRepo`, `pluginManager`, and optional `storageBackend`
   - Import service: `internal/usecase/import/service.go` — `Service` interface with `ImportVideo`, `CancelImport`, `RetryImport`, `ListUserImports`
   - Response envelope: `shared.WriteJSON(w, status, data)` wraps in `{success, data, error, meta}`
-  - Postman collections: use `{{baseUrl}}` and `{{authToken}}` env vars. Follow `postman/athena-auth.postman_collection.json` structure
+  - Postman collections: use `{{baseUrl}}` and `{{authToken}}` env vars. Follow `postman/vidra-auth.postman_collection.json` structure
 
 - **Conventions:**
   - Error wrapping: `fmt.Errorf("context: %w", err)` with `domain.ErrXxx` sentinels
@@ -144,10 +144,10 @@ Type: Feature
 - `internal/httpapi/handlers/runner/handlers_test.go` — expanded from 2 to 15+ test functions
 - `internal/httpapi/handlers/plugin/plugin_lifecycle_test.go` — new success-path tests
 - `internal/httpapi/handlers/video/import_handlers_test.go` — extended with any missing gap-fill tests
-- `postman/athena-runners.postman_collection.json` — new
-- `postman/athena-plugins.postman_collection.json` — new
-- `postman/athena-payments.postman_collection.json` — new
-- `postman/athena-import-lifecycle.postman_collection.json` — new
+- `postman/vidra-runners.postman_collection.json` — new
+- `postman/vidra-plugins.postman_collection.json` — new
+- `postman/vidra-payments.postman_collection.json` — new
+- `postman/vidra-import-lifecycle.postman_collection.json` — new
 - `tests/e2e/scenarios/import_lifecycle_test.go` — new simulated E2E
 - `api/openapi.yaml` or domain specs — updated with any missing paths
 - `docs/reports/peertube-parity-gap-report.md` — updated
@@ -207,13 +207,13 @@ Type: Feature
 
 ### Task 2: Runner Postman E2E Collection + OpenAPI Verification
 
-**Objective:** Create dedicated `athena-runners.postman_collection.json` with success-path lifecycle tests and verify runner OpenAPI spec completeness.
+**Objective:** Create dedicated `vidra-runners.postman_collection.json` with success-path lifecycle tests and verify runner OpenAPI spec completeness.
 
 **Dependencies:** Task 1
 
 **Files:**
 
-- Create: `postman/athena-runners.postman_collection.json`
+- Create: `postman/vidra-runners.postman_collection.json`
 - Possibly modify: `api/openapi.yaml` (if any runner paths are missing)
 - Note: `postman/run-all-tests.sh` registration deferred to Task 11
 
@@ -228,7 +228,7 @@ Type: Feature
 
 **Definition of Done:**
 
-- [ ] `athena-runners.postman_collection.json` exists with ≥10 requests
+- [ ] `vidra-runners.postman_collection.json` exists with ≥10 requests
 - [ ] Success-path lifecycle: register → request → accept → update → success
 - [ ] Error path: register → request → accept → error
 - [ ] Admin operations: list runners, list jobs, cancel job, delete job
@@ -238,7 +238,7 @@ Type: Feature
 
 **Verify:**
 
-- `newman run postman/athena-runners.postman_collection.json -e postman/test-env.json --bail` (against running server)
+- `newman run postman/vidra-runners.postman_collection.json -e postman/test-env.json --bail` (against running server)
 - `make verify-openapi`
 
 ---
@@ -279,13 +279,13 @@ Type: Feature
 
 ### Task 4: Plugin Postman E2E Collection
 
-**Objective:** Create dedicated `athena-plugins.postman_collection.json` with success-path lifecycle E2E tests.
+**Objective:** Create dedicated `vidra-plugins.postman_collection.json` with success-path lifecycle E2E tests.
 
 **Dependencies:** Task 3
 
 **Files:**
 
-- Create: `postman/athena-plugins.postman_collection.json`
+- Create: `postman/vidra-plugins.postman_collection.json`
 - Note: `postman/run-all-tests.sh` registration deferred to Task 11
 
 **Key Decisions / Notes:**
@@ -298,7 +298,7 @@ Type: Feature
 
 **Definition of Done:**
 
-- [ ] `athena-plugins.postman_collection.json` exists with ≥8 requests
+- [ ] `vidra-plugins.postman_collection.json` exists with ≥8 requests
 - [ ] List plugins and available plugins success-path tested
 - [ ] Install API contract shape verified (error response for invalid URL)
 - [ ] Get/settings/update tested against pre-seeded or listed plugin if available
@@ -308,7 +308,7 @@ Type: Feature
 
 **Verify:**
 
-- `newman run postman/athena-plugins.postman_collection.json -e postman/test-env.json --bail`
+- `newman run postman/vidra-plugins.postman_collection.json -e postman/test-env.json --bail`
 
 ---
 
@@ -354,13 +354,13 @@ Type: Feature
 
 ### Task 6: Import Lifecycle Postman E2E Collection
 
-**Objective:** Create `athena-import-lifecycle.postman_collection.json` with full positive-path import lifecycle tests.
+**Objective:** Create `vidra-import-lifecycle.postman_collection.json` with full positive-path import lifecycle tests.
 
 **Dependencies:** Task 5
 
 **Files:**
 
-- Create: `postman/athena-import-lifecycle.postman_collection.json`
+- Create: `postman/vidra-import-lifecycle.postman_collection.json`
 - Note: `postman/run-all-tests.sh` registration deferred to Task 11
 
 **Key Decisions / Notes:**
@@ -373,7 +373,7 @@ Type: Feature
 
 **Definition of Done:**
 
-- [ ] `athena-import-lifecycle.postman_collection.json` exists with ≥6 requests
+- [ ] `vidra-import-lifecycle.postman_collection.json` exists with ≥6 requests
 - [ ] Create → Get → List → Cancel lifecycle
 - [ ] Create → Get → Retry lifecycle (for failed imports)
 - [ ] All tests pass
@@ -381,19 +381,19 @@ Type: Feature
 
 **Verify:**
 
-- `newman run postman/athena-import-lifecycle.postman_collection.json -e postman/test-env.json --bail`
+- `newman run postman/vidra-import-lifecycle.postman_collection.json -e postman/test-env.json --bail`
 
 ---
 
 ### Task 7: Payments Postman E2E Collection
 
-**Objective:** Create `athena-payments.postman_collection.json` for crypto payments E2E validation.
+**Objective:** Create `vidra-payments.postman_collection.json` for crypto payments E2E validation.
 
 **Dependencies:** None
 
 **Files:**
 
-- Create: `postman/athena-payments.postman_collection.json`
+- Create: `postman/vidra-payments.postman_collection.json`
 - Note: `postman/run-all-tests.sh` registration deferred to Task 11
 
 **Key Decisions / Notes:**
@@ -407,7 +407,7 @@ Type: Feature
 
 **Definition of Done:**
 
-- [ ] `athena-payments.postman_collection.json` exists with ≥8 requests
+- [ ] `vidra-payments.postman_collection.json` exists with ≥8 requests
 - [ ] Wallet lifecycle: create → get → duplicate error
 - [ ] Payment intent: create → get → status check
 - [ ] Transaction history endpoint tested
@@ -417,7 +417,7 @@ Type: Feature
 
 **Verify:**
 
-- `newman run postman/athena-payments.postman_collection.json -e postman/test-env.json --bail`
+- `newman run postman/vidra-payments.postman_collection.json -e postman/test-env.json --bail`
 
 ---
 
@@ -430,12 +430,12 @@ Type: Feature
 **Files:**
 
 - Use existing: `internal/usecase/atproto_features_test.go` (22 functions) and `internal/usecase/atproto_service_test.go` (6 functions) — pre-existing coverage for PublishVideo, PublishComment, PublishVideoBatch confirmed passing; no new file needed
-- Create: `postman/athena-atproto.postman_collection.json`
+- Create: `postman/vidra-atproto.postman_collection.json`
 - Note: `postman/run-all-tests.sh` registration deferred to Task 11
 
 **Key Decisions / Notes:**
 
-- **IPFS:** Avatar upload with IPFS is already tested in auth handler tests. What's missing is Postman E2E proof. Add IPFS-backed avatar upload request to existing `athena-auth` or `athena-social` collection (or note in docs that IPFS-specific Postman tests require IPFS node in docker-compose)
+- **IPFS:** Avatar upload with IPFS is already tested in auth handler tests. What's missing is Postman E2E proof. Add IPFS-backed avatar upload request to existing `vidra-auth` or `vidra-social` collection (or note in docs that IPFS-specific Postman tests require IPFS node in docker-compose)
 - **ATProto:** `PublishVideo`, `PublishComment`, `PublishVideoBatch` in `internal/usecase/atproto_features.go` need test coverage. Mock the HTTP client for PDS API calls. Verify post creation, comment threading, and batch error handling.
 - **ATProto social routes verified:** `/api/v1/social/*` is registered via `SocialHandler.RegisterRoutes()` at `social.go:26-50`. 17 endpoints exist: `GET /social/actors/{handle}`, `GET /social/actors/{handle}/stats`, `GET /social/followers/{handle}`, `GET /social/following/{handle}`, `GET /social/likes/{uri}`, `GET /social/comments/{uri}`, `GET /social/comments/{uri}/thread`, `GET /social/moderation/labels/{did}`, `POST /social/follow`, `DELETE /social/follow/{handle}`, `POST /social/like`, `DELETE /social/like`, `POST /social/comment`, `DELETE /social/comment/{uri}`, `POST /social/moderation/label`, `DELETE /social/moderation/label/{id}`, `POST /social/ingest/{handle}`. Postman collection can test all public GET endpoints and authenticated POST/DELETE endpoints.
 - Check existing ATProto test coverage first — tests may already exist in `internal/usecase/`
@@ -445,7 +445,7 @@ Type: Feature
 - [ ] ATProto PublishVideo Go test: mock PDS, verify post created with correct record
 - [ ] ATProto PublishComment Go test: mock PDS, verify threaded reply structure
 - [ ] ATProto PublishVideoBatch Go test: verify partial failure handling
-- [ ] `athena-atproto.postman_collection.json` with social/ATProto API requests (≥10 requests covering verified social endpoints)
+- [ ] `vidra-atproto.postman_collection.json` with social/ATProto API requests (≥10 requests covering verified social endpoints)
 - [ ] IPFS flow documented: which Postman tests exercise IPFS and what config is needed
 - [ ] All tests pass
 - [ ] Note: `run-all-tests.sh` registration handled in Task 11
@@ -453,7 +453,7 @@ Type: Feature
 **Verify:**
 
 - `go test ./internal/usecase/... -run TestAtproto -short -count=1 -v`
-- `newman run postman/athena-atproto.postman_collection.json -e postman/test-env.json --bail`
+- `newman run postman/vidra-atproto.postman_collection.json -e postman/test-env.json --bail`
 
 ---
 
@@ -551,7 +551,7 @@ Type: Feature
 - Update Newman collection count (currently 13 passing) to reflect new collections
 - Update test function counts across documentation
 - Verify no stale references to "still not proven" for areas now covered
-- **Consolidated `run-all-tests.sh` registration:** All 5 new Postman collections are registered here in one edit to avoid merge conflicts from parallel task edits. Collections to add: `athena-runners`, `athena-plugins`, `athena-payments`, `athena-import-lifecycle`, `athena-atproto`
+- **Consolidated `run-all-tests.sh` registration:** All 5 new Postman collections are registered here in one edit to avoid merge conflicts from parallel task edits. Collections to add: `vidra-runners`, `vidra-plugins`, `vidra-payments`, `vidra-import-lifecycle`, `vidra-atproto`
 
 **Definition of Done:**
 

@@ -1,15 +1,15 @@
 package social
 
 import (
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"time"
 
-	"athena/internal/usecase"
+	"vidra-core/internal/usecase"
 
 	"github.com/go-chi/chi/v5"
 )

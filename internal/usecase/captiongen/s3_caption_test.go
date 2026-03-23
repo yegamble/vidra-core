@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
-	"athena/internal/storage"
-	"athena/internal/whisper"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/storage"
+	"vidra-core/internal/whisper"
 )
 
 // mockS3Backend is a minimal in-memory StorageBackend for captiongen tests.

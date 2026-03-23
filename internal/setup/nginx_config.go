@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"athena/nginx"
+	"vidra-core/nginx"
 )
 
 type nginxTemplateData struct {

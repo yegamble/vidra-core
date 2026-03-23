@@ -11,7 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 type mockNotificationService struct {

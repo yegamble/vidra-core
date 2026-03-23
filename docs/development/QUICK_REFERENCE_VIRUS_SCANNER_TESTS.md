@@ -122,8 +122,8 @@ PASS: TestVirusScanner_ExhaustedReaderVulnerability
 
 ## Contact
 
-- **Tests**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner_test.go:167-871`
-- **Impl**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner.go:254-352`
+- **Tests**: `/Users/yosefgamble/github/vidra/internal/security/virus_scanner_test.go:167-871`
+- **Impl**: `/Users/yosefgamble/github/vidra/internal/security/virus_scanner.go:254-352`
 - **Docs**: See `SECURITY_ANALYSIS_VIRUS_SCANNER.md`
 
 **Remember**: No infected file can ever be marked clean.

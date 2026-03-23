@@ -129,7 +129,7 @@ REDIS_URL="${REDIS_URL:-}"
 JWT_SECRET="${JWT_SECRET:-}"
 
 # Support INSTALL_DIR override
-INSTALL_DIR="${INSTALL_DIR:-$HOME/athena}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/vidra}"
 ```
 
 **Why**: Power users can automate installation with pre-set values.
@@ -211,7 +211,7 @@ After implementing these patterns:
 
 ## Example: Real-World Usage
 
-**Athena project install script** (`scripts/install.sh`):
+**Vidra Core project install script** (`scripts/install.sh`):
 
 1. Auto-detects repo root using `$(dirname "$0")`
 2. Handles 4 scenarios: existing compose file, existing git repo, non-empty dir, empty dir
@@ -220,7 +220,7 @@ After implementing these patterns:
 5. Preserves existing .env if found
 6. Checks Docker availability with OS-specific install instructions
 
-**Result**: Users run `bash <(curl -Ls https://install.example.com/athena)` and get a working setup wizard with zero configuration.
+**Result**: Users run `bash <(curl -Ls https://install.example.com/vidra)` and get a working setup wizard with zero configuration.
 
 ## Testing Strategy
 
@@ -238,8 +238,8 @@ To test these patterns:
 
 ## References
 
-- [Athena install.sh implementation](../../scripts/install.sh)
-- [Athena config mode detection](../../internal/config/config.go)
-- [Athena setup wizard](../../internal/setup/)
+- [Vidra Core install.sh implementation](../../scripts/install.sh)
+- [Vidra Core config mode detection](../../internal/config/config.go)
+- [Vidra Core setup wizard](../../internal/setup/)
 - [12-Factor App: Config](https://12factor.net/config)
 - [Docker Compose environment variables](https://docs.docker.com/compose/environment-variables/set-environment-variables/)

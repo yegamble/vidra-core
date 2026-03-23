@@ -9,11 +9,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	"athena/internal/security"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/security"
+	"vidra-core/internal/usecase"
 )
 
 func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {

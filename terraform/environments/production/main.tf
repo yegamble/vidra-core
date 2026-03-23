@@ -1,4 +1,4 @@
-# Production Environment Configuration for Athena Platform
+# Production Environment Configuration for Vidra Core Platform
 # This file orchestrates all infrastructure modules
 
 terraform {
@@ -8,11 +8,11 @@ terraform {
     # Backend configuration should be provided via backend-config file
     # Example: terraform init -backend-config=backend.hcl
     # Contents of backend.hcl:
-    #   bucket         = "athena-terraform-state-production"
+    #   bucket         = "vidra-terraform-state-production"
     #   key            = "production/terraform.tfstate"
     #   region         = "us-east-1"
     #   encrypt        = true
-    #   dynamodb_table = "athena-terraform-locks"
+    #   dynamodb_table = "vidra-terraform-locks"
   }
 }
 
@@ -93,8 +93,8 @@ module "rds" {
   max_allocated_storage = var.rds_max_allocated_storage
   storage_type      = "gp3"
 
-  database_name   = "athena"
-  master_username = "athenaadmin"
+  database_name   = "vidra"
+  master_username = "vidraadmin"
   # Password will be auto-generated and stored in Secrets Manager
 
   multi_az                = true
@@ -198,7 +198,7 @@ module "s3" {
 }
 
 # IAM Role for Service Account (IRSA) - S3 Access
-resource "aws_iam_role" "athena_s3_access" {
+resource "aws_iam_role" "vidra_s3_access" {
   name = "${var.project_name}-${local.environment}-s3-access"
 
   assume_role_policy = jsonencode({
@@ -211,7 +211,7 @@ resource "aws_iam_role" "athena_s3_access" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
-          "${replace(module.eks.cluster_oidc_issuer_url, "https://", "")}:sub" = "system:serviceaccount:default:athena-api"
+          "${replace(module.eks.cluster_oidc_issuer_url, "https://", "")}:sub" = "system:serviceaccount:default:vidra-api"
           "${replace(module.eks.cluster_oidc_issuer_url, "https://", "")}:aud" = "sts.amazonaws.com"
         }
       }
@@ -221,9 +221,9 @@ resource "aws_iam_role" "athena_s3_access" {
   tags = local.common_tags
 }
 
-resource "aws_iam_role_policy" "athena_s3_access" {
+resource "aws_iam_role_policy" "vidra_s3_access" {
   name = "s3-access"
-  role = aws_iam_role.athena_s3_access.id
+  role = aws_iam_role.vidra_s3_access.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -254,7 +254,7 @@ resource "aws_iam_role_policy" "athena_s3_access" {
 }
 
 # IAM Role for Service Account - Secrets Manager Access
-resource "aws_iam_role" "athena_secrets_access" {
+resource "aws_iam_role" "vidra_secrets_access" {
   name = "${var.project_name}-${local.environment}-secrets-access"
 
   assume_role_policy = jsonencode({
@@ -267,7 +267,7 @@ resource "aws_iam_role" "athena_secrets_access" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
-          "${replace(module.eks.cluster_oidc_issuer_url, "https://", "")}:sub" = "system:serviceaccount:default:athena-api"
+          "${replace(module.eks.cluster_oidc_issuer_url, "https://", "")}:sub" = "system:serviceaccount:default:vidra-api"
           "${replace(module.eks.cluster_oidc_issuer_url, "https://", "")}:aud" = "sts.amazonaws.com"
         }
       }
@@ -277,9 +277,9 @@ resource "aws_iam_role" "athena_secrets_access" {
   tags = local.common_tags
 }
 
-resource "aws_iam_role_policy" "athena_secrets_access" {
+resource "aws_iam_role_policy" "vidra_secrets_access" {
   name = "secrets-access"
-  role = aws_iam_role.athena_secrets_access.id
+  role = aws_iam_role.vidra_secrets_access.id
 
   policy = jsonencode({
     Version = "2012-10-17"

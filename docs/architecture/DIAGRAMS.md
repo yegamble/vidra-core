@@ -1,6 +1,6 @@
 # Architecture Diagrams
 
-This document contains canonical Mermaid diagrams for the Athena system architecture.
+This document contains canonical Mermaid diagrams for the Vidra Core system architecture.
 
 ## 1) System Architecture
 
@@ -121,16 +121,16 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    Athena["Athena Instance"] --> Outbox["ActivityPub Outbox"]
+    Vidra Core["Vidra Core Instance"] --> Outbox["ActivityPub Outbox"]
     Outbox --> SharedInbox["Remote Shared Inbox"]
     SharedInbox --> RemoteInstances["Remote ActivityPub Instances"]
 
-    RemoteInstances --> Inbox["Athena Inbox"]
+    RemoteInstances --> Inbox["Vidra Core Inbox"]
     Inbox --> Verify["HTTP Signature Verification"]
     Verify --> Dedup["Deduplicate Activity"]
     Dedup --> Persist["Persist Activity"]
 
-    Athena --> ATWriter["ATProto Publisher"]
+    Vidra Core --> ATWriter["ATProto Publisher"]
     ATWriter --> PDS["BlueSky PDS"]
     Firehose["BlueSky Firehose"] --> ATReader["ATProto Ingestion Worker"]
     ATReader --> Persist

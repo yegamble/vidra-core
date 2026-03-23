@@ -16,7 +16,7 @@ func testConfig() *Config {
 		SMTPUsername: "user",
 		SMTPPassword: "pass",
 		FromAddress:  "no-reply@example.com",
-		FromName:     "Athena",
+		FromName:     "Vidra Core",
 		BaseURL:      "https://app.example.com",
 	}
 }
@@ -40,7 +40,7 @@ func TestComposeResendVerificationEmail_ComposesProperly(t *testing.T) {
 }
 
 func TestBuildMIMEMessage_ContainsBothParts(t *testing.T) {
-	from := "Athena <no-reply@example.com>"
+	from := "Vidra Core <no-reply@example.com>"
 	to := "user@example.com"
 	subject := "Subject Line"
 	plain := "This is the plain text part."
@@ -71,11 +71,11 @@ func TestComposeVerificationEmail_Body(t *testing.T) {
 	link := "https://app.example.com/verify-email?token=tok123"
 	assert.Contains(t, plain, link)
 	assert.Contains(t, plain, "654321")
-	assert.Contains(t, plain, "Welcome to Athena, alice!")
+	assert.Contains(t, plain, "Welcome to Vidra Core, alice!")
 	assert.Contains(t, html, "href=\""+link+"\"")
 	assert.Contains(t, html, "Verify Email Address")
 	assert.Contains(t, html, "654321")
-	assert.Contains(t, html, "Welcome to Athena, alice!")
+	assert.Contains(t, html, "Welcome to Vidra Core, alice!")
 }
 
 func TestComposePasswordResetEmail_Body(t *testing.T) {

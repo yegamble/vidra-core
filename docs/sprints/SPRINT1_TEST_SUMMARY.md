@@ -130,7 +130,7 @@ This document provides a comprehensive summary of all testing completed for Spri
 **Requirements:**
 
 - PostgreSQL database running on port 5433
-- Test database: `athena_test`
+- Test database: `vidra_test`
 - Environment variable: `TEST_DATABASE_URL`
 
 ---
@@ -204,10 +204,10 @@ Executes real API calls:
 ```bash
 $ go test -short ./internal/domain ./internal/repository ./internal/usecase/import ./internal/httpapi -run "TestImport"
 
-ok      athena/internal/domain          0.336s
-ok      athena/internal/repository      0.566s
-ok      athena/internal/usecase/import  0.383s
-ok      athena/internal/httpapi         0.714s
+ok      vidra/internal/domain          0.336s
+ok      vidra/internal/repository      0.566s
+ok      vidra/internal/usecase/import  0.383s
+ok      vidra/internal/httpapi         0.714s
 ```
 
 **Result:** ✅ All tests passing in ~2 seconds
@@ -272,7 +272,7 @@ go tool cover -html=coverage.out
 ### Integration Tests (requires database)
 
 ```bash
-export TEST_DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
+export TEST_DATABASE_URL="postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable"
 go test -v -tags=integration ./internal/httpapi -run TestImportIntegration
 ```
 

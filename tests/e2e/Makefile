@@ -92,11 +92,11 @@ clean:
 
 # Access PostgreSQL shell
 db-shell:
-	docker exec -it athena-e2e-postgres psql -U athena_test -d athena_e2e
+	docker exec -it vidra-e2e-postgres psql -U vidra_test -d vidra_e2e
 
 # Access Redis CLI
 redis-shell:
-	docker exec -it athena-e2e-redis redis-cli
+	docker exec -it vidra-e2e-redis redis-cli
 
 # Check service status
 status:

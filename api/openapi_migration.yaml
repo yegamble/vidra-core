@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: Athena API - PeerTube Instance Migration
+  title: Vidra Core API - PeerTube Instance Migration
   description: |
-    Admin endpoints for migrating data from a PeerTube instance into Athena.
+    Admin endpoints for migrating data from a PeerTube instance into Vidra Core.
 
     ## Migration Pipeline
 
@@ -29,7 +29,7 @@ paths:
       summary: Start a PeerTube instance migration
       description: |
         Creates a new migration job that connects to a source PeerTube
-        PostgreSQL database and migrates all data into this Athena instance.
+        PostgreSQL database and migrates all data into this Vidra Core instance.
         Only one migration may run at a time.
       operationId: migration_startMigration
       security:

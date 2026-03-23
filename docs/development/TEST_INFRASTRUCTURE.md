@@ -1,6 +1,6 @@
 # Test Infrastructure
 
-Comprehensive guide to running, writing, and debugging tests for Athena.
+Comprehensive guide to running, writing, and debugging tests for Vidra Core.
 
 ## Test Categories
 
@@ -36,7 +36,7 @@ Comprehensive guide to running, writing, and debugging tests for Athena.
 docker compose up -d postgres redis ipfs
 
 # Verify connectivity
-pg_isready -h localhost -p 5432 -U athena_user
+pg_isready -h localhost -p 5432 -U vidra_user
 redis-cli -h localhost -p 6379 ping
 curl http://localhost:5001/api/v0/version
 ```
@@ -169,7 +169,7 @@ func TestCreateVideo(t *testing.T) {
 ### Test Helpers (testutil)
 
 ```go
-import "athena/internal/testutil"
+import "vidra-core/internal/testutil"
 
 func TestWithDB(t *testing.T) {
     if testing.Short() {
@@ -274,7 +274,7 @@ make test-cleanup
 docker compose ps
 
 # Check database is ready
-pg_isready -h localhost -p 5432 -U athena_user
+pg_isready -h localhost -p 5432 -U vidra_user
 
 # For test database
 pg_isready -h localhost -p 5433 -U test_user

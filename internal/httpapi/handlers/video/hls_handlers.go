@@ -1,7 +1,7 @@
 package video
 
 import (
-	"athena/internal/middleware"
+	"vidra-core/internal/middleware"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,11 +11,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/repository"
-	"athena/internal/usecase/ipfs_streaming"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase/ipfs_streaming"
 )
 
 type HLSHandlers struct {

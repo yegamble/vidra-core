@@ -65,7 +65,7 @@ I've identified and prepared fixes for the E2E test failures. The fixes are read
 
 ```bash
 # The patch file is saved at: e2e-helpers-fix.patch
-cd /Users/yosefgamble/github/athena
+cd /Users/yosefgamble/github/vidra
 git apply e2e-helpers-fix.patch
 
 # Verify the changes
@@ -241,7 +241,7 @@ sleep 30
 
 # 2. Verify database is ready
 docker compose -f tests/e2e/docker-compose.yml exec postgres-e2e \
-  psql -U athena_test -d athena_e2e -c "\dt" | grep users
+  psql -U vidra_test -d vidra_e2e -c "\dt" | grep users
 
 # 3. Run tests with verbose output
 E2E_BASE_URL=http://localhost:18080 \
@@ -284,7 +284,7 @@ Comprehensive analysis documents have been created:
 
 ## API Endpoint Clarification
 
-The Athena API has two distinct video creation endpoints:
+The Vidra Core API has two distinct video creation endpoints:
 
 ### POST /api/v1/videos (JSON)
 
@@ -373,7 +373,7 @@ Error code: INVALID_CREDENTIALS, Message: Invalid credentials
 
 ```bash
 docker compose -f tests/e2e/docker-compose.yml exec postgres-e2e \
-  psql -U athena_test -d athena_e2e -c \
+  psql -U vidra_test -d vidra_e2e -c \
   "SELECT id, username, email, twofa_enabled, password_hash IS NOT NULL as has_password
    FROM users WHERE email LIKE 'e2e_%@example.com'
    ORDER BY created_at DESC LIMIT 5;"

@@ -72,7 +72,7 @@ func (w *Wizard) processDatabaseForm(rw http.ResponseWriter, r *http.Request) {
 		if dbName != "" {
 			w.config.PostgresDB = dbName
 		} else {
-			w.config.PostgresDB = "athena"
+			w.config.PostgresDB = "vidra"
 		}
 		w.config.PostgresSSLMode = r.FormValue("POSTGRES_SSLMODE")
 		if w.config.PostgresSSLMode == "" {
@@ -124,7 +124,7 @@ func (w *Wizard) processDatabaseForm(rw http.ResponseWriter, r *http.Request) {
 		w.config.PostgresPort = 5432
 		w.config.PostgresUser = ""
 		w.config.PostgresPassword = ""
-		w.config.PostgresDB = "athena"
+		w.config.PostgresDB = "vidra"
 		w.config.PostgresSSLMode = "disable"
 		w.config.DatabaseURL = ""
 	}

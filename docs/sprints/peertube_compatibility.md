@@ -466,4 +466,4 @@ curl http://localhost:8080/ready
 
 ## Conclusion
 
-The Athena project has successfully implemented all core PeerTube features (Sprints A-G) and is production-ready as a video platform. Federation support (Sprints H-K) remains as an optional future enhancement for deployments requiring cross-instance content sharing.
+The Vidra Core project has successfully implemented all core PeerTube features (Sprints A-G) and is production-ready as a video platform. Federation support (Sprints H-K) remains as an optional future enhancement for deployments requiring cross-instance content sharing.

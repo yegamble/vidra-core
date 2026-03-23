@@ -1,7 +1,7 @@
-# Postman E2E Test Scenarios - Athena API
+# Postman E2E Test Scenarios - Vidra Core API
 
 **Purpose:** Comprehensive Postman test collection for breaking the API and validating edge cases
-**Target:** Athena video platform API
+**Target:** Vidra Core video platform API
 **Date:** 2025-11-23
 
 ---
@@ -1207,7 +1207,7 @@ pm.test("Cleanup successful", function() {
 ### Run Full Collection
 
 ```bash
-newman run Athena_E2E.postman_collection.json \\
+newman run Vidra Core_E2E.postman_collection.json \\
   --environment E2E_Environment.postman_environment.json \\
   --reporters cli,htmlextra \\
   --reporter-htmlextra-export newman-report.html \\
@@ -1217,7 +1217,7 @@ newman run Athena_E2E.postman_collection.json \\
 ### Run Specific Folder (Auth Tests Only)
 
 ```bash
-newman run Athena_E2E.postman_collection.json \\
+newman run Vidra Core_E2E.postman_collection.json \\
   --environment E2E_Environment.postman_environment.json \\
   --folder "02 - Authentication Edge Cases" \\
   --reporters cli
@@ -1226,7 +1226,7 @@ newman run Athena_E2E.postman_collection.json \\
 ### Run with Retry on Failure
 
 ```bash
-newman run Athena_E2E.postman_collection.json \\
+newman run Vidra Core_E2E.postman_collection.json \\
   --environment E2E_Environment.postman_environment.json \\
   --reporters cli \\
   --delay-request 100 \\
@@ -1237,7 +1237,7 @@ newman run Athena_E2E.postman_collection.json \\
 ### Run with JSON Output (for CI/CD)
 
 ```bash
-newman run Athena_E2E.postman_collection.json \\
+newman run Vidra Core_E2E.postman_collection.json \\
   --environment E2E_Environment.postman_environment.json \\
   --reporters cli,json \\
   --reporter-json-export newman-results.json

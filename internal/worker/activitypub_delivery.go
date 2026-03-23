@@ -7,9 +7,9 @@ import (
 	"log"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/port"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 )
 
 // ActivityPubDeliveryWorker handles background delivery of ActivityPub activities

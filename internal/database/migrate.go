@@ -7,7 +7,7 @@ import (
 	"log"
 	"sync"
 
-	"athena/migrations"
+	"vidra-core/migrations"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/pressly/goose/v3"

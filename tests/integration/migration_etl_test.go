@@ -17,15 +17,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/database"
-	"athena/internal/domain"
-	"athena/internal/repository"
-	ucmigration "athena/internal/usecase/migration_etl"
+	"vidra-core/internal/database"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
+	ucmigration "vidra-core/internal/usecase/migration_etl"
 )
 
 const (
-	// Integration Postgres (Athena target).
-	athenaIntegrationDSN = "postgres://integration_user:integration_password@localhost:15432/athena_integration?sslmode=disable"
+	// Integration Postgres (Vidra Core target).
+	vidraIntegrationDSN = "postgres://integration_user:integration_password@localhost:15432/vidra_integration?sslmode=disable"
 	// PeerTube source Postgres (seeded with test data).
 	peertubeSourceDSN = "postgres://peertube:peertube_password@localhost:15433/peertube_prod?sslmode=disable"
 )
@@ -40,9 +40,9 @@ func TestMigrationETL(t *testing.T) {
 	// -----------------------------------------------------------------------
 	// 1. Connect to both databases
 	// -----------------------------------------------------------------------
-	athenaDB, err := sqlx.Connect("postgres", athenaIntegrationDSN)
-	require.NoError(t, err, "failed to connect to Athena integration DB")
-	defer athenaDB.Close()
+	vidraDB, err := sqlx.Connect("postgres", vidraIntegrationDSN)
+	require.NoError(t, err, "failed to connect to Vidra Core integration DB")
+	defer vidraDB.Close()
 
 	sourceDB, err := sqlx.Connect("postgres", peertubeSourceDSN)
 	require.NoError(t, err, "failed to connect to PeerTube source DB")
@@ -55,21 +55,21 @@ func TestMigrationETL(t *testing.T) {
 	require.Equal(t, 3, userCount, "peertube source should have 3 users")
 
 	// -----------------------------------------------------------------------
-	// 2. Apply Athena migrations to the integration DB
+	// 2. Apply Vidra Core migrations to the integration DB
 	// -----------------------------------------------------------------------
-	err = database.RunMigrations(ctx, athenaDB)
-	require.NoError(t, err, "failed to apply Athena migrations")
+	err = database.RunMigrations(ctx, vidraDB)
+	require.NoError(t, err, "failed to apply Vidra Core migrations")
 
 	// -----------------------------------------------------------------------
 	// 3. Create ETLService with real repos pointing at integration DB
 	// -----------------------------------------------------------------------
-	migrationRepo := repository.NewMigrationRepository(athenaDB)
-	userRepo := repository.NewUserRepository(athenaDB)
-	channelRepo := repository.NewChannelRepository(athenaDB)
-	commentRepo := repository.NewCommentRepository(athenaDB)
-	playlistRepo := repository.NewPlaylistRepository(athenaDB)
-	captionRepo := repository.NewCaptionRepository(athenaDB)
-	videoRepo := repository.NewVideoRepository(athenaDB)
+	migrationRepo := repository.NewMigrationRepository(vidraDB)
+	userRepo := repository.NewUserRepository(vidraDB)
+	channelRepo := repository.NewChannelRepository(vidraDB)
+	commentRepo := repository.NewCommentRepository(vidraDB)
+	playlistRepo := repository.NewPlaylistRepository(vidraDB)
+	captionRepo := repository.NewCaptionRepository(vidraDB)
+	videoRepo := repository.NewVideoRepository(vidraDB)
 
 	etlService := ucmigration.NewETLService(
 		migrationRepo,
@@ -153,24 +153,24 @@ func TestMigrationETL(t *testing.T) {
 	assert.Equal(t, 0, stats.Captions.Failed, "captions failed")
 
 	// -----------------------------------------------------------------------
-	// 7. Verify data in Athena database
+	// 7. Verify data in Vidra Core database
 	// -----------------------------------------------------------------------
 
 	// Users
-	athenaUsers, err := userRepo.List(ctx, 100, 0)
+	vidraUsers, err := userRepo.List(ctx, 100, 0)
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(athenaUsers), 3, "at least 3 users in Athena DB")
+	assert.GreaterOrEqual(t, len(vidraUsers), 3, "at least 3 users in Vidra Core DB")
 
 	// Verify user roles
 	roleMap := make(map[string]domain.UserRole)
-	for _, u := range athenaUsers {
+	for _, u := range vidraUsers {
 		roleMap[u.Username] = u.Role
 	}
 	assert.Equal(t, domain.RoleAdmin, roleMap["admin_user"], "admin should have admin role")
 	assert.Equal(t, domain.RoleUser, roleMap["alice"], "alice should have user role")
 
 	// Bob should be inactive (blocked in PeerTube)
-	for _, u := range athenaUsers {
+	for _, u := range vidraUsers {
 		if u.Username == "bob" {
 			assert.False(t, u.IsActive, "bob should be inactive (was blocked)")
 		}
@@ -179,7 +179,7 @@ func TestMigrationETL(t *testing.T) {
 	// Video count
 	videoCount, err := videoRepo.Count(ctx)
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, videoCount, int64(3), "at least 3 videos in Athena DB")
+	assert.GreaterOrEqual(t, videoCount, int64(3), "at least 3 videos in Vidra Core DB")
 
 	// Comment threading: find replies and verify they have parent IDs
 	var commentRows []struct {
@@ -187,7 +187,7 @@ func TestMigrationETL(t *testing.T) {
 		ParentID *string `db:"parent_id"`
 		Body     string  `db:"body"`
 	}
-	err = athenaDB.Select(&commentRows, `SELECT id, parent_id, body FROM comments ORDER BY created_at`)
+	err = vidraDB.Select(&commentRows, `SELECT id, parent_id, body FROM comments ORDER BY created_at`)
 	require.NoError(t, err)
 
 	topLevelCount := 0

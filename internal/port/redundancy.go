@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // RedundancyRepository defines the interface for redundancy data persistence.

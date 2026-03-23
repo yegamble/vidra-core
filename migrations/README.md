@@ -194,7 +194,7 @@ See `.github/workflows/` for CI configuration
 
 ## PostgreSQL Extensions
 
-Athena uses these extensions (enabled in migrations):
+Vidra Core uses these extensions (enabled in migrations):
 
 - `uuid-ossp` - UUID generation
 - `pg_trgm` - Trigram text search

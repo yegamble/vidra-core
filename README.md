@@ -1,8 +1,8 @@
-# Athena - PeerTube Backend in Go
+# Vidra Core - PeerTube Backend in Go
 
-[![Test](https://github.com/yegamble/athena/actions/workflows/test.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/test.yml)
-[![OpenAPI CI](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/openapi-ci.yml)
-[![Database Migrations](https://github.com/yegamble/athena/actions/workflows/goose-migrate.yml/badge.svg)](https://github.com/yegamble/athena/actions/workflows/goose-migrate.yml)
+[![Test](https://github.com/yegamble/vidra-core/actions/workflows/test.yml/badge.svg)](https://github.com/yegamble/vidra-core/actions/workflows/test.yml)
+[![OpenAPI CI](https://github.com/yegamble/vidra-core/actions/workflows/openapi-ci.yml/badge.svg)](https://github.com/yegamble/vidra-core/actions/workflows/openapi-ci.yml)
+[![Database Migrations](https://github.com/yegamble/vidra-core/actions/workflows/goose-migrate.yml/badge.svg)](https://github.com/yegamble/vidra-core/actions/workflows/goose-migrate.yml)
 
 A high-performance, PeerTube-compatible backend implementation in Go with P2P distribution, live streaming, plugin system, and multi-protocol federation (ActivityPub + ATProto).
 
@@ -47,7 +47,7 @@ Status legend:
 - **Video Analytics** - Retention curves, view tracking, channel statistics, and data aggregation
 - **Auto-Captioning** - AI-powered caption generation via Whisper integration
 - **Video Studio Editing** - Server-side video editing with FFmpeg (cut, add intro/outro, watermark)
-- **Migration ETL** - PeerTube dump → Athena import pipeline with dry-run support
+- **Migration ETL** - PeerTube dump → Vidra Core import pipeline with dry-run support
 
 #### Live Streaming
 
@@ -102,22 +102,22 @@ For new deployments on a server or clean machine:
 
 ```bash
 # One-command install — clones repo, creates .env, starts services
-curl -sSL https://raw.githubusercontent.com/yegamble/athena/main/scripts/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/yegamble/vidra/main/scripts/install.sh | bash
 
 # Or inspect before running
-curl -O https://raw.githubusercontent.com/yegamble/athena/main/scripts/install.sh
+curl -O https://raw.githubusercontent.com/yegamble/vidra/main/scripts/install.sh
 less install.sh
 bash install.sh
 ```
 
-This installs Docker if needed, clones Athena to `~/athena`, starts all services, and opens the **Setup Wizard** at `http://localhost:8080/setup/welcome`.
+This installs Docker if needed, clones Vidra Core to `~/vidra`, starts all services, and opens the **Setup Wizard** at `http://localhost:8080/setup/welcome`.
 
 ### Option 2: From an Existing Clone
 
 If you already have the repository:
 
 ```bash
-cd athena
+cd vidra
 
 # Run the install script (auto-detects repo root, skips clone)
 bash scripts/install.sh
@@ -132,8 +132,8 @@ Then open `http://localhost:8080/setup/welcome` to configure.
 ### Option 3: Local Development (No Docker)
 
 ```bash
-git clone https://github.com/yegamble/athena.git
-cd athena
+git clone https://github.com/yegamble/vidra-core.git
+cd vidra
 make deps
 
 # Start Postgres and Redis (Docker or local installs)
@@ -154,7 +154,7 @@ Without `DATABASE_URL`, `REDIS_URL`, or `JWT_SECRET` set, the server starts in *
 
 ### Setup Wizard
 
-On first run (or when required config is missing), Athena serves a web-based wizard at `http://localhost:8080/setup/welcome`:
+On first run (or when required config is missing), Vidra Core serves a web-based wizard at `http://localhost:8080/setup/welcome`:
 
 1. **Welcome** — System resource detection and deployment overview
 2. **Quick Install** — Optional shortcut path for guided local setup
@@ -167,16 +167,16 @@ On first run (or when required config is missing), Athena serves a web-based wiz
 9. **Review** — Summary of all settings with edit links per section.
 10. **Complete** — Configuration saved. Restart the server to apply.
 
-The wizard writes a `.env` file and sets `SETUP_COMPLETED=true`. After restart, Athena boots normally.
+The wizard writes a `.env` file and sets `SETUP_COMPLETED=true`. After restart, Vidra Core boots normally.
 
 #### CLI Alternative
 
 ```bash
 # Interactive setup
-./athena-cli setup
+./vidra-cli setup
 
 # Non-interactive setup from template
-./athena-cli setup --from-env .env.example
+./vidra-cli setup --from-env .env.example
 ```
 
 ### Docker Compose Profiles
@@ -290,7 +290,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 - **[Architecture Overview](docs/architecture.md)** - Clean architecture layers, data flow, and design patterns
 - **[CLAUDE.md](docs/architecture/CLAUDE.md)** - Comprehensive architecture guide for AI-assisted development
 - **[PeerTube Compatibility](docs/PEERTUBE_COMPAT.md)** - API compatibility matrix
-- **[PeerTube Migration](docs/PEERTUBE_MIGRATION.md)** - High-level migration guide from PeerTube to Athena
+- **[PeerTube Migration](docs/PEERTUBE_MIGRATION.md)** - High-level migration guide from PeerTube to Vidra Core
 
 ### Deployment & Operations
 
@@ -303,7 +303,7 @@ See the full documentation index at [docs/README.md](docs/README.md).
 
 ### Security
 
-- **[Security Policy](docs/security/SECURITY.md)** - Security advisories including CVE-ATHENA-2025-001
+- **[Security Policy](docs/security/SECURITY.md)** - Security advisories including CVE-VIDRA-2025-001
 - **[Security Advisory](docs/security/SECURITY_ADVISORY.md)** - Credential exposure mitigation
 - **[End-to-End Encryption](docs/security/SECURITY_E2EE.md)** - E2EE messaging implementation
 - **[IPFS Security](docs/security/IPFS_SECURITY_IMPLEMENTATION.md)** - IPFS security hardening
@@ -449,7 +449,7 @@ ACTIVITYPUB_KEY_ENCRYPTION_KEY=         # 32-byte base64 key for encrypting AP p
 - **Input Validation**: UUID validation, string sanitization, file size limits (5GB video, 50MB image)
 - **Cryptographic Security**: AES-256-GCM encryption, Argon2id key derivation, HSM interface support
 
-See [SECURITY.md](docs/security/SECURITY.md) for security advisories including CVE-ATHENA-2025-001 and [Security Deployment Guide](docs/deployment/security.md) for detailed configuration.
+See [SECURITY.md](docs/security/SECURITY.md) for security advisories including CVE-VIDRA-2025-001 and [Security Deployment Guide](docs/deployment/security.md) for detailed configuration.
 
 ## Contributing
 
@@ -468,6 +468,6 @@ We welcome contributions! Please see our documentation for:
 
 ## Links
 
-- [GitHub Issues](https://github.com/yegamble/athena/issues)
+- [GitHub Issues](https://github.com/yegamble/vidra-core/issues)
 - [PeerTube Project](https://github.com/Chocobozzz/PeerTube)
 - [AT Protocol](https://atproto.com/)

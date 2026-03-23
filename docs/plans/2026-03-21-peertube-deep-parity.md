@@ -7,12 +7,12 @@ Iterations: 0
 Worktree: No
 Type: Feature
 
-> Superseded by `/Users/yosefgamble/github/athena/docs/reports/peertube-parity-gap-report.md`.
+> Superseded by `/Users/yosefgamble/github/vidra/docs/reports/peertube-parity-gap-report.md`.
 > Implementation work landed, but later runtime validation showed remaining parity and E2E gaps, so this plan should not be treated as the current compatibility status.
 
 ## Summary
 
-**Goal:** Comprehensive second-pass comparison of PeerTube functionality vs Athena — identify missing capabilities, incomplete user stories, E2E gaps, and test coverage holes across the full feature surface.
+**Goal:** Comprehensive second-pass comparison of PeerTube functionality vs Vidra Core — identify missing capabilities, incomplete user stories, E2E gaps, and test coverage holes across the full feature surface.
 
 **Architecture:** Additive endpoint and test layer on top of existing Chi + SQLX + domain architecture. No schema changes. New handlers follow established handler patterns in `internal/httpapi/handlers/`.
 

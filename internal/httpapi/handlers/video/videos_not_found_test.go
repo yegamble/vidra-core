@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
 )
 
 func TestGetVideoHandler_NotFoundSentinelReturns404(t *testing.T) {

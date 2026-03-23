@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"athena/internal/usecase"
+	"vidra-core/internal/usecase"
 
 	"github.com/jmoiron/sqlx"
 )

@@ -1,6 +1,6 @@
 package usecase
 
-import "athena/internal/port"
+import "vidra-core/internal/port"
 
 // RatingRepository defines the interface for rating data operations
 type RatingRepository = port.RatingRepository

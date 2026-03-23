@@ -1,4 +1,4 @@
-# Amazon EFS Module for Athena Platform
+# Amazon EFS Module for Vidra Core Platform
 # Creates EFS for ReadWriteMany persistent volumes (500GB+ shared storage)
 
 locals {

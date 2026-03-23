@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Extended API
+  title: Vidra Core Extended API
   version: 1.0.0
   description: >
     Additional API endpoints for watch history, token sessions, video ownership

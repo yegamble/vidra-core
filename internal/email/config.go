@@ -1,6 +1,6 @@
 package email
 
-import "athena/internal/config"
+import "vidra-core/internal/config"
 
 func NewConfigFromAppConfig(cfg *config.Config) *Config {
 	return &Config{

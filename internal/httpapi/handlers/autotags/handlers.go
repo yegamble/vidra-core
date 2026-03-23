@@ -7,10 +7,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	ucat "athena/internal/usecase/auto_tags"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	ucat "vidra-core/internal/usecase/auto_tags"
 )
 
 // Handlers handles HTTP requests for automatic tag policies.

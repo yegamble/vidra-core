@@ -27,7 +27,7 @@ func NewActivityPubKeyEncryption(masterKey string) (*ActivityPubKeyEncryption, e
 
 	// Derive a 32-byte encryption key using PBKDF2
 	// Using a fixed salt for key derivation (in production, consider using a unique salt per installation)
-	salt := []byte("athena-activitypub-key-encryption-v1")
+	salt := []byte("vidra-activitypub-key-encryption-v1")
 	derivedKey := pbkdf2.Key([]byte(masterKey), salt, 100000, 32, sha256.New)
 
 	return &ActivityPubKeyEncryption{

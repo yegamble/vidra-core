@@ -14,11 +14,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/testutil"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase"
 )
 
 // Helper to decode response envelope and return raw data

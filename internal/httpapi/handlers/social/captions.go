@@ -1,9 +1,9 @@
 package social
 
 import (
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -354,7 +354,7 @@ func (h *CaptionHandlers) DeleteCaption(w http.ResponseWriter, r *http.Request) 
 }
 
 // resolveCaptionID resolves the "captionId" URL parameter which may be either
-// a UUID (Athena-native) or a language code (PeerTube-compatible).
+// a UUID (Vidra Core-native) or a language code (PeerTube-compatible).
 // It first tries UUID parsing; on failure it treats the value as a language
 // code and looks up the caption by video + language.
 func (h *CaptionHandlers) resolveCaptionID(r *http.Request, videoID uuid.UUID) (uuid.UUID, error) {
@@ -363,7 +363,7 @@ func (h *CaptionHandlers) resolveCaptionID(r *http.Request, videoID uuid.UUID) (
 		return uuid.Nil, fmt.Errorf("caption identifier is required")
 	}
 
-	// Try UUID first (Athena native path).
+	// Try UUID first (Vidra Core native path).
 	if id, err := uuid.Parse(param); err == nil {
 		return id, nil
 	}

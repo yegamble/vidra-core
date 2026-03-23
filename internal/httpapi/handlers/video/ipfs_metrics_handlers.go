@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	ucipfs "athena/internal/usecase/ipfs_streaming"
+	ucipfs "vidra-core/internal/usecase/ipfs_streaming"
 )
 
 // IPFSMetricsHandlers handles IPFS streaming metrics endpoints

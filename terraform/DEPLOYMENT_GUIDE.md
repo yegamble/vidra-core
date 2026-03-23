@@ -1,6 +1,6 @@
-# Athena Platform - Terraform Deployment Guide
+# Vidra Core Platform - Terraform Deployment Guide
 
-Complete guide for deploying Athena video platform infrastructure using Terraform.
+Complete guide for deploying Vidra Core video platform infrastructure using Terraform.
 
 ## Table of Contents
 
@@ -76,15 +76,15 @@ sudo yum install -y jq      # RHEL/CentOS
 2. **Create Route53 hosted zone**:
 
    ```bash
-   aws route53 create-hosted-zone --name athena.example.com --caller-reference $(date +%s)
+   aws route53 create-hosted-zone --name vidra.example.com --caller-reference $(date +%s)
    ```
 
 3. **Request ACM certificate** in us-east-1 (for CloudFront):
 
    ```bash
    aws acm request-certificate \
-     --domain-name "*.athena.example.com" \
-     --subject-alternative-names "athena.example.com" \
+     --domain-name "*.vidra.example.com" \
+     --subject-alternative-names "vidra.example.com" \
      --validation-method DNS \
      --region us-east-1
    ```
@@ -147,10 +147,10 @@ All resources follow the pattern: `{project}-{environment}-{resource}`
 
 Example:
 
-- VPC: `athena-production-vpc`
-- EKS: `athena-production-eks`
-- RDS: `athena-production-postgres`
-- S3: `athena-production-videos-{account-id}`
+- VPC: `vidra-production-vpc`
+- EKS: `vidra-production-eks`
+- RDS: `vidra-production-postgres`
+- S3: `vidra-production-videos-{account-id}`
 
 ## Cost Estimation
 
@@ -200,8 +200,8 @@ cd terraform/scripts
 
 This creates:
 
-- S3 bucket: `athena-terraform-state-production`
-- DynamoDB table: `athena-terraform-locks`
+- S3 bucket: `vidra-terraform-state-production`
+- DynamoDB table: `vidra-terraform-locks`
 - Backend config file: `environments/production/backend.hcl`
 
 ### Step 2: Configure Variables
@@ -214,15 +214,15 @@ cp terraform.tfvars.example terraform.tfvars
 Edit `terraform.tfvars` with your specific values:
 
 ```hcl
-project_name = "athena"
+project_name = "vidra"
 environment  = "production"
 aws_region   = "us-east-1"
 owner_email  = "devops@yourcompany.com"
 
-domain_name = "athena.yourcompany.com"
+domain_name = "vidra.yourcompany.com"
 
 # Update CloudFront configuration if using custom domain
-cloudfront_aliases = ["cdn.athena.yourcompany.com"]
+cloudfront_aliases = ["cdn.vidra.yourcompany.com"]
 acm_certificate_arn = "arn:aws:acm:us-east-1:ACCOUNT:certificate/CERT-ID"
 
 # Security: Restrict access to your IP ranges
@@ -296,10 +296,10 @@ terraform output
 Important outputs:
 
 ```
-eks_cluster_name = "athena-production-eks"
-rds_endpoint = "athena-production-postgres.xxxxx.us-east-1.rds.amazonaws.com"
-redis_endpoint = "athena-production-redis.xxxxx.cache.amazonaws.com"
-s3_bucket_name = "athena-production-videos-123456789012"
+eks_cluster_name = "vidra-production-eks"
+rds_endpoint = "vidra-production-postgres.xxxxx.us-east-1.rds.amazonaws.com"
+redis_endpoint = "vidra-production-redis.xxxxx.cache.amazonaws.com"
+s3_bucket_name = "vidra-production-videos-123456789012"
 cloudfront_domain_name = "d1234567890abc.cloudfront.net"
 ```
 
@@ -308,7 +308,7 @@ Save these for later use.
 ### Step 7: Configure kubectl
 
 ```bash
-aws eks update-kubeconfig --region us-east-1 --name athena-production-eks
+aws eks update-kubeconfig --region us-east-1 --name vidra-production-eks
 kubectl get nodes
 ```
 
@@ -347,30 +347,30 @@ This script:
 Check pod status:
 
 ```bash
-kubectl get pods -n athena-production
+kubectl get pods -n vidra-production
 ```
 
 Expected output:
 
 ```
 NAME                                    READY   STATUS    RESTARTS   AGE
-athena-api-xxxxx                        1/1     Running   0          2m
-athena-api-yyyyy                        1/1     Running   0          2m
-athena-api-zzzzz                        1/1     Running   0          2m
-athena-encoding-worker-aaaaa            1/1     Running   0          2m
-athena-encoding-worker-bbbbb            1/1     Running   0          2m
+vidra-api-xxxxx                        1/1     Running   0          2m
+vidra-api-yyyyy                        1/1     Running   0          2m
+vidra-api-zzzzz                        1/1     Running   0          2m
+vidra-encoding-worker-aaaaa            1/1     Running   0          2m
+vidra-encoding-worker-bbbbb            1/1     Running   0          2m
 ```
 
 Check services:
 
 ```bash
-kubectl get svc -n athena-production
+kubectl get svc -n vidra-production
 ```
 
 Check ingress:
 
 ```bash
-kubectl get ingress -n athena-production
+kubectl get ingress -n vidra-production
 ```
 
 ## Post-Deployment Configuration
@@ -381,14 +381,14 @@ If using custom domain, create DNS records:
 
 ```bash
 # Get ingress load balancer
-INGRESS_LB=$(kubectl get ingress athena-ingress -n athena-production -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+INGRESS_LB=$(kubectl get ingress vidra-ingress -n vidra-production -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
 # Create Route53 record (example)
 aws route53 change-resource-record-sets --hosted-zone-id ZXXXXX --change-batch '{
   "Changes": [{
     "Action": "CREATE",
     "ResourceRecordSet": {
-      "Name": "athena.yourcompany.com",
+      "Name": "vidra.yourcompany.com",
       "Type": "CNAME",
       "TTL": 300,
       "ResourceRecords": [{"Value": "'"$INGRESS_LB"'"}]
@@ -410,7 +410,7 @@ aws route53 change-resource-record-sets --hosted-zone-id ZXXXXX --change-batch '
   "Changes": [{
     "Action": "CREATE",
     "ResourceRecordSet": {
-      "Name": "cdn.athena.yourcompany.com",
+      "Name": "cdn.vidra.yourcompany.com",
       "Type": "A",
       "AliasTarget": {
         "HostedZoneId": "Z2FDTNDATAQYW2",
@@ -428,10 +428,10 @@ Run database migrations:
 
 ```bash
 # Get a pod name
-POD=$(kubectl get pod -n athena-production -l app=athena,component=api -o jsonpath='{.items[0].metadata.name}')
+POD=$(kubectl get pod -n vidra-production -l app=vidra,component=api -o jsonpath='{.items[0].metadata.name}')
 
 # Run migrations
-kubectl exec -n athena-production $POD -- /app/athena migrate up
+kubectl exec -n vidra-production $POD -- /app/vidra migrate up
 ```
 
 ### 4. Set Up Monitoring
@@ -439,7 +439,7 @@ kubectl exec -n athena-production $POD -- /app/athena migrate up
 Access Grafana:
 
 ```bash
-kubectl port-forward -n athena-production svc/grafana 3000:80
+kubectl port-forward -n vidra-production svc/grafana 3000:80
 ```
 
 Navigate to <http://localhost:3000>
@@ -452,8 +452,8 @@ Navigate to <http://localhost:3000>
 Create SNS topic for alerts:
 
 ```bash
-aws sns create-topic --name athena-production-alerts
-aws sns subscribe --topic-arn arn:aws:sns:us-east-1:ACCOUNT:athena-production-alerts \
+aws sns create-topic --name vidra-production-alerts
+aws sns subscribe --topic-arn arn:aws:sns:us-east-1:ACCOUNT:vidra-production-alerts \
   --protocol email --notification-endpoint devops@yourcompany.com
 ```
 
@@ -461,7 +461,7 @@ Update Terraform variables:
 
 ```hcl
 # In terraform.tfvars
-alarm_actions = ["arn:aws:sns:us-east-1:ACCOUNT:athena-production-alerts"]
+alarm_actions = ["arn:aws:sns:us-east-1:ACCOUNT:vidra-production-alerts"]
 ```
 
 Apply changes:
@@ -551,8 +551,8 @@ terraform apply
 
 ```bash
 aws rds restore-db-instance-from-db-snapshot \
-  --db-instance-identifier athena-production-postgres-recovered \
-  --db-snapshot-identifier athena-production-postgres-snapshot-YYYY-MM-DD
+  --db-instance-identifier vidra-production-postgres-recovered \
+  --db-snapshot-identifier vidra-production-postgres-snapshot-YYYY-MM-DD
 ```
 
 #### Recover EFS from Backup
@@ -601,7 +601,7 @@ terraform apply
 
 ```bash
 # Check node instance profile has correct permissions
-aws iam get-instance-profile --instance-profile-name athena-production-eks-*
+aws iam get-instance-profile --instance-profile-name vidra-production-eks-*
 
 # Check security groups allow node-to-cluster communication
 aws ec2 describe-security-groups --group-ids sg-xxxxx
@@ -621,7 +621,7 @@ aws ec2 describe-security-groups --group-ids sg-rds
 
 # Test connection from pod
 kubectl run -it --rm debug --image=postgres:15 --restart=Never -- bash
-psql -h athena-production-postgres.xxxxx.rds.amazonaws.com -U athenaadmin -d athena
+psql -h vidra-production-postgres.xxxxx.rds.amazonaws.com -U vidraadmin -d vidra
 ```
 
 ### Issue: High Costs
@@ -651,16 +651,16 @@ aws rds describe-db-instances --query 'DBInstances[?DBInstanceStatus==`available
 
 ```bash
 # Check pod status and events
-kubectl describe pod athena-api-xxxxx -n athena-production
+kubectl describe pod vidra-api-xxxxx -n vidra-production
 
 # Check resource usage
-kubectl top pod athena-api-xxxxx -n athena-production
+kubectl top pod vidra-api-xxxxx -n vidra-production
 
 # View logs
-kubectl logs athena-api-xxxxx -n athena-production --previous
+kubectl logs vidra-api-xxxxx -n vidra-production --previous
 
 # Adjust resource limits in deployment
-kubectl edit deployment athena-api -n athena-production
+kubectl edit deployment vidra-api -n vidra-production
 ```
 
 ## Support and Contributing
@@ -679,11 +679,11 @@ For issues or questions:
 
    ```bash
    # Rotate RDS password
-   aws rds modify-db-instance --db-instance-identifier athena-production-postgres \
+   aws rds modify-db-instance --db-instance-identifier vidra-production-postgres \
      --master-user-password NewSecurePassword123!
 
    # Update Kubernetes secret
-   kubectl create secret generic athena-secrets --from-literal=database-url=... \
+   kubectl create secret generic vidra-secrets --from-literal=database-url=... \
      --dry-run=client -o yaml | kubectl apply -f -
    ```
 
@@ -696,8 +696,8 @@ For issues or questions:
 3. **Enable CloudTrail**
 
    ```bash
-   aws cloudtrail create-trail --name athena-production-trail \
-     --s3-bucket-name athena-cloudtrail-logs
+   aws cloudtrail create-trail --name vidra-production-trail \
+     --s3-bucket-name vidra-cloudtrail-logs
    ```
 
 4. **Regular security audits**

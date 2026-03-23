@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/testutil"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -697,7 +697,7 @@ func TestOEmbedIntegration(t *testing.T) {
 		assert.Equal(t, "oEmbed Test Video", resp["title"])
 		assert.Equal(t, float64(640), resp["width"])
 		assert.Equal(t, float64(360), resp["height"])
-		assert.Equal(t, "Athena Video Platform", resp["provider_name"])
+		assert.Equal(t, "Vidra Core Video Platform", resp["provider_name"])
 		assert.Equal(t, baseURL, resp["provider_url"])
 		assert.Contains(t, resp["html"], "<iframe")
 		assert.Contains(t, resp["html"], video.ID)

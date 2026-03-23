@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
 )
 
 // MockBlocklistStatusRepo implements BlocklistStatusRepository.

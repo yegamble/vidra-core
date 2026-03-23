@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-Sprint 8 successfully implemented a comprehensive WebTorrent-compatible P2P video distribution system for the Athena video platform. The implementation includes torrent generation, seeding infrastructure, WebSocket tracker, and complete API integration, enabling browser-based P2P video delivery while maintaining compatibility with traditional BitTorrent clients.
+Sprint 8 successfully implemented a comprehensive WebTorrent-compatible P2P video distribution system for the Vidra Core video platform. The implementation includes torrent generation, seeding infrastructure, WebSocket tracker, and complete API integration, enabling browser-based P2P video delivery while maintaining compatibility with traditional BitTorrent clients.
 
 ### Key Achievements
 
@@ -475,4 +475,4 @@ The implementation is clean, well-architected, and ready for production deployme
 **Code Quality:** ✅ PRODUCTION-READY
 **Documentation:** ✅ COMPREHENSIVE
 
-*Athena PeerTube Backend - P2P Video Distribution System*
+*Vidra Core PeerTube Backend - P2P Video Distribution System*

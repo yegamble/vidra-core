@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/usecase"
+	"vidra-core/internal/usecase"
 
 	"github.com/google/uuid"
 )

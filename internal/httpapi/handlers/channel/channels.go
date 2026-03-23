@@ -1,16 +1,16 @@
 package channel
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
-	ucchannel "athena/internal/usecase/channel"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/usecase"
+	ucchannel "vidra-core/internal/usecase/channel"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

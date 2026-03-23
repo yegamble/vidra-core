@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	"athena/internal/storage"
+	"vidra-core/internal/storage"
 )
 
 func (cfg *Config) ToS3Config() storage.S3Config {

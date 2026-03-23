@@ -12,7 +12,7 @@
 
 ## Executive Summary
 
-The Athena API documentation is **98%+ complete and well-maintained**. The recent ClamAV/virus scanner changes have been properly documented in the upload specifications. The modular OpenAPI structure provides excellent coverage across 18 specification files.
+The Vidra Core API documentation is **98%+ complete and well-maintained**. The recent ClamAV/virus scanner changes have been properly documented in the upload specifications. The modular OpenAPI structure provides excellent coverage across 18 specification files.
 
 ### Overall Health: **EXCELLENT** ✅
 
@@ -28,30 +28,30 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 ### ✅ What's Working Well
 
 1. **Virus Scanning Documentation is Current**
-   - `/root/athena/api/openapi_uploads.yaml` correctly documents ClamAV integration
+   - `/root/vidra/api/openapi_uploads.yaml` correctly documents ClamAV integration
    - Lines 26-29 cover virus scanning behavior, error codes (422, 503)
    - Lines 189-219 document virus detection responses with examples
-   - Postman collection `/root/athena/postman/athena-virus-scanner-tests.postman_collection.json` provides comprehensive E2E tests
+   - Postman collection `/root/vidra/postman/vidra-virus-scanner-tests.postman_collection.json` provides comprehensive E2E tests
 
 2. **Import Endpoints Fully Documented**
-   - `/root/athena/api/openapi_imports.yaml` is complete and accurate
-   - Matches implementation in `/root/athena/internal/httpapi/handlers/video/import_handlers.go`
+   - `/root/vidra/api/openapi_imports.yaml` is complete and accurate
+   - Matches implementation in `/root/vidra/internal/httpapi/handlers/video/import_handlers.go`
    - SSRF protection documented (lines 23-25, 98-102)
    - Rate limiting clearly stated (10 imports/minute)
    - Postman collection fully aligned with OpenAPI spec
 
 3. **Comment System Documentation Complete**
-   - `/root/athena/api/openapi_comments.yaml` covers all 7 endpoints
+   - `/root/vidra/api/openapi_comments.yaml` covers all 7 endpoints
    - Properly documents threading, moderation, and flagging
-   - Response schemas match actual handlers in `/root/athena/internal/httpapi/handlers/social/comments.go`
+   - Response schemas match actual handlers in `/root/vidra/internal/httpapi/handlers/social/comments.go`
 
 4. **Federation/Remote Video Support**
    - `CreateRemoteVideo` interface documented in code comments
-   - Used for ActivityPub federation (line 1682 in `/root/athena/internal/usecase/activitypub/service.go`)
+   - Used for ActivityPub federation (line 1682 in `/root/vidra/internal/usecase/activitypub/service.go`)
    - Internal interface not user-facing, no API documentation needed ✅
 
 5. **Repository Interfaces Accurate**
-   - `CountByVideo` interface in `/root/athena/internal/port/comment.go` (line 18)
+   - `CountByVideo` interface in `/root/vidra/internal/port/comment.go` (line 18)
    - Used internally for statistics, not exposed as standalone endpoint ✅
    - Count data available through GET comments response (total/pagination)
 
@@ -73,7 +73,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 
 - **No action needed** - current design is RESTful and efficient
 - Count available in pagination metadata: `{"data": [...], "pagination": {"total": 42}}`
-- If explicit count endpoint desired, add to `/root/athena/api/openapi_comments.yaml`:
+- If explicit count endpoint desired, add to `/root/vidra/api/openapi_comments.yaml`:
 
 ```yaml
 /api/v1/videos/{videoId}/comments/count:
@@ -109,15 +109,15 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 
 **Finding:**
 
-- Endpoints implemented in `/root/athena/internal/httpapi/routes.go` (lines 106-123)
-- Not documented in `/root/athena/api/openapi_federation.yaml`
+- Endpoints implemented in `/root/vidra/internal/httpapi/routes.go` (lines 106-123)
+- Not documented in `/root/vidra/api/openapi_federation.yaml`
 - Endpoints: `/.well-known/webfinger`, `/.well-known/nodeinfo`, `/.well-known/host-meta`, `/nodeinfo/2.0`
 - User actor endpoints: `/users/{username}`, `/users/{username}/inbox`, `/users/{username}/outbox`, etc.
 
 **Recommendation:**
 
-- Add to `/root/athena/api/openapi_federation.yaml` when federation is actively used
-- Already tracked in `/root/athena/api/README.md` lines 160-173 ✅
+- Add to `/root/vidra/api/openapi_federation.yaml` when federation is actively used
+- Already tracked in `/root/vidra/api/README.md` lines 160-173 ✅
 
 ### 3. User Profile Endpoints (LOW PRIORITY)
 
@@ -126,7 +126,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 **Finding:**
 
 - Some user profile endpoints not in OpenAPI specs
-- Tracked in `/root/athena/api/README.md` lines 135-143
+- Tracked in `/root/vidra/api/README.md` lines 135-143
 
 **Recommendation:**
 
@@ -147,13 +147,13 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 
 **Evidence:**
 
-1. **OpenAPI Specification** (`/root/athena/api/openapi_uploads.yaml`)
+1. **OpenAPI Specification** (`/root/vidra/api/openapi_uploads.yaml`)
    - Lines 26-29: Overview of virus scanning behavior
    - Lines 189-204: 422 error with virus detection example
    - Lines 206-219: 503 error when scanner unavailable
    - Documented error codes: `VIRUS_DETECTED`, `SCANNER_UNAVAILABLE`
 
-2. **Postman Collection** (`/root/athena/postman/athena-virus-scanner-tests.postman_collection.json`)
+2. **Postman Collection** (`/root/vidra/postman/vidra-virus-scanner-tests.postman_collection.json`)
    - Comprehensive test suite with 46,916 bytes of tests
    - Covers edge cases, breaking scenarios, security validation
    - Documents P1 vulnerability fix (network error retry bypass)
@@ -170,7 +170,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 
 **Recent Addition:**
 
-- `/root/athena/docs/development/CI_CD_CONFIGURATION.md` created (commit `55f36e4`)
+- `/root/vidra/docs/development/CI_CD_CONFIGURATION.md` created (commit `55f36e4`)
 
 **Status:** Documentation is comprehensive ✅
 
@@ -180,31 +180,31 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 
 ### Collections Evaluated
 
-1. **athena-auth.postman_collection.json** (138,577 bytes)
+1. **vidra-auth.postman_collection.json** (138,577 bytes)
    - Authentication workflows
    - OAuth2 flows
    - 2FA operations
    - **Status:** ✅ Comprehensive
 
-2. **athena-uploads.postman_collection.json** (26,973 bytes)
+2. **vidra-uploads.postman_collection.json** (26,973 bytes)
    - Chunked upload workflow
    - Legacy upload
    - **Status:** ✅ Complete
 
-3. **athena-imports.postman_collection.json** (24,382 bytes)
+3. **vidra-imports.postman_collection.json** (24,382 bytes)
    - Import creation
    - Status polling
    - SSRF protection tests
    - **Status:** ✅ Complete and aligned with OpenAPI
 
-4. **athena-virus-scanner-tests.postman_collection.json** (46,916 bytes)
+4. **vidra-virus-scanner-tests.postman_collection.json** (46,916 bytes)
    - Edge cases (boundary conditions, 10MB files)
    - Breaking scenarios (network failures, race conditions)
    - Security validation (EICAR, nested archives, polyglots)
    - Performance testing
    - **Status:** ✅ Excellent coverage
 
-5. **athena-analytics.postman_collection.json** (29,187 bytes)
+5. **vidra-analytics.postman_collection.json** (29,187 bytes)
    - View tracking
    - Analytics retrieval
    - **Status:** ✅ Complete
@@ -229,24 +229,24 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 
 #### VideoRepository.CreateRemoteVideo
 
-- **Location:** `/root/athena/internal/port/video.go` line 22
-- **Implementation:** `/root/athena/internal/repository/video_repository.go` line 779
+- **Location:** `/root/vidra/internal/port/video.go` line 22
+- **Implementation:** `/root/vidra/internal/repository/video_repository.go` line 779
 - **Usage:** ActivityPub federation (internal, not user-facing API)
 - **Documentation Status:** ✅ Internal interface, properly commented in code
 - **API Exposure:** Not exposed as REST endpoint (by design)
 
 #### CommentRepository.CountByVideo
 
-- **Location:** `/root/athena/internal/port/comment.go` line 18
-- **Implementation:** `/root/athena/internal/repository/comment_repository.go` line 215
+- **Location:** `/root/vidra/internal/port/comment.go` line 18
+- **Implementation:** `/root/vidra/internal/repository/comment_repository.go` line 215
 - **Usage:** Internal for pagination, not standalone endpoint
 - **Documentation Status:** ✅ Count available via GET /api/v1/videos/{id}/comments pagination
 - **API Exposure:** Data included in pagination response, not separate endpoint
 
 #### CaptionRepository.CountByVideoID
 
-- **Location:** `/root/athena/internal/port/caption.go` line 19
-- **Implementation:** `/root/athena/internal/repository/caption_repository.go` line 194
+- **Location:** `/root/vidra/internal/port/caption.go` line 19
+- **Implementation:** `/root/vidra/internal/repository/caption_repository.go` line 194
 - **Usage:** Internal statistics
 - **Documentation Status:** ✅ Internal utility method
 
@@ -260,9 +260,9 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 
 **Files Analyzed:**
 
-- `/root/athena/internal/usecase/activitypub/service_test.go`
-- `/root/athena/internal/httpapi/handlers/social/comments_integration_test.go`
-- `/root/athena/internal/httpapi/handlers/video/import_integration_test.go`
+- `/root/vidra/internal/usecase/activitypub/service_test.go`
+- `/root/vidra/internal/httpapi/handlers/social/comments_integration_test.go`
+- `/root/vidra/internal/httpapi/handlers/video/import_integration_test.go`
 
 **Finding:** Test expectations align with documented API behavior ✅
 
@@ -276,7 +276,7 @@ The Athena API documentation is **98%+ complete and well-maintained**. The recen
 
 ## E2E Test Expectations vs. Documentation
 
-**E2E Test Location:** `/root/athena/tests/e2e/`
+**E2E Test Location:** `/root/vidra/tests/e2e/`
 
 **Postman E2E Collections:**
 
@@ -350,7 +350,7 @@ No critical documentation inconsistencies found. Current state is excellent.
 
 ## Documentation Consistency Checklist
 
-- [x] OpenAPI specs match route definitions in `/root/athena/internal/httpapi/routes.go`
+- [x] OpenAPI specs match route definitions in `/root/vidra/internal/httpapi/routes.go`
 - [x] Request/response schemas match handler implementations
 - [x] Postman collections align with OpenAPI specs
 - [x] Security features (virus scan, SSRF, rate limit) documented
@@ -366,7 +366,7 @@ No critical documentation inconsistencies found. Current state is excellent.
 
 ## Conclusion
 
-The Athena API documentation is in **excellent condition** with 98%+ coverage and strong consistency between code and documentation. The recent ClamAV/virus scanner changes are properly documented, and no critical gaps exist.
+The Vidra Core API documentation is in **excellent condition** with 98%+ coverage and strong consistency between code and documentation. The recent ClamAV/virus scanner changes are properly documented, and no critical gaps exist.
 
 The minor gaps identified (ActivityPub endpoints, user profiles) are already tracked in the API README and do not affect current functionality.
 
@@ -378,49 +378,49 @@ The minor gaps identified (ActivityPub endpoints, user profiles) are already tra
 
 ### OpenAPI Specifications (18 files)
 
-- /root/athena/api/openapi.yaml
-- /root/athena/api/openapi_auth_2fa.yaml
-- /root/athena/api/openapi_uploads.yaml
-- /root/athena/api/openapi_imports.yaml
-- /root/athena/api/openapi_comments.yaml
-- /root/athena/api/openapi_federation.yaml
-- /root/athena/api/openapi_analytics.yaml
-- /root/athena/api/openapi_channels.yaml
-- /root/athena/api/openapi_captions.yaml
-- /root/athena/api/openapi_chat.yaml
-- /root/athena/api/openapi_livestreaming.yaml
-- /root/athena/api/openapi_moderation.yaml
-- /root/athena/api/openapi_notifications.yaml
-- /root/athena/api/openapi_payments.yaml
-- /root/athena/api/openapi_plugins.yaml
-- /root/athena/api/openapi_ratings_playlists.yaml
-- /root/athena/api/openapi_redundancy.yaml
-- /root/athena/api/openapi_federation_hardening.yaml
+- /root/vidra/api/openapi.yaml
+- /root/vidra/api/openapi_auth_2fa.yaml
+- /root/vidra/api/openapi_uploads.yaml
+- /root/vidra/api/openapi_imports.yaml
+- /root/vidra/api/openapi_comments.yaml
+- /root/vidra/api/openapi_federation.yaml
+- /root/vidra/api/openapi_analytics.yaml
+- /root/vidra/api/openapi_channels.yaml
+- /root/vidra/api/openapi_captions.yaml
+- /root/vidra/api/openapi_chat.yaml
+- /root/vidra/api/openapi_livestreaming.yaml
+- /root/vidra/api/openapi_moderation.yaml
+- /root/vidra/api/openapi_notifications.yaml
+- /root/vidra/api/openapi_payments.yaml
+- /root/vidra/api/openapi_plugins.yaml
+- /root/vidra/api/openapi_ratings_playlists.yaml
+- /root/vidra/api/openapi_redundancy.yaml
+- /root/vidra/api/openapi_federation_hardening.yaml
 
 ### Postman Collections (5 files)
 
-- /root/athena/postman/athena-auth.postman_collection.json
-- /root/athena/postman/athena-uploads.postman_collection.json
-- /root/athena/postman/athena-imports.postman_collection.json
-- /root/athena/postman/athena-virus-scanner-tests.postman_collection.json
-- /root/athena/postman/athena-analytics.postman_collection.json
+- /root/vidra/postman/vidra-auth.postman_collection.json
+- /root/vidra/postman/vidra-uploads.postman_collection.json
+- /root/vidra/postman/vidra-imports.postman_collection.json
+- /root/vidra/postman/vidra-virus-scanner-tests.postman_collection.json
+- /root/vidra/postman/vidra-analytics.postman_collection.json
 
 ### Implementation Files
 
-- /root/athena/internal/httpapi/routes.go
-- /root/athena/internal/httpapi/handlers/social/comments.go
-- /root/athena/internal/httpapi/handlers/video/import_handlers.go
-- /root/athena/internal/port/comment.go
-- /root/athena/internal/port/video.go
-- /root/athena/internal/repository/comment_repository.go
-- /root/athena/internal/repository/video_repository.go
-- /root/athena/internal/usecase/activitypub/service.go
+- /root/vidra/internal/httpapi/routes.go
+- /root/vidra/internal/httpapi/handlers/social/comments.go
+- /root/vidra/internal/httpapi/handlers/video/import_handlers.go
+- /root/vidra/internal/port/comment.go
+- /root/vidra/internal/port/video.go
+- /root/vidra/internal/repository/comment_repository.go
+- /root/vidra/internal/repository/video_repository.go
+- /root/vidra/internal/usecase/activitypub/service.go
 
 ### Documentation Files
 
-- /root/athena/api/README.md
-- /root/athena/docs/architecture/CLAUDE.md
-- /root/athena/docs/sprints/SPRINT13_COMPLETE.md
+- /root/vidra/api/README.md
+- /root/vidra/docs/architecture/CLAUDE.md
+- /root/vidra/docs/sprints/SPRINT13_COMPLETE.md
 
 ---
 

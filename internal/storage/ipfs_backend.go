@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"athena/internal/ipfs"
+	"vidra-core/internal/ipfs"
 )
 
 type IPFSBackend struct {

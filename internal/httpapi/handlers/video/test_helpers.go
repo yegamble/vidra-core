@@ -12,9 +12,9 @@ import (
 	chi "github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/mock"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	importuc "athena/internal/usecase/import"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	importuc "vidra-core/internal/usecase/import"
 )
 
 // Response is an alias for shared.Response for tests

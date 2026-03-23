@@ -1,7 +1,7 @@
 package livestream
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 )
 
 // Response is an alias for shared.Response for tests

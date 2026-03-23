@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Video Analytics & Views
+  title: Vidra Core API - Video Analytics & Views
   description: |
     Endpoints for tracking video views, analytics, and discovering trending content.
 

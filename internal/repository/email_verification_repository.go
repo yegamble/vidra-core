@@ -7,8 +7,8 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"athena/internal/domain"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/usecase"
 )
 
 // EmailVerificationRepository implements the email verification repository interface

@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 -- Add support for federated remote videos
--- This allows Athena to store references to videos from other PeerTube/ActivityPub instances
+-- This allows Vidra Core to store references to videos from other PeerTube/ActivityPub instances
 
 -- Add columns to videos table for remote video support
 ALTER TABLE videos

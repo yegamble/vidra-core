@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/ipfs"
+	"vidra-core/internal/ipfs"
 )
 
 func TestNewIPFSBackend(t *testing.T) {

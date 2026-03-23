@@ -53,8 +53,8 @@ temp/
 *.log
 
 # Build artifacts
-athena-server
-athena
+vidra-server
+vidra
 
 # Documentation build
 docs/_build/

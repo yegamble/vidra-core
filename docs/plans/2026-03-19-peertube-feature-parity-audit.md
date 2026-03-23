@@ -9,7 +9,7 @@ Type: Feature
 
 ## Summary
 
-**Goal:** Close critical gaps in Athena's video pipeline (upload → encode → store → serve) vs PeerTube, ensuring videos work end-to-end across local, S3, IPFS, and ATProto storage backends. Fix subtitle generation for remote storage.
+**Goal:** Close critical gaps in Vidra Core's video pipeline (upload → encode → store → serve) vs PeerTube, ensuring videos work end-to-end across local, S3, IPFS, and ATProto storage backends. Fix subtitle generation for remote storage.
 
 **Architecture:** The encoding service currently writes HLS segments locally and optionally uploads to IPFS. S3 is only available via a separate post-hoc migration service. Stream handlers only read `OutputPaths` (local filesystem) and fall back to serving mock/fake playlists. This plan adds direct S3 upload to the encoding pipeline, fixes the stream handler to serve from S3URLs, removes the mock playlist fallback, and fixes caption generation for non-local videos.
 
@@ -30,7 +30,7 @@ Type: Feature
 
 ### Out of Scope
 
-- PeerTube resumable upload protocol (Athena's chunked upload is functionally equivalent)
+- PeerTube resumable upload protocol (Vidra Core's chunked upload is functionally equivalent)
 - Video studio editing (cut/intro/outro)
 - Per-resolution file deletion endpoints (`DELETE /videos/{id}/files/{fileId}`)
 - ATProto video blob upload (current external-embed approach is valid)
@@ -383,7 +383,7 @@ None — all design decisions resolved.
 
 ### Deferred Ideas
 
-- **Resumable upload protocol** — PeerTube supports `tus` protocol for resumable uploads; Athena's chunked upload is functionally similar but not protocol-compatible
+- **Resumable upload protocol** — PeerTube supports `tus` protocol for resumable uploads; Vidra Core's chunked upload is functionally similar but not protocol-compatible
 - **Per-resolution file management** — PeerTube lets admins delete specific resolution files; could save storage
 - **Video studio editing** — PeerTube has cut/intro/outro editing via the studio API
 - **ATProto video blob upload** — Currently uses external embed; could upload actual video bytes to Bluesky for native playback

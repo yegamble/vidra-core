@@ -6,9 +6,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: smoke-tests
-  namespace: athena
+  namespace: vidra
   labels:
-    app: athena
+    app: vidra
     component: testing
 spec:
   backoffLimit: 1
@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       labels:
-        app: athena
+        app: vidra
         component: testing
     spec:
       restartPolicy: Never
@@ -29,7 +29,7 @@ spec:
         - |
           set -e
 
-          BASE_URL="${BASE_URL:-http://athena-api-green}"
+          BASE_URL="${BASE_URL:-http://vidra-api-green}"
           echo "Running smoke tests against $BASE_URL"
 
           # Test counter
@@ -78,7 +78,7 @@ spec:
 
           # Test 6: Metrics endpoint
           run_test "Prometheus metrics endpoint" \
-            "curl -f -s $BASE_URL:9090/metrics | grep -q 'athena_'"
+            "curl -f -s $BASE_URL:9090/metrics | grep -q 'vidra_'"
 
           # Test 7: CORS headers
           run_test "CORS headers present" \
@@ -115,6 +115,6 @@ spec:
           fi
         env:
         - name: BASE_URL
-          value: "http://athena-api-green"
+          value: "http://vidra-api-green"
         - name: EXPECT_TLS
           value: "false"

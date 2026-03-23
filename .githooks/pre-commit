@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 #
-# Git pre-commit hook for Athena project
+# Git pre-commit hook for Vidra Core project
 #
 # - Enforces gofmt on staged Go files
 # - Re-stages any files that were reformatted

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"athena/internal/domain"
-	"athena/internal/port"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

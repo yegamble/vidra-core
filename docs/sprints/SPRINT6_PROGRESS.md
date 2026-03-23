@@ -612,4 +612,4 @@ Focus on observability:
 **Overall Sprint 6 Status**: ✅ 100% Complete!
 
 *Last Updated: 2025-10-20*
-*Athena PeerTube Backend - Video Platform in Go*
+*Vidra Core PeerTube Backend - Video Platform in Go*

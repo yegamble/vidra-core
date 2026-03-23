@@ -1,7 +1,7 @@
 package usecase
 
 import (
-	"athena/internal/port"
+	"vidra-core/internal/port"
 )
 
 type UserRepository = port.UserRepository

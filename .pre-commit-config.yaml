@@ -1,4 +1,4 @@
-# Pre-commit hooks configuration for Athena project
+# Pre-commit hooks configuration for Vidra Core project
 # See https://pre-commit.com for more information
 
 default_stages: [commit]
@@ -45,7 +45,7 @@ repos:
         name: Go Vet
       - id: go-imports
         name: Go Imports
-        args: [-w, -local, github.com/yosefgamble/athena]
+        args: [-w, -local, github.com/yosefgamble/vidra-core]
       - id: go-cyclo
         name: Go Cyclomatic Complexity
         args: [-over, "15"]

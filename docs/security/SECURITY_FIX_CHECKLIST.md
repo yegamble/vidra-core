@@ -90,7 +90,7 @@
   CLAMAV_FALLBACK_MODE=strict  # CRITICAL: Must be 'strict' in production
   CLAMAV_AUTO_QUARANTINE=true
   QUARANTINE_DIR=/var/quarantine
-  CLAMAV_AUDIT_LOG=/var/log/athena/virus_scan_audit.log
+  CLAMAV_AUDIT_LOG=/var/log/vidra/virus_scan_audit.log
   QUARANTINE_RETENTION_DAYS=30
   ```
 
@@ -177,7 +177,7 @@
 
 ```bash
 # Backup current database
-pg_dump -h localhost -U athena -d athena > backup_pre_security_fix_$(date +%Y%m%d).sql
+pg_dump -h localhost -U vidra -d vidra > backup_pre_security_fix_$(date +%Y%m%d).sql
 
 # Tag current production version
 git tag production-pre-security-fix-$(date +%Y%m%d)
@@ -188,8 +188,8 @@ cat > rollback.sh <<EOF
 #!/bin/bash
 set -e
 echo "Rolling back to previous version..."
-kubectl set image deployment/athena-api athena-api=athena-api:production-pre-security-fix
-kubectl rollout status deployment/athena-api
+kubectl set image deployment/vidra-api vidra-api=vidra-api:production-pre-security-fix
+kubectl rollout status deployment/vidra-api
 echo "Rollback complete"
 EOF
 chmod +x rollback.sh
@@ -199,16 +199,16 @@ chmod +x rollback.sh
 
 ```bash
 # Build new image
-docker build -t athena-api:security-fix-v1 .
+docker build -t vidra-api:security-fix-v1 .
 
 # Push to registry
-docker push registry.example.com/athena-api:security-fix-v1
+docker push registry.example.com/vidra-api:security-fix-v1
 
 # Deploy to staging
-kubectl set image deployment/athena-api athena-api=registry.example.com/athena-api:security-fix-v1 -n staging
+kubectl set image deployment/vidra-api vidra-api=registry.example.com/vidra-api:security-fix-v1 -n staging
 
 # Wait for rollout
-kubectl rollout status deployment/athena-api -n staging
+kubectl rollout status deployment/vidra-api -n staging
 ```
 
 ### 3. Staging Validation
@@ -226,7 +226,7 @@ curl -X POST https://staging.example.com/api/v1/uploads \
 # Expected: 400 Bad Request, "malware detected"
 
 # Check virus_scan_log table
-psql -h staging-db -U athena -c "SELECT * FROM virus_scan_log ORDER BY scanned_at DESC LIMIT 5;"
+psql -h staging-db -U vidra -c "SELECT * FROM virus_scan_log ORDER BY scanned_at DESC LIMIT 5;"
 
 # Verify metrics endpoint
 curl https://staging.example.com/metrics | grep virus_scan
@@ -236,19 +236,19 @@ curl https://staging.example.com/metrics | grep virus_scan
 
 ```bash
 # Enable maintenance mode (optional)
-kubectl scale deployment/athena-api --replicas=0 -n production
+kubectl scale deployment/vidra-api --replicas=0 -n production
 
 # Apply database migration
 make migrate-up
 
 # Deploy new version
-kubectl set image deployment/athena-api athena-api=registry.example.com/athena-api:security-fix-v1 -n production
+kubectl set image deployment/vidra-api vidra-api=registry.example.com/vidra-api:security-fix-v1 -n production
 
 # Scale up
-kubectl scale deployment/athena-api --replicas=3 -n production
+kubectl scale deployment/vidra-api --replicas=3 -n production
 
 # Monitor rollout
-kubectl rollout status deployment/athena-api -n production
+kubectl rollout status deployment/vidra-api -n production
 
 # Disable maintenance mode
 # (or wait for health checks to pass)
@@ -262,7 +262,7 @@ curl https://api.example.com/health
 # Expected: {"status": "ok"}
 
 # Check ClamAV connectivity
-kubectl exec -it deployment/athena-api -n production -- nc -zv clamav 3310
+kubectl exec -it deployment/vidra-api -n production -- nc -zv clamav 3310
 # Expected: Connection successful
 
 # Upload test file
@@ -272,7 +272,7 @@ curl -X POST https://api.example.com/api/v1/uploads \
 # Expected: 200 OK
 
 # Check logs for errors
-kubectl logs -f deployment/athena-api -n production | grep -i error
+kubectl logs -f deployment/vidra-api -n production | grep -i error
 
 # Monitor metrics
 curl https://api.example.com/metrics | grep virus_scan_duration_seconds
@@ -314,10 +314,10 @@ Immediately rollback if:
 ./rollback.sh
 
 # Or manual rollback
-kubectl rollout undo deployment/athena-api -n production
+kubectl rollout undo deployment/vidra-api -n production
 
 # Verify rollback
-kubectl rollout status deployment/athena-api -n production
+kubectl rollout status deployment/vidra-api -n production
 
 # Check service health
 curl https://api.example.com/health

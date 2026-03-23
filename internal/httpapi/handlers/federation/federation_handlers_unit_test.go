@@ -13,10 +13,10 @@ import (
 
 	"database/sql"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/usecase"
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"

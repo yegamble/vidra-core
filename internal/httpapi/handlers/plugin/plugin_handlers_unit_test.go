@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	coreplugin "athena/internal/plugin"
+	coreplugin "vidra-core/internal/plugin"
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"

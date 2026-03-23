@@ -20,7 +20,7 @@ if [ $# -ne 1 ]; then
 fi
 
 ENVIRONMENT=$1
-PROJECT_NAME="athena"
+PROJECT_NAME="vidra"
 
 echo -e "${GREEN}=== Kubernetes Deployment ===${NC}"
 echo "Environment: $ENVIRONMENT"
@@ -62,7 +62,7 @@ aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
 echo -e "${GREEN}✓ kubectl configured${NC}"
 
 # Create namespace if it doesn't exist
-NAMESPACE="athena-${ENVIRONMENT}"
+NAMESPACE="vidra-${ENVIRONMENT}"
 echo -e "${YELLOW}Creating namespace: $NAMESPACE${NC}"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 echo -e "${GREEN}✓ Namespace ready${NC}"
@@ -94,7 +94,7 @@ fi
 JWT_SECRET=$(openssl rand -base64 32)
 
 # Create Kubernetes secret
-kubectl create secret generic athena-secrets \
+kubectl create secret generic vidra-secrets \
     --from-literal=database-url="$DATABASE_URL" \
     --from-literal=redis-url="$REDIS_URL" \
     --from-literal=jwt-secret="$JWT_SECRET" \
@@ -109,7 +109,7 @@ cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: athena-api
+  name: vidra-api
   namespace: $NAMESPACE
   annotations:
     eks.amazonaws.com/role-arn: $S3_ROLE_ARN
@@ -117,7 +117,7 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: athena-secrets
+  name: vidra-secrets
   namespace: $NAMESPACE
   annotations:
     eks.amazonaws.com/role-arn: $SECRETS_ROLE_ARN
@@ -145,7 +145,7 @@ cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: athena-storage-pv
+  name: vidra-storage-pv
 spec:
   capacity:
     storage: 500Gi
@@ -161,7 +161,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: athena-storage
+  name: vidra-storage
   namespace: $NAMESPACE
 spec:
   accessModes:
@@ -170,12 +170,12 @@ spec:
   resources:
     requests:
       storage: 500Gi
-  volumeName: athena-storage-pv
+  volumeName: vidra-storage-pv
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: athena-quarantine-pv
+  name: vidra-quarantine-pv
 spec:
   capacity:
     storage: 10Gi
@@ -191,7 +191,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: athena-quarantine
+  name: vidra-quarantine
   namespace: $NAMESPACE
 spec:
   accessModes:
@@ -200,7 +200,7 @@ spec:
   resources:
     requests:
       storage: 10Gi
-  volumeName: athena-quarantine-pv
+  volumeName: vidra-quarantine-pv
 EOF
 echo -e "${GREEN}✓ PersistentVolumes created${NC}"
 
@@ -210,10 +210,10 @@ cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: athena-config
+  name: vidra-config
   namespace: $NAMESPACE
   labels:
-    app: athena
+    app: vidra
 data:
   # S3 Configuration
   s3-bucket: "$S3_BUCKET"
@@ -293,6 +293,6 @@ echo "Namespace: $NAMESPACE"
 echo ""
 echo "Next steps:"
 echo "1. Check pod status: kubectl get pods -n $NAMESPACE"
-echo "2. View logs: kubectl logs -f deployment/athena-api -n $NAMESPACE"
+echo "2. View logs: kubectl logs -f deployment/vidra-api -n $NAMESPACE"
 echo "3. Get ingress: kubectl get ingress -n $NAMESPACE"
 echo ""

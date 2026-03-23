@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document outlines the comprehensive E2EE (End-to-End Encryption) implementation for the Athena messaging platform, detailing the security model, cryptographic algorithms, key management, and penetration testing guidelines for security validation.
+This document outlines the comprehensive E2EE (End-to-End Encryption) implementation for the Vidra Core messaging platform, detailing the security model, cryptographic algorithms, key management, and penetration testing guidelines for security validation.
 
 ## Security Architecture Overview
 
@@ -155,7 +155,7 @@ messages:
 docker compose --profile test up -d postgres-test redis-test ipfs-test clamav-test app-test
 
 # Initialize test database with E2EE schema
-DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+DATABASE_URL="postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable" \
   make migrate
 
 # Generate test certificates and keys
@@ -316,7 +316,7 @@ def test_timing_attacks():
 # Test for cryptographic material in memory dumps
 valgrind --tool=memcheck --leak-check=full \
   --track-origins=yes --show-leak-kinds=all \
-  ./athena-server &
+  ./vidra-server &
 
 # Perform E2EE operations
 curl -X POST http://localhost:8080/api/v1/e2ee/setup -d '{"password":"test123"}'
@@ -623,7 +623,7 @@ done
 
 ```javascript
 // Run from different origin (e.g., http://evil.com)
-const ws = new WebSocket('wss://athena.example.com/api/v1/streams/STREAM_ID/chat');
+const ws = new WebSocket('wss://vidra.example.com/api/v1/streams/STREAM_ID/chat');
 ws.onopen = () => console.log('VULNERABLE: Connection allowed from wrong origin');
 ws.onerror = () => console.log('SECURE: Origin validation working');
 ```

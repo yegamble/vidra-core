@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/config"
-	ucipfs "athena/internal/usecase/ipfs_streaming"
+	"vidra-core/internal/config"
+	ucipfs "vidra-core/internal/usecase/ipfs_streaming"
 )
 
 func TestIPFSMetricsHandlers_UnitBranches(t *testing.T) {

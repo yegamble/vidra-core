@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 #
-# validate-all.sh - Portable validation script for Athena project
+# validate-all.sh - Portable validation script for Vidra Core project
 #
 # This script runs all code quality validations in a portable manner.
 # It works across macOS, Linux, and Windows (WSL/Git Bash/MSYS2).
@@ -47,7 +47,7 @@ SKIPPED_CHECKS=0
 FAILURES=()
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}Athena Validation Suite${NC}"
+echo -e "${BLUE}Vidra Core Validation Suite${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 echo "Project root: $PROJECT_ROOT"
@@ -266,7 +266,7 @@ if [ "${CI:-false}" = "true" ]; then
 fi
 
 # Exclude integration tests and repository tests (which need DB)
-PKGS=$(go list ./... | grep -v "/internal/repository$" | grep -v "^athena/tests/integration$" || echo "")
+PKGS=$(go list ./... | grep -v "/internal/repository$" | grep -v "^vidra/tests/integration$" || echo "")
 
 if [ -z "$PKGS" ]; then
     print_warning "No test packages found"
@@ -328,12 +328,12 @@ print_header "Build Verification"
 
 echo "Building server binary..."
 
-if go build -o /tmp/athena-server-validate ./cmd/server 2>&1; then
+if go build -o /tmp/vidra-server-validate ./cmd/server 2>&1; then
     print_success "Build successful"
     record_pass
 
     # Clean up
-    rm -f /tmp/athena-server-validate
+    rm -f /tmp/vidra-server-validate
 else
     print_failure "Build failed"
     record_fail "build errors"

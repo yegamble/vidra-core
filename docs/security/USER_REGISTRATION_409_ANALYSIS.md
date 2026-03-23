@@ -17,7 +17,7 @@ E2E tests are experiencing 409 Conflict errors during user registration due to *
 
 ### 1. Database Schema Constraint
 
-**File**: `/home/user/athena/migrations/002_create_users_table.sql`
+**File**: `/home/user/vidra/migrations/002_create_users_table.sql`
 
 ```sql
 CREATE TABLE users (
@@ -36,7 +36,7 @@ CREATE TABLE users (
 
 ### 2. E2E Test Username Generation
 
-**File**: `/home/user/athena/tests/e2e/scenarios/video_workflow_test.go`
+**File**: `/home/user/vidra/tests/e2e/scenarios/video_workflow_test.go`
 
 ```go
 // Line 38
@@ -95,7 +95,7 @@ Test 2: testuser_TestVideoUploadWorkflow_17321572568930974
 
 **Handler Chain:**
 
-1. Route: `/home/user/athena/internal/httpapi/routes.go:76`
+1. Route: `/home/user/vidra/internal/httpapi/routes.go:76`
 
    ```go
    r.With(strictAuthLimiter.Limit).Post("/auth/register", server.Register)
@@ -103,13 +103,13 @@ Test 2: testuser_TestVideoUploadWorkflow_17321572568930974
 
    - Rate limit: **5 requests per 60 seconds**
 
-2. Handler: `/home/user/athena/internal/httpapi/handlers.go:187`
+2. Handler: `/home/user/vidra/internal/httpapi/handlers.go:187`
 
    ```go
    func (s *Server) Register(w http.ResponseWriter, r *http.Request)
    ```
 
-3. Repository: `/home/user/athena/internal/repository/user_repository.go:27`
+3. Repository: `/home/user/vidra/internal/repository/user_repository.go:27`
 
    ```go
    func (r *userRepository) Create(ctx context.Context, user *domain.User, passwordHash string)
@@ -494,7 +494,7 @@ func TestRegister_TruncationCollision(t *testing.T) {
 
 ## Postman Test Collection
 
-See: `/home/user/athena/postman/athena-registration-edge-cases.postman_collection.json`
+See: `/home/user/vidra/postman/vidra-registration-edge-cases.postman_collection.json`
 
 **Test Scenarios:**
 
@@ -515,7 +515,7 @@ See: `/home/user/athena/postman/athena-registration-edge-cases.postman_collectio
 
 ### GitHub Actions Workflow
 
-**File**: `/home/user/athena/.github/workflows/e2e-tests.yml`
+**File**: `/home/user/vidra/.github/workflows/e2e-tests.yml`
 
 **Current Behavior:**
 

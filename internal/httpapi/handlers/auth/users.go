@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/usecase"
 )
 
 // GetCurrentUserHandler returns the current user using the repository

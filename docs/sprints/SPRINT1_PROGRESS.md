@@ -206,7 +206,7 @@ Run migration:
 
 ```bash
 atlas migrate apply --dir "file://migrations" \
-  --url "postgres://user:pass@localhost:5432/athena?sslmode=disable"
+  --url "postgres://user:pass@localhost:5432/vidra?sslmode=disable"
 ```
 
 Or with make:

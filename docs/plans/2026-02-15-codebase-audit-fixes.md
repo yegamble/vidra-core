@@ -58,7 +58,7 @@ Worktree: No
 ## Context for Implementer
 
 - **Patterns to follow:** File splits must preserve all existing function signatures. No behavioral changes.
-- **Conventions:** All Go files use `gofmt` formatting. Tests use table-driven pattern with `testify`. Postman collections follow the structure in existing `postman/athena-auth.postman_collection.json`.
+- **Conventions:** All Go files use `gofmt` formatting. Tests use table-driven pattern with `testify`. Postman collections follow the structure in existing `postman/vidra-auth.postman_collection.json`.
 - **Key files:**
   - `internal/httpapi/routes.go` — all route definitions, needed for Postman collections
   - `internal/usecase/activitypub/service.go:40` — `NewService` constructor, anchor for split
@@ -389,11 +389,11 @@ Worktree: No
 
 **Files:**
 
-- Create: `postman/athena-videos.postman_collection.json`
+- Create: `postman/vidra-videos.postman_collection.json`
 
 **Key Decisions / Notes:**
 
-- Follow structure from existing `postman/athena-auth.postman_collection.json`
+- Follow structure from existing `postman/vidra-auth.postman_collection.json`
 - Cover these endpoints:
   - `GET /api/v1/videos` — list (with pagination params)
   - `GET /api/v1/videos/search` — search (with query params)
@@ -413,8 +413,8 @@ Worktree: No
   - Search with empty query
 - Use environment variables for `{{baseUrl}}` and `{{authToken}}`
 - Include pre-request scripts to set auth token where needed
-- Before adding edge case requests, grep existing Postman collections for similar tests to avoid duplication with `athena-edge-cases-security.postman_collection.json`
-- Cross-reference ALL endpoint URLs and auth patterns against `routes.go` and existing `athena-auth.postman_collection.json`
+- Before adding edge case requests, grep existing Postman collections for similar tests to avoid duplication with `vidra-edge-cases-security.postman_collection.json`
+- Cross-reference ALL endpoint URLs and auth patterns against `routes.go` and existing `vidra-auth.postman_collection.json`
 
 **Definition of Done:**
 
@@ -425,8 +425,8 @@ Worktree: No
 
 **Verify:**
 
-- `python3 -m json.tool postman/athena-videos.postman_collection.json > /dev/null` — valid JSON
-- `grep -c '"request"' postman/athena-videos.postman_collection.json` — 15+ requests
+- `python3 -m json.tool postman/vidra-videos.postman_collection.json > /dev/null` — valid JSON
+- `grep -c '"request"' postman/vidra-videos.postman_collection.json` — 15+ requests
 
 ---
 
@@ -438,7 +438,7 @@ Worktree: No
 
 **Files:**
 
-- Create: `postman/athena-social.postman_collection.json`
+- Create: `postman/vidra-social.postman_collection.json`
 
 **Key Decisions / Notes:**
 
@@ -477,8 +477,8 @@ Worktree: No
 
 **Verify:**
 
-- `python3 -m json.tool postman/athena-social.postman_collection.json > /dev/null` — valid JSON
-- `grep -c '"request"' postman/athena-social.postman_collection.json` — 20+ requests
+- `python3 -m json.tool postman/vidra-social.postman_collection.json > /dev/null` — valid JSON
+- `grep -c '"request"' postman/vidra-social.postman_collection.json` — 20+ requests
 
 ## Runtime Environment
 

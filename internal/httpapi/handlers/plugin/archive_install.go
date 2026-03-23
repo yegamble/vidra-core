@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"athena/internal/domain"
-	coreplugin "athena/internal/plugin"
-	"athena/internal/repository"
+	"vidra-core/internal/domain"
+	coreplugin "vidra-core/internal/plugin"
+	"vidra-core/internal/repository"
 
 	"github.com/google/uuid"
 )

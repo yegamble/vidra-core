@@ -1,4 +1,4 @@
-# Athena Project Audit & Improvement Plan v2
+# Vidra Core Project Audit & Improvement Plan v2
 
 **Date**: 2026-02-10
 **Status**: Active (Phase 1 coverage objectives complete)
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This audit found the Athena codebase is **significantly more complete than documentation suggests**. The code has 31 implemented subsystems, but `docs/architecture.md` only documents ~17 and marks 3 completed features as "planned." The most critical finding is a **61.2 percentage point gap** between claimed test coverage (85%+) and actual coverage (23.8%). This plan is prioritized by risk and sequenced by dependencies.
+This audit found the Vidra Core codebase is **significantly more complete than documentation suggests**. The code has 31 implemented subsystems, but `docs/architecture.md` only documents ~17 and marks 3 completed features as "planned." The most critical finding is a **61.2 percentage point gap** between claimed test coverage (85%+) and actual coverage (23.8%). This plan is prioritized by risk and sequenced by dependencies.
 
 ### Key Metrics (Actual vs. Documented)
 
@@ -374,7 +374,7 @@ Note (2026-02-11): consolidated root compose definitions into profile-based `/do
 - updated operational references in `Makefile`, GitHub workflows, and helper scripts to use `docker compose --profile test|ci ...`
 Note (2026-02-11): runtime verification of consolidated compose setup:
 - `docker compose config`, `docker compose --profile test config`, and `docker compose --profile ci config` all succeed.
-- `COMPOSE_PROJECT_NAME=athena-test docker compose --profile test up -d postgres-test redis-test ipfs-test clamav-test app-test` starts expected services; `app-test` is healthy.
+- `COMPOSE_PROJECT_NAME=vidra-test docker compose --profile test up -d postgres-test redis-test ipfs-test clamav-test app-test` starts expected services; `app-test` is healthy.
 - Full `make test-local` now reaches integration execution with Docker-backed services (previously daemon-blocked), but still has existing test-suite blockers.
 - Targeted reproduction: `go test -v -count=1 -run 'TestChannelNotifications_Integration|TestChannelSubscriptions_Integration' ./internal/httpapi/handlers/channel` fails in `TestChannelSubscriptions_Integration/Subscribe_to_Channel` (`expected 200, got 400`) and panics on index access in `channel_subscriptions_integration_test.go`.
 - `ipfs-test` unhealthy status is pre-existing (same healthcheck command as historical `docker-compose.test.yml`), not introduced by profile consolidation.
@@ -480,7 +480,7 @@ The sprint documents show Sprints A-K ALL COMPLETE:
 ### 4.2 Update Compatibility Documentation
 
 - [x] **P2** Update `docs/PEERTUBE_COMPAT.md` to reflect all sprints are complete
-- [x] **P2** Add API shape comparison table (Athena endpoint vs PeerTube endpoint)
+- [x] **P2** Add API shape comparison table (Vidra Core endpoint vs PeerTube endpoint)
 - [x] **P2** Document any intentional deviations from PeerTube API (and why)
 - [x] **P2** Add compatibility tag to OpenAPI specs for PeerTube-matching routes
 
@@ -493,10 +493,10 @@ The sprint documents show Sprints A-K ALL COMPLETE:
 
 ### 4.4 Migration Documentation (Separate Initiative)
 
-**Note**: Building actual PeerTube-to-Athena migration tooling is a significant engineering project. For this audit, only document the conceptual approach.
+**Note**: Building actual PeerTube-to-Vidra Core migration tooling is a significant engineering project. For this audit, only document the conceptual approach.
 
 - [x] **P3** Write `docs/PEERTUBE_MIGRATION.md` with high-level guidance:
-  - Database schema mapping (PeerTube tables -> Athena tables)
+  - Database schema mapping (PeerTube tables -> Vidra Core tables)
   - Storage migration considerations (local -> IPFS/S3)
   - Config migration checklist
   - DNS/reverse-proxy switchover steps

@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Video Redundancy API
+  title: Vidra Core Video Redundancy API
   description: |
     Video Redundancy API for distributing videos across peer instances for reliability and availability.
 
@@ -13,11 +13,11 @@ info:
 
   version: 1.0.0
   contact:
-    name: Athena API Support
-    url: https://github.com/athena/athena
+    name: Vidra Core API Support
+    url: https://github.com/vidra/vidra
 
 servers:
-  - url: https://api.athena.example.com
+  - url: https://api.vidra.example.com
     description: Production server
   - url: http://localhost:8080
     description: Local development server

@@ -1,8 +1,8 @@
-# Claude Contributing Guide - Athena Backend
+# Claude Contributing Guide - Vidra Core Backend
 
 ## Overview
 
-This guide helps Claude AI assistants contribute effectively to the Athena codebase while maintaining project standards and conventions.
+This guide helps Claude AI assistants contribute effectively to the Vidra Core codebase while maintaining project standards and conventions.
 
 ## Before You Start
 
@@ -202,7 +202,7 @@ make migrate-status
 
 ```bash
 # Check test database
-DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" \
+DATABASE_URL="postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable" \
   go test -v -short -race ./internal/repository
 
 # Run specific test

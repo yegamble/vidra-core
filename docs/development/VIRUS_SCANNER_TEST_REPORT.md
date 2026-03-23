@@ -152,7 +152,7 @@ A critical P1 security vulnerability in the virus scanning retry logic has been 
 
 | Artifact | Location | Purpose |
 |----------|----------|---------|
-| Postman Collection | `/postman/athena-virus-scanner-tests.postman_collection.json` | E2E test suite |
+| Postman Collection | `/postman/vidra-virus-scanner-tests.postman_collection.json` | E2E test suite |
 | Test Script | `/postman/run-virus-scanner-tests.sh` | Automated test runner |
 | GitHub Workflow | `/.github/workflows/virus-scanner-tests.yml` | CI/CD integration |
 | Vulnerability Assessment | `/internal/security/VULNERABILITY_ASSESSMENT.md` | Detailed security analysis |

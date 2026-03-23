@@ -1,6 +1,6 @@
 # Comprehensive Regression Testing Report
 
-**Project**: Athena Video Platform
+**Project**: Vidra Core Video Platform
 **Date**: 2025-11-18
 **Branch**: claude/align-tests-documentation-0199K5icoy18CVayraL1TcXM
 **Test Environment**: Self-Hosted CI/CD with Go 1.24
@@ -94,11 +94,11 @@
 
 All 5 failures are due to build dependency issues, not code defects:
 
-1. **athena/cmd/server** - Cannot build server (RoaringBitmap dependency)
-2. **athena/internal/app** - Cannot build app initialization (RoaringBitmap dependency)
-3. **athena/internal/httpapi** - Cannot build HTTP API (RoaringBitmap dependency)
-4. **athena/internal/httpapi/handlers/video** - Cannot build video handlers (RoaringBitmap dependency)
-5. **athena/internal/torrent** - Cannot build torrent client (RoaringBitmap dependency)
+1. **vidra/cmd/server** - Cannot build server (RoaringBitmap dependency)
+2. **vidra/internal/app** - Cannot build app initialization (RoaringBitmap dependency)
+3. **vidra/internal/httpapi** - Cannot build HTTP API (RoaringBitmap dependency)
+4. **vidra/internal/httpapi/handlers/video** - Cannot build video handlers (RoaringBitmap dependency)
+5. **vidra/internal/torrent** - Cannot build torrent client (RoaringBitmap dependency)
 
 #### Skipped Packages (26/65 - 40%)
 
@@ -213,7 +213,7 @@ go test -v ./internal/security -run TestFailing
 
 ### Collections Overview (6 collections, 95+ tests)
 
-#### 1. **athena-auth.postman_collection.json** (61 tests)
+#### 1. **vidra-auth.postman_collection.json** (61 tests)
 
 **Endpoints**: Authentication, Avatar Uploads, Basic Video CRUD
 
@@ -244,7 +244,7 @@ go test -v ./internal/security -run TestFailing
 - Authentication requirements
 - JWT token expiration
 
-#### 2. **athena-uploads.postman_collection.json** (11 tests)
+#### 2. **vidra-uploads.postman_collection.json** (11 tests)
 
 **Endpoints**: Chunked Uploads, Upload Session Management, Encoding Status
 
@@ -283,7 +283,7 @@ go test -v ./internal/security -run TestFailing
 - ⚠️ Maximum concurrent sessions per user
 - ⚠️ Chunk size validation (too small/large)
 
-#### 3. **athena-analytics.postman_collection.json** (13 tests)
+#### 3. **vidra-analytics.postman_collection.json** (13 tests)
 
 **Endpoints**: View Tracking, Video Analytics, Discovery
 
@@ -328,7 +328,7 @@ go test -v ./internal/security -run TestFailing
 - ⚠️ Negative watch time values
 - ⚠️ SQL injection in category filters
 
-#### 4. **athena-imports.postman_collection.json** (10 tests)
+#### 4. **vidra-imports.postman_collection.json** (10 tests)
 
 **Endpoints**: External Video Imports, SSRF Protection
 
@@ -366,7 +366,7 @@ go test -v ./internal/security -run TestFailing
 - ⚠️ Import rate limiting enforcement
 - ⚠️ Concurrent imports per user limit
 
-#### 5. **athena-edge-cases-security.postman_collection.json** (20+ tests)
+#### 5. **vidra-edge-cases-security.postman_collection.json** (20+ tests)
 
 **Endpoints**: SSRF, Input Validation, XSS, SQL Injection
 
@@ -400,7 +400,7 @@ go test -v ./internal/security -run TestFailing
   - ✅ Burst traffic handling
   - ✅ Distributed rate limit bypass attempts
 
-#### 6. **athena-virus-scanner-tests.postman_collection.json** (46 tests)
+#### 6. **vidra-virus-scanner-tests.postman_collection.json** (46 tests)
 
 **Endpoints**: ClamAV Integration, File Upload Security
 
@@ -861,7 +861,7 @@ No API contract changes detected.
 ```makefile
 # In Makefile postman-e2e target, add:
 @echo "Cleaning up any existing test containers..."
-COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
+COMPOSE_PROJECT_NAME=vidra-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
 docker stop $$(docker ps -q --filter "publish=6380" --filter "publish=5433" --filter "publish=8080") 2>/dev/null || true
 docker rm $$(docker ps -aq --filter "publish=6380" --filter "publish=5433" --filter "publish=8080") 2>/dev/null || true
 ```
@@ -1108,7 +1108,7 @@ git log --oneline -10 -- internal/obs/ internal/middleware/
 
 #### 4. Implement SSRF Protection (P0)
 
-**Location**: `/home/user/athena/internal/security/url_validator.go`
+**Location**: `/home/user/vidra/internal/security/url_validator.go`
 
 **Implementation**:
 
@@ -1163,7 +1163,7 @@ func TestValidateURL_BlocksAWSMetadata(t *testing.T) {
 
 #### 5. Add File Size Pre-validation (P1)
 
-**Location**: `/home/user/athena/internal/usecase/video/import_service.go`
+**Location**: `/home/user/vidra/internal/usecase/video/import_service.go`
 
 **Implementation**:
 
@@ -1189,7 +1189,7 @@ func (s *ImportService) CreateImport(ctx context.Context, sourceURL string) erro
 
 #### 6. Implement Input Sanitization (P1)
 
-**Location**: `/home/user/athena/internal/usecase/comments/comment_service.go`
+**Location**: `/home/user/vidra/internal/usecase/comments/comment_service.go`
 
 **Implementation**:
 
@@ -1215,7 +1215,7 @@ func (s *CommentService) CreateComment(ctx context.Context, req *CreateCommentRe
 
 #### 7. Add Comprehensive E2E Security Tests
 
-**Location**: `/home/user/athena/postman/athena-edge-cases-security.postman_collection.json`
+**Location**: `/home/user/vidra/postman/vidra-edge-cases-security.postman_collection.json`
 
 **Additions**:
 
@@ -1228,7 +1228,7 @@ func (s *CommentService) CreateComment(ctx context.Context, req *CreateCommentRe
 
 #### 8. Implement Performance Testing
 
-**Location**: `/home/user/athena/tests/load/`
+**Location**: `/home/user/vidra/tests/load/`
 
 **Create**:
 
@@ -1239,7 +1239,7 @@ func (s *CommentService) CreateComment(ctx context.Context, req *CreateCommentRe
 
 #### 9. Add Fuzz Testing
 
-**Location**: `/home/user/athena/internal/`
+**Location**: `/home/user/vidra/internal/`
 
 **Add Fuzz Tests for**:
 
@@ -1555,12 +1555,12 @@ tests/integration/ssrf_protection_test.go
 ### Postman Collections
 
 ```
-postman/athena-auth.postman_collection.json (61 tests)
-postman/athena-uploads.postman_collection.json (11 tests)
-postman/athena-analytics.postman_collection.json (13 tests)
-postman/athena-imports.postman_collection.json (10 tests)
-postman/athena-edge-cases-security.postman_collection.json (20+ tests)
-postman/athena-virus-scanner-tests.postman_collection.json (46 tests)
+postman/vidra-auth.postman_collection.json (61 tests)
+postman/vidra-uploads.postman_collection.json (11 tests)
+postman/vidra-analytics.postman_collection.json (13 tests)
+postman/vidra-imports.postman_collection.json (10 tests)
+postman/vidra-edge-cases-security.postman_collection.json (20+ tests)
+postman/vidra-virus-scanner-tests.postman_collection.json (46 tests)
 ```
 
 ---
@@ -1584,23 +1584,23 @@ postman/athena-virus-scanner-tests.postman_collection.json (46 tests)
 
 **Source Code**:
 
-- `/home/user/athena/internal/security/url_validator.go` - SSRF protection (needs implementation)
-- `/home/user/athena/internal/usecase/video/import_service.go` - File size validation (needs implementation)
-- `/home/user/athena/internal/usecase/comments/comment_service.go` - Input sanitization (needs implementation)
-- `/home/user/athena/internal/middleware/observability.go` - Failing tests
-- `/home/user/athena/internal/obs/logger.go` - Logger interface
+- `/home/user/vidra/internal/security/url_validator.go` - SSRF protection (needs implementation)
+- `/home/user/vidra/internal/usecase/video/import_service.go` - File size validation (needs implementation)
+- `/home/user/vidra/internal/usecase/comments/comment_service.go` - Input sanitization (needs implementation)
+- `/home/user/vidra/internal/middleware/observability.go` - Failing tests
+- `/home/user/vidra/internal/obs/logger.go` - Logger interface
 
 **Configuration**:
 
-- `/home/user/athena/Makefile` - Test targets
-- `/home/user/athena/docker-compose.test.yml` - Test services
-- `/home/user/athena/.env.ci` - CI environment variables
+- `/home/user/vidra/Makefile` - Test targets
+- `/home/user/vidra/docker-compose.test.yml` - Test services
+- `/home/user/vidra/.env.ci` - CI environment variables
 
 **Documentation**:
 
-- `/home/user/athena/COMPREHENSIVE_FIX_SUMMARY.md` - Recent fixes
-- `/home/user/athena/BREAKING_CHANGES_ANALYSIS.md` - Security analysis
-- `/home/user/athena/postman/README.md` - Postman test documentation
+- `/home/user/vidra/COMPREHENSIVE_FIX_SUMMARY.md` - Recent fixes
+- `/home/user/vidra/BREAKING_CHANGES_ANALYSIS.md` - Security analysis
+- `/home/user/vidra/postman/README.md` - Postman test documentation
 
 ---
 

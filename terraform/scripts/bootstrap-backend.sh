@@ -21,7 +21,7 @@ fi
 
 ENVIRONMENT=$1
 REGION=$2
-PROJECT_NAME="athena"
+PROJECT_NAME="vidra"
 
 BUCKET_NAME="${PROJECT_NAME}-terraform-state-${ENVIRONMENT}"
 DYNAMODB_TABLE="${PROJECT_NAME}-terraform-locks"

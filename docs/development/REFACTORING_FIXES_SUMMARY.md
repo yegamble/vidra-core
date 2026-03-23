@@ -8,7 +8,7 @@
 
 **Problem:** Handler files were calling `WriteError`, `WriteJSON`, and `WriteJSONWithMeta` without importing the shared package.
 
-**Fix:** Added `"athena/internal/httpapi/shared"` import to all handler files and updated all calls to use the `shared.` prefix.
+**Fix:** Added `"vidra-core/internal/httpapi/shared"` import to all handler files and updated all calls to use the `shared.` prefix.
 
 **Files affected:** All files in `internal/httpapi/handlers/*/*.go`
 
@@ -75,7 +75,7 @@
 
 **Problem:** `hls_handlers.go` used `middleware.GetUserIDFromContext` without importing middleware package.
 
-**Fix:** Added `"athena/internal/middleware"` import and fixed return value handling.
+**Fix:** Added `"vidra-core/internal/middleware"` import and fixed return value handling.
 
 ### 11. Torrent Handlers Missing Shared Import
 

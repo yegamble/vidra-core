@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"

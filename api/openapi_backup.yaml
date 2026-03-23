@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Backup & Restore API
+  title: Vidra Core Backup & Restore API
   description: Admin endpoints for server backup creation, listing, deletion, and restore operations
   version: 1.0.0
 

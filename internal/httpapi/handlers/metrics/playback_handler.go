@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
 )
 
 // PlaybackMetricsRequest represents the PeerTube-compatible playback metrics payload.

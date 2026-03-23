@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func (s *Service) ingestRemoteVideo(ctx context.Context, videoObj map[string]interface{}, remoteActor *domain.APRemoteActor, activityID string) error {

@@ -1,8 +1,8 @@
-# Claude Architecture Guide - Athena Backend
+# Claude Architecture Guide - Vidra Core Backend
 
 ## System Overview
 
-Athena is a PeerTube backend implementation in Go following clean architecture principles with decentralized storage (IPFS) and ATProto federation support.
+Vidra Core is a PeerTube backend implementation in Go following clean architecture principles with decentralized storage (IPFS) and ATProto federation support.
 
 ## Project Layout
 

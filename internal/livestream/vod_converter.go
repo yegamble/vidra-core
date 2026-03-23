@@ -18,10 +18,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/repository"
-	"athena/internal/usecase"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase"
 )
 
 // VODConversionJob represents a VOD conversion job

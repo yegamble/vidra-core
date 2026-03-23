@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"athena/internal/domain"
-	"athena/internal/port"
-	"athena/internal/security"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
+	"vidra-core/internal/security"
 
 	"github.com/google/uuid"
 )

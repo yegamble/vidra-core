@@ -726,7 +726,7 @@ type SandboxAnalyzer struct {
 func (s *SandboxAnalyzer) AnalyzeFile(ctx context.Context, filePath string) (*BehaviorReport, error) {
     // Create isolated container with limited resources
     container, err := s.containerRuntime.ContainerCreate(ctx, &container.Config{
-        Image: "athena-sandbox:latest",
+        Image: "vidra-sandbox:latest",
         Cmd:   []string{"/analyze.sh", filePath},
     }, &container.HostConfig{
         NetworkMode: "none", // No network access

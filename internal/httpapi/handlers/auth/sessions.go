@@ -5,10 +5,10 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	"athena/internal/port"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
 )
 
 // TokenSessionHandlers handles token session endpoints.

@@ -2,7 +2,7 @@
 set -e
 
 # rotate-credentials.sh
-# Generates secure random credentials for Athena production deployment.
+# Generates secure random credentials for Vidra Core production deployment.
 # Usage: ./scripts/rotate-credentials.sh [output_file]
 # Default output is .env.production.new
 
@@ -20,7 +20,7 @@ API_KEY=$(openssl rand -hex 16)
 HLS_SIGNING_SECRET=$(openssl rand -base64 48)
 
 cat <<EOF > "$OUTPUT_FILE"
-# Athena Production Configuration (Generated $(date))
+# Vidra Core Production Configuration (Generated $(date))
 # SECURITY WARNING: Store this file securely. Do not commit to git.
 
 # Server
@@ -31,7 +31,7 @@ SERVER_HOST=0.0.0.0
 
 # Database
 # Note: Update your database user password manually using the generated password below.
-DATABASE_URL=postgres://athena_user:${DB_PASSWORD}@localhost:5432/athena?sslmode=require&pool_max_conns=25
+DATABASE_URL=postgres://vidra_user:${DB_PASSWORD}@localhost:5432/vidra?sslmode=require&pool_max_conns=25
 DATABASE_MAX_CONNECTIONS=25
 
 # Redis
@@ -51,7 +51,7 @@ HLS_SIGNING_SECRET=${HLS_SIGNING_SECRET} # For private video streaming
 # S3 / Object Storage
 S3_ENABLED=true
 S3_ENDPOINT=https://s3.amazonaws.com
-S3_BUCKET=athena-videos
+S3_BUCKET=vidra-videos
 S3_REGION=us-east-1
 S3_ACCESS_KEY=<CHANGE_ME_S3_ACCESS_KEY>
 S3_SECRET_KEY=<CHANGE_ME_S3_SECRET_KEY>
@@ -59,9 +59,9 @@ S3_SECRET_KEY=<CHANGE_ME_S3_SECRET_KEY>
 # SMTP / Email
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
-SMTP_USERNAME=athena-noreply@example.com
+SMTP_USERNAME=vidra-noreply@example.com
 SMTP_PASSWORD=<CHANGE_ME_SMTP_PASSWORD>
-SMTP_FROM=Athena <noreply@example.com>
+SMTP_FROM=Vidra Core <noreply@example.com>
 
 # Virus Scanning (ClamAV)
 CLAMAV_ADDRESS=clamav:3310
@@ -76,7 +76,7 @@ echo "Done! Credentials written to $OUTPUT_FILE"
 echo ""
 echo "IMPORTANT MANUAL STEPS REQUIRED:"
 echo "1. Update PostgreSQL user password:"
-echo "   ALTER USER athena_user WITH PASSWORD '${DB_PASSWORD}';"
+echo "   ALTER USER vidra_user WITH PASSWORD '${DB_PASSWORD}';"
 echo ""
 echo "2. Update Redis configuration (redis.conf) or ACL:"
 echo "   requirepass ${REDIS_PASSWORD}"

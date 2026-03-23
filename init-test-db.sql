@@ -1,4 +1,4 @@
--- Enable required PostgreSQL extensions for Athena test database
+-- Enable required PostgreSQL extensions for Vidra Core test database
 -- As specified in CLAUDE.md
 
 -- UUID generation extension
@@ -299,4 +299,4 @@ AFTER DELETE ON subscriptions
 FOR EACH ROW EXECUTE FUNCTION decrement_subscriber_count();
 
 -- Log successful initialization
-\echo 'PostgreSQL test database initialized successfully for Athena platform with all tables and indexes';
+\echo 'PostgreSQL test database initialized successfully for Vidra Core platform with all tables and indexes';

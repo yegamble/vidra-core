@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/testutil"
-	"athena/internal/usecase"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase"
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

@@ -22,7 +22,7 @@ func TestGeneratorConfig(t *testing.T) {
 	t.Run("DefaultConfig", func(t *testing.T) {
 		config := DefaultGeneratorConfig()
 		assert.Equal(t, int64(262144), config.PieceLength)
-		assert.Equal(t, "Athena/1.0", config.CreatedBy)
+		assert.Equal(t, "Vidra Core/1.0", config.CreatedBy)
 		assert.False(t, config.Private)
 		assert.Len(t, config.Trackers, 3)
 		assert.Contains(t, config.Trackers, "wss://tracker.openwebtorrent.com")
@@ -128,7 +128,7 @@ func TestGenerateFromVideo(t *testing.T) {
 		// Use smaller piece length to ensure multiple pieces
 		config := &GeneratorConfig{
 			PieceLength: 262144, // 256KB
-			CreatedBy:   "Athena/1.0",
+			CreatedBy:   "Vidra Core/1.0",
 			Trackers: []string{
 				"wss://tracker.test.com",
 			},

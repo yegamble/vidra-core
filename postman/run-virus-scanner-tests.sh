@@ -196,7 +196,7 @@ run_postman_tests() {
 
     mkdir -p "$RESULTS_DIR"
 
-    local collection="$SCRIPT_DIR/athena-virus-scanner-tests.postman_collection.json"
+    local collection="$SCRIPT_DIR/vidra-virus-scanner-tests.postman_collection.json"
     local environment="$SCRIPT_DIR/test-local.postman_environment.json"
     local report_file="$RESULTS_DIR/virus-scanner-report-${TIMESTAMP}.html"
     local json_file="$RESULTS_DIR/virus-scanner-results-${TIMESTAMP}.json"

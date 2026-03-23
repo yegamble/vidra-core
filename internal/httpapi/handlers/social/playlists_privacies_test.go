@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

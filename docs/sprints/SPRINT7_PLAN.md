@@ -592,4 +592,4 @@ After Sprint 7 completion:
 
 ---
 
-*Athena PeerTube Backend - Video Platform in Go*
+*Vidra Core PeerTube Backend - Video Platform in Go*

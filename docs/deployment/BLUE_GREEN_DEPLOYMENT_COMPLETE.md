@@ -8,7 +8,7 @@
 
 ## What Was Delivered
 
-A comprehensive blue/green deployment strategy specifically designed for Athena's unique requirements as a **federated video platform** with:
+A comprehensive blue/green deployment strategy specifically designed for Vidra Core's unique requirements as a **federated video platform** with:
 
 - Zero-downtime deployments
 - Federation continuity (ActivityPub/BlueSky)
@@ -54,23 +54,23 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 
 **Blue Environment:**
 
-- `/home/user/athena/k8s/overlays/blue/kustomization.yaml`
-- `/home/user/athena/k8s/overlays/blue/deployment-patch.yaml`
+- `/home/user/vidra/k8s/overlays/blue/kustomization.yaml`
+- `/home/user/vidra/k8s/overlays/blue/deployment-patch.yaml`
 
 **Green Environment:**
 
-- `/home/user/athena/k8s/overlays/green/kustomization.yaml`
-- `/home/user/athena/k8s/overlays/green/deployment-patch.yaml`
-- `/home/user/athena/k8s/overlays/green/ingress-canary.yaml`
+- `/home/user/vidra/k8s/overlays/green/kustomization.yaml`
+- `/home/user/vidra/k8s/overlays/green/deployment-patch.yaml`
+- `/home/user/vidra/k8s/overlays/green/ingress-canary.yaml`
 
 **Validation Jobs:**
 
-- `/home/user/athena/k8s/jobs/pre-switch-validation.yaml` (comprehensive health checks)
-- `/home/user/athena/k8s/jobs/smoke-tests.yaml` (functional testing)
+- `/home/user/vidra/k8s/jobs/pre-switch-validation.yaml` (comprehensive health checks)
+- `/home/user/vidra/k8s/jobs/smoke-tests.yaml` (functional testing)
 
 ### 🤖 GitHub Actions Workflow
 
-**File:** `/home/user/athena/.github/workflows/blue-green-deploy.yml`
+**File:** `/home/user/vidra/.github/workflows/blue-green-deploy.yml`
 
 **Features:**
 
@@ -96,7 +96,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 
 ### 🔄 Operational Scripts
 
-**Rollback Script:** `/home/user/athena/scripts/rollback-deployment.sh`
+**Rollback Script:** `/home/user/vidra/scripts/rollback-deployment.sh`
 
 - Instant traffic switch back to previous environment
 - Health check validation
@@ -106,7 +106,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 
 ### 📊 Updated Documentation
 
-- `/home/user/athena/k8s/README.md` - Added blue/green section
+- `/home/user/vidra/k8s/README.md` - Added blue/green section
 - Links between all documentation files
 
 ---
@@ -164,7 +164,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 
 ### Federation-Aware
 
-**Specific to Athena:**
+**Specific to Vidra Core:**
 
 - ActivityPub endpoints remain accessible
 - BlueSky ATProto compatibility maintained
@@ -174,7 +174,7 @@ A comprehensive blue/green deployment strategy specifically designed for Athena'
 
 ### Video Encoding Protection
 
-**Specific to Athena:**
+**Specific to Vidra Core:**
 
 - Long-running encoding jobs complete on Blue
 - New jobs assigned to Green
@@ -305,17 +305,17 @@ ALTER TABLE videos DROP COLUMN old_status;
 ### 1. Label Current Deployment (5 minutes)
 
 ```bash
-cd /home/user/athena
+cd /home/user/vidra
 
 # Label existing deployment as "blue"
-kubectl label deployment athena-api version=blue -n athena --overwrite
-kubectl label deployment athena-encoding-worker version=blue -n athena --overwrite
+kubectl label deployment vidra-api version=blue -n vidra --overwrite
+kubectl label deployment vidra-encoding-worker version=blue -n vidra --overwrite
 
 # Update service to use version selector
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"blue"}}}'
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"blue"}}}'
 
 # Verify
-kubectl get service athena-api -n athena -o jsonpath='{.spec.selector}' | jq
+kubectl get service vidra-api -n vidra -o jsonpath='{.spec.selector}' | jq
 ```
 
 ### 2. Configure GitHub Secrets (5 minutes)
@@ -325,7 +325,7 @@ kubectl get service athena-api -n athena -o jsonpath='{.spec.selector}' | jq
 cat ~/.kube/config | base64 | gh secret set KUBE_CONFIG --body-file=-
 
 # Add database URL
-gh secret set DATABASE_URL --body "postgres://user:pass@host:5432/athena"
+gh secret set DATABASE_URL --body "postgres://user:pass@host:5432/vidra"
 
 # Optional: Slack webhook
 gh secret set SLACK_WEBHOOK_URL --body "https://hooks.slack.com/services/..."
@@ -338,11 +338,11 @@ gh secret set SLACK_WEBHOOK_URL --body "https://hooks.slack.com/services/..."
 kubectl apply -k k8s/overlays/green/
 
 # Verify green pods running
-kubectl get pods -l version=green -n athena
+kubectl get pods -l version=green -n vidra
 
 # Test green health (without switching traffic)
-kubectl run test --image=curlimages/curl --restart=Never --rm -i -n athena \
-  -- curl http://athena-api-green/health
+kubectl run test --image=curlimages/curl --restart=Never --rm -i -n vidra \
+  -- curl http://vidra-api-green/health
 
 # Clean up test
 kubectl delete -k k8s/overlays/green/
@@ -352,8 +352,8 @@ kubectl delete -k k8s/overlays/green/
 
 ```bash
 # Build and push new image
-docker build -t ghcr.io/yegamble/athena:v1.2.0 .
-docker push ghcr.io/yegamble/athena:v1.2.0
+docker build -t ghcr.io/yegamble/vidra-core:v1.2.0 .
+docker push ghcr.io/yegamble/vidra-core:v1.2.0
 
 # Trigger GitHub Actions workflow
 gh workflow run blue-green-deploy.yml \
@@ -377,7 +377,7 @@ gh run watch
 ./scripts/rollback-deployment.sh
 
 # Or manual:
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"blue"}}}'
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"blue"}}}'
 ```
 
 ---
@@ -608,8 +608,8 @@ Create Grafana dashboard with:
 
 **Community:**
 
-- GitHub Issues: <https://github.com/yegamble/athena/issues>
-- Slack: #athena-deployments (create channel)
+- GitHub Issues: <https://github.com/yegamble/vidra-core/issues>
+- Slack: #vidra-deployments (create channel)
 
 **On-Call:**
 
@@ -620,7 +620,7 @@ Create Grafana dashboard with:
 
 ## Conclusion
 
-This comprehensive blue/green deployment strategy provides Athena with:
+This comprehensive blue/green deployment strategy provides Vidra Core with:
 
 ✅ **Zero-downtime deployments** for a federated video platform
 ✅ **Instant rollback** capability (< 30 seconds)
@@ -637,7 +637,7 @@ This comprehensive blue/green deployment strategy provides Athena with:
 
 ---
 
-**Prepared by:** Athena Project Management Team
+**Prepared by:** Vidra Core Project Management Team
 **Date:** 2025-11-17
 **Version:** 1.0
 **Status:** ✅ COMPLETE - Ready for Implementation

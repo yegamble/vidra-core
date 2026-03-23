@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"athena/internal/crypto"
+	"vidra-core/internal/crypto"
 
 	"github.com/jmoiron/sqlx"
 )

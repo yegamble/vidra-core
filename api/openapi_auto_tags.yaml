@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Auto Tags API
+  title: Vidra Core Auto Tags API
   description: Automatic tag policies for content moderation
   version: 1.0.0
 

@@ -128,7 +128,7 @@ func getPostgresDSN() string {
 		host := getEnvDefault("TEST_DB_HOST", "localhost")
 		defaultPort := "5432"
 		port := getEnvDefault("TEST_DB_PORT", defaultPort)
-		name := getEnvDefault("TEST_DB_NAME", "athena_test")
+		name := getEnvDefault("TEST_DB_NAME", "vidra_test")
 		user := getEnvDefault("TEST_DB_USER", "test_user")
 		pass := getEnvDefault("TEST_DB_PASSWORD", "test_password")
 		ssl := getEnvDefault("TEST_DB_SSLMODE", "disable")
@@ -852,7 +852,7 @@ func runSchemaMigrations(db *sqlx.DB, schema string) error {
 		script.WriteString("\n")
 	}
 
-	tmpFile, err := os.CreateTemp("", "athena-test-migrations-*.sql")
+	tmpFile, err := os.CreateTemp("", "vidra-test-migrations-*.sql")
 	if err != nil {
 		return fmt.Errorf("failed to create temp migration script: %w", err)
 	}

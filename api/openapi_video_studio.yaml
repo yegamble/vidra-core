@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Video Studio
+  title: Vidra Core API - Video Studio
   description: Endpoints for video studio editing (cut, add-intro, add-outro, add-watermark)
   version: 1.0.0
 

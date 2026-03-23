@@ -1,6 +1,6 @@
 # Kubernetes Deployment Guide
 
-This guide covers deploying Athena to a Kubernetes cluster with full production readiness.
+This guide covers deploying Vidra Core to a Kubernetes cluster with full production readiness.
 
 ## Table of Contents
 
@@ -52,30 +52,30 @@ This guide covers deploying Athena to a Kubernetes cluster with full production 
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yegamble/athena.git
-cd athena
+git clone https://github.com/yegamble/vidra-core.git
+cd vidra
 
 # 2. Create namespace
-kubectl create namespace athena
+kubectl create namespace vidra
 
 # 3. Set up secrets
-kubectl create secret generic athena-secrets \
-  --from-literal=database-url="postgres://user:pass@postgres:5432/athena?sslmode=require" \
+kubectl create secret generic vidra-secrets \
+  --from-literal=database-url="postgres://user:pass@postgres:5432/vidra?sslmode=require" \
   --from-literal=redis-url="redis://redis:6379/0" \
   --from-literal=jwt-secret="$(openssl rand -base64 64)" \
   --from-literal=hls-signing-secret="$(openssl rand -base64 48)" \
   --from-literal=activitypub-key-encryption-key="$(openssl rand -base64 48)" \
-  --namespace athena
+  --namespace vidra
 
 # 4. Update ingress hostname
-sed -i 's/athena.example.com/your-domain.com/g' k8s/base/ingress.yaml
+sed -i 's/vidra.example.com/your-domain.com/g' k8s/base/ingress.yaml
 
 # 5. Deploy
-kubectl apply -f k8s/base/ --namespace athena
+kubectl apply -f k8s/base/ --namespace vidra
 
 # 6. Check status
-kubectl get pods --namespace athena
-kubectl get ingress --namespace athena
+kubectl get pods --namespace vidra
+kubectl get ingress --namespace vidra
 ```
 
 ## Configuration
@@ -152,7 +152,7 @@ spec:
         pathType: Prefix
         backend:
           service:
-            name: athena-api
+            name: vidra-api
             port:
               number: 80
 ```
@@ -168,7 +168,7 @@ spec:
   tls:
   - hosts:
     - your-domain.com
-    secretName: athena-tls-cert
+    secretName: vidra-tls-cert
 ```
 
 ## Deployment Steps
@@ -179,12 +179,12 @@ spec:
 
 ```sql
 -- Create database and user
-CREATE DATABASE athena;
-CREATE USER athena WITH PASSWORD 'your-secure-password';
-GRANT ALL PRIVILEGES ON DATABASE athena TO athena;
+CREATE DATABASE vidra;
+CREATE USER vidra WITH PASSWORD 'your-secure-password';
+GRANT ALL PRIVILEGES ON DATABASE vidra TO vidra;
 
 -- Enable required extensions
-\c athena
+\c vidra
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 CREATE EXTENSION IF NOT EXISTS "unaccent";
@@ -208,7 +208,7 @@ kubectl apply -f k8s/clamav/
 
 # Deploy PostgreSQL exporter (for monitoring)
 helm install postgres-exporter prometheus-community/prometheus-postgres-exporter \
-  --set config.datasource="postgresql://athena:password@postgres:5432/athena?sslmode=require" \
+  --set config.datasource="postgresql://vidra:password@postgres:5432/vidra?sslmode=require" \
   --namespace monitoring
 
 # Deploy Redis exporter
@@ -217,65 +217,65 @@ helm install redis-exporter prometheus-community/prometheus-redis-exporter \
   --namespace monitoring
 ```
 
-### Step 3: Deploy Athena
+### Step 3: Deploy Vidra Core
 
 ```bash
 # Create namespace
-kubectl create namespace athena
+kubectl create namespace vidra
 
 # Apply secrets
-kubectl apply -f k8s/base/secret.yaml --namespace athena
+kubectl apply -f k8s/base/secret.yaml --namespace vidra
 
 # Apply configuration
-kubectl apply -f k8s/base/configmap.yaml --namespace athena
+kubectl apply -f k8s/base/configmap.yaml --namespace vidra
 
 # Deploy storage
-kubectl apply -f k8s/base/pvc.yaml --namespace athena
+kubectl apply -f k8s/base/pvc.yaml --namespace vidra
 
 # Deploy application
-kubectl apply -f k8s/base/deployment.yaml --namespace athena
-kubectl apply -f k8s/base/service.yaml --namespace athena
-kubectl apply -f k8s/base/ingress.yaml --namespace athena
+kubectl apply -f k8s/base/deployment.yaml --namespace vidra
+kubectl apply -f k8s/base/service.yaml --namespace vidra
+kubectl apply -f k8s/base/ingress.yaml --namespace vidra
 
 # Deploy autoscaling
-kubectl apply -f k8s/base/hpa.yaml --namespace athena
+kubectl apply -f k8s/base/hpa.yaml --namespace vidra
 ```
 
 ### Step 4: Run Database Migrations
 
 ```bash
 # Create migration job
-kubectl run athena-migrate \
-  --image=ghcr.io/yegamble/athena:latest \
+kubectl run vidra-migrate \
+  --image=ghcr.io/yegamble/vidra-core:latest \
   --restart=Never \
-  --namespace=athena \
-  --env="DATABASE_URL=$(kubectl get secret athena-secrets -n athena -o jsonpath='{.data.database-url}' | base64 -d)" \
-  --command -- /app/athena migrate up
+  --namespace=vidra \
+  --env="DATABASE_URL=$(kubectl get secret vidra-secrets -n vidra -o jsonpath='{.data.database-url}' | base64 -d)" \
+  --command -- /app/vidra migrate up
 
 # Check migration logs
-kubectl logs athena-migrate --namespace athena
+kubectl logs vidra-migrate --namespace vidra
 
 # Clean up job
-kubectl delete pod athena-migrate --namespace athena
+kubectl delete pod vidra-migrate --namespace vidra
 ```
 
 ### Step 5: Verify Deployment
 
 ```bash
 # Check pod status
-kubectl get pods --namespace athena
-kubectl describe pod athena-api-<pod-id> --namespace athena
+kubectl get pods --namespace vidra
+kubectl describe pod vidra-api-<pod-id> --namespace vidra
 
 # Check logs
-kubectl logs -f deployment/athena-api --namespace athena
+kubectl logs -f deployment/vidra-api --namespace vidra
 
 # Check health endpoints
 kubectl run curl --image=curlimages/curl -i --rm --restart=Never -- \
-  curl http://athena-api/health
+  curl http://vidra-api/health
 
 # Check readiness
 kubectl run curl --image=curlimages/curl -i --rm --restart=Never -- \
-  curl http://athena-api/ready
+  curl http://vidra-api/ready
 ```
 
 ## Monitoring
@@ -299,8 +299,8 @@ helm install grafana grafana/grafana \
   --set persistence.size=10Gi \
   --set adminPassword='admin'
 
-# Import Athena dashboard
-kubectl create configmap grafana-dashboard-athena \
+# Import Vidra Core dashboard
+kubectl create configmap grafana-dashboard-vidra \
   --from-file=k8s/monitoring/grafana-dashboard.json \
   --namespace monitoring
 ```
@@ -321,12 +321,12 @@ open http://localhost:3000
 
 ### Key Metrics to Monitor
 
-- **Request Rate**: `rate(athena_http_requests_total[5m])`
-- **Error Rate**: `rate(athena_http_requests_total{status=~"5.."}[5m])`
-- **Latency (p99)**: `histogram_quantile(0.99, rate(athena_http_request_duration_seconds_bucket[5m]))`
-- **Database Connections**: `athena_database_connections_in_use`
-- **Encoding Queue**: `athena_encoding_queue_depth`
-- **IPFS Health**: `athena_ipfs_gateway_health`
+- **Request Rate**: `rate(vidra_http_requests_total[5m])`
+- **Error Rate**: `rate(vidra_http_requests_total{status=~"5.."}[5m])`
+- **Latency (p99)**: `histogram_quantile(0.99, rate(vidra_http_request_duration_seconds_bucket[5m]))`
+- **Database Connections**: `vidra_database_connections_in_use`
+- **Encoding Queue**: `vidra_encoding_queue_depth`
+- **IPFS Health**: `vidra_ipfs_gateway_health`
 
 ## Scaling
 
@@ -342,7 +342,7 @@ HPA is automatically configured in `k8s/base/hpa.yaml`:
 **Monitor autoscaling:**
 
 ```bash
-kubectl get hpa --namespace athena --watch
+kubectl get hpa --namespace vidra --watch
 ```
 
 ### Vertical Scaling (Resource Limits)
@@ -377,10 +377,10 @@ resources:
 
 ```bash
 # Check events
-kubectl describe pod <pod-name> --namespace athena
+kubectl describe pod <pod-name> --namespace vidra
 
 # Check logs
-kubectl logs <pod-name> --namespace athena --previous
+kubectl logs <pod-name> --namespace vidra --previous
 
 # Common issues:
 # - ImagePullBackOff: Check image name and registry access
@@ -392,11 +392,11 @@ kubectl logs <pod-name> --namespace athena --previous
 
 ```bash
 # Test connection from pod
-kubectl run psql --image=postgres:15-alpine -i --rm --restart=Never --namespace athena -- \
-  psql "$(kubectl get secret athena-secrets -n athena -o jsonpath='{.data.database-url}' | base64 -d)"
+kubectl run psql --image=postgres:15-alpine -i --rm --restart=Never --namespace vidra -- \
+  psql "$(kubectl get secret vidra-secrets -n vidra -o jsonpath='{.data.database-url}' | base64 -d)"
 
 # Check network policies
-kubectl get networkpolicies --namespace athena
+kubectl get networkpolicies --namespace vidra
 ```
 
 ### High Latency
@@ -411,7 +411,7 @@ kubectl get networkpolicies --namespace athena
 
 ```bash
 # Check memory usage
-kubectl top pods --namespace athena
+kubectl top pods --namespace vidra
 
 # Increase memory limits in deployment
 # Add memory requests to ensure QoS
@@ -421,7 +421,7 @@ kubectl top pods --namespace athena
 
 ```bash
 # Check ClamAV pod status
-kubectl logs deployment/clamav --namespace athena
+kubectl logs deployment/clamav --namespace vidra
 
 # ClamAV startup can take 2-5 minutes to load virus signatures
 # Check fallback mode in configmap (should be "strict" in production)

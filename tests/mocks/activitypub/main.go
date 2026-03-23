@@ -176,7 +176,7 @@ func newRouter() http.Handler {
 		info := map[string]interface{}{
 			"version": "2.0",
 			"software": map[string]interface{}{
-				"name":    "athena-mock-activitypub",
+				"name":    "vidra-mock-activitypub",
 				"version": "0.1.0",
 			},
 			"protocols":         []string{"activitypub"},

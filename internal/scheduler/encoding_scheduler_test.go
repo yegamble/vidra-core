@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/usecase/encoding"
+	"vidra-core/internal/usecase/encoding"
 )
 
 // fakeEncodingService implements encoding.Service for testing.

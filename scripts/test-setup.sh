@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo "================================================"
-echo "Athena Test Environment Setup"
+echo "Vidra Core Test Environment Setup"
 echo "================================================"
 
 # Function to check if a port is in use
@@ -116,14 +116,14 @@ echo "3. Cleaning Up Existing Test Containers..."
 echo "--------------------------------"
 
 # Stop and remove test containers
-docker stop $(docker ps -aq --filter "name=athena-test") 2>/dev/null || true
-docker stop $(docker ps -aq --filter "name=athena_test") 2>/dev/null || true
-docker rm -f $(docker ps -aq --filter "name=athena-test") 2>/dev/null || true
-docker rm -f $(docker ps -aq --filter "name=athena_test") 2>/dev/null || true
+docker stop $(docker ps -aq --filter "name=vidra-test") 2>/dev/null || true
+docker stop $(docker ps -aq --filter "name=vidra_test") 2>/dev/null || true
+docker rm -f $(docker ps -aq --filter "name=vidra-test") 2>/dev/null || true
+docker rm -f $(docker ps -aq --filter "name=vidra_test") 2>/dev/null || true
 
 # Remove test networks
-docker network rm athena-test_test-network 2>/dev/null || true
-docker network rm athena_test_default 2>/dev/null || true
+docker network rm vidra-test_test-network 2>/dev/null || true
+docker network rm vidra_test_default 2>/dev/null || true
 
 echo -e "${GREEN}✓${NC} Test containers cleaned up"
 
@@ -168,8 +168,8 @@ echo "--------------------------------"
 
 cat > .env.test <<EOF
 # Test Environment Configuration
-DATABASE_URL=postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable
-TEST_DATABASE_URL=postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable
+DATABASE_URL=postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable
+TEST_DATABASE_URL=postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable
 REDIS_URL=redis://localhost:6380/0
 JWT_SECRET=test-jwt-secret
 IPFS_API=http://localhost:15001

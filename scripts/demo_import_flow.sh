@@ -6,7 +6,7 @@
 set -e
 
 echo "========================================"
-echo "Athena Video Import System - Demo"
+echo "Vidra Core Video Import System - Demo"
 echo "========================================"
 echo ""
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
+	"vidra-core/internal/config"
 )
 
 func TestNew(t *testing.T) {

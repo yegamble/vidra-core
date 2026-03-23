@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "Athena Notification Workflow",
+    "name": "Vidra Core Notification Workflow",
     "description": "Complete workflow for testing notifications when a subscribed channel uploads a video",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },

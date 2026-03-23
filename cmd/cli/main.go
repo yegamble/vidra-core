@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/backup"
-	"athena/internal/config"
-	"athena/internal/database"
+	"vidra-core/internal/backup"
+	"vidra-core/internal/config"
+	"vidra-core/internal/database"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
@@ -43,7 +43,7 @@ func main() {
 	case "setup":
 		handleSetup(os.Args[2:])
 	case "version":
-		fmt.Printf("athena-cli version %s\n", version)
+		fmt.Printf("vidra-cli version %s\n", version)
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -54,10 +54,10 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println("athena-cli - Athena command-line tool")
+	fmt.Println("vidra-cli - Vidra Core command-line tool")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  athena-cli <command> [options]")
+	fmt.Println("  vidra-cli <command> [options]")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  backup     Manage backups")
@@ -68,7 +68,7 @@ func printUsage() {
 	fmt.Println("  version    Show version")
 	fmt.Println("  help       Show this help")
 	fmt.Println()
-	fmt.Println("Run 'athena-cli <command> -h' for command-specific help")
+	fmt.Println("Run 'vidra-cli <command> -h' for command-specific help")
 }
 
 func handleBackup(args []string) {
@@ -80,7 +80,7 @@ func handleBackup(args []string) {
 	excludeDirs := fs.String("exclude-dir", "", "Comma-separated list of directories to exclude from storage backup")
 
 	fs.Usage = func() {
-		fmt.Println("Usage: athena-cli backup <subcommand> [options]")
+		fmt.Println("Usage: vidra-cli backup <subcommand> [options]")
 		fmt.Println()
 		fmt.Println("Subcommands:")
 		fmt.Println("  create    Create a new backup")
@@ -200,7 +200,7 @@ func handleRestore(args []string) {
 	jsonOutput := fs.Bool("json", false, "Output in JSON format")
 
 	fs.Usage = func() {
-		fmt.Println("Usage: athena-cli restore [options]")
+		fmt.Println("Usage: vidra-cli restore [options]")
 		fmt.Println()
 		fmt.Println("Options:")
 		fmt.Println("  --backup <id>       Backup ID or path to restore")
@@ -248,7 +248,7 @@ func handleRestore(args []string) {
 	version, _ := database.CurrentVersion(db)
 	backupManager := backup.NewBackupManager(target, "cli", version, cfg.DatabaseURL, cfg.RedisURL, cfg.StorageDir)
 
-	tempDir, err := os.MkdirTemp("", "athena-restore-*")
+	tempDir, err := os.MkdirTemp("", "vidra-restore-*")
 	if err != nil {
 		log.Fatalf("Failed to create temp directory: %v", err)
 	}
@@ -339,7 +339,7 @@ func handleStatus(args []string) {
 			log.Fatalf("Failed to encode JSON: %v", err)
 		}
 	} else {
-		fmt.Println("Athena Status:")
+		fmt.Println("Vidra Core Status:")
 		fmt.Printf("  Database: Connected\n")
 		fmt.Printf("  Schema Version: v%d\n", version)
 	}
@@ -372,7 +372,7 @@ func handleSetup(args []string) {
 	fromEnv := fs.String("from-env", "", "Non-interactive setup from env template file")
 
 	fs.Usage = func() {
-		fmt.Println("Usage: athena-cli setup [options]")
+		fmt.Println("Usage: vidra-cli setup [options]")
 		fmt.Println()
 		fmt.Println("Options:")
 		fmt.Println("  --from-env <file>   Non-interactive setup from env template")
@@ -394,7 +394,7 @@ func handleSetup(args []string) {
 		return
 	}
 
-	fmt.Println("Athena Interactive Setup")
+	fmt.Println("Vidra Core Interactive Setup")
 	fmt.Println("========================")
 	fmt.Println()
 	fmt.Println("This CLI setup is minimal. For a full-featured setup wizard,")
@@ -403,10 +403,10 @@ func handleSetup(args []string) {
 	fmt.Println("Basic configuration:")
 	fmt.Println("1. Copy .env.example to .env")
 	fmt.Println("2. Edit .env with your settings")
-	fmt.Println("3. Run: athena-cli migrate")
+	fmt.Println("3. Run: vidra-cli migrate")
 	fmt.Println("4. Start the server")
 	fmt.Println()
-	fmt.Println("Or use: athena-cli setup --from-env .env.example")
+	fmt.Println("Or use: vidra-cli setup --from-env .env.example")
 }
 
 func loadConfig() *config.Config {

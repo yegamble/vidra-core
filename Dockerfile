@@ -50,9 +50,9 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 RUN mkdir -p storage/avatars storage/cache storage/captions storage/logs storage/previews storage/streaming-playlists/hls storage/thumbnails storage/torrents storage/web-videos storage/storyboards processed
 
 # Create non-root user
-RUN adduser -D -s /bin/sh athena
-RUN chown -R athena:athena /app
-USER athena
+RUN adduser -D -s /bin/sh vidra
+RUN chown -R vidra:vidra /app
+USER vidra
 
 EXPOSE 8080
 

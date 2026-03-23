@@ -1,4 +1,4 @@
-# Amazon EKS Cluster Module for Athena Platform
+# Amazon EKS Cluster Module for Vidra Core Platform
 # Creates EKS cluster with managed node groups, IRSA, and add-ons
 
 locals {

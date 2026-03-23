@@ -21,7 +21,7 @@ func TestWizardHandlerWelcome(t *testing.T) {
 			name:           "GET welcome page returns 200",
 			method:         http.MethodGet,
 			expectedStatus: http.StatusOK,
-			expectedBody:   "Welcome to Athena Setup",
+			expectedBody:   "Welcome to Vidra Core Setup",
 		},
 		{
 			name:           "POST not allowed on welcome",
@@ -72,7 +72,7 @@ func TestWizardHandlerDatabase(t *testing.T) {
 			assert.Contains(t, w.Body.String(), "Database")
 			// Verify page renders its own content, not welcome content
 			assert.Contains(t, w.Body.String(), "Database Configuration")
-			assert.NotContains(t, w.Body.String(), "Welcome to Athena Setup")
+			assert.NotContains(t, w.Body.String(), "Welcome to Vidra Core Setup")
 		})
 	}
 }
@@ -88,7 +88,7 @@ func TestWizardHandlerServices(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Services")
 	// Verify page renders its own content, not welcome content
 	assert.Contains(t, w.Body.String(), "Services Configuration")
-	assert.NotContains(t, w.Body.String(), "Welcome to Athena Setup")
+	assert.NotContains(t, w.Body.String(), "Welcome to Vidra Core Setup")
 }
 
 func TestWizardHandlerEmail(t *testing.T) {
@@ -102,7 +102,7 @@ func TestWizardHandlerEmail(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Email")
 	// Verify page renders its own content, not welcome content
 	assert.Contains(t, w.Body.String(), "Email Configuration")
-	assert.NotContains(t, w.Body.String(), "Welcome to Athena Setup")
+	assert.NotContains(t, w.Body.String(), "Welcome to Vidra Core Setup")
 }
 
 func TestHandleTestEmail_InvalidJSON(t *testing.T) {
@@ -178,7 +178,7 @@ func TestWizardHandlerNetworking(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Networking")
 	// Verify page renders its own content, not welcome content
 	assert.Contains(t, w.Body.String(), "Networking Configuration")
-	assert.NotContains(t, w.Body.String(), "Welcome to Athena Setup")
+	assert.NotContains(t, w.Body.String(), "Welcome to Vidra Core Setup")
 }
 
 func TestWizardHandlerStorage(t *testing.T) {
@@ -192,7 +192,7 @@ func TestWizardHandlerStorage(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Storage")
 	// Verify page renders its own content, not welcome content
 	assert.Contains(t, w.Body.String(), "Storage Configuration")
-	assert.NotContains(t, w.Body.String(), "Welcome to Athena Setup")
+	assert.NotContains(t, w.Body.String(), "Welcome to Vidra Core Setup")
 }
 
 func TestWizardHandlerSecurity(t *testing.T) {
@@ -206,7 +206,7 @@ func TestWizardHandlerSecurity(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Security")
 	// Verify page renders its own content, not welcome content
 	assert.Contains(t, w.Body.String(), "Security Configuration")
-	assert.NotContains(t, w.Body.String(), "Welcome to Athena Setup")
+	assert.NotContains(t, w.Body.String(), "Welcome to Vidra Core Setup")
 }
 
 func TestWizardHandlerReview(t *testing.T) {
@@ -220,7 +220,7 @@ func TestWizardHandlerReview(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Review")
 	// Verify page renders its own content, not welcome content
 	assert.Contains(t, w.Body.String(), "Review Configuration")
-	assert.NotContains(t, w.Body.String(), "Welcome to Athena Setup")
+	assert.NotContains(t, w.Body.String(), "Welcome to Vidra Core Setup")
 }
 
 func TestWizardHandlerComplete(t *testing.T) {
@@ -233,8 +233,8 @@ func TestWizardHandlerComplete(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "Setup Complete")
 	// Verify page renders its own content, not welcome content
-	assert.Contains(t, w.Body.String(), "Your Athena instance is configured and ready to use")
-	assert.NotContains(t, w.Body.String(), "Welcome to Athena Setup")
+	assert.Contains(t, w.Body.String(), "Your Vidra Core instance is configured and ready to use")
+	assert.NotContains(t, w.Body.String(), "Welcome to Vidra Core Setup")
 }
 
 func TestGenerateJWTSecret(t *testing.T) {

@@ -27,7 +27,7 @@ All P0-P3 work items from the initial audit have been completed. See `docs/repor
 - **Tests**: 86/86 packages pass, 4,800+ test functions, build clean
 - **Newman**: 42/42 collections in CI, all pass
 - **OpenAPI**: 37 specs, 462 paths, 569 operations
-- **Extra features**: 8 Athena-only features fully implemented (~1,000+ tests)
+- **Extra features**: 8 Vidra Core-only features fully implemented (~1,000+ tests)
 
 ### Implementation workstreams completed:
 - **WS1**: Static file serving + URL aliases (commit `c7c8a44`)
@@ -98,7 +98,7 @@ All P0-P3 work items from the initial audit have been completed. See `docs/repor
   - `stubRunnerRepo.GetRunnerByToken` returns a copy to prevent `authenticateRunner`'s `runner.Token = ""` from breaking subsequent calls
 
 - **Domain context:**
-  - "Import PeerTube instance" means Athena can discover and follow remote ActivityPub instances, resolve their actors, and surface their content in a federation timeline
+  - "Import PeerTube instance" means Vidra Core can discover and follow remote ActivityPub instances, resolve their actors, and surface their content in a federation timeline
   - Plugin install pipeline: download/receive ZIP → extract `plugin.json` manifest → validate permissions → extract files to plugin directory → create DB record
   - Runner lifecycle: admin creates registration token → runner registers with token → runner requests job → accepts → updates progress → uploads result file → marks success
 
@@ -136,7 +136,7 @@ All P0-P3 work items from the initial audit have been completed. See `docs/repor
 2. `internal/httpapi/handlers/runner/handlers_test.go` — extended with full lifecycle test
 3. `tests/e2e/scenarios/federation_import_test.go` — new file with federation E2E test
 4. `docker-compose.yml` — updated with ATProto PDS in test profile
-5. `postman/athena-*.postman_collection.json` — updated collections for live validation
+5. `postman/vidra-*.postman_collection.json` — updated collections for live validation
 6. `docs/reports/peertube-parity-gap-report.md` — rewritten confidence statement and next steps
 
 ## Progress Tracking
@@ -227,7 +227,7 @@ All P0-P3 work items from the initial audit have been completed. See `docs/repor
   3. Register a user, then use server follow endpoints to follow/list/unfollow
   4. Verify federation timeline returns content
 - Uses `e2e.TestClient` for HTTP calls (same pattern as `import_lifecycle_test.go`)
-- Mock remote instance is NOT needed for this test — we're testing Athena's own federation endpoints
+- Mock remote instance is NOT needed for this test — we're testing Vidra Core's own federation endpoints
 
 **Definition of Done:**
 
@@ -243,7 +243,7 @@ All P0-P3 work items from the initial audit have been completed. See `docs/repor
 
 ### Task 4: ATProto PDS mock in Docker test profile
 
-**Objective:** Wire the existing ATProto PDS mock server into the Docker `test` profile so the `athena-atproto` Newman collection can make live assertions instead of contract-shape checks.
+**Objective:** Wire the existing ATProto PDS mock server into the Docker `test` profile so the `vidra-atproto` Newman collection can make live assertions instead of contract-shape checks.
 **Dependencies:** None
 
 **Files:**
@@ -277,11 +277,11 @@ All P0-P3 work items from the initial audit have been completed. See `docs/repor
 
 **Files:**
 
-- Modify: `postman/athena-runners.postman_collection.json`
-- Modify: `postman/athena-plugins.postman_collection.json`
-- Modify: `postman/athena-payments.postman_collection.json`
-- Modify: `postman/athena-import-lifecycle.postman_collection.json`
-- Modify: `postman/athena-atproto.postman_collection.json`
+- Modify: `postman/vidra-runners.postman_collection.json`
+- Modify: `postman/vidra-plugins.postman_collection.json`
+- Modify: `postman/vidra-payments.postman_collection.json`
+- Modify: `postman/vidra-import-lifecycle.postman_collection.json`
+- Modify: `postman/vidra-atproto.postman_collection.json`
 
 **Key Decisions / Notes:**
 
@@ -301,8 +301,8 @@ All P0-P3 work items from the initial audit have been completed. See `docs/repor
 
 **Verify:**
 
-- Run all collections: `for f in postman/athena-*.postman_collection.json; do echo "--- $f ---"; newman run "$f" -e postman/athena.local.postman_environment.json || exit 1; done`
-- Alternatively: `./postman/run-all-tests.sh postman/athena.local.postman_environment.json`
+- Run all collections: `for f in postman/vidra-*.postman_collection.json; do echo "--- $f ---"; newman run "$f" -e postman/vidra.local.postman_environment.json || exit 1; done`
+- Alternatively: `./postman/run-all-tests.sh postman/vidra.local.postman_environment.json`
 
 ---
 
@@ -343,6 +343,6 @@ All P0-P3 work items from the initial audit have been completed. See `docs/repor
 ## Autonomous Decisions
 
 - **Testing approach for plugin archive:** Test pure functions (`extractPluginManifest`, `extractPluginArchive`) directly rather than through HTTP handler. The handler-level test would require full DB setup via sqlmock which is overly complex for proving "real artifact" coverage. The pure function tests prove the archive pipeline works with real ZIP data.
-- **Federation E2E scope:** Test Athena's own federation endpoints (WebFinger, NodeInfo, server follow) rather than simulating a full remote instance import. A full import scenario would require a running remote PeerTube instance, which is out of scope. The federation endpoint coverage proves the discovery and follow mechanisms work.
+- **Federation E2E scope:** Test Vidra Core's own federation endpoints (WebFinger, NodeInfo, server follow) rather than simulating a full remote instance import. A full import scenario would require a running remote PeerTube instance, which is out of scope. The federation endpoint coverage proves the discovery and follow mechanisms work.
 - **Runner lifecycle as handler test, not E2E:** Use httptest handler-level testing (like existing patterns) rather than requiring the Docker stack. This is more reliable and faster while still proving the full stateful chain.
 - **ATProto PDS mock:** Create a separate docker-compose service for the test profile rather than adding the test profile to the existing test-integration service. This avoids cross-profile network conflicts.

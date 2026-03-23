@@ -17,14 +17,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/ipfs"
-	"athena/internal/metrics"
-	"athena/internal/port"
-	"athena/internal/storage"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/ipfs"
+	"vidra-core/internal/metrics"
+	"vidra-core/internal/port"
+	"vidra-core/internal/storage"
 
-	ucn "athena/internal/usecase/notification"
+	ucn "vidra-core/internal/usecase/notification"
 
 	"github.com/google/uuid"
 )

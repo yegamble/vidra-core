@@ -5,7 +5,7 @@
 
 ## Overview
 
-This document describes the complete ActivityPub video federation implementation for Athena, enabling full PeerTube compatibility for video sharing across federated instances.
+This document describes the complete ActivityPub video federation implementation for Vidra Core, enabling full PeerTube compatibility for video sharing across federated instances.
 
 ## Implemented Features
 
@@ -73,7 +73,7 @@ if r.Method == "POST" || r.Method == "PUT" {
     "https://joinpeertube.org/ns"
   ],
   "type": "Video",
-  "id": "https://athena.example.com/videos/abc123",
+  "id": "https://vidra.example.com/videos/abc123",
   "uuid": "abc123",
   "name": "My Video Title",
   "duration": "PT5M30S",
@@ -108,42 +108,42 @@ if r.Method == "POST" || r.Method == "PUT" {
     {
       "type": "Link",
       "mediaType": "video/mp4",
-      "href": "https://athena.example.com/videos/abc123/stream",
+      "href": "https://vidra.example.com/videos/abc123/stream",
       "height": 1080,
       "width": 1920
     },
     {
       "type": "Link",
       "mediaType": "application/x-mpegURL",
-      "href": "https://athena.example.com/videos/abc123/master.m3u8"
+      "href": "https://vidra.example.com/videos/abc123/master.m3u8"
     },
     {
       "type": "Link",
       "mediaType": "application/x-mpegURL",
-      "href": "https://athena.example.com/videos/abc123/1080p.m3u8",
+      "href": "https://vidra.example.com/videos/abc123/1080p.m3u8",
       "height": 1080,
       "width": 1920
     },
     {
       "type": "Link",
       "mediaType": "application/x-mpegURL",
-      "href": "https://athena.example.com/videos/abc123/720p.m3u8",
+      "href": "https://vidra.example.com/videos/abc123/720p.m3u8",
       "height": 720,
       "width": 1280
     }
   ],
   "icon": [{
     "type": "Image",
-    "url": "https://athena.example.com/thumbnails/thumb.jpg",
+    "url": "https://vidra.example.com/thumbnails/thumb.jpg",
     "mediaType": "image/jpeg"
   }],
-  "attributedTo": ["https://athena.example.com/users/alice"],
+  "attributedTo": ["https://vidra.example.com/users/alice"],
   "to": ["https://www.w3.org/ns/activitystreams#Public"],
-  "cc": ["https://athena.example.com/users/alice/followers"],
-  "likes": "https://athena.example.com/videos/abc123/likes",
-  "dislikes": "https://athena.example.com/videos/abc123/dislikes",
-  "shares": "https://athena.example.com/videos/abc123/shares",
-  "comments": "https://athena.example.com/videos/abc123/comments"
+  "cc": ["https://vidra.example.com/users/alice/followers"],
+  "likes": "https://vidra.example.com/videos/abc123/likes",
+  "dislikes": "https://vidra.example.com/videos/abc123/dislikes",
+  "shares": "https://vidra.example.com/videos/abc123/shares",
+  "comments": "https://vidra.example.com/videos/abc123/comments"
 }
 ```
 
@@ -307,7 +307,7 @@ Retry on Failure (up to 10 times)
 **Required Manual Testing**:
 
 1. **Video Publishing**:
-   - Create video on Athena instance A
+   - Create video on Vidra Core instance A
    - Verify follower on PeerTube instance B sees video in timeline
    - Verify video can be played from instance B
 
@@ -332,7 +332,7 @@ Retry on Failure (up to 10 times)
 ENABLE_ACTIVITYPUB=true
 
 # Public base URL (for generating activity IDs)
-PUBLIC_BASE_URL=https://athena.example.com
+PUBLIC_BASE_URL=https://vidra.example.com
 
 # ActivityPub delivery settings
 ACTIVITYPUB_DELIVERY_WORKERS=5
@@ -405,10 +405,10 @@ videoRepo.Delete(ctx, video.ID)
 **Available Metrics**:
 
 ```
-athena_activitypub_delivery_total{status="success|failed"} - Delivery attempts
-athena_activitypub_delivery_duration_seconds - Delivery latency
-athena_activitypub_video_publishes_total - Videos published
-athena_activitypub_queue_depth - Pending delivery jobs
+vidra_activitypub_delivery_total{status="success|failed"} - Delivery attempts
+vidra_activitypub_delivery_duration_seconds - Delivery latency
+vidra_activitypub_video_publishes_total - Videos published
+vidra_activitypub_queue_depth - Pending delivery jobs
 ```
 
 ### Alert Rules
@@ -505,7 +505,7 @@ LIMIT 10;
 
 ## Conclusion
 
-Athena's ActivityPub video federation is **production-ready** for outbound federation (publishing videos to remote instances). The implementation is PeerTube-compatible and includes all critical security enhancements.
+Vidra Core's ActivityPub video federation is **production-ready** for outbound federation (publishing videos to remote instances). The implementation is PeerTube-compatible and includes all critical security enhancements.
 
 **Current Status**: 95% Complete
 **Production Ready**: Yes (for outbound federation)

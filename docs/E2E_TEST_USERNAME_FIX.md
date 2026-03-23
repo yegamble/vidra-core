@@ -141,7 +141,7 @@ func generateTestUsername(t *testing.T) string {
 
 ## Recommended Fix (Option 1 with Safety Check)
 
-### File: `/home/user/athena/tests/e2e/helpers.go`
+### File: `/home/user/vidra/tests/e2e/helpers.go`
 
 Add a helper function:
 
@@ -189,7 +189,7 @@ func GenerateTestUsername(t *testing.T, prefix string) string {
 }
 ```
 
-### File: `/home/user/athena/tests/e2e/scenarios/video_workflow_test.go`
+### File: `/home/user/vidra/tests/e2e/scenarios/video_workflow_test.go`
 
 Update all tests to use the helper:
 
@@ -244,7 +244,7 @@ username := e2e.GenerateTestUsername(t, "test")
 
 ## Additional API-Level Fix
 
-### File: `/home/user/athena/internal/httpapi/handlers.go`
+### File: `/home/user/vidra/internal/httpapi/handlers.go`
 
 Add validation before database insertion:
 
@@ -335,7 +335,7 @@ if req.DisplayName != nil && len(*req.DisplayName) > MaxDisplayNameLength {
 
 Add unit tests to verify the fix:
 
-### File: `/home/user/athena/internal/httpapi/handlers_test.go`
+### File: `/home/user/vidra/internal/httpapi/handlers_test.go`
 
 ```go
 func TestRegister_UsernameTooLong(t *testing.T) {
@@ -404,22 +404,22 @@ func TestRegister_UsernameInvalidChars(t *testing.T) {
 ### 1. Run Unit Tests
 
 ```bash
-cd /home/user/athena
+cd /home/user/vidra
 go test ./internal/httpapi -v -run TestRegister
 ```
 
 ### 2. Run E2E Tests
 
 ```bash
-cd /home/user/athena
+cd /home/user/vidra
 go test ./tests/e2e/scenarios -v
 ```
 
 ### 3. Run Postman Collection
 
 ```bash
-cd /home/user/athena
-newman run postman/athena-registration-edge-cases.postman_collection.json \
+cd /home/user/vidra
+newman run postman/vidra-registration-edge-cases.postman_collection.json \
   --environment postman/environments/local.postman_environment.json
 ```
 
@@ -542,9 +542,9 @@ If the fix causes issues:
 
 ## Related Files
 
-- `/home/user/athena/docs/security/USER_REGISTRATION_409_ANALYSIS.md` - Full vulnerability analysis
-- `/home/user/athena/postman/athena-registration-edge-cases.postman_collection.json` - Test collection
-- `/home/user/athena/.github/workflows/registration-api-tests.yml` - CI/CD pipeline
-- `/home/user/athena/migrations/002_create_users_table.sql` - Database schema
-- `/home/user/athena/tests/e2e/scenarios/video_workflow_test.go` - E2E tests
-- `/home/user/athena/internal/httpapi/handlers.go` - Registration handler
+- `/home/user/vidra/docs/security/USER_REGISTRATION_409_ANALYSIS.md` - Full vulnerability analysis
+- `/home/user/vidra/postman/vidra-registration-edge-cases.postman_collection.json` - Test collection
+- `/home/user/vidra/.github/workflows/registration-api-tests.yml` - CI/CD pipeline
+- `/home/user/vidra/migrations/002_create_users_table.sql` - Database schema
+- `/home/user/vidra/tests/e2e/scenarios/video_workflow_test.go` - E2E tests
+- `/home/user/vidra/internal/httpapi/handlers.go` - Registration handler

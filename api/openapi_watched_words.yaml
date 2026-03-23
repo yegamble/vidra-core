@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Watched Words API
+  title: Vidra Core Watched Words API
   description: CRUD operations for watched word lists used in content moderation
   version: 1.0.0
 

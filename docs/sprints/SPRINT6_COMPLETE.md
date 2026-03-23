@@ -7,7 +7,7 @@
 
 ## Overview
 
-Sprint 6 successfully implements real-time HLS (HTTP Live Streaming) transcoding for Athena's live streaming infrastructure. Viewers can now watch live streams in their browsers with adaptive bitrate streaming, DVR capabilities, and automatic VOD conversion when streams end. This sprint includes HLS transcoding service, HTTP API for playlist/segment delivery, VOD converter with IPFS integration, and comprehensive test coverage.
+Sprint 6 successfully implements real-time HLS (HTTP Live Streaming) transcoding for Vidra Core's live streaming infrastructure. Viewers can now watch live streams in their browsers with adaptive bitrate streaming, DVR capabilities, and automatic VOD conversion when streams end. This sprint includes HLS transcoding service, HTTP API for playlist/segment delivery, VOD converter with IPFS integration, and comprehensive test coverage.
 
 ## Completed Tasks ✅
 
@@ -424,7 +424,7 @@ Stream Ends
 
 ```bash
 === HLS Transcoder Tests ===
-ok      athena/internal/livestream      0.951s
+ok      vidra/internal/livestream      0.951s
   - TestGetQualityVariants: PASS
   - TestFilterVariantsByConfig: PASS (4 sub-tests)
   - TestNewHLSTranscoder: PASS
@@ -749,4 +749,4 @@ The system enables real-time browser-based playback of live streams with automat
 **Sprint 6 Status: ✅ 100% COMPLETE**
 
 *Completed: 2025-10-20*
-*Athena PeerTube Backend - Video Platform in Go*
+*Vidra Core PeerTube Backend - Video Platform in Go*

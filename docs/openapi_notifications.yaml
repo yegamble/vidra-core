@@ -1,12 +1,12 @@
 openapi: 3.0.3
 info:
-  title: Athena Notifications API
-  description: API endpoints for managing user notifications in the Athena video platform
+  title: Vidra Core Notifications API
+  description: API endpoints for managing user notifications in the Vidra Core video platform
   version: 1.0.0
 servers:
   - url: http://localhost:8080/api/v1
     description: Development server
-  - url: https://api.athena.example.com/api/v1
+  - url: https://api.vidra.example.com/api/v1
     description: Production server
 
 security:

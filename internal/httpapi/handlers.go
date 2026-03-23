@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -16,11 +16,11 @@ import (
 	redis "github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/generated"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/generated"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/usecase"
 )
 
 type Server struct {

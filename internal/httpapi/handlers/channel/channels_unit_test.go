@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	ucchannel "athena/internal/usecase/channel"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	ucchannel "vidra-core/internal/usecase/channel"
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

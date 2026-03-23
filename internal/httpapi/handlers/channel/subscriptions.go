@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"strings"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
-	ucchannel "athena/internal/usecase/channel"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/usecase"
+	ucchannel "vidra-core/internal/usecase/channel"
 
 	"github.com/google/uuid"
 )

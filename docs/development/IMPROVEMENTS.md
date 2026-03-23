@@ -2,7 +2,7 @@
 
 ## Summary of Enhancements
 
-This document outlines the comprehensive improvements made to make the Athena PeerTube backend production-ready.
+This document outlines the comprehensive improvements made to make the Vidra Core PeerTube backend production-ready.
 
 ## 🔒 Security Enhancements
 
@@ -250,7 +250,7 @@ This document outlines the comprehensive improvements made to make the Athena Pe
 
 ## Conclusion
 
-The Athena PeerTube backend is now production-ready with:
+The Vidra Core PeerTube backend is now production-ready with:
 
 - Comprehensive security measures
 - Full observability and monitoring

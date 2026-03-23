@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/security"
-	"athena/internal/setup"
+	"vidra-core/internal/security"
+	"vidra-core/internal/setup"
 )
 
 // skipIfNoIntegration skips the test unless TEST_INTEGRATION=true is set.
@@ -69,7 +69,7 @@ func TestServiceConnections_PostgreSQL(t *testing.T) {
 			"port":     15432,
 			"user":     "integration_user",
 			"password": "integration_password",
-			"database": "athena_integration",
+			"database": "vidra_integration",
 			"sslmode":  "disable",
 		})
 		assert.Equal(t, true, resp["success"], "expected success, got: %v", resp)
@@ -84,7 +84,7 @@ func TestServiceConnections_PostgreSQL(t *testing.T) {
 			"port":     15432,
 			"user":     "integration_user",
 			"password": "wrong_password",
-			"database": "athena_integration",
+			"database": "vidra_integration",
 			"sslmode":  "disable",
 		})
 		assert.Equal(t, false, resp["success"], "expected failure with wrong password")

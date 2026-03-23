@@ -1,6 +1,6 @@
 # Docker Compose Override Example
 #
-# This file demonstrates how to customize the Athena setup.
+# This file demonstrates how to customize the Vidra Core setup.
 # Copy this file to `docker-compose.override.yml` and modify as needed.
 # docker-compose.override.yml is automatically loaded by Docker Compose.
 #
@@ -14,7 +14,7 @@ services:
   # app:
   #   environment:
   #     POSTGRES_MODE: external
-  #     DATABASE_URL: postgres://user:pass@external-db.example.com:5432/athena
+  #     DATABASE_URL: postgres://user:pass@external-db.example.com:5432/vidra
 
   # Example: Use external Redis
   # redis:

@@ -1,4 +1,4 @@
-# Athena PeerTube Feature Parity - Sprint Plan
+# Vidra Core PeerTube Feature Parity - Sprint Plan
 
 ## Progress Summary
 
@@ -659,7 +659,7 @@ ffmpegArgs := []string{
 
 #### Acceptance Criteria
 
-- ✅ Can stream from OBS to Athena (via RTMP)
+- ✅ Can stream from OBS to Vidra Core (via RTMP)
 - ✅ Live streams automatically transcode to HLS
 - ✅ Multiple quality variants generated (1080p, 720p, 480p, 360p)
 - ✅ Browser playback possible via master playlist
@@ -1348,7 +1348,7 @@ type APIPlugin interface {
 {
   "name": "watermark-plugin",
   "version": "1.0.0",
-  "author": "Athena Team",
+  "author": "Vidra Core Team",
   "permissions": ["read_videos", "write_videos"],
   "hooks": ["video_processed"],
   "config_schema": {
@@ -1432,7 +1432,7 @@ CREATE TABLE instance_peers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     instance_url TEXT NOT NULL UNIQUE,
     instance_name TEXT,
-    software TEXT, -- peertube, athena
+    software TEXT, -- peertube, vidra
     version TEXT,
     auto_accept_redundancy BOOLEAN DEFAULT false,
     last_contacted_at TIMESTAMP,
@@ -1491,7 +1491,7 @@ CREATE INDEX idx_video_redundancy_status ON video_redundancy(status);
 
 **E2E Tests** (Pending Production Deployment)
 
-- [ ] Setup two Athena instances
+- [ ] Setup two Vidra Core instances
 - [ ] Configure redundancy between them
 - [ ] Upload video on instance A
 - [ ] Verify video syncs to instance B
@@ -1522,7 +1522,7 @@ CREATE INDEX idx_video_redundancy_status ON video_redundancy(status);
 **GitHub Actions Workflow**
 
 ```yaml
-name: Athena CI
+name: Vidra Core CI
 
 on:
   push:
@@ -1721,7 +1721,7 @@ func CreateTestVideo(t *testing.T, db *sqlx.DB) *domain.Video {
 
 ## Conclusion
 
-This sprint plan provides a comprehensive roadmap for implementing PeerTube feature parity in Athena.
+This sprint plan provides a comprehensive roadmap for implementing PeerTube feature parity in Vidra Core.
 
 ### Current Status (As of 2026-02-13)
 

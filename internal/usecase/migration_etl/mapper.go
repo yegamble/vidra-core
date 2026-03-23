@@ -1,6 +1,6 @@
 package migration_etl
 
-import "athena/internal/domain"
+import "vidra-core/internal/domain"
 
 // mapPeerTubeRole converts PeerTube numeric role to domain UserRole.
 // PeerTube: 0=admin, 1=moderator, 2=user

@@ -15,12 +15,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/port"
-	"athena/internal/security"
-	"athena/internal/storage"
-	"athena/internal/validation"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
+	"vidra-core/internal/security"
+	"vidra-core/internal/storage"
+	"vidra-core/internal/validation"
 )
 
 type Service interface {

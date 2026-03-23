@@ -70,7 +70,7 @@ curl http://localhost:8080/ready
 ## Services Available
 
 - **Application**: <http://localhost:8080>
-- **PostgreSQL**: localhost:5432 (athena_user/athena_password/athena)
+- **PostgreSQL**: localhost:5432 (vidra_user/vidra_password/vidra)
 - **Redis**: localhost:6379
 - **IPFS API**: <http://localhost:5001>
 

@@ -9,10 +9,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	ucww "athena/internal/usecase/watched_words"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	ucww "vidra-core/internal/usecase/watched_words"
 )
 
 // Handlers handles HTTP requests for watched word lists.

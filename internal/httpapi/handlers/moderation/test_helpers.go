@@ -3,10 +3,10 @@ package moderation
 import (
 	"context"
 
-	adminhandlers "athena/internal/httpapi/handlers/admin"
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/usecase"
+	adminhandlers "vidra-core/internal/httpapi/handlers/admin"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase"
 )
 
 // InstanceHandlers is an alias to the real admin instance handlers.

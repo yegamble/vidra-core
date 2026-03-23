@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: athena-storage
+  name: vidra-storage
   labels:
-    app: athena
+    app: vidra
 spec:
   accessModes:
     - ReadWriteMany  # Multiple pods need access
@@ -15,9 +15,9 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: athena-quarantine
+  name: vidra-quarantine
   labels:
-    app: athena
+    app: vidra
 spec:
   accessModes:
     - ReadWriteMany

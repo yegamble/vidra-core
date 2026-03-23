@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"athena/internal/domain"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/usecase"
 )
 
 type EmailVerifiedKey string

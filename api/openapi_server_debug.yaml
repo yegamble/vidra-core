@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Server Debug & Logs
+  title: Vidra Core API - Server Debug & Logs
   description: |
     Admin endpoints for server debugging, log management, and client log submission.
 

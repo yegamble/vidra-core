@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func (s *Service) buildActorID(username string) string {

@@ -21,7 +21,7 @@ A critical security vulnerability exists in the virus scanner's `ScanStream` met
 
 ### Root Cause
 
-**File**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner.go`
+**File**: `/Users/yosefgamble/github/vidra/internal/security/virus_scanner.go`
 **Lines**: 254-352 (ScanStream method)
 
 The `ScanStream` method implements retry logic (lines 275-305) but fails to account for non-seekable `io.Reader` streams:
@@ -175,7 +175,7 @@ if seeker, ok := reader.(io.Seeker); !ok {
 
 ## Comprehensive Test Coverage Added
 
-**File**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner_test.go`
+**File**: `/Users/yosefgamble/github/vidra/internal/security/virus_scanner_test.go`
 
 ### Critical Security Tests (Lines 167-871)
 

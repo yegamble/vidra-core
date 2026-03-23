@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"athena/internal/metrics"
-	"athena/internal/usecase/encoding"
+	"vidra-core/internal/metrics"
+	"vidra-core/internal/usecase/encoding"
 )
 
 // Status captures recent scheduler activity for observability.

@@ -1,4 +1,4 @@
-# Per-package coverage thresholds for Athena
+# Per-package coverage thresholds for Vidra Core
 # Format: package_path  minimum_coverage_percent
 #
 # These thresholds are ratcheted upward as coverage improves.

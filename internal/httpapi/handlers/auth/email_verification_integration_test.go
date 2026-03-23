@@ -15,12 +15,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
-	"athena/internal/domain"
-	"athena/internal/email"
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/testutil"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/email"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase"
 )
 
 // TestUnverifiedUserRestrictions tests that unverified users cannot perform protected actions

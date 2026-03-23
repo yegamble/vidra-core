@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"athena/internal/usecase"
+	"vidra-core/internal/usecase"
 )
 
 type sessionRepository interface {

@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/testutil"
-	ucenc "athena/internal/usecase/encoding"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/testutil"
+	ucenc "vidra-core/internal/usecase/encoding"
 
 	"github.com/google/uuid"
 )

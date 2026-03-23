@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // BlacklistRepository defines data operations for video blacklisting.

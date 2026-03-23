@@ -1,0 +1,169 @@
+{
+  "info": {
+    "name": "Vidra Core Live Streaming API",
+    "_postman_id": "c6a6c6a6-0006-4000-9000-c6a6c6a6c6a6",
+    "description": "Postman collection for live streaming: create/manage streams, session history, HLS.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
+    {"key": "access_token", "value": "", "type": "string"},
+    {"key": "stream_id", "value": "", "type": "string"},
+    {"key": "channel_id", "value": "", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "Live Streaming - Happy Path",
+      "item": [
+        {
+          "name": "GET /api/v1/users/me/channels - Resolve stream channel",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "const channels = json.data && Array.isArray(json.data.data) ? json.data.data : [];",
+            "pm.test('Has at least one owned channel', () => pm.expect(channels.length).to.be.greaterThan(0));",
+            "if (channels.length > 0) {",
+            "  pm.collectionVariables.set('channel_id', channels[0].id);",
+            "  pm.environment.set('channel_id', channels[0].id);",
+            "}",
+            "if (channels.length === 0) {",
+            "  console.log('No owned channels available for livestream tests');",
+            "}"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/users/me/channels", "host": ["{{baseUrl}}"], "path": ["api", "v1", "users", "me", "channels"]}
+          }
+        },
+        {
+          "name": "POST /api/v1/streams - Create live stream",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 201 or 200', () => pm.expect([200, 201]).to.include(pm.response.code));",
+            "const json = pm.response.json();",
+            "pm.test('Stream response has ID', () => pm.expect(json).to.have.nested.property('data.id'));",
+            "if (json && json.data && json.data.id) {",
+            "  pm.collectionVariables.set('stream_id', json.data.id);",
+            "  pm.environment.set('stream_id', json.data.id);",
+            "}"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"title\": \"Test Live Stream {{$timestamp}}\",\n  \"channel_id\": \"{{channel_id}}\",\n  \"privacy\": \"public\"\n}"},
+            "url": {"raw": "{{baseUrl}}/api/v1/streams", "host": ["{{baseUrl}}"], "path": ["api", "v1", "streams"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/streams/active - Active streams",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/streams/active", "host": ["{{baseUrl}}"], "path": ["api", "v1", "streams", "active"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/streams/:id - Get stream",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Has wrapped stream', () => pm.expect(json).to.have.nested.property('data.id'));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/streams/{{stream_id}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "streams", "{{stream_id}}"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/streams/:id/sessions - Session history",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Has sessions array', () => pm.expect(json).to.have.property('data'));",
+            "pm.test('Wrapped data is array', () => pm.expect(json.data).to.be.an('array'));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/streams/{{stream_id}}/sessions", "host": ["{{baseUrl}}"], "path": ["api", "v1", "streams", "{{stream_id}}", "sessions"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/streams/:id/stats - Stream stats",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Has wrapped stats', () => pm.expect(json).to.have.nested.property('data.stream_id'));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/streams/{{stream_id}}/stats", "host": ["{{baseUrl}}"], "path": ["api", "v1", "streams", "{{stream_id}}", "stats"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/streams/channels/:channelId - Channel streams",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Has wrapped channel stream list', () => pm.expect(json).to.have.nested.property('data.data'));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/streams/channels/{{channel_id}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "streams", "channels", "{{channel_id}}"]}
+          }
+        },
+        {
+          "name": "POST /api/v1/streams/:id/end - End stream",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200, 204, or 400', () => pm.expect([200, 204, 400]).to.include(pm.response.code));",
+            "if (pm.response.code === 400) {",
+            "  console.log('Stream is not live yet, so end returns 400 for a waiting stream');",
+            "}"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/streams/{{stream_id}}/end", "host": ["{{baseUrl}}"], "path": ["api", "v1", "streams", "{{stream_id}}", "end"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Live Streaming - Error Path",
+      "item": [
+        {
+          "name": "POST /api/v1/streams - Unauthenticated (401)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {"mode": "raw", "raw": "{\n  \"name\": \"Unauthorized Stream\"\n}"},
+            "url": {"raw": "{{baseUrl}}/api/v1/streams", "host": ["{{baseUrl}}"], "path": ["api", "v1", "streams"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/streams/:id/sessions - Unauthenticated (401)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/streams/{{stream_id}}/sessions", "host": ["{{baseUrl}}"], "path": ["api", "v1", "streams", "{{stream_id}}", "sessions"]}
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 **Last Updated:** 2025-11-30
 
-This document provides a comprehensive index of all OpenAPI documentation and related resources for the Athena backend API.
+This document provides a comprehensive index of all OpenAPI documentation and related resources for the Vidra Core backend API.
 
 ---
 
@@ -271,7 +271,7 @@ This checks for:
    npx @openapitools/openapi-generator-cli generate \
      -i api/openapi.yaml \
      -g typescript-axios \
-     -o /tmp/athena-client
+     -o /tmp/vidra-client
    ```
 
 2. **Import to Postman:**

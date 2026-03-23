@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Video Channel Sync
+  title: Vidra Core API - Video Channel Sync
   description: |
     Endpoints for managing video channel synchronization with external platforms.
 

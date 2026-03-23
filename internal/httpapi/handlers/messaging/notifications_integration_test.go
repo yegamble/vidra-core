@@ -17,11 +17,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/usecase"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase"
 )
 
 // generateTestJWT creates a JWT token for testing
@@ -46,7 +46,7 @@ func setupTestNotificationEnvironment(t *testing.T) (*sqlx.DB, *chi.Mux, *config
 	// Setup test database - use environment variable if available (for CI)
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable"
+		dbURL = "postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable"
 	}
 
 	cfg := &config.Config{

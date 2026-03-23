@@ -7,7 +7,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // PasswordResetRepository defines the interface for password reset token storage.

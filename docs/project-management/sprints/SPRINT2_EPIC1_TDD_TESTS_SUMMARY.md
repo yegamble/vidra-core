@@ -8,7 +8,7 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 
 ### 1. Domain Models
 
-**File:** `/home/user/athena/internal/domain/payment.go`
+**File:** `/home/user/vidra/internal/domain/payment.go`
 
 - `IOTAWallet` - User wallet with encrypted seed storage
 - `IOTAPaymentIntent` - Payment request tracking
@@ -18,7 +18,7 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 
 ### 2. Repository Tests (Database Layer)
 
-**File:** `/home/user/athena/internal/repository/iota_repository_test.go`
+**File:** `/home/user/vidra/internal/repository/iota_repository_test.go`
 **Test Count:** 20+ test cases
 
 #### Wallet CRUD Tests
@@ -55,7 +55,7 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 
 ### 3. IOTA Client Tests (Node Interaction)
 
-**File:** `/home/user/athena/internal/payments/iota_client_test.go`
+**File:** `/home/user/vidra/internal/payments/iota_client_test.go`
 **Test Count:** 25+ test cases
 
 #### Wallet Generation Tests
@@ -88,7 +88,7 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 
 ### 4. Payment Service Tests (Business Logic)
 
-**File:** `/home/user/athena/internal/usecase/payments/payment_service_test.go`
+**File:** `/home/user/vidra/internal/usecase/payments/payment_service_test.go`
 **Test Count:** 20+ test cases
 
 #### Wallet Management Tests
@@ -136,7 +136,7 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 
 ### 5. API Handler Tests (HTTP Layer)
 
-**File:** `/home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go`
+**File:** `/home/user/vidra/internal/httpapi/handlers/payments/payment_handlers_test.go`
 **Test Count:** 20+ test cases
 
 #### Endpoint Tests
@@ -185,7 +185,7 @@ Comprehensive Test-Driven Development (TDD) tests for IOTA payment functionality
 
 ### 6. Worker Tests (Background Processing)
 
-**File:** `/home/user/athena/internal/worker/iota_payment_worker_test.go`
+**File:** `/home/user/vidra/internal/worker/iota_payment_worker_test.go`
 **Test Count:** 15+ test cases
 
 #### Payment Monitoring Tests
@@ -399,12 +399,12 @@ All tests are designed to **FAIL** currently because:
 
 ## Files Created
 
-1. `/home/user/athena/internal/domain/payment.go` - Domain models
-2. `/home/user/athena/internal/repository/iota_repository_test.go` - Repository tests
-3. `/home/user/athena/internal/payments/iota_client_test.go` - IOTA client tests
-4. `/home/user/athena/internal/usecase/payments/payment_service_test.go` - Service tests
-5. `/home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go` - Handler tests
-6. `/home/user/athena/internal/worker/iota_payment_worker_test.go` - Worker tests
+1. `/home/user/vidra/internal/domain/payment.go` - Domain models
+2. `/home/user/vidra/internal/repository/iota_repository_test.go` - Repository tests
+3. `/home/user/vidra/internal/payments/iota_client_test.go` - IOTA client tests
+4. `/home/user/vidra/internal/usecase/payments/payment_service_test.go` - Service tests
+5. `/home/user/vidra/internal/httpapi/handlers/payments/payment_handlers_test.go` - Handler tests
+6. `/home/user/vidra/internal/worker/iota_payment_worker_test.go` - Worker tests
 
 **Total Lines of Test Code:** ~3,000+ lines
 

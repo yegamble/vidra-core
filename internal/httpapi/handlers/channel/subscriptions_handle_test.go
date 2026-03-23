@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"athena/internal/usecase"
+	"vidra-core/internal/usecase"
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

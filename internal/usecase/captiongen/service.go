@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/port"
-	"athena/internal/storage"
-	"athena/internal/whisper"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
+	"vidra-core/internal/storage"
+	"vidra-core/internal/whisper"
 
 	"github.com/google/uuid"
 )

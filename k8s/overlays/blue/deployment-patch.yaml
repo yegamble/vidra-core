@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: athena-api
+  name: vidra-api
   labels:
     version: blue
 spec:
@@ -10,11 +10,11 @@ spec:
       labels:
         version: blue
       annotations:
-        deployment.athena/color: "blue"
-        deployment.athena/timestamp: "TIMESTAMP_PLACEHOLDER"
+        deployment.vidra/color: "blue"
+        deployment.vidra/timestamp: "TIMESTAMP_PLACEHOLDER"
     spec:
       containers:
-      - name: athena
+      - name: vidra
         env:
         - name: DEPLOYMENT_COLOR
           value: "blue"
@@ -24,7 +24,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: athena-encoding-worker
+  name: vidra-encoding-worker
   labels:
     version: blue
 spec:
@@ -33,7 +33,7 @@ spec:
       labels:
         version: blue
       annotations:
-        deployment.athena/color: "blue"
+        deployment.vidra/color: "blue"
     spec:
       terminationGracePeriodSeconds: 7200  # 2 hours for encoding jobs
       containers:

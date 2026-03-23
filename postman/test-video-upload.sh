@@ -6,8 +6,8 @@ echo "Starting test environment..."
 cd "$(dirname "$0")/.."
 
 # Ensure clean state
-COMPOSE_PROJECT_NAME=athena-test docker compose --profile test down -v > /dev/null 2>&1
-COMPOSE_PROJECT_NAME=athena-test docker compose --profile test up -d postgres-test redis-test ipfs-test app-test
+COMPOSE_PROJECT_NAME=vidra-test docker compose --profile test down -v > /dev/null 2>&1
+COMPOSE_PROJECT_NAME=vidra-test docker compose --profile test up -d postgres-test redis-test ipfs-test app-test
 
 echo "Waiting for services..."
 sleep 5
@@ -15,7 +15,7 @@ sleep 5
 echo "Testing video upload with authentication..."
 
 # First register a user and get token using docker
-REGISTER_RESPONSE=$(docker run --rm --network athena-test_test-network \
+REGISTER_RESPONSE=$(docker run --rm --network vidra-test_test-network \
   curlimages/curl:latest \
   -s -X POST http://app-test:8080/auth/register \
   -H "Content-Type: application/json" \
@@ -39,7 +39,7 @@ echo "Got access token: ${ACCESS_TOKEN:0:20}..."
 
 # Test video upload with the token
 echo "Testing video upload..."
-UPLOAD_RESPONSE=$(docker run --rm --network athena-test_test-network \
+UPLOAD_RESPONSE=$(docker run --rm --network vidra-test_test-network \
   -v "$(pwd)/postman/test-files:/test-files" \
   curlimages/curl:latest \
   -s -X POST http://app-test:8080/api/v1/videos/upload \
@@ -59,6 +59,6 @@ else
 fi
 
 echo "Cleaning up..."
-COMPOSE_PROJECT_NAME=athena-test docker compose --profile test down -v
+COMPOSE_PROJECT_NAME=vidra-test docker compose --profile test down -v
 
 echo "Test complete!"

@@ -1,0 +1,288 @@
+{
+  "info": {
+    "name": "Vidra Core Watched Words & Auto-Tags API",
+    "description": "Test collection for server watched words management and auto-tag policies.\n\nPeerTube-compatible endpoints for content moderation via word lists.\n\n## Environment Variables Required\n- `baseUrl` - API base URL\n- `admin_access_token` - Admin JWT access token\n\n## Variables Set During Run\n- `watched_word_list_id` - UUID of created word list",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Watched Words",
+      "item": [
+        {
+          "name": "List Server Watched Words (empty)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Response has data', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/watched-words/server",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "watched-words", "server"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Server Word List",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 201', () => {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Word list created', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "  pm.expect(body.data).to.have.property('id');",
+                  "});",
+                  "pm.environment.set('watched_word_list_id', body.data.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"list_name\": \"test-filter\",\n  \"words\": [\"spam\", \"scam\", \"phishing\"],\n  \"action\": \"flag\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/watched-words/server",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "watched-words", "server"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Watched Words (verify created)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('At least one word list exists', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/watched-words/server",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "watched-words", "server"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Word List",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Word list updated', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"words\": [\"spam\", \"scam\", \"phishing\", \"malware\"],\n  \"action\": \"block\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/watched-words/server/{{watched_word_list_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "watched-words", "server", "{{watched_word_list_id}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Word List",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 204', () => {",
+                  "  pm.expect([200, 204]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/watched-words/server/{{watched_word_list_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "watched-words", "server", "{{watched_word_list_id}}"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auto-Tags",
+      "item": [
+        {
+          "name": "Get Available Auto-Tags",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Auto-tags returned', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auto-tags",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auto-tags"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Auto-Tag Policies",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Policies returned', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auto-tags/policies",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auto-tags", "policies"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Auto-Tag Policies",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Policies updated', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"review\": [\"watched-words\"],\n  \"enabled\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auto-tags/policies",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auto-tags", "policies"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

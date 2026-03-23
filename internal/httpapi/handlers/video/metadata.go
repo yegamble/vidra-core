@@ -3,7 +3,7 @@ package video
 import (
 	"net/http"
 
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 )
 
 // VideoLicences maps PeerTube licence IDs to human-readable names.

@@ -12,7 +12,7 @@
 
 ## Overview
 
-This guide provides step-by-step instructions for implementing blue/green deployments for the Athena video platform.
+This guide provides step-by-step instructions for implementing blue/green deployments for the Vidra Core video platform.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ Before implementing blue/green deployments:
 
 - [ ] Kubernetes cluster running (1.24+)
 - [ ] kubectl configured with cluster admin access
-- [ ] Athena currently deployed (single environment)
+- [ ] Vidra Core currently deployed (single environment)
 - [ ] Database migrations strategy reviewed
 - [ ] Monitoring stack deployed (Prometheus + Grafana)
 - [ ] GitHub Actions configured with KUBE_CONFIG secret
@@ -43,27 +43,27 @@ Before implementing blue/green deployments:
 
 ```bash
 # Navigate to project root
-cd /home/user/athena
+cd /home/user/vidra
 
 # Backup current deployment
-kubectl get all -n athena -o yaml > backup-current-deployment.yaml
+kubectl get all -n vidra -o yaml > backup-current-deployment.yaml
 
 # Label current deployment as "blue"
-kubectl label deployment athena-api version=blue -n athena --overwrite
-kubectl label deployment athena-encoding-worker version=blue -n athena --overwrite
+kubectl label deployment vidra-api version=blue -n vidra --overwrite
+kubectl label deployment vidra-encoding-worker version=blue -n vidra --overwrite
 
 # Update service selector to use version label
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"blue"}}}'
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"blue"}}}'
 
 # Verify
-kubectl get service athena-api -n athena -o jsonpath='{.spec.selector}' | jq
+kubectl get service vidra-api -n vidra -o jsonpath='{.spec.selector}' | jq
 ```
 
 **Expected Output:**
 
 ```json
 {
-  "app": "athena",
+  "app": "vidra",
   "component": "api",
   "version": "blue"
 }
@@ -73,13 +73,13 @@ kubectl get service athena-api -n athena -o jsonpath='{.spec.selector}' | jq
 
 ```bash
 # Run health check
-curl http://athena.example.com/health
+curl http://vidra.example.com/health
 
 # Run readiness check
-curl http://athena.example.com/ready | jq
+curl http://vidra.example.com/ready | jq
 
 # Check traffic is flowing to blue pods
-kubectl logs -l version=blue -n athena --tail=10
+kubectl logs -l version=blue -n vidra --tail=10
 ```
 
 ### Step 1.3: Deploy Green Environment (Test)
@@ -89,7 +89,7 @@ kubectl logs -l version=blue -n athena --tail=10
 kubectl apply -k k8s/overlays/green/
 
 # Wait for green pods to be ready
-kubectl wait --for=condition=ready pod -l version=green --timeout=5m -n athena
+kubectl wait --for=condition=ready pod -l version=green --timeout=5m -n vidra
 
 # Verify green environment (without switching traffic)
 kubectl run test-green \
@@ -97,8 +97,8 @@ kubectl run test-green \
   --restart=Never \
   --rm \
   -i \
-  -n athena \
-  -- curl -f http://athena-api-green/health
+  -n vidra \
+  -- curl -f http://vidra-api-green/health
 
 # Clean up green environment
 kubectl delete -k k8s/overlays/green/
@@ -120,7 +120,7 @@ cat ~/.kube/config | base64 > kubeconfig-base64.txt
 gh secret set KUBE_CONFIG < kubeconfig-base64.txt
 
 # Add database URL (for migrations)
-gh secret set DATABASE_URL --body "postgres://user:pass@host:5432/athena"
+gh secret set DATABASE_URL --body "postgres://user:pass@host:5432/vidra"
 
 # Optional: Slack webhook
 gh secret set SLACK_WEBHOOK_URL --body "https://hooks.slack.com/services/..."
@@ -242,7 +242,7 @@ gh workflow run blue-green-deploy.yml \
   --field auto_promote=true
 
 # Monitor staging deployment
-kubectl get pods -n athena-staging --watch
+kubectl get pods -n vidra-staging --watch
 ```
 
 ### Step 4.2: Load Test During Switchover
@@ -256,7 +256,7 @@ k6 run --vus 100 --duration 30m video-platform-load-test.js &
 gh workflow run blue-green-deploy.yml --field image_tag=v1.1.0-staging
 
 # Monitor error rates during switchover
-kubectl logs -f deployment/athena-api-green -n athena-staging | grep ERROR
+kubectl logs -f deployment/vidra-api-green -n vidra-staging | grep ERROR
 ```
 
 ### Step 4.3: Test Rollback Procedure
@@ -266,23 +266,23 @@ kubectl logs -f deployment/athena-api-green -n athena-staging | grep ERROR
 kubectl apply -k k8s/overlays/green/
 
 # Switch traffic to green
-kubectl patch service athena-api -n athena-staging -p '{"spec":{"selector":{"version":"green"}}}'
+kubectl patch service vidra-api -n vidra-staging -p '{"spec":{"selector":{"version":"green"}}}'
 
 # Simulate failure scenario
-kubectl exec -it deployment/athena-api-green -n athena-staging -- killall -9 athena
+kubectl exec -it deployment/vidra-api-green -n vidra-staging -- killall -9 vidra
 
 # Execute rollback
 ./scripts/rollback-deployment.sh
 
 # Verify traffic back on blue
-curl http://staging.athena.example.com/health
+curl http://staging.vidra.example.com/health
 ```
 
 ### Step 4.4: Validate Federation During Switchover
 
 ```bash
 # Set up ActivityPub monitoring
-watch -n 5 'curl -s http://staging.athena.example.com/.well-known/nodeinfo | jq'
+watch -n 5 'curl -s http://staging.vidra.example.com/.well-known/nodeinfo | jq'
 
 # Trigger deployment
 gh workflow run blue-green-deploy.yml --field image_tag=v1.1.0-staging
@@ -313,10 +313,10 @@ gh workflow run blue-green-deploy.yml --field image_tag=v1.1.0-staging
 # - Queue depth
 
 # Document current version
-kubectl get deployment athena-api -n athena -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment vidra-api -n vidra -o jsonpath='{.spec.template.spec.containers[0].image}'
 
 # Backup database
-pg_dump "$DATABASE_URL" | gzip > athena-backup-$(date +%Y%m%d).sql.gz
+pg_dump "$DATABASE_URL" | gzip > vidra-backup-$(date +%Y%m%d).sql.gz
 
 # Verify monitoring alerts are configured
 kubectl get prometheusrules -n monitoring
@@ -375,10 +375,10 @@ gh run view --web
 
 ```bash
 # Verify traffic is flowing
-curl https://athena.example.com/health
+curl https://vidra.example.com/health
 
 # Check error rates
-kubectl logs -l version=green -n athena --tail=100 | grep ERROR
+kubectl logs -l version=green -n vidra --tail=100 | grep ERROR
 
 # Monitor Grafana dashboard
 # - HTTP request rate
@@ -391,24 +391,24 @@ kubectl logs -l version=green -n athena --tail=100 | grep ERROR
 
 ```bash
 # Scale down blue environment
-kubectl scale deployment athena-api-blue --replicas=1 -n athena
+kubectl scale deployment vidra-api-blue --replicas=1 -n vidra
 
 # Monitor for stability
-watch -n 60 'kubectl top pods -n athena'
+watch -n 60 'kubectl top pods -n vidra'
 
 # Verify federation is working
-curl https://athena.example.com/.well-known/nodeinfo | jq
+curl https://vidra.example.com/.well-known/nodeinfo | jq
 ```
 
 **Long-term (2-24 hours):**
 
 ```bash
 # After 2 hours, fully scale down blue
-kubectl scale deployment athena-api-blue --replicas=0 -n athena
-kubectl scale deployment athena-encoding-worker-blue --replicas=0 -n athena
+kubectl scale deployment vidra-api-blue --replicas=0 -n vidra
+kubectl scale deployment vidra-encoding-worker-blue --replicas=0 -n vidra
 
 # After 24 hours, label as inactive
-kubectl label deployment athena-api-blue status=inactive -n athena --overwrite
+kubectl label deployment vidra-api-blue status=inactive -n vidra --overwrite
 
 # Schedule contract migration for next release
 echo "TODO: Apply contract migration in v1.3.0" >> docs/deployment/migration-checklist.md
@@ -463,8 +463,8 @@ EOF
 
 ```bash
 # 1. Build and push Docker image
-docker build -t ghcr.io/yegamble/athena:v1.3.0 .
-docker push ghcr.io/yegamble/athena:v1.3.0
+docker build -t ghcr.io/yegamble/vidra-core:v1.3.0 .
+docker push ghcr.io/yegamble/vidra-core:v1.3.0
 
 # 2. Trigger GitHub Actions workflow
 gh workflow run blue-green-deploy.yml \
@@ -482,7 +482,7 @@ gh run watch
 ./scripts/rollback-deployment.sh
 
 # Manual rollback
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"blue"}}}'
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"blue"}}}'
 ```
 
 ### Monitoring Checklist
@@ -503,7 +503,7 @@ Monitor these metrics during deployment:
 **Pods stuck in Pending:**
 
 ```bash
-kubectl describe pod <pod-name> -n athena
+kubectl describe pod <pod-name> -n vidra
 # Check: Resource quotas, PVC availability, node capacity
 ```
 
@@ -514,7 +514,7 @@ kubectl describe pod <pod-name> -n athena
 ./scripts/rollback-deployment.sh
 
 # Check logs
-kubectl logs -l version=green -n athena --tail=500 | grep ERROR
+kubectl logs -l version=green -n vidra --tail=500 | grep ERROR
 ```
 
 **Database connection pool exhausted:**
@@ -524,9 +524,9 @@ kubectl logs -l version=green -n athena --tail=500 | grep ERROR
 psql "$DATABASE_URL" -c "SELECT count(*) FROM pg_stat_activity WHERE state = 'active';"
 
 # Increase connection limits in deployment
-kubectl set env deployment/athena-api-green \
+kubectl set env deployment/vidra-api-green \
   DATABASE_MAX_CONNECTIONS=50 \
-  -n athena
+  -n vidra
 ```
 
 **Encoding jobs stuck:**
@@ -536,7 +536,7 @@ kubectl set env deployment/athena-api-green \
 redis-cli -u "$REDIS_URL" LLEN encoding:queue
 
 # Check worker status
-kubectl logs -l component=encoding-worker,version=green -n athena
+kubectl logs -l component=encoding-worker,version=green -n vidra
 ```
 
 ---
@@ -601,11 +601,11 @@ After successful implementation:
 
 ## Support & Resources
 
-- **Strategy Document:** `/home/user/athena/docs/deployment/BLUE_GREEN_DEPLOYMENT_STRATEGY.md`
-- **Kubernetes Manifests:** `/home/user/athena/k8s/overlays/{blue,green}/`
-- **GitHub Actions Workflow:** `/home/user/athena/.github/workflows/blue-green-deploy.yml`
-- **Rollback Script:** `/home/user/athena/scripts/rollback-deployment.sh`
-- **Slack Channel:** #athena-deployments
+- **Strategy Document:** `/home/user/vidra/docs/deployment/BLUE_GREEN_DEPLOYMENT_STRATEGY.md`
+- **Kubernetes Manifests:** `/home/user/vidra/k8s/overlays/{blue,green}/`
+- **GitHub Actions Workflow:** `/home/user/vidra/.github/workflows/blue-green-deploy.yml`
+- **Rollback Script:** `/home/user/vidra/scripts/rollback-deployment.sh`
+- **Slack Channel:** #vidra-deployments
 - **On-Call:** PagerDuty rotation
 
 ---

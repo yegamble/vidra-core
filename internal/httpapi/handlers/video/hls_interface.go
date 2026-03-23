@@ -3,7 +3,7 @@ package video
 import (
 	"github.com/google/uuid"
 
-	"athena/internal/livestream"
+	"vidra-core/internal/livestream"
 )
 
 type HLSTranscoderInterface interface {

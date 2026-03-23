@@ -1,4 +1,4 @@
-# Athena Nginx Configuration - HTTP Mode
+# Vidra Core Nginx Configuration - HTTP Mode
 # Generated from template by setup wizard
 
 # Rate limiting zone
@@ -10,8 +10,8 @@ gzip_vary on;
 gzip_min_length 1024;
 gzip_types text/plain text/css application/json application/javascript text/xml application/xml video/mp2t application/vnd.apple.mpegurl;
 
-# Upstream - Athena Go application
-upstream athena_app {
+# Upstream - Vidra Core Go application
+upstream vidra_app {
     server {{.UpstreamAddr}};
     keepalive 32;
 }
@@ -64,7 +64,7 @@ server {
 
     # WebSocket endpoint for live chat
     location /ws/ {
-        proxy_pass http://athena_app;
+        proxy_pass http://vidra_app;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         include /etc/nginx/conf.d/common-proxy.conf;
@@ -73,13 +73,13 @@ server {
     # API endpoints with rate limiting
     location /api/ {
         limit_req zone=api_limit burst=20 nodelay;
-        proxy_pass http://athena_app;
+        proxy_pass http://vidra_app;
         include /etc/nginx/conf.d/common-proxy.conf;
     }
 
     # All other requests proxied to app
     location / {
-        proxy_pass http://athena_app;
+        proxy_pass http://vidra_app;
         include /etc/nginx/conf.d/common-proxy.conf;
     }
 }

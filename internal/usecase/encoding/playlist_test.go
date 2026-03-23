@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"athena/internal/config"
+	"vidra-core/internal/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

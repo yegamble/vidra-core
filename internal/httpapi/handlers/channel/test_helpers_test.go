@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"athena/internal/httpapi/handlers/messaging"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	ucn "athena/internal/usecase/notification"
+	"vidra-core/internal/httpapi/handlers/messaging"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	ucn "vidra-core/internal/usecase/notification"
 )
 
 // Response is an alias for shared.Response for tests

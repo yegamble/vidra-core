@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - User Data Archives
+  title: Vidra Core API - User Data Archives
   description: |
     Endpoints for user data export and import.
 

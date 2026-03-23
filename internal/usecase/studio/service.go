@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"athena/internal/domain"
-	"athena/internal/port"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 )
 
 // VideoRepository is the subset of port.VideoRepository used by StudioService.

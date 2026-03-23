@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Video Storyboards
+  title: Vidra Core API - Video Storyboards
   description: Endpoints for retrieving video storyboard sprite sheets
   version: 1.0.0
 

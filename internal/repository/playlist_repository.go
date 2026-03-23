@@ -1,8 +1,8 @@
 package repository
 
 import (
-	"athena/internal/domain"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/usecase"
 	"context"
 	"database/sql"
 	"fmt"

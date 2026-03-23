@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/port"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"

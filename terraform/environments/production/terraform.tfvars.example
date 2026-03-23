@@ -2,14 +2,14 @@
 # Copy this file to terraform.tfvars and update with your values
 
 # Project Configuration
-project_name = "athena"
+project_name = "vidra"
 environment  = "production"
 aws_region   = "us-east-1"
 owner_email  = "devops@example.com"
 cost_center  = "engineering"
 
 # Domain Configuration
-domain_name = "athena.example.com"
+domain_name = "vidra.example.com"
 
 # VPC Configuration
 vpc_cidr = "10.0.0.0/16"
@@ -120,7 +120,7 @@ cloudfront_max_ttl     = 31536000  # 1 year
 
 # Configure these after setting up your domain and ACM certificate
 cloudfront_aliases = [
-  # "cdn.athena.example.com"
+  # "cdn.vidra.example.com"
 ]
 acm_certificate_arn = null # ARN of ACM certificate in us-east-1
 
@@ -140,6 +140,6 @@ enable_kms_encryption = true
 # Additional Tags
 additional_tags = {
   Terraform   = "true"
-  Repository  = "github.com/yegamble/athena"
+  Repository  = "github.com/yegamble/vidra-core"
   Team        = "platform"
 }

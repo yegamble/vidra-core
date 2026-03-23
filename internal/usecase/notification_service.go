@@ -1,6 +1,6 @@
 package usecase
 
-import ucn "athena/internal/usecase/notification"
+import ucn "vidra-core/internal/usecase/notification"
 
 type NotificationService = ucn.Service
 

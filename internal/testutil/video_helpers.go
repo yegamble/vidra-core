@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 type VideoMetadata struct {
@@ -205,6 +205,6 @@ func GenerateTestVideo(spec TestVideoSpec, outputDir string) (string, error) {
 
 // EnsureTestVideoExists generates a test video if it doesn't exist and returns its path
 func EnsureTestVideoExists(spec TestVideoSpec) (string, error) {
-	tempDir := filepath.Join(os.TempDir(), "athena_test_videos")
+	tempDir := filepath.Join(os.TempDir(), "vidra_test_videos")
 	return GenerateTestVideo(spec, tempDir)
 }

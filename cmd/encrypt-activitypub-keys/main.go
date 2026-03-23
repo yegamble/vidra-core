@@ -9,8 +9,8 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 
-	"athena/internal/config"
-	"athena/internal/security"
+	"vidra-core/internal/config"
+	"vidra-core/internal/security"
 )
 
 // KeyRecord represents a key record from the database

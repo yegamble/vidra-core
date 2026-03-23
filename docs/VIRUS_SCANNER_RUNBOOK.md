@@ -2,7 +2,7 @@
 
 ## Overview
 
-This runbook provides operational procedures for monitoring, maintaining, and troubleshooting the ClamAV virus scanning system in Athena.
+This runbook provides operational procedures for monitoring, maintaining, and troubleshooting the ClamAV virus scanning system in Vidra Core.
 
 ## Table of Contents
 
@@ -22,7 +22,7 @@ This runbook provides operational procedures for monitoring, maintaining, and tr
 ```bash
 # Docker environment
 docker ps | grep clamav
-docker exec athena-clamav clamdscan --ping
+docker exec vidra-clamav clamdscan --ping
 
 # Systemd environment
 systemctl status clamav-daemon
@@ -87,16 +87,16 @@ find /var/quarantine -type f -mtime +30 -ls  # Older than 30 days
 
 ```bash
 # Check signature database version
-docker exec athena-clamav freshclam --version
+docker exec vidra-clamav freshclam --version
 
 # View last update time
-docker exec athena-clamav cat /var/lib/clamav/daily.cvd | head -c 512
+docker exec vidra-clamav cat /var/lib/clamav/daily.cvd | head -c 512
 
 # Force signature update
-docker exec athena-clamav freshclam
+docker exec vidra-clamav freshclam
 
 # Check update logs
-docker logs athena-clamav | grep freshclam
+docker logs vidra-clamav | grep freshclam
 ```
 
 ---
@@ -114,7 +114,7 @@ docker logs athena-clamav | grep freshclam
 docker ps | grep clamav
 
 # Check ClamAV logs
-docker logs athena-clamav --tail 100
+docker logs vidra-clamav --tail 100
 
 # Test connectivity
 telnet localhost 3310
@@ -124,13 +124,13 @@ telnet localhost 3310
 
 ```bash
 # Restart ClamAV
-docker restart athena-clamav
+docker restart vidra-clamav
 
 # Wait for initialization (can take 60-120 seconds)
-docker logs -f athena-clamav
+docker logs -f vidra-clamav
 
 # Verify service is ready
-docker exec athena-clamav clamdscan --ping
+docker exec vidra-clamav clamdscan --ping
 ```
 
 **Prevention**:
@@ -168,7 +168,7 @@ LIMIT 20;
 export CLAMAV_TIMEOUT=600  # 10 minutes
 
 # Check ClamAV CPU/memory usage
-docker stats athena-clamav
+docker stats vidra-clamav
 
 # Increase ClamAV resources if needed
 # Edit docker-compose.yml:
@@ -203,7 +203,7 @@ ORDER BY occurrences DESC;
 
 ```bash
 # Test file with multiple engines
-docker exec athena-clamav clamdscan /path/to/file
+docker exec vidra-clamav clamdscan /path/to/file
 
 # Submit false positive to ClamAV team
 # https://www.clamav.net/reports/fp
@@ -223,7 +223,7 @@ docker exec athena-clamav clamdscan /path/to/file
 
 ```bash
 # Check memory usage
-docker stats athena-clamav --no-stream
+docker stats vidra-clamav --no-stream
 
 # Review OOM kills in system logs
 dmesg | grep -i "out of memory"
@@ -264,10 +264,10 @@ services:
 
 ```bash
 # Review scan log entry
-docker exec athena-clamav clamdscan /quarantine/[filename]
+docker exec vidra-clamav clamdscan /quarantine/[filename]
 
 # Check virus signature details
-docker exec athena-clamav sigtool --find [virus_name]
+docker exec vidra-clamav sigtool --find [virus_name]
 ```
 
 2. **Identify Affected User**:
@@ -347,11 +347,11 @@ curl -X POST https://alerts.company.com/security \
 
 ```bash
 # Verify production uses strict mode
-docker exec athena-app env | grep CLAMAV_FALLBACK_MODE
+docker exec vidra-app env | grep CLAMAV_FALLBACK_MODE
 # MUST return: CLAMAV_FALLBACK_MODE=strict
 
 # If not strict, update immediately
-docker exec athena-app sh -c 'export CLAMAV_FALLBACK_MODE=strict'
+docker exec vidra-app sh -c 'export CLAMAV_FALLBACK_MODE=strict'
 ```
 
 2. **Assess Impact**:
@@ -368,15 +368,15 @@ WHERE scan_result IN ('error', 'warning')
 
 ```bash
 # Attempt restart
-docker restart athena-clamav
+docker restart vidra-clamav
 
 # If restart fails, check resources
 df -h  # Disk space
 free -h  # Memory
 
 # Force clean restart
-docker stop athena-clamav
-docker rm athena-clamav
+docker stop vidra-clamav
+docker rm vidra-clamav
 docker compose up -d clamav
 ```
 
@@ -385,14 +385,14 @@ docker compose up -d clamav
 ```bash
 # Script to re-scan files from outage window
 #!/bin/bash
-psql -U athena_user -d athena -t -A -c "
+psql -U vidra_user -d vidra -t -A -c "
   SELECT DISTINCT file_path
   FROM virus_scan_log
   WHERE scan_result = 'warning'
     AND scanned_at BETWEEN '[outage_start]' AND '[outage_end]'
 " | while read filepath; do
   echo "Re-scanning: $filepath"
-  docker exec athena-clamav clamdscan "$filepath"
+  docker exec vidra-clamav clamdscan "$filepath"
 done
 ```
 
@@ -429,10 +429,10 @@ du -sh /var/quarantine/
 
 ```bash
 # Signatures auto-update via freshclam, but verify
-docker exec athena-clamav freshclam --show-progress
+docker exec vidra-clamav freshclam --show-progress
 
 # Check signature counts
-docker exec athena-clamav sigtool --info /var/lib/clamav/daily.cvd
+docker exec vidra-clamav sigtool --info /var/lib/clamav/daily.cvd
 ```
 
 2. **Review Scan Performance**:
@@ -456,7 +456,7 @@ ORDER BY week DESC;
 
 ```bash
 # Run automated cleanup (configured in docker-compose)
-docker exec athena-app /app/bin/cleanup-quarantine
+docker exec vidra-app /app/bin/cleanup-quarantine
 
 # Or manual cleanup
 find /var/quarantine -type f -mtime +90 -delete
@@ -481,7 +481,7 @@ ORDER BY month DESC;
 
 ```bash
 # Review audit log
-less /var/log/athena/virus_scan.log
+less /var/log/vidra/virus_scan.log
 
 # Check for unauthorized quarantine access
 sudo ausearch -f /var/quarantine -i
@@ -587,8 +587,8 @@ ausearch -k quarantine_access -i
 
 ```bash
 # Verify signature database integrity
-docker exec athena-clamav sigtool --info /var/lib/clamav/daily.cvd
-docker exec athena-clamav sigtool --info /var/lib/clamav/main.cvd
+docker exec vidra-clamav sigtool --info /var/lib/clamav/daily.cvd
+docker exec vidra-clamav sigtool --info /var/lib/clamav/main.cvd
 
 # Check for signature tampering
 find /var/lib/clamav -type f -name "*.cvd" -exec md5sum {} \;
@@ -642,7 +642,7 @@ groups:
 
 ## References
 
-- [SECURITY.md](../SECURITY.md) - CVE-ATHENA-2025-001 details
+- [SECURITY.md](../SECURITY.md) - CVE-VIDRA-2025-001 details
 - [Security Deployment Guide](security.md) - Configuration reference
 - [ClamAV Documentation](https://docs.clamav.net/)
 - [Virus Scanner Implementation](../../internal/security/virus_scanner.go)

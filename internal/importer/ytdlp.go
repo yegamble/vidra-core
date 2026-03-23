@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	"athena/internal/domain"
-	"athena/internal/security"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/security"
 )
 
 type YtDlp struct {

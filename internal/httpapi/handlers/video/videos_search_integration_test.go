@@ -10,10 +10,10 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 
-	"athena/internal/domain"
-	"athena/internal/repository"
-	"athena/internal/testutil"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase"
 )
 
 // This integration test ensures that search and user video endpoints

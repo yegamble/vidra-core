@@ -4,9 +4,9 @@ import (
 	"context"
 	"net/http"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
 )
 
 // BlocklistStatusRepository defines the blocklist query needed for status endpoint.

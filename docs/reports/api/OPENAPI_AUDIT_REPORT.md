@@ -1,19 +1,19 @@
 # OpenAPI Documentation Audit Report
 
 **Date:** 2025-11-30
-**Project:** Athena Backend API (PeerTube-Inspired)
+**Project:** Vidra Core Backend API (PeerTube-Inspired)
 **Auditor:** Claude (Documentation Engineer)
 
 ---
 
 ## Executive Summary
 
-This audit systematically compared the OpenAPI/Swagger documentation against the actual API implementation in the Athena backend. The analysis examined:
+This audit systematically compared the OpenAPI/Swagger documentation against the actual API implementation in the Vidra Core backend. The analysis examined:
 
-1. **Route definitions** in `/Users/yosefgamble/github/athena/internal/httpapi/routes.go`
-2. **OpenAPI specifications** in `/Users/yosefgamble/github/athena/api/*.yaml` and `/Users/yosefgamble/github/athena/docs/openapi_notifications.yaml`
-3. **Handler implementations** in `/Users/yosefgamble/github/athena/internal/httpapi/handlers/**/*.go`
-4. **Domain models and DTOs** in `/Users/yosefgamble/github/athena/internal/domain/*.go`
+1. **Route definitions** in `/Users/yosefgamble/github/vidra/internal/httpapi/routes.go`
+2. **OpenAPI specifications** in `/Users/yosefgamble/github/vidra/api/*.yaml` and `/Users/yosefgamble/github/vidra/docs/openapi_notifications.yaml`
+3. **Handler implementations** in `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/**/*.go`
+4. **Domain models and DTOs** in `/Users/yosefgamble/github/vidra/internal/domain/*.go`
 
 ### Key Findings
 
@@ -31,7 +31,7 @@ The following endpoints are **implemented in code but NOT documented** in any Op
 
 ### 1.1 Live Stream Endpoints
 
-**Location:** `/Users/yosefgamble/github/athena/internal/httpapi/routes.go:293-342`
+**Location:** `/Users/yosefgamble/github/vidra/internal/httpapi/routes.go:293-342`
 
 | Method | Endpoint | Handler | Status |
 |--------|----------|---------|--------|
@@ -112,7 +112,7 @@ These endpoints are documented but may not be fully implemented:
 
 ### 1.3 Video Category Endpoints
 
-**Location:** `/Users/yosefgamble/github/athena/api/openapi.yaml:2018-2270`
+**Location:** `/Users/yosefgamble/github/vidra/api/openapi.yaml:2018-2270`
 
 These endpoints ARE documented in the main `openapi.yaml` but their implementation in handlers needs verification:
 
@@ -124,7 +124,7 @@ These endpoints ARE documented in the main `openapi.yaml` but their implementati
 | PUT | `/api/v1/admin/categories/{id}` | ✅ Documented | ❓ Needs verification |
 | DELETE | `/api/v1/admin/categories/{id}` | ✅ Documented | ❓ Needs verification |
 
-**Issue:** No category routes found in `routes.go`. Handler exists at `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/video_category_handler.go` but routes may not be registered.
+**Issue:** No category routes found in `routes.go`. Handler exists at `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/video_category_handler.go` but routes may not be registered.
 
 **Recommendation:**
 
@@ -185,7 +185,7 @@ All redundancy endpoints are documented but not found in `routes.go`:
 
 **Recommendation:**
 
-1. Handler exists at `/Users/yosefgamble/github/athena/internal/httpapi/handlers/messaging/secure_messages.go`
+1. Handler exists at `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/messaging/secure_messages.go`
 2. Add routes to `routes.go` or remove from OpenAPI spec if not ready
 
 ---
@@ -265,7 +265,7 @@ All redundancy endpoints are documented but not found in `routes.go`:
 ### 3.1 User Schema
 
 **OpenAPI Location:** `api/openapi.yaml` (components/schemas/User)
-**Domain Model:** `/Users/yosefgamble/github/athena/internal/domain/user.go:9-29`
+**Domain Model:** `/Users/yosefgamble/github/vidra/internal/domain/user.go:9-29`
 
 **Mismatches:**
 
@@ -335,7 +335,7 @@ User:
 ### 3.2 Video Schema
 
 **OpenAPI Location:** `api/openapi.yaml` (components/schemas/Video)
-**Domain Model:** `/Users/yosefgamble/github/athena/internal/domain/video.go:43-83`
+**Domain Model:** `/Users/yosefgamble/github/vidra/internal/domain/video.go:43-83`
 
 **Mismatches:**
 
@@ -497,7 +497,7 @@ VideoMetadata:
 
 ### 3.3 Response Wrapper Schema
 
-**Implementation:** `/Users/yosefgamble/github/athena/internal/httpapi/shared/response.go:11-30`
+**Implementation:** `/Users/yosefgamble/github/vidra/internal/httpapi/shared/response.go:11-30`
 
 All API responses use a standard wrapper:
 
@@ -881,11 +881,11 @@ Create a test that:
 2. Parses all OpenAPI schemas
 3. Compares them and reports mismatches
 
-Example location: `/Users/yosefgamble/github/athena/test/openapi_validation_test.go`
+Example location: `/Users/yosefgamble/github/vidra/test/openapi_validation_test.go`
 
 ### 10.4 Documentation Standards Document
 
-Create `/Users/yosefgamble/github/athena/api/README.md` with:
+Create `/Users/yosefgamble/github/vidra/api/README.md` with:
 
 - When to create a new OpenAPI file vs extending existing
 - Naming conventions for operationIds
@@ -901,7 +901,7 @@ Consider merging all OpenAPI specs into a single file or using `$ref` to referen
 # api/openapi.yaml (main file)
 openapi: 3.0.3
 info:
-  title: Athena API
+  title: Vidra Core API
   version: 1.0.0
 
 paths:
@@ -947,7 +947,7 @@ This improves maintainability and ensures consistency.
 
 ## 12. Conclusion
 
-The Athena API implementation is generally well-structured, but the OpenAPI documentation has fallen behind the actual codebase. The main issues are:
+The Vidra Core API implementation is generally well-structured, but the OpenAPI documentation has fallen behind the actual codebase. The main issues are:
 
 1. **Missing documentation** for recently added features (live streams, federation fields, S3 storage)
 2. **Path inconsistencies** (missing /api/v1 prefixes)
@@ -969,8 +969,8 @@ With these fixes, the OpenAPI documentation will accurately reflect the API impl
 **Report Generated:** 2025-11-30
 **Files Analyzed:**
 
-- `/Users/yosefgamble/github/athena/internal/httpapi/routes.go`
-- `/Users/yosefgamble/github/athena/api/*.yaml` (17 files)
-- `/Users/yosefgamble/github/athena/docs/openapi_notifications.yaml`
-- `/Users/yosefgamble/github/athena/internal/domain/*.go` (20+ files)
-- `/Users/yosefgamble/github/athena/internal/httpapi/handlers/**/*.go` (80+ files)
+- `/Users/yosefgamble/github/vidra/internal/httpapi/routes.go`
+- `/Users/yosefgamble/github/vidra/api/*.yaml` (17 files)
+- `/Users/yosefgamble/github/vidra/docs/openapi_notifications.yaml`
+- `/Users/yosefgamble/github/vidra/internal/domain/*.go` (20+ files)
+- `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/**/*.go` (80+ files)

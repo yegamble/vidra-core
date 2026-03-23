@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	"athena/internal/port"
-	"athena/internal/security"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
+	"vidra-core/internal/security"
 
 	"github.com/go-chi/chi/v5"
 )

@@ -414,4 +414,4 @@ ANALYTICS_RETENTION_DAYS=90
 **Last Updated**: 2025-10-21
 **Sprint 7 Status**: ✅ COMPLETE (100% - All phases complete with tests)
 
-*Athena PeerTube Backend - Video Platform in Go*
+*Vidra Core PeerTube Backend - Video Platform in Go*

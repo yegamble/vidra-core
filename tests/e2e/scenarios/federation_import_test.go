@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/tests/e2e"
+	"vidra-core/tests/e2e"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

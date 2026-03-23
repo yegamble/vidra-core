@@ -5,15 +5,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/port"
-	"athena/internal/usecase"
-	ucchannel "athena/internal/usecase/channel"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/port"
+	"vidra-core/internal/usecase"
+	ucchannel "vidra-core/internal/usecase/channel"
 )
 
 // AliasHandlers provides thin route aliases that resolve PeerTube-style URL
-// patterns to Athena's canonical endpoints.
+// patterns to Vidra Core's canonical endpoints.
 type AliasHandlers struct {
 	captionRepo    port.CaptionRepository
 	channelService *ucchannel.Service

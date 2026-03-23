@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"athena/internal/backup"
+	"vidra-core/internal/backup"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -234,7 +234,7 @@ make test
 make lint
 
 # Build application
-go build -o bin/athena ./cmd/server
+go build -o bin/vidra ./cmd/server
 ```
 
 ## Notes

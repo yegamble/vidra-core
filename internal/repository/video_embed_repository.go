@@ -8,8 +8,8 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"athena/internal/domain"
-	"athena/internal/port"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 )
 
 type videoEmbedPrivacyRepository struct {

@@ -1,6 +1,6 @@
 package usecase
 
-import ucup "athena/internal/usecase/upload"
+import ucup "vidra-core/internal/usecase/upload"
 
 type UploadService = ucup.Service
 

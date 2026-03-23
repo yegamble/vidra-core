@@ -1,7 +1,7 @@
 # GitHub Actions CI/CD Optimization Report
 
 **Date:** 2025-11-18
-**Project:** Athena
+**Project:** Vidra Core
 **Current Setup:** Self-hosted runners, Go 1.24, 8 workflow files
 
 ---

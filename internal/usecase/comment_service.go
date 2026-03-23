@@ -1,7 +1,7 @@
 package usecase
 
 import (
-	uccmt "athena/internal/usecase/comment"
+	uccmt "vidra-core/internal/usecase/comment"
 )
 
 type CommentService = uccmt.Service

@@ -1,6 +1,6 @@
 # Terraform Infrastructure - File Structure
 
-Complete directory structure for Athena platform Terraform infrastructure.
+Complete directory structure for Vidra Core platform Terraform infrastructure.
 
 ## Overview
 
@@ -457,9 +457,9 @@ Total resources created in production environment:
 
 State file locations:
 
-- Production: `s3://athena-terraform-state-production/production/terraform.tfstate`
-- Staging: `s3://athena-terraform-state-staging/staging/terraform.tfstate`
-- Dev: `s3://athena-terraform-state-dev/dev/terraform.tfstate`
+- Production: `s3://vidra-terraform-state-production/production/terraform.tfstate`
+- Staging: `s3://vidra-terraform-state-staging/staging/terraform.tfstate`
+- Dev: `s3://vidra-terraform-state-dev/dev/terraform.tfstate`
 
 ## Security
 
@@ -478,7 +478,7 @@ All modules follow security best practices:
 
 All resources are tagged with:
 
-- `Project`: athena
+- `Project`: vidra
 - `Environment`: production/staging/dev
 - `ManagedBy`: Terraform
 - `Owner`: (from variables)

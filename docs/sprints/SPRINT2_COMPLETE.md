@@ -6,7 +6,7 @@
 
 ## Overview
 
-Sprint 2 implemented multi-codec transcoding support, enabling Athena to encode videos using H.264, VP9, and AV1 codecs with adaptive bitrate streaming. This provides significant bandwidth savings and improved quality for modern clients while maintaining backward compatibility with legacy devices.
+Sprint 2 implemented multi-codec transcoding support, enabling Vidra Core to encode videos using H.264, VP9, and AV1 codecs with adaptive bitrate streaming. This provides significant bandwidth savings and improved quality for modern clients while maintaining backward compatibility with legacy devices.
 
 ## Implementation Summary
 
@@ -390,7 +390,7 @@ Sprint 3 will focus on **Live Streaming** capabilities:
    - Browser-to-browser streaming
    - Interactive features
 
-See `docs/ATHENA_PEERTUBE_SPRINT_PLAN.md` for full details.
+See `docs/VIDRA_PEERTUBE_SPRINT_PLAN.md` for full details.
 
 ## Lessons Learned
 
@@ -423,4 +423,4 @@ Sprint 2 successfully implemented multi-codec transcoding with comprehensive tes
 ---
 
 *Generated: 2025-10-14*
-*Athena PeerTube Backend - Video Platform in Go*
+*Vidra Core PeerTube Backend - Video Platform in Go*

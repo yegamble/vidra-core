@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/plugin"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/plugin"
 )
 
 // WebhookPlugin sends webhooks when events occur
@@ -31,7 +31,7 @@ func NewWebhookPlugin() *WebhookPlugin {
 	return &WebhookPlugin{
 		name:        "webhook",
 		version:     "1.0.0",
-		author:      "Athena Team",
+		author:      "Vidra Core Team",
 		description: "Sends HTTP webhooks for video events",
 		enabled:     false,
 		timeout:     10 * time.Second,
@@ -157,7 +157,7 @@ func (p *WebhookPlugin) sendWebhook(ctx context.Context, event string, data map[
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Athena-Webhook-Plugin/"+p.version)
+	req.Header.Set("User-Agent", "Vidra Core-Webhook-Plugin/"+p.version)
 
 	// Add signature header if secret is configured
 	if p.secret != "" {

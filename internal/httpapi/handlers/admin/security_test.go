@@ -1,8 +1,8 @@
 package admin
 
 import (
-	"athena/internal/domain"
-	"athena/internal/repository"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
 	"context"
 	"database/sql"
 	"net/http"

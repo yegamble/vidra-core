@@ -1,4 +1,4 @@
-# RDS PostgreSQL Module for Athena Platform
+# RDS PostgreSQL Module for Vidra Core Platform
 # Creates Multi-AZ PostgreSQL database with automated backups and encryption
 
 locals {

@@ -50,7 +50,7 @@ See the [sprints/](sprints/) directory for detailed sprint documentation includi
   - Analytics with 30-second interval collection and session tracking
   - 23 new API endpoints, ~9,235 lines of code, 85%+ test coverage
 - ✅ Migration from Atlas to Goose (eliminated authentication issues)
-- ✅ P1 Security Vulnerability Fixed: CVE-ATHENA-2025-001
+- ✅ P1 Security Vulnerability Fixed: CVE-VIDRA-2025-001
 - ✅ Pre-commit hooks implemented (prevents credential leaks)
 - ✅ Code quality improvements (YAML linting, struct alignment)
 - ✅ Claude Code hooks created for automated quality assurance

@@ -31,30 +31,30 @@ func DecInFlight()  { atomic.AddInt64(&encoderJobsInFlight, -1) }
 // Handler exposes metrics in Prometheus text exposition format
 func Handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = fmt.Fprintf(w, "# TYPE athena_encoder_jobs_processed_total counter\n")
-	_, _ = fmt.Fprintf(w, "athena_encoder_jobs_processed_total %d\n", atomic.LoadInt64(&encoderJobsProcessed))
-	_, _ = fmt.Fprintf(w, "# TYPE athena_encoder_jobs_failed_total counter\n")
-	_, _ = fmt.Fprintf(w, "athena_encoder_jobs_failed_total %d\n", atomic.LoadInt64(&encoderJobsFailed))
-	_, _ = fmt.Fprintf(w, "# TYPE athena_encoder_jobs_in_progress gauge\n")
-	_, _ = fmt.Fprintf(w, "athena_encoder_jobs_in_progress %d\n", atomic.LoadInt64(&encoderJobsInFlight))
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_encoder_jobs_processed_total counter\n")
+	_, _ = fmt.Fprintf(w, "vidra_encoder_jobs_processed_total %d\n", atomic.LoadInt64(&encoderJobsProcessed))
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_encoder_jobs_failed_total counter\n")
+	_, _ = fmt.Fprintf(w, "vidra_encoder_jobs_failed_total %d\n", atomic.LoadInt64(&encoderJobsFailed))
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_encoder_jobs_in_progress gauge\n")
+	_, _ = fmt.Fprintf(w, "vidra_encoder_jobs_in_progress %d\n", atomic.LoadInt64(&encoderJobsInFlight))
 
 	// Federation metrics
-	_, _ = fmt.Fprintf(w, "# TYPE athena_federation_jobs_processed_total counter\n")
-	_, _ = fmt.Fprintf(w, "athena_federation_jobs_processed_total %d\n", atomic.LoadInt64(&federationJobsProcessed))
-	_, _ = fmt.Fprintf(w, "# TYPE athena_federation_jobs_failed_total counter\n")
-	_, _ = fmt.Fprintf(w, "athena_federation_jobs_failed_total %d\n", atomic.LoadInt64(&federationJobsFailed))
-	_, _ = fmt.Fprintf(w, "# TYPE athena_federation_posts_ingested_total counter\n")
-	_, _ = fmt.Fprintf(w, "athena_federation_posts_ingested_total %d\n", atomic.LoadInt64(&federationPostsIngested))
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_federation_jobs_processed_total counter\n")
+	_, _ = fmt.Fprintf(w, "vidra_federation_jobs_processed_total %d\n", atomic.LoadInt64(&federationJobsProcessed))
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_federation_jobs_failed_total counter\n")
+	_, _ = fmt.Fprintf(w, "vidra_federation_jobs_failed_total %d\n", atomic.LoadInt64(&federationJobsFailed))
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_federation_posts_ingested_total counter\n")
+	_, _ = fmt.Fprintf(w, "vidra_federation_posts_ingested_total %d\n", atomic.LoadInt64(&federationPostsIngested))
 
 	// Scheduler metrics
-	_, _ = fmt.Fprintf(w, "# TYPE athena_scheduler_enabled gauge\n")
-	_, _ = fmt.Fprintf(w, "athena_scheduler_enabled %d\n", atomic.LoadInt64(&schedulerEnabled))
-	_, _ = fmt.Fprintf(w, "# TYPE athena_scheduler_interval_seconds gauge\n")
-	_, _ = fmt.Fprintf(w, "athena_scheduler_interval_seconds %d\n", atomic.LoadInt64(&schedulerIntervalSeconds))
-	_, _ = fmt.Fprintf(w, "# TYPE athena_scheduler_burst gauge\n")
-	_, _ = fmt.Fprintf(w, "athena_scheduler_burst %d\n", atomic.LoadInt64(&schedulerBurst))
-	_, _ = fmt.Fprintf(w, "# TYPE athena_scheduler_last_tick_unixtime gauge\n")
-	_, _ = fmt.Fprintf(w, "athena_scheduler_last_tick_unixtime %d\n", atomic.LoadInt64(&schedulerLastTickUnix))
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_scheduler_enabled gauge\n")
+	_, _ = fmt.Fprintf(w, "vidra_scheduler_enabled %d\n", atomic.LoadInt64(&schedulerEnabled))
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_scheduler_interval_seconds gauge\n")
+	_, _ = fmt.Fprintf(w, "vidra_scheduler_interval_seconds %d\n", atomic.LoadInt64(&schedulerIntervalSeconds))
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_scheduler_burst gauge\n")
+	_, _ = fmt.Fprintf(w, "vidra_scheduler_burst %d\n", atomic.LoadInt64(&schedulerBurst))
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_scheduler_last_tick_unixtime gauge\n")
+	_, _ = fmt.Fprintf(w, "vidra_scheduler_last_tick_unixtime %d\n", atomic.LoadInt64(&schedulerLastTickUnix))
 }
 
 func IncFedJobsProcessed()      { atomic.AddInt64(&federationJobsProcessed, 1) }

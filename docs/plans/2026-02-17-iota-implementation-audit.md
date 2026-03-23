@@ -18,7 +18,7 @@ Worktree: No
 
 ## Summary
 
-**Goal:** Upgrade Athena's IOTA payment integration from stub/mock code targeting the deprecated Stardust protocol to a fully functional implementation targeting IOTA Rebased (launched May 5, 2025) — a Move-based smart contract platform with JSON-RPC APIs, Ed25519 keypairs, and hex-encoded addresses.
+**Goal:** Upgrade Vidra Core's IOTA payment integration from stub/mock code targeting the deprecated Stardust protocol to a fully functional implementation targeting IOTA Rebased (launched May 5, 2025) — a Move-based smart contract platform with JSON-RPC APIs, Ed25519 keypairs, and hex-encoded addresses.
 
 **Architecture:** Build a native Go JSON-RPC client that communicates with the IOTA Rebased node API. Replace the old Bech32 address format with hex `0x`-prefixed addresses. Migrate from "seeds" to Ed25519 keypairs for wallet key storage. Add Docker containers for IOTA node (testnet for dev, mainnet for prod). Integrate IOTA node configuration into the Setup Wizard.
 
@@ -451,7 +451,7 @@ Worktree: No
 
 ### Deferred Ideas
 
-- Custom Move smart contract for Athena-specific payment tokens (Phase 2)
+- Custom Move smart contract for Vidra Core-specific payment tokens (Phase 2)
 - IOTA staking integration for validator rewards
 - Multi-sig wallet support
 - Withdrawal/send transaction implementation (requires Programmable Transaction Block construction)

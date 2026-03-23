@@ -19,7 +19,7 @@ cd postman && ./run-virus-scanner-tests.sh
 
 | File | Purpose | Location |
 |------|---------|----------|
-| **Postman Collection** | E2E tests with edge cases | `/postman/athena-virus-scanner-tests.postman_collection.json` |
+| **Postman Collection** | E2E tests with edge cases | `/postman/vidra-virus-scanner-tests.postman_collection.json` |
 | **Test Runner Script** | Automated test execution | `/postman/run-virus-scanner-tests.sh` |
 | **GitHub Workflow** | CI/CD integration | `/.github/workflows/virus-scanner-tests.yml` |
 | **Vulnerability Report** | Security analysis | `/internal/security/VULNERABILITY_ASSESSMENT.md` |
@@ -58,7 +58,7 @@ CLAMAV_ADDRESS=localhost:3310 go test -v ./internal/security/virus_scanner_test.
 ./postman/run-virus-scanner-tests.sh
 
 # Just Postman collection
-newman run postman/athena-virus-scanner-tests.postman_collection.json \
+newman run postman/vidra-virus-scanner-tests.postman_collection.json \
     --environment postman/test-local.postman_environment.json
 ```
 

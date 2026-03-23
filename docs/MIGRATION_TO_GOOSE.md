@@ -39,10 +39,10 @@ Goose uses environment variables or command-line flags:
 ```bash
 # Database connection
 export GOOSE_DRIVER=postgres
-export GOOSE_DBSTRING="postgres://athena_user:athena_password@localhost:5432/athena?sslmode=disable"
+export GOOSE_DBSTRING="postgres://vidra_user:vidra_password@localhost:5432/vidra?sslmode=disable"
 
 # Or use DATABASE_URL (more common)
-export DATABASE_URL="postgres://athena_user:athena_password@localhost:5432/athena?sslmode=disable"
+export DATABASE_URL="postgres://vidra_user:vidra_password@localhost:5432/vidra?sslmode=disable"
 ```
 
 ### Step 3: Migration File Format

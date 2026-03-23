@@ -18,7 +18,7 @@ Sprint 1 successfully addressed all critical security vulnerabilities and deploy
 
 ### 1. Database Connection Pooling ✅ **COMPLETE (10/10)**
 
-**Implementation:** `/home/user/athena/internal/database/pool.go`
+**Implementation:** `/home/user/vidra/internal/database/pool.go`
 
 **Achievements:**
 
@@ -40,7 +40,7 @@ Sprint 1 successfully addressed all critical security vulnerabilities and deploy
 
 ### 2. Health Checks ✅ **COMPLETE (10/10)**
 
-**Implementation:** `/home/user/athena/internal/health/checker.go`
+**Implementation:** `/home/user/vidra/internal/health/checker.go`
 
 **Achievements:**
 
@@ -48,7 +48,7 @@ Sprint 1 successfully addressed all critical security vulnerabilities and deploy
 - RedisChecker with connection validation
 - IPFSChecker with API reachability tests
 - QueueDepthChecker with configurable thresholds
-- Integration: `/home/user/athena/internal/httpapi/health.go` (GET /health, GET /ready)
+- Integration: `/home/user/vidra/internal/httpapi/health.go` (GET /health, GET /ready)
 - **Test Coverage:** 65+ tests written, ~90% coverage
 
 **Production Readiness:** ✅ **READY**
@@ -67,7 +67,7 @@ Sprint 1 successfully addressed all critical security vulnerabilities and deploy
 
 ### 3. IPFS CID Validation ✅ **COMPLETE (9.5/10)**
 
-**Implementation:** `/home/user/athena/internal/ipfs/cid_validation.go`
+**Implementation:** `/home/user/vidra/internal/ipfs/cid_validation.go`
 
 **Achievements:**
 
@@ -96,7 +96,7 @@ Sprint 1 successfully addressed all critical security vulnerabilities and deploy
 
 ### 4. IPFS Cluster Authentication ✅ **COMPLETE (9.5/10)**
 
-**Implementation:** `/home/user/athena/internal/ipfs/cluster_auth.go`
+**Implementation:** `/home/user/vidra/internal/ipfs/cluster_auth.go`
 
 **Achievements:**
 
@@ -123,7 +123,7 @@ Sprint 1 successfully addressed all critical security vulnerabilities and deploy
 
 ### 5. Virus Scanning Integration ✅ **COMPLETE (10/10)**
 
-**Implementation:** `/home/user/athena/internal/security/virus_scanner.go`
+**Implementation:** `/home/user/vidra/internal/security/virus_scanner.go`
 
 **Achievements:**
 
@@ -167,7 +167,7 @@ VIRUS_SCAN_FALLBACK_MODE=strict  # strict|permissive|log_only
 
 ### 6. File Type Blocking ✅ **COMPLETE (10/10)**
 
-**Implementation:** `/home/user/athena/internal/security/file_type_blocker.go`
+**Implementation:** `/home/user/vidra/internal/security/file_type_blocker.go`
 
 **Achievements:**
 
@@ -210,7 +210,7 @@ PASS: TestMimeValidation (sniff + extension)
 
 ### 7. Rate Limiter Goroutine Leak Fix ✅ **COMPLETE (10/10)**
 
-**Implementation:** `/home/user/athena/internal/middleware/ratelimit.go`
+**Implementation:** `/home/user/vidra/internal/middleware/ratelimit.go`
 
 **Achievements:**
 
@@ -327,7 +327,7 @@ golangci-lint run ./...
 
 1. **IOTA Payments** ❌ **0% COMPLETE**
    - **Impact:** HIGH - Core monetization feature
-   - **Files:** No implementation found in `/home/user/athena/internal`
+   - **Files:** No implementation found in `/home/user/vidra/internal`
    - **Effort:** 8-12 hours
 
 2. **ActivityPub Video Federation** ❌ **30% COMPLETE**
@@ -406,7 +406,7 @@ golangci-lint run ./...
 
    ```bash
    # Database
-   DATABASE_URL=postgres://user:pass@db:5432/athena?sslmode=require
+   DATABASE_URL=postgres://user:pass@db:5432/vidra?sslmode=require
    DB_MAX_OPEN_CONNS=25
    DB_MAX_IDLE_CONNS=5
 
@@ -447,14 +447,14 @@ golangci-lint run ./...
 1. **Prometheus Scraping**
 
    ```yaml
-   - job_name: 'athena'
+   - job_name: 'vidra'
      static_configs:
-       - targets: ['athena:8080']
+       - targets: ['vidra:8080']
      metrics_path: /metrics
    ```
 
 2. **Key Metrics to Alert On**
-   - `athena_encoder_jobs_in_progress > 100` (queue saturation)
+   - `vidra_encoder_jobs_in_progress > 100` (queue saturation)
    - `health_check_failures_total > 5` (degraded service)
    - `virus_scan_infected_total > 0` (security incident)
    - `database_pool_exhaustion_total > 0` (connection issue)

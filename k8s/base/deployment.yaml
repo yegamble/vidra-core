@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: athena-api
+  name: vidra-api
   labels:
-    app: athena
+    app: vidra
     component: api
     version: v1
 spec:
@@ -15,12 +15,12 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app: athena
+      app: vidra
       component: api
   template:
     metadata:
       labels:
-        app: athena
+        app: vidra
         component: api
         version: v1
       annotations:
@@ -33,8 +33,8 @@ spec:
         runAsUser: 1000
         fsGroup: 1000
       containers:
-      - name: athena
-        image: ghcr.io/yegamble/athena:latest
+      - name: vidra
+        image: ghcr.io/yegamble/vidra-core:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
@@ -49,37 +49,37 @@ spec:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              name: athena-secrets
+              name: vidra-secrets
               key: database-url
         - name: REDIS_URL
           valueFrom:
             secretKeyRef:
-              name: athena-secrets
+              name: vidra-secrets
               key: redis-url
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
-              name: athena-secrets
+              name: vidra-secrets
               key: jwt-secret
         - name: IPFS_API
           valueFrom:
             configMapKeyRef:
-              name: athena-config
+              name: vidra-config
               key: ipfs-api
         - name: IPFS_CLUSTER_API
           valueFrom:
             configMapKeyRef:
-              name: athena-config
+              name: vidra-config
               key: ipfs-cluster-api
         - name: CLAMAV_ADDRESS
           valueFrom:
             configMapKeyRef:
-              name: athena-config
+              name: vidra-config
               key: clamav-address
         - name: LOG_LEVEL
           valueFrom:
             configMapKeyRef:
-              name: athena-config
+              name: vidra-config
               key: log-level
         - name: LOG_FORMAT
           value: "json"
@@ -128,28 +128,28 @@ spec:
       volumes:
       - name: storage
         persistentVolumeClaim:
-          claimName: athena-storage
+          claimName: vidra-storage
       - name: quarantine
         persistentVolumeClaim:
-          claimName: athena-quarantine
+          claimName: vidra-quarantine
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: athena-encoding-worker
+  name: vidra-encoding-worker
   labels:
-    app: athena
+    app: vidra
     component: encoding-worker
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: athena
+      app: vidra
       component: encoding-worker
   template:
     metadata:
       labels:
-        app: athena
+        app: vidra
         component: encoding-worker
     spec:
       securityContext:
@@ -158,18 +158,18 @@ spec:
         fsGroup: 1000
       containers:
       - name: encoding-worker
-        image: ghcr.io/yegamble/athena:latest
-        command: ["/app/athena-encoding-worker"]
+        image: ghcr.io/yegamble/vidra-core:latest
+        command: ["/app/vidra-encoding-worker"]
         env:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              name: athena-secrets
+              name: vidra-secrets
               key: database-url
         - name: REDIS_URL
           valueFrom:
             secretKeyRef:
-              name: athena-secrets
+              name: vidra-secrets
               key: redis-url
         - name: ENABLE_ENCODING
           value: "true"
@@ -190,4 +190,4 @@ spec:
       volumes:
       - name: storage
         persistentVolumeClaim:
-          claimName: athena-storage
+          claimName: vidra-storage

@@ -1,6 +1,6 @@
 # Claude Code Hooks Documentation
 
-This document explains the Claude Code hooks system used in the Athena project for automated code quality assurance and workflow optimization.
+This document explains the Claude Code hooks system used in the Vidra Core project for automated code quality assurance and workflow optimization.
 
 ## Overview
 

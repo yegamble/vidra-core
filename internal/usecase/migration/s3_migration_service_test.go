@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/storage"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/storage"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"

@@ -1,6 +1,6 @@
 # Documentation Index
 
-This index links the core Athena documentation by area.
+This index links the core Vidra Core documentation by area.
 
 ## Start Here
 

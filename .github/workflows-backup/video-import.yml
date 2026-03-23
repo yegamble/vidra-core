@@ -114,7 +114,7 @@ jobs:
         env:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: athena_test
+          POSTGRES_DB: vidra_test
         ports:
           - 5433:5432
         options: >-
@@ -188,25 +188,25 @@ jobs:
         run: |
           for migration in migrations/*.sql; do
             echo "Applying: $(basename "$migration")"
-            psql -h localhost -p 5433 -U test_user -d athena_test -f "$migration" > /dev/null 2>&1 || echo "  -> Already applied or error (continuing...)"
+            psql -h localhost -p 5433 -U test_user -d vidra_test -f "$migration" > /dev/null 2>&1 || echo "  -> Already applied or error (continuing...)"
           done
 
       - name: Verify migration
         env:
           PGPASSWORD: test_password
         run: |
-          psql -h localhost -p 5433 -U test_user -d athena_test -c "SELECT COUNT(*) FROM video_imports;" || echo "Table not created yet"
+          psql -h localhost -p 5433 -U test_user -d vidra_test -c "SELECT COUNT(*) FROM video_imports;" || echo "Table not created yet"
 
       - name: Run repository integration tests
         env:
-          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable
+          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable
           REDIS_URL: redis://localhost:6380/0
         run: |
           go test -v -race -tags=integration ./internal/repository -run TestImport
 
       - name: Run API integration tests
         env:
-          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable
+          TEST_DATABASE_URL: postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable
           REDIS_URL: redis://localhost:6380/0
         run: |
           go test -v -race -tags=integration ./internal/httpapi -run TestImportIntegration || echo "Note: Some integration tests may skip if yt-dlp not available"
@@ -220,7 +220,7 @@ jobs:
         env:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: athena_test
+          POSTGRES_DB: vidra_test
         ports:
           - 5433:5432
         options: >-
@@ -258,7 +258,7 @@ jobs:
           echo "Running migrations..."
           for migration in migrations/*.sql; do
             echo "Applying: $(basename "$migration")"
-            psql -h localhost -p 5433 -U test_user -d athena_test -f "$migration" || exit 1
+            psql -h localhost -p 5433 -U test_user -d vidra_test -f "$migration" || exit 1
           done
 
       - name: Verify video_imports table structure
@@ -266,7 +266,7 @@ jobs:
           PGPASSWORD: test_password
         run: |
           echo "Verifying video_imports table..."
-          psql -h localhost -p 5433 -U test_user -d athena_test -c "\d video_imports"
+          psql -h localhost -p 5433 -U test_user -d vidra_test -c "\d video_imports"
 
       - name: Test table constraints
         env:
@@ -274,11 +274,11 @@ jobs:
         run: |
           echo "Testing constraints..."
           # Test enum constraint
-          psql -h localhost -p 5433 -U test_user -d athena_test -c "SELECT 'pending'::import_status;" || exit 1
+          psql -h localhost -p 5433 -U test_user -d vidra_test -c "SELECT 'pending'::import_status;" || exit 1
           # Test progress check constraint
-          psql -h localhost -p 5433 -U test_user -d athena_test -c "INSERT INTO users (username, email, password_hash) VALUES ('test', 'test@example.com', 'hash') RETURNING id;" > /tmp/user_id.txt
+          psql -h localhost -p 5433 -U test_user -d vidra_test -c "INSERT INTO users (username, email, password_hash) VALUES ('test', 'test@example.com', 'hash') RETURNING id;" > /tmp/user_id.txt
           USER_ID=$(cat /tmp/user_id.txt | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
-          psql -h localhost -p 5433 -U test_user -d athena_test -c "INSERT INTO video_imports (user_id, source_url, progress) VALUES ('$USER_ID', 'https://youtube.com/watch?v=test', 150);" 2>&1 | grep -q "violates check constraint" && echo "✓ Progress constraint works" || exit 1
+          psql -h localhost -p 5433 -U test_user -d vidra_test -c "INSERT INTO video_imports (user_id, source_url, progress) VALUES ('$USER_ID', 'https://youtube.com/watch?v=test', 150);" 2>&1 | grep -q "violates check constraint" && echo "✓ Progress constraint works" || exit 1
 
   security-scan:
     name: Security Scan

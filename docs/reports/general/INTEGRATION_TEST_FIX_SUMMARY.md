@@ -194,7 +194,7 @@ postgres-test:
   image: postgres:15.6-alpine
   ports: 5433:5432
   environment:
-    POSTGRES_DB: athena_test
+    POSTGRES_DB: vidra_test
     POSTGRES_USER: test_user
     POSTGRES_PASSWORD: test_password
 

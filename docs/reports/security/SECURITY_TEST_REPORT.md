@@ -11,7 +11,7 @@
 
 ## Executive Summary
 
-This report provides a comprehensive analysis of 3 P0 (Priority Zero) security vulnerabilities that were identified in the Athena platform. Based on extensive code analysis and test execution, **2 out of 3 vulnerabilities are already protected**, while **1 critical vulnerability remains unaddressed**.
+This report provides a comprehensive analysis of 3 P0 (Priority Zero) security vulnerabilities that were identified in the Vidra Core platform. Based on extensive code analysis and test execution, **2 out of 3 vulnerabilities are already protected**, while **1 critical vulnerability remains unaddressed**.
 
 ### Critical Findings
 
@@ -27,7 +27,7 @@ This report provides a comprehensive analysis of 3 P0 (Priority Zero) security v
 
 ### Current Status: VULNERABLE
 
-**Location:** `/home/user/athena/internal/httpapi/handlers/payments/payment_handlers.go`
+**Location:** `/home/user/vidra/internal/httpapi/handlers/payments/payment_handlers.go`
 
 ### Vulnerability Description
 
@@ -57,7 +57,7 @@ func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Requ
 
 ### Test Results
 
-**Test File:** `/home/user/athena/internal/httpapi/handlers/payments/payment_handlers_test.go`
+**Test File:** `/home/user/vidra/internal/httpapi/handlers/payments/payment_handlers_test.go`
 **Test Function:** `TestValidateInputSanitization` (Lines 562-605)
 
 ```
@@ -132,7 +132,7 @@ func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Requ
 
 ### Current Status: PROTECTED
 
-**Location:** `/home/user/athena/internal/usecase/import/service.go`
+**Location:** `/home/user/vidra/internal/usecase/import/service.go`
 
 ### Protection Implementation
 
@@ -156,7 +156,7 @@ func (s *service) validateImportRequest(req *ImportRequest) error {
 }
 ```
 
-**SSRF Protection Logic** (`/home/user/athena/internal/domain/import.go`, Lines 122-150):
+**SSRF Protection Logic** (`/home/user/vidra/internal/domain/import.go`, Lines 122-150):
 
 ```go
 func ValidateURLWithSSRFCheck(rawURL string) error {
@@ -188,7 +188,7 @@ func ValidateURLWithSSRFCheck(rawURL string) error {
 
 ### Test Results
 
-**Test File:** `/home/user/athena/tests/integration/ssrf_protection_test.go`
+**Test File:** `/home/user/vidra/tests/integration/ssrf_protection_test.go`
 
 All SSRF protection tests PASSED successfully:
 
@@ -296,7 +296,7 @@ The implementation blocks access to the following IP ranges:
 
 ### Current Status: PROTECTED
 
-**Location:** `/home/user/athena/internal/usecase/upload/service.go`
+**Location:** `/home/user/vidra/internal/usecase/upload/service.go`
 
 ### Protection Implementation
 
@@ -322,14 +322,14 @@ func (s *service) InitiateUpload(ctx context.Context, userID string, req *domain
 
 The codebase implements multiple layers of file size protection:
 
-1. **Upload Service:** 10GB limit (`/home/user/athena/internal/usecase/upload/service.go`)
-2. **Config Default:** 5GB limit (`/home/user/athena/internal/config/config.go`)
-3. **Whisper/Audio Processing:** 25MB limit (`/home/user/athena/internal/whisper/openai_client.go`)
-4. **File Type Blocker:** 25MB limit (`/home/user/athena/internal/security/file_type_blocker.go`)
+1. **Upload Service:** 10GB limit (`/home/user/vidra/internal/usecase/upload/service.go`)
+2. **Config Default:** 5GB limit (`/home/user/vidra/internal/config/config.go`)
+3. **Whisper/Audio Processing:** 25MB limit (`/home/user/vidra/internal/whisper/openai_client.go`)
+4. **File Type Blocker:** 25MB limit (`/home/user/vidra/internal/security/file_type_blocker.go`)
 
 ### Test Results
 
-**Test File:** `/home/user/athena/internal/usecase/upload_service_test.go`
+**Test File:** `/home/user/vidra/internal/usecase/upload_service_test.go`
 **Test Function:** `TestUploadService_InitiateUpload_FileTooLarge` (Lines 125-151)
 
 ```go
@@ -403,11 +403,11 @@ func TestUploadService_InitiateUpload_FileTooLarge(t *testing.T) {
 
 The following packages have build failures unrelated to P0 security fixes:
 
-- `athena/internal/security` - Test mocking issues (not affecting runtime security)
-- `athena/internal/httpapi/handlers/video` - Setup failure
-- `athena/internal/torrent` - Setup failure
-- `athena/cmd/server` - Setup failure
-- `athena/internal/app` - Setup failure
+- `vidra/internal/security` - Test mocking issues (not affecting runtime security)
+- `vidra/internal/httpapi/handlers/video` - Setup failure
+- `vidra/internal/torrent` - Setup failure
+- `vidra/cmd/server` - Setup failure
+- `vidra/internal/app` - Setup failure
 
 **Impact:** These failures do not affect the security implementations being tested.
 
@@ -503,7 +503,7 @@ func (s *service) InitiateUpload(ctx context.Context, userID string, req *domain
 
 ### Test Collection Status
 
-**Location:** `/home/user/athena/postman/`
+**Location:** `/home/user/vidra/postman/`
 
 **Note:** E2E Postman tests were not executed in this analysis due to environment constraints. However, based on code review, the following API endpoints should be tested:
 
@@ -844,7 +844,7 @@ Stalled uploads (no data)          -> Timeout and cleanup
 
 **Overall Security Status:** 2 out of 3 P0 vulnerabilities are protected. **1 critical SQL injection vulnerability requires immediate attention before production deployment.**
 
-The Athena platform demonstrates strong security practices in SSRF prevention and file size DoS protection. However, the SQL injection vulnerability in payment handlers represents a **critical risk** that must be addressed immediately.
+The Vidra Core platform demonstrates strong security practices in SSRF prevention and file size DoS protection. However, the SQL injection vulnerability in payment handlers represents a **critical risk** that must be addressed immediately.
 
 **Next Steps:**
 

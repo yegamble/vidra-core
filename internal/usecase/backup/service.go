@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"athena/internal/backup"
+	"vidra-core/internal/backup"
 )
 
 type Service struct {

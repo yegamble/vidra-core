@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Successfully implemented comprehensive transaction management across all critical repository operations in the Athena decentralized video platform. This ensures ACID properties (Atomicity, Consistency, Isolation, Durability) are maintained for all database operations, preventing data inconsistencies and partial updates.
+Successfully implemented comprehensive transaction management across all critical repository operations in the Vidra Core decentralized video platform. This ensures ACID properties (Atomicity, Consistency, Isolation, Durability) are maintained for all database operations, preventing data inconsistencies and partial updates.
 
 ## Critical Issues Identified and Resolved
 
@@ -47,7 +47,7 @@ Successfully implemented comprehensive transaction management across all critica
 
 ### Core Transaction Infrastructure
 
-#### `/home/user/athena/internal/repository/transaction_manager.go`
+#### `/home/user/vidra/internal/repository/transaction_manager.go`
 
 Created comprehensive transaction management system with:
 
@@ -78,33 +78,33 @@ GetExecutor(ctx, db) Executor
 
 ### Repository Updates
 
-#### 1. User Repository (`/home/user/athena/internal/repository/user_repository.go`)
+#### 1. User Repository (`/home/user/vidra/internal/repository/user_repository.go`)
 
 - Added TransactionManager field
 - Create method now wraps user + channel creation in transaction
 - Update/Delete methods support transaction context via GetExecutor
 
-#### 2. Subscription Repository (`/home/user/athena/internal/repository/subscription_repository.go`)
+#### 2. Subscription Repository (`/home/user/vidra/internal/repository/subscription_repository.go`)
 
 - SubscribeToChannel now atomic (check ownership + insert)
 - Prevents race conditions in concurrent subscriptions
 
-#### 3. Upload Repository (`/home/user/athena/internal/repository/upload_repository.go`)
+#### 3. Upload Repository (`/home/user/vidra/internal/repository/upload_repository.go`)
 
 - RecordChunk atomic check-then-update prevents duplicate chunks
 - Ensures upload session consistency
 
-#### 4. Video Repository (`/home/user/athena/internal/repository/video_repository.go`)
+#### 4. Video Repository (`/home/user/vidra/internal/repository/video_repository.go`)
 
 - All CRUD operations support transaction context
 - Complex channel assignment logic protected by transactions
 
-#### 5. Comment Repository (`/home/user/athena/internal/repository/comment_repository.go`)
+#### 5. Comment Repository (`/home/user/vidra/internal/repository/comment_repository.go`)
 
 - Create method supports transaction context
 - Enables atomic comment creation with other operations
 
-#### 6. Rating Repository (`/home/user/athena/internal/repository/rating_repository.go`)
+#### 6. Rating Repository (`/home/user/vidra/internal/repository/rating_repository.go`)
 
 - SetRating supports transaction context
 - Enables atomic rating updates with video statistics
@@ -154,7 +154,7 @@ result, err := exec.ExecContext(ctx, query, args...)
 
 ## Test Coverage Added
 
-### Transaction Tests (`/home/user/athena/internal/repository/transaction_test.go`)
+### Transaction Tests (`/home/user/vidra/internal/repository/transaction_test.go`)
 
 - Basic transaction commit/rollback
 - Panic recovery and rollback
@@ -165,7 +165,7 @@ result, err := exec.ExecContext(ctx, query, args...)
 - Isolation level tests
 - Comment/Rating transaction support
 
-### Integration Tests (`/home/user/athena/internal/repository/transaction_integration_test.go`)
+### Integration Tests (`/home/user/vidra/internal/repository/transaction_integration_test.go`)
 
 - Multi-repository transactions
 - Complex workflow atomicity
@@ -280,7 +280,7 @@ func (r *repository) Method(ctx context.Context, args...) error {
 
 ## Conclusion
 
-The transaction management implementation successfully addresses all critical data consistency issues in the Athena platform. The solution is:
+The transaction management implementation successfully addresses all critical data consistency issues in the Vidra Core platform. The solution is:
 
 - **Comprehensive**: Covers all repository operations
 - **Flexible**: Supports various isolation levels and retry strategies

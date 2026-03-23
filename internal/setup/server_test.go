@@ -76,7 +76,7 @@ func TestSetupServer_WizardPagesReturnHTML(t *testing.T) {
 		path            string
 		expectedContent string
 	}{
-		{"welcome page", "/setup/welcome", "Welcome to Athena Setup"},
+		{"welcome page", "/setup/welcome", "Welcome to Vidra Core Setup"},
 		{"database page", "/setup/database", "Database"},
 		{"services page", "/setup/services", "Services"},
 		{"storage page", "/setup/storage", "Storage"},

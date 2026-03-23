@@ -1,10 +1,10 @@
-# PeerTube to Athena Migration Guide
+# PeerTube to Vidra Core Migration Guide
 
-This guide describes the current migration posture for moving from a PeerTube instance to Athena.
+This guide describes the current migration posture for moving from a PeerTube instance to Vidra Core.
 
 ## Current State
 
-Athena has validated PeerTube-aligned API/runtime coverage for many day-to-day flows, but it does **not** currently ship a production ETL/import tool that can automatically ingest:
+Vidra Core has validated PeerTube-aligned API/runtime coverage for many day-to-day flows, but it does **not** currently ship a production ETL/import tool that can automatically ingest:
 
 - a PeerTube PostgreSQL dump
 - PeerTube media and thumbnail storage
@@ -14,15 +14,15 @@ So this document is still a planning guide, not an operator-ready migration runb
 
 ## What Exists Today
 
-- PeerTube-style API and admin route coverage validated in Athena's Go and Newman suites
+- PeerTube-style API and admin route coverage validated in Vidra Core's Go and Newman suites
 - ActivityPub discovery and instance follow/unfollow validation
-- OpenAPI coverage for the Athena routes exercised in the current runtime test suite
-- Athena-only extension coverage for messaging, payments, IPFS, livestreaming, and ATProto
+- OpenAPI coverage for the Vidra Core routes exercised in the current runtime test suite
+- Vidra Core-only extension coverage for messaging, payments, IPFS, livestreaming, and ATProto
 
 ## What Is Still Missing
 
 - A supported import command or service for PeerTube database/media ETL
-- A fixture-based migration rehearsal proving a real PeerTube export can be transformed and loaded into Athena
+- A fixture-based migration rehearsal proving a real PeerTube export can be transformed and loaded into Vidra Core
 - An automated post-import validation harness for migrated users, channels, videos, comments, playlists, captions, and subscriptions
 
 ## Scope
@@ -34,8 +34,8 @@ So this document is still a planning guide, not an operator-ready migration runb
 
 ## 1) Pre-Migration Checklist
 
-- Confirm Athena environment is provisioned (database, redis, storage, secrets).
-- Ensure Athena schema is current (`make migrate-up`).
+- Confirm Vidra Core environment is provisioned (database, redis, storage, secrets).
+- Ensure Vidra Core schema is current (`make migrate-up`).
 - Inventory PeerTube data volume:
   - users/accounts
   - channels
@@ -43,7 +43,7 @@ So this document is still a planning guide, not an operator-ready migration runb
   - comments
   - playlists
   - captions
-- Define target storage mode in Athena (local/IPFS/S3-compatible).
+- Define target storage mode in Vidra Core (local/IPFS/S3-compatible).
 - Schedule maintenance window for final sync/cutover.
 
 ## 2) Database Strategy
@@ -56,39 +56,39 @@ So this document is still a planning guide, not an operator-ready migration runb
 pg_dump -Fc -d "$PEERTUBE_DATABASE_URL" -f peertube.dump
 ```
 
-### Transform + Import into Athena
+### Transform + Import into Vidra Core
 
-Athena and PeerTube are similar in many high-level concepts but not schema-identical. A full migration will require a staged ETL process:
+Vidra Core and PeerTube are similar in many high-level concepts but not schema-identical. A full migration will require a staged ETL process:
 
 1. Restore the PeerTube dump into a temporary staging database.
-2. Run transformation scripts that map staging tables into Athena tables.
+2. Run transformation scripts that map staging tables into Vidra Core tables.
 3. Validate foreign keys, required fields, and media references before final import.
 4. Produce a migration report showing what was imported, skipped, or transformed.
 
-Today, these steps are conceptual. Athena does not yet ship the transformation scripts or migration service.
+Today, these steps are conceptual. Vidra Core does not yet ship the transformation scripts or migration service.
 
 ### Conceptual Mapping
 
-- PeerTube accounts/users -> Athena users
-- PeerTube video channels -> Athena channels
-- PeerTube videos -> Athena videos (`channel_id` must be set)
-- PeerTube comments -> Athena comments (`parent_id` for threading)
-- PeerTube playlists + items -> Athena playlists + playlist_items
-- PeerTube captions/subtitles -> Athena captions
+- PeerTube accounts/users -> Vidra Core users
+- PeerTube video channels -> Vidra Core channels
+- PeerTube videos -> Vidra Core videos (`channel_id` must be set)
+- PeerTube comments -> Vidra Core comments (`parent_id` for threading)
+- PeerTube playlists + items -> Vidra Core playlists + playlist_items
+- PeerTube captions/subtitles -> Vidra Core captions
 
 ## 3) Storage Strategy
 
-PeerTube media and thumbnails must be copied to Athena storage and reindexed.
+PeerTube media and thumbnails must be copied to Vidra Core storage and reindexed.
 
 ### Local-to-Local
 
-- Copy media directories to Athena storage root.
-- Rebuild Athena path references as needed.
+- Copy media directories to Vidra Core storage root.
+- Rebuild Vidra Core path references as needed.
 
 ### Local-to-IPFS/S3
 
-- Ingest files into the selected Athena backend.
-- Persist resulting object keys or CIDs in Athena records.
+- Ingest files into the selected Vidra Core backend.
+- Persist resulting object keys or CIDs in Vidra Core records.
 
 ### Validation
 
@@ -100,10 +100,10 @@ PeerTube media and thumbnails must be copied to Athena storage and reindexed.
 
 PeerTube config does not map 1:1; migrate by intent.
 
-- Instance name/description/contact -> Athena instance config (`/api/v1/admin/instance/config/*`)
-- OAuth/provider credentials -> Athena environment + admin OAuth client config
-- Moderation defaults/blocklists -> Athena moderation endpoints
-- Federation settings (ActivityPub/ATProto) -> Athena federation config
+- Instance name/description/contact -> Vidra Core instance config (`/api/v1/admin/instance/config/*`)
+- OAuth/provider credentials -> Vidra Core environment + admin OAuth client config
+- Moderation defaults/blocklists -> Vidra Core moderation endpoints
+- Federation settings (ActivityPub/ATProto) -> Vidra Core federation config
 
 ## 5) Cutover (DNS/Proxy)
 
@@ -111,8 +111,8 @@ Recommended sequence:
 
 1. Put PeerTube in maintenance/read-only mode.
 2. Run final incremental data and storage sync.
-3. Run post-import validation in Athena.
-4. Switch reverse proxy/DNS to Athena.
+3. Run post-import validation in Vidra Core.
+4. Switch reverse proxy/DNS to Vidra Core.
 5. Monitor errors, playback, auth, and federation behavior.
 
 ## 6) Post-Cutover Validation
@@ -123,7 +123,7 @@ Recommended sequence:
 - Comments/playlists/captions are present and linked.
 - Instance metadata and oEmbed endpoints respond.
 - ActivityPub discovery endpoints return expected data.
-- Athena-only integrations that are enabled for the target deployment still work as expected.
+- Vidra Core-only integrations that are enabled for the target deployment still work as expected.
 
 ## 7) Rollback Plan
 
@@ -133,7 +133,7 @@ Recommended sequence:
 
 ## Notes
 
-- Treat this as an execution framework until Athena ships real migration tooling.
+- Treat this as an execution framework until Vidra Core ships real migration tooling.
 - Production migrations should include scripted ETL and dry-run rehearsals.
 - For upstream migration context and operational background, see:
   - <https://docs.joinpeertube.org/maintain/migration>

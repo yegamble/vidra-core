@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // AutoSyncEnabled returns whether automatic video syndication is enabled.

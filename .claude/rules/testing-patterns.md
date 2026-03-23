@@ -9,7 +9,7 @@ Project-specific testing conventions and best practices.
 ### Database Setup
 
 ```go
-import "athena/internal/testutil"
+import "vidra-core/internal/testutil"
 
 func TestMyFunction(t *testing.T) {
     if testing.Short() {

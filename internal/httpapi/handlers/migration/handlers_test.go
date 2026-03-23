@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/port"
-	"athena/internal/usecase/migration_etl"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
+	"vidra-core/internal/usecase/migration_etl"
 )
 
 // mockMigrationRepo is a test double for port.MigrationJobRepository

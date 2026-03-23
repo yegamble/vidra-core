@@ -1,10 +1,10 @@
 # CI/CD Configuration Guide
 
-This document describes the CI/CD configuration for the Athena project, including recent fixes and best practices.
+This document describes the CI/CD configuration for the Vidra Core project, including recent fixes and best practices.
 
 ## Overview
 
-Athena uses GitHub Actions for CI/CD with self-hosted runners. The workflows are designed to ensure code quality, security, and reliability through comprehensive testing.
+Vidra Core uses GitHub Actions for CI/CD with self-hosted runners. The workflows are designed to ensure code quality, security, and reliability through comprehensive testing.
 
 ## Self-Hosted Runner Configuration
 
@@ -153,8 +153,8 @@ volumes:
 **Symptoms:**
 
 ```
-Container athena_test_clamav is unhealthy
-dependency failed to start: container athena_test_clamav is unhealthy
+Container vidra_test_clamav is unhealthy
+dependency failed to start: container vidra_test_clamav is unhealthy
 ```
 
 **Solution:**
@@ -178,7 +178,7 @@ Add cleanup step in Makefile:
 ```makefile
 postman-e2e:
  @echo "Cleaning up any existing test containers..."
- COMPOSE_PROJECT_NAME=athena-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
+ COMPOSE_PROJECT_NAME=vidra-test $(DOCKER_COMPOSE) -f docker-compose.test.yml down -v 2>/dev/null || true
  # ... rest of target
 ```
 
@@ -204,7 +204,7 @@ Services:
 - **redis-test**: Redis 7 for caching
 - **ipfs-test**: IPFS Kubo for decentralized storage
 - **clamav-test**: ClamAV for virus scanning (with proper health check)
-- **app-test**: Athena application under test
+- **app-test**: Vidra Core application under test
 - **newman**: Postman/Newman for E2E API tests
 
 ### Health Check Configuration
@@ -308,10 +308,10 @@ gh run view <run-id> --log
 
 ```bash
 # Check ClamAV logs
-docker logs athena_test_clamav
+docker logs vidra_test_clamav
 
 # Check all compose logs
-COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml logs
+COMPOSE_PROJECT_NAME=vidra-test docker compose -f docker-compose.test.yml logs
 ```
 
 ### Debug Health Checks

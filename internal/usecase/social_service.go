@@ -1,6 +1,6 @@
 package usecase
 
-import ucsocial "athena/internal/usecase/social"
+import ucsocial "vidra-core/internal/usecase/social"
 
 // Backwards-compatible aliases while we migrate to feature slice packages
 type SocialService = ucsocial.Service

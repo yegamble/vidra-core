@@ -47,7 +47,7 @@ func TestWizardFullFlowDocker(t *testing.T) {
 	form = url.Values{}
 	form.Set("SMTP_MODE", "docker")
 	form.Set("SMTP_FROM_ADDRESS", "noreply@localhost")
-	form.Set("SMTP_FROM_NAME", "Athena")
+	form.Set("SMTP_FROM_NAME", "Vidra Core")
 	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/email", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -123,7 +123,7 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	form.Set("POSTGRES_PORT", "5432")
 	form.Set("POSTGRES_USER", "user")
 	form.Set("POSTGRES_PASSWORD", "pass")
-	form.Set("POSTGRES_DB", "athena")
+	form.Set("POSTGRES_DB", "vidra")
 	form.Set("POSTGRES_SSLMODE", "disable")
 	form.Set("_csrf_token", wizard.csrfToken)
 	req := httptest.NewRequest(http.MethodPost, "/setup/database", strings.NewReader(form.Encode()))
@@ -149,10 +149,10 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	assert.Equal(t, 5432, wizard.config.PostgresPort)
 	assert.Equal(t, "user", wizard.config.PostgresUser)
 	assert.Equal(t, "pass", wizard.config.PostgresPassword)
-	assert.Equal(t, "athena", wizard.config.PostgresDB)
+	assert.Equal(t, "vidra", wizard.config.PostgresDB)
 	assert.Equal(t, "disable", wizard.config.PostgresSSLMode)
 	// DatabaseURL is constructed from individual fields
-	assert.Contains(t, wizard.config.DatabaseURL, "postgres://user:pass@external.host:5432/athena")
+	assert.Contains(t, wizard.config.DatabaseURL, "postgres://user:pass@external.host:5432/vidra")
 	assert.Contains(t, wizard.config.DatabaseURL, "sslmode=disable")
 	assert.Equal(t, "external", wizard.config.RedisMode)
 	assert.Equal(t, "redis://external.host:6379/0", wizard.config.RedisURL)
@@ -165,7 +165,7 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	form.Set("SMTP_USERNAME", "noreply")
 	form.Set("SMTP_PASSWORD", "secret")
 	form.Set("SMTP_FROM_ADDRESS", "noreply@example.com")
-	form.Set("SMTP_FROM_NAME", "Athena Videos")
+	form.Set("SMTP_FROM_NAME", "Vidra Core Videos")
 	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/email", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -223,12 +223,12 @@ func TestWizardFullFlowExternal(t *testing.T) {
 	envContent := string(envData)
 
 	assert.Contains(t, envContent, "POSTGRES_MODE=external")
-	assert.Contains(t, envContent, "DATABASE_URL=postgres://user:pass@external.host:5432/athena")
+	assert.Contains(t, envContent, "DATABASE_URL=postgres://user:pass@external.host:5432/vidra")
 	assert.Contains(t, envContent, "POSTGRES_HOST=external.host")
 	assert.Contains(t, envContent, "POSTGRES_PORT=5432")
 	assert.Contains(t, envContent, "POSTGRES_USER=user")
 	assert.Contains(t, envContent, "POSTGRES_PASSWORD=pass")
-	assert.Contains(t, envContent, "POSTGRES_DB=athena")
+	assert.Contains(t, envContent, "POSTGRES_DB=vidra")
 	assert.Contains(t, envContent, "POSTGRES_SSLMODE=disable")
 	assert.Contains(t, envContent, "REDIS_MODE=external")
 	assert.Contains(t, envContent, "REDIS_URL=redis://external.host:6379/0")
@@ -577,7 +577,7 @@ func TestWizardPageRendersOwnContent(t *testing.T) {
 			name:        "welcome page",
 			url:         "/setup/welcome",
 			handler:     wizard.HandleWelcome,
-			expectedH2:  "Welcome to Athena Setup",
+			expectedH2:  "Welcome to Vidra Core Setup",
 			notExpected: "Database Configuration",
 		},
 		{
@@ -585,56 +585,56 @@ func TestWizardPageRendersOwnContent(t *testing.T) {
 			url:         "/setup/database",
 			handler:     wizard.HandleDatabase,
 			expectedH2:  "Database Configuration",
-			notExpected: "Welcome to Athena Setup",
+			notExpected: "Welcome to Vidra Core Setup",
 		},
 		{
 			name:        "services page",
 			url:         "/setup/services",
 			handler:     wizard.HandleServices,
 			expectedH2:  "Services Configuration",
-			notExpected: "Welcome to Athena Setup",
+			notExpected: "Welcome to Vidra Core Setup",
 		},
 		{
 			name:        "email page",
 			url:         "/setup/email",
 			handler:     wizard.HandleEmail,
 			expectedH2:  "Email Configuration",
-			notExpected: "Welcome to Athena Setup",
+			notExpected: "Welcome to Vidra Core Setup",
 		},
 		{
 			name:        "networking page",
 			url:         "/setup/networking",
 			handler:     wizard.HandleNetworking,
 			expectedH2:  "Networking Configuration",
-			notExpected: "Welcome to Athena Setup",
+			notExpected: "Welcome to Vidra Core Setup",
 		},
 		{
 			name:        "storage page",
 			url:         "/setup/storage",
 			handler:     wizard.HandleStorage,
 			expectedH2:  "Storage Configuration",
-			notExpected: "Welcome to Athena Setup",
+			notExpected: "Welcome to Vidra Core Setup",
 		},
 		{
 			name:        "security page",
 			url:         "/setup/security",
 			handler:     wizard.HandleSecurity,
 			expectedH2:  "Security Configuration",
-			notExpected: "Welcome to Athena Setup",
+			notExpected: "Welcome to Vidra Core Setup",
 		},
 		{
 			name:        "review page",
 			url:         "/setup/review",
 			handler:     wizard.HandleReview,
 			expectedH2:  "Review Configuration",
-			notExpected: "Welcome to Athena Setup",
+			notExpected: "Welcome to Vidra Core Setup",
 		},
 		{
 			name:        "complete page",
 			url:         "/setup/complete",
 			handler:     wizard.HandleComplete,
 			expectedH2:  "Setup Complete",
-			notExpected: "Welcome to Athena Setup",
+			notExpected: "Welcome to Vidra Core Setup",
 		},
 	}
 
@@ -688,7 +688,7 @@ func TestWizardFullNavigationFlow(t *testing.T) {
 	form = url.Values{}
 	form.Set("SMTP_MODE", "docker")
 	form.Set("SMTP_FROM_ADDRESS", "noreply@localhost")
-	form.Set("SMTP_FROM_NAME", "Athena")
+	form.Set("SMTP_FROM_NAME", "Vidra Core")
 	form.Set("_csrf_token", wizard.csrfToken)
 	req = httptest.NewRequest(http.MethodPost, "/setup/email", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

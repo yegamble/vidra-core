@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 #
-# setup-validation.sh - Setup validation environment for Athena project
+# setup-validation.sh - Setup validation environment for Vidra Core project
 #
 # This script sets up all validation tools and Git hooks.
 # It's designed to be portable across macOS, Linux, and Windows (WSL/Git Bash).
@@ -39,7 +39,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}Athena Validation Setup${NC}"
+echo -e "${BLUE}Vidra Core Validation Setup${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 echo "Project root: $PROJECT_ROOT"
@@ -207,7 +207,7 @@ cat > "$PROJECT_ROOT/.githooks/pre-commit" <<'EOF'
 #!/usr/bin/env bash
 
 #
-# Git pre-commit hook for Athena project
+# Git pre-commit hook for Vidra Core project
 #
 # - Enforces gofmt on staged Go files
 # - Re-stages any files that were reformatted

@@ -16,8 +16,8 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/yegamble/athena.git
-cd athena
+git clone https://github.com/yegamble/vidra-core.git
+cd vidra
 
 # Configure environment
 cp .env.example .env
@@ -50,7 +50,7 @@ NODE_ENV=production
 LOG_LEVEL=info
 
 # Database
-DATABASE_URL=postgres://user:pass@host:5432/athena?sslmode=require
+DATABASE_URL=postgres://user:pass@host:5432/vidra?sslmode=require
 DATABASE_MAX_CONNECTIONS=25
 
 # Redis
@@ -77,7 +77,7 @@ IPFS_GATEWAY=https://gateway.ipfs.io
 # S3 Storage
 S3_ENABLED=true
 S3_ENDPOINT=https://s3.amazonaws.com
-S3_BUCKET=athena-videos
+S3_BUCKET=vidra-videos
 S3_ACCESS_KEY=<access-key>
 S3_SECRET_KEY=<secret-key>
 
@@ -92,9 +92,9 @@ BLUESKY_ENABLED=true
 ### 1. Create Database
 
 ```sql
-CREATE DATABASE athena;
-CREATE USER athena_app WITH PASSWORD 'strong_password';
-GRANT ALL PRIVILEGES ON DATABASE athena TO athena_app;
+CREATE DATABASE vidra;
+CREATE USER vidra_app WITH PASSWORD 'strong_password';
+GRANT ALL PRIVILEGES ON DATABASE vidra TO vidra_app;
 ```
 
 ### 2. Run Migrations
@@ -336,4 +336,4 @@ For deployment issues:
 
 - Check [Troubleshooting Guide](#troubleshooting)
 - Review application logs
-- Open an issue on [GitHub](https://github.com/yegamble/athena/issues)
+- Open an issue on [GitHub](https://github.com/yegamble/vidra-core/issues)

@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/config"
-	"athena/internal/domain"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
 )
 
 // TestBuildVideoObject_Basic tests converting domain.Video to ActivityPub VideoObject

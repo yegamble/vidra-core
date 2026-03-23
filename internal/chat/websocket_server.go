@@ -13,9 +13,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/repository"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
 )
 
 const (

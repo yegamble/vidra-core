@@ -14,7 +14,7 @@ This guide explains how to set up and configure ATProto (Authenticated Transfer 
 - ✅ Batch video syndication
 - ✅ Federation discovery (handle resolution)
 - ✅ Exponential backoff retry on transient errors
-- ⚠️ Bidirectional comment sync not yet complete (Bluesky -> Athena)
+- ⚠️ Bidirectional comment sync not yet complete (Bluesky -> Vidra Core)
 
 **Production Readiness**: BETA — suitable for non-critical workloads
 
@@ -27,7 +27,7 @@ This guide explains how to set up and configure ATProto (Authenticated Transfer 
 ## Architecture Overview
 
 ```
-Athena Video Platform
+Vidra Core Video Platform
         ↓
    ATProto Client
         ↓
@@ -74,7 +74,7 @@ Generate an app-specific password for API access.
 1. Log into Bluesky
 2. Go to Settings → App Passwords
 3. Click "Add App Password"
-4. Name: "Athena Integration"
+4. Name: "Vidra Core Integration"
 5. Copy generated password (shown once!)
 
 **Security Note**: Never use your main account password. Always use app passwords.
@@ -220,7 +220,7 @@ curl -X POST http://localhost:8080/api/v1/atproto/videos/{videoId}/syndicate \
 - Video title
 - Video description (truncated to 300 chars)
 - Thumbnail image (if `include_thumbnail: true`)
-- Link back to Athena video
+- Link back to Vidra Core video
 - Tags (as hashtags)
 
 **Automatic Syndication** (BETA, disabled by default):
@@ -385,8 +385,8 @@ func SyndicateVideo(ctx context.Context, videoID uuid.UUID) error {
 
 2. **Limited Federation**
    - ~~No automatic discovery of Bluesky users~~ ✅ Handle resolution implemented
-   - Cannot follow Bluesky users from Athena
-   - Cannot import Bluesky content to Athena
+   - Cannot follow Bluesky users from Vidra Core
+   - Cannot import Bluesky content to Vidra Core
 
 3. **No Real-Time Sync**
    - ~~Manual syndication only~~ ✅ Configurable auto-sync available
@@ -394,8 +394,8 @@ func SyndicateVideo(ctx context.Context, videoID uuid.UUID) error {
    - Updates not pushed automatically
 
 4. **Comment Limitations**
-   - Comments on Bluesky posts not synced back (Bluesky → Athena)
-   - ~~Cannot reply to Bluesky comments from Athena~~ ✅ Comment syndication implemented (Athena → Bluesky)
+   - Comments on Bluesky posts not synced back (Bluesky → Vidra Core)
+   - ~~Cannot reply to Bluesky comments from Vidra Core~~ ✅ Comment syndication implemented (Vidra Core → Bluesky)
    - Bidirectional sync not yet complete
 
 5. ~~**Error Handling**~~ ✅ **Resolved**
@@ -413,16 +413,16 @@ func SyndicateVideo(ctx context.Context, videoID uuid.UUID) error {
 **Phase 2** (Target: Q2 2025):
 
 - [ ] Automatic video upload to Bluesky (if < 1 min)
-- [x] Comment syndication (Athena → Bluesky as threaded replies)
+- [x] Comment syndication (Vidra Core → Bluesky as threaded replies)
 - [x] Improved error handling and retries (exponential backoff)
 - [x] Batch syndication support
 
 **Phase 3** (Target: Q3 2025):
 
 - [x] Federation discovery (handle resolution)
-- [ ] Follow Bluesky users from Athena
+- [ ] Follow Bluesky users from Vidra Core
 - [ ] Real-time webhook support
-- [ ] Full bidirectional comment sync (Bluesky → Athena)
+- [ ] Full bidirectional comment sync (Bluesky → Vidra Core)
 
 ---
 
@@ -477,7 +477,7 @@ Error: failed to create record: invalid post
 curl http://localhost:8080/api/v1/videos/{videoId}
 
 # Check syndication logs
-docker logs athena | grep "atproto"
+docker logs vidra | grep "atproto"
 ```
 
 ### Issue: Token Expired
@@ -548,7 +548,7 @@ curl https://bsky.social/xrpc/_health
 
 - Public video metadata (title, description, tags)
 - Thumbnail images
-- Link to video on Athena instance
+- Link to video on Vidra Core instance
 - User's Bluesky handle
 
 **What's NOT Shared**:
@@ -567,7 +567,7 @@ curl https://bsky.social/xrpc/_health
 - 100 posts/hour per account
 - 50 images/hour per account
 
-**Athena Protection**:
+**Vidra Core Protection**:
 
 - Internal rate limiting (300 req/hour)
 - Exponential backoff on errors
@@ -676,7 +676,7 @@ func (m *MockATProtoClient) CreateRecord(ctx context.Context, req *CreateRecordR
 **Report Issues**:
 
 - GitHub Issues: Tag with `atproto` label
-- Security Issues: <security@athena.com>
+- Security Issues: <security@vidra.com>
 
 **Feature Requests**:
 
@@ -686,4 +686,4 @@ func (m *MockATProtoClient) CreateRecord(ctx context.Context, req *CreateRecordR
 **Community**:
 
 - Discord: #federation channel
-- Matrix: #athena-federation:matrix.org
+- Matrix: #vidra-federation:matrix.org

@@ -311,7 +311,7 @@ func (c *Client) addAuthHeaders(req *http.Request) {
     }
 
     // Add User-Agent
-    req.Header.Set("User-Agent", "athena-ipfs-client/1.0")
+    req.Header.Set("User-Agent", "vidra-ipfs-client/1.0")
 }
 ```
 
@@ -516,7 +516,7 @@ PASS: TestClusterAuth_mTLS_ClientCertificateLoading
 ... (44 total tests)
 
 PASS
-ok      athena/internal/ipfs    2.456s
+ok      vidra/internal/ipfs    2.456s
 ```
 
 ---

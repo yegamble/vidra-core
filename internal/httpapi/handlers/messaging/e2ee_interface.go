@@ -3,7 +3,7 @@ package messaging
 import (
 	"context"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 type E2EEServiceInterface interface {

@@ -1,29 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Athena Auth API" tests="58" time="35.264">
+<testsuites name="Vidra Core Auth API" tests="58" time="35.264">
   <testsuite name="Auth / Register" id="b64d2d47-7454-4b6e-9cd9-697d322390fd" timestamp="2026-02-11T02:15:38.736Z" tests="4" failures="0" errors="0" time="23.806">
-    <testcase name="Status is 201" time="23.806" classname="AthenaAuthApi"/>
-    <testcase name="Returns JSON" time="23.806" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="23.806" classname="AthenaAuthApi"/>
-    <testcase name="Has user + tokens" time="23.806" classname="AthenaAuthApi"/>
+    <testcase name="Status is 201" time="23.806" classname="Vidra CoreAuthApi"/>
+    <testcase name="Returns JSON" time="23.806" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="23.806" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has user + tokens" time="23.806" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Login" id="8633fc77-8fc9-463b-b1c4-37de4b06d882" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="7.169">
-    <testcase name="Status is valid (200 or 401)" time="7.169" classname="AthenaAuthApi"/>
-    <testcase name="401 response has error structure" time="7.169" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200 or 401)" time="7.169" classname="Vidra CoreAuthApi"/>
+    <testcase name="401 response has error structure" time="7.169" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Login - Invalid Password (401)" id="1bcd4bb9-1b94-44b4-af1a-7012f884f31c" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.215">
-    <testcase name="Status is 401" time="0.215" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.215" classname="AthenaAuthApi"/>
+    <testcase name="Status is 401" time="0.215" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.215" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Refresh" id="1a2dfe92-3826-4a5e-894a-a2330c349420" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.026">
-    <testcase name="Status is valid (200, 400, or 401)" time="0.026" classname="AthenaAuthApi"/>
-    <testcase name="Error response has error structure" time="0.026" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200, 400, or 401)" time="0.026" classname="Vidra CoreAuthApi"/>
+    <testcase name="Error response has error structure" time="0.026" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Upload Avatar - PNG" id="e50932ff-f841-4cd4-989f-eafd51259eb1" timestamp="2026-02-11T02:15:38.736Z" tests="1" failures="1" errors="0" time="0.159">
-    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.159" classname="AthenaAuthApi">
+    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.159" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected [ 200, 401, 503, 500 ] to include 404">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Auth / Upload Avatar - PNG.]]>
         <![CDATA[Test description: Status is valid (200, 401, 503, or 500).]]>
         <![CDATA[Error message: expected [ 200, 401, 503, 500 ] to include 404.]]>
@@ -33,11 +33,11 @@
     </testcase>
   </testsuite>
   <testsuite name="Auth / Upload Avatar - JPEG" id="52e727a0-36f4-4b9e-84cb-8f01d73158d7" timestamp="2026-02-11T02:15:38.736Z" tests="1" failures="1" errors="0" time="0.283">
-    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.283" classname="AthenaAuthApi">
+    <testcase name="Status is valid (200, 401, 503, or 500)" time="0.283" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected [ 200, 401, 503, 500 ] to include 404">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Auth / Upload Avatar - JPEG.]]>
         <![CDATA[Test description: Status is valid (200, 401, 503, or 500).]]>
         <![CDATA[Error message: expected [ 200, 401, 503, 500 ] to include 404.]]>
@@ -47,69 +47,69 @@
     </testcase>
   </testsuite>
   <testsuite name="Auth / Upload Avatar - WebP" id="60c177ae-5f35-4b87-bef3-043867778656" timestamp="2026-02-11T02:15:38.736Z" tests="1" failures="0" errors="0" time="0.296">
-    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.296" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.296" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Upload Avatar - HEIC" id="0c92d91b-758d-4c4c-965e-1e1eb587ecf0" timestamp="2026-02-11T02:15:38.736Z" tests="1" failures="0" errors="0" time="0.243">
-    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.243" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.243" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Upload Avatar - GIF" id="d0b9ecc4-2f98-42f6-91b3-89977c7ad755" timestamp="2026-02-11T02:15:38.736Z" tests="1" failures="0" errors="0" time="0.162">
-    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.162" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.162" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Upload Avatar - TIFF" id="a3f82cc6-159a-44f4-a75c-519944bd5981" timestamp="2026-02-11T02:15:38.736Z" tests="1" failures="0" errors="0" time="0.839">
-    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.839" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200, 400, 401, 503, or 500)" time="0.839" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Upload Avatar - Invalid Extension (400)" id="cdd99180-f7c7-49d6-a4e3-8a509b8f01bd" timestamp="2026-02-11T02:15:38.736Z" tests="3" failures="0" errors="0" time="0.096">
-    <testcase name="Status is valid (400 or 401)" time="0.096" classname="AthenaAuthApi"/>
-    <testcase name="Has error response" time="0.096" classname="AthenaAuthApi"/>
-    <testcase name="Error message indicates unsupported format" time="0.096" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (400 or 401)" time="0.096" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error response" time="0.096" classname="Vidra CoreAuthApi"/>
+    <testcase name="Error message indicates unsupported format" time="0.096" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Upload Avatar - Malicious File (400)" id="9bebc41e-bbd7-47d7-a3db-9022abaf73d6" timestamp="2026-02-11T02:15:38.736Z" tests="3" failures="0" errors="0" time="0.060">
-    <testcase name="Status is valid (400 or 401)" time="0.060" classname="AthenaAuthApi"/>
-    <testcase name="Has error response" time="0.060" classname="AthenaAuthApi"/>
-    <testcase name="Error message indicates invalid image" time="0.060" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (400 or 401)" time="0.060" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error response" time="0.060" classname="Vidra CoreAuthApi"/>
+    <testcase name="Error message indicates invalid image" time="0.060" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Upload Avatar - No File (400)" id="4adf8a31-7550-488a-b0a0-a6f378c7c35c" timestamp="2026-02-11T02:15:38.736Z" tests="3" failures="0" errors="0" time="0.021">
-    <testcase name="Status is valid (400 or 401)" time="0.021" classname="AthenaAuthApi"/>
-    <testcase name="Has error response" time="0.021" classname="AthenaAuthApi"/>
-    <testcase name="Error message indicates missing file" time="0.021" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (400 or 401)" time="0.021" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error response" time="0.021" classname="Vidra CoreAuthApi"/>
+    <testcase name="Error message indicates missing file" time="0.021" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Upload Avatar - No Auth (401)" id="78467107-2ec9-46f1-8faf-192f6d0b0aca" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.054">
-    <testcase name="Status is 401" time="0.054" classname="AthenaAuthApi"/>
-    <testcase name="Has error response" time="0.054" classname="AthenaAuthApi"/>
+    <testcase name="Status is 401" time="0.054" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error response" time="0.054" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Refresh - Missing Token (400)" id="b5ec7f26-bb47-4864-8844-83c8b52b2ab7" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.016">
-    <testcase name="Status is 400" time="0.016" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.016" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400" time="0.016" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.016" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Refresh - Invalid Token (401)" id="94f8123f-dc6b-4d42-973b-08f145efb8c5" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.015">
-    <testcase name="Status is 401" time="0.015" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.015" classname="AthenaAuthApi"/>
+    <testcase name="Status is 401" time="0.015" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.015" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Logout" id="1cd34d29-4e0f-4fe8-8bc8-ad37c01447c9" timestamp="2026-02-11T02:15:38.736Z" tests="3" failures="0" errors="0" time="0.027">
-    <testcase name="Status is valid (200 or 401)" time="0.027" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.027" classname="AthenaAuthApi"/>
-    <testcase name="Logout success message" time="0.027" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200 or 401)" time="0.027" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.027" classname="Vidra CoreAuthApi"/>
+    <testcase name="Logout success message" time="0.027" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Refresh After Logout (401)" id="5667f0d4-c426-4cff-9f48-1bebdf7c014f" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.019">
-    <testcase name="Status is 401" time="0.019" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.019" classname="AthenaAuthApi"/>
+    <testcase name="Status is 401" time="0.019" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.019" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Auth / Logout Without Token (401)" id="d498d4fa-d6c7-43d1-8cf8-8d49b0902cc3" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.045">
-    <testcase name="Status is 401" time="0.045" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.045" classname="AthenaAuthApi"/>
+    <testcase name="Status is 401" time="0.045" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body or text" time="0.045" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / List Videos" id="03321fc2-dba4-4f1a-a91c-abeb7818bf5a" timestamp="2026-02-11T02:15:38.736Z" tests="4" failures="0" errors="0" time="0.019">
-    <testcase name="Status is 200" time="0.019" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.019" classname="AthenaAuthApi"/>
-    <testcase name="Has meta object" time="0.019" classname="AthenaAuthApi"/>
-    <testcase name="Meta has pagination fields" time="0.019" classname="AthenaAuthApi"/>
+    <testcase name="Status is 200" time="0.019" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.019" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has meta object" time="0.019" classname="Vidra CoreAuthApi"/>
+    <testcase name="Meta has pagination fields" time="0.019" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Upload Video - MP4" id="39a1a966-83d6-480e-b14a-1ef5bbef5bdb" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="2" errors="0" time="0.120">
-    <testcase name="Status is 201" time="0.120" classname="AthenaAuthApi">
+    <testcase name="Status is 201" time="0.120" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 201 but got 500">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Upload Video - MP4.]]>
         <![CDATA[Test description: Status is 201.]]>
         <![CDATA[Error message: expected response to have status code 201 but got 500.]]>
@@ -117,11 +117,11 @@
    at Object.eval sandbox-script.js:1:21).]]>
       </failure>
     </testcase>
-    <testcase name="Response has video ID" time="0.120" classname="AthenaAuthApi">
+    <testcase name="Response has video ID" time="0.120" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected { error: { …(2) }, success: false } to have property 'id'">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Upload Video - MP4.]]>
         <![CDATA[Test description: Response has video ID.]]>
         <![CDATA[Error message: expected { error: { …(2) }, success: false } to have property 'id'.]]>
@@ -131,11 +131,11 @@
     </testcase>
   </testsuite>
   <testsuite name="Videos / Upload Video - MOV" id="3dcf4965-0e15-4bdd-8b4c-0dbc57dca325" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="2" errors="0" time="0.090">
-    <testcase name="Status is 201" time="0.090" classname="AthenaAuthApi">
+    <testcase name="Status is 201" time="0.090" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 201 but got 500">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Upload Video - MOV.]]>
         <![CDATA[Test description: Status is 201.]]>
         <![CDATA[Error message: expected response to have status code 201 but got 500.]]>
@@ -143,11 +143,11 @@
    at Object.eval sandbox-script.js:1:22).]]>
       </failure>
     </testcase>
-    <testcase name="Response has video ID" time="0.090" classname="AthenaAuthApi">
+    <testcase name="Response has video ID" time="0.090" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected { error: { …(2) }, success: false } to have property 'id'">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Upload Video - MOV.]]>
         <![CDATA[Test description: Response has video ID.]]>
         <![CDATA[Error message: expected { error: { …(2) }, success: false } to have property 'id'.]]>
@@ -157,11 +157,11 @@
     </testcase>
   </testsuite>
   <testsuite name="Videos / Upload Video - MKV" id="9340b498-4198-493b-b1ab-ac04125980a1" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="2" errors="0" time="0.057">
-    <testcase name="Status is 201" time="0.057" classname="AthenaAuthApi">
+    <testcase name="Status is 201" time="0.057" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 201 but got 500">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Upload Video - MKV.]]>
         <![CDATA[Test description: Status is 201.]]>
         <![CDATA[Error message: expected response to have status code 201 but got 500.]]>
@@ -169,11 +169,11 @@
    at Object.eval sandbox-script.js:1:23).]]>
       </failure>
     </testcase>
-    <testcase name="Response has video ID" time="0.057" classname="AthenaAuthApi">
+    <testcase name="Response has video ID" time="0.057" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected { error: { …(2) }, success: false } to have property 'id'">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Upload Video - MKV.]]>
         <![CDATA[Test description: Response has video ID.]]>
         <![CDATA[Error message: expected { error: { …(2) }, success: false } to have property 'id'.]]>
@@ -183,11 +183,11 @@
     </testcase>
   </testsuite>
   <testsuite name="Videos / Upload Video - WebM" id="ff1a228d-7ba3-4870-8b21-237694b87097" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="2" errors="0" time="0.063">
-    <testcase name="Status is 201" time="0.063" classname="AthenaAuthApi">
+    <testcase name="Status is 201" time="0.063" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 201 but got 500">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Upload Video - WebM.]]>
         <![CDATA[Test description: Status is 201.]]>
         <![CDATA[Error message: expected response to have status code 201 but got 500.]]>
@@ -195,11 +195,11 @@
    at Object.eval sandbox-script.js:1:24).]]>
       </failure>
     </testcase>
-    <testcase name="Response has video ID" time="0.063" classname="AthenaAuthApi">
+    <testcase name="Response has video ID" time="0.063" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected { error: { …(2) }, success: false } to have property 'id'">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Upload Video - WebM.]]>
         <![CDATA[Test description: Response has video ID.]]>
         <![CDATA[Error message: expected { error: { …(2) }, success: false } to have property 'id'.]]>
@@ -209,11 +209,11 @@
     </testcase>
   </testsuite>
   <testsuite name="Videos / Upload Video - AVI" id="f0a4c11e-b8cb-487d-850c-64104a4be25d" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="2" errors="0" time="0.059">
-    <testcase name="Status is 201" time="0.059" classname="AthenaAuthApi">
+    <testcase name="Status is 201" time="0.059" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected response to have status code 201 but got 500">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Upload Video - AVI.]]>
         <![CDATA[Test description: Status is 201.]]>
         <![CDATA[Error message: expected response to have status code 201 but got 500.]]>
@@ -221,11 +221,11 @@
    at Object.eval sandbox-script.js:1:25).]]>
       </failure>
     </testcase>
-    <testcase name="Response has video ID" time="0.059" classname="AthenaAuthApi">
+    <testcase name="Response has video ID" time="0.059" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected { error: { …(2) }, success: false } to have property 'id'">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Upload Video - AVI.]]>
         <![CDATA[Test description: Response has video ID.]]>
         <![CDATA[Error message: expected { error: { …(2) }, success: false } to have property 'id'.]]>
@@ -235,68 +235,68 @@
     </testcase>
   </testsuite>
   <testsuite name="Videos / Upload Video - Invalid MP3 (400)" id="cbe0038f-c964-4c52-ad4d-a4202c33c1e5" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.055">
-    <testcase name="Status is 400" time="0.055" classname="AthenaAuthApi"/>
-    <testcase name="Has error message" time="0.055" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400" time="0.055" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error message" time="0.055" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Upload Video - Invalid PDF (400)" id="91725c46-d9b2-478f-93f5-d8cd7d028f66" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.055">
-    <testcase name="Status is 400" time="0.055" classname="AthenaAuthApi"/>
-    <testcase name="Has error message" time="0.055" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400" time="0.055" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error message" time="0.055" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Upload Video - Fake MP4 (400)" id="189811fc-03f2-4f0b-93ae-f46dc4608628" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.052">
-    <testcase name="Status is 400" time="0.052" classname="AthenaAuthApi"/>
-    <testcase name="Has error message" time="0.052" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400" time="0.052" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error message" time="0.052" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Upload Video - Corrupted File (400)" id="02f4f441-d076-4fae-b6c4-c6e80fb71f00" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.078">
-    <testcase name="Status is 400" time="0.078" classname="AthenaAuthApi"/>
-    <testcase name="Has error message" time="0.078" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400" time="0.078" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error message" time="0.078" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Upload Video - Malicious Script (400)" id="1b8a3b7d-0f5d-4d2d-a1eb-ddfaf35ffb93" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.080">
-    <testcase name="Status is 400" time="0.080" classname="AthenaAuthApi"/>
-    <testcase name="Has error message" time="0.080" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400" time="0.080" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error message" time="0.080" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Upload Video - HTML XSS (400)" id="643c24cd-df8c-478d-a89a-262b3c8147ab" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.100">
-    <testcase name="Status is 400" time="0.100" classname="AthenaAuthApi"/>
-    <testcase name="Has error message" time="0.100" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400" time="0.100" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error message" time="0.100" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Upload Video - No Auth (401)" id="9b6b9782-65cf-4c24-b399-e9a0cc2595b3" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.060">
-    <testcase name="Status is 401" time="0.060" classname="AthenaAuthApi"/>
-    <testcase name="Has error message" time="0.060" classname="AthenaAuthApi"/>
+    <testcase name="Status is 401" time="0.060" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error message" time="0.060" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Upload Video - Missing Title (400)" id="706ca9aa-31ec-4ea1-b2cb-01d94b077a41" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.127">
-    <testcase name="Status is 400" time="0.127" classname="AthenaAuthApi"/>
-    <testcase name="Has error message" time="0.127" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400" time="0.127" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error message" time="0.127" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / List Videos - With Filters" id="3562a4d7-3dc8-4aa9-a916-7a3c2c89d307" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.019">
-    <testcase name="Status is 200" time="0.019" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.019" classname="AthenaAuthApi"/>
+    <testcase name="Status is 200" time="0.019" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.019" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Search Videos" id="b42d38d9-9b73-4188-a05a-030e0c73a3d9" timestamp="2026-02-11T02:15:38.736Z" tests="3" failures="0" errors="0" time="0.081">
-    <testcase name="Status is 200" time="0.081" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.081" classname="AthenaAuthApi"/>
-    <testcase name="Has meta object" time="0.081" classname="AthenaAuthApi"/>
+    <testcase name="Status is 200" time="0.081" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.081" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has meta object" time="0.081" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Search Videos - With Tags" id="58b2533e-49ca-4f9d-8822-30368eb6bbe6" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.014">
-    <testcase name="Status is 200" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.014" classname="AthenaAuthApi"/>
+    <testcase name="Status is 200" time="0.014" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.014" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Search Videos - Missing Query (400)" id="ab211f1a-854b-4953-985f-d46e34b3655e" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.011">
-    <testcase name="Status is 400 or 401" time="0.011" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.011" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400 or 401" time="0.011" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.011" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Get Video by ID" id="f84fa10d-312a-4260-80e1-acadbb64ef26" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.059">
-    <testcase name="Status is valid (200 or 404, not 400)" time="0.059" classname="AthenaAuthApi"/>
-    <testcase name="404 response has error structure" time="0.059" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200 or 404, not 400)" time="0.059" classname="Vidra CoreAuthApi"/>
+    <testcase name="404 response has error structure" time="0.059" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Get Video - Not Found (404)" id="b9c6913a-a5ed-45cf-aa94-0e5b75bab6a2" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.014">
-    <testcase name="Status is 404 or 401" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.014" classname="AthenaAuthApi"/>
+    <testcase name="Status is 404 or 401" time="0.014" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.014" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Create Video" id="17360889-9c8d-406d-a3a4-89cfa8dcd356" timestamp="2026-02-11T02:15:38.736Z" tests="1" failures="1" errors="0" time="0.019">
-    <testcase name="Status is valid (201 or 401)" time="0.019" classname="AthenaAuthApi">
+    <testcase name="Status is valid (201 or 401)" time="0.019" classname="Vidra CoreAuthApi">
       <failure type="AssertionFailure" message="expected [ 201, 401 ] to include 500">
         <![CDATA[Failed 1 times.]]>
         <![CDATA[Collection JSON ID: a5f5f3f0-0000-4000-9000-aaaaaaaaaaaa.]]>
-        <![CDATA[Collection name: Athena Auth API.]]>
+        <![CDATA[Collection name: Vidra Core Auth API.]]>
         <![CDATA[Request name: Videos / Create Video.]]>
         <![CDATA[Test description: Status is valid (201 or 401).]]>
         <![CDATA[Error message: expected [ 201, 401 ] to include 500.]]>
@@ -306,85 +306,85 @@
     </testcase>
   </testsuite>
   <testsuite name="Videos / Create Video - Missing Token (401)" id="398c7e9c-78a2-43e8-8706-bd459a503bba" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.017">
-    <testcase name="Status is 401" time="0.017" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.017" classname="AthenaAuthApi"/>
+    <testcase name="Status is 401" time="0.017" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body or text" time="0.017" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Update Video" id="9134e89a-7ef3-4852-844a-0ccf32f12d8c" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.048">
-    <testcase name="Status is valid (200, 401, or 404)" time="0.048" classname="AthenaAuthApi"/>
-    <testcase name="404 response has error structure" time="0.048" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200, 401, or 404)" time="0.048" classname="Vidra CoreAuthApi"/>
+    <testcase name="404 response has error structure" time="0.048" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Update Video - Not Found (404)" id="f319827b-9842-4bb6-9e23-412faddec51d" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.031">
-    <testcase name="Status is 404 or 401" time="0.031" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.031" classname="AthenaAuthApi"/>
+    <testcase name="Status is 404 or 401" time="0.031" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.031" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Delete Video" id="6c2dda40-ccde-48bf-9eb1-fefac40248b7" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.013">
-    <testcase name="Status is valid (204, 401, or 404)" time="0.013" classname="AthenaAuthApi"/>
-    <testcase name="404 response has error structure" time="0.013" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (204, 401, or 404)" time="0.013" classname="Vidra CoreAuthApi"/>
+    <testcase name="404 response has error structure" time="0.013" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Delete Video - Not Found (404)" id="c262e7d5-77d4-4519-ab83-f73053429d9e" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.023">
-    <testcase name="Status is 404 or 401" time="0.023" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.023" classname="AthenaAuthApi"/>
+    <testcase name="Status is 404 or 401" time="0.023" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.023" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Delete Video - Missing Token (401)" id="80838a47-a4b2-45bc-bc33-0a6df63eb713" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.014">
-    <testcase name="Status is 401" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.014" classname="AthenaAuthApi"/>
+    <testcase name="Status is 401" time="0.014" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body or text" time="0.014" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Get User Videos" id="6a3f81b8-b906-4f6a-892d-037b2cf0b58f" timestamp="2026-02-11T02:15:38.736Z" tests="5" failures="0" errors="0" time="0.026">
-    <testcase name="Status is 200" time="0.026" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.026" classname="AthenaAuthApi"/>
-    <testcase name="Has meta object" time="0.026" classname="AthenaAuthApi"/>
-    <testcase name="Meta has pagination fields" time="0.026" classname="AthenaAuthApi"/>
-    <testcase name="All videos belong to user" time="0.026" classname="AthenaAuthApi"/>
+    <testcase name="Status is 200" time="0.026" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.026" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has meta object" time="0.026" classname="Vidra CoreAuthApi"/>
+    <testcase name="Meta has pagination fields" time="0.026" classname="Vidra CoreAuthApi"/>
+    <testcase name="All videos belong to user" time="0.026" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Get User Videos - Nonexistent User" id="45877d11-773b-429e-aea6-2802d80dbc58" timestamp="2026-02-11T02:15:38.736Z" tests="3" failures="0" errors="0" time="0.015">
-    <testcase name="Status is 200" time="0.015" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.015" classname="AthenaAuthApi"/>
-    <testcase name="Returns empty array for nonexistent user" time="0.015" classname="AthenaAuthApi"/>
+    <testcase name="Status is 200" time="0.015" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.015" classname="Vidra CoreAuthApi"/>
+    <testcase name="Returns empty array for nonexistent user" time="0.015" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Create Video - Invalid JSON (400)" id="25127ca0-c761-40e2-bf4a-843462af49fb" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.096">
-    <testcase name="Status is 400 or 401" time="0.096" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.096" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400 or 401" time="0.096" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.096" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Create Video - Missing Required Fields (400)" id="aadf75e4-0341-49df-82c8-27b0f5124fd7" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.017">
-    <testcase name="Status is 400 or 401" time="0.017" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.017" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400 or 401" time="0.017" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.017" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Update Video - Invalid JSON (400)" id="b826f2e9-dff7-48de-b20f-b64cb728335a" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.014">
-    <testcase name="Status is 400 or 401" time="0.014" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.014" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400 or 401" time="0.014" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.014" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Update Video - Missing Token (401)" id="52143c8a-ad95-4bb8-9167-451a19fc8761" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.010">
-    <testcase name="Status is 401" time="0.010" classname="AthenaAuthApi"/>
-    <testcase name="Has error body or text" time="0.010" classname="AthenaAuthApi"/>
+    <testcase name="Status is 401" time="0.010" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body or text" time="0.010" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Video Streaming Endpoint" id="ec30266f-7d88-44ad-a426-9ebd46286534" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.023">
-    <testcase name="Status is 404 (video was deleted)" time="0.023" classname="AthenaAuthApi"/>
-    <testcase name="Has error response" time="0.023" classname="AthenaAuthApi"/>
+    <testcase name="Status is 404 (video was deleted)" time="0.023" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error response" time="0.023" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Stream Video - Invalid Quality (400)" id="183511e8-8c10-4ef4-a328-a3ab5200b579" timestamp="2026-02-11T02:15:38.736Z" tests="2" failures="0" errors="0" time="0.023">
-    <testcase name="Status is 400 or 401" time="0.023" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with error" time="0.023" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400 or 401" time="0.023" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with error" time="0.023" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Get Supported Qualities" id="bceb289a-cdb6-4f64-8a0f-bb39ff144db5" timestamp="2026-02-11T02:15:38.736Z" tests="5" failures="0" errors="0" time="0.019">
-    <testcase name="Status is 200" time="0.019" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.019" classname="AthenaAuthApi"/>
-    <testcase name="Qualities array present" time="0.019" classname="AthenaAuthApi"/>
-    <testcase name="Default quality present" time="0.019" classname="AthenaAuthApi"/>
-    <testcase name="Common qualities included" time="0.019" classname="AthenaAuthApi"/>
+    <testcase name="Status is 200" time="0.019" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.019" classname="Vidra CoreAuthApi"/>
+    <testcase name="Qualities array present" time="0.019" classname="Vidra CoreAuthApi"/>
+    <testcase name="Default quality present" time="0.019" classname="Vidra CoreAuthApi"/>
+    <testcase name="Common qualities included" time="0.019" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Upload Video Chunk" id="182f57ea-2390-4226-8a45-93ae3ce147f2" timestamp="2026-02-11T02:15:38.736Z" tests="3" failures="0" errors="0" time="0.043">
-    <testcase name="Status is valid (200, 401, or 404)" time="0.043" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.043" classname="AthenaAuthApi"/>
-    <testcase name="Upload response has chunk info" time="0.043" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200, 401, or 404)" time="0.043" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.043" classname="Vidra CoreAuthApi"/>
+    <testcase name="Upload response has chunk info" time="0.043" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Upload Video Chunk - Missing Headers (400)" id="8bca7039-ee23-4798-8197-70311934c732" timestamp="2026-02-11T02:15:38.736Z" tests="3" failures="0" errors="0" time="0.015">
-    <testcase name="Status is 400 or 401" time="0.015" classname="AthenaAuthApi"/>
-    <testcase name="404 response has error structure" time="0.015" classname="AthenaAuthApi"/>
-    <testcase name="Has error body" time="0.015" classname="AthenaAuthApi"/>
+    <testcase name="Status is 400 or 401" time="0.015" classname="Vidra CoreAuthApi"/>
+    <testcase name="404 response has error structure" time="0.015" classname="Vidra CoreAuthApi"/>
+    <testcase name="Has error body" time="0.015" classname="Vidra CoreAuthApi"/>
   </testsuite>
   <testsuite name="Videos / Complete Video Upload" id="cc80ac76-2484-4eac-b0ba-1ec4f7715238" timestamp="2026-02-11T02:15:38.736Z" tests="3" failures="0" errors="0" time="0.034">
-    <testcase name="Status is valid (200, 401, or 404)" time="0.034" classname="AthenaAuthApi"/>
-    <testcase name="Response wrapped with data" time="0.034" classname="AthenaAuthApi"/>
-    <testcase name="Upload completion response" time="0.034" classname="AthenaAuthApi"/>
+    <testcase name="Status is valid (200, 401, or 404)" time="0.034" classname="Vidra CoreAuthApi"/>
+    <testcase name="Response wrapped with data" time="0.034" classname="Vidra CoreAuthApi"/>
+    <testcase name="Upload completion response" time="0.034" classname="Vidra CoreAuthApi"/>
   </testsuite>
 </testsuites>

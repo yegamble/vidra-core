@@ -1,6 +1,6 @@
 # Postman Test Collections
 
-This directory contains Postman collections for comprehensive API testing of the Athena PeerTube-compatible backend.
+This directory contains Postman collections for comprehensive API testing of the Vidra Core PeerTube-compatible backend.
 
 ## Quick Start
 
@@ -14,14 +14,14 @@ npm install -g newman
 
 ```bash
 cd postman
-./run-all-tests.sh                              # Uses athena.local.postman_environment.json
+./run-all-tests.sh                              # Uses vidra.local.postman_environment.json
 ./run-all-tests.sh my-env.json                  # Use a different environment file
 ```
 
 ### 3. Run Individual Collection
 
 ```bash
-newman run athena-auth.postman_collection.json -e athena.local.postman_environment.json
+newman run vidra-auth.postman_collection.json -e vidra.local.postman_environment.json
 ```
 
 ---
@@ -32,61 +32,61 @@ newman run athena-auth.postman_collection.json -e athena.local.postman_environme
 
 | # | Collection | Requests | Purpose | In CI |
 |---|-----------|----------|---------|-------|
-| 1 | **athena-auth** | 61 | Authentication, avatar uploads, user CRUD | Yes |
-| 2 | **athena-videos** | -- | Video CRUD, search, upload, stream | Yes |
-| 3 | **athena-uploads** | 11 | Chunked uploads, resume, encoding status | Yes |
-| 4 | **athena-channels** | -- | Channel CRUD, subscribe/unsubscribe | Yes |
-| 5 | **athena-social** | -- | Social features (follows, ratings) | Yes |
-| 6 | **athena-playlists** | -- | Playlist CRUD, items, reorder | Yes |
-| 7 | **athena-instance-config** | -- | Public config and quota endpoints | Yes |
-| 8 | **athena-imports** | 10 | External video imports | Yes |
-| 9 | **athena-peertube-canonical** | -- | PeerTube-canonical registrations, jobs, plugins | Yes |
-| 10 | **athena-feeds** | -- | Public and subscription feeds (RSS/Atom) | Yes |
-| 11 | **athena-blocklist** | -- | Account/server blocklist state transitions | Yes |
-| 12 | **athena-moderation** | -- | Abuse reports, blacklist, content moderation | Yes |
-| 13 | **athena-notifications** | -- | Notification list/read/delete | Yes |
-| 14 | **athena-livestreaming** | -- | Stream create/get/stats/session/channel | Yes |
-| 15 | **athena-federation** | -- | WebFinger, NodeInfo, federation discovery | Yes |
-| 16 | **athena-secure-messaging** | -- | Encrypted messaging E2EE flow | Yes |
-| 17 | **athena-ipfs** | -- | IPFS metrics and gateway health | Yes |
-| 18 | **athena-runners** | 24 | Runner registration, job lifecycle, file upload | Yes |
-| 19 | **athena-plugins** | 13 | Plugin discovery, settings, install contract | Yes |
-| 20 | **athena-payments** | 14 | IOTA wallet lifecycle, payment intents | Yes |
-| 21 | **athena-import-lifecycle** | 14 | Import create->list->cancel->retry lifecycle | Yes |
-| 22 | **athena-atproto** | 21 | ATProto social: actors, follows, likes, comments | Yes |
-| 23 | **athena-chapters-blacklist** | -- | Video chapters and blacklist management | Yes |
-| 24 | **athena-analytics** | 13 | View tracking, analytics, trending | Yes |
-| 25 | **athena-encoding-jobs** | -- | Encoding job status and management | Yes |
-| 26 | **athena-captions** | 8 | Video captions: list, upload (SRT/VTT), delete, auto-generate | Yes |
-| 27 | **athena-2fa** | 8 | Two-factor authentication lifecycle | Yes |
-| 28 | **athena-chat** | 8 | Live stream chat: messages, moderators, bans | Yes |
-| 29 | **athena-redundancy** | 10 | Instance peers, redundancy policies, stats | Yes |
-| 30 | **athena-watched-words** | 8 | Server watched words and auto-tag policies | Yes |
-| 31 | **athena-video-passwords** | 6 | Password-protected video access | Yes |
-| 32 | **athena-user-import-export** | 6 | User data export/import portability | Yes |
-| 33 | **athena-channel-sync** | 4 | Channel sync with external feeds | Yes |
-| 34 | **athena-player-settings** | 4 | Video player configuration | Yes |
-| 35 | **athena-admin-debug** | 6 | Admin debug info, instance stats, user/video admin | Yes |
-| 36 | **athena-video-studio** | 6 | Video studio editing jobs (create, list, status) | Yes |
-| 37 | **athena-migration-etl** | 7 | PeerTube migration import pipeline | Yes |
-| 38 | **athena-registration-edge-cases** | -- | Username length limits, special chars, security tests | Yes |
-| 39 | **athena-edge-cases-security** | -- | Additional security edge case testing | Yes |
-| 40 | **athena-virus-scanner-tests** | -- | Virus scanner integration tests | Yes |
-| 41 | **athena-frontend-api-gaps** | -- | Frontend API gap coverage | Yes |
+| 1 | **vidra-auth** | 61 | Authentication, avatar uploads, user CRUD | Yes |
+| 2 | **vidra-videos** | -- | Video CRUD, search, upload, stream | Yes |
+| 3 | **vidra-uploads** | 11 | Chunked uploads, resume, encoding status | Yes |
+| 4 | **vidra-channels** | -- | Channel CRUD, subscribe/unsubscribe | Yes |
+| 5 | **vidra-social** | -- | Social features (follows, ratings) | Yes |
+| 6 | **vidra-playlists** | -- | Playlist CRUD, items, reorder | Yes |
+| 7 | **vidra-instance-config** | -- | Public config and quota endpoints | Yes |
+| 8 | **vidra-imports** | 10 | External video imports | Yes |
+| 9 | **vidra-peertube-canonical** | -- | PeerTube-canonical registrations, jobs, plugins | Yes |
+| 10 | **vidra-feeds** | -- | Public and subscription feeds (RSS/Atom) | Yes |
+| 11 | **vidra-blocklist** | -- | Account/server blocklist state transitions | Yes |
+| 12 | **vidra-moderation** | -- | Abuse reports, blacklist, content moderation | Yes |
+| 13 | **vidra-notifications** | -- | Notification list/read/delete | Yes |
+| 14 | **vidra-livestreaming** | -- | Stream create/get/stats/session/channel | Yes |
+| 15 | **vidra-federation** | -- | WebFinger, NodeInfo, federation discovery | Yes |
+| 16 | **vidra-secure-messaging** | -- | Encrypted messaging E2EE flow | Yes |
+| 17 | **vidra-ipfs** | -- | IPFS metrics and gateway health | Yes |
+| 18 | **vidra-runners** | 24 | Runner registration, job lifecycle, file upload | Yes |
+| 19 | **vidra-plugins** | 13 | Plugin discovery, settings, install contract | Yes |
+| 20 | **vidra-payments** | 14 | IOTA wallet lifecycle, payment intents | Yes |
+| 21 | **vidra-import-lifecycle** | 14 | Import create->list->cancel->retry lifecycle | Yes |
+| 22 | **vidra-atproto** | 21 | ATProto social: actors, follows, likes, comments | Yes |
+| 23 | **vidra-chapters-blacklist** | -- | Video chapters and blacklist management | Yes |
+| 24 | **vidra-analytics** | 13 | View tracking, analytics, trending | Yes |
+| 25 | **vidra-encoding-jobs** | -- | Encoding job status and management | Yes |
+| 26 | **vidra-captions** | 8 | Video captions: list, upload (SRT/VTT), delete, auto-generate | Yes |
+| 27 | **vidra-2fa** | 8 | Two-factor authentication lifecycle | Yes |
+| 28 | **vidra-chat** | 8 | Live stream chat: messages, moderators, bans | Yes |
+| 29 | **vidra-redundancy** | 10 | Instance peers, redundancy policies, stats | Yes |
+| 30 | **vidra-watched-words** | 8 | Server watched words and auto-tag policies | Yes |
+| 31 | **vidra-video-passwords** | 6 | Password-protected video access | Yes |
+| 32 | **vidra-user-import-export** | 6 | User data export/import portability | Yes |
+| 33 | **vidra-channel-sync** | 4 | Channel sync with external feeds | Yes |
+| 34 | **vidra-player-settings** | 4 | Video player configuration | Yes |
+| 35 | **vidra-admin-debug** | 6 | Admin debug info, instance stats, user/video admin | Yes |
+| 36 | **vidra-video-studio** | 6 | Video studio editing jobs (create, list, status) | Yes |
+| 37 | **vidra-migration-etl** | 7 | PeerTube migration import pipeline | Yes |
+| 38 | **vidra-registration-edge-cases** | -- | Username length limits, special chars, security tests | Yes |
+| 39 | **vidra-edge-cases-security** | -- | Additional security edge case testing | Yes |
+| 40 | **vidra-virus-scanner-tests** | -- | Virus scanner integration tests | Yes |
+| 41 | **vidra-frontend-api-gaps** | -- | Frontend API gap coverage | Yes |
 
 ### E2E Workflow Chain Collections (in CI runner)
 
 | # | Collection | Requests | Purpose | In CI |
 |---|-----------|----------|---------|-------|
-| 42 | **athena-e2e-auth-flow** | 6 | Register -> verify -> login -> 2FA -> logout -> re-login | Yes |
-| 43 | **athena-e2e-video-lifecycle** | 8 | Login -> channel -> video -> caption -> rate -> comment | Yes |
-| 44 | **athena-e2e-payment-flow** | 7 | Register users -> wallets -> payment intent -> history | Yes |
+| 42 | **vidra-e2e-auth-flow** | 6 | Register -> verify -> login -> 2FA -> logout -> re-login | Yes |
+| 43 | **vidra-e2e-video-lifecycle** | 8 | Login -> channel -> video -> caption -> rate -> comment | Yes |
+| 44 | **vidra-e2e-payment-flow** | 7 | Register users -> wallets -> payment intent -> history | Yes |
 
 ---
 
 ## Environment Variables
 
-All collections use `athena.local.postman_environment.json`:
+All collections use `vidra.local.postman_environment.json`:
 
 ```json
 {
@@ -128,7 +128,7 @@ cd postman
   run: |
     npm install -g newman
     cd postman
-    ./run-all-tests.sh athena.local.postman_environment.json
+    ./run-all-tests.sh vidra.local.postman_environment.json
 ```
 
 ---
@@ -174,7 +174,7 @@ cd postman
 
 ## Adding New Collections
 
-1. Create `athena-<name>.postman_collection.json` following existing patterns
+1. Create `vidra-<name>.postman_collection.json` following existing patterns
 2. Use `{{baseUrl}}` for the base URL (not `{{base_url}}`)
 3. Use `pm.environment.set()` to share state between requests
 4. Add the collection to `run-all-tests.sh` in the appropriate position

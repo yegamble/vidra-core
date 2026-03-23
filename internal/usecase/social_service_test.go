@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/repository"
-	"athena/internal/usecase"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"

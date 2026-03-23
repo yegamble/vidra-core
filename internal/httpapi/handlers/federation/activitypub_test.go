@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/config"
-	"athena/internal/domain"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
 )
 
 func TestWebFingerWithAcctResource(t *testing.T) {
@@ -153,7 +153,7 @@ func TestNodeInfo20(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "2.0", nodeInfo.Version)
-	assert.Equal(t, "athena", nodeInfo.Software.Name)
+	assert.Equal(t, "vidra", nodeInfo.Software.Name)
 	assert.Contains(t, nodeInfo.Protocols, "activitypub")
 	assert.Equal(t, "A test instance", nodeInfo.Metadata["nodeDescription"])
 }

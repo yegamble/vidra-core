@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/domain"
-	"athena/internal/repository"
-	"athena/internal/testutil"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"

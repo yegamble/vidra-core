@@ -1,4 +1,4 @@
-// Package strutil provides string utility functions for the Athena project.
+// Package strutil provides string utility functions for the Vidra Core project.
 // This package has no dependencies on internal packages and can be safely
 // imported by any layer of the application.
 package strutil

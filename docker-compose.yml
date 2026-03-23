@@ -6,21 +6,21 @@ services:
     image: postgres:15-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: athena
-      POSTGRES_USER: athena_user
-      POSTGRES_PASSWORD: athena_password
+      POSTGRES_DB: vidra
+      POSTGRES_USER: vidra_user
+      POSTGRES_PASSWORD: vidra_password
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U athena_user -d athena"]
+      test: ["CMD-SHELL", "pg_isready -U vidra_user -d vidra"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
     networks:
-      - athena-network
+      - vidra-network
 
   redis:
     image: redis:7-alpine
@@ -36,7 +36,7 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - athena-network
+      - vidra-network
 
   ipfs:
     profiles: ["full", "ipfs"]
@@ -60,7 +60,7 @@ services:
       retries: 15
       start_period: 60s
     networks:
-      - athena-network
+      - vidra-network
 
   clamav:
     profiles: ["full", "media"]
@@ -79,7 +79,7 @@ services:
       start_period: 180s
     mem_limit: 2g
     networks:
-      - athena-network
+      - vidra-network
 
   mailpit:
     profiles: ["full", "mail"]
@@ -97,7 +97,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - athena-network
+      - vidra-network
 
   whisper:
     profiles: ["full", "media"]
@@ -118,7 +118,7 @@ services:
       retries: 3
       start_period: 60s
     networks:
-      - athena-network
+      - vidra-network
     deploy:
       resources:
         limits:
@@ -151,7 +151,7 @@ services:
       retries: 5
       start_period: 120s
     networks:
-      - athena-network
+      - vidra-network
 
   app:
     build: .
@@ -170,7 +170,7 @@ services:
       IPFS_MODE: ${IPFS_MODE:-docker}
 
       # Database
-      DATABASE_URL: ${DATABASE_URL:-postgres://athena_user:athena_password@postgres:5432/athena?sslmode=disable}
+      DATABASE_URL: ${DATABASE_URL:-postgres://vidra_user:vidra_password@postgres:5432/vidra?sslmode=disable}
 
       # Redis
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -207,7 +207,7 @@ services:
       SMTP_DISABLE_STARTTLS: ${SMTP_DISABLE_STARTTLS:-false}
       SMTP_CA_FILE: ${SMTP_CA_FILE:-}
       SMTP_FROM: ${SMTP_FROM:-noreply@localhost}
-      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Athena}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Vidra Core}
       WHISPER_PROVIDER: ${WHISPER_PROVIDER:-local}
       WHISPER_API_URL: ${WHISPER_API_URL:-http://whisper:9000}
       WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-base}
@@ -219,7 +219,7 @@ services:
       - storage:/app/storage
       - processed:/app/processed
     networks:
-      - athena-network
+      - vidra-network
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 5s
@@ -250,7 +250,7 @@ services:
       - certbot_conf:/etc/letsencrypt:ro
       - certbot_www:/var/www/certbot:ro
     networks:
-      - athena-network
+      - vidra-network
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost/nginx-health"]
       interval: 10s
@@ -281,7 +281,7 @@ services:
       done
       "
     networks:
-      - athena-network
+      - vidra-network
 
   # ---------------------------------------------------------------------------
   # Local test stack (profile: test)
@@ -292,14 +292,14 @@ services:
     tmpfs:
       - /var/lib/postgresql/data
     environment:
-      POSTGRES_DB: athena_test
+      POSTGRES_DB: vidra_test
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_password
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test_user -d athena_test"]
+      test: ["CMD-SHELL", "pg_isready -U test_user -d vidra_test"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -368,7 +368,7 @@ services:
     profiles: ["test"]
     image: clamav/clamav:stable
     platform: linux/amd64
-    container_name: athena_test_clamav
+    container_name: vidra_test_clamav
     environment:
       - CLAMAV_NO_FRESHCLAM=false
       - CLAMD_STARTUP_TIMEOUT=300
@@ -401,7 +401,7 @@ services:
 
   app-test:
     profiles: ["test"]
-    image: athena:latest
+    image: vidra:latest
     build: .
     depends_on:
       postgres-test:
@@ -417,7 +417,7 @@ services:
       iota-node-test:
         condition: service_started
     environment:
-      DATABASE_URL: postgres://test_user:test_password@postgres-test:5432/athena_test?sslmode=disable
+      DATABASE_URL: postgres://test_user:test_password@postgres-test:5432/vidra_test?sslmode=disable
       REDIS_URL: redis://redis-test:6379/0
       JWT_SECRET: test-jwt-secret
       ENABLE_IPFS_STREAMING: "true"
@@ -468,7 +468,7 @@ services:
       - ./postman:/etc/newman
     entrypoint:
       [
-        "/bin/sh", "/etc/newman/run-all-tests.sh", "/etc/newman/athena.local.postman_environment.json"
+        "/bin/sh", "/etc/newman/run-all-tests.sh", "/etc/newman/vidra.local.postman_environment.json"
       ]
     networks:
       - test-network
@@ -480,13 +480,13 @@ services:
     profiles: ["ci"]
     image: postgres:15-alpine
     environment:
-      POSTGRES_DB: athena_test
+      POSTGRES_DB: vidra_test
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_password
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test_user -d athena_test"]
+      test: ["CMD-SHELL", "pg_isready -U test_user -d vidra_test"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -572,9 +572,9 @@ services:
     entrypoint: >
       /bin/sh -c "
       mc alias set local http://minio:9000 minioadmin minioadmin;
-      mc mb --ignore-existing local/athena-test;
-      mc anonymous set public local/athena-test;
-      echo 'MinIO bucket athena-test created';
+      mc mb --ignore-existing local/vidra-test;
+      mc anonymous set public local/vidra-test;
+      echo 'MinIO bucket vidra-test created';
       "
     networks:
       - test-integration-network
@@ -650,14 +650,14 @@ services:
     tmpfs:
       - /var/lib/postgresql/data
     environment:
-      POSTGRES_DB: athena_integration
+      POSTGRES_DB: vidra_integration
       POSTGRES_USER: integration_user
       POSTGRES_PASSWORD: integration_password
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "15432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U integration_user -d athena_integration"]
+      test: ["CMD-SHELL", "pg_isready -U integration_user -d vidra_integration"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -754,7 +754,7 @@ volumes:
     driver: local
 
 networks:
-  athena-network:
+  vidra-network:
     driver: bridge
   test-network:
     driver: bridge

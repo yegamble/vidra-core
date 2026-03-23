@@ -7,7 +7,7 @@
 
 ## Overview
 
-This sprint delivered a comprehensive plugin system for extending Athena functionality through custom plugins. The system provides a flexible architecture for loading, managing, and executing plugins with support for multiple hook types, configuration management, and performance monitoring.
+This sprint delivered a comprehensive plugin system for extending Vidra Core functionality through custom plugins. The system provides a flexible architecture for loading, managing, and executing plugins with support for multiple hook types, configuration management, and performance monitoring.
 
 ## Delivered Features
 
@@ -333,7 +333,7 @@ Exports analytics events to JSON files:
 
 ```json
 {
-  "export_path": "/var/lib/athena/exports",
+  "export_path": "/var/lib/vidra/exports",
   "batch_size": 100,
   "flush_interval_seconds": 60
 }
@@ -358,7 +358,7 @@ Logs all plugin events for debugging:
 
 ```json
 {
-  "log_file": "/var/log/athena/plugins.log"
+  "log_file": "/var/log/vidra/plugins.log"
 }
 ```
 
@@ -458,7 +458,7 @@ Response:
     "id": "123e4567-e89b-12d3-a456-426614174000",
     "name": "webhook",
     "version": "1.0.0",
-    "author": "Athena Team",
+    "author": "Vidra Core Team",
     "description": "Sends HTTP webhooks for video events",
     "status": "enabled",
     "permissions": ["read_videos"],
@@ -553,10 +553,10 @@ Response:
 {
   "name": "webhook",
   "version": "1.0.0",
-  "author": "Athena Team",
+  "author": "Vidra Core Team",
   "description": "Sends HTTP webhooks for video events",
   "license": "MIT",
-  "homepage": "https://github.com/athena/plugins/webhook",
+  "homepage": "https://github.com/vidra/plugins/webhook",
   "permissions": [
     "read_videos"
   ],
@@ -693,10 +693,10 @@ Statistics are aggregated using PostgreSQL triggers:
 
 ```bash
 # Using psql
-psql -h localhost -U athena_user -d athena < migrations/051_create_plugin_tables.sql
+psql -h localhost -U vidra_user -d vidra < migrations/051_create_plugin_tables.sql
 
 # Or using atlas
-atlas migrate apply --dir "file://migrations" --url "postgres://athena_user:password@localhost:5432/athena"
+atlas migrate apply --dir "file://migrations" --url "postgres://vidra_user:password@localhost:5432/vidra"
 ```
 
 ## Acceptance Criteria
@@ -747,7 +747,7 @@ atlas migrate apply --dir "file://migrations" --url "postgres://athena_user:pass
 
 ## Conclusion
 
-Sprint 12 successfully delivered a production-ready plugin system for Athena. The system provides a flexible, extensible architecture for adding custom functionality without modifying core code. The interface-based design ensures type safety while the hook system provides powerful event-driven capabilities.
+Sprint 12 successfully delivered a production-ready plugin system for Vidra Core. The system provides a flexible, extensible architecture for adding custom functionality without modifying core code. The interface-based design ensures type safety while the hook system provides powerful event-driven capabilities.
 
 The plugin system is ready for production use with three working example plugins demonstrating the patterns. Sprint 13 will enhance security with process isolation and add marketplace infrastructure for community plugins.
 

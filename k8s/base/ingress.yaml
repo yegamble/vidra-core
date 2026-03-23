@@ -1,9 +1,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: athena-ingress
+  name: vidra-ingress
   labels:
-    app: athena
+    app: vidra
   annotations:
     # nginx ingress controller annotations
     nginx.ingress.kubernetes.io/proxy-body-size: "5g"
@@ -26,16 +26,16 @@ spec:
   ingressClassName: nginx
   # tls:
   # - hosts:
-  #   - athena.example.com
-  #   secretName: athena-tls-cert
+  #   - vidra.example.com
+  #   secretName: vidra-tls-cert
   rules:
-  - host: athena.example.com  # Change to your domain
+  - host: vidra.example.com  # Change to your domain
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: athena-api
+            name: vidra-api
             port:
               number: 80

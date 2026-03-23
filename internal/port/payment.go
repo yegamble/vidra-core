@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // PaymentService defines the interface for payment operations.

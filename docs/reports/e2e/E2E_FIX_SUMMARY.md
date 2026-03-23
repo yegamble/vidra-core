@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-Fixed E2E test failures caused by incorrect API endpoint usage in test helpers. Applied fixes and diagnostic improvements to `/Users/yosefgamble/github/athena/tests/e2e/helpers.go`.
+Fixed E2E test failures caused by incorrect API endpoint usage in test helpers. Applied fixes and diagnostic improvements to `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go`.
 
 ---
 
@@ -82,7 +82,7 @@ Error code: INVALID_CREDENTIALS, Message: Invalid credentials, Details:
 
 ## Files Modified
 
-### /Users/yosefgamble/github/athena/tests/e2e/helpers.go
+### /Users/yosefgamble/github/vidra/tests/e2e/helpers.go
 
 **Changes:**
 
@@ -154,7 +154,7 @@ Error code: INVALID_CREDENTIALS, Message: Invalid credentials, Details:
 
 ## API Endpoint Clarification
 
-The Athena API has **two different video creation endpoints** with different purposes:
+The Vidra Core API has **two different video creation endpoints** with different purposes:
 
 ### POST /api/v1/videos (JSON)
 
@@ -235,7 +235,7 @@ sleep 30
 
 # 4. Verify database is initialized
 docker compose -f tests/e2e/docker-compose.yml exec postgres-e2e \
-  psql -U athena_test -d athena_e2e -c "\dt" | grep users
+  psql -U vidra_test -d vidra_e2e -c "\dt" | grep users
 
 # Should see users table (and many others)
 
@@ -474,7 +474,7 @@ Based on diagnostic logs, may need to:
 ```bash
 # Connect to E2E database
 docker compose -f tests/e2e/docker-compose.yml exec postgres-e2e \
-  psql -U athena_test -d athena_e2e
+  psql -U vidra_test -d vidra_e2e
 
 # Check if users are being created
 SELECT id, username, email, twofa_enabled,
@@ -516,7 +516,7 @@ t.Logf("Login email: %q (length: %d)", email, len(email))
 
 ### 1. API Endpoint Design
 
-The Athena API separates video creation into two workflows:
+The Vidra Core API separates video creation into two workflows:
 
 - **Metadata-only creation** (JSON) - for chunked uploads
 - **Complete file upload** (multipart) - for simple uploads

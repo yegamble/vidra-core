@@ -182,7 +182,7 @@ jobs:
       # Penetration Testing
       - name: Build application
         if: matrix.category == 'penetration-testing'
-        run: go build -o athena-server ./cmd/server
+        run: go build -o vidra-server ./cmd/server
 
       - name: Run SSRF Attack Simulation Tests
         if: matrix.category == 'penetration-testing'

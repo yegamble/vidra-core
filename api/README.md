@@ -1,6 +1,6 @@
-# Athena API Documentation
+# Vidra Core API Documentation
 
-This directory contains the 39 OpenAPI 3.0 specifications for the Athena video platform API, covering the complete API surface with full PeerTube v8.1.0 parity.
+This directory contains the 39 OpenAPI 3.0 specifications for the Vidra Core video platform API, covering the complete API surface with full PeerTube v8.1.0 parity.
 
 The canonical HTTP surface lives in `internal/httpapi/routes.go`. The specs in `api/` cover all domains.
 
@@ -63,7 +63,7 @@ The API documentation is split into modular files by functional domain for bette
 7. **`openapi_ipfs.yaml`** - IPFS Streaming Diagnostics
    - IPFS delivery metrics
    - Gateway health visibility
-   - Athena-specific operational endpoints
+   - Vidra Core-specific operational endpoints
 
 ### Domain Specs
 
@@ -142,7 +142,7 @@ The API documentation is split into modular files by functional domain for bette
 21. **`openapi_backup.yaml`** - Backup & Restore
     - Backup creation, listing, restore operations
 
-22. **`openapi_extensions.yaml`** - Athena Extensions
+22. **`openapi_extensions.yaml`** - Vidra Core Extensions
     - Video ownership change, storyboards, custom routes
 
 23. **`openapi_messaging.yaml`** - User Messaging
@@ -206,7 +206,7 @@ The API documentation is split into modular files by functional domain for bette
 
 ## Current Sync Status
 
-- All 39 specs cover the complete Athena API surface.
+- All 39 specs cover the complete Vidra Core API surface.
 - All operationIds are unique across all specs (65 duplicates were resolved with domain prefixes).
 - All specs standardized to OpenAPI 3.0.3.
 - The router in `internal/httpapi/routes.go` remains the implementation source of truth.
@@ -244,7 +244,7 @@ docker run -p 8080:8080 \
     {url: '/api/openapi_payments.yaml', name: 'Payments'}, \
     {url: '/api/openapi_admin.yaml', name: 'Admin'}, \
     {url: '/api/openapi_backup.yaml', name: 'Backup & Restore'}, \
-    {url: '/api/openapi_extensions.yaml', name: 'Athena Extensions'}, \
+    {url: '/api/openapi_extensions.yaml', name: 'Vidra Core Extensions'}, \
     {url: '/api/openapi_messaging.yaml', name: 'Messaging'}, \
     {url: '/api/openapi_runners.yaml', name: 'Runners'}, \
     {url: '/api/openapi_notifications.yaml', name: 'Notifications'}, \
@@ -516,4 +516,4 @@ For API documentation issues or questions:
 
 ## License
 
-Same license as the main Athena project.
+Same license as the main Vidra Core project.

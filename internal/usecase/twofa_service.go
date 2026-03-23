@@ -12,20 +12,20 @@ import (
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // TwoFAService handles two-factor authentication operations
 type TwoFAService struct {
 	userRepo       UserRepository
 	backupCodeRepo TwoFABackupCodeRepository
-	issuer         string // Application name for TOTP (e.g., "Athena")
+	issuer         string // Application name for TOTP (e.g., "Vidra Core")
 }
 
 // NewTwoFAService creates a new 2FA service
 func NewTwoFAService(userRepo UserRepository, backupCodeRepo TwoFABackupCodeRepository, issuer string) *TwoFAService {
 	if issuer == "" {
-		issuer = "Athena"
+		issuer = "Vidra Core"
 	}
 	return &TwoFAService{
 		userRepo:       userRepo,

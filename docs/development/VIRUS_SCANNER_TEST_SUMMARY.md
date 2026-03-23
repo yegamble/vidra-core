@@ -19,7 +19,7 @@ Comprehensive test coverage has been added to expose and validate the fix for a 
 
 ### 1. Test Coverage Added
 
-**File**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner_test.go`
+**File**: `/Users/yosefgamble/github/vidra/internal/security/virus_scanner_test.go`
 
 - **Lines Added**: 707 lines (167-871)
 - **Tests Added**: 14 comprehensive security tests
@@ -129,7 +129,7 @@ if result != nil && result.Status == ScanStatusClean {
 
 ## Vulnerability Details (Quick Reference)
 
-**Location**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner.go:286`
+**Location**: `/Users/yosefgamble/github/vidra/internal/security/virus_scanner.go:286`
 
 **Problem**:
 
@@ -300,14 +300,14 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 
 ### Implementation
 
-- **Vulnerable Code**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner.go:254-352`
-- **Test Coverage**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner_test.go:167-871`
+- **Vulnerable Code**: `/Users/yosefgamble/github/vidra/internal/security/virus_scanner.go:254-352`
+- **Test Coverage**: `/Users/yosefgamble/github/vidra/internal/security/virus_scanner_test.go:167-871`
 
 ### Documentation
 
-- **Security Analysis**: `/Users/yosefgamble/github/athena/SECURITY_ANALYSIS_VIRUS_SCANNER.md`
-- **Test Execution Guide**: `/Users/yosefgamble/github/athena/TEST_EXECUTION_GUIDE.md`
-- **This Summary**: `/Users/yosefgamble/github/athena/VIRUS_SCANNER_TEST_SUMMARY.md`
+- **Security Analysis**: `/Users/yosefgamble/github/vidra/SECURITY_ANALYSIS_VIRUS_SCANNER.md`
+- **Test Execution Guide**: `/Users/yosefgamble/github/vidra/TEST_EXECUTION_GUIDE.md`
+- **This Summary**: `/Users/yosefgamble/github/vidra/VIRUS_SCANNER_TEST_SUMMARY.md`
 
 ---
 
@@ -384,15 +384,15 @@ func (s *VirusScanner) ScanStream(ctx context.Context, reader io.Reader) (*ScanR
 
 ### For Test Execution
 
-See: `/Users/yosefgamble/github/athena/TEST_EXECUTION_GUIDE.md`
+See: `/Users/yosefgamble/github/vidra/TEST_EXECUTION_GUIDE.md`
 
 ### For Security Details
 
-See: `/Users/yosefgamble/github/athena/SECURITY_ANALYSIS_VIRUS_SCANNER.md`
+See: `/Users/yosefgamble/github/vidra/SECURITY_ANALYSIS_VIRUS_SCANNER.md`
 
 ### For Implementation
 
-Review: `/Users/yosefgamble/github/athena/internal/security/virus_scanner.go:254-352`
+Review: `/Users/yosefgamble/github/vidra/internal/security/virus_scanner.go:254-352`
 
 ---
 

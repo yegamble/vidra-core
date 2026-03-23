@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 type mockAutoTagRepo struct {

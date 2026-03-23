@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/usecase"
 )
 
 // AdminVideoHandlers handles admin video management HTTP requests.

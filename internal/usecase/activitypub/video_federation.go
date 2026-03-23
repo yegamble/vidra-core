@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*domain.VideoObject, error) {

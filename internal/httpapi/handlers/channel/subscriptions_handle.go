@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
-	ucchannel "athena/internal/usecase/channel"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/usecase"
+	ucchannel "vidra-core/internal/usecase/channel"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

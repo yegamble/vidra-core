@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"athena/internal/httpapi/handlers/misc"
+	"vidra-core/internal/httpapi/handlers/misc"
 )
 
 // TestContactFormHandler_OK verifies 204 on valid contact form submission.

@@ -104,16 +104,16 @@ ENABLE_IOTA=true
 LOG_LEVEL=info
 LOG_FORMAT=json
 OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
-OTEL_SERVICE_NAME=athena
+OTEL_SERVICE_NAME=vidra
 ```
 
 **New Metrics:**
 
-- HTTP: `athena_http_requests_total`, `athena_http_request_duration_ms`
-- Database: `athena_db_connections_open`, `athena_db_queries_total`
-- IPFS: `athena_ipfs_pinning_total`, `athena_ipfs_pin_duration_ms`
-- IOTA: `athena_iota_payments_confirmed_total`, `athena_iota_payments_pending`
-- Virus: `athena_virus_scan_infected_total`
+- HTTP: `vidra_http_requests_total`, `vidra_http_request_duration_ms`
+- Database: `vidra_db_connections_open`, `vidra_db_queries_total`
+- IPFS: `vidra_ipfs_pinning_total`, `vidra_ipfs_pin_duration_ms`
+- IOTA: `vidra_iota_payments_confirmed_total`, `vidra_iota_payments_pending`
+- Virus: `vidra_virus_scan_infected_total`
 
 **Dependencies:**
 

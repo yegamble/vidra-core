@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/chat"
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/repository"
+	"vidra-core/internal/chat"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -29,7 +29,7 @@ import (
 )
 
 func setupIntegrationTest(t *testing.T) (*sqlx.DB, *redis.Client, func()) {
-	db, err := sqlx.Connect("postgres", "postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable")
+	db, err := sqlx.Connect("postgres", "postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable")
 	require.NoError(t, err)
 
 	redisClient := redis.NewClient(&redis.Options{

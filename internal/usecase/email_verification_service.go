@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"athena/internal/domain"
-	"athena/internal/email"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/email"
 )
 
 // EmailVerificationService handles email verification logic

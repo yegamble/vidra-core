@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: athena-config
+  name: vidra-config
   labels:
-    app: athena
+    app: vidra
 data:
   # IPFS Configuration
   ipfs-api: "http://ipfs:5001"

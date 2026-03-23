@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/httpapi"
-	"athena/internal/repository"
-	"athena/internal/testutil"
-	"athena/internal/usecase"
+	"vidra-core/internal/config"
+	"vidra-core/internal/httpapi"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

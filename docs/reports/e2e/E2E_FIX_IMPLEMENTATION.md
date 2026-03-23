@@ -20,9 +20,9 @@
 postgres-e2e:
   image: postgres:15-alpine
   environment:
-    POSTGRES_USER: athena_test
+    POSTGRES_USER: vidra_test
     POSTGRES_PASSWORD: test_password
-    POSTGRES_DB: athena_e2e
+    POSTGRES_DB: vidra_e2e
   ports:
     - "5433:5432"
   volumes:                                                                    # ADD THIS LINE
@@ -30,7 +30,7 @@ postgres-e2e:
   tmpfs:
     - /var/lib/postgresql/data
   healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U athena_test"]
+    test: ["CMD-SHELL", "pg_isready -U vidra_test"]
     interval: 5s
     timeout: 5s
     retries: 5
@@ -69,7 +69,7 @@ sleep 30
 
 # Verify schema exists
 docker compose -f tests/e2e/docker-compose.yml exec postgres-e2e \
-  psql -U athena_test -d athena_e2e -c "\dt" | grep users
+  psql -U vidra_test -d vidra_e2e -c "\dt" | grep users
 
 # Should show the users table (and many others)
 ```
@@ -92,7 +92,7 @@ Expected output:
 === RUN   TestVideoSearchFunctionality
 --- PASS: TestVideoSearchFunctionality (3.12s)
 PASS
-ok      athena/tests/e2e/scenarios      8.801s
+ok      vidra/tests/e2e/scenarios      8.801s
 ```
 
 ### 4. Verify in CI
@@ -137,13 +137,13 @@ Add after the "Wait for services to be ready" step:
 
     # Check for essential tables
     TABLES=$(docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e \
-      psql -U athena_test -d athena_e2e -t -c "\dt" | grep -E "users|videos|sessions" | wc -l)
+      psql -U vidra_test -d vidra_e2e -t -c "\dt" | grep -E "users|videos|sessions" | wc -l)
 
     if [ "$TABLES" -lt 3 ]; then
       echo "ERROR: Database schema not properly initialized"
       echo "Expected at least users, videos, and sessions tables"
       docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e \
-        psql -U athena_test -d athena_e2e -c "\dt"
+        psql -U vidra_test -d vidra_e2e -c "\dt"
       exit 1
     fi
 
@@ -185,13 +185,13 @@ CI always started fresh with tmpfs (in-memory) storage, exposing the issue.
   run: |
     # Wait for Postgres
     docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e \
-      pg_isready -U athena_test
+      pg_isready -U vidra_test
 
     # Install goose
     go install github.com/pressly/goose/v3/cmd/goose@latest
 
     # Run migrations
-    DATABASE_URL="postgres://athena_test:test_password@localhost:5433/athena_e2e?sslmode=disable" \
+    DATABASE_URL="postgres://vidra_test:test_password@localhost:5433/vidra_e2e?sslmode=disable" \
       goose -dir migrations postgres "$DATABASE_URL" up
 ```
 

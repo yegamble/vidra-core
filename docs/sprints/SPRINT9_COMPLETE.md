@@ -610,7 +610,7 @@ While Sprint 9 is complete, these enhancements could be added in future sprints:
 2. **Advanced Analytics Dashboard**: Real-time P2P metrics visualization
 3. **Automatic Unseeding**: Remove torrents with healthy swarms (ratio >5)
 4. **Multi-tier Seeding**: Priority levels for critical vs archival content
-5. **Cross-instance Seeding**: Federated seeding across multiple Athena instances
+5. **Cross-instance Seeding**: Federated seeding across multiple Vidra Core instances
 6. **WebRTC Direct Connections**: Peer-to-peer without tracker for WebTorrent
 7. **IPFS Cluster Integration**: Automated pinning and replication
 8. **Bandwidth Prediction**: ML-based traffic shaping
@@ -706,7 +706,7 @@ While Sprint 9 is complete, these enhancements could be added in future sprints:
 
 ## Conclusion
 
-Sprint 9 successfully enhanced Athena's P2P video distribution with advanced features including DHT for trackerless operation, PEX for rapid peer discovery, smart seeding for bandwidth optimization, and hybrid IPFS+Torrent infrastructure. Combined with Sprint 8's WebTorrent implementation, Athena now has a production-ready, decentralized video distribution system capable of scaling to millions of users while reducing server bandwidth costs.
+Sprint 9 successfully enhanced Vidra Core's P2P video distribution with advanced features including DHT for trackerless operation, PEX for rapid peer discovery, smart seeding for bandwidth optimization, and hybrid IPFS+Torrent infrastructure. Combined with Sprint 8's WebTorrent implementation, Vidra Core now has a production-ready, decentralized video distribution system capable of scaling to millions of users while reducing server bandwidth costs.
 
 The implementation leverages industry-standard protocols (DHT, PEX) and best practices (smart seeding, rate limiting) to ensure efficient, reliable, and cost-effective video delivery. The comprehensive configuration system allows fine-tuning for different deployment scenarios, from small self-hosted instances to large-scale production deployments.
 

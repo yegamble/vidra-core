@@ -1,7 +1,7 @@
 package plugin
 
 import (
-	"athena/internal/config"
+	"vidra-core/internal/config"
 )
 
 type PluginHandlers struct {

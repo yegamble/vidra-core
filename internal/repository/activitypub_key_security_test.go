@@ -9,7 +9,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 
-	"athena/internal/security"
+	"vidra-core/internal/security"
 )
 
 // TestActivityPubKeys_NoPlaintextStorage verifies that private keys are NEVER stored in plaintext

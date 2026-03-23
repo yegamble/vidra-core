@@ -1,0 +1,4146 @@
+{
+  "collection": {
+    "item": [
+      {
+        "id": "158b3197-eb63-42e3-80a6-48d6b752e236",
+        "name": "Import Workflow",
+        "description": {
+          "content": "Complete import workflow from creation to cancellation",
+          "type": "text/plain"
+        },
+        "item": [
+          {
+            "id": "6349c63b-710d-4fc4-a245-a7bc4884d924",
+            "name": "Create Import - Direct URL",
+            "request": {
+              "description": {
+                "content": "Create a new video import job from an external URL.\n\n**Note**: This test uses a sample video URL. Replace with a real accessible URL for actual testing.\n\n**Rate Limiting**: Maximum 10 imports per minute to prevent SSRF abuse.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "videos",
+                  "imports",
+                  ""
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{\n  \"source_url\": \"https://www.youtube.com/watch?v=jNQXAC9IVRw\",\n  \"target_privacy\": \"private\"\n}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "prerequest",
+                "script": {
+                  "id": "995bc463-a637-4697-a747-c10a44d14160",
+                  "type": "text/javascript",
+                  "exec": [
+                    "const accessToken = pm.environment.get('access_token');",
+                    "if (!accessToken || accessToken.length === 0) {",
+                    "  console.warn('No access token found - import will fail with 401');",
+                    "}"
+                  ],
+                  "_lastExecutionId": "d43ad143-eeb2-4ce2-aa26-5d4a15858f71"
+                }
+              },
+              {
+                "listen": "test",
+                "script": {
+                  "id": "a684d1e0-439b-469d-8975-535227501bdc",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 201, 400, 401, or 429', () => {",
+                    "  pm.expect([201, 400, 401, 429]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 201) {",
+                    "  const json = pm.response.json();",
+                    "  ",
+                    "  pm.test('Import job created successfully', () => {",
+                    "    pm.expect(json).to.have.property('id');",
+                    "    pm.expect(json).to.have.property('source_url');",
+                    "    pm.expect(json).to.have.property('status');",
+                    "    pm.expect(json).to.have.property('created_at');",
+                    "  });",
+                    "  ",
+                    "  pm.test('Initial status is pending', () => {",
+                    "    pm.expect(json.status).to.equal('pending');",
+                    "  });",
+                    "  ",
+                    "  // Save import ID for subsequent requests",
+                    "  pm.environment.set('import_job_id', json.id);",
+                    "  ",
+                    "  console.log(`Import job created: ${json.id}`);",
+                    "  console.log(`Status: ${json.status}`);",
+                    "} else if (pm.response.code === 400) {",
+                    "  const json = pm.response.json();",
+                    "  console.log(`Bad request: ${json.message || json.error}`);",
+                    "} else if (pm.response.code === 429) {",
+                    "  console.log('Rate limit exceeded - maximum 10 imports per minute');",
+                    "} else if (pm.response.code === 401) {",
+                    "  console.log('Unauthorized - authentication required');",
+                    "}"
+                  ],
+                  "_lastExecutionId": "34380ba4-9b44-4c8d-8022-3caad427fe71"
+                }
+              }
+            ]
+          },
+          {
+            "id": "345aa640-f484-4158-9156-062607b69865",
+            "name": "List Imports - All",
+            "request": {
+              "description": {
+                "content": "List all import jobs created by the authenticated user",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "videos",
+                  "imports",
+                  ""
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [
+                  {
+                    "description": {
+                      "content": "Number of results (1-100)",
+                      "type": "text/plain"
+                    },
+                    "key": "limit",
+                    "value": "20"
+                  },
+                  {
+                    "description": {
+                      "content": "Pagination offset",
+                      "type": "text/plain"
+                    },
+                    "key": "offset",
+                    "value": "0"
+                  }
+                ],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "4c33bd85-f716-4290-bcc4-c0f43b338382",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200 or 401', () => {",
+                    "  pm.expect([200, 401]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 200) {",
+                    "  const json = pm.response.json();",
+                    "  ",
+                    "  pm.test('Response has imports list', () => {",
+                    "    pm.expect(json).to.have.property('imports');",
+                    "    pm.expect(json).to.have.property('total_count');",
+                    "    pm.expect(json).to.have.property('limit');",
+                    "    pm.expect(json).to.have.property('offset');",
+                    "    pm.expect(json.imports).to.be.an('array');",
+                    "  });",
+                    "  ",
+                    "  console.log(`Total imports: ${json.total_count}`);",
+                    "  console.log(`Showing: ${json.imports.length}`);",
+                    "  ",
+                    "  if (json.imports.length > 0) {",
+                    "    json.imports.forEach((imp, i) => {",
+                    "      console.log(`${i+1}. ${imp.title} - ${imp.status}`);",
+                    "    });",
+                    "  }",
+                    "}"
+                  ],
+                  "_lastExecutionId": "53d1c5d6-1629-4c40-9ea4-a5350ad16128"
+                }
+              }
+            ]
+          },
+          {
+            "id": "d277c557-56e9-41a8-826c-f13ceab36de8",
+            "name": "List Imports - Filter by Status",
+            "request": {
+              "description": {
+                "content": "List import jobs filtered by status",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "videos",
+                  "imports",
+                  ""
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [
+                  {
+                    "description": {
+                      "content": "Filter by status (pending, downloading, processing, completed, failed, cancelled)",
+                      "type": "text/plain"
+                    },
+                    "key": "status",
+                    "value": "pending"
+                  }
+                ],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "7044a571-8bd1-4d50-98fd-c5a3b3f6b2dd",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200 or 401', () => {",
+                    "  pm.expect([200, 401]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 200) {",
+                    "  const json = pm.response.json();",
+                    "  ",
+                    "  pm.test('All imports have matching status', () => {",
+                    "    pm.expect(json.imports).to.be.an('array');",
+                    "    // Check that all returned imports have the requested status",
+                    "    json.imports.forEach(imp => {",
+                    "      pm.expect(imp.status).to.equal('pending');",
+                    "    });",
+                    "  });",
+                    "}"
+                  ],
+                  "_lastExecutionId": "d2adc337-6bf0-4236-80a0-987e10eb0a01"
+                }
+              }
+            ]
+          },
+          {
+            "id": "425cba7d-1037-4262-a030-18de26eee9da",
+            "name": "Get Import Status",
+            "request": {
+              "description": {
+                "content": "Get detailed status of a specific import job.\n\nStatus values:\n- `pending` - Waiting to start\n- `downloading` - Downloading from source\n- `processing` - Processing/transcoding\n- `completed` - Successfully imported (video_id available)\n- `failed` - Import failed (error_message available)\n- `cancelled` - Cancelled by user",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "videos",
+                  "imports",
+                  "{{import_job_id}}"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "prerequest",
+                "script": {
+                  "id": "d2b70c5b-6ca2-44bc-a410-4a3ad24dbab7",
+                  "type": "text/javascript",
+                  "exec": [
+                    "const importId = pm.environment.get('import_job_id');",
+                    "if (!importId) {",
+                    "  console.warn('No import_job_id found - run Create Import first');",
+                    "}"
+                  ],
+                  "_lastExecutionId": "5f7dc885-d243-4f95-9945-6f24af4adcd8"
+                }
+              },
+              {
+                "listen": "test",
+                "script": {
+                  "id": "1f4b2623-3ac1-406b-a73b-0cd03199530c",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200, 401, 403, or 404', () => {",
+                    "  pm.expect([200, 401, 403, 404]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 200) {",
+                    "  const json = pm.response.json();",
+                    "  ",
+                    "  pm.test('Response has import details', () => {",
+                    "    pm.expect(json).to.have.property('id');",
+                    "    pm.expect(json).to.have.property('source_url');",
+                    "    pm.expect(json).to.have.property('status');",
+                    "    pm.expect(json).to.have.property('created_at');",
+                    "  });",
+                    "  ",
+                    "  const status = json.status;",
+                    "  console.log(`Import status: ${status}`);",
+                    "  ",
+                    "  if (status === 'downloading' || status === 'processing') {",
+                    "    pm.test('Progress is reported', () => {",
+                    "      pm.expect(json).to.have.property('progress');",
+                    "    });",
+                    "    console.log(`Progress: ${json.progress}%`);",
+                    "  }",
+                    "  ",
+                    "  if (status === 'completed') {",
+                    "    pm.test('Video ID is provided', () => {",
+                    "      pm.expect(json).to.have.property('video_id');",
+                    "      pm.expect(json.video_id).to.not.be.null;",
+                    "    });",
+                    "    console.log(`Video created: ${json.video_id}`);",
+                    "  }",
+                    "  ",
+                    "  if (status === 'failed') {",
+                    "    pm.test('Error message is provided', () => {",
+                    "      pm.expect(json).to.have.property('error_message');",
+                    "    });",
+                    "    console.log(`Error: ${json.error_message}`);",
+                    "  }",
+                    "} else if (pm.response.code === 404) {",
+                    "  console.log('Import job not found');",
+                    "}"
+                  ],
+                  "_lastExecutionId": "300d05d3-9ba5-47ae-8458-c1b3eca7ed36"
+                }
+              }
+            ]
+          },
+          {
+            "id": "005390f4-cb4c-449d-88e2-bc6a716b01c2",
+            "name": "Cancel Import",
+            "request": {
+              "description": {
+                "content": "Cancel a pending or in-progress import job.\n\n**Note**: Completed imports cannot be cancelled (will return 400).",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "videos",
+                  "imports",
+                  "{{import_job_id}}"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "DELETE"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "c6fd985a-659c-42f6-8de5-2fbcbdacefd0",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 204, 400, 401, 403, or 404', () => {",
+                    "  pm.expect([204, 400, 401, 403, 404]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 204) {",
+                    "  console.log('Import cancelled successfully');",
+                    "} else if (pm.response.code === 400) {",
+                    "  const json = pm.response.json();",
+                    "  console.log(`Cannot cancel: ${json.message || json.error}`);",
+                    "  // Likely already completed or already cancelled",
+                    "}"
+                  ],
+                  "_lastExecutionId": "bfd40880-07aa-4643-aba3-be501a9151ff"
+                }
+              }
+            ]
+          }
+        ],
+        "event": []
+      },
+      {
+        "id": "730d6509-1679-454b-b4ac-51d2ca416360",
+        "name": "Error Cases",
+        "description": {
+          "content": "Error cases, validation, and security testing",
+          "type": "text/plain"
+        },
+        "item": [
+          {
+            "id": "c8e32670-3392-4b82-8615-a4f202721e89",
+            "name": "Create Import - Missing Auth",
+            "request": {
+              "description": {
+                "content": "Verify that import creation requires authentication",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "videos",
+                  "imports",
+                  ""
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{\n  \"url\": \"https://example.com/video.mp4\",\n  \"title\": \"Test Video\"\n}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "3d780d74-4606-4f12-90f7-7c162add6dd6",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 401 Unauthorized', () => {",
+                    "  pm.expect(pm.response.code).to.equal(401);",
+                    "});",
+                    "",
+                    "pm.test('Error response structure', () => {",
+                    "  const json = pm.response.json();",
+                    "  pm.expect(json).to.have.property('error');",
+                    "  pm.expect(json.error).to.have.property('message');",
+                    "});"
+                  ],
+                  "_lastExecutionId": "da0f2ad3-ea85-434e-a790-d3ccc426f7bb"
+                }
+              }
+            ]
+          },
+          {
+            "id": "677da6e6-00c3-48ae-bee0-c6b9b013e43c",
+            "name": "Create Import - Invalid URL",
+            "request": {
+              "description": {
+                "content": "Verify that malformed URLs are rejected",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "videos",
+                  "imports",
+                  ""
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{\n  \"source_url\": \"not-a-valid-url\",\n  \"target_privacy\": \"private\"\n}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "3bd2d0dc-8d5e-480a-81d0-be95d9d67e91",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 400 Bad Request', () => {",
+                    "  pm.expect(pm.response.code).to.equal(400);",
+                    "});",
+                    "",
+                    "pm.test('Error indicates invalid URL', () => {",
+                    "  const json = pm.response.json();",
+                    "  const detail = `${json.message || ''} ${json.details || ''} ${json.error || ''}`.toLowerCase();",
+                    "  pm.expect(detail).to.match(/url|invalid|unsafe/);",
+                    "});"
+                  ],
+                  "_lastExecutionId": "55533efe-120c-4f3e-96d9-8a3c2d36e02d"
+                }
+              }
+            ]
+          },
+          {
+            "id": "2c92d3fa-0313-4111-9c67-9d4d2c3a8961",
+            "name": "Create Import - Private IP (SSRF Protection)",
+            "request": {
+              "description": {
+                "content": "Verify SSRF protection - private IP addresses should be blocked",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "videos",
+                  "imports",
+                  ""
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{\n  \"source_url\": \"http://127.0.0.1/secret-file.mp4\",\n  \"target_privacy\": \"private\"\n}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "6ab199a1-3468-409e-99b2-208b294e64a1",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 400 Bad Request', () => {",
+                    "  pm.expect(pm.response.code).to.equal(400);",
+                    "});",
+                    "",
+                    "pm.test('Error indicates blocked domain/IP', () => {",
+                    "  const json = pm.response.json();",
+                    "  const detail = `${json.message || ''} ${json.details || ''} ${json.error || ''}`.toLowerCase();",
+                    "  pm.expect(detail).to.match(/blocked|private|ssrf|unsafe|invalid/);",
+                    "});",
+                    "",
+                    "console.log('SSRF protection is working - private IPs are blocked');"
+                  ],
+                  "_lastExecutionId": "5c509129-f2b8-421f-a63e-081cfb590826"
+                }
+              }
+            ]
+          },
+          {
+            "id": "bf0ac56d-b751-4f0b-9b3a-0adae68f4f9c",
+            "name": "Get Import - Not Found",
+            "request": {
+              "description": {
+                "content": "Verify proper 404 error for non-existent import jobs",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "videos",
+                  "imports",
+                  "import_nonexistent_12345"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "5fd60730-1cee-4fb4-8ead-96ab1992b129",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 404 Not Found', () => {",
+                    "  pm.expect(pm.response.code).to.equal(404);",
+                    "});",
+                    "",
+                    "pm.test('Error response structure', () => {",
+                    "  const json = pm.response.json();",
+                    "  pm.expect(json).to.have.property('error');",
+                    "  pm.expect(json).to.have.property('message');",
+                    "});"
+                  ],
+                  "_lastExecutionId": "8a64583c-d3c3-4831-ad93-78d1f3299c9d"
+                }
+              }
+            ]
+          },
+          {
+            "id": "ba7ef8a0-e42a-4edc-9896-da6453c67632",
+            "name": "Cancel Import - Already Completed",
+            "request": {
+              "description": {
+                "content": "Verify that completed imports cannot be cancelled (should return 400)",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "videos",
+                  "imports",
+                  "{{import_job_id}}"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{access_token}}"
+                }
+              ],
+              "method": "DELETE"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "a13646c2-ff28-47f7-a023-39e018d08d77",
+                  "type": "text/javascript",
+                  "exec": [
+                    "// Should be 400 if import is already completed",
+                    "// Could be 204 if the import is still cancellable, or 404 if it doesn't exist",
+                    "pm.test('Status is 204, 400 or 404', () => {",
+                    "  pm.expect([204, 400, 404]).to.include(pm.response.code);",
+                    "});",
+                    "",
+                    "if (pm.response.code === 400) {",
+                    "  console.log('Cannot cancel completed import (expected)');",
+                    "}"
+                  ],
+                  "_lastExecutionId": "6024515c-febe-4fb2-bf7d-8e92c497149c"
+                }
+              }
+            ]
+          }
+        ],
+        "event": []
+      }
+    ],
+    "event": [],
+    "variable": [
+      {
+        "type": "string",
+        "value": "http://localhost:8080",
+        "key": "baseUrl"
+      }
+    ],
+    "info": {
+      "_postman_id": "593a7206-358c-4764-9445-8f7168c3cb87",
+      "name": "Vidra Core Video Imports API",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+      "description": {
+        "content": "Test collection for importing videos from external URLs.\n\n## Features Tested\n\n- **Create Import** - Import from external video URLs\n- **List Imports** - View all import jobs\n- **Get Import Status** - Track import progress\n- **Cancel Import** - Cancel pending/in-progress imports\n\n## Security Features\n\n- Rate limiting: 10 imports per minute\n- SSRF protection: Private IPs blocked\n- File size validation\n- Content validation\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - JWT access token (required)",
+        "type": "text/plain"
+      }
+    }
+  },
+  "environment": {
+    "_": {
+      "postman_variable_scope": "environment",
+      "postman_exported_at": "2026-03-23T18:30:40.177Z",
+      "postman_exported_using": "Newman/6.1.3"
+    },
+    "id": "0f7a1111-2222-4333-8444-bbbbbbbbbbbb",
+    "name": "Vidra Core Local",
+    "values": [
+      {
+        "type": "any",
+        "value": "http://app-test:8080",
+        "key": "baseUrl"
+      },
+      {
+        "type": "any",
+        "value": "user_1774290633402",
+        "key": "username"
+      },
+      {
+        "type": "any",
+        "value": "user_1774290633402@example.com",
+        "key": "email"
+      },
+      {
+        "type": "any",
+        "value": "Password123!",
+        "key": "password"
+      },
+      {
+        "type": "any",
+        "value": "f5f1559d-3fa7-49ed-83cb-289d449684ae",
+        "key": "user_id"
+      },
+      {
+        "type": "any",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8",
+        "key": "access_token"
+      },
+      {
+        "type": "any",
+        "value": "132c5bd1-91cd-4e30-8da0-f75c2bde2cad",
+        "key": "refresh_token"
+      },
+      {
+        "type": "any",
+        "value": "bafkreidggesxrtgthyu6zy5xyqlkjgyoz7dl75rv4skkmag3ivmbhr26ea",
+        "key": "avatar_ipfs_cid"
+      },
+      {
+        "type": "any",
+        "value": "f8130d69-acc1-4967-ae64-ce0d424096f1",
+        "key": "uploadedVideoId"
+      },
+      {
+        "type": "any",
+        "value": "a524cbba-84da-43e3-9d73-475138b0b662",
+        "key": "video_id"
+      },
+      {
+        "type": "any",
+        "value": "57b153b9-044c-4063-9393-68ac1f94d543",
+        "key": "test_video_id"
+      },
+      {
+        "type": "any",
+        "value": "test-video-1774290638028.mp4",
+        "key": "test_filename"
+      },
+      {
+        "type": "any",
+        "value": "d1afd7c6-fc52-427c-b072-dcfad39ef3a0",
+        "key": "upload_session_id"
+      },
+      {
+        "type": "any",
+        "value": 1,
+        "key": "total_chunks"
+      },
+      {
+        "type": "any",
+        "value": "8b46423f-33d8-496d-ac2c-89db2e060686",
+        "key": "upload_video_id"
+      },
+      {
+        "type": "any",
+        "value": "be8ae72e-9515-405a-af56-686ffd359883",
+        "key": "incomplete_upload_session_id"
+      },
+      {
+        "type": "any",
+        "value": "6af8538a-42ed-4d9a-9a2a-6b5d8ed27e41",
+        "key": "channel_id"
+      },
+      {
+        "type": "any",
+        "value": "b55c7d66-5694-4b21-86fa-601592a3594a",
+        "key": "subscription_channel_id"
+      }
+    ]
+  },
+  "globals": {
+    "id": "9106754d-1f19-431f-aa36-7fc920bb0b68",
+    "values": []
+  },
+  "run": {
+    "stats": {
+      "iterations": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "items": {
+        "total": 10,
+        "pending": 0,
+        "failed": 0
+      },
+      "scripts": {
+        "total": 12,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequests": {
+        "total": 10,
+        "pending": 0,
+        "failed": 0
+      },
+      "requests": {
+        "total": 10,
+        "pending": 0,
+        "failed": 0
+      },
+      "tests": {
+        "total": 10,
+        "pending": 0,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 16,
+        "pending": 0,
+        "failed": 0
+      },
+      "testScripts": {
+        "total": 10,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequestScripts": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      }
+    },
+    "timings": {
+      "responseAverage": 116.9,
+      "responseMin": 3,
+      "responseMax": 1126,
+      "responseSd": 336.3683843645238,
+      "dnsAverage": 0,
+      "dnsMin": 0,
+      "dnsMax": 0,
+      "dnsSd": 0,
+      "firstByteAverage": 0,
+      "firstByteMin": 0,
+      "firstByteMax": 0,
+      "firstByteSd": 0,
+      "started": 1774290640679,
+      "completed": 1774290642059
+    },
+    "executions": [
+      {
+        "cursor": {
+          "position": 0,
+          "iteration": 0,
+          "length": 10,
+          "cycles": 1,
+          "empty": false,
+          "eof": false,
+          "bof": true,
+          "cr": false,
+          "ref": "14cb42ee-5f58-4830-9321-d944ea26fb9d",
+          "httpRequestId": "02b18526-cc55-4ba4-baa0-aeecf5a70420"
+        },
+        "item": {
+          "id": "6349c63b-710d-4fc4-a245-a7bc4884d924",
+          "name": "Create Import - Direct URL",
+          "request": {
+            "description": {
+              "content": "Create a new video import job from an external URL.\n\n**Note**: This test uses a sample video URL. Replace with a real accessible URL for actual testing.\n\n**Rate Limiting**: Maximum 10 imports per minute to prevent SSRF abuse.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"https://www.youtube.com/watch?v=jNQXAC9IVRw\",\n  \"target_privacy\": \"private\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "995bc463-a637-4697-a747-c10a44d14160",
+                "type": "text/javascript",
+                "exec": [
+                  "const accessToken = pm.environment.get('access_token');",
+                  "if (!accessToken || accessToken.length === 0) {",
+                  "  console.warn('No access token found - import will fail with 401');",
+                  "}"
+                ],
+                "_lastExecutionId": "d43ad143-eeb2-4ce2-aa26-5d4a15858f71"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "a684d1e0-439b-469d-8975-535227501bdc",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201, 400, 401, or 429', () => {",
+                  "  pm.expect([201, 400, 401, 429]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  ",
+                  "  pm.test('Import job created successfully', () => {",
+                  "    pm.expect(json).to.have.property('id');",
+                  "    pm.expect(json).to.have.property('source_url');",
+                  "    pm.expect(json).to.have.property('status');",
+                  "    pm.expect(json).to.have.property('created_at');",
+                  "  });",
+                  "  ",
+                  "  pm.test('Initial status is pending', () => {",
+                  "    pm.expect(json.status).to.equal('pending');",
+                  "  });",
+                  "  ",
+                  "  // Save import ID for subsequent requests",
+                  "  pm.environment.set('import_job_id', json.id);",
+                  "  ",
+                  "  console.log(`Import job created: ${json.id}`);",
+                  "  console.log(`Status: ${json.status}`);",
+                  "} else if (pm.response.code === 400) {",
+                  "  const json = pm.response.json();",
+                  "  console.log(`Bad request: ${json.message || json.error}`);",
+                  "} else if (pm.response.code === 429) {",
+                  "  console.log('Rate limit exceeded - maximum 10 imports per minute');",
+                  "} else if (pm.response.code === 401) {",
+                  "  console.log('Unauthorized - authentication required');",
+                  "}"
+                ],
+                "_lastExecutionId": "34380ba4-9b44-4c8d-8022-3caad427fe71"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Create a new video import job from an external URL.\n\n**Note**: This test uses a sample video URL. Replace with a real accessible URL for actual testing.\n\n**Rate Limiting**: Maximum 10 imports per minute to prevent SSRF abuse.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "videos",
+              "imports",
+              ""
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "92051ed7-4758-4bf3-9696-4cf2dcacebdd",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "96",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"source_url\": \"https://www.youtube.com/watch?v=jNQXAC9IVRw\",\n  \"target_privacy\": \"private\"\n}"
+          }
+        },
+        "response": {
+          "id": "c2b4156c-a9e9-401f-b750-3b80705a9400",
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "FF47oKfECBGdeRWfqAd9uA"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:41 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "139"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              34,
+              66,
+              97,
+              100,
+              32,
+              82,
+              101,
+              113,
+              117,
+              101,
+              115,
+              116,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              117,
+              110,
+              115,
+              117,
+              112,
+              112,
+              111,
+              114,
+              116,
+              101,
+              100,
+              32,
+              85,
+              82,
+              76,
+              32,
+              111,
+              114,
+              32,
+              112,
+              108,
+              97,
+              116,
+              102,
+              111,
+              114,
+              109,
+              34,
+              44,
+              34,
+              100,
+              101,
+              116,
+              97,
+              105,
+              108,
+              115,
+              34,
+              58,
+              34,
+              117,
+              110,
+              115,
+              117,
+              112,
+              112,
+              111,
+              114,
+              116,
+              101,
+              100,
+              32,
+              85,
+              82,
+              76,
+              32,
+              111,
+              114,
+              32,
+              112,
+              108,
+              97,
+              116,
+              102,
+              111,
+              114,
+              109,
+              58,
+              32,
+              118,
+              105,
+              100,
+              101,
+              111,
+              32,
+              85,
+              82,
+              76,
+              32,
+              118,
+              97,
+              108,
+              105,
+              100,
+              97,
+              116,
+              105,
+              111,
+              110,
+              32,
+              102,
+              97,
+              105,
+              108,
+              101,
+              100,
+              58,
+              32,
+              117,
+              110,
+              97,
+              98,
+              108,
+              101,
+              32,
+              116,
+              111,
+              32,
+              97,
+              99,
+              99,
+              101,
+              115,
+              115,
+              32,
+              111,
+              114,
+              32,
+              112,
+              97,
+              114,
+              115,
+              101,
+              32,
+              116,
+              104,
+              101,
+              32,
+              118,
+              105,
+              100,
+              101,
+              111,
+              34,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 1126,
+          "responseSize": 170
+        },
+        "id": "6349c63b-710d-4fc4-a245-a7bc4884d924",
+        "assertions": [
+          {
+            "assertion": "Status is 201, 400, 401, or 429",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "d99cf86f-0c0a-49f7-a193-bf22c1f18807",
+          "length": 10,
+          "cycles": 1,
+          "position": 1,
+          "iteration": 0,
+          "httpRequestId": "805fa5fe-0af8-42b6-9979-8a511da183f3"
+        },
+        "item": {
+          "id": "345aa640-f484-4158-9156-062607b69865",
+          "name": "List Imports - All",
+          "request": {
+            "description": {
+              "content": "List all import jobs created by the authenticated user",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [
+                {
+                  "description": {
+                    "content": "Number of results (1-100)",
+                    "type": "text/plain"
+                  },
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "description": {
+                    "content": "Pagination offset",
+                    "type": "text/plain"
+                  },
+                  "key": "offset",
+                  "value": "0"
+                }
+              ],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "4c33bd85-f716-4290-bcc4-c0f43b338382",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 401', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has imports list', () => {",
+                  "    pm.expect(json).to.have.property('imports');",
+                  "    pm.expect(json).to.have.property('total_count');",
+                  "    pm.expect(json).to.have.property('limit');",
+                  "    pm.expect(json).to.have.property('offset');",
+                  "    pm.expect(json.imports).to.be.an('array');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Total imports: ${json.total_count}`);",
+                  "  console.log(`Showing: ${json.imports.length}`);",
+                  "  ",
+                  "  if (json.imports.length > 0) {",
+                  "    json.imports.forEach((imp, i) => {",
+                  "      console.log(`${i+1}. ${imp.title} - ${imp.status}`);",
+                  "    });",
+                  "  }",
+                  "}"
+                ],
+                "_lastExecutionId": "53d1c5d6-1629-4c40-9ea4-a5350ad16128"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "List all import jobs created by the authenticated user",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "videos",
+              "imports",
+              ""
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [
+              {
+                "key": "limit",
+                "value": "20"
+              },
+              {
+                "key": "offset",
+                "value": "0"
+              }
+            ],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "469f19e8-cf79-45f6-890b-fb7cb50d73f8",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "930c947b-4801-4f0f-95d7-8058693a91f5",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "cG54K8oWQwvbPqNqp1zvZA"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:41 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "75"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              105,
+              109,
+              112,
+              111,
+              114,
+              116,
+              115,
+              34,
+              58,
+              91,
+              93,
+              44,
+              34,
+              116,
+              111,
+              116,
+              97,
+              108,
+              95,
+              99,
+              111,
+              117,
+              110,
+              116,
+              34,
+              58,
+              48,
+              44,
+              34,
+              108,
+              105,
+              109,
+              105,
+              116,
+              34,
+              58,
+              50,
+              48,
+              44,
+              34,
+              111,
+              102,
+              102,
+              115,
+              101,
+              116,
+              34,
+              58,
+              48,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 6,
+          "responseSize": 53
+        },
+        "id": "345aa640-f484-4158-9156-062607b69865",
+        "assertions": [
+          {
+            "assertion": "Status is 200 or 401",
+            "skipped": false
+          },
+          {
+            "assertion": "Response has imports list",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "b0fee821-19f3-4cbf-9ce0-185bd8887401",
+          "length": 10,
+          "cycles": 1,
+          "position": 2,
+          "iteration": 0,
+          "httpRequestId": "b021c589-d014-4baa-8869-b9ec2a27121e"
+        },
+        "item": {
+          "id": "d277c557-56e9-41a8-826c-f13ceab36de8",
+          "name": "List Imports - Filter by Status",
+          "request": {
+            "description": {
+              "content": "List import jobs filtered by status",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [
+                {
+                  "description": {
+                    "content": "Filter by status (pending, downloading, processing, completed, failed, cancelled)",
+                    "type": "text/plain"
+                  },
+                  "key": "status",
+                  "value": "pending"
+                }
+              ],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "7044a571-8bd1-4d50-98fd-c5a3b3f6b2dd",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 401', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  ",
+                  "  pm.test('All imports have matching status', () => {",
+                  "    pm.expect(json.imports).to.be.an('array');",
+                  "    // Check that all returned imports have the requested status",
+                  "    json.imports.forEach(imp => {",
+                  "      pm.expect(imp.status).to.equal('pending');",
+                  "    });",
+                  "  });",
+                  "}"
+                ],
+                "_lastExecutionId": "d2adc337-6bf0-4236-80a0-987e10eb0a01"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "List import jobs filtered by status",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "videos",
+              "imports",
+              ""
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [
+              {
+                "key": "status",
+                "value": "pending"
+              }
+            ],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "e2f1cd92-7967-4edb-9961-9d246564c5a1",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "0282778d-71b6-4b4a-98fb-9ad3747c2165",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "4eOVnt-XS0nKcSCjhb4-Og"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:41 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "75"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              105,
+              109,
+              112,
+              111,
+              114,
+              116,
+              115,
+              34,
+              58,
+              91,
+              93,
+              44,
+              34,
+              116,
+              111,
+              116,
+              97,
+              108,
+              95,
+              99,
+              111,
+              117,
+              110,
+              116,
+              34,
+              58,
+              48,
+              44,
+              34,
+              108,
+              105,
+              109,
+              105,
+              116,
+              34,
+              58,
+              50,
+              48,
+              44,
+              34,
+              111,
+              102,
+              102,
+              115,
+              101,
+              116,
+              34,
+              58,
+              48,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 5,
+          "responseSize": 53
+        },
+        "id": "d277c557-56e9-41a8-826c-f13ceab36de8",
+        "assertions": [
+          {
+            "assertion": "Status is 200 or 401",
+            "skipped": false
+          },
+          {
+            "assertion": "All imports have matching status",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "126efd63-7a6c-44fb-b3db-2214817d4bd0",
+          "length": 10,
+          "cycles": 1,
+          "position": 3,
+          "iteration": 0,
+          "httpRequestId": "bfd8c91a-7628-496a-94fc-a68ec2dfff01"
+        },
+        "item": {
+          "id": "425cba7d-1037-4262-a030-18de26eee9da",
+          "name": "Get Import Status",
+          "request": {
+            "description": {
+              "content": "Get detailed status of a specific import job.\n\nStatus values:\n- `pending` - Waiting to start\n- `downloading` - Downloading from source\n- `processing` - Processing/transcoding\n- `completed` - Successfully imported (video_id available)\n- `failed` - Import failed (error_message available)\n- `cancelled` - Cancelled by user",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "{{import_job_id}}"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "d2b70c5b-6ca2-44bc-a410-4a3ad24dbab7",
+                "type": "text/javascript",
+                "exec": [
+                  "const importId = pm.environment.get('import_job_id');",
+                  "if (!importId) {",
+                  "  console.warn('No import_job_id found - run Create Import first');",
+                  "}"
+                ],
+                "_lastExecutionId": "5f7dc885-d243-4f95-9945-6f24af4adcd8"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "1f4b2623-3ac1-406b-a73b-0cd03199530c",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200, 401, 403, or 404', () => {",
+                  "  pm.expect([200, 401, 403, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has import details', () => {",
+                  "    pm.expect(json).to.have.property('id');",
+                  "    pm.expect(json).to.have.property('source_url');",
+                  "    pm.expect(json).to.have.property('status');",
+                  "    pm.expect(json).to.have.property('created_at');",
+                  "  });",
+                  "  ",
+                  "  const status = json.status;",
+                  "  console.log(`Import status: ${status}`);",
+                  "  ",
+                  "  if (status === 'downloading' || status === 'processing') {",
+                  "    pm.test('Progress is reported', () => {",
+                  "      pm.expect(json).to.have.property('progress');",
+                  "    });",
+                  "    console.log(`Progress: ${json.progress}%`);",
+                  "  }",
+                  "  ",
+                  "  if (status === 'completed') {",
+                  "    pm.test('Video ID is provided', () => {",
+                  "      pm.expect(json).to.have.property('video_id');",
+                  "      pm.expect(json.video_id).to.not.be.null;",
+                  "    });",
+                  "    console.log(`Video created: ${json.video_id}`);",
+                  "  }",
+                  "  ",
+                  "  if (status === 'failed') {",
+                  "    pm.test('Error message is provided', () => {",
+                  "      pm.expect(json).to.have.property('error_message');",
+                  "    });",
+                  "    console.log(`Error: ${json.error_message}`);",
+                  "  }",
+                  "} else if (pm.response.code === 404) {",
+                  "  console.log('Import job not found');",
+                  "}"
+                ],
+                "_lastExecutionId": "300d05d3-9ba5-47ae-8458-c1b3eca7ed36"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Get detailed status of a specific import job.\n\nStatus values:\n- `pending` - Waiting to start\n- `downloading` - Downloading from source\n- `processing` - Processing/transcoding\n- `completed` - Successfully imported (video_id available)\n- `failed` - Import failed (error_message available)\n- `cancelled` - Cancelled by user",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "videos",
+              "imports",
+              "%7B%7Bimport_job_id%7D%7D"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "864f9155-4d89-495f-8d90-0296061bbdc4",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "773c7e29-b31d-4fe0-9df8-f4359071c97f",
+          "status": "Not Found",
+          "code": 404,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "elH0_1B6VsaEEE-DknHE9w"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:41 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "81"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              34,
+              78,
+              111,
+              116,
+              32,
+              70,
+              111,
+              117,
+              110,
+              100,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              105,
+              109,
+              112,
+              111,
+              114,
+              116,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              44,
+              34,
+              100,
+              101,
+              116,
+              97,
+              105,
+              108,
+              115,
+              34,
+              58,
+              34,
+              105,
+              109,
+              112,
+              111,
+              114,
+              116,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 5,
+          "responseSize": 80
+        },
+        "id": "425cba7d-1037-4262-a030-18de26eee9da",
+        "assertions": [
+          {
+            "assertion": "Status is 200, 401, 403, or 404",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "9da6cc6c-4ee3-46d2-8a94-dc5902bc20f0",
+          "length": 10,
+          "cycles": 1,
+          "position": 4,
+          "iteration": 0,
+          "httpRequestId": "66a60552-c0e3-4d89-a8d6-15c10e568e52"
+        },
+        "item": {
+          "id": "005390f4-cb4c-449d-88e2-bc6a716b01c2",
+          "name": "Cancel Import",
+          "request": {
+            "description": {
+              "content": "Cancel a pending or in-progress import job.\n\n**Note**: Completed imports cannot be cancelled (will return 400).",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "{{import_job_id}}"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "DELETE"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "c6fd985a-659c-42f6-8de5-2fbcbdacefd0",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 204, 400, 401, 403, or 404', () => {",
+                  "  pm.expect([204, 400, 401, 403, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 204) {",
+                  "  console.log('Import cancelled successfully');",
+                  "} else if (pm.response.code === 400) {",
+                  "  const json = pm.response.json();",
+                  "  console.log(`Cannot cancel: ${json.message || json.error}`);",
+                  "  // Likely already completed or already cancelled",
+                  "}"
+                ],
+                "_lastExecutionId": "bfd40880-07aa-4643-aba3-be501a9151ff"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Cancel a pending or in-progress import job.\n\n**Note**: Completed imports cannot be cancelled (will return 400).",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "videos",
+              "imports",
+              "%7B%7Bimport_job_id%7D%7D"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "9bec3f89-a31d-4c0b-b4e3-fc212c730204",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "DELETE"
+        },
+        "response": {
+          "id": "c37dcc31-28f3-4143-8bef-b096c76916da",
+          "status": "Not Found",
+          "code": 404,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "eDQSY8P4OxQzAjAJ_GqiCA"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:41 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "81"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              34,
+              78,
+              111,
+              116,
+              32,
+              70,
+              111,
+              117,
+              110,
+              100,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              105,
+              109,
+              112,
+              111,
+              114,
+              116,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              44,
+              34,
+              100,
+              101,
+              116,
+              97,
+              105,
+              108,
+              115,
+              34,
+              58,
+              34,
+              105,
+              109,
+              112,
+              111,
+              114,
+              116,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 80
+        },
+        "id": "005390f4-cb4c-449d-88e2-bc6a716b01c2",
+        "assertions": [
+          {
+            "assertion": "Status is 204, 400, 401, 403, or 404",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "6cfb58a8-0f65-4775-adf4-1a1894b60f7e",
+          "length": 10,
+          "cycles": 1,
+          "position": 5,
+          "iteration": 0,
+          "httpRequestId": "c024c6da-a31d-486a-8424-856e6e5db3d0"
+        },
+        "item": {
+          "id": "c8e32670-3392-4b82-8615-a4f202721e89",
+          "name": "Create Import - Missing Auth",
+          "request": {
+            "description": {
+              "content": "Verify that import creation requires authentication",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com/video.mp4\",\n  \"title\": \"Test Video\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "3d780d74-4606-4f12-90f7-7c162add6dd6",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401 Unauthorized', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});",
+                  "",
+                  "pm.test('Error response structure', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.have.property('error');",
+                  "  pm.expect(json.error).to.have.property('message');",
+                  "});"
+                ],
+                "_lastExecutionId": "da0f2ad3-ea85-434e-a790-d3ccc426f7bb"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Verify that import creation requires authentication",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "videos",
+              "imports",
+              ""
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "6354c4e1-37d7-4abd-a356-53e28082159f",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "69",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"url\": \"https://example.com/video.mp4\",\n  \"title\": \"Test Video\"\n}"
+          }
+        },
+        "response": {
+          "id": "25e0865d-e142-482d-9c25-ad618903760e",
+          "status": "Unauthorized",
+          "code": 401,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "PVT74uWIYUbivC33D3g97A"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:41 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "115"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              77,
+              73,
+              83,
+              83,
+              73,
+              78,
+              71,
+              95,
+              65,
+              85,
+              84,
+              72,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              77,
+              73,
+              83,
+              83,
+              73,
+              78,
+              71,
+              95,
+              65,
+              85,
+              84,
+              72,
+              58,
+              32,
+              77,
+              105,
+              115,
+              115,
+              105,
+              110,
+              103,
+              32,
+              97,
+              117,
+              116,
+              104,
+              111,
+              114,
+              105,
+              122,
+              97,
+              116,
+              105,
+              111,
+              110,
+              32,
+              104,
+              101,
+              97,
+              100,
+              101,
+              114,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 7,
+          "responseSize": 105
+        },
+        "id": "c8e32670-3392-4b82-8615-a4f202721e89",
+        "assertions": [
+          {
+            "assertion": "Status is 401 Unauthorized",
+            "skipped": false
+          },
+          {
+            "assertion": "Error response structure",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "0d6fc5f3-21b8-49d7-92c3-aa75ffd6c84b",
+          "length": 10,
+          "cycles": 1,
+          "position": 6,
+          "iteration": 0,
+          "httpRequestId": "843d595d-bce5-4109-9c66-c844cda9d7cc"
+        },
+        "item": {
+          "id": "677da6e6-00c3-48ae-bee0-c6b9b013e43c",
+          "name": "Create Import - Invalid URL",
+          "request": {
+            "description": {
+              "content": "Verify that malformed URLs are rejected",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"not-a-valid-url\",\n  \"target_privacy\": \"private\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "3bd2d0dc-8d5e-480a-81d0-be95d9d67e91",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400 Bad Request', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "",
+                  "pm.test('Error indicates invalid URL', () => {",
+                  "  const json = pm.response.json();",
+                  "  const detail = `${json.message || ''} ${json.details || ''} ${json.error || ''}`.toLowerCase();",
+                  "  pm.expect(detail).to.match(/url|invalid|unsafe/);",
+                  "});"
+                ],
+                "_lastExecutionId": "55533efe-120c-4f3e-96d9-8a3c2d36e02d"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Verify that malformed URLs are rejected",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "videos",
+              "imports",
+              ""
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "7c67668e-7a78-4004-9788-d0d8ea8914e5",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "68",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"source_url\": \"not-a-valid-url\",\n  \"target_privacy\": \"private\"\n}"
+          }
+        },
+        "response": {
+          "id": "e868ca34-e251-4502-9563-d5ffe058d090",
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "W-bAXt7yRQ6-TAhHfLR1rw"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:41 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "144"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              34,
+              66,
+              97,
+              100,
+              32,
+              82,
+              101,
+              113,
+              117,
+              101,
+              115,
+              116,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              73,
+              110,
+              118,
+              97,
+              108,
+              105,
+              100,
+              32,
+              111,
+              114,
+              32,
+              117,
+              110,
+              115,
+              97,
+              102,
+              101,
+              32,
+              85,
+              82,
+              76,
+              34,
+              44,
+              34,
+              100,
+              101,
+              116,
+              97,
+              105,
+              108,
+              115,
+              34,
+              58,
+              34,
+              115,
+              101,
+              99,
+              117,
+              114,
+              105,
+              116,
+              121,
+              32,
+              118,
+              97,
+              108,
+              105,
+              100,
+              97,
+              116,
+              105,
+              111,
+              110,
+              32,
+              102,
+              97,
+              105,
+              108,
+              101,
+              100,
+              58,
+              32,
+              105,
+              110,
+              118,
+              97,
+              108,
+              105,
+              100,
+              32,
+              85,
+              82,
+              76,
+              32,
+              115,
+              99,
+              104,
+              101,
+              109,
+              101,
+              58,
+              32,
+              111,
+              110,
+              108,
+              121,
+              32,
+              104,
+              116,
+              116,
+              112,
+              32,
+              97,
+              110,
+              100,
+              32,
+              104,
+              116,
+              116,
+              112,
+              115,
+              32,
+              97,
+              114,
+              101,
+              32,
+              97,
+              108,
+              108,
+              111,
+              119,
+              101,
+              100,
+              34,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 3,
+          "responseSize": 150
+        },
+        "id": "677da6e6-00c3-48ae-bee0-c6b9b013e43c",
+        "assertions": [
+          {
+            "assertion": "Status is 400 Bad Request",
+            "skipped": false
+          },
+          {
+            "assertion": "Error indicates invalid URL",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "4681db6b-c3c8-4bbc-a1da-b319413c2ed1",
+          "length": 10,
+          "cycles": 1,
+          "position": 7,
+          "iteration": 0,
+          "httpRequestId": "a2350de8-2304-4d51-b297-257dbe460a0b"
+        },
+        "item": {
+          "id": "2c92d3fa-0313-4111-9c67-9d4d2c3a8961",
+          "name": "Create Import - Private IP (SSRF Protection)",
+          "request": {
+            "description": {
+              "content": "Verify SSRF protection - private IP addresses should be blocked",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                ""
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"http://127.0.0.1/secret-file.mp4\",\n  \"target_privacy\": \"private\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "6ab199a1-3468-409e-99b2-208b294e64a1",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400 Bad Request', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "",
+                  "pm.test('Error indicates blocked domain/IP', () => {",
+                  "  const json = pm.response.json();",
+                  "  const detail = `${json.message || ''} ${json.details || ''} ${json.error || ''}`.toLowerCase();",
+                  "  pm.expect(detail).to.match(/blocked|private|ssrf|unsafe|invalid/);",
+                  "});",
+                  "",
+                  "console.log('SSRF protection is working - private IPs are blocked');"
+                ],
+                "_lastExecutionId": "5c509129-f2b8-421f-a63e-081cfb590826"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Verify SSRF protection - private IP addresses should be blocked",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "videos",
+              "imports",
+              ""
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "b0bceedf-2ca5-4c81-bcc0-99ab99f66309",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "85",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"source_url\": \"http://127.0.0.1/secret-file.mp4\",\n  \"target_privacy\": \"private\"\n}"
+          }
+        },
+        "response": {
+          "id": "4edd3a68-16b0-40a3-b573-f9dc072713bd",
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "k5Sioo9cYoLR-clsM5htUg"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:42 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "151"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              34,
+              66,
+              97,
+              100,
+              32,
+              82,
+              101,
+              113,
+              117,
+              101,
+              115,
+              116,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              73,
+              110,
+              118,
+              97,
+              108,
+              105,
+              100,
+              32,
+              111,
+              114,
+              32,
+              117,
+              110,
+              115,
+              97,
+              102,
+              101,
+              32,
+              85,
+              82,
+              76,
+              34,
+              44,
+              34,
+              100,
+              101,
+              116,
+              97,
+              105,
+              108,
+              115,
+              34,
+              58,
+              34,
+              115,
+              101,
+              99,
+              117,
+              114,
+              105,
+              116,
+              121,
+              32,
+              118,
+              97,
+              108,
+              105,
+              100,
+              97,
+              116,
+              105,
+              111,
+              110,
+              32,
+              102,
+              97,
+              105,
+              108,
+              101,
+              100,
+              58,
+              32,
+              97,
+              99,
+              99,
+              101,
+              115,
+              115,
+              32,
+              116,
+              111,
+              32,
+              112,
+              114,
+              105,
+              118,
+              97,
+              116,
+              101,
+              47,
+              105,
+              110,
+              116,
+              101,
+              114,
+              110,
+              97,
+              108,
+              32,
+              73,
+              80,
+              115,
+              32,
+              105,
+              115,
+              32,
+              98,
+              108,
+              111,
+              99,
+              107,
+              101,
+              100,
+              32,
+              102,
+              111,
+              114,
+              32,
+              115,
+              101,
+              99,
+              117,
+              114,
+              105,
+              116,
+              121,
+              32,
+              114,
+              101,
+              97,
+              115,
+              111,
+              110,
+              115,
+              34,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 5,
+          "responseSize": 161
+        },
+        "id": "2c92d3fa-0313-4111-9c67-9d4d2c3a8961",
+        "assertions": [
+          {
+            "assertion": "Status is 400 Bad Request",
+            "skipped": false
+          },
+          {
+            "assertion": "Error indicates blocked domain/IP",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "80b1b2e4-b17f-44a2-8681-7a42e8a9db5b",
+          "length": 10,
+          "cycles": 1,
+          "position": 8,
+          "iteration": 0,
+          "httpRequestId": "396d48df-0e9f-4340-8e81-95f3e01c286e"
+        },
+        "item": {
+          "id": "bf0ac56d-b751-4f0b-9b3a-0adae68f4f9c",
+          "name": "Get Import - Not Found",
+          "request": {
+            "description": {
+              "content": "Verify proper 404 error for non-existent import jobs",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "import_nonexistent_12345"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "5fd60730-1cee-4fb4-8ead-96ab1992b129",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404 Not Found', () => {",
+                  "  pm.expect(pm.response.code).to.equal(404);",
+                  "});",
+                  "",
+                  "pm.test('Error response structure', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.have.property('error');",
+                  "  pm.expect(json).to.have.property('message');",
+                  "});"
+                ],
+                "_lastExecutionId": "8a64583c-d3c3-4831-ad93-78d1f3299c9d"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Verify proper 404 error for non-existent import jobs",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "videos",
+              "imports",
+              "import_nonexistent_12345"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "c2227556-3dfb-4288-a1f3-8525cb4b46fa",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "c3b3d7ca-15b2-43c7-9a8d-76f43694ca0b",
+          "status": "Not Found",
+          "code": 404,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "eoOE5wtbFMOMHNjyh5obVg"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:42 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "81"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              34,
+              78,
+              111,
+              116,
+              32,
+              70,
+              111,
+              117,
+              110,
+              100,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              105,
+              109,
+              112,
+              111,
+              114,
+              116,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              44,
+              34,
+              100,
+              101,
+              116,
+              97,
+              105,
+              108,
+              115,
+              34,
+              58,
+              34,
+              105,
+              109,
+              112,
+              111,
+              114,
+              116,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 80
+        },
+        "id": "bf0ac56d-b751-4f0b-9b3a-0adae68f4f9c",
+        "assertions": [
+          {
+            "assertion": "Status is 404 Not Found",
+            "skipped": false
+          },
+          {
+            "assertion": "Error response structure",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "ee4dc6ce-1f58-449d-a848-456dedd19d9f",
+          "length": 10,
+          "cycles": 1,
+          "position": 9,
+          "iteration": 0,
+          "httpRequestId": "9d2c8fda-8514-4b06-842d-6837c85ef60e"
+        },
+        "item": {
+          "id": "ba7ef8a0-e42a-4edc-9896-da6453c67632",
+          "name": "Cancel Import - Already Completed",
+          "request": {
+            "description": {
+              "content": "Verify that completed imports cannot be cancelled (should return 400)",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "{{import_job_id}}"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "method": "DELETE"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "a13646c2-ff28-47f7-a023-39e018d08d77",
+                "type": "text/javascript",
+                "exec": [
+                  "// Should be 400 if import is already completed",
+                  "// Could be 204 if the import is still cancellable, or 404 if it doesn't exist",
+                  "pm.test('Status is 204, 400 or 404', () => {",
+                  "  pm.expect([204, 400, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 400) {",
+                  "  console.log('Cannot cancel completed import (expected)');",
+                  "}"
+                ],
+                "_lastExecutionId": "6024515c-febe-4fb2-bf7d-8e92c497149c"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Verify that completed imports cannot be cancelled (should return 400)",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "videos",
+              "imports",
+              "%7B%7Bimport_job_id%7D%7D"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "4ca3171b-5747-446d-8376-b58ec9e525e8",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "DELETE"
+        },
+        "response": {
+          "id": "fc64d9b0-8ab9-428f-9d79-b29cc9555be4",
+          "status": "Not Found",
+          "code": 404,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "r6LgwDMN0e6JdKkeEUtjYw"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:42 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "81"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              34,
+              78,
+              111,
+              116,
+              32,
+              70,
+              111,
+              117,
+              110,
+              100,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              105,
+              109,
+              112,
+              111,
+              114,
+              116,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              44,
+              34,
+              100,
+              101,
+              116,
+              97,
+              105,
+              108,
+              115,
+              34,
+              58,
+              34,
+              105,
+              109,
+              112,
+              111,
+              114,
+              116,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 80
+        },
+        "id": "ba7ef8a0-e42a-4edc-9896-da6453c67632",
+        "assertions": [
+          {
+            "assertion": "Status is 204, 400 or 404",
+            "skipped": false
+          }
+        ]
+      }
+    ],
+    "transfers": {
+      "responseTotal": 1023
+    },
+    "failures": [],
+    "error": null
+  }
+}

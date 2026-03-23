@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
-	"athena/internal/config"
+	"vidra-core/internal/config"
 )
 
 // StreamMetrics tracks streaming metrics

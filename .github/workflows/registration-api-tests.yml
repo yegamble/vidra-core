@@ -33,9 +33,9 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: athena
-          POSTGRES_PASSWORD: athena_pass
-          POSTGRES_DB: athena_test
+          POSTGRES_USER: vidra
+          POSTGRES_PASSWORD: vidra_pass
+          POSTGRES_DB: vidra_test
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -55,7 +55,7 @@ jobs:
           - 6379:6379
 
     env:
-      DATABASE_URL: postgres://athena:athena_pass@localhost:5432/athena_test?sslmode=disable
+      DATABASE_URL: postgres://vidra:vidra_pass@localhost:5432/vidra_test?sslmode=disable
       REDIS_URL: redis://localhost:6379
       JWT_SECRET: test-secret-key-for-registration-tests
       PORT: 8080
@@ -82,11 +82,11 @@ jobs:
 
       - name: Build application
         run: |
-          go build -o athena-server ./cmd/server
+          go build -o vidra-server ./cmd/server
 
       - name: Start API server in background
         run: |
-          ./athena-server > server.log 2>&1 &
+          ./vidra-server > server.log 2>&1 &
           echo "SERVER_PID=$!" >> $GITHUB_ENV
           sleep 2
           # Check if server started successfully
@@ -114,7 +114,7 @@ jobs:
         id: newman
         continue-on-error: true
         run: |
-          newman run postman/athena-registration-edge-cases.postman_collection.json \
+          newman run postman/vidra-registration-edge-cases.postman_collection.json \
             --environment postman/environments/local.postman_environment.json \
             --reporters cli,htmlextra,json \
             --reporter-htmlextra-export newman-report.html \

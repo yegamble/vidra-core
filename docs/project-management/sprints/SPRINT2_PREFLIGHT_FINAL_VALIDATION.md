@@ -1,7 +1,7 @@
 # Sprint 2 Pre-flight Final Validation Report
 
 **Date**: November 16, 2025
-**Project**: Athena - Decentralized Video Platform
+**Project**: Vidra Core - Decentralized Video Platform
 **Report Type**: Pre-flight Validation & GO/NO-GO Decision
 **Prepared by**: Project Management Office
 

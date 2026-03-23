@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Athena will be documented in this file.
+All notable changes to Vidra Core will be documented in this file.
 
 ## [Unreleased]
 
@@ -12,7 +12,7 @@ All notable changes to Athena will be documented in this file.
 
 ## Overview
 
-Athena is a high-performance PeerTube-compatible video platform backend built in Go, developed over 20 two-week sprints spanning feature parity (Sprints 1-14) and comprehensive quality hardening (Sprints 15-20).
+Vidra Core is a high-performance PeerTube-compatible video platform backend built in Go, developed over 20 two-week sprints spanning feature parity (Sprints 1-14) and comprehensive quality hardening (Sprints 15-20).
 
 **Final Status:**
 
@@ -235,7 +235,7 @@ Athena is a high-performance PeerTube-compatible video platform backend built in
 
 ## Breaking Changes
 
-None. Athena is pre-release software; API stability is not guaranteed until v1.0.0.
+None. Vidra Core is pre-release software; API stability is not guaranteed until v1.0.0.
 
 ---
 

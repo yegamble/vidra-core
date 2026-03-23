@@ -10,11 +10,11 @@ PeerTube references:
 
 ## Scope
 
-Comprehensive audit comparing Athena against PeerTube's full REST API surface after completion of 9 implementation workstreams (WS1-WS9). Covers:
+Comprehensive audit comparing Vidra Core against PeerTube's full REST API surface after completion of 9 implementation workstreams (WS1-WS9). Covers:
 - Endpoint-by-endpoint API parity (43+ PeerTube categories, 374+ endpoints)
 - Postman E2E test coverage (44 collections in CI)
 - OpenAPI specification completeness (39 spec files)
-- Athena-only feature verification (8 extra features, ~1,000+ tests)
+- Vidra Core-only feature verification (8 extra features, ~1,000+ tests)
 - Build, lint, and full test suite validation (88 packages, 0 failures)
 
 Evidence:
@@ -27,7 +27,7 @@ Evidence:
 
 ## Bottom Line
 
-**API/runtime parity: 100% of PeerTube v8.1.0 API categories are implemented.** At the category level: 43+ categories COMPLETE, 0 PARTIAL, 0 MISSING. Athena adds 8 major features beyond PeerTube (IOTA payments, E2EE messaging, ATProto/BlueSky, IPFS, WebTorrent, live chat, plugins, video import) plus Migration ETL and Video Studio Editing.
+**API/runtime parity: 100% of PeerTube v8.1.0 API categories are implemented.** At the category level: 43+ categories COMPLETE, 0 PARTIAL, 0 MISSING. Vidra Core adds 8 major features beyond PeerTube (IOTA payments, E2EE messaging, ATProto/BlueSky, IPFS, WebTorrent, live chat, plugins, video import) plus Migration ETL and Video Studio Editing.
 
 **Build & tests: All 88 test packages pass (4,879 test functions, 456 test files). Build compiles cleanly.**
 
@@ -54,7 +54,7 @@ Evidence:
 
 ### Remaining items: None
 
-All PeerTube API categories, Athena-only features, and code quality items are fully implemented.
+All PeerTube API categories, Vidra Core-only features, and code quality items are fully implemented.
 
 Confidence levels:
 
@@ -62,9 +62,9 @@ Confidence levels:
 |-----------|------------|-----------|
 | API/runtime parity | **Very High** | 43+ categories complete, 374+ endpoints, 88/88 test packages pass |
 | PeerTube client compatibility | **Very High** | Static file paths, URL aliases, caption language lookup, Migration ETL all implemented |
-| "Import & just works" | **High** | Full ETL pipeline with dry-run support for PeerTube dump → Athena import |
+| "Import & just works" | **High** | Full ETL pipeline with dry-run support for PeerTube dump → Vidra Core import |
 | OpenAPI documentation | **Very High** | 39 specs, all operationIds unique, standardized to 3.0.3 |
-| E2E test coverage | **Very High** | 44 collections in CI, covering 100% of PeerTube + Athena-only features |
+| E2E test coverage | **Very High** | 44 collections in CI, covering 100% of PeerTube + Vidra Core-only features |
 
 ## PeerTube API Parity by Category
 
@@ -115,7 +115,7 @@ Confidence levels:
 | 41 | Video Overviews | Categories, channels, tags overview |
 | 42 | User/Admin Features | Data import/export archives, channel sync, player settings, debug, logs, client config, bulk operations, contact form |
 | 43 | Video Studio Editing | `POST /videos/{id}/studio/edit` with async FFmpeg tasks (cut, add-intro, add-outro, add-watermark), job listing and status (WS8) |
-| 44 | Migration ETL Pipeline | Admin endpoints: import, list jobs, get job, cancel job, dry-run — PeerTube dump → Athena import (WS7) |
+| 44 | Migration ETL Pipeline | Admin endpoints: import, list jobs, get job, cancel job, dry-run — PeerTube dump → Vidra Core import (WS7) |
 
 ### MISSING (0 categories)
 
@@ -125,7 +125,7 @@ None. All PeerTube v8.1.0 API categories are implemented.
 
 All PeerTube-compatible paths now have working aliases:
 
-| PeerTube Path | Athena Implementation | Status |
+| PeerTube Path | Vidra Core Implementation | Status |
 |---------------|----------------------|--------|
 | `/static/web-videos/` | Static handler with path traversal protection | DONE |
 | `/static/streaming-playlists/hls/` | Static handler | DONE |
@@ -137,7 +137,7 @@ All PeerTube-compatible paths now have working aliases:
 | `/api/v1/videos/categories` | Alias route | DONE |
 | `/api/v1/metrics/playback` | Playback metrics handler | DONE |
 
-## Athena-Only Features (Beyond PeerTube)
+## Vidra Core-Only Features (Beyond PeerTube)
 
 All 8 features are **fully implemented** with production-quality code:
 
@@ -158,50 +158,50 @@ All 8 features are **fully implemented** with production-quality code:
 
 | Collection | Requests | Coverage |
 |------------|----------|----------|
-| athena-auth | 61 | Excellent (registration, login, refresh, upload, search, streaming) |
-| athena-peertube-canonical | 32 | Strong (registrations, jobs, plugins, collaborators, runners) |
-| athena-secure-messaging | 27 | Excellent (full E2EE lifecycle with 3 users) |
-| athena-frontend-api-gaps | 27 | Good (admin user/video management, history, notification prefs) |
-| athena-runners | 24 | Excellent (full lifecycle: register→job→upload→success/error/abort) |
-| athena-social | 22 | Good (comments CRUD, channel CRUD) |
-| athena-atproto | 21 | Excellent (social graph, likes, comments, moderation, feed ingest) |
-| athena-registration-edge-cases | 17 | Good (username limits, special chars, duplicate handling) |
-| athena-videos | 15 | Good (CRUD, search, filtering, pagination edges) |
-| athena-payments | 14 | Good (wallet, intents, transactions, error paths) |
-| athena-import-lifecycle | 14 | Good (create, status, list, cancel, retry, SSRF blocked) |
-| athena-channels | 14 | Good (CRUD, subscribe, my channels) |
-| athena-plugins | 13 | Good (list, settings, install contracts) |
-| athena-uploads | 12 | Good (resumable lifecycle, encoding status) |
-| athena-blocklist | 10 | Good (account + server block/unblock) |
-| athena-imports | 10 | Good (create, list, cancel, SSRF protection) |
-| athena-notifications | 10 | Good (list, read, batch read, delete) |
-| athena-livestreaming | 10 | Good (create, list, sessions, stats, end) |
-| athena-moderation | 9 | Good (abuse reports) |
-| athena-playlists | 9 | Good (playlist CRUD) |
-| athena-2fa | 8 | Good (setup, verify, disable, backup codes) |
-| athena-encoding-jobs | 8 | Good (encoding progress tracking) |
-| athena-e2e-video-lifecycle | 8 | Good (upload → transcode → play) |
-| athena-chapters-blacklist | 7 | Good (chapters, blacklist) |
-| athena-e2e-payment-flow | 7 | Good (payment intent → IOTA → confirmation) |
-| athena-migration-etl | 7 | Good (import, list, status, cancel, dry-run) — **NEW (WS7)** |
-| athena-video-studio | 6 | Good (create edit job, list jobs, get job) — **NEW (WS8)** |
-| athena-video-passwords | 6 | Good (password protection) |
-| athena-e2e-auth-flow | 6 | Good (register → verify → login) |
-| athena-federation | 6 | Good (WebFinger, NodeInfo, DID, timeline) |
-| athena-edge-cases-security | 6 | Good (SSRF, XSS, SQL injection, rate limiting) |
-| athena-instance-config | 5 | Adequate (public config, quota, admin config) |
-| athena-feeds | 5 | Adequate (Atom, RSS, subscriptions) |
-| athena-virus-scanner-tests | 5 | Good (malware detection regression) |
-| athena-chat | 5 | Good (messages, moderators, bans) |
-| athena-captions | 5 | Good (list, upload, delete, generate) |
-| athena-redundancy | 4 | Good (peers, policies, sync, health) |
-| athena-analytics | 4 | Good (view tracking, trending, daily stats) |
-| athena-channel-sync | 4 | Good (channel sync lifecycle) |
-| athena-player-settings | 4 | Good (per-user player config) |
-| athena-admin-debug | 3 | Adequate (debug info, log streaming) |
-| athena-user-import-export | 3 | Good (data export/import archives) |
-| athena-watched-words | 2 | Good (watched word CRUD) |
-| athena-ipfs | 2 | Minimal (metrics + gateways) |
+| vidra-auth | 61 | Excellent (registration, login, refresh, upload, search, streaming) |
+| vidra-peertube-canonical | 32 | Strong (registrations, jobs, plugins, collaborators, runners) |
+| vidra-secure-messaging | 27 | Excellent (full E2EE lifecycle with 3 users) |
+| vidra-frontend-api-gaps | 27 | Good (admin user/video management, history, notification prefs) |
+| vidra-runners | 24 | Excellent (full lifecycle: register→job→upload→success/error/abort) |
+| vidra-social | 22 | Good (comments CRUD, channel CRUD) |
+| vidra-atproto | 21 | Excellent (social graph, likes, comments, moderation, feed ingest) |
+| vidra-registration-edge-cases | 17 | Good (username limits, special chars, duplicate handling) |
+| vidra-videos | 15 | Good (CRUD, search, filtering, pagination edges) |
+| vidra-payments | 14 | Good (wallet, intents, transactions, error paths) |
+| vidra-import-lifecycle | 14 | Good (create, status, list, cancel, retry, SSRF blocked) |
+| vidra-channels | 14 | Good (CRUD, subscribe, my channels) |
+| vidra-plugins | 13 | Good (list, settings, install contracts) |
+| vidra-uploads | 12 | Good (resumable lifecycle, encoding status) |
+| vidra-blocklist | 10 | Good (account + server block/unblock) |
+| vidra-imports | 10 | Good (create, list, cancel, SSRF protection) |
+| vidra-notifications | 10 | Good (list, read, batch read, delete) |
+| vidra-livestreaming | 10 | Good (create, list, sessions, stats, end) |
+| vidra-moderation | 9 | Good (abuse reports) |
+| vidra-playlists | 9 | Good (playlist CRUD) |
+| vidra-2fa | 8 | Good (setup, verify, disable, backup codes) |
+| vidra-encoding-jobs | 8 | Good (encoding progress tracking) |
+| vidra-e2e-video-lifecycle | 8 | Good (upload → transcode → play) |
+| vidra-chapters-blacklist | 7 | Good (chapters, blacklist) |
+| vidra-e2e-payment-flow | 7 | Good (payment intent → IOTA → confirmation) |
+| vidra-migration-etl | 7 | Good (import, list, status, cancel, dry-run) — **NEW (WS7)** |
+| vidra-video-studio | 6 | Good (create edit job, list jobs, get job) — **NEW (WS8)** |
+| vidra-video-passwords | 6 | Good (password protection) |
+| vidra-e2e-auth-flow | 6 | Good (register → verify → login) |
+| vidra-federation | 6 | Good (WebFinger, NodeInfo, DID, timeline) |
+| vidra-edge-cases-security | 6 | Good (SSRF, XSS, SQL injection, rate limiting) |
+| vidra-instance-config | 5 | Adequate (public config, quota, admin config) |
+| vidra-feeds | 5 | Adequate (Atom, RSS, subscriptions) |
+| vidra-virus-scanner-tests | 5 | Good (malware detection regression) |
+| vidra-chat | 5 | Good (messages, moderators, bans) |
+| vidra-captions | 5 | Good (list, upload, delete, generate) |
+| vidra-redundancy | 4 | Good (peers, policies, sync, health) |
+| vidra-analytics | 4 | Good (view tracking, trending, daily stats) |
+| vidra-channel-sync | 4 | Good (channel sync lifecycle) |
+| vidra-player-settings | 4 | Good (per-user player config) |
+| vidra-admin-debug | 3 | Adequate (debug info, log streaming) |
+| vidra-user-import-export | 3 | Good (data export/import archives) |
+| vidra-watched-words | 2 | Good (watched word CRUD) |
+| vidra-ipfs | 2 | Minimal (metrics + gateways) |
 
 ## OpenAPI Documentation Status
 
@@ -289,7 +289,7 @@ All 8 features are **fully implemented** with production-quality code:
 
 ## Remaining Work Items
 
-**None.** All PeerTube API categories, Athena-only features, code quality items, and documentation are complete.
+**None.** All PeerTube API categories, Vidra Core-only features, code quality items, and documentation are complete.
 
 ### Code Quality (from prior audit) — ALL RESOLVED
 
@@ -329,8 +329,8 @@ All 8 features are **fully implemented** with production-quality code:
 
 **PeerTube client compatibility confidence is very high** — static file paths, URL aliases, caption language lookup, and all PeerTube-compatible routes are implemented with path traversal protection.
 
-**"Import a real PeerTube instance and have it just work" confidence is high** — Full Migration ETL pipeline with dry-run support for PeerTube dump → Athena import. API surface is fully compatible.
+**"Import a real PeerTube instance and have it just work" confidence is high** — Full Migration ETL pipeline with dry-run support for PeerTube dump → Vidra Core import. API surface is fully compatible.
 
 **OpenAPI documentation confidence is very high** — 39 specs with all unique operationIds, standardized to OpenAPI 3.0.3. Code generation ready.
 
-**E2E test confidence is very high** — 44 collections in CI runner, covering 100% of PeerTube categories and 100% of Athena-only features including Video Studio and Migration ETL.
+**E2E test confidence is very high** — 44 collections in CI runner, covering 100% of PeerTube categories and 100% of Vidra Core-only features including Video Studio and Migration ETL.

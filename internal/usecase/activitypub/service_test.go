@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/activitypub"
-	"athena/internal/config"
-	"athena/internal/domain"
+	"vidra-core/internal/activitypub"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
 )
 
 type MockActivityPubRepository struct {

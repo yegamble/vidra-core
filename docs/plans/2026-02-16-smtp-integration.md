@@ -18,7 +18,7 @@ Worktree: No
 
 ## Summary
 
-**Goal:** Fully wire SMTP email support into Athena with PeerTube-compatible config fields, Docker dev setup (Mailpit), external relay support, setup wizard integration, and application-level email service wiring.
+**Goal:** Fully wire SMTP email support into Vidra Core with PeerTube-compatible config fields, Docker dev setup (Mailpit), external relay support, setup wizard integration, and application-level email service wiring.
 
 **Architecture:** The `internal/email` package already has a working SMTP service with plain/TLS/STARTTLS sending. The config struct and env loading already include all PeerTube-compatible fields. The gaps are: (1) `email.Config` doesn't expose the full set of PeerTube fields (TLS, STARTTLS, CA, transport), (2) the email service isn't wired in `app.go`, (3) `.env.example` lacks SMTP docs, (4) the setup wizard has no email step, (5) email verification routes are registered with `nil` service.
 
@@ -76,7 +76,7 @@ Worktree: No
   - The `email.Config` and `config.Config` are separate structs — need a bridge function
   - The review template form action is `/setup/complete` (not `/setup/review`)
   - Existing sender tests (`service_sender_test.go`) assert port-based TLS selection — these need updating for config-driven behavior
-- **Domain context:** PeerTube SMTP config supports `smtp` and `sendmail` transports, explicit TLS toggle (not just port-based), STARTTLS control, and custom CA files. Athena's `config.Config` already has all these fields loaded from env. The email service just doesn't use them yet.
+- **Domain context:** PeerTube SMTP config supports `smtp` and `sendmail` transports, explicit TLS toggle (not just port-based), STARTTLS control, and custom CA files. Vidra Core's `config.Config` already has all these fields loaded from env. The email service just doesn't use them yet.
 
 ## Progress Tracking
 
@@ -352,7 +352,7 @@ Worktree: No
 
 ```bash
 docker compose --profile mail up -d   # Start Mailpit
-go run cmd/server/main.go             # Start Athena (enters setup mode if not configured)
+go run cmd/server/main.go             # Start Vidra Core (enters setup mode if not configured)
 # Access setup wizard at http://localhost:8080/setup/welcome
 # Access Mailpit UI at http://localhost:8025
 ```

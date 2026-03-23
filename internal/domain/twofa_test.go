@@ -73,7 +73,7 @@ func TestTwoFABackupCodeJSONRoundTrip(t *testing.T) {
 func TestTwoFASetupResponseJSON(t *testing.T) {
 	resp := TwoFASetupResponse{
 		Secret:      "JBSWY3DPEHPK3PXP",
-		QRCodeURI:   "otpauth://totp/Athena:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Athena",
+		QRCodeURI:   "otpauth://totp/Vidra Core:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Vidra Core",
 		BackupCodes: []string{"code1", "code2", "code3", "code4", "code5"},
 	}
 

@@ -1,5 +1,5 @@
 package usecase
 
-import "athena/internal/port"
+import "vidra-core/internal/port"
 
 type NotificationRepository = port.NotificationRepository

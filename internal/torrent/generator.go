@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
@@ -46,7 +46,7 @@ type GeneratorConfig struct {
 func DefaultGeneratorConfig() *GeneratorConfig {
 	return &GeneratorConfig{
 		PieceLength: 262144, // 256KB - optimal for WebTorrent
-		CreatedBy:   "Athena/1.0",
+		CreatedBy:   "Vidra Core/1.0",
 		Private:     false,
 		Trackers: []string{
 			"wss://tracker.openwebtorrent.com",
@@ -65,7 +65,7 @@ func NewGenerator(config *GeneratorConfig) *Generator {
 		config.PieceLength = 262144 // 256KB default
 	}
 	if config.CreatedBy == "" {
-		config.CreatedBy = "Athena/1.0"
+		config.CreatedBy = "Vidra Core/1.0"
 	}
 	return &Generator{config: config}
 }

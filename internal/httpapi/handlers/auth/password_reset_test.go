@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // MockPasswordResetRepository mocks the PasswordResetRepository interface.

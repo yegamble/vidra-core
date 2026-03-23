@@ -292,20 +292,20 @@ After making fixes:
 
 Mark files as you update them:
 
-- [ ] `/Users/yosefgamble/github/athena/api/openapi.yaml`
-- [ ] `/Users/yosefgamble/github/athena/api/openapi_payments.yaml`
-- [ ] `/Users/yosefgamble/github/athena/docs/openapi_notifications.yaml`
-- [ ] `/Users/yosefgamble/github/athena/api/openapi_ratings_playlists.yaml`
-- [ ] `/Users/yosefgamble/github/athena/api/openapi_livestreaming.yaml`
-- [ ] `/Users/yosefgamble/github/athena/api/openapi_comments.yaml`
-- [ ] `/Users/yosefgamble/github/athena/api/openapi_plugins.yaml` (or moved to planned/)
-- [ ] `/Users/yosefgamble/github/athena/api/openapi_chat.yaml` (or moved to planned/)
-- [ ] `/Users/yosefgamble/github/athena/api/openapi_redundancy.yaml` (or moved to planned/)
-- [ ] `/Users/yosefgamble/github/athena/api/schemas/common.yaml` (new file)
+- [ ] `/Users/yosefgamble/github/vidra/api/openapi.yaml`
+- [ ] `/Users/yosefgamble/github/vidra/api/openapi_payments.yaml`
+- [ ] `/Users/yosefgamble/github/vidra/docs/openapi_notifications.yaml`
+- [ ] `/Users/yosefgamble/github/vidra/api/openapi_ratings_playlists.yaml`
+- [ ] `/Users/yosefgamble/github/vidra/api/openapi_livestreaming.yaml`
+- [ ] `/Users/yosefgamble/github/vidra/api/openapi_comments.yaml`
+- [ ] `/Users/yosefgamble/github/vidra/api/openapi_plugins.yaml` (or moved to planned/)
+- [ ] `/Users/yosefgamble/github/vidra/api/openapi_chat.yaml` (or moved to planned/)
+- [ ] `/Users/yosefgamble/github/vidra/api/openapi_redundancy.yaml` (or moved to planned/)
+- [ ] `/Users/yosefgamble/github/vidra/api/schemas/common.yaml` (new file)
 
 ## Routes File Updates (if implementing missing features)
 
-- [ ] `/Users/yosefgamble/github/athena/internal/httpapi/routes.go`
+- [ ] `/Users/yosefgamble/github/vidra/internal/httpapi/routes.go`
   - Add plugin routes (if implementing)
   - Add chat routes (if implementing)
   - Add redundancy routes (if implementing)

@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/config"
-	"athena/internal/storage"
+	"vidra-core/internal/config"
+	"vidra-core/internal/storage"
 )
 
 // mockStorageBackend is a simple in-memory StorageBackend for testing.

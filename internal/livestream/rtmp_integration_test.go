@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/repository"
-	"athena/internal/testutil"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
 
 	"github.com/google/uuid"
 	"github.com/nareix/joy4/format/rtmp"

@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
 )
 
 // OverviewVideoRepository is the subset of video repo needed for overview queries.

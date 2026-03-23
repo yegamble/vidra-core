@@ -17,14 +17,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
-	"athena/internal/domain"
-	"athena/internal/generated"
-	"athena/internal/httpapi"
-	"athena/internal/httpapi/handlers/auth"
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/usecase"
-	"athena/tests/integration"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/generated"
+	"vidra-core/internal/httpapi"
+	"vidra-core/internal/httpapi/handlers/auth"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase"
+	"vidra-core/tests/integration"
 )
 
 func TestTwoFASetupFlow(t *testing.T) {

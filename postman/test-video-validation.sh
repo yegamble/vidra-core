@@ -6,7 +6,7 @@ echo "Starting test environment..."
 cd "$(dirname "$0")/.."
 
 # Ensure services are running
-COMPOSE_PROJECT_NAME=athena-test docker compose --profile test up -d postgres-test redis-test ipfs-test app-test > /dev/null 2>&1
+COMPOSE_PROJECT_NAME=vidra-test docker compose --profile test up -d postgres-test redis-test ipfs-test app-test > /dev/null 2>&1
 
 echo "Waiting for services..."
 sleep 3
@@ -14,7 +14,7 @@ sleep 3
 echo "Testing video upload validation..."
 
 # First register a user and get token
-REGISTER_RESPONSE=$(docker run --rm --network athena-test_test-network \
+REGISTER_RESPONSE=$(docker run --rm --network vidra-test_test-network \
   curlimages/curl:latest \
   -s -X POST http://app-test:8080/auth/register \
   -H "Content-Type: application/json" \
@@ -37,7 +37,7 @@ echo "Got access token for testing..."
 # Test with invalid MP3 file
 echo ""
 echo "Testing with MP3 file (should fail)..."
-MP3_RESPONSE=$(docker run --rm --network athena-test_test-network \
+MP3_RESPONSE=$(docker run --rm --network vidra-test_test-network \
   -v "$(pwd)/postman/test-files:/test-files" \
   curlimages/curl:latest \
   -s -X POST http://app-test:8080/api/v1/videos/upload \
@@ -57,7 +57,7 @@ fi
 # Test with PDF document
 echo ""
 echo "Testing with PDF file (should fail)..."
-PDF_RESPONSE=$(docker run --rm --network athena-test_test-network \
+PDF_RESPONSE=$(docker run --rm --network vidra-test_test-network \
   -v "$(pwd)/postman/test-files:/test-files" \
   curlimages/curl:latest \
   -s -X POST http://app-test:8080/api/v1/videos/upload \
@@ -77,7 +77,7 @@ fi
 # Test with valid MP4
 echo ""
 echo "Testing with valid MP4 (should succeed)..."
-MP4_RESPONSE=$(docker run --rm --network athena-test_test-network \
+MP4_RESPONSE=$(docker run --rm --network vidra-test_test-network \
   -v "$(pwd)/postman/test-files:/test-files" \
   curlimages/curl:latest \
   -s -X POST http://app-test:8080/api/v1/videos/upload \
@@ -96,6 +96,6 @@ fi
 
 echo ""
 echo "Cleaning up..."
-COMPOSE_PROJECT_NAME=athena-test docker compose --profile test down -v > /dev/null 2>&1
+COMPOSE_PROJECT_NAME=vidra-test docker compose --profile test down -v > /dev/null 2>&1
 
 echo "Validation tests complete!"

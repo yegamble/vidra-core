@@ -14,7 +14,7 @@ The committed `.env` file contained the following sensitive information:
 
 ### 1. Database Credentials
 
-- **Database Password:** `athena_password`
+- **Database Password:** `vidra_password`
 - **Database Connection String:** Full PostgreSQL connection URL
 - **Action Required:** Change database password immediately
 
@@ -22,14 +22,14 @@ The committed `.env` file contained the following sensitive information:
 
 - **S3 Access Key:** `005552b994877250000000009`
 - **S3 Secret Key:** `K005bVFj899WnCZ61liiumVwa8Epwco`
-- **Bucket:** `athena-videos`
+- **Bucket:** `vidra-videos`
 - **Endpoint:** `s3.us-west-000.backblazeb2.com`
 - **Action Required:** Rotate S3 access keys immediately via Backblaze B2 console
 
 ### 3. SMTP/Email Credentials
 
 - **SMTP Host:** `smtp.improvmx.com`
-- **SMTP Username:** `athena-test@sizetube.com`
+- **SMTP Username:** `vidra-test@sizetube.com`
 - **SMTP Password:** `Po5kZMd9dBLE`
 - **Action Required:** Change SMTP password immediately
 
@@ -64,20 +64,20 @@ The committed `.env` file contained the following sensitive information:
 -- Connect to PostgreSQL as superuser
 psql -U postgres
 
--- Change password for athena_user
-ALTER USER athena_user WITH PASSWORD 'NEW_SECURE_PASSWORD_HERE';
+-- Change password for vidra_user
+ALTER USER vidra_user WITH PASSWORD 'NEW_SECURE_PASSWORD_HERE';
 ```
 
 Update `.env`:
 
 ```bash
-DATABASE_URL=postgres://athena_user:NEW_SECURE_PASSWORD_HERE@localhost:5432/athena?sslmode=disable
+DATABASE_URL=postgres://vidra_user:NEW_SECURE_PASSWORD_HERE@localhost:5432/vidra?sslmode=disable
 ```
 
 ### 3. Rotate SMTP Password (HIGH Priority)
 
 1. Login to ImprovMX dashboard or email provider
-2. Change password for `athena-test@sizetube.com`
+2. Change password for `vidra-test@sizetube.com`
 3. Update `.env` with new password
 
 ### 4. Generate New JWT Secret (HIGH Priority)
@@ -157,7 +157,7 @@ brew install git-secrets  # macOS
 apt-get install git-secrets  # Ubuntu/Debian
 
 # Setup in repository
-cd /path/to/athena
+cd /path/to/vidra
 git secrets --install
 git secrets --register-aws
 
@@ -223,8 +223,8 @@ SMTP_PASSWORD=your-smtp-password
 ### Potential Exposure
 
 - **Database:** Read/write access to development database
-- **S3/Backblaze B2:** Read/write access to video storage bucket `athena-videos`
-- **SMTP:** Ability to send emails from `athena-test@sizetube.com`
+- **S3/Backblaze B2:** Read/write access to video storage bucket `vidra-videos`
+- **SMTP:** Ability to send emails from `vidra-test@sizetube.com`
 - **JWT:** Ability to forge authentication tokens (if secret was in production use)
 
 ### Estimated Risk

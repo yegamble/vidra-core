@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

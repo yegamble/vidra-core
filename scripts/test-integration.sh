@@ -75,7 +75,7 @@ wait_http() {
 }
 
 wait_postgres() {
-    local host="${1:-127.0.0.1}" port="${2:-15432}" db="${3:-athena_integration}" user="${4:-integration_user}" retries="${5:-30}"
+    local host="${1:-127.0.0.1}" port="${2:-15432}" db="${3:-vidra_integration}" user="${4:-integration_user}" retries="${5:-30}"
     echo -n "  Waiting for Postgres on $host:$port..."
     for i in $(seq 1 $retries); do
         if pg_isready -h "$host" -p "$port" -d "$db" -U "$user" >/dev/null 2>&1; then
@@ -112,7 +112,7 @@ wait_http "ActivityPub"  "http://localhost:${ACTIVITYPUB_PORT}/health"
 wait_http "IOTA RPC"     "http://localhost:${IOTA_PORT}/health"
 wait_http "Mailpit"      "http://localhost:19400/api/v1/messages"
 wait_http "IPFS"         "http://localhost:${IPFS_PORT}/api/v0/id"
-wait_postgres "127.0.0.1" "${POSTGRES_PORT}" "athena_integration" "integration_user"
+wait_postgres "127.0.0.1" "${POSTGRES_PORT}" "vidra_integration" "integration_user"
 wait_postgres "127.0.0.1" "${PEERTUBE_DB_PORT}" "peertube_prod" "peertube"
 wait_redis "redis://127.0.0.1:${REDIS_PORT}"
 

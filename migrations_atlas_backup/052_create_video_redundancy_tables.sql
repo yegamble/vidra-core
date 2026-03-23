@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS instance_peers (
     instance_url TEXT NOT NULL UNIQUE,
     instance_name TEXT,
     instance_host TEXT NOT NULL,
-    software TEXT, -- peertube, athena, mastodon
+    software TEXT, -- peertube, vidra, mastodon
     version TEXT,
 
     -- Redundancy configuration

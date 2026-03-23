@@ -1,6 +1,6 @@
 # Sprint Backlog: Quality Programme - Sprint 16 (API Contract Reproducibility)
 
-**Programme:** Athena Quality Programme (Sprints 15-20)
+**Programme:** Vidra Core Quality Programme (Sprints 15-20)
 **Sprint Goal:** Make the API contract stable and reproducible with CI enforcement
 **Sprint Duration:** Mar 3 - Mar 16, 2026
 **Previous Sprint:** [Sprint 15 Complete](docs/sprints/SPRINT15_COMPLETE.md)

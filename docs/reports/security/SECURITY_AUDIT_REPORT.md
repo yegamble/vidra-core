@@ -1,4 +1,4 @@
-# Security Audit Report: SSRF Protection for Athena Video Platform
+# Security Audit Report: SSRF Protection for Vidra Core Video Platform
 
 **Date:** November 17, 2025
 **Auditor:** Claude Security Testing Agent
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This security audit focused on identifying and mitigating Server-Side Request Forgery (SSRF) vulnerabilities in the Athena decentralized video platform. SSRF attacks allow malicious actors to make the server perform requests to internal resources, potentially exposing sensitive data or accessing restricted services.
+This security audit focused on identifying and mitigating Server-Side Request Forgery (SSRF) vulnerabilities in the Vidra Core decentralized video platform. SSRF attacks allow malicious actors to make the server perform requests to internal resources, potentially exposing sensitive data or accessing restricted services.
 
 ### Key Findings
 
@@ -24,7 +24,7 @@ This security audit focused on identifying and mitigating Server-Side Request Fo
 
 ### 1. ActivityPub Service - Remote Actor Fetching (CRITICAL)
 
-**Location:** `/home/user/athena/internal/usecase/activitypub/service.go:110`
+**Location:** `/home/user/vidra/internal/usecase/activitypub/service.go:110`
 
 **Vulnerability Description:**
 The `FetchRemoteActor` function was making HTTP requests to user-supplied `actorURI` without validating whether the URL pointed to internal/private IP addresses.
@@ -69,7 +69,7 @@ req, err := http.NewRequestWithContext(ctx, "GET", actorURI, nil)
 
 ### 2. Social Service - ATProto PDS URL Fetching (CRITICAL)
 
-**Location:** `/home/user/athena/internal/usecase/social/service.go` (multiple locations)
+**Location:** `/home/user/vidra/internal/usecase/social/service.go` (multiple locations)
 
 **Vulnerability Description:**
 The social service makes HTTP requests to ATProto PDS (Personal Data Server) URLs without SSRF validation in three locations:
@@ -107,7 +107,7 @@ if err := s.urlValidator.ValidateURL(url); err != nil {
 
 ### 3. Video Import Service - External URL Downloads (PROTECTED)
 
-**Location:** `/home/user/athena/internal/usecase/import/service.go:459`
+**Location:** `/home/user/vidra/internal/usecase/import/service.go:459`
 
 **Assessment:**
 This service was already protected with `domain.ValidateURLWithSSRFCheck(req.SourceURL)`.
@@ -118,7 +118,7 @@ This service was already protected with `domain.ValidateURLWithSSRFCheck(req.Sou
 
 ### 4. Instance Discovery Service (PROTECTED)
 
-**Location:** `/home/user/athena/internal/usecase/redundancy/instance_discovery.go:85`
+**Location:** `/home/user/vidra/internal/usecase/redundancy/instance_discovery.go:85`
 
 **Assessment:**
 This service was already protected with `domain.ValidateURLWithSSRFCheck(instanceURL)`.
@@ -131,7 +131,7 @@ This service was already protected with `domain.ValidateURLWithSSRFCheck(instanc
 
 ### 1. URLValidator Component
 
-**Location:** `/home/user/athena/internal/security/url_validator.go`
+**Location:** `/home/user/vidra/internal/security/url_validator.go`
 
 A comprehensive URL validator that blocks:
 
@@ -176,7 +176,7 @@ A comprehensive URL validator that blocks:
 
 ### 2. Domain-Level SSRF Check
 
-**Location:** `/home/user/athena/internal/domain/import.go:122-150`
+**Location:** `/home/user/vidra/internal/domain/import.go:122-150`
 
 Provides `ValidateURLWithSSRFCheck()` function used by import and redundancy services.
 
@@ -186,7 +186,7 @@ Provides `ValidateURLWithSSRFCheck()` function used by import and redundancy ser
 
 ### 1. Unit Tests for URL Validator
 
-**Location:** `/home/user/athena/internal/security/url_validator_test.go`
+**Location:** `/home/user/vidra/internal/security/url_validator_test.go`
 
 **Tests:** 14 test functions covering:
 
@@ -216,7 +216,7 @@ Provides `ValidateURLWithSSRFCheck()` function used by import and redundancy ser
 
 ### 2. Integration Tests for SSRF Protection
 
-**Location:** `/home/user/athena/tests/integration/ssrf_protection_test.go`
+**Location:** `/home/user/vidra/tests/integration/ssrf_protection_test.go`
 
 **Tests:** 10 comprehensive test functions covering:
 
@@ -244,7 +244,7 @@ Provides `ValidateURLWithSSRFCheck()` function used by import and redundancy ser
 
 ### 3. GitHub Actions Workflow
 
-**Location:** `/home/user/athena/.github/workflows/security-tests.yml`
+**Location:** `/home/user/vidra/.github/workflows/security-tests.yml`
 
 Automated security testing pipeline with:
 
@@ -451,7 +451,7 @@ BenchmarkSSRFValidation_PrivateIP-8    100000   15234 ns/op
 
 ## Conclusion
 
-This security audit successfully identified and remediated **2 critical SSRF vulnerabilities** in the Athena video platform. The implemented protections provide comprehensive defense against SSRF attacks by:
+This security audit successfully identified and remediated **2 critical SSRF vulnerabilities** in the Vidra Core video platform. The implemented protections provide comprehensive defense against SSRF attacks by:
 
 1. Blocking all private and reserved IP ranges (IPv4 and IPv6)
 2. Restricting allowed protocols to HTTP/HTTPS only
@@ -480,22 +480,22 @@ The platform now has **robust SSRF protection** for all external URL fetching op
 
 ### Security Implementations
 
-1. `/home/user/athena/internal/security/url_validator.go` (existing, enhanced)
-2. `/home/user/athena/internal/usecase/activitypub/service.go` (SSRF protection added)
-3. `/home/user/athena/internal/usecase/social/service.go` (SSRF protection added)
+1. `/home/user/vidra/internal/security/url_validator.go` (existing, enhanced)
+2. `/home/user/vidra/internal/usecase/activitypub/service.go` (SSRF protection added)
+3. `/home/user/vidra/internal/usecase/social/service.go` (SSRF protection added)
 
 ### Test Files Created
 
-4. `/home/user/athena/internal/security/url_validator_test.go` (new)
-5. `/home/user/athena/tests/integration/ssrf_protection_test.go` (new)
+4. `/home/user/vidra/internal/security/url_validator_test.go` (new)
+5. `/home/user/vidra/tests/integration/ssrf_protection_test.go` (new)
 
 ### CI/CD Configuration
 
-6. `/home/user/athena/.github/workflows/security-tests.yml` (new)
+6. `/home/user/vidra/.github/workflows/security-tests.yml` (new)
 
 ### Documentation
 
-7. `/home/user/athena/SECURITY_AUDIT_REPORT.md` (this file)
+7. `/home/user/vidra/SECURITY_AUDIT_REPORT.md` (this file)
 
 ---
 

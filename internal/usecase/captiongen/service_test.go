@@ -1,8 +1,8 @@
 package captiongen
 
 import (
-	"athena/internal/domain"
-	"athena/internal/whisper"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/whisper"
 	"context"
 	"errors"
 	"fmt"

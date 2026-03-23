@@ -3,14 +3,14 @@ package video
 import (
 	redis "github.com/redis/go-redis/v9"
 
-	"athena/internal/config"
-	"athena/internal/livestream"
-	"athena/internal/repository"
-	"athena/internal/scheduler"
-	"athena/internal/usecase"
-	"athena/internal/usecase/encoding"
-	"athena/internal/usecase/upload"
-	"athena/internal/usecase/views"
+	"vidra-core/internal/config"
+	"vidra-core/internal/livestream"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/scheduler"
+	"vidra-core/internal/usecase"
+	"vidra-core/internal/usecase/encoding"
+	"vidra-core/internal/usecase/upload"
+	"vidra-core/internal/usecase/views"
 )
 
 // VideoHandlers holds dependencies for video-related handlers

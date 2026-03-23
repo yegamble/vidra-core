@@ -85,7 +85,7 @@ CREATE TRIGGER update_instance_config_updated_at BEFORE UPDATE ON instance_confi
 
 -- Insert default instance configuration
 INSERT INTO instance_config (key, value, description, is_public) VALUES
-    ('instance_name', '"Athena"'::jsonb, 'The name of this instance', true),
+    ('instance_name', '"Vidra Core"'::jsonb, 'The name of this instance', true),
     ('instance_description', '"A decentralized video platform"'::jsonb, 'Description of this instance', true),
     ('instance_version', '"1.0.0"'::jsonb, 'Current version of the platform', true),
     ('instance_contact_email', '"admin@example.com"'::jsonb, 'Contact email for the instance', true),

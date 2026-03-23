@@ -19,7 +19,7 @@ NC='\033[0m' # No Color
 # Check if we're in the right directory
 if [ ! -f ".github/workflows/test.yml" ]; then
     echo -e "${RED}Error: Not in the project root directory${NC}"
-    echo "Please run this script from the athena project root"
+    echo "Please run this script from the vidra project root"
     exit 1
 fi
 

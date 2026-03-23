@@ -105,7 +105,7 @@ git commit -m "docs: consolidate architecture documentation"
 Create a comprehensive `docs/README.md` that serves as the master index:
 
 ```markdown
-# Athena Documentation
+# Vidra Core Documentation
 
 ## Getting Started
 - [Main README](../README.md)
@@ -218,8 +218,8 @@ package auth  // or video, channel, etc.
 
 ```go
 import (
-    "athena/internal/httpapi/handlers/auth"
-    "athena/internal/httpapi/handlers/video"
+    "vidra-core/internal/httpapi/handlers/auth"
+    "vidra-core/internal/httpapi/handlers/video"
     // etc.
 )
 ```

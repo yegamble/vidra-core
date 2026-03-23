@@ -116,7 +116,7 @@ Worktree: No
 
 - `go:embed` only allows paths relative to the source file's directory. Since `nginx_config.go` is in `internal/setup/` and templates are in `nginx/templates/` at project root, we CANNOT use `//go:embed ../../nginx/templates/*` (Go forbids `..` in embed paths).
 - **Solution:** Add a thin `embed.go` file at project root (or `nginx/` directory) that exports an `embed.FS`, then import it from `nginx_config.go`. Alternatively, copy the approach used for HTML templates — but those are already inside `internal/setup/templates/`.
-- **Chosen approach:** Create `nginx/embed.go` in package `nginxtemplates` that exports `var TemplatesFS embed.FS`. Then `nginx_config.go` imports `athena/nginx/nginxtemplates` and reads from the embedded FS. This keeps templates where they are (used by both Go code and Docker builds) while eliminating the directory walk.
+- **Chosen approach:** Create `nginx/embed.go` in package `nginxtemplates` that exports `var TemplatesFS embed.FS`. Then `nginx_config.go` imports `vidra/nginx/nginxtemplates` and reads from the embedded FS. This keeps templates where they are (used by both Go code and Docker builds) while eliminating the directory walk.
 - Remove `findProjectRoot()` entirely.
 - Change `template.ParseFiles(path)` to `template.ParseFS(fs, name)`.
 - Change `os.ReadFile(srcPath)` for includes to `fs.ReadFile(name)`.

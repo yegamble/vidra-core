@@ -2,7 +2,7 @@
 
 ## Problem
 
-The rate limiter in `/home/user/athena/internal/middleware/ratelimit.go` had a critical goroutine leak:
+The rate limiter in `/home/user/vidra/internal/middleware/ratelimit.go` had a critical goroutine leak:
 
 - Line 29: `go rl.cleanupVisitors()` runs forever without shutdown mechanism
 - No way to stop the cleanup goroutine when rate limiter is no longer needed
@@ -12,7 +12,7 @@ The rate limiter in `/home/user/athena/internal/middleware/ratelimit.go` had a c
 
 ### 1. Added Shutdown Mechanism to RateLimiter
 
-**File: `/home/user/athena/internal/middleware/ratelimit.go`**
+**File: `/home/user/vidra/internal/middleware/ratelimit.go`**
 
 - Added `done` channel for shutdown signaling
 - Added `wg` sync.WaitGroup to track cleanup goroutine
@@ -23,7 +23,7 @@ The rate limiter in `/home/user/athena/internal/middleware/ratelimit.go` had a c
 
 ### 2. Created RateLimiterManager
 
-**File: `/home/user/athena/internal/middleware/manager.go`**
+**File: `/home/user/vidra/internal/middleware/manager.go`**
 
 - Manages lifecycle of all rate limiters in the application
 - Tracks all created rate limiters for centralized shutdown
@@ -32,7 +32,7 @@ The rate limiter in `/home/user/athena/internal/middleware/ratelimit.go` had a c
 
 ### 3. Updated Application Structure
 
-**File: `/home/user/athena/internal/app/app.go`**
+**File: `/home/user/vidra/internal/app/app.go`**
 
 - Added `rateLimiterManager` field to Application struct
 - Initialize manager in `New()` function
@@ -40,7 +40,7 @@ The rate limiter in `/home/user/athena/internal/middleware/ratelimit.go` had a c
 
 ### 4. Updated Route Registration
 
-**File: `/home/user/athena/internal/httpapi/routes.go`**
+**File: `/home/user/vidra/internal/httpapi/routes.go`**
 
 - Updated to accept RateLimiterManager parameter
 - Create rate limiters through manager instead of directly
@@ -48,7 +48,7 @@ The rate limiter in `/home/user/athena/internal/middleware/ratelimit.go` had a c
 
 ### 5. Comprehensive Tests
 
-**File: `/home/user/athena/internal/middleware/ratelimit_leak_test.go`**
+**File: `/home/user/vidra/internal/middleware/ratelimit_leak_test.go`**
 
 - Test for goroutine leaks when creating/destroying rate limiters
 - Test that cleanup goroutine stops on shutdown
@@ -84,8 +84,8 @@ When using rate limiters in the application:
 
 ## Files Modified
 
-1. `/home/user/athena/internal/middleware/ratelimit.go` - Fixed implementation
-2. `/home/user/athena/internal/middleware/manager.go` - New manager
-3. `/home/user/athena/internal/middleware/ratelimit_leak_test.go` - Tests
-4. `/home/user/athena/internal/app/app.go` - Integrated manager
-5. `/home/user/athena/internal/httpapi/routes.go` - Use managed limiters
+1. `/home/user/vidra/internal/middleware/ratelimit.go` - Fixed implementation
+2. `/home/user/vidra/internal/middleware/manager.go` - New manager
+3. `/home/user/vidra/internal/middleware/ratelimit_leak_test.go` - Tests
+4. `/home/user/vidra/internal/app/app.go` - Integrated manager
+5. `/home/user/vidra/internal/httpapi/routes.go` - Use managed limiters

@@ -7,7 +7,7 @@
 
 ## Overview
 
-Sprint 5 successfully implements live streaming infrastructure for Athena, enabling the platform to accept RTMP streams from broadcasting software (OBS, Streamlabs, etc.) and manage stream sessions with viewer tracking and real-time state management. This sprint includes comprehensive database schema, domain models, repository layer, RTMP server, stream manager, API handlers, and integration tests.
+Sprint 5 successfully implements live streaming infrastructure for Vidra Core, enabling the platform to accept RTMP streams from broadcasting software (OBS, Streamlabs, etc.) and manage stream sessions with viewer tracking and real-time state management. This sprint includes comprehensive database schema, domain models, repository layer, RTMP server, stream manager, API handlers, and integration tests.
 
 ## Completed Tasks ✅
 
@@ -239,15 +239,15 @@ Sprint 5 successfully implements live streaming infrastructure for Athena, enabl
 
 ```bash
 === Domain Tests ===
-ok      athena/internal/domain          0.234s
+ok      vidra/internal/domain          0.234s
 coverage: 100.0% of statements
 
 === Repository Tests ===
-ok      athena/internal/repository      0.189s
+ok      vidra/internal/repository      0.189s
 coverage: 100.0% of statements
 
 === HTTP Handler Tests ===
-ok      athena/internal/httpapi         1.245s
+ok      vidra/internal/httpapi         1.245s
 coverage: 95.0% of statements
 ```
 
@@ -255,7 +255,7 @@ coverage: 95.0% of statements
 
 ```bash
 === RTMP Integration Tests ===
-ok      athena/internal/livestream      5.123s
+ok      vidra/internal/livestream      5.123s
   - BasicStreamLifecycle: PASS
   - AuthenticationFailure: PASS
   - ConcurrentStreams: PASS
@@ -564,4 +564,4 @@ The system is architected for scale with batching, caching, and concurrent-safe 
 **Sprint 5 Status: ✅ 100% COMPLETE**
 
 *Completed: 2025-10-20*
-*Athena PeerTube Backend - Video Platform in Go*
+*Vidra Core PeerTube Backend - Video Platform in Go*

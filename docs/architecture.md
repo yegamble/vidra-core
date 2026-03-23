@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Athena is a high-performance PeerTube backend implementation in Go, following **Clean Architecture** principles with clear separation of concerns across layers.
+Vidra Core is a high-performance PeerTube backend implementation in Go, following **Clean Architecture** principles with clear separation of concerns across layers.
 
 ## Table of Contents
 
@@ -26,7 +26,7 @@ Athena is a high-performance PeerTube backend implementation in Go, following **
 ## Project Structure
 
 ```
-athena/
+vidra/
 ├── cmd/
 │   └── server/              # Application entry point
 │       └── main.go          # Wires up dependencies and starts HTTP server

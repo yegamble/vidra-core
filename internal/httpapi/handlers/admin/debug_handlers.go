@@ -6,9 +6,9 @@ import (
 	"runtime"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
 )
 
 var startTime = time.Now()

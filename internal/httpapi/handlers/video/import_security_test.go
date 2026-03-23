@@ -9,9 +9,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	importuc "athena/internal/usecase/import"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	importuc "vidra-core/internal/usecase/import"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

@@ -10,8 +10,8 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
 )
 
 type mockStreamRepo struct {

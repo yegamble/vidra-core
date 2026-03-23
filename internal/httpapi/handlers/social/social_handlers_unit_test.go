@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/security"
-	"athena/internal/usecase"
-	ucsocial "athena/internal/usecase/social"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/security"
+	"vidra-core/internal/usecase"
+	ucsocial "vidra-core/internal/usecase/social"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"

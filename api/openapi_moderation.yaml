@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Moderation & Instance API
+  title: Vidra Core Moderation & Instance API
   description: Admin moderation features, instance configuration, and oEmbed support
   version: 1.0.0
 

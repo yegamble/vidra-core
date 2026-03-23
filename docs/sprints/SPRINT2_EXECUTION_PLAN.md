@@ -73,7 +73,7 @@ Implement IOTA payment integration for creator monetization, video purchases, an
 
 **Files to Create:**
 
-- `/home/user/athena/migrations/058_create_iota_payments_tables.sql`
+- `/home/user/vidra/migrations/058_create_iota_payments_tables.sql`
 
 **Schema:**
 
@@ -136,7 +136,7 @@ CREATE INDEX idx_iota_payment_intents_user_id ON iota_payment_intents(user_id);
 CREATE INDEX idx_iota_payment_intents_payment_address ON iota_payment_intents(payment_address);
 ```
 
-**Domain Models:** `/home/user/athena/internal/domain/iota.go`
+**Domain Models:** `/home/user/vidra/internal/domain/iota.go`
 
 ```go
 package domain
@@ -205,14 +205,14 @@ type IOTAPaymentIntent struct {
 
 **Files to Create:**
 
-1. `/home/user/athena/internal/iota/client.go` - IOTA node client
-2. `/home/user/athena/internal/iota/wallet.go` - Wallet management (seed generation, address derivation)
-3. `/home/user/athena/internal/iota/transaction.go` - Transaction building and submission
-4. `/home/user/athena/internal/crypto/aes.go` - AES-256-GCM encryption for seed storage
-5. `/home/user/athena/internal/repository/iota_repository.go` - Database persistence
-6. `/home/user/athena/internal/usecase/payments/iota_service.go` - Business logic
+1. `/home/user/vidra/internal/iota/client.go` - IOTA node client
+2. `/home/user/vidra/internal/iota/wallet.go` - Wallet management (seed generation, address derivation)
+3. `/home/user/vidra/internal/iota/transaction.go` - Transaction building and submission
+4. `/home/user/vidra/internal/crypto/aes.go` - AES-256-GCM encryption for seed storage
+5. `/home/user/vidra/internal/repository/iota_repository.go` - Database persistence
+6. `/home/user/vidra/internal/usecase/payments/iota_service.go` - Business logic
 
-**IOTA Client:** `/home/user/athena/internal/iota/client.go`
+**IOTA Client:** `/home/user/vidra/internal/iota/client.go`
 
 ```go
 package iota
@@ -260,7 +260,7 @@ func (c *Client) GetOutputsByAddress(ctx context.Context, address string) ([]iot
 }
 ```
 
-**Wallet Service:** `/home/user/athena/internal/iota/wallet.go`
+**Wallet Service:** `/home/user/vidra/internal/iota/wallet.go`
 
 ```go
 package iota
@@ -297,7 +297,7 @@ func BuildTransaction(inputs []iotago.Output, outputs []iotago.Output, privateKe
 }
 ```
 
-**Encryption:** `/home/user/athena/internal/crypto/aes.go`
+**Encryption:** `/home/user/vidra/internal/crypto/aes.go`
 
 ```go
 package crypto
@@ -360,7 +360,7 @@ func DecryptAES256GCM(ciphertext string, key []byte) ([]byte, error) {
 }
 ```
 
-**Payment Service:** `/home/user/athena/internal/usecase/payments/iota_service.go`
+**Payment Service:** `/home/user/vidra/internal/usecase/payments/iota_service.go`
 
 ```go
 package payments
@@ -370,8 +370,8 @@ import (
     "encoding/json"
     "time"
 
-    "athena/internal/domain"
-    "athena/internal/iota"
+    "vidra-core/internal/domain"
+    "vidra-core/internal/iota"
 )
 
 type IOTAService struct {
@@ -439,7 +439,7 @@ func (s *IOTAService) SyncWallet(ctx context.Context, walletID string) error {
 
 **Files to Create:**
 
-- `/home/user/athena/internal/worker/iota_payment_worker.go`
+- `/home/user/vidra/internal/worker/iota_payment_worker.go`
 
 **Implementation:**
 
@@ -451,7 +451,7 @@ import (
     "log"
     "time"
 
-    "athena/internal/usecase/payments"
+    "vidra-core/internal/usecase/payments"
 )
 
 type IOTAPaymentWorker struct {
@@ -516,8 +516,8 @@ func (w *IOTAPaymentWorker) Stop() {
 
 **Files to Create:**
 
-- `/home/user/athena/internal/httpapi/handlers/payments/iota_handlers.go`
-- `/home/user/athena/internal/httpapi/handlers/payments/iota_handlers_test.go`
+- `/home/user/vidra/internal/httpapi/handlers/payments/iota_handlers.go`
+- `/home/user/vidra/internal/httpapi/handlers/payments/iota_handlers_test.go`
 
 **Endpoints:**
 
@@ -569,9 +569,9 @@ func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Requ
 
 **Files to Create:**
 
-- `/home/user/athena/internal/usecase/payments/iota_service_test.go`
-- `/home/user/athena/internal/iota/client_test.go`
-- `/home/user/athena/internal/httpapi/handlers/payments/iota_integration_test.go`
+- `/home/user/vidra/internal/usecase/payments/iota_service_test.go`
+- `/home/user/vidra/internal/iota/client_test.go`
+- `/home/user/vidra/internal/httpapi/handlers/payments/iota_integration_test.go`
 
 **Test Scenarios:**
 
@@ -624,7 +624,7 @@ Complete ActivityPub video federation by implementing VideoObject creation and C
 
 ### Current Status
 
-- ✅ VideoObject domain model defined (`/home/user/athena/internal/domain/activitypub.go`)
+- ✅ VideoObject domain model defined (`/home/user/vidra/internal/domain/activitypub.go`)
 - ✅ ActivityPub service handles Follow/Like/Announce
 - ✅ HTTP signature verification and delivery working
 - ❌ No method to build VideoObject from domain.Video
@@ -639,10 +639,10 @@ Complete ActivityPub video federation by implementing VideoObject creation and C
 
 **Files to Modify:**
 
-- `/home/user/athena/internal/usecase/activitypub/service.go` (add methods)
-- `/home/user/athena/internal/usecase/activitypub/video.go` (new file)
+- `/home/user/vidra/internal/usecase/activitypub/service.go` (add methods)
+- `/home/user/vidra/internal/usecase/activitypub/video.go` (new file)
 
-**Implementation:** `/home/user/athena/internal/usecase/activitypub/video.go`
+**Implementation:** `/home/user/vidra/internal/usecase/activitypub/video.go`
 
 ```go
 package activitypub
@@ -652,7 +652,7 @@ import (
     "fmt"
     "time"
 
-    "athena/internal/domain"
+    "vidra-core/internal/domain"
 )
 
 // BuildVideoObject converts a domain.Video to an ActivityPub VideoObject
@@ -780,10 +780,10 @@ func truncate(s string, maxLen int) string {
 
 **Files to Modify:**
 
-- `/home/user/athena/internal/usecase/activitypub/service.go` (add PublishVideo method)
-- `/home/user/athena/internal/usecase/encoding/service.go` (integrate PublishVideo call)
+- `/home/user/vidra/internal/usecase/activitypub/service.go` (add PublishVideo method)
+- `/home/user/vidra/internal/usecase/encoding/service.go` (integrate PublishVideo call)
 
-**Implementation:** Add to `/home/user/athena/internal/usecase/activitypub/service.go`
+**Implementation:** Add to `/home/user/vidra/internal/usecase/activitypub/service.go`
 
 ```go
 // PublishVideo creates and delivers a Create activity for a video
@@ -884,7 +884,7 @@ func (s *Service) enqueueDelivery(ctx context.Context, activityID, inboxURL, act
 }
 ```
 
-**Integration:** Modify `/home/user/athena/internal/usecase/encoding/service.go`
+**Integration:** Modify `/home/user/vidra/internal/usecase/encoding/service.go`
 
 ```go
 // After video processing completes successfully
@@ -922,11 +922,11 @@ if video.ProcessingStatus == "completed" {
 
 **Files to Create:**
 
-- `/home/user/athena/internal/usecase/activitypub/comment.go`
+- `/home/user/vidra/internal/usecase/activitypub/comment.go`
 
 **Files to Modify:**
 
-- `/home/user/athena/internal/usecase/comment/service.go` (trigger federation on comment creation)
+- `/home/user/vidra/internal/usecase/comment/service.go` (trigger federation on comment creation)
 
 **Implementation:**
 
@@ -939,7 +939,7 @@ import (
     "fmt"
     "time"
 
-    "athena/internal/domain"
+    "vidra-core/internal/domain"
 )
 
 // PublishComment federates a new comment as a Create activity
@@ -1019,8 +1019,8 @@ func (s *Service) PublishComment(ctx context.Context, commentID string) error {
 
 **Files to Create:**
 
-- `/home/user/athena/internal/usecase/activitypub/video_test.go`
-- `/home/user/athena/internal/usecase/activitypub/comment_test.go`
+- `/home/user/vidra/internal/usecase/activitypub/video_test.go`
+- `/home/user/vidra/internal/usecase/activitypub/comment_test.go`
 
 **Test Scenarios:**
 
@@ -1079,10 +1079,10 @@ Implement production-grade observability with structured logging (slog), expande
 
 **Files to Create:**
 
-- `/home/user/athena/internal/obs/logger.go` - Centralized logger factory
-- `/home/user/athena/internal/obs/context.go` - Request-scoped logging
+- `/home/user/vidra/internal/obs/logger.go` - Centralized logger factory
+- `/home/user/vidra/internal/obs/context.go` - Request-scoped logging
 
-**Implementation:** `/home/user/athena/internal/obs/logger.go`
+**Implementation:** `/home/user/vidra/internal/obs/logger.go`
 
 ```go
 package obs
@@ -1150,7 +1150,7 @@ func WithFields(fields ...any) *slog.Logger {
 }
 ```
 
-**Context Integration:** `/home/user/athena/internal/obs/context.go`
+**Context Integration:** `/home/user/vidra/internal/obs/context.go`
 
 ```go
 package obs
@@ -1178,7 +1178,7 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 }
 ```
 
-**Middleware Integration:** Add to `/home/user/athena/internal/middleware/logging.go`
+**Middleware Integration:** Add to `/home/user/vidra/internal/middleware/logging.go`
 
 ```go
 package middleware
@@ -1187,7 +1187,7 @@ import (
     "net/http"
     "time"
 
-    "athena/internal/obs"
+    "vidra-core/internal/obs"
     "github.com/go-chi/chi/v5/middleware"
 )
 
@@ -1234,7 +1234,7 @@ func RequestLogger(next http.Handler) http.Handler {
 
 **Files to Modify:**
 
-- `/home/user/athena/internal/metrics/metrics.go` (expand metrics)
+- `/home/user/vidra/internal/metrics/metrics.go` (expand metrics)
 
 **New Metrics to Add:**
 
@@ -1312,8 +1312,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 
     // HTTP metrics
-    fmt.Fprintf(w, "# TYPE athena_http_requests_total counter\n")
-    fmt.Fprintf(w, "athena_http_requests_total %d\n", atomic.LoadInt64(&httpRequestsTotal))
+    fmt.Fprintf(w, "# TYPE vidra_http_requests_total counter\n")
+    fmt.Fprintf(w, "vidra_http_requests_total %d\n", atomic.LoadInt64(&httpRequestsTotal))
 
     // ... (export all metrics)
 }
@@ -1334,8 +1334,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 **Files to Create:**
 
-- `/home/user/athena/internal/obs/tracing.go` - Tracer initialization
-- `/home/user/athena/internal/middleware/tracing.go` - HTTP trace middleware
+- `/home/user/vidra/internal/obs/tracing.go` - Tracer initialization
+- `/home/user/vidra/internal/middleware/tracing.go` - HTTP trace middleware
 
 **Dependencies:**
 
@@ -1346,7 +1346,7 @@ go get go.opentelemetry.io/otel/sdk/trace
 go get go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
 ```
 
-**Implementation:** `/home/user/athena/internal/obs/tracing.go`
+**Implementation:** `/home/user/vidra/internal/obs/tracing.go`
 
 ```go
 package obs
@@ -1362,7 +1362,7 @@ import (
     semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
-var tracer = otel.Tracer("athena")
+var tracer = otel.Tracer("vidra")
 
 // InitTracing initializes OpenTelemetry tracing
 func InitTracing(serviceName, otlpEndpoint string) (func(context.Context) error, error) {
@@ -1398,7 +1398,7 @@ func Tracer() trace.Tracer {
 }
 ```
 
-**Middleware:** `/home/user/athena/internal/middleware/tracing.go`
+**Middleware:** `/home/user/vidra/internal/middleware/tracing.go`
 
 ```go
 package middleware
@@ -1478,15 +1478,15 @@ Replace shell script-based migrations with Go-Atlas for professional schema mana
 
 **Files to Create:**
 
-- `/home/user/athena/atlas.hcl` - Atlas configuration
-- `/home/user/athena/schema.hcl` - Declarative schema (optional, keep SQL migrations)
+- `/home/user/vidra/atlas.hcl` - Atlas configuration
+- `/home/user/vidra/schema.hcl` - Declarative schema (optional, keep SQL migrations)
 
-**Implementation:** `/home/user/athena/atlas.hcl`
+**Implementation:** `/home/user/vidra/atlas.hcl`
 
 ```hcl
 env "local" {
   src = "file://migrations"
-  url = "postgres://athena_user:password@localhost:5432/athena?sslmode=disable"
+  url = "postgres://vidra_user:password@localhost:5432/vidra?sslmode=disable"
 
   dev = "docker://postgres/15/dev"
 
@@ -1519,7 +1519,7 @@ env "production" {
   src = "file://migrations"
   url = getenv("DATABASE_URL")
 
-  dev = "postgres://athena_shadow:password@localhost:5433/athena_shadow?sslmode=disable"
+  dev = "postgres://vidra_shadow:password@localhost:5433/vidra_shadow?sslmode=disable"
 
   migration {
     dir = "file://migrations"
@@ -1572,9 +1572,9 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_USER: athena_user
+          POSTGRES_USER: vidra_user
           POSTGRES_PASSWORD: password
-          POSTGRES_DB: athena
+          POSTGRES_DB: vidra
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -1592,14 +1592,14 @@ jobs:
         run: |
           atlas migrate lint \
             --dir "file://migrations" \
-            --dev-url "postgres://athena_user:password@localhost:5432/athena?sslmode=disable" \
+            --dev-url "postgres://vidra_user:password@localhost:5432/vidra?sslmode=disable" \
             --latest 1
 
       - name: Validate Migration Plan
         run: |
           atlas migrate apply \
             --dir "file://migrations" \
-            --url "postgres://athena_user:password@localhost:5432/athena?sslmode=disable" \
+            --url "postgres://vidra_user:password@localhost:5432/vidra?sslmode=disable" \
             --dry-run
 ```
 
@@ -1618,7 +1618,7 @@ jobs:
 
 **Files to Create:**
 
-- `/home/user/athena/docs/migrations.md`
+- `/home/user/vidra/docs/migrations.md`
 
 **Content:**
 
@@ -1636,7 +1636,7 @@ atlas migrate diff add_feature_x \
 ### Apply migrations
 atlas migrate apply \
   --dir "file://migrations" \
-  --url "postgres://user:pass@localhost:5432/athena?sslmode=disable"
+  --url "postgres://user:pass@localhost:5432/vidra?sslmode=disable"
 
 ### Lint migrations
 atlas migrate lint \

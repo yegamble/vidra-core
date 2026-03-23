@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/health"
+	"vidra-core/internal/health"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

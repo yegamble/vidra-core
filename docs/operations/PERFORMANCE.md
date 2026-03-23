@@ -1,6 +1,6 @@
 # Performance Tuning Guide
 
-This guide covers performance optimization strategies for Athena in production.
+This guide covers performance optimization strategies for Vidra Core in production.
 
 ## 🎯 Database Tuning
 

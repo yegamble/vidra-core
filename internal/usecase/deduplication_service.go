@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // DeduplicationStrategy defines how to handle duplicate content

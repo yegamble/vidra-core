@@ -12,13 +12,13 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/handlers/auth"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/testutil"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/handlers/auth"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase"
 )
 
 // integResp is a wrapper for API responses

@@ -39,7 +39,7 @@
 
 ### 🔴 P0 - CRITICAL: SSRF Vulnerability
 
-**Location:** `/root/athena/internal/httpapi/handlers/video/import_handlers.go`
+**Location:** `/root/vidra/internal/httpapi/handlers/video/import_handlers.go`
 
 **Issue:** Remote video import endpoint lacks SSRF protection
 
@@ -65,7 +65,7 @@ POST /api/v1/videos/imports
 3. Add DNS rebinding protection
 4. Deploy emergency hotfix before next release
 
-**Fix Provided:** See `/root/athena/BREAKING_CHANGES_ANALYSIS.md` Section 7.1
+**Fix Provided:** See `/root/vidra/BREAKING_CHANGES_ANALYSIS.md` Section 7.1
 
 ---
 
@@ -98,15 +98,15 @@ POST /api/v1/videos/imports
 
 | Collection | Tests | Comment Coverage | Remote Video Coverage |
 |------------|-------|------------------|----------------------|
-| athena-auth | 138KB | ❌ None | ❌ None |
-| athena-uploads | 27KB | ❌ None | ❌ None |
-| athena-imports | 24KB | ❌ None | ⚠️ Basic only |
-| athena-analytics | 29KB | ❌ None | ❌ None |
-| athena-virus-scanner | 47KB | ❌ None | ❌ None |
+| vidra-auth | 138KB | ❌ None | ❌ None |
+| vidra-uploads | 27KB | ❌ None | ❌ None |
+| vidra-imports | 24KB | ❌ None | ⚠️ Basic only |
+| vidra-analytics | 29KB | ❌ None | ❌ None |
+| vidra-virus-scanner | 47KB | ❌ None | ❌ None |
 
 ### New Collection Created
 
-✅ **`athena-edge-cases-security.postman_collection.json`**
+✅ **`vidra-edge-cases-security.postman_collection.json`**
 
 Contains 20+ comprehensive tests covering:
 
@@ -139,7 +139,7 @@ Contains 20+ comprehensive tests covering:
 
 ### 1. Comprehensive Analysis Report
 
-**File:** `/root/athena/BREAKING_CHANGES_ANALYSIS.md`
+**File:** `/root/vidra/BREAKING_CHANGES_ANALYSIS.md`
 
 **Contents:**
 
@@ -154,7 +154,7 @@ Contains 20+ comprehensive tests covering:
 
 ### 2. Security Test Collection
 
-**File:** `/root/athena/postman/athena-edge-cases-security.postman_collection.json`
+**File:** `/root/vidra/postman/vidra-edge-cases-security.postman_collection.json`
 
 **Contains:**
 
@@ -166,7 +166,7 @@ Contains 20+ comprehensive tests covering:
 
 ### 3. Executive Summary
 
-**File:** `/root/athena/EXECUTIVE_SUMMARY.md` (this document)
+**File:** `/root/vidra/EXECUTIVE_SUMMARY.md` (this document)
 
 ---
 
@@ -220,7 +220,7 @@ go run cmd/server/main.go
 npm install -g newman
 
 # 3. Run edge case tests
-newman run postman/athena-edge-cases-security.postman_collection.json \
+newman run postman/vidra-edge-cases-security.postman_collection.json \
   -e postman/test-local.postman_environment.json \
   --reporters cli,json \
   --reporter-json-export edge-case-results.json
@@ -371,7 +371,7 @@ Validates:
 
 ```bash
 # All tests must pass
-newman run postman/athena-edge-cases-security.postman_collection.json
+newman run postman/vidra-edge-cases-security.postman_collection.json
 
 # No vulnerabilities found
 go test ./internal/... -v | grep -i "FAIL" || echo "All tests passed"
@@ -393,8 +393,8 @@ go test ./internal/... -v | grep -i "FAIL" || echo "All tests passed"
 
 ### Additional Resources
 
-- Full Analysis: `/root/athena/BREAKING_CHANGES_ANALYSIS.md`
-- Test Collection: `/root/athena/postman/athena-edge-cases-security.postman_collection.json`
+- Full Analysis: `/root/vidra/BREAKING_CHANGES_ANALYSIS.md`
+- Test Collection: `/root/vidra/postman/vidra-edge-cases-security.postman_collection.json`
 - OWASP SSRF Guide: <https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html>
 
 ---

@@ -3,10 +3,10 @@ package video
 import (
 	"net/http"
 
-	"athena/internal/config"
-	"athena/internal/httpapi/shared"
-	"athena/internal/scheduler"
-	"athena/internal/usecase"
+	"vidra-core/internal/config"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/scheduler"
+	"vidra-core/internal/usecase"
 )
 
 // EncodingStatusHandler reports counts of jobs by status

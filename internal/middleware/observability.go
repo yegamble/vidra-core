@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"athena/internal/obs"
+	"vidra-core/internal/obs"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"

@@ -3,7 +3,7 @@ package social
 import (
 	"context"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/google/uuid"
 )

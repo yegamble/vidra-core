@@ -1,0 +1,257 @@
+{
+  "info": {
+    "name": "Vidra Core Migration ETL",
+    "description": "PeerTube instance migration endpoints for importing data from a remote PeerTube PostgreSQL database.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:9000",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "migrationId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{adminToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Admin Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const resp = pm.response.json();",
+              "if (resp.data && resp.data.access_token) {",
+              "    pm.collectionVariables.set('adminToken', resp.data.access_token);",
+              "    pm.test('Admin login successful', () => pm.response.to.have.status(200));",
+              "} else if (resp.access_token) {",
+              "    pm.collectionVariables.set('adminToken', resp.access_token);",
+              "    pm.test('Admin login successful', () => pm.response.to.have.status(200));",
+              "} else {",
+              "    pm.test('Admin login returned token', () => pm.expect.fail('No token'));",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        }
+      }
+    },
+    {
+      "name": "Start PeerTube Migration",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Migration created', () => {",
+              "    pm.response.to.have.status(201);",
+              "    const resp = pm.response.json();",
+              "    pm.expect(resp.success).to.be.true;",
+              "    pm.expect(resp.data).to.have.property('id');",
+              "    pm.expect(resp.data.status).to.equal('pending');",
+              "    pm.collectionVariables.set('migrationId', resp.data.id);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"source_host\": \"peertube.example.com\",\n  \"source_db_host\": \"localhost\",\n  \"source_db_port\": 5432,\n  \"source_db_name\": \"peertube_prod\",\n  \"source_db_user\": \"peertube\",\n  \"source_db_password\": \"secret\",\n  \"source_media_path\": \"/var/www/peertube/storage\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/admin/migrations/peertube",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "admin", "migrations", "peertube"]
+        }
+      }
+    },
+    {
+      "name": "List Migrations",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Migrations listed', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const resp = pm.response.json();",
+              "    pm.expect(resp.success).to.be.true;",
+              "    pm.expect(resp.data).to.be.an('array');",
+              "    pm.expect(resp.meta).to.have.property('total');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/admin/migrations?count=20&start=0",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "admin", "migrations"],
+          "query": [
+            { "key": "count", "value": "20" },
+            { "key": "start", "value": "0" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Migration Status",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Migration retrieved', () => {",
+              "    pm.response.to.have.status(200);",
+              "    const resp = pm.response.json();",
+              "    pm.expect(resp.success).to.be.true;",
+              "    pm.expect(resp.data).to.have.property('id');",
+              "    pm.expect(resp.data).to.have.property('status');",
+              "    pm.expect(resp.data).to.have.property('source_host');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/admin/migrations/{{migrationId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "admin", "migrations", "{{migrationId}}"]
+        }
+      }
+    },
+    {
+      "name": "Dry-Run Migration",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Dry-run created', () => {",
+              "    pm.response.to.have.status(201);",
+              "    const resp = pm.response.json();",
+              "    pm.expect(resp.success).to.be.true;",
+              "    pm.expect(resp.data.dry_run).to.be.true;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"source_host\": \"peertube.example.com\",\n  \"source_db_host\": \"localhost\",\n  \"source_db_port\": 5432,\n  \"source_db_name\": \"peertube_prod\",\n  \"source_db_user\": \"peertube\",\n  \"source_db_password\": \"secret\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/admin/migrations/{{migrationId}}/dry-run",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "admin", "migrations", "{{migrationId}}", "dry-run"]
+        }
+      }
+    },
+    {
+      "name": "Cancel Migration",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Migration cancelled', () => {",
+              "    // 204 = cancelled, 400 = already terminal",
+              "    pm.expect(pm.response.code).to.be.oneOf([204, 400]);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/admin/migrations/{{migrationId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "admin", "migrations", "{{migrationId}}"]
+        }
+      }
+    },
+    {
+      "name": "Get Migration Not Found",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Returns 404 for unknown ID', () => {",
+              "    pm.response.to.have.status(404);",
+              "    const resp = pm.response.json();",
+              "    pm.expect(resp.success).to.be.false;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/admin/migrations/00000000-0000-0000-0000-000000000000",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "admin", "migrations", "00000000-0000-0000-0000-000000000000"]
+        }
+      }
+    }
+  ]
+}

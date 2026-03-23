@@ -57,7 +57,7 @@ variable "iops" {
 variable "database_name" {
   description = "Name of the database to create"
   type        = string
-  default     = "athena"
+  default     = "vidra"
 }
 
 variable "master_username" {

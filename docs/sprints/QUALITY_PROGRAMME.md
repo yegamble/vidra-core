@@ -1,4 +1,4 @@
-# Athena Quality Programme: Sprints 15-20
+# Vidra Core Quality Programme: Sprints 15-20
 
 **Programme Start:** 2026-02-16
 **Programme End:** 2026-05-11 (12 weeks)
@@ -36,7 +36,7 @@ Following the successful completion of PeerTube feature parity (Sprints 1-14), t
 
 ```mermaid
 gantt
-  title Athena Quality Programme (2-week sprints)
+  title Vidra Core Quality Programme (2-week sprints)
   dateFormat  YYYY-MM-DD
   axisFormat  %d %b
 

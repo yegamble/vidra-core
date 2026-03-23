@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/httpapi/handlers/auth"
-	"athena/internal/middleware"
+	"vidra-core/internal/httpapi/handlers/auth"
+	"vidra-core/internal/middleware"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

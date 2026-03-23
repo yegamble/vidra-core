@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: Athena Backend API (PeerTube‑Inspired)
+  title: Vidra Core Backend API (PeerTube‑Inspired)
   description: |
-    Athena's API designed with PeerTube's patterns in mind — native resources and shapes without a compatibility facade.
+    Vidra Core's API designed with PeerTube's patterns in mind — native resources and shapes without a compatibility facade.
 
     ## Additional API Documentation
 
@@ -21,14 +21,14 @@ info:
     - **Other Features:** See README at `/api/README.md` for complete documentation index
   version: 1.0.0
   contact:
-    name: Athena Team
+    name: Vidra Core Team
   license:
     name: MIT
 
 servers:
   - url: http://localhost:8080
     description: Development server
-  - url: https://api.athena.example.com
+  - url: https://api.vidra.example.com
     description: Production server
 
 security:
@@ -3968,7 +3968,7 @@ paths:
       tags:
         - Jobs
       summary: List jobs
-      description: PeerTube-compatible alias for listing Athena encoding jobs without a state filter.
+      description: PeerTube-compatible alias for listing Vidra Core encoding jobs without a state filter.
       operationId: listJobs
       responses:
         '200':
@@ -3995,7 +3995,7 @@ paths:
       tags:
         - Jobs
       summary: List jobs by state
-      description: PeerTube-compatible alias for listing Athena encoding jobs filtered by state.
+      description: PeerTube-compatible alias for listing Vidra Core encoding jobs filtered by state.
       operationId: listJobsByState
       parameters:
         - name: state
@@ -4028,7 +4028,7 @@ paths:
       tags:
         - Jobs
       summary: Pause jobs
-      description: PeerTube-compatible alias for pausing Athena job scheduling.
+      description: PeerTube-compatible alias for pausing Vidra Core job scheduling.
       operationId: pauseJobs
       responses:
         '204':
@@ -4051,7 +4051,7 @@ paths:
       tags:
         - Jobs
       summary: Resume jobs
-      description: PeerTube-compatible alias for resuming Athena job scheduling.
+      description: PeerTube-compatible alias for resuming Vidra Core job scheduling.
       operationId: resumeJobs
       responses:
         '204':
@@ -4074,7 +4074,7 @@ paths:
       tags:
         - Videos
       summary: Cancel video import
-      description: PeerTube-compatible cancel endpoint. Athena currently enforces pending-state cancellation on this alias.
+      description: PeerTube-compatible cancel endpoint. Vidra Core currently enforces pending-state cancellation on this alias.
       operationId: cancelVideoImport
       parameters:
         - name: id

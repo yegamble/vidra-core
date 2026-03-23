@@ -1,5 +1,5 @@
 ---
-# YAML Lint Configuration for Athena Project
+# YAML Lint Configuration for Vidra Core Project
 
 extends: default
 

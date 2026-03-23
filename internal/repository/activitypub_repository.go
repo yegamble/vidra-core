@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
-	"athena/internal/domain"
-	"athena/internal/security"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/security"
 )
 
 // ActivityPubRepository handles ActivityPub data persistence

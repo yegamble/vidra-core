@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func setupChatRepoTest(t *testing.T) (*chatRepository, sqlmock.Sqlmock, func()) {

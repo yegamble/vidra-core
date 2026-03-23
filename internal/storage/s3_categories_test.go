@@ -95,7 +95,7 @@ func TestCategoryStorage_URLGeneration(t *testing.T) {
 			category: CategoryUserExports,
 			path:     "user-789/export.zip",
 			baseURL:  "",
-			want:     "http://127.0.0.1:1/athena-test-bucket/user-exports/user-789/export.zip",
+			want:     "http://127.0.0.1:1/vidra-test-bucket/user-exports/user-789/export.zip",
 		},
 	}
 

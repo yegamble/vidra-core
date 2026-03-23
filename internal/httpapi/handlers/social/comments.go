@@ -1,10 +1,10 @@
 package social
 
 import (
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	uccmt "athena/internal/usecase/comment"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	uccmt "vidra-core/internal/usecase/comment"
 	"encoding/json"
 	"errors"
 	"fmt"

@@ -1,10 +1,10 @@
 # Security Documentation
 
-This directory contains all security-related documentation for the Athena project.
+This directory contains all security-related documentation for the Vidra Core project.
 
 ## Core Security Policy
 
-- **[SECURITY.md](SECURITY.md)** - Security policy, vulnerability reporting, and security advisories (including CVE-ATHENA-2025-001)
+- **[SECURITY.md](SECURITY.md)** - Security policy, vulnerability reporting, and security advisories (including CVE-VIDRA-2025-001)
 
 ## Security Features
 

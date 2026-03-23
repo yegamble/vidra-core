@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/setup"
+	"vidra-core/internal/setup"
 )
 
 // newWizardHandler creates a chi router with a given Wizard instance,
@@ -138,7 +138,7 @@ func TestSetupWizardFullFlow(t *testing.T) {
 	emailForm := url.Values{
 		"SMTP_MODE":         {"docker"},
 		"SMTP_FROM_ADDRESS": {"noreply@localhost"},
-		"SMTP_FROM_NAME":    {"Athena"},
+		"SMTP_FROM_NAME":    {"Vidra Core"},
 	}
 	resp7 := doForm(t, client, ts.URL+"/setup/email", emailForm, csrf)
 	resp7.Body.Close()

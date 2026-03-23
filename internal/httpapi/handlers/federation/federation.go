@@ -1,12 +1,12 @@
 package federation
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 	"net/http"
 	"strconv"
 
-	"athena/internal/domain"
-	"athena/internal/repository"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
 )
 
 type FederationHandlers struct {

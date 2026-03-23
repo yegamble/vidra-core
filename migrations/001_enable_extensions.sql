@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- Enable required PostgreSQL extensions for Athena
+-- Enable required PostgreSQL extensions for Vidra Core
 -- Keep in sync with init-* SQLs
 
 -- UUID helpers and gen_random_uuid()

@@ -80,7 +80,7 @@ func (m *BackupManager) CreateBackupWithComponents(ctx context.Context, componen
 		return nil, fmt.Errorf("invalid backup manager: %w", err)
 	}
 
-	tempDir, err := os.MkdirTemp("", "athena-backup-*")
+	tempDir, err := os.MkdirTemp("", "vidra-backup-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
@@ -123,7 +123,7 @@ func (m *BackupManager) CreateBackupWithComponents(ctx context.Context, componen
 	}
 	filesToArchive = append(filesToArchive, "manifest.json")
 
-	archiveName := fmt.Sprintf("athena-backup-%s.tar.gz", time.Now().UTC().Format("2006-01-02-150405"))
+	archiveName := fmt.Sprintf("vidra-backup-%s.tar.gz", time.Now().UTC().Format("2006-01-02-150405"))
 	archivePath := filepath.Join(tempDir, archiveName)
 
 	if err := m.createArchive(archivePath, tempDir, filesToArchive); err != nil {

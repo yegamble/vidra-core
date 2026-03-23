@@ -1,6 +1,6 @@
-# Load Testing for Athena
+# Load Testing for Vidra Core
 
-This directory contains load testing scripts for the Athena video platform using k6.
+This directory contains load testing scripts for the Vidra Core video platform using k6.
 
 ## Prerequisites
 
@@ -30,7 +30,7 @@ docker pull grafana/k6
 k6 run k6-video-platform.js
 
 # Run with custom base URL
-k6 run -e BASE_URL=https://athena.example.com k6-video-platform.js
+k6 run -e BASE_URL=https://vidra.example.com k6-video-platform.js
 
 # Run with custom user credentials
 k6 run -e TEST_USERNAME=loadtest -e TEST_PASSWORD=secret k6-video-platform.js

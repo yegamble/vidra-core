@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/repository"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"

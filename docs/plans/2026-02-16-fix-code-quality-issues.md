@@ -109,7 +109,7 @@ Worktree: No
 - Use `security.SanitizeCommentHTML()` for video descriptions (allows basic formatting like comments do)
 - Follow the pattern at `internal/usecase/comment/service.go:67-70` — sanitize then check if content was stripped
 - For upload filename title (`upload/service.go:68`), sanitize the `req.FileName` before using in `fmt.Sprintf`
-- Import `athena/internal/security` in both files
+- Import `vidra/internal/security` in both files
 
 **Definition of Done:**
 

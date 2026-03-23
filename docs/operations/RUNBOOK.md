@@ -1,6 +1,6 @@
 # Operations Runbook
 
-This runbook provides operational procedures for monitoring, troubleshooting, and maintaining the Athena video platform in production.
+This runbook provides operational procedures for monitoring, troubleshooting, and maintaining the Vidra Core video platform in production.
 
 For detailed monitoring setup instructions, see the [Monitoring Guide](MONITORING.md).
 
@@ -357,23 +357,23 @@ df -h /app/processed
 
 ```bash
 # Full database dump
-pg_dump -h localhost -U athena_user -d athena \
+pg_dump -h localhost -U vidra_user -d vidra \
   -F c -b -v -f backup_$(date +%Y%m%d_%H%M%S).dump
 
 # Compressed backup
-pg_dump -h localhost -U athena_user -d athena \
+pg_dump -h localhost -U vidra_user -d vidra \
   | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
 
 # Schema-only backup
-pg_dump -h localhost -U athena_user -d athena \
+pg_dump -h localhost -U vidra_user -d vidra \
   --schema-only > schema_$(date +%Y%m%d).sql
 ```
 
 **Automated Backup** (via cron):
 
 ```bash
-# /etc/cron.d/athena-backup
-0 2 * * * postgres /usr/local/bin/backup-athena-db.sh
+# /etc/cron.d/vidra-backup
+0 2 * * * postgres /usr/local/bin/backup-vidra-db.sh
 ```
 
 **Verify Backup**:
@@ -392,22 +392,22 @@ dropdb test_restore
 
 ```bash
 # Stop application
-systemctl stop athena
+systemctl stop vidra
 
 # Drop existing database (CAUTION!)
-dropdb athena
+dropdb vidra
 
 # Recreate database
-createdb athena
+createdb vidra
 
 # Restore from dump
-pg_restore -d athena backup_20250117.dump
+pg_restore -d vidra backup_20250117.dump
 
 # Verify migrations
 goose -dir migrations postgres "$DATABASE_URL" status
 
 # Start application
-systemctl start athena
+systemctl start vidra
 ```
 
 **Point-in-Time Recovery** (PITR):
@@ -529,12 +529,12 @@ curl -X POST "https://api.pinata.cloud/pinning/pinByHash" \
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: athena-api
+  name: vidra-api
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: athena-api
+    name: vidra-api
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -559,7 +559,7 @@ spec:
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:
-  name: athena-transcode-worker
+  name: vidra-transcode-worker
 spec:
   targetRef:
     apiVersion: apps/v1
@@ -594,7 +594,7 @@ spec:
 
 ```bash
 # Check stuck videos (use docker exec or psql with DATABASE_URL)
-psql -U athena_user -d athena -c "SELECT id, title, processing_status, created_at
+psql -U vidra_user -d vidra -c "SELECT id, title, processing_status, created_at
   FROM videos WHERE processing_status = 'processing'
   AND created_at < now() - interval '1 hour';"
 
@@ -602,14 +602,14 @@ psql -U athena_user -d athena -c "SELECT id, title, processing_status, created_a
 redis-cli HGETALL video:processing:{video_id}
 
 # Check worker logs
-docker logs athena-transcode-worker-1 --tail 100
+docker logs vidra-transcode-worker-1 --tail 100
 ```
 
 **Resolution**:
 
 ```bash
 # Reset stuck video
-psql -U athena_user -d athena -c "UPDATE videos
+psql -U vidra_user -d vidra -c "UPDATE videos
   SET processing_status = 'pending'
   WHERE id = '{video_id}';"
 
@@ -642,13 +642,13 @@ pprof -http=:8081 http://localhost:8080/debug/pprof/heap
 
 ```bash
 # Restart service
-systemctl restart athena
+systemctl restart vidra
 
 # Tune GOGC (garbage collection)
 export GOGC=50  # More aggressive GC
 
 # Add memory limits
-docker run --memory=4g athena
+docker run --memory=4g vidra
 ```
 
 ### Issue: Slow Video Playback
@@ -689,13 +689,13 @@ curl -I http://cdn.example.com/videos/{id}/playlist.m3u8 | grep X-Cache
 
 ```bash
 # Vacuum all tables
-psql -U athena_user -d athena -c "VACUUM ANALYZE;"
+psql -U vidra_user -d vidra -c "VACUUM ANALYZE;"
 
 # Vacuum specific table
-psql -U athena_user -d athena -c "VACUUM ANALYZE videos;"
+psql -U vidra_user -d vidra -c "VACUUM ANALYZE videos;"
 
 # Check bloat
-psql -U athena_user -d athena -c "SELECT schemaname, tablename,
+psql -U vidra_user -d vidra -c "SELECT schemaname, tablename,
   pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
   FROM pg_tables ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC LIMIT 10;"
 ```
@@ -704,10 +704,10 @@ psql -U athena_user -d athena -c "SELECT schemaname, tablename,
 
 ```bash
 # Reindex all indexes
-psql -U athena_user -d athena -c "REINDEX DATABASE athena;"
+psql -U vidra_user -d vidra -c "REINDEX DATABASE vidra;"
 
 # Reindex specific index
-psql -U athena_user -d athena -c "REINDEX INDEX idx_videos_processing_status;"
+psql -U vidra_user -d vidra -c "REINDEX INDEX idx_videos_processing_status;"
 ```
 
 ### Redis Maintenance
@@ -778,8 +778,8 @@ clamscan eicar.txt
 |------|---------|-----------|
 | **Backend** | +1-555-0100 | +1-555-0101 |
 | **DevOps** | +1-555-0200 | +1-555-0201 |
-| **Security** | +1-555-0300 | <security@athena.com> |
-| **Product** | +1-555-0400 | <product@athena.com> |
+| **Security** | +1-555-0300 | <security@vidra.com> |
+| **Product** | +1-555-0400 | <product@vidra.com> |
 
 ### Escalation Path
 
@@ -792,8 +792,8 @@ clamscan eicar.txt
 
 - **AWS Support**: +1-800-AWS-SUPPORT (P1 support plan)
 - **Cloudflare Support**: Enterprise dashboard
-- **Database DBA**: <dba@athena.com>
-- **Security Team**: <security@athena.com> (PGP key available)
+- **Database DBA**: <dba@vidra.com>
+- **Security Team**: <security@vidra.com> (PGP key available)
 
 ---
 
@@ -803,19 +803,19 @@ clamscan eicar.txt
 
 ```bash
 # Check service status
-systemctl status athena
+systemctl status vidra
 
 # View logs (last 100 lines)
-journalctl -u athena -n 100 --no-pager
+journalctl -u vidra -n 100 --no-pager
 
 # Follow logs in real-time
-journalctl -u athena -f
+journalctl -u vidra -f
 
 # Check disk usage
 du -sh /app/uploads /app/processed /app/ipfs
 
 # Database connection count
-psql -U athena_user -d athena -c "SELECT count(*) FROM pg_stat_activity;"
+psql -U vidra_user -d vidra -c "SELECT count(*) FROM pg_stat_activity;"
 
 # Redis memory usage
 redis-cli INFO memory | grep used_memory_human

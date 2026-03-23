@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"athena/internal/domain"
-	"athena/internal/plugin"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/plugin"
 )
 
 // LoggerPlugin logs all plugin events to a file or stdout
@@ -27,7 +27,7 @@ func NewLoggerPlugin() *LoggerPlugin {
 	return &LoggerPlugin{
 		name:        "logger",
 		version:     "1.0.0",
-		author:      "Athena Team",
+		author:      "Vidra Core Team",
 		description: "Logs all plugin events for debugging",
 		enabled:     false,
 	}

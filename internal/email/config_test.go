@@ -3,7 +3,7 @@ package email
 import (
 	"testing"
 
-	"athena/internal/config"
+	"vidra-core/internal/config"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -21,8 +21,8 @@ func TestNewConfigFromAppConfig(t *testing.T) {
 		SMTPDisableSTARTTLS: false,
 		SMTPCAFile:          "/etc/ssl/ca.pem",
 		SMTPFromAddress:     "no-reply@example.com",
-		SMTPFromName:        "Athena",
-		PublicBaseURL:       "https://athena.example.com",
+		SMTPFromName:        "Vidra Core",
+		PublicBaseURL:       "https://vidra.example.com",
 	}
 
 	emailCfg := NewConfigFromAppConfig(appCfg)
@@ -38,8 +38,8 @@ func TestNewConfigFromAppConfig(t *testing.T) {
 	assert.Equal(t, false, emailCfg.DisableSTARTTLS)
 	assert.Equal(t, "/etc/ssl/ca.pem", emailCfg.CAFile)
 	assert.Equal(t, "no-reply@example.com", emailCfg.FromAddress)
-	assert.Equal(t, "Athena", emailCfg.FromName)
-	assert.Equal(t, "https://athena.example.com", emailCfg.BaseURL)
+	assert.Equal(t, "Vidra Core", emailCfg.FromName)
+	assert.Equal(t, "https://vidra.example.com", emailCfg.BaseURL)
 }
 
 func TestNewConfigFromAppConfig_AllFieldsMapped(t *testing.T) {

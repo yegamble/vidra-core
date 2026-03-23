@@ -135,7 +135,7 @@ Worktree: No
 - Keep the `DATABASE_URL` hidden field — it will be constructed server-side from individual fields (Task 3)
 - Update `testConnection()` JS to read individual field values and POST them to `/setup/test-database`
 - Move Test Connection button inside the external-fields div (only visible in external mode). Show Docker info message outside.
-- Add default values: Port=5432, SSLMode=disable, Database=athena
+- Add default values: Port=5432, SSLMode=disable, Database=vidra
 - **Fix review.html:** Currently displays raw `DatabaseURL` which contains the password. Update to show individual fields (host, port, user, database, SSL mode) and mask/omit the password.
 
 **Definition of Done:**
@@ -166,7 +166,7 @@ Worktree: No
 **Key Decisions / Notes:**
 
 - Add to WizardConfig: `PostgresHost string`, `PostgresPort int`, `PostgresUser string`, `PostgresPassword string`, `PostgresDB string`, `PostgresSSLMode string`
-- Default values in NewWizard(): Port=5432, SSLMode="disable", DB="athena", User="athena"
+- Default values in NewWizard(): Port=5432, SSLMode="disable", DB="vidra", User="vidra"
 - In `processDatabaseForm`, when mode is "external": parse individual fields, validate host is non-empty, construct `DatabaseURL` as `postgres://user:password@host:port/database?sslmode=sslmode`
 - URL-encode the password using `url.QueryEscape()` to handle special characters
 - Parse `POSTGRES_PORT` from string to int with `strconv.Atoi` and validate range (1-65535), following the SMTP_PORT pattern in `wizard_forms.go:98-106`

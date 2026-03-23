@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This report identifies breaking changes, test coverage gaps, and security vulnerabilities related to recent interface updates in the Athena video platform. Two new methods were added to repository interfaces (`CreateRemoteVideo`, `CountByVideo`) which require comprehensive testing and validation.
+This report identifies breaking changes, test coverage gaps, and security vulnerabilities related to recent interface updates in the Vidra Core video platform. Two new methods were added to repository interfaces (`CreateRemoteVideo`, `CountByVideo`) which require comprehensive testing and validation.
 
 ### Critical Findings
 
@@ -25,24 +25,24 @@ This report identifies breaking changes, test coverage gaps, and security vulner
 
 **New Method Added:** `CreateRemoteVideo(ctx context.Context, video *domain.Video) error`
 
-**Location:** `/root/athena/internal/port/video.go:22`
+**Location:** `/root/vidra/internal/port/video.go:22`
 
 **Purpose:** Support ActivityPub federation by creating video records from remote instances
 
 **Implementation Status:**
 
-- ✅ Repository implementation: `/root/athena/internal/repository/video_repository.go:779-812`
+- ✅ Repository implementation: `/root/vidra/internal/repository/video_repository.go:779-812`
 - ✅ Mock implementations in tests:
-  - `/root/athena/internal/usecase/import/service_test.go:190-193`
-  - `/root/athena/internal/usecase/captiongen/service_test.go:214-217`
-  - `/root/athena/internal/usecase/views_service_test.go:202-205`
-  - `/root/athena/internal/usecase/activitypub/service_test.go:298-301`
-  - `/root/athena/internal/usecase/migration/s3_migration_service_test.go:160-163`
-  - `/root/athena/internal/usecase/encoding/encoding_resolution_test.go:391-393`
+  - `/root/vidra/internal/usecase/import/service_test.go:190-193`
+  - `/root/vidra/internal/usecase/captiongen/service_test.go:214-217`
+  - `/root/vidra/internal/usecase/views_service_test.go:202-205`
+  - `/root/vidra/internal/usecase/activitypub/service_test.go:298-301`
+  - `/root/vidra/internal/usecase/migration/s3_migration_service_test.go:160-163`
+  - `/root/vidra/internal/usecase/encoding/encoding_resolution_test.go:391-393`
 
 **Usage Analysis:**
 
-- Primary consumer: `/root/athena/internal/usecase/activitypub/service.go:1682`
+- Primary consumer: `/root/vidra/internal/usecase/activitypub/service.go:1682`
 - Used in federation video ingestion workflow
 - Called after validating remote video metadata
 
@@ -50,14 +50,14 @@ This report identifies breaking changes, test coverage gaps, and security vulner
 
 **New Method Added:** `CountByVideo(ctx context.Context, videoID uuid.UUID, activeOnly bool) (int, error)`
 
-**Location:** `/root/athena/internal/port/comment.go:18`
+**Location:** `/root/vidra/internal/port/comment.go:18`
 
 **Purpose:** Retrieve comment count for videos with filtering for active/all comments
 
 **Implementation Status:**
 
-- ✅ Repository implementation: `/root/athena/internal/repository/comment_repository.go:215-229`
-- ✅ Mock implementation: `/root/athena/internal/usecase/activitypub/service_test.go` (confirmed with CountByVideo method)
+- ✅ Repository implementation: `/root/vidra/internal/repository/comment_repository.go:215-229`
+- ✅ Mock implementation: `/root/vidra/internal/usecase/activitypub/service_test.go` (confirmed with CountByVideo method)
 
 **SQL Query Security:**
 
@@ -110,7 +110,7 @@ go test ./internal/usecase/... -v 2>&1 | grep -E "missing method|undefined"
 ### 3.1 Remote Video Import Endpoints
 
 **Endpoint:** `POST /api/v1/videos/imports`
-**Handler:** `/root/athena/internal/httpapi/handlers/video/import_handlers.go:59-97`
+**Handler:** `/root/vidra/internal/httpapi/handlers/video/import_handlers.go:59-97`
 **Rate Limit:** 10 requests per minute (line 39)
 
 **Request Structure:**
@@ -150,7 +150,7 @@ go test ./internal/usecase/... -v 2>&1 | grep -E "missing method|undefined"
 - `POST /api/v1/videos/{videoId}/comments` - Create comment
 - `GET /api/v1/videos/{videoId}/comments` - List comments
 
-**Handler:** `/root/athena/internal/httpapi/handlers/social/comments.go`
+**Handler:** `/root/vidra/internal/httpapi/handlers/social/comments.go`
 
 **Comment Count Usage:** ⚠️ NOT EXPOSED AS DEDICATED ENDPOINT
 
@@ -341,11 +341,11 @@ GET /api/v1/videos/{videoId}/comments/count
 
 | Collection | Purpose | Lines | Comment Tests | Remote Video Tests |
 |------------|---------|-------|---------------|-------------------|
-| `athena-auth.postman_collection.json` | Authentication | 138,577 | ❌ No | ❌ No |
-| `athena-uploads.postman_collection.json` | Video uploads | 26,973 | ❌ No | ❌ No |
-| `athena-imports.postman_collection.json` | Import workflow | 24,382 | ❌ No | ⚠️ Basic |
-| `athena-analytics.postman_collection.json` | Views/analytics | 29,187 | ❌ No | ❌ No |
-| `athena-virus-scanner-tests.postman_collection.json` | Security tests | 46,916 | ❌ No | ❌ No |
+| `vidra-auth.postman_collection.json` | Authentication | 138,577 | ❌ No | ❌ No |
+| `vidra-uploads.postman_collection.json` | Video uploads | 26,973 | ❌ No | ❌ No |
+| `vidra-imports.postman_collection.json` | Import workflow | 24,382 | ❌ No | ⚠️ Basic |
+| `vidra-analytics.postman_collection.json` | Views/analytics | 29,187 | ❌ No | ❌ No |
+| `vidra-virus-scanner-tests.postman_collection.json` | Security tests | 46,916 | ❌ No | ❌ No |
 
 ### 5.2 Coverage Gaps
 
@@ -374,7 +374,7 @@ GET /api/v1/videos/{videoId}/comments/count
 
 ### 6.1 Remote Video Import Edge Case Tests
 
-**Create New Collection:** `athena-remote-video-edge-cases.postman_collection.json`
+**Create New Collection:** `vidra-remote-video-edge-cases.postman_collection.json`
 
 ```javascript
 // Test 1: SSRF Protection - Private IP Ranges
@@ -699,7 +699,7 @@ pm.test("Should handle scan timeout for large files", function() {
 **Implementation Required:**
 
 ```go
-// /root/athena/internal/usecase/import/url_validator.go
+// /root/vidra/internal/usecase/import/url_validator.go
 package importuc
 
 import (
@@ -908,8 +908,8 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_DB: athena_test
-          POSTGRES_USER: athena
+          POSTGRES_DB: vidra_test
+          POSTGRES_USER: vidra
           POSTGRES_PASSWORD: test_password
         options: >-
           --health-cmd pg_isready
@@ -947,8 +947,8 @@ jobs:
 
       - name: Start application
         run: |
-          go build -o athena ./cmd/server
-          ./athena &
+          go build -o vidra ./cmd/server
+          ./vidra &
           echo $! > app.pid
           sleep 10
 
@@ -958,7 +958,7 @@ jobs:
 
       - name: Run SSRF Protection Tests
         run: |
-          newman run postman/athena-remote-video-edge-cases.postman_collection.json \
+          newman run postman/vidra-remote-video-edge-cases.postman_collection.json \
             -e postman/test-local.postman_environment.json \
             --reporters cli,json \
             --reporter-json-export ssrf-results.json \
@@ -966,14 +966,14 @@ jobs:
 
       - name: Run Comment Edge Case Tests
         run: |
-          newman run postman/athena-comment-edge-cases.postman_collection.json \
+          newman run postman/vidra-comment-edge-cases.postman_collection.json \
             -e postman/test-local.postman_environment.json \
             --reporters cli,json \
             --reporter-json-export comment-results.json
 
       - name: Run ClamAV Integration Tests
         run: |
-          newman run postman/athena-virus-scanner-tests.postman_collection.json \
+          newman run postman/vidra-virus-scanner-tests.postman_collection.json \
             -e postman/test-local.postman_environment.json \
             --reporters cli,json \
             --reporter-json-export clamav-results.json
@@ -1191,12 +1191,12 @@ func (r *ImportRateLimiter) Allow(userID string) bool {
 
 **Related Files:**
 
-- `/root/athena/internal/port/video.go` - VideoRepository interface
-- `/root/athena/internal/port/comment.go` - CommentRepository interface
-- `/root/athena/internal/repository/video_repository.go` - CreateRemoteVideo implementation
-- `/root/athena/internal/repository/comment_repository.go` - CountByVideo implementation
-- `/root/athena/internal/httpapi/handlers/video/import_handlers.go` - Import API endpoints
-- `/root/athena/internal/httpapi/handlers/social/comments.go` - Comment API endpoints
+- `/root/vidra/internal/port/video.go` - VideoRepository interface
+- `/root/vidra/internal/port/comment.go` - CommentRepository interface
+- `/root/vidra/internal/repository/video_repository.go` - CreateRemoteVideo implementation
+- `/root/vidra/internal/repository/comment_repository.go` - CountByVideo implementation
+- `/root/vidra/internal/httpapi/handlers/video/import_handlers.go` - Import API endpoints
+- `/root/vidra/internal/httpapi/handlers/social/comments.go` - Comment API endpoints
 
 **External References:**
 

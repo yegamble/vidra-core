@@ -1,12 +1,12 @@
 openapi: 3.0.3
 info:
-  title: Athena Two-Factor Authentication (2FA) API
+  title: Vidra Core Two-Factor Authentication (2FA) API
   description: |
-    This document describes the Two-Factor Authentication (2FA) endpoints for Athena.
+    This document describes the Two-Factor Authentication (2FA) endpoints for Vidra Core.
 
     ## Overview
 
-    Athena implements Time-based One-Time Password (TOTP) authentication following RFC 6238
+    Vidra Core implements Time-based One-Time Password (TOTP) authentication following RFC 6238
     for enhanced account security. Users can enable 2FA to require both password and a
     time-sensitive code during login.
 
@@ -76,13 +76,13 @@ info:
 
   version: 1.0.0
   contact:
-    name: Athena API Support
-    url: https://github.com/yegamble/athena
+    name: Vidra Core API Support
+    url: https://github.com/yegamble/vidra-core
 
 servers:
   - url: http://localhost:8080
     description: Local development server
-  - url: https://api.athena.example.com
+  - url: https://api.vidra.example.com
     description: Production server
 
 tags:
@@ -130,7 +130,7 @@ paths:
                 $ref: '#/components/schemas/TwoFASetupResponse'
               example:
                 secret: JBSWY3DPEHPK3PXP
-                qr_code_uri: "otpauth://totp/Athena:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Athena"
+                qr_code_uri: "otpauth://totp/Vidra Core:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Vidra Core"
                 backup_codes:
                   - "ABCD-EFGH"
                   - "IJKL-MNOP"
@@ -544,7 +544,7 @@ components:
           description: |
             otpauth:// URI for QR code generation. Can be rendered as QR code
             using any QR code library on the client side.
-          example: "otpauth://totp/Athena:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Athena"
+          example: "otpauth://totp/Vidra Core:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Vidra Core"
         backup_codes:
           type: array
           description: |

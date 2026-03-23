@@ -40,14 +40,14 @@ Type: Feature
 
 ### Out of Scope
 
-- External runners (entire subsystem — Athena uses in-process FFmpeg)
+- External runners (entire subsystem — Vidra Core uses in-process FFmpeg)
 - Video studio editing (complex FFmpeg pipeline)
 - Storyboard generation
 - Video source replacement (PUT)
 - Video password protection
 - User data export/import (GDPR)
 - Channel syncs (YouTube auto-import)
-- tus protocol (Athena uses custom chunked upload)
+- tus protocol (Vidra Core uses custom chunked upload)
 
 ## Context for Implementer
 
@@ -63,7 +63,7 @@ Type: Feature
   - `internal/repository/user_repository.go:163` — username lookup implementation
   - `internal/repository/channel_repository.go:84` — handle lookup implementation
 - **Gotchas:**
-  - PeerTube uses `@username@domain` handles; Athena uses UUIDs internally — handle routes resolve to UUID then delegate
+  - PeerTube uses `@username@domain` handles; Vidra Core uses UUIDs internally — handle routes resolve to UUID then delegate
   - Channel media DELETE exists (`channel_media.go`) but upload POST doesn't
   - `shared.WriteJSON` wraps in `{success, data, error, meta}` envelope
 - **Domain context:** PeerTube clients expect handle-based URLs for federation interop
@@ -643,7 +643,7 @@ None — all decisions resolved through user input.
 
 ### Deferred Ideas
 
-- tus protocol support for resumable uploads (PeerTube uses tus, Athena has custom chunked)
+- tus protocol support for resumable uploads (PeerTube uses tus, Vidra Core has custom chunked)
 - Video thumbnails list endpoint (`GET /videos/{id}/thumbnails`)
 - Video embed endpoint (currently handled by oEmbed)
 - Accounts list endpoint (`GET /api/v1/accounts` — list all accounts)

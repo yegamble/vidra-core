@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func (s *Service) HandleInboxActivity(ctx context.Context, activity map[string]interface{}, r *http.Request) error {

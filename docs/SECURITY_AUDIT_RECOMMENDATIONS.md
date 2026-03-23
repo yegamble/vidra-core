@@ -17,8 +17,8 @@ Based on code analysis, the following user-generated content endpoints should al
 **Risk Level**: MEDIUM
 **Files to Update**:
 
-- `/home/user/athena/internal/httpapi/handlers/video/videos.go`
-- `/home/user/athena/internal/usecase/video/service.go`
+- `/home/user/vidra/internal/httpapi/handlers/video/videos.go`
+- `/home/user/vidra/internal/usecase/video/service.go`
 
 **Fields Requiring Sanitization**:
 
@@ -31,8 +31,8 @@ Based on code analysis, the following user-generated content endpoints should al
 **Risk Level**: MEDIUM
 **Files to Update**:
 
-- `/home/user/athena/internal/httpapi/handlers/channel/channels.go`
-- `/home/user/athena/internal/usecase/channel/service.go`
+- `/home/user/vidra/internal/httpapi/handlers/channel/channels.go`
+- `/home/user/vidra/internal/usecase/channel/service.go`
 
 **Fields Requiring Sanitization**:
 
@@ -45,7 +45,7 @@ Based on code analysis, the following user-generated content endpoints should al
 **Risk Level**: LOW-MEDIUM
 **Files to Update**:
 
-- `/home/user/athena/internal/httpapi/handlers/social/playlists.go`
+- `/home/user/vidra/internal/httpapi/handlers/social/playlists.go`
 
 **Fields Requiring Sanitization**:
 
@@ -70,7 +70,7 @@ Based on code analysis, the following user-generated content endpoints should al
 **Risk Level**: HIGH (direct user-to-user communication)
 **Files to Check**:
 
-- `/home/user/athena/internal/httpapi/handlers/messaging/`
+- `/home/user/vidra/internal/httpapi/handlers/messaging/`
 
 **Fields Requiring Sanitization**:
 
@@ -103,7 +103,7 @@ For each identified endpoint:
 
 ```go
 // In the service layer, before storing:
-import "athena/internal/security"
+import "vidra-core/internal/security"
 
 // For plain text fields (no HTML):
 sanitizedTitle := security.SanitizeStrictText(req.Title)

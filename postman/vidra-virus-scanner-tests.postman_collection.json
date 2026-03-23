@@ -1,0 +1,1130 @@
+{
+  "info": {
+    "name": "Vidra Core Virus Scanner - Edge Cases & Breaking Scenarios",
+    "description": "Comprehensive test suite for virus scanning functionality with edge cases, attack vectors, and performance validation.\n\n## Test Categories\n\n1. **Edge Cases**\n   - Boundary file sizes (10MB exact, 10MB+1)\n   - Network interruption mid-scan\n   - Slow connection timeouts\n   - Malformed content-type headers\n   - Concurrent large uploads\n\n2. **Breaking Scenarios**\n   - Network error retry bypass (P1 vulnerability)\n   - Infected file with connection failures\n   - Race conditions in scanning\n   - Resource exhaustion attacks\n\n3. **Security Validation**\n   - Nested archives (zip bombs)\n   - Polyglot files\n   - EICAR test virus detection\n   - Blocked file type circumvention\n\n4. **Performance Testing**\n   - Memory usage under load\n   - CPU usage during scanning\n   - Response time benchmarks\n   - Concurrent scan throughput\n\n## Environment Variables\n\n- `baseUrl` - API base URL (e.g., http://localhost:8080)\n- `access_token` - JWT access token\n- `clamav_address` - ClamAV address for health checks\n\n## Test Data Requirements\n\n- EICAR test file (standard antivirus test file)\n- 10MB test file (boundary condition)\n- 10MB+1 byte file (over boundary)\n- Large file for performance testing (100MB+)\n- Nested ZIP archive (zip bomb simulation)\n- Polyglot file (multiple valid formats)\n\n## Vulnerability Context\n\nThese tests validate the fix for a P1 vulnerability where infected files could bypass scanning when network errors occur during ClamAV communication. The original issue allowed:\n\n1. Network interruption → fallback mode triggered\n2. Infected file accepted without scan\n3. File processed and distributed\n\n**Fix**: Strict retry logic with proper error handling and mandatory scanning before processing.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "virus-scanner-tests"
+  },
+  "variable": [
+    {
+      "key": "test_session_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "test_video_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "scan_attempts",
+      "value": "0",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Edge Cases",
+      "item": [
+        {
+          "name": "Upload Exactly 10MB File (Boundary)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate exactly 10MB of data",
+                  "const tenMB = 10 * 1024 * 1024;",
+                  "pm.environment.set('file_size_10mb', tenMB);",
+                  "",
+                  "// Log boundary condition test",
+                  "console.log('Testing boundary condition: exactly 10MB file');",
+                  "console.log('Expected: File should be accepted and scanned');",
+                  "",
+                  "// Set timestamp for unique filename",
+                  "const timestamp = Date.now();",
+                  "pm.environment.set('test_timestamp', timestamp);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201 Created', () => {",
+                  "    pm.expect(pm.response.code).to.equal(201);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    ",
+                  "    pm.test('Upload session created for 10MB file', () => {",
+                  "        pm.expect(response).to.have.property('success', true);",
+                  "        pm.expect(response.data).to.have.property('session_id');",
+                  "    });",
+                  "    ",
+                  "    pm.test('File size accepted at boundary', () => {",
+                  "        pm.expect(response.data).to.have.property('total_chunks');",
+                  "        pm.expect(response.data.total_chunks).to.be.above(0);",
+                  "    });",
+                  "    ",
+                  "    pm.collectionVariables.set('test_session_id', response.data.session_id);",
+                  "    pm.collectionVariables.set('test_video_id', response.data.video_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"test-10mb-exact-{{test_timestamp}}.mp4\",\n  \"file_size\": {{file_size_10mb}},\n  \"chunk_size\": 5242880,\n  \"video_metadata\": {\n    \"title\": \"10MB Boundary Test\",\n    \"description\": \"Testing exact 10MB file size boundary\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        },
+        {
+          "name": "Upload 10MB + 1 Byte File (Over Boundary)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate 10MB + 1 byte",
+                  "const tenMBPlusOne = (10 * 1024 * 1024) + 1;",
+                  "pm.environment.set('file_size_10mb_plus_one', tenMBPlusOne);",
+                  "",
+                  "console.log('Testing boundary condition: 10MB + 1 byte file');",
+                  "console.log('Expected: File should still be accepted and scanned');",
+                  "",
+                  "const timestamp = Date.now();",
+                  "pm.environment.set('test_timestamp', timestamp);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201 Created', () => {",
+                  "    pm.expect(pm.response.code).to.equal(201);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    ",
+                  "    pm.test('Upload session created for 10MB+1 file', () => {",
+                  "        pm.expect(response).to.have.property('success', true);",
+                  "        pm.expect(response.data).to.have.property('session_id');",
+                  "    });",
+                  "    ",
+                  "    pm.test('Additional chunk allocated for extra byte', () => {",
+                  "        pm.expect(response.data).to.have.property('total_chunks');",
+                  "        // Should have one more chunk than exact 10MB",
+                  "        pm.expect(response.data.total_chunks).to.be.above(1);",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"test-10mb-plus-one-{{test_timestamp}}.mp4\",\n  \"file_size\": {{file_size_10mb_plus_one}},\n  \"chunk_size\": 5242880,\n  \"video_metadata\": {\n    \"title\": \"10MB+1 Boundary Test\",\n    \"description\": \"Testing 10MB + 1 byte file size boundary\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        },
+        {
+          "name": "Upload with Malformed Content-Type",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log('Testing malformed Content-Type header');",
+                  "console.log('Expected: Server should reject or sanitize malformed header');",
+                  "",
+                  "const timestamp = Date.now();",
+                  "pm.environment.set('test_timestamp', timestamp);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Server handles malformed Content-Type', () => {",
+                  "    // Should either accept with sanitization or reject with 400",
+                  "    pm.expect([400, 415, 201]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 400 || pm.response.code === 415) {",
+                  "    pm.test('Error message indicates Content-Type issue', () => {",
+                  "        const response = pm.response.json();",
+                  "        pm.expect(response).to.have.property('error');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json; charset=utf-8; boundary=<script>alert('xss')</script>",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"test-malformed-ct-{{test_timestamp}}.mp4\",\n  \"file_size\": 1048576,\n  \"chunk_size\": 524288,\n  \"video_metadata\": {\n    \"title\": \"Malformed Content-Type Test\",\n    \"description\": \"Testing malformed Content-Type header handling\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        },
+        {
+          "name": "Upload with Slow Connection Timeout",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log('Testing slow connection scenario');",
+                  "console.log('Expected: Request should timeout gracefully');",
+                  "",
+                  "// This test intentionally uses a very short timeout",
+                  "pm.request.timeout = 100; // 100ms timeout",
+                  "",
+                  "const timestamp = Date.now();",
+                  "pm.environment.set('test_timestamp', timestamp);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Server responds within timeout or returns timeout error', () => {",
+                  "    // Should either complete quickly or timeout gracefully",
+                  "    const validCodes = [201, 408, 504]; // Created, Request Timeout, Gateway Timeout",
+                  "    pm.expect(validCodes).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 408 || pm.response.code === 504) {",
+                  "    pm.test('Timeout error is properly formatted', () => {",
+                  "        const response = pm.response.json();",
+                  "        pm.expect(response).to.have.property('error');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"test-slow-connection-{{test_timestamp}}.mp4\",\n  \"file_size\": 104857600,\n  \"chunk_size\": 5242880,\n  \"video_metadata\": {\n    \"title\": \"Slow Connection Test\",\n    \"description\": \"Testing timeout handling\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Breaking Scenarios (P1 Vulnerability)",
+      "item": [
+        {
+          "name": "Exploit: Network Error During Scan",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// This test simulates the P1 vulnerability scenario",
+                  "console.log('======================================');",
+                  "console.log('BREAKING TEST: Network Error During Scan');",
+                  "console.log('======================================');",
+                  "console.log('Scenario: Upload infected file with ClamAV network interruption');",
+                  "console.log('BEFORE FIX: File bypasses scanning and gets processed');",
+                  "console.log('AFTER FIX: File is rejected or quarantined');",
+                  "console.log('');",
+                  "",
+                  "const timestamp = Date.now();",
+                  "pm.environment.set('test_timestamp', timestamp);",
+                  "",
+                  "// Note: This test requires ClamAV to be temporarily unavailable",
+                  "// or network interruption during scanning",
+                  "console.log('Manual Test Steps:');",
+                  "console.log('1. Start upload of EICAR test file');",
+                  "console.log('2. Interrupt ClamAV connection mid-scan');",
+                  "console.log('3. Verify file is rejected (not accepted with warning)');",
+                  "console.log('');"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Critical security test: Infected file should NEVER be accepted",
+                  "pm.test('[CRITICAL] Infected file is rejected', () => {",
+                  "    // Should be 400, 403, or 500 - never 201 or 200",
+                  "    const rejectedCodes = [400, 403, 500, 503];",
+                  "    pm.expect(rejectedCodes).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('[CRITICAL] No fallback mode used for infected files', () => {",
+                  "    if (pm.response.code === 201 || pm.response.code === 200) {",
+                  "        const response = pm.response.json();",
+                  "        pm.expect(response.data).to.not.have.property('fallback_used');",
+                  "        // If this test fails, the P1 vulnerability still exists",
+                  "    }",
+                  "});",
+                  "",
+                  "if (pm.response.code >= 400) {",
+                  "    pm.test('Error indicates virus scan failure', () => {",
+                  "        const response = pm.response.json();",
+                  "        pm.expect(response.error).to.exist;",
+                  "        // Should mention scanning or virus detection",
+                  "        const errorLower = JSON.stringify(response.error).toLowerCase();",
+                  "        const hasScanKeyword = errorLower.includes('scan') || ",
+                  "                               errorLower.includes('virus') || ",
+                  "                               errorLower.includes('malware') ||",
+                  "                               errorLower.includes('clamav');",
+                  "        pm.expect(hasScanKeyword).to.be.true;",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream",
+                "type": "text"
+              },
+              {
+                "key": "X-Filename",
+                "value": "eicar-test-{{test_timestamp}}.txt",
+                "type": "text"
+              },
+              {
+                "key": "X-Virus-Test",
+                "value": "true",
+                "type": "text",
+                "description": "Flag to indicate this is a virus test"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/direct",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "direct"]
+            },
+            "description": "Attempts to upload EICAR test virus. Should be blocked even if network interruption occurs."
+          }
+        },
+        {
+          "name": "Exploit: Retry Exhaustion",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log('Testing retry exhaustion scenario');",
+                  "console.log('Scenario: ClamAV unavailable for all retry attempts');",
+                  "console.log('Expected: File is rejected with error (strict mode)');",
+                  "",
+                  "pm.collectionVariables.set('scan_attempts', 0);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('[CRITICAL] Scan failure results in rejection', () => {",
+                  "    // In strict mode, should never accept file if scan fails",
+                  "    pm.expect([500, 503]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Error indicates scan service unavailable', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('error');",
+                  "    const errorLower = JSON.stringify(response.error).toLowerCase();",
+                  "    const hasServiceError = errorLower.includes('unavailable') ||",
+                  "                           errorLower.includes('failed') ||",
+                  "                           errorLower.includes('scan');",
+                  "    pm.expect(hasServiceError).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test('No file accepted without successful scan', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.not.have.nested.property('data.session_id');",
+                  "    pm.expect(response).to.not.have.nested.property('data.video_id');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Test-ClamAV-Unavailable",
+                "value": "true",
+                "type": "text",
+                "description": "Test header to simulate ClamAV unavailability"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"test-retry-exhaustion.mp4\",\n  \"file_size\": 1048576,\n  \"chunk_size\": 524288,\n  \"video_metadata\": {\n    \"title\": \"Retry Exhaustion Test\",\n    \"description\": \"Testing scan failure with exhausted retries\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        },
+        {
+          "name": "Exploit: Concurrent Infected Uploads",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log('Testing concurrent infected file uploads');",
+                  "console.log('Expected: All infected files rejected');",
+                  "console.log('Checks for: Race conditions, scanning queue overflow');",
+                  "",
+                  "// Note: Run this test multiple times in parallel to test race conditions",
+                  "const timestamp = Date.now();",
+                  "const randomId = Math.floor(Math.random() * 1000);",
+                  "pm.environment.set('test_id', `${timestamp}-${randomId}`);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('[CRITICAL] Infected file rejected even under load', () => {",
+                  "    // Should always reject infected files, even under concurrent load",
+                  "    pm.expect([400, 403, 500]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('No race condition allows infected file through', () => {",
+                  "    if (pm.response.code === 201 || pm.response.code === 200) {",
+                  "        // This should NEVER happen with infected files",
+                  "        throw new Error('SECURITY FAILURE: Infected file accepted under concurrent load');",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('Response time acceptable under load', () => {",
+                  "    // Should respond within 30 seconds even under load",
+                  "    pm.expect(pm.response.responseTime).to.be.below(30000);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream",
+                "type": "text"
+              },
+              {
+                "key": "X-Filename",
+                "value": "eicar-concurrent-{{test_id}}.txt",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/direct",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "direct"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Security Validation",
+      "item": [
+        {
+          "name": "EICAR Test Virus Detection",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log('Testing EICAR standard antivirus test file');",
+                  "console.log('Expected: File detected as infected and rejected');",
+                  "",
+                  "const timestamp = Date.now();",
+                  "pm.environment.set('test_timestamp', timestamp);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('EICAR test virus is detected', () => {",
+                  "    // Should be rejected with 400 or 403",
+                  "    pm.expect([400, 403]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Response indicates virus detection', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('error');",
+                  "    const errorStr = JSON.stringify(response).toLowerCase();",
+                  "    const hasVirusKeyword = errorStr.includes('virus') ||",
+                  "                           errorStr.includes('infected') ||",
+                  "                           errorStr.includes('malware') ||",
+                  "                           errorStr.includes('eicar');",
+                  "    pm.expect(hasVirusKeyword).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test('File is not processed or stored', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.not.have.nested.property('data.video_id');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream",
+                "type": "text"
+              },
+              {
+                "key": "X-Filename",
+                "value": "eicar-test-{{test_timestamp}}.com",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/direct",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "direct"]
+            }
+          }
+        },
+        {
+          "name": "Blocked File Type - Executable",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Executable file extension is blocked', () => {",
+                  "    pm.expect([400, 415]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Error indicates blocked file type', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('error');",
+                  "    const errorStr = JSON.stringify(response).toLowerCase();",
+                  "    const hasBlockedKeyword = errorStr.includes('blocked') ||",
+                  "                             errorStr.includes('not allowed') ||",
+                  "                             errorStr.includes('file type');",
+                  "    pm.expect(hasBlockedKeyword).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"malware.exe\",\n  \"file_size\": 1024,\n  \"chunk_size\": 512,\n  \"video_metadata\": {\n    \"title\": \"Blocked File Test\",\n    \"description\": \"Testing executable file blocking\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        },
+        {
+          "name": "Blocked File Type - Script",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Script file extension is blocked', () => {",
+                  "    pm.expect([400, 415]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Error indicates blocked file type', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"malicious.sh\",\n  \"file_size\": 1024,\n  \"chunk_size\": 512,\n  \"video_metadata\": {\n    \"title\": \"Blocked Script Test\",\n    \"description\": \"Testing script file blocking\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        },
+        {
+          "name": "Nested Archive (Zip Bomb Simulation)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log('Testing nested archive handling');",
+                  "console.log('Expected: Excessive nesting or size expansion detected');",
+                  "",
+                  "const timestamp = Date.now();",
+                  "pm.environment.set('test_timestamp', timestamp);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Nested archive is detected and rejected', () => {",
+                  "    pm.expect([400, 413]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Error indicates archive validation issue', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"nested-archive-{{test_timestamp}}.zip\",\n  \"file_size\": 10485760,\n  \"chunk_size\": 524288,\n  \"video_metadata\": {\n    \"title\": \"Nested Archive Test\",\n    \"description\": \"Testing zip bomb protection\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Performance Testing",
+      "item": [
+        {
+          "name": "Memory Usage - Large File",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log('Testing memory usage with large file (100MB)');",
+                  "console.log('Expected: Memory overhead < 50MB due to streaming');",
+                  "",
+                  "const hundredMB = 100 * 1024 * 1024;",
+                  "pm.environment.set('file_size_100mb', hundredMB);",
+                  "",
+                  "const timestamp = Date.now();",
+                  "pm.environment.set('test_timestamp', timestamp);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Large file upload initiated successfully', () => {",
+                  "    pm.expect(pm.response.code).to.equal(201);",
+                  "});",
+                  "",
+                  "pm.test('Response time acceptable for large file', () => {",
+                  "    // Initiation should be fast, actual upload will be chunked",
+                  "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    ",
+                  "    pm.test('Chunking configured for large file', () => {",
+                  "        pm.expect(response.data).to.have.property('total_chunks');",
+                  "        pm.expect(response.data.total_chunks).to.be.above(10);",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"large-file-{{test_timestamp}}.mp4\",\n  \"file_size\": {{file_size_100mb}},\n  \"chunk_size\": 5242880,\n  \"video_metadata\": {\n    \"title\": \"Memory Usage Test - 100MB\",\n    \"description\": \"Testing memory efficiency with large file\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        },
+        {
+          "name": "Concurrent Upload Throughput",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log('Testing concurrent upload throughput');",
+                  "console.log('Run this test with 10+ parallel iterations');",
+                  "",
+                  "const timestamp = Date.now();",
+                  "const randomId = Math.floor(Math.random() * 10000);",
+                  "pm.environment.set('test_id', `${timestamp}-${randomId}`);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Concurrent upload accepted', () => {",
+                  "    pm.expect([201, 429]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test('Response time under load acceptable', () => {",
+                  "        pm.expect(pm.response.responseTime).to.be.below(10000);",
+                  "    });",
+                  "} else if (pm.response.code === 429) {",
+                  "    pm.test('Rate limit properly enforced', () => {",
+                  "        const response = pm.response.json();",
+                  "        pm.expect(response).to.have.property('error');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"concurrent-test-{{test_id}}.mp4\",\n  \"file_size\": 10485760,\n  \"chunk_size\": 1048576,\n  \"video_metadata\": {\n    \"title\": \"Concurrent Upload Test\",\n    \"description\": \"Testing throughput under concurrent load\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        },
+        {
+          "name": "Scan Performance Benchmark",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "console.log('Benchmarking virus scan performance');",
+                  "console.log('Expected: Small clean file scans < 10ms');",
+                  "",
+                  "const timestamp = Date.now();",
+                  "pm.environment.set('test_timestamp', timestamp);",
+                  "pm.environment.set('scan_start_time', Date.now());"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const scanDuration = Date.now() - pm.environment.get('scan_start_time');",
+                  "",
+                  "pm.test('Small file upload completed', () => {",
+                  "    pm.expect(pm.response.code).to.equal(201);",
+                  "});",
+                  "",
+                  "pm.test('Scan performance within benchmark', () => {",
+                  "    // Total response time should be reasonable for small file",
+                  "    console.log(`Scan completed in ${scanDuration}ms`);",
+                  "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+                  "});",
+                  "",
+                  "// Log performance metrics",
+                  "console.log('Performance Metrics:');",
+                  "console.log(`  - Response Time: ${pm.response.responseTime}ms`);",
+                  "console.log(`  - Scan Duration: ${scanDuration}ms`);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"perf-test-{{test_timestamp}}.txt\",\n  \"file_size\": 1024,\n  \"chunk_size\": 512,\n  \"video_metadata\": {\n    \"title\": \"Scan Performance Benchmark\",\n    \"description\": \"Testing scan speed for small files\",\n    \"privacy\": \"private\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - API Contract Validation",
+      "item": [
+        {
+          "name": "Error Response Format - Virus Detected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 403 Forbidden for infected file', () => {",
+                  "    pm.expect(pm.response.code).to.equal(403);",
+                  "});",
+                  "",
+                  "pm.test('Error response has consistent format', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('success', false);",
+                  "    pm.expect(response).to.have.property('error');",
+                  "});",
+                  "",
+                  "pm.test('Error details include virus information', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.error).to.exist;",
+                  "    // Should have details about the virus",
+                  "    const errorStr = JSON.stringify(response.error).toLowerCase();",
+                  "    pm.expect(errorStr).to.include('virus');",
+                  "});",
+                  "",
+                  "pm.test('Response headers are secure', () => {",
+                  "    pm.expect(pm.response.headers.get('X-Content-Type-Options')).to.equal('nosniff');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream",
+                "type": "text"
+              },
+              {
+                "key": "X-Filename",
+                "value": "eicar-format-test.com",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/direct",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "direct"]
+            }
+          }
+        },
+        {
+          "name": "Error Response Format - Scan Failure",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code indicates service error', () => {",
+                  "    pm.expect([500, 503]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Error response format is consistent', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('success', false);",
+                  "    pm.expect(response).to.have.property('error');",
+                  "});",
+                  "",
+                  "pm.test('Retry-After header is set for service unavailable', () => {",
+                  "    if (pm.response.code === 503) {",
+                  "        pm.expect(pm.response.headers.has('Retry-After')).to.be.true;",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Test-ClamAV-Unavailable",
+                "value": "true",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"scan-failure-test.mp4\",\n  \"file_size\": 1048576,\n  \"chunk_size\": 524288\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "uploads", "initiate"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

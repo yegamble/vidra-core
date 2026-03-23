@@ -1,7 +1,7 @@
 package messaging
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,9 +11,9 @@ import (
 	chi "github.com/go-chi/chi/v5"
 	validator "github.com/go-playground/validator/v10"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/usecase"
 
 	"github.com/google/uuid"
 )

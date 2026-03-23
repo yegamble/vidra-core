@@ -480,11 +480,11 @@ func (a *ArchiveValidator) ValidateArchive(filePath string) error {
 # docker-compose.yml for FFmpeg worker
 services:
   ffmpeg-worker:
-    image: athena-ffmpeg:latest
+    image: vidra-ffmpeg:latest
     security_opt:
       - no-new-privileges:true
       - seccomp=./seccomp-profiles/ffmpeg-strict.json
-      - apparmor=athena-ffmpeg-profile
+      - apparmor=vidra-ffmpeg-profile
     cap_drop:
       - ALL
     cap_add:
@@ -531,12 +531,12 @@ services:
 }
 ```
 
-**AppArmor Profile** (`apparmor.d/athena-ffmpeg-profile`):
+**AppArmor Profile** (`apparmor.d/vidra-ffmpeg-profile`):
 
 ```
 #include <tunables/global>
 
-profile athena-ffmpeg-profile flags=(attach_disconnected,mediate_deleted) {
+profile vidra-ffmpeg-profile flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   # Allow reading input files

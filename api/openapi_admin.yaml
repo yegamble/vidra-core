@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Admin API
+  title: Vidra Core Admin API
   description: |
     Admin-only endpoints for user management, video management, encoding jobs,
     federation management, instance configuration, views management, and OAuth client administration.

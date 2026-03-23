@@ -8,10 +8,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/middleware"
-	"athena/internal/repository"
-	"athena/internal/testutil"
-	"athena/internal/usecase/analytics"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase/analytics"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

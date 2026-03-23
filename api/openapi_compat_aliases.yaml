@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: Athena PeerTube Compatibility Aliases
+  title: Vidra Core PeerTube Compatibility Aliases
   description: |
-    PeerTube-compatible URL aliases that forward to Athena's canonical endpoints.
-    These routes exist so PeerTube clients can interact with Athena without modification.
+    PeerTube-compatible URL aliases that forward to Vidra Core's canonical endpoints.
+    These routes exist so PeerTube clients can interact with Vidra Core without modification.
   version: 1.0.0
 
 paths:
@@ -40,7 +40,7 @@ paths:
           description: Unauthorized
     put:
       summary: Upload a chunk (PeerTube alias)
-      description: Not yet implemented in Athena.
+      description: Not yet implemented in Vidra Core.
       operationId: uploadResumableChunk
       tags:
         - Uploads (PeerTube Compat)
@@ -51,7 +51,7 @@ paths:
           description: Not implemented
     delete:
       summary: Cancel a resumable upload (PeerTube alias)
-      description: Not yet implemented in Athena.
+      description: Not yet implemented in Vidra Core.
       operationId: cancelResumableUpload
       tags:
         - Uploads (PeerTube Compat)
@@ -90,7 +90,7 @@ paths:
   /api/v1/users/me/notifications/read-all:
     post:
       summary: Mark all notifications as read (PeerTube alias)
-      description: PeerTube uses POST, Athena uses PUT /api/v1/notifications/read-all
+      description: PeerTube uses POST, Vidra Core uses PUT /api/v1/notifications/read-all
       operationId: markAllNotificationsReadPost
       tags:
         - Notifications (PeerTube Compat)
@@ -264,7 +264,7 @@ paths:
     put:
       summary: Update a caption by ID or language code
       description: |
-        The captionId parameter accepts both a UUID (Athena native) and a language
+        The captionId parameter accepts both a UUID (Vidra Core native) and a language
         code (PeerTube compatible, e.g., "en", "fr"). When a language code is provided,
         it is resolved to the caption ID for that video.
       operationId: compat_aliases_updateCaption

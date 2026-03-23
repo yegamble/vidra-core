@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-The Athena backend OpenAPI specifications have been comprehensively updated to ensure complete API documentation coverage for frontend development. All critical user-facing features and admin endpoints are now fully documented with request/response schemas, examples, and validation rules.
+The Vidra Core backend OpenAPI specifications have been comprehensively updated to ensure complete API documentation coverage for frontend development. All critical user-facing features and admin endpoints are now fully documented with request/response schemas, examples, and validation rules.
 
 **Latest Addition (2025-01-06):** Complete two-factor authentication (2FA) documentation with TOTP, backup codes, and QR code generation.
 

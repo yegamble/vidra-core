@@ -1,0 +1,1148 @@
+{
+  "info": {
+    "name": "Vidra Core Secure Messaging (E2EE)",
+    "_postman_id": "e2ee-0001-0000-4000-9000-aaaaaaaaaaee",
+    "description": "Postman E2E test collection for Vidra Core's client-side E2EE secure messaging API.\n\nCovers the full sender + recipient flow:\n1. Register two users (A = sender, B = recipient, C = error testing)\n2. Both register identity keys with the server\n3. User A fetches User B's public key bundle\n4. User A initiates key exchange; User B accepts\n5. Both users exchange encrypted messages and retrieve them\n6. Session management: status transitions, blocked sends while pending\n7. Error cases: 401, 400, 403, 404, 409, 412\n\nRun with Newman:\n  newman run postman/vidra-secure-messaging.postman_collection.json -e postman/test-env.json",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",        "value": "http://app-test:8080", "type": "string" },
+    { "key": "userA_token",    "value": "",                     "type": "string" },
+    { "key": "userB_token",    "value": "",                     "type": "string" },
+    { "key": "userC_token",    "value": "",                     "type": "string" },
+    { "key": "userA_id",       "value": "",                     "type": "string" },
+    { "key": "userB_id",       "value": "",                     "type": "string" },
+    { "key": "userC_id",       "value": "",                     "type": "string" },
+    { "key": "keyExchangeId",  "value": "",                     "type": "string" },
+    { "key": "conversationId", "value": "",                     "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "01 - Setup: Register Users",
+      "item": [
+        {
+          "name": "Register User A (Sender)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{userA_username}}\",\n  \"email\": \"{{userA_email}}\",\n  \"password\": \"Password123!\",\n  \"display_name\": \"Alice Sender\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ts = Date.now();",
+                  "pm.variables.set('userA_username', 'alice_' + ts);",
+                  "pm.variables.set('userA_email', 'alice_' + ts + '@example.com');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Register User A: 201 Created', () => pm.response.to.have.status(201));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Has user and tokens', () => {",
+                  "  pm.expect(wrap).to.have.nested.property('data.user');",
+                  "  pm.expect(wrap).to.have.nested.property('data.access_token');",
+                  "});",
+                  "const d = wrap.data || {};",
+                  "pm.variables.set('userA_id', d.user.id);",
+                  "pm.variables.set('userA_token', d.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register User B (Recipient)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{userB_username}}\",\n  \"email\": \"{{userB_email}}\",\n  \"password\": \"Password123!\",\n  \"display_name\": \"Bob Recipient\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ts = Date.now() + 1;",
+                  "pm.variables.set('userB_username', 'bob_' + ts);",
+                  "pm.variables.set('userB_email', 'bob_' + ts + '@example.com');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Register User B: 201 Created', () => pm.response.to.have.status(201));",
+                  "const d = (pm.response.json().data) || {};",
+                  "pm.variables.set('userB_id', d.user.id);",
+                  "pm.variables.set('userB_token', d.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register User C (Error Testing)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{userC_username}}\",\n  \"email\": \"{{userC_email}}\",\n  \"password\": \"Password123!\",\n  \"display_name\": \"Carol ErrorCase\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ts = Date.now() + 2;",
+                  "pm.variables.set('userC_username', 'carol_' + ts);",
+                  "pm.variables.set('userC_email', 'carol_' + ts + '@example.com');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Register User C: 201 Created', () => pm.response.to.have.status(201));",
+                  "const d = (pm.response.json().data) || {};",
+                  "pm.variables.set('userC_id', d.user.id);",
+                  "pm.variables.set('userC_token', d.access_token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Key Registration",
+      "item": [
+        {
+          "name": "User A: Register Identity Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/keys",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "keys"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"public_identity_key\": \"{{userA_identity_key}}\",\n  \"public_signing_key\": \"{{userA_signing_key}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Simulate a base64-encoded X25519 public key (32 bytes = 44 base64 chars)",
+                  "const randB64 = (n) => {",
+                  "  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+                  "  return Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');",
+                  "};",
+                  "pm.variables.set('userA_identity_key', randB64(44));",
+                  "pm.variables.set('userA_signing_key', randB64(44));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User A Register Key: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has success message', () => pm.expect(json).to.have.property('message'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User B: Register Identity Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userB_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/keys",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "keys"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"public_identity_key\": \"{{userB_identity_key}}\",\n  \"public_signing_key\": \"{{userB_signing_key}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const randB64 = (n) => {",
+                  "  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+                  "  return Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');",
+                  "};",
+                  "pm.variables.set('userB_identity_key', randB64(44));",
+                  "pm.variables.set('userB_signing_key', randB64(44));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User B Register Key: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has success message', () => pm.expect(json).to.have.property('message'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User A: Re-register Key (Key Rotation — expects 200, not 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/keys",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "keys"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"public_identity_key\": \"{{userA_identity_key_v2}}\",\n  \"public_signing_key\": \"{{userA_signing_key_v2}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const randB64 = (n) => {",
+                  "  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+                  "  return Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');",
+                  "};",
+                  "pm.variables.set('userA_identity_key_v2', randB64(44));",
+                  "pm.variables.set('userA_signing_key_v2', randB64(44));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Re-registration performs key rotation (increments key_version) — NOT a conflict",
+                  "pm.test('Re-register Key (rotation): 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Has message field', () => pm.expect(pm.response.json()).to.have.property('message'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Key Discovery & Status",
+      "item": [
+        {
+          "name": "User A: Get Own E2EE Status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userA_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "status"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User A Status: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('has_identity_key is true', () => pm.expect(json.has_identity_key).to.be.true);",
+                  "pm.test('key_version >= 1', () => pm.expect(json.key_version).to.be.at.least(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User B: Get Own E2EE Status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userB_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "status"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User B Status: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('has_identity_key is true', () => pm.expect(json.has_identity_key).to.be.true);",
+                  "pm.test('key_version >= 1', () => pm.expect(json.key_version).to.be.at.least(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User A: Get User B's Public Key Bundle",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userA_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/keys/{{userB_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "keys", "{{userB_id}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Get User B Keys: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has public_identity_key', () => pm.expect(json).to.have.property('public_identity_key'));",
+                  "pm.test('Has public_signing_key', () => pm.expect(json).to.have.property('public_signing_key'));",
+                  "pm.test('Has key_version', () => pm.expect(json).to.have.property('key_version'));",
+                  "pm.test('Keys are non-empty strings', () => {",
+                  "  pm.expect(json.public_identity_key).to.be.a('string').with.length.greaterThan(0);",
+                  "  pm.expect(json.public_signing_key).to.be.a('string').with.length.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 - Key Exchange",
+      "item": [
+        {
+          "name": "User A: Initiate Key Exchange with User B",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/key-exchange",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "key-exchange"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{userB_id}}\",\n  \"sender_public_key\": \"{{userA_ephemeral_key}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const randB64 = (n) => {",
+                  "  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+                  "  return Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');",
+                  "};",
+                  "pm.variables.set('userA_ephemeral_key', randB64(44));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Initiate Key Exchange: 201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has key_exchange object', () => pm.expect(json).to.have.property('key_exchange'));",
+                  "pm.test('Has status field', () => pm.expect(json).to.have.property('status'));",
+                  "pm.test('Status is initiated', () => pm.expect(json.status).to.equal('initiated'));",
+                  "const kex = json.key_exchange;",
+                  "pm.test('key_exchange has required fields', () => {",
+                  "  pm.expect(kex).to.have.property('id');",
+                  "  pm.expect(kex).to.have.property('conversation_id');",
+                  "  pm.expect(kex).to.have.property('sender_id');",
+                  "  pm.expect(kex).to.have.property('recipient_id');",
+                  "  pm.expect(kex).to.have.property('exchange_type');",
+                  "  pm.expect(kex.exchange_type).to.equal('offer');",
+                  "});",
+                  "pm.variables.set('keyExchangeId', kex.id);",
+                  "pm.variables.set('conversationId', kex.conversation_id);",
+                  "console.log('keyExchangeId:', kex.id);",
+                  "console.log('conversationId:', kex.conversation_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User B: Get Pending Key Exchanges",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userB_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/key-exchange/pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "key-exchange", "pending"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Get Pending Key Exchanges: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has key_exchanges array', () => pm.expect(json).to.have.property('key_exchanges'));",
+                  "pm.test('Has total field', () => pm.expect(json).to.have.property('total'));",
+                  "pm.test('At least 1 pending exchange', () => pm.expect(json.total).to.be.at.least(1));",
+                  "pm.test('key_exchanges is an array', () => pm.expect(json.key_exchanges).to.be.an('array'));",
+                  "if (json.key_exchanges && json.key_exchanges.length > 0) {",
+                  "  const kex = json.key_exchanges[0];",
+                  "  pm.test('Pending exchange has id', () => pm.expect(kex).to.have.property('id'));",
+                  "  pm.test('Pending exchange has sender_id', () => pm.expect(kex).to.have.property('sender_id'));",
+                  "  // Use the pending exchange ID from this response to verify match",
+                  "  const storedKexId = pm.variables.get('keyExchangeId');",
+                  "  pm.test('Pending exchange ID matches initiated exchange', () => {",
+                  "    const pendingIds = json.key_exchanges.map(k => k.id);",
+                  "    pm.expect(pendingIds).to.include(storedKexId);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[Session Mgmt] User A: Send While Pending — expects 412",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{userB_id}}\",\n  \"encrypted_content\": \"{{enc_content_pending}}\",\n  \"content_nonce\": \"{{enc_nonce_pending}}\",\n  \"signature\": \"{{enc_sig_pending}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const randB64 = (n) => {",
+                  "  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+                  "  return Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');",
+                  "};",
+                  "pm.variables.set('enc_content_pending', randB64(44));",
+                  "pm.variables.set('enc_nonce_pending', randB64(32));",
+                  "pm.variables.set('enc_sig_pending', randB64(88));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Key exchange is initiated but not yet accepted (status=pending) — server blocks send",
+                  "pm.test('Send While Pending: 412 Precondition Failed', () => pm.response.to.have.status(412));",
+                  "const json = pm.response.json();",
+                  "pm.test('Error response has error field', () => pm.expect(json).to.have.property('error'));",
+                  "pm.test('Error code is key_exchange_required', () => {",
+                  "  pm.expect(json.error.code).to.equal('key_exchange_required');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User B: Accept Key Exchange",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userB_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/key-exchange/accept",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "key-exchange", "accept"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key_exchange_id\": \"{{keyExchangeId}}\",\n  \"public_key\": \"{{userB_ephemeral_key}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const randB64 = (n) => {",
+                  "  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+                  "  return Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');",
+                  "};",
+                  "pm.variables.set('userB_ephemeral_key', randB64(44));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Accept Key Exchange: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has message field', () => pm.expect(json).to.have.property('message'));",
+                  "pm.test('Status is active', () => pm.expect(json.status).to.equal('active'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[Session Mgmt] User A: Status After Active",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userA_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "status"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User A Status After Active: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('User A has_identity_key is true', () => pm.expect(json.has_identity_key).to.be.true);",
+                  "pm.test('key_version >= 1', () => pm.expect(json.key_version).to.be.at.least(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[Session Mgmt] User B: Status After Active",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userB_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "status"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User B Status After Active: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('User B has_identity_key is true', () => pm.expect(json.has_identity_key).to.be.true);",
+                  "pm.test('key_version >= 1', () => pm.expect(json.key_version).to.be.at.least(1));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 - Encrypted Messaging",
+      "item": [
+        {
+          "name": "User A: Send Encrypted Message to User B",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{userB_id}}\",\n  \"encrypted_content\": \"{{enc_content_a}}\",\n  \"content_nonce\": \"{{enc_nonce_a}}\",\n  \"signature\": \"{{enc_sig_a}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Simulate client-side encrypted content: server treats these as opaque blobs",
+                  "const randB64 = (n) => {",
+                  "  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+                  "  return Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');",
+                  "};",
+                  "pm.variables.set('enc_content_a', randB64(64));  // 48-byte ciphertext in base64",
+                  "pm.variables.set('enc_nonce_a',   randB64(32));  // 24-byte nonce in base64",
+                  "pm.variables.set('enc_sig_a',     randB64(88));  // 64-byte Ed25519 sig in base64"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Send Encrypted Message: 201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has message object', () => pm.expect(json).to.have.property('message'));",
+                  "const msg = json.message;",
+                  "pm.test('Message has required fields', () => {",
+                  "  pm.expect(msg).to.have.property('id');",
+                  "  pm.expect(msg).to.have.property('sender_id');",
+                  "  pm.expect(msg).to.have.property('recipient_id');",
+                  "  pm.expect(msg).to.have.property('is_encrypted');",
+                  "  pm.expect(msg.is_encrypted).to.be.true;",
+                  "  pm.expect(msg.message_type).to.equal('secure');",
+                  "});",
+                  "pm.test('Plaintext content is NOT present (server is blind)', () => {",
+                  "  pm.expect(msg.content).to.be.undefined;  // content field is null/omitted for E2EE msgs",
+                  "});",
+                  "pm.test('Encrypted content is opaque blob (not plaintext)', () => {",
+                  "  pm.expect(msg.encrypted_content).to.be.a('string');",
+                  "});",
+                  "pm.variables.set('msgA_id', msg.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User B: Retrieve Encrypted Messages",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userB_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/messages/{{conversationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "messages", "{{conversationId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User B Retrieve Messages: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has messages array', () => pm.expect(json).to.have.property('messages'));",
+                  "pm.test('Has total field', () => pm.expect(json).to.have.property('total'));",
+                  "pm.test('At least 1 message', () => pm.expect(json.total).to.be.at.least(1));",
+                  "pm.test('Messages are E2EE (is_encrypted=true)', () => {",
+                  "  json.messages.forEach(m => {",
+                  "    pm.expect(m.is_encrypted, `message ${m.id} is_encrypted`).to.be.true;",
+                  "    pm.expect(m.message_type, `message ${m.id} type`).to.equal('secure');",
+                  "  });",
+                  "});",
+                  "pm.test('Messages contain opaque ciphertext, not plaintext', () => {",
+                  "  json.messages.forEach(m => {",
+                  "    pm.expect(m.encrypted_content).to.be.a('string').with.length.greaterThan(0);",
+                  "    pm.expect(m.content).to.be.undefined;  // plaintext never exposed",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User B: Reply with Encrypted Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userB_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{userA_id}}\",\n  \"encrypted_content\": \"{{enc_content_b}}\",\n  \"content_nonce\": \"{{enc_nonce_b}}\",\n  \"signature\": \"{{enc_sig_b}}\",\n  \"parent_message_id\": \"{{msgA_id}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const randB64 = (n) => {",
+                  "  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+                  "  return Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');",
+                  "};",
+                  "pm.variables.set('enc_content_b', randB64(64));",
+                  "pm.variables.set('enc_nonce_b',   randB64(32));",
+                  "pm.variables.set('enc_sig_b',     randB64(88));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User B Reply: 201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has message object', () => pm.expect(json).to.have.property('message'));",
+                  "const msg = json.message;",
+                  "pm.test('Reply is E2EE', () => {",
+                  "  pm.expect(msg.is_encrypted).to.be.true;",
+                  "  pm.expect(msg.message_type).to.equal('secure');",
+                  "});",
+                  "pm.test('Reply references parent message', () => {",
+                  "  const parentId = pm.variables.get('msgA_id');",
+                  "  pm.expect(msg.parent_message_id).to.equal(parentId);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User A: Retrieve Messages (sees reply)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userA_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/messages/{{conversationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "messages", "{{conversationId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User A Retrieve Messages: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('At least 2 messages (original + reply)', () => pm.expect(json.total).to.be.at.least(2));",
+                  "pm.test('All messages are E2EE', () => {",
+                  "  json.messages.forEach(m => {",
+                  "    pm.expect(m.is_encrypted).to.be.true;",
+                  "  });",
+                  "});",
+                  "pm.test('Pagination fields present', () => {",
+                  "  pm.expect(json).to.have.property('limit');",
+                  "  pm.expect(json).to.have.property('offset');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User A: Retrieve Messages with Pagination",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userA_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/messages/{{conversationId}}?limit=1&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "messages", "{{conversationId}}"],
+              "query": [
+                { "key": "limit",  "value": "1" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Paginated Retrieve: 200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Limit param respected: at most 1 message returned', () => {",
+                  "  pm.expect(json.messages.length).to.be.at.most(1);",
+                  "});",
+                  "pm.test('Limit field matches request', () => pm.expect(json.limit).to.equal(1));",
+                  "pm.test('Offset field matches request', () => pm.expect(json.offset).to.equal(0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 - Error Cases",
+      "item": [
+        {
+          "name": "[ERR-1] Unauthenticated access — 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "status"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('[ERR-1] No auth returns 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[ERR-2] Key Exchange with Self — 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/key-exchange",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "key-exchange"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{userA_id}}\",\n  \"sender_public_key\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('[ERR-2] Key exchange with self returns 400', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('Error code is invalid_recipient', () => pm.expect(json.error.code).to.equal('invalid_recipient'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[ERR-3] Accept Other's Key Exchange — 403",
+          "description": "User A tries to accept a key exchange that was offered to User B — should be forbidden",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/key-exchange/accept",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "key-exchange", "accept"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key_exchange_id\": \"{{keyExchangeId_bc}}\",\n  \"public_key\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// User B initiates a key exchange with User C so User A can try to steal it",
+                  "const randB64 = (n) => {",
+                  "  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+                  "  return Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');",
+                  "};",
+                  "const baseUrl = pm.variables.get('baseUrl');",
+                  "const userB_token = pm.variables.get('userB_token');",
+                  "const userC_id = pm.variables.get('userC_id');",
+                  "",
+                  "pm.sendRequest({",
+                  "  url: baseUrl + '/api/v1/e2ee/key-exchange',",
+                  "  method: 'POST',",
+                  "  header: {",
+                  "    'Content-Type': 'application/json',",
+                  "    'Authorization': 'Bearer ' + userB_token",
+                  "  },",
+                  "  body: {",
+                  "    mode: 'raw',",
+                  "    raw: JSON.stringify({",
+                  "      recipient_id: userC_id,",
+                  "      sender_public_key: randB64(44)",
+                  "    })",
+                  "  }",
+                  "}, (err, res) => {",
+                  "  if (!err && res.code === 201) {",
+                  "    const kex = res.json().key_exchange;",
+                  "    pm.variables.set('keyExchangeId_bc', kex.id);",
+                  "  } else {",
+                  "    // If already has active exchange, use a fake UUID to still trigger 404 → but that's not 403",
+                  "    // Set a fake UUID — AcceptKeyExchange will return 404, not 403",
+                  "    pm.variables.set('keyExchangeId_bc', '00000000-0000-4000-8000-000000000099');",
+                  "    console.warn('Could not create B→C key exchange for ERR-3 test:', err || res.code);",
+                  "  }",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// User A trying to accept a B→C exchange should get 403 (forbidden)",
+                  "// If the pre-request couldn't create the exchange (e.g. already active), we get 404",
+                  "pm.test('[ERR-3] Accept other party\\'s key exchange: 403 or 404', () => {",
+                  "  pm.expect([403, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('403 error code is unauthorized', () => {",
+                  "    pm.expect(pm.response.json().error.code).to.equal('unauthorized');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[ERR-4] Get Messages from Non-Member Conversation — 403",
+          "description": "User C tries to read the A-B conversation — should be forbidden",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userC_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/messages/{{conversationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "messages", "{{conversationId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('[ERR-4] Non-member cannot read conversation: 403', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('Error code is unauthorized', () => pm.expect(json.error.code).to.equal('unauthorized'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[ERR-5] Send Without Key Exchange (no active E2EE) — 412",
+          "description": "User A sends to User C — no key exchange has been established",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{userC_id}}\",\n  \"encrypted_content\": \"{{enc_content_err}}\",\n  \"content_nonce\": \"{{enc_nonce_err}}\",\n  \"signature\": \"{{enc_sig_err}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const randB64 = (n) => {",
+                  "  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+                  "  return Array.from({length: n}, () => c[Math.floor(Math.random() * c.length)]).join('');",
+                  "};",
+                  "pm.variables.set('enc_content_err', randB64(44));",
+                  "pm.variables.set('enc_nonce_err',   randB64(32));",
+                  "pm.variables.set('enc_sig_err',     randB64(88));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// No key exchange with User C — conversation is none/pending, not active",
+                  "pm.test('[ERR-5] Send without active E2EE: 412 Precondition Failed', () => pm.response.to.have.status(412));",
+                  "const json = pm.response.json();",
+                  "pm.test('Error code is key_exchange_required', () => {",
+                  "  pm.expect(json.error.code).to.equal('key_exchange_required');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[ERR-6] Send Message to Self — 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{userA_id}}\",\n  \"encrypted_content\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\n  \"content_nonce\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\n  \"signature\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('[ERR-6] Send to self returns 400', () => pm.response.to.have.status(400));",
+                  "const json = pm.response.json();",
+                  "pm.test('Error code is invalid_recipient', () => pm.expect(json.error.code).to.equal('invalid_recipient'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[ERR-7] Get Public Keys for Unregistered User — 404",
+          "description": "Fetching keys for a user who has never registered identity keys",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userA_token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/e2ee/keys/{{userC_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "e2ee", "keys", "{{userC_id}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// User C exists but never registered identity keys",
+                  "pm.test('[ERR-7] Keys for unregistered user: 404 Not Found', () => pm.response.to.have.status(404));",
+                  "const json = pm.response.json();",
+                  "pm.test('Error code is keys_not_found', () => pm.expect(json.error.code).to.equal('keys_not_found'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

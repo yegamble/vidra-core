@@ -1,4 +1,4 @@
-# Spectral OpenAPI Linting Rules for Athena
+# Spectral OpenAPI Linting Rules for Vidra Core
 # https://stoplight.io/open-source/spectral
 
 extends:
@@ -22,8 +22,8 @@ rules:
   # Security rules
   oas3-api-servers: warn
 
-  # Custom rules for Athena
-  athena-response-wrapper:
+  # Custom rules for Vidra Core
+  vidra-response-wrapper:
     description: Responses should use SuccessResponse or ErrorResponse wrapper
     severity: warn
     given: $.paths[*][*].responses[*].content.application/json.schema
@@ -33,7 +33,7 @@ rules:
         functionOptions:
           match: '.*(SuccessResponse|ErrorResponse|Error).*'
 
-  athena-api-v1-prefix:
+  vidra-api-v1-prefix:
     description: Most API paths should start with /api/v1
     severity: warn
     given: $.paths[*]~
@@ -43,7 +43,7 @@ rules:
         notMatch: '^/(health|ready|oauth|auth|\.well-known|oembed|inbox|users|nodeinfo).*'
         match: '^/api/v1/.*'
 
-  athena-bearer-auth:
+  vidra-bearer-auth:
     description: OpenAPI file should define bearerAuth security scheme
     severity: error
     given: $.components.securitySchemes
@@ -51,7 +51,7 @@ rules:
       field: bearerAuth
       function: truthy
 
-  athena-pagination-params:
+  vidra-pagination-params:
     description: List endpoints should have pagination parameters
     severity: warn
     given: $.paths[*].get
@@ -73,7 +73,7 @@ rules:
                     name:
                       const: page
 
-  athena-error-responses:
+  vidra-error-responses:
     description: Operations should define error responses
     severity: warn
     given: $.paths[*][*].responses
@@ -83,7 +83,7 @@ rules:
       - field: '5xx'
         function: truthy
 
-  athena-success-response-schema:
+  vidra-success-response-schema:
     description: Success responses should have a schema
     severity: error
     given: $.paths[*][*].responses.2*.content.application/json

@@ -1,13 +1,13 @@
 openapi: 3.0.3
 info:
-  title: Athena Plugin System API
-  description: API endpoints for managing plugins in Athena
+  title: Vidra Core Plugin System API
+  description: API endpoints for managing plugins in Vidra Core
   version: 1.0.0
 
 servers:
   - url: http://localhost:8080
     description: Development server
-  - url: https://api.athena.example.com
+  - url: https://api.vidra.example.com
     description: Production server
 
 security:
@@ -483,7 +483,7 @@ paths:
       tags:
         - Plugins
       summary: Install plugin
-      description: PeerTube-compatible plugin install route backed by Athena's URL-based plugin installer.
+      description: PeerTube-compatible plugin install route backed by Vidra Core's URL-based plugin installer.
       operationId: installPluginCanonical
       requestBody:
         required: true
@@ -519,7 +519,7 @@ paths:
       tags:
         - Plugins
       summary: Update plugin
-      description: PeerTube-compatible plugin update route backed by Athena's URL-based plugin installer.
+      description: PeerTube-compatible plugin update route backed by Vidra Core's URL-based plugin installer.
       operationId: updatePluginCanonical
       requestBody:
         required: true
@@ -555,7 +555,7 @@ paths:
       tags:
         - Plugins
       summary: Uninstall plugin
-      description: PeerTube-compatible plugin uninstall route backed by Athena's plugin registry.
+      description: PeerTube-compatible plugin uninstall route backed by Vidra Core's plugin registry.
       operationId: uninstallPluginCanonical
       requestBody:
         required: true
@@ -613,7 +613,7 @@ paths:
       tags:
         - Plugins
       summary: Get registered plugin settings
-      description: PeerTube-compatible plugin settings metadata route backed by Athena's persisted plugin configuration.
+      description: PeerTube-compatible plugin settings metadata route backed by Vidra Core's persisted plugin configuration.
       operationId: getRegisteredPluginSettingsCanonical
       parameters:
         - $ref: '#/components/parameters/PluginName'
@@ -633,7 +633,7 @@ paths:
       tags:
         - Plugins
       summary: Get public plugin settings
-      description: PeerTube-compatible public plugin settings route backed by Athena's persisted plugin configuration.
+      description: PeerTube-compatible public plugin settings route backed by Vidra Core's persisted plugin configuration.
       operationId: getPublicPluginSettingsCanonical
       parameters:
         - $ref: '#/components/parameters/PluginName'
@@ -653,7 +653,7 @@ paths:
       tags:
         - Plugins
       summary: Update plugin settings
-      description: PeerTube-compatible plugin settings update route backed by Athena's persisted plugin configuration.
+      description: PeerTube-compatible plugin settings update route backed by Vidra Core's persisted plugin configuration.
       operationId: updatePluginSettingsCanonical
       parameters:
         - $ref: '#/components/parameters/PluginName'
@@ -726,7 +726,7 @@ components:
           example: "1.0.0"
         author:
           type: string
-          example: "Athena Team"
+          example: "Vidra Core Team"
         description:
           type: string
           example: "Sends webhooks on various events"

@@ -1,8 +1,8 @@
 package video
 
 import (
-	"athena/internal/repository"
-	"athena/internal/usecase"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/testutil"
+	"vidra-core/internal/testutil"
 )
 
 // TestLoadScenarios tests various high-volume scenarios to ensure the system

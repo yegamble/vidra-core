@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/repository"
-	"athena/internal/storage"
-	"athena/internal/usecase/migration"
+	"vidra-core/internal/config"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/storage"
+	"vidra-core/internal/usecase/migration"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"

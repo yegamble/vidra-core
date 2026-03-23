@@ -3,13 +3,13 @@
 **Date:** 2025-11-17
 **Severity:** CRITICAL
 **Status:** RESOLVED
-**Issue ID:** ATHENA-SEC-001
+**Issue ID:** VIDRA-SEC-001
 
 ---
 
 ## Executive Summary
 
-This report documents the successful resolution of a critical security vulnerability in the Athena decentralized video platform's ActivityPub implementation. The vulnerability involved the storage of ActivityPub private keys in plaintext within the database, and the use of inadequate RSA key sizes that did not meet current NIST cryptographic standards.
+This report documents the successful resolution of a critical security vulnerability in the Vidra Core decentralized video platform's ActivityPub implementation. The vulnerability involved the storage of ActivityPub private keys in plaintext within the database, and the use of inadequate RSA key sizes that did not meet current NIST cryptographic standards.
 
 ### Critical Issues Addressed
 
@@ -30,7 +30,7 @@ This report documents the successful resolution of a critical security vulnerabi
 
 ### 1. Plaintext Private Key Storage
 
-**Location:** `/home/user/athena/migrations/041_add_activitypub_support.sql`
+**Location:** `/home/user/vidra/migrations/041_add_activitypub_support.sql`
 
 **Vulnerable Code:**
 
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS ap_actor_keys (
 
 ### 2. Inadequate RSA Key Size
 
-**Location:** `/home/user/athena/internal/activitypub/httpsig.go:250`
+**Location:** `/home/user/vidra/internal/activitypub/httpsig.go:250`
 
 **Vulnerable Code:**
 
@@ -88,7 +88,7 @@ privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 
 ### 1. Encryption at Rest (AES-256-GCM)
 
-**New Module:** `/home/user/athena/internal/security/activitypub_key_encryption.go`
+**New Module:** `/home/user/vidra/internal/security/activitypub_key_encryption.go`
 
 **Encryption Algorithm:**
 
@@ -124,7 +124,7 @@ func (e *ActivityPubKeyEncryption) DecryptPrivateKey(encryptedData string) (stri
 
 ### 2. Repository Layer Updates
 
-**File Modified:** `/home/user/athena/internal/repository/activitypub_repository.go`
+**File Modified:** `/home/user/vidra/internal/repository/activitypub_repository.go`
 
 **Changes:**
 
@@ -151,7 +151,7 @@ func (r *ActivityPubRepository) GetActorKeys(...) (publicKey, privateKey string,
 
 ### 3. RSA Key Size Upgrade
 
-**File Modified:** `/home/user/athena/internal/activitypub/httpsig.go:249-252`
+**File Modified:** `/home/user/vidra/internal/activitypub/httpsig.go:249-252`
 
 **Old Code:**
 
@@ -177,7 +177,7 @@ privateKey, err := rsa.GenerateKey(rand.Reader, 3072)
 
 ### 4. Configuration Updates
 
-**File Modified:** `/home/user/athena/internal/config/config.go`
+**File Modified:** `/home/user/vidra/internal/config/config.go`
 
 **New Configuration Field:**
 
@@ -211,7 +211,7 @@ openssl rand -base64 48
 
 ### Database Migration
 
-**File:** `/home/user/athena/migrations/058_encrypt_activitypub_private_keys.sql`
+**File:** `/home/user/vidra/migrations/058_encrypt_activitypub_private_keys.sql`
 
 **Changes:**
 
@@ -229,7 +229,7 @@ COMMENT ON COLUMN ap_actor_keys.private_key_pem IS 'Encrypted private key (AES-2
 
 ### Key Migration Tool
 
-**File:** `/home/user/athena/cmd/encrypt-activitypub-keys/main.go`
+**File:** `/home/user/vidra/cmd/encrypt-activitypub-keys/main.go`
 
 **Purpose:** Encrypt all existing plaintext private keys in the database
 
@@ -287,7 +287,7 @@ All private keys have been successfully encrypted!
 
 **1. Encryption Module Tests**
 
-**File:** `/home/user/athena/internal/security/activitypub_key_encryption_test.go`
+**File:** `/home/user/vidra/internal/security/activitypub_key_encryption_test.go`
 
 **Test Cases:**
 
@@ -305,7 +305,7 @@ All private keys have been successfully encrypted!
 
 **2. Repository Security Tests**
 
-**File:** `/home/user/athena/internal/repository/activitypub_key_security_test.go`
+**File:** `/home/user/vidra/internal/repository/activitypub_key_security_test.go`
 
 **Critical Security Tests:**
 
@@ -330,7 +330,7 @@ if strings.Contains(storedPrivateKey, "BEGIN RSA PRIVATE KEY") {
 
 **3. RSA Key Size Tests**
 
-**File:** `/home/user/athena/internal/activitypub/httpsig_test.go`
+**File:** `/home/user/vidra/internal/activitypub/httpsig_test.go`
 
 **Enhanced Test:**
 
@@ -450,7 +450,7 @@ BenchmarkGenerateKeyPair-8 (3072-bit): 950ms per key pair
 1. **Backup Database:**
 
    ```bash
-   pg_dump -U athena_user -d athena > athena_backup_$(date +%Y%m%d).sql
+   pg_dump -U vidra_user -d vidra > vidra_backup_$(date +%Y%m%d).sql
    ```
 
 2. **Generate Encryption Key:**
@@ -490,7 +490,7 @@ go run cmd/encrypt-activitypub-keys/main.go
 
 ```bash
 # Connect to database
-psql -U athena_user -d athena
+psql -U vidra_user -d vidra
 
 # Verify keys are encrypted
 SELECT actor_id,
@@ -514,14 +514,14 @@ FROM ap_actor_keys;
 **5. Restart Application:**
 
 ```bash
-systemctl restart athena
+systemctl restart vidra
 ```
 
 **6. Verify Application:**
 
 ```bash
 # Check logs for encryption initialization
-journalctl -u athena | grep -i encryption
+journalctl -u vidra | grep -i encryption
 
 # Test ActivityPub functionality
 curl -H "Accept: application/activity+json" https://your-domain.com/users/testuser
@@ -692,6 +692,6 @@ The implementation successfully addresses the critical security vulnerabilities 
 
 ---
 
-**Report Prepared By:** Athena Security Team
+**Report Prepared By:** Vidra Core Security Team
 **Review Status:** Approved for Production Deployment
 **Next Review Date:** 2026-11-17 (Annual cryptographic review)

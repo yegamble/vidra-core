@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/jmoiron/sqlx"
 )

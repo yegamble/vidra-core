@@ -19,7 +19,7 @@ func composeVerificationEmail(cfg *Config, username, token, code string) (string
         <html>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #2c3e50;">Welcome to Athena, %s!</h2>
+                <h2 style="color: #2c3e50;">Welcome to Vidra Core, %s!</h2>
 
                 <p>Thank you for registering. Please verify your email address to complete your registration.</p>
 
@@ -50,7 +50,7 @@ func composeVerificationEmail(cfg *Config, username, token, code string) (string
     `, safeUsername, safeLink, safeCode, safeLink, safeLink)
 
 	plainBody := fmt.Sprintf(`
-Welcome to Athena, %s!
+Welcome to Vidra Core, %s!
 
 Thank you for registering. Please verify your email address to complete your registration.
 

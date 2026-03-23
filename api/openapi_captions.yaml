@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Video Captions
+  title: Vidra Core API - Video Captions
   description: Endpoints for managing video captions and subtitles
   version: 1.0.0
 

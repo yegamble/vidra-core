@@ -184,14 +184,14 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 
 | Collection | File Size | Coverage Area |
 |------------|-----------|---------------|
-| `athena-auth.postman_collection.json` | 3,786 lines | Auth, registration, login, OAuth |
-| `athena-virus-scanner-tests.postman_collection.json` | 1,130 lines | Virus scanning edge cases |
-| `athena-edge-cases-security.postman_collection.json` | 997 lines | Security edge cases |
-| `athena-registration-edge-cases.postman_collection.json` | 927 lines | Registration edge cases |
-| `athena-analytics.postman_collection.json` | 807 lines | Analytics endpoints |
-| `athena-uploads.postman_collection.json` | 739 lines | Upload endpoints |
-| `athena-imports.postman_collection.json` | 664 lines | Import endpoints |
-| `athena-encoding-jobs.postman_collection.json` | 456 lines | Encoding job endpoints |
+| `vidra-auth.postman_collection.json` | 3,786 lines | Auth, registration, login, OAuth |
+| `vidra-virus-scanner-tests.postman_collection.json` | 1,130 lines | Virus scanning edge cases |
+| `vidra-edge-cases-security.postman_collection.json` | 997 lines | Security edge cases |
+| `vidra-registration-edge-cases.postman_collection.json` | 927 lines | Registration edge cases |
+| `vidra-analytics.postman_collection.json` | 807 lines | Analytics endpoints |
+| `vidra-uploads.postman_collection.json` | 739 lines | Upload endpoints |
+| `vidra-imports.postman_collection.json` | 664 lines | Import endpoints |
+| `vidra-encoding-jobs.postman_collection.json` | 456 lines | Encoding job endpoints |
 
 **Total: 8 collections, ~9,506 lines**
 
@@ -344,10 +344,10 @@ Based on `internal/httpapi/routes.go`, the API has the following endpoint groups
 
 ### Immediate Actions
 
-1. **Create `athena-videos.postman_collection.json`** - Video CRUD is the core feature and has zero Postman coverage
-2. **Create `athena-channels.postman_collection.json`** - Second most important CRUD collection
-3. **Create `athena-social.postman_collection.json`** - Comments, ratings, playlists in one collection
-4. **Create `athena-2fa.postman_collection.json`** - Security-critical, no coverage
+1. **Create `vidra-videos.postman_collection.json`** - Video CRUD is the core feature and has zero Postman coverage
+2. **Create `vidra-channels.postman_collection.json`** - Second most important CRUD collection
+3. **Create `vidra-social.postman_collection.json`** - Comments, ratings, playlists in one collection
+4. **Create `vidra-2fa.postman_collection.json`** - Security-critical, no coverage
 
 ### Medium-Term
 

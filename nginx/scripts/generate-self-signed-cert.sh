@@ -1,5 +1,5 @@
 #!/bin/sh
-# Generate self-signed SSL certificates for Athena Nginx
+# Generate self-signed SSL certificates for Vidra Core Nginx
 # Usage: ./generate-self-signed-cert.sh [domain]
 # Example: ./generate-self-signed-cert.sh localhost
 
@@ -41,7 +41,7 @@ fi
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
     -keyout "$KEY_FILE" \
     -out "$CERT_FILE" \
-    -subj "/C=US/ST=State/L=City/O=Athena/CN=$DOMAIN" \
+    -subj "/C=US/ST=State/L=City/O=Vidra Core/CN=$DOMAIN" \
     -addext "subjectAltName=DNS:$DOMAIN,DNS:*.$DOMAIN,DNS:localhost,IP:127.0.0.1"
 
 # Set appropriate permissions

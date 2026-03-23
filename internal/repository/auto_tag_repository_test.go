@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func setupAutoTagMock(t *testing.T) (*sqlx.DB, sqlmock.Sqlmock) {

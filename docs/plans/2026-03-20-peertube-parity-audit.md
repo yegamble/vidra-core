@@ -9,9 +9,9 @@ Type: Feature
 
 ## Summary
 
-**Goal:** Comprehensive audit of Athena vs PeerTube (v8.1.0) covering every API endpoint, user story, and E2E capability. Fix all failing tests, implement critical missing features, and produce a gap report for deferred items.
+**Goal:** Comprehensive audit of Vidra Core vs PeerTube (v8.1.0) covering every API endpoint, user story, and E2E capability. Fix all failing tests, implement critical missing features, and produce a gap report for deferred items.
 
-**Architecture:** Athena already implements ~85% of PeerTube's core features across 20 sprints. This plan addresses: (1) 10 failing tests + 2 build failures, (2) critical missing PeerTube endpoints (RSS feeds, password reset, search for channels/playlists, video blacklisting, user account deletion, video chapters), (3) documented gap report for remaining items.
+**Architecture:** Vidra Core already implements ~85% of PeerTube's core features across 20 sprints. This plan addresses: (1) 10 failing tests + 2 build failures, (2) critical missing PeerTube endpoints (RSS feeds, password reset, search for channels/playlists, video blacklisting, user account deletion, video chapters), (3) documented gap report for remaining items.
 
 **Tech Stack:** Go 1.24+, Chi router, PostgreSQL/SQLX, Redis, IPFS, FFmpeg
 
@@ -36,7 +36,7 @@ Type: Feature
 - Video description endpoint (`GET /api/v1/videos/{id}/description`)
 
 **Phase C — Comprehensive gap report:**
-- Full mapping document: every PeerTube endpoint → Athena status
+- Full mapping document: every PeerTube endpoint → Vidra Core status
 - User story coverage analysis
 - E2E test recommendations
 
@@ -52,7 +52,7 @@ Type: Feature
 - Video embed privacy — requires iframe integration
 - Instance logo/avatar/banner management — cosmetic admin feature
 - Video source replacement (resumable) — complex upload variant
-- oAuth client flow — Athena uses JWT, has OAuth endpoints already
+- oAuth client flow — Vidra Core uses JWT, has OAuth endpoints already
 - Video channel syncs — requires external platform polling
 
 ## Context for Implementer
@@ -90,9 +90,9 @@ Type: Feature
   - Routes are registered conditionally based on `cfg.Enable*` flags and non-nil deps
 
 - **Domain context:**
-  - PeerTube's "accounts" map to Athena's "users" — each user has an account actor
-  - PeerTube's "video-channels" map to Athena's "channels" — videos belong to channels
-  - PeerTube uses "blacklist" for admin video takedowns; Athena has no equivalent
+  - PeerTube's "accounts" map to Vidra Core's "users" — each user has an account actor
+  - PeerTube's "video-channels" map to Vidra Core's "channels" — videos belong to channels
+  - PeerTube uses "blacklist" for admin video takedowns; Vidra Core has no equivalent
   - PeerTube's feed system provides RSS/Atom/JSON Feed for videos, comments, subscriptions
 
 ## Assumptions
@@ -120,7 +120,7 @@ Type: Feature
 4. `GET /api/v1/search/video-channels` returns channels matching a query
 5. `POST /api/v1/videos/{id}/blacklist` (admin) hides a video from public listing
 6. `DELETE /api/v1/users/me` soft-deletes the authenticated user
-7. Gap report document covers all PeerTube v8.1.0 OpenAPI endpoints with Athena status (verify count against spec before finalizing)
+7. Gap report document covers all PeerTube v8.1.0 OpenAPI endpoints with Vidra Core status (verify count against spec before finalizing)
 
 ### Artifacts
 
@@ -286,7 +286,7 @@ Type: Feature
 **Key Decisions / Notes:**
 
 - PeerTube's flow: user requests reset → email sent with token → user submits token + new password
-- Athena already has `email.SendPasswordResetEmail()` in `internal/email/service.go:135` — reuse this
+- Vidra Core already has `email.SendPasswordResetEmail()` in `internal/email/service.go:135` — reuse this
 - **Token storage: Use a DB table** (`password_reset_tokens` with columns: `id`, `user_id`, `token_hash`, `expires_at`, `created_at`, `used_at`). Follow the email verification token pattern. DB is preferred over Redis because: tokens should survive Redis restarts, and the email verification system already uses DB storage — consistency is important.
 - Handler pattern: follow existing auth handlers in `internal/httpapi/handlers/auth/`
 - Rate limit the request endpoint to prevent abuse (use existing `strictAuthLimiter`)
@@ -325,7 +325,7 @@ Type: Feature
 **Key Decisions / Notes:**
 
 - PeerTube supports `search` query param with optional filters (sort, host, etc.)
-- Athena already has `SearchVideosHandler` at `/api/v1/videos/search` — follow the same pattern
+- Vidra Core already has `SearchVideosHandler` at `/api/v1/videos/search` — follow the same pattern
 - Channel search: query against `name`, `display_name`, `description` fields
 - Playlist search: query against `title`, `description` fields
 - Mount at `/api/v1/search/video-channels` and `/api/v1/search/video-playlists` per PeerTube spec
@@ -532,7 +532,7 @@ Type: Feature
 
 ### Task 12: Produce comprehensive PeerTube parity gap report
 
-**Objective:** Create a detailed mapping document of all 212 PeerTube API endpoints against Athena's implementation status.
+**Objective:** Create a detailed mapping document of all 212 PeerTube API endpoints against Vidra Core's implementation status.
 
 **Dependencies:** Tasks 1-11
 
@@ -542,10 +542,10 @@ Type: Feature
 
 **Key Decisions / Notes:**
 
-- Document format: table with columns: PeerTube Endpoint | HTTP Method | Athena Status | Notes
-- Statuses: `Implemented`, `Partial`, `Missing`, `N/A` (Athena has different approach), `Deferred`
+- Document format: table with columns: PeerTube Endpoint | HTTP Method | Vidra Core Status | Notes
+- Statuses: `Implemented`, `Partial`, `Missing`, `N/A` (Vidra Core has different approach), `Deferred`
 - Group by PeerTube API category (accounts, videos, channels, etc.)
-- Include user story coverage analysis: what can a PeerTube user do that an Athena user cannot?
+- Include user story coverage analysis: what can a PeerTube user do that an Vidra Core user cannot?
 - Include E2E test recommendations for critical paths
 - After Tasks 5-11, the gap should be primarily cosmetic/admin features
 
@@ -574,4 +574,4 @@ None — all critical decisions resolved during exploration.
 5. **User data export** — Export all user data as ZIP. Requires data aggregation across all tables.
 6. **Video channel syncs** — Auto-import from external YouTube/etc channels on schedule.
 7. **Video source replacement** — Replace source file while keeping metadata. Needs re-encoding pipeline.
-8. **Resumable uploads (tus protocol)** — PeerTube uses tus; Athena has chunked upload which is functionally equivalent.
+8. **Resumable uploads (tus protocol)** — PeerTube uses tus; Vidra Core has chunked upload which is functionally equivalent.

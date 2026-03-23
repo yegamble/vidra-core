@@ -1,4 +1,4 @@
-module athena
+module vidra-core
 
 go 1.24.0
 

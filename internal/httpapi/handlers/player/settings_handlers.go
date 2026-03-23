@@ -7,8 +7,8 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
 )
 
 // PlayerSettingsRepository defines the storage interface for player settings.

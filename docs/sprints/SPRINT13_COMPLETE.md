@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-Sprint 13 successfully implemented a comprehensive plugin security infrastructure for Athena, including plugin upload capabilities, cryptographic signature verification, and extensive permission validation. The sprint delivers production-ready security features that protect the system from malicious plugins while enabling a robust plugin ecosystem.
+Sprint 13 successfully implemented a comprehensive plugin security infrastructure for Vidra Core, including plugin upload capabilities, cryptographic signature verification, and extensive permission validation. The sprint delivers production-ready security features that protect the system from malicious plugins while enabling a robust plugin ecosystem.
 
 ### Key Achievements
 
@@ -118,10 +118,10 @@ type SignatureVerifier struct {
 ```json
 [
   {
-    "author": "athena-team",
+    "author": "vidra-team",
     "public_key": "base64-encoded-public-key",
     "added_at": "2025-10-23T00:00:00Z",
-    "comment": "Official Athena plugins"
+    "comment": "Official Vidra Core plugins"
   }
 ]
 ```
@@ -352,7 +352,7 @@ ok   command-line-arguments 0.190s
 
 ```bash
 $ go test -short ./internal/plugin/...
-ok   athena/internal/plugin 0.291s
+ok   vidra/internal/plugin 0.291s
 ```
 
 ### Test Coverage
@@ -498,7 +498,7 @@ import (
     "fmt"
     "os"
 
-    "athena/internal/plugin"
+    "vidra-core/internal/plugin"
 )
 
 func main() {
@@ -530,7 +530,7 @@ import (
     "io"
     "os"
 
-    "athena/internal/plugin"
+    "vidra-core/internal/plugin"
 )
 
 func main() {
@@ -549,7 +549,7 @@ curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -F "plugin=@my-plugin.zip" \
   -F "signature=@my-plugin.sig" \
-  https://api.athena.example.com/api/v1/admin/plugins
+  https://api.vidra.example.com/api/v1/admin/plugins
 ```
 
 ### For Server Administrators
@@ -563,14 +563,14 @@ echo '[{
   "public_key": "rWJzSc3...",
   "added_at": "2025-10-23T00:00:00Z",
   "comment": "Verified third-party developer"
-}]' > /etc/athena/trusted_plugin_keys.json
+}]' > /etc/vidra/trusted_plugin_keys.json
 ```
 
 #### 2. Configure Handler
 
 ```go
 // In server initialization
-verifier, err := plugin.NewSignatureVerifier("/etc/athena/trusted_plugin_keys.json")
+verifier, err := plugin.NewSignatureVerifier("/etc/vidra/trusted_plugin_keys.json")
 if err != nil {
     log.Fatal(err)
 }
@@ -587,7 +587,7 @@ handler := httpapi.NewPluginHandler(
 
 ```bash
 # Enable signature verification
-PLUGIN_TRUSTED_KEYS_FILE="/etc/athena/trusted_plugin_keys.json"
+PLUGIN_TRUSTED_KEYS_FILE="/etc/vidra/trusted_plugin_keys.json"
 REQUIRE_PLUGIN_SIGNATURES=true  # or false for development
 ```
 
@@ -678,8 +678,8 @@ REQUIRE_PLUGIN_SIGNATURES=true  # or false for development
 2. **Restrict Plugin Directory Permissions**
 
    ```bash
-   chmod 750 /var/lib/athena/plugins
-   chown athena:athena /var/lib/athena/plugins
+   chmod 750 /var/lib/vidra/plugins
+   chown vidra:vidra /var/lib/vidra/plugins
    ```
 
 3. **Monitor Plugin Execution**
@@ -775,7 +775,7 @@ REQUIRE_PLUGIN_SIGNATURES=true  # or false for development
 
 ## Conclusion
 
-Sprint 13 successfully delivered a production-ready plugin security infrastructure for Athena. The implementation includes:
+Sprint 13 successfully delivered a production-ready plugin security infrastructure for Vidra Core. The implementation includes:
 
 ✅ **Secure Upload Mechanism** - Multipart file upload with comprehensive validation
 ✅ **Cryptographic Verification** - Ed25519 signature verification with trusted key management
@@ -811,7 +811,7 @@ Sprint 13 successfully delivered a production-ready plugin security infrastructu
 - **Documentation**: ✅ Complete
 - **OpenAPI Spec**: ✅ Complete
 
-The plugin system now provides a secure foundation for extending Athena functionality while protecting the platform and users from malicious code.
+The plugin system now provides a secure foundation for extending Vidra Core functionality while protecting the platform and users from malicious code.
 
 ---
 

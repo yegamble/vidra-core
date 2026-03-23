@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
-	"athena/internal/domain"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/usecase"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"

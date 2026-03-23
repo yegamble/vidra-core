@@ -1,6 +1,6 @@
 package usecase
 
-import ucrt "athena/internal/usecase/rating"
+import ucrt "vidra-core/internal/usecase/rating"
 
 type RatingService = ucrt.Service
 

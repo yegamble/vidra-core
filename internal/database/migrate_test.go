@@ -15,7 +15,7 @@ func TestRunMigrations(t *testing.T) {
 		t.Skip("Skipping database tests in short mode")
 	}
 
-	dbURL := "postgres://athena:password@localhost:5432/athena_test?sslmode=disable"
+	dbURL := "postgres://vidra:password@localhost:5432/vidra_test?sslmode=disable"
 
 	tests := []struct {
 		name    string
@@ -36,7 +36,7 @@ func TestRunMigrations(t *testing.T) {
 			_, err = db.Exec(`
 				DROP SCHEMA public CASCADE;
 				CREATE SCHEMA public;
-				GRANT ALL ON SCHEMA public TO athena;
+				GRANT ALL ON SCHEMA public TO vidra;
 				GRANT ALL ON SCHEMA public TO public;
 			`)
 			require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestCurrentVersion(t *testing.T) {
 		t.Skip("Skipping database tests in short mode")
 	}
 
-	dbURL := "postgres://athena:password@localhost:5432/athena_test?sslmode=disable"
+	dbURL := "postgres://vidra:password@localhost:5432/vidra_test?sslmode=disable"
 
 	db, err := sqlx.Connect("postgres", dbURL)
 	require.NoError(t, err)
@@ -84,7 +84,7 @@ func TestRunMigrations_AlreadyMigrated(t *testing.T) {
 		t.Skip("Skipping database tests in short mode")
 	}
 
-	dbURL := "postgres://athena:password@localhost:5432/athena_test?sslmode=disable"
+	dbURL := "postgres://vidra:password@localhost:5432/vidra_test?sslmode=disable"
 
 	db, err := sqlx.Connect("postgres", dbURL)
 	require.NoError(t, err)

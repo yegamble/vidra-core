@@ -10,7 +10,7 @@ import (
 func newS3ConfigForTests() S3Config {
 	return S3Config{
 		Endpoint:  "http://127.0.0.1:1",
-		Bucket:    "athena-test-bucket",
+		Bucket:    "vidra-test-bucket",
 		AccessKey: "test-access",
 		SecretKey: "test-secret",
 		Region:    "us-test-1",

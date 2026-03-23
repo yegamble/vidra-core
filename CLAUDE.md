@@ -1,4 +1,4 @@
-# Athena - PeerTube Backend in Go
+# Vidra Core - PeerTube Backend in Go
 
 ## Quick Reference
 
@@ -138,4 +138,4 @@ For detailed guidance in specific areas, see:
 - Audio transcription (Whisper)
 - Kubernetes and Terraform deployment
 - Video Studio Editing: server-side FFmpeg pipeline (cut, intro, outro, watermark)
-- Migration ETL: PeerTube dump → Athena import pipeline with dry-run and cancel support
+- Migration ETL: PeerTube dump → Vidra Core import pipeline with dry-run and cancel support

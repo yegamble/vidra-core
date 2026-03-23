@@ -1,6 +1,6 @@
 package usecase
 
-import "athena/internal/port"
+import "vidra-core/internal/port"
 
 type OAuthClient = port.OAuthClient
 type OAuthAuthorizationCode = port.OAuthAuthorizationCode

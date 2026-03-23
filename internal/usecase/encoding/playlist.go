@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // MultiCodecPlaylistGenerator generates HLS master playlists with multiple codec support

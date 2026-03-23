@@ -14,13 +14,13 @@ Comprehensive security test suite created following TDD (Test-Driven Development
 
 ### 1. CID Validation Test Suite
 
-**File:** `/home/user/athena/internal/ipfs/cid_validation_test.go`
+**File:** `/home/user/vidra/internal/ipfs/cid_validation_test.go`
 **Test Cases:** 22 (exceeds requirement of 15)
 **Lines of Code:** 620+
 
 ### 2. Cluster Authentication Test Suite
 
-**File:** `/home/user/athena/internal/ipfs/cluster_auth_test.go`
+**File:** `/home/user/vidra/internal/ipfs/cluster_auth_test.go`
 **Test Cases:** 22 (exceeds requirement of 10)
 **Lines of Code:** 730+
 
@@ -593,9 +593,9 @@ undefined: ClusterAuthConfig
 
 ## Files Created
 
-1. `/home/user/athena/internal/ipfs/cid_validation_test.go` (620+ lines)
-2. `/home/user/athena/internal/ipfs/cluster_auth_test.go` (730+ lines)
-3. `/home/user/athena/internal/ipfs/SECURITY_TESTS_SUMMARY.md` (this file)
+1. `/home/user/vidra/internal/ipfs/cid_validation_test.go` (620+ lines)
+2. `/home/user/vidra/internal/ipfs/cluster_auth_test.go` (730+ lines)
+3. `/home/user/vidra/internal/ipfs/SECURITY_TESTS_SUMMARY.md` (this file)
 
 **Total Lines of Test Code:** 1,350+
 **Total Test Cases:** 44

@@ -11,7 +11,7 @@
 **Fix:**
 
 - Changed `HandlerDependencies` to `shared.HandlerDependencies`
-- Added `"athena/internal/httpapi/shared"` import
+- Added `"vidra-core/internal/httpapi/shared"` import
 
 ### 2. OAuth Methods Missing on Server
 
@@ -31,7 +31,7 @@
 
 **Fix:**
 
-- Added `"athena/internal/httpapi/handlers/federation"` import
+- Added `"vidra-core/internal/httpapi/handlers/federation"` import
 - Changed to `federation.NewActivityPubHandlers`
 
 ### 4. undefined: NewViewsHandler
@@ -40,7 +40,7 @@
 
 **Fix:**
 
-- Added `"athena/internal/httpapi/handlers/video"` import
+- Added `"vidra-core/internal/httpapi/handlers/video"` import
 - Changed to `video.NewViewsHandler`
 
 ### 5. undefined: MapDomainErrorToHTTP
@@ -55,7 +55,7 @@
 
 **Fix:**
 
-- Added `"athena/internal/httpapi/shared"` import
+- Added `"vidra-core/internal/httpapi/shared"` import
 - Changed all `WriteJSON` calls to `shared.WriteJSON`
 - Changed all `WriteError` calls to `shared.WriteError`
 
@@ -175,16 +175,16 @@
 
 ```go
 import (
- "athena/internal/httpapi/handlers/auth"
- "athena/internal/httpapi/handlers/channel"
- "athena/internal/httpapi/handlers/federation"
- "athena/internal/httpapi/handlers/livestream"
- "athena/internal/httpapi/handlers/messaging"
- "athena/internal/httpapi/handlers/moderation"
- "athena/internal/httpapi/handlers/admin"
- "athena/internal/httpapi/handlers/social"
- "athena/internal/httpapi/handlers/video"
- "athena/internal/httpapi/shared"
+ "vidra-core/internal/httpapi/handlers/auth"
+ "vidra-core/internal/httpapi/handlers/channel"
+ "vidra-core/internal/httpapi/handlers/federation"
+ "vidra-core/internal/httpapi/handlers/livestream"
+ "vidra-core/internal/httpapi/handlers/messaging"
+ "vidra-core/internal/httpapi/handlers/moderation"
+ "vidra-core/internal/httpapi/handlers/admin"
+ "vidra-core/internal/httpapi/handlers/social"
+ "vidra-core/internal/httpapi/handlers/video"
+ "vidra-core/internal/httpapi/shared"
 )
 ```
 
@@ -192,7 +192,7 @@ import (
 
 ```go
 import (
- "athena/internal/httpapi/shared"
+ "vidra-core/internal/httpapi/shared"
 )
 ```
 
@@ -200,7 +200,7 @@ import (
 
 ```go
 import (
- "athena/internal/httpapi/shared"
+ "vidra-core/internal/httpapi/shared"
 )
 ```
 

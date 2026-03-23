@@ -2,7 +2,7 @@
 <h2 style="margin-bottom: 20px;">Database Configuration</h2>
 
 <p style="margin-bottom: 20px; color: #6b7280;">
-    Athena requires PostgreSQL 13+ for data storage.
+    Vidra Core requires PostgreSQL 13+ for data storage.
 </p>
 
 {{if .Error}}
@@ -34,9 +34,9 @@
         <strong>Managed Automatically</strong>
         <p style="margin-top: 10px;">Docker will set up PostgreSQL with the following configuration:</p>
         <ul style="margin-top: 10px; margin-left: 20px;">
-            <li>User: athena</li>
+            <li>User: vidra</li>
             <li>Password: Auto-generated</li>
-            <li>Database: athena</li>
+            <li>Database: vidra</li>
             <li>Port: 5432 (internal)</li>
         </ul>
     </div>
@@ -62,7 +62,7 @@
             <label for="postgres_user">Username *</label>
             <input type="text" id="postgres_user" name="POSTGRES_USER"
                    value="{{.Config.PostgresUser}}"
-                   placeholder="athena">
+                   placeholder="vidra">
         </div>
 
         <div class="form-group">
@@ -75,9 +75,9 @@
         <div class="form-group">
             <label for="postgres_db">Database Name</label>
             <input type="text" id="postgres_db" name="POSTGRES_DB"
-                   value="{{if .Config.PostgresDB}}{{.Config.PostgresDB}}{{else}}athena{{end}}"
-                   placeholder="athena">
-            <div class="help-text">Default: athena</div>
+                   value="{{if .Config.PostgresDB}}{{.Config.PostgresDB}}{{else}}vidra{{end}}"
+                   placeholder="vidra">
+            <div class="help-text">Default: vidra</div>
         </div>
 
         <div class="form-group">

@@ -121,7 +121,7 @@
 
 - Credentials are configured correctly
 - S3 client initializes successfully
-- **Issue**: Bucket "athena-videos" returns 403 Forbidden
+- **Issue**: Bucket "vidra-videos" returns 403 Forbidden
 
 **Possible Causes:**
 
@@ -132,7 +132,7 @@
 **Next Steps:**
 
 1. Log into Backblaze B2: <https://www.backblaze.com/b2/>
-2. Create bucket "athena-videos" OR find existing bucket name
+2. Create bucket "vidra-videos" OR find existing bucket name
 3. Update `.env` with correct bucket name
 4. Ensure application key has access to the bucket
 5. Re-run: `./bin/s3test`
@@ -178,7 +178,7 @@
 2. **Apply Database Migration**
 
    ```bash
-   psql -h localhost -U athena_user -d athena -f migrations/055_add_s3_storage_fields.sql
+   psql -h localhost -U vidra_user -d vidra -f migrations/055_add_s3_storage_fields.sql
    ```
 
 3. **Test S3 Connection**

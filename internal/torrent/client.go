@@ -1,7 +1,7 @@
 package torrent
 
 import (
-	"athena/internal/config"
+	"vidra-core/internal/config"
 	"bytes"
 	"context"
 	"fmt"

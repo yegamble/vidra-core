@@ -30,8 +30,8 @@ services:
   postgres:
     host: "localhost"
     port: 5433
-    database: "athena_e2e"
-    user: "athena_test"
+    database: "vidra_e2e"
+    user: "vidra_test"
     password: "test_password"
 
   redis:
@@ -42,7 +42,7 @@ services:
     endpoint: "localhost:9000"
     access_key: "minioadmin"
     secret_key: "minioadmin"
-    bucket: "athena-test"
+    bucket: "vidra-test"
     use_ssl: false
 
   clamav:

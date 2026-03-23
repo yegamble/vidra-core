@@ -11,8 +11,8 @@ import (
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"athena/internal/domain"
-	ucchannel "athena/internal/usecase/channel"
+	"vidra-core/internal/domain"
+	ucchannel "vidra-core/internal/usecase/channel"
 )
 
 // buildHandleRouter builds a chi router mirroring the /video-channels/{channelHandle} routes

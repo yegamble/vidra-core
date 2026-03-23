@@ -41,7 +41,7 @@ All `-race` targets automatically set `CGO_ENABLED=1` internally.
 
 ### 2. GCC Installation Action
 
-Created `/home/user/athena/.github/actions/install-gcc/action.yml`:
+Created `/home/user/vidra/.github/actions/install-gcc/action.yml`:
 
 **Features:**
 
@@ -395,36 +395,36 @@ make test-unit-race
 
 ### Makefile
 
-- `/home/user/athena/Makefile`
+- `/home/user/vidra/Makefile`
   - Added: `test-race`, `test-unit-race`, `test-integration-race`, etc.
   - Modified: Removed `-race` from default targets
   - Fixed: Cleaned up orphaned test commands in `logs` target
 
 ### Workflows
 
-- `/home/user/athena/.github/workflows/test.yml`
+- `/home/user/vidra/.github/workflows/test.yml`
   - Added: `unit-race` and `integration-race` jobs
   - Modified: Job names to indicate fast vs. race tests
   - Updated: `all-tests-passed` to include race jobs
 
-- `/home/user/athena/.github/workflows/security-tests.yml`
+- `/home/user/vidra/.github/workflows/security-tests.yml`
   - Removed: `-race` flag from all matrix tests
   - Added: `security-tests-race` job for critical categories
 
-- `/home/user/athena/.github/workflows/virus-scanner-tests.yml`
+- `/home/user/vidra/.github/workflows/virus-scanner-tests.yml`
   - Removed: `-race` flag from default tests
   - Added: `integration-tests-race` job
 
-- `/home/user/athena/.github/workflows/video-import.yml`
+- `/home/user/vidra/.github/workflows/video-import.yml`
   - Removed: `-race` flag from unit tests
   - Added: `unit-tests-race` job
 
-- `/home/user/athena/.github/workflows/e2e-tests.yml`
+- `/home/user/vidra/.github/workflows/e2e-tests.yml`
   - Updated: `e2e-tests-race` to install gcc and enable CGO
 
 ### Actions
 
-- `/home/user/athena/.github/actions/install-gcc/action.yml` (NEW)
+- `/home/user/vidra/.github/actions/install-gcc/action.yml` (NEW)
   - Composite action to install GCC in CI containers
   - Supports Debian/Ubuntu and Alpine
   - Includes verification and error handling

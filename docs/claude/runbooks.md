@@ -1,4 +1,4 @@
-# Claude Operations Runbook - Athena Backend
+# Claude Operations Runbook - Vidra Core Backend
 
 ## Common Operations
 
@@ -46,13 +46,13 @@ docker compose logs --tail=100 server
 
 ```bash
 # Direct connection (use credentials from .env or docker-compose.yml)
-psql postgres://athena_user:athena_password@localhost:5432/athena
+psql postgres://vidra_user:vidra_password@localhost:5432/vidra
 
 # Via Docker
-docker compose exec postgres psql -U athena_user -d athena
+docker compose exec postgres psql -U vidra_user -d vidra
 
 # Test database
-DATABASE_URL="postgres://test_user:test_password@localhost:5433/athena_test?sslmode=disable" psql
+DATABASE_URL="postgres://test_user:test_password@localhost:5433/vidra_test?sslmode=disable" psql
 ```
 
 #### Run Migrations
@@ -223,17 +223,17 @@ go clean -testcache
 
 ```bash
 # Local build
-go build -o bin/athena-server ./cmd/server
+go build -o bin/vidra-server ./cmd/server
 
 # Production build
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -ldflags="-s -w" -o bin/athena-server ./cmd/server
+  go build -ldflags="-s -w" -o bin/vidra-server ./cmd/server
 
 # Docker build
-docker build -t athena:latest .
+docker build -t vidra:latest .
 
 # Multi-stage build
-docker build --target production -t athena:prod .
+docker build --target production -t vidra:prod .
 ```
 
 #### Health Checks
@@ -368,10 +368,10 @@ redis-cli flushdb
 
 ```bash
 # Backup database
-pg_dump -h localhost -U user -d athena > backup.sql
+pg_dump -h localhost -U user -d vidra > backup.sql
 
 # Restore database
-psql -h localhost -U user -d athena < backup.sql
+psql -h localhost -U user -d vidra < backup.sql
 
 # Export Redis data
 redis-cli --rdb dump.rdb
@@ -436,10 +436,10 @@ redis-cli --bigkeys
 Add to your shell profile:
 
 ```bash
-alias athena-logs='docker compose logs -f server'
-alias athena-db='docker compose exec postgres psql -U athena_user -d athena'
-alias athena-redis='docker compose exec redis redis-cli'
-alias athena-test='go test -short -race ./...'
-alias athena-lint='golangci-lint run ./...'
-alias athena-build='go build -o bin/athena-server ./cmd/server'
+alias vidra-logs='docker compose logs -f server'
+alias vidra-db='docker compose exec postgres psql -U vidra_user -d vidra'
+alias vidra-redis='docker compose exec redis redis-cli'
+alias vidra-test='go test -short -race ./...'
+alias vidra-lint='golangci-lint run ./...'
+alias vidra-build='go build -o bin/vidra-server ./cmd/server'
 ```

@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"athena/internal/domain"
-	"athena/internal/torrent"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/torrent"
 
 	"github.com/google/uuid"
 )

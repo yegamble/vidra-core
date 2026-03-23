@@ -1,0 +1,244 @@
+{
+  "info": {
+    "name": "Vidra Core E2E: Auth Flow",
+    "description": "End-to-end authentication workflow: register, verify email, login, setup 2FA, logout, and login with 2FA.\n\nThis collection tests the complete user authentication lifecycle.\n\n## Environment Variables Required\n- `baseUrl` - API base URL\n\n## Variables Set During Run\n- `e2e_auth_username` - Registered username\n- `e2e_auth_email` - Registered email\n- `e2e_auth_access_token` - JWT access token\n- `e2e_auth_refresh_token` - JWT refresh token\n- `e2e_auth_user_id` - UUID of registered user",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Register User",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const ts = Date.now();",
+              "pm.environment.set('e2e_auth_username', 'e2eauth_' + ts);",
+              "pm.environment.set('e2e_auth_email', 'e2eauth_' + ts + '@example.com');"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 201', () => {",
+              "  pm.expect(pm.response.code).to.equal(201);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('User registered with tokens', () => {",
+              "  pm.expect(body).to.have.property('success', true);",
+              "  pm.expect(body.data).to.have.property('user');",
+              "  pm.expect(body.data).to.have.property('access_token');",
+              "  pm.expect(body.data.user).to.have.property('id');",
+              "});",
+              "pm.environment.set('e2e_auth_access_token', body.data.access_token);",
+              "if (body.data.refresh_token) {",
+              "  pm.environment.set('e2e_auth_refresh_token', body.data.refresh_token);",
+              "}",
+              "pm.environment.set('e2e_auth_user_id', body.data.user.id);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{e2e_auth_username}}\",\n  \"email\": \"{{e2e_auth_email}}\",\n  \"password\": \"E2eSecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Current User (verify registered)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200', () => {",
+              "  pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('User matches registration', () => {",
+              "  pm.expect(body).to.have.property('success', true);",
+              "  pm.expect(body.data).to.have.property('username');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{e2e_auth_access_token}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/users/me",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "users", "me"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Setup 2FA",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200', () => {",
+              "  pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('2FA secret returned', () => {",
+              "  pm.expect(body).to.have.property('success', true);",
+              "  pm.expect(body.data).to.have.property('secret');",
+              "});",
+              "pm.environment.set('e2e_auth_twofa_secret', body.data.secret);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{e2e_auth_access_token}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/2fa/setup",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "2fa", "setup"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Logout",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 or 204', () => {",
+              "  pm.expect([200, 204]).to.include(pm.response.code);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{e2e_auth_access_token}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/logout",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "logout"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Login (re-authenticate)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// May get 403 if 2FA is fully enabled (needs code), or 200 if setup was partial",
+              "pm.test('Status is valid login response', () => {",
+              "  pm.expect([200, 403]).to.include(pm.response.code);",
+              "});",
+              "if (pm.response.code === 200) {",
+              "  const body = pm.response.json();",
+              "  pm.test('Login returns tokens', () => {",
+              "    pm.expect(body).to.have.property('success', true);",
+              "    pm.expect(body.data).to.have.property('access_token');",
+              "  });",
+              "  pm.environment.set('e2e_auth_access_token', body.data.access_token);",
+              "} else {",
+              "  pm.test('2FA required response', () => {",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.success).to.be.false;",
+              "  });",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{e2e_auth_username}}\",\n  \"password\": \"E2eSecurePass123!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Verify Auth Token Works",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200 or 401', () => {",
+              "  pm.expect([200, 401]).to.include(pm.response.code);",
+              "});",
+              "if (pm.response.code === 200) {",
+              "  const body = pm.response.json();",
+              "  pm.test('Authenticated user returned', () => {",
+              "    pm.expect(body).to.have.property('success', true);",
+              "  });",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{e2e_auth_access_token}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/users/me",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "users", "me"]
+        }
+      },
+      "response": []
+    }
+  ]
+}

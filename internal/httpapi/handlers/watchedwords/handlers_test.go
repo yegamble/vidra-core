@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	ucww "athena/internal/usecase/watched_words"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	ucww "vidra-core/internal/usecase/watched_words"
 )
 
 // mockWatchedWordsRepo implements port.WatchedWordsRepository for testing.

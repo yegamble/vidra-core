@@ -6,9 +6,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: pre-switch-validation
-  namespace: athena
+  namespace: vidra
   labels:
-    app: athena
+    app: vidra
     component: validation
 spec:
   backoffLimit: 0  # Don't retry on failure
@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       labels:
-        app: athena
+        app: vidra
         component: validation
     spec:
       restartPolicy: Never
@@ -29,7 +29,7 @@ spec:
         - |
           set -e
 
-          TARGET_SERVICE="${TARGET_SERVICE:-athena-api-green}"
+          TARGET_SERVICE="${TARGET_SERVICE:-vidra-api-green}"
           echo "Running pre-switch validation against $TARGET_SERVICE"
 
           # Function to check HTTP endpoint
@@ -121,7 +121,7 @@ spec:
 
           # Webfinger check (may not have test user)
           echo "  Checking Webfinger endpoint..."
-          wf_status=$(curl -s -o /dev/null -w "%{http_code}" "http://$TARGET_SERVICE/.well-known/webfinger?resource=acct:test@athena.example.com" || echo "000")
+          wf_status=$(curl -s -o /dev/null -w "%{http_code}" "http://$TARGET_SERVICE/.well-known/webfinger?resource=acct:test@vidra.example.com" || echo "000")
           if [ "$wf_status" = "200" ] || [ "$wf_status" = "404" ]; then
             echo "  ✓ Webfinger endpoint: responsive (HTTP $wf_status)"
           else
@@ -158,4 +158,4 @@ spec:
           exit 0
         env:
         - name: TARGET_SERVICE
-          value: "athena-api-green"
+          value: "vidra-api-green"

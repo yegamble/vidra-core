@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 type InstanceDiscovery struct {

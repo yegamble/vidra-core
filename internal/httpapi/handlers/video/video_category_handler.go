@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/usecase"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

@@ -1,7 +1,7 @@
 package port
 
 import (
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 	"context"
 
 	"github.com/google/uuid"

@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"testing"
 
-	"athena/internal/domain"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/usecase"
 )
 
 // mockVideoRepo minimally satisfies usecase.VideoRepository for HTTP tests

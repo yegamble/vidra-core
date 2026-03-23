@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/port"
-	"athena/internal/storage"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
+	"vidra-core/internal/storage"
 
 	"github.com/google/uuid"
 )

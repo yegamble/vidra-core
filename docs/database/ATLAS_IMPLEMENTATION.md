@@ -14,7 +14,7 @@ Successfully implemented professional database migration management using Go-Atl
 
 ## Deliverables
 
-### 1. Atlas Configuration (`/home/user/athena/atlas.hcl`)
+### 1. Atlas Configuration (`/home/user/vidra/atlas.hcl`)
 
 **Status:** ✅ Created
 
@@ -35,7 +35,7 @@ Comprehensive configuration with four environments:
 - Format configuration for consistent output
 - Data-dependent change detection
 
-### 2. Makefile Integration (`/home/user/athena/Makefile`)
+### 2. Makefile Integration (`/home/user/vidra/Makefile`)
 
 **Status:** ✅ Updated
 
@@ -109,7 +109,7 @@ Automated CI/CD validation pipeline:
 
 **Status:** ✅ Created
 
-#### Main Documentation (`/home/user/athena/docs/database/MIGRATIONS.md`)
+#### Main Documentation (`/home/user/vidra/docs/database/MIGRATIONS.md`)
 
 **15,000+ words** comprehensive guide covering:
 
@@ -136,7 +136,7 @@ Automated CI/CD validation pipeline:
 - Data migration batching
 - Migration reversibility
 
-#### Quick Start Guide (`/home/user/athena/docs/database/ATLAS_QUICKSTART.md`)
+#### Quick Start Guide (`/home/user/vidra/docs/database/ATLAS_QUICKSTART.md`)
 
 **3,000+ words** fast-track guide:
 
@@ -147,7 +147,7 @@ Automated CI/CD validation pipeline:
 - Troubleshooting quick fixes
 - Best practices checklist
 
-#### Migrations Directory README (`/home/user/athena/migrations/README.md`)
+#### Migrations Directory README (`/home/user/vidra/migrations/README.md`)
 
 **4,000+ words** developer reference:
 
@@ -170,7 +170,7 @@ Added Atlas-specific configuration:
 # Atlas Migration Configuration
 # Shadow database for Atlas schema validation and migration testing
 # Can be on the same host as DATABASE_URL, just different database name
-SHADOW_DATABASE_URL=postgres://athena_user:athena_password@localhost:5433/athena_shadow?sslmode=disable
+SHADOW_DATABASE_URL=postgres://vidra_user:vidra_password@localhost:5433/vidra_shadow?sslmode=disable
 ```
 
 **Documentation:**
@@ -320,7 +320,7 @@ All environments support:
 ### File Structure
 
 ```
-athena/
+vidra/
 ├── atlas.hcl                          # Atlas configuration
 ├── Makefile                           # Build commands (updated)
 ├── .env.example                       # Environment template (updated)

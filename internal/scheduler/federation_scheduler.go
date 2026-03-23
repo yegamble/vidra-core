@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"athena/internal/metrics"
-	"athena/internal/usecase"
+	"vidra-core/internal/metrics"
+	"vidra-core/internal/usecase"
 )
 
 // FederationScheduler periodically processes federation jobs and ingestion.

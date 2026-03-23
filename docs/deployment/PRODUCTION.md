@@ -30,7 +30,7 @@ NODE_ENV=production
 LOG_LEVEL=info
 
 # Database (use connection pooling)
-DATABASE_URL=postgres://user:pass@host:5432/athena?sslmode=require&pool_max_conns=25
+DATABASE_URL=postgres://user:pass@host:5432/vidra?sslmode=require&pool_max_conns=25
 DATABASE_MAX_CONNECTIONS=25
 DATABASE_MAX_IDLE=5
 DATABASE_MAX_LIFETIME=5m
@@ -61,7 +61,7 @@ ENABLE_IPFS_CLUSTER=true
 
 # S3 Storage (for cold storage)
 S3_ENDPOINT=https://s3.amazonaws.com
-S3_BUCKET=athena-videos
+S3_BUCKET=vidra-videos
 S3_ACCESS_KEY=<access-key>
 S3_SECRET_KEY=<secret-key>
 S3_REGION=us-east-1
@@ -114,20 +114,20 @@ The application includes comprehensive security middleware:
 
 ```sql
 -- Create application user with limited privileges
-CREATE USER athena_app WITH PASSWORD 'strong_password';
-GRANT CONNECT ON DATABASE athena TO athena_app;
-GRANT USAGE ON SCHEMA public TO athena_app;
-GRANT CREATE ON SCHEMA public TO athena_app;
+CREATE USER vidra_app WITH PASSWORD 'strong_password';
+GRANT CONNECT ON DATABASE vidra TO vidra_app;
+GRANT USAGE ON SCHEMA public TO vidra_app;
+GRANT CREATE ON SCHEMA public TO vidra_app;
 
 -- Grant table permissions
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO athena_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO athena_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO vidra_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO vidra_app;
 
 -- Create read-only user for analytics
-CREATE USER athena_readonly WITH PASSWORD 'strong_password';
-GRANT CONNECT ON DATABASE athena TO athena_readonly;
-GRANT USAGE ON SCHEMA public TO athena_readonly;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO athena_readonly;
+CREATE USER vidra_readonly WITH PASSWORD 'strong_password';
+GRANT CONNECT ON DATABASE vidra TO vidra_readonly;
+GRANT USAGE ON SCHEMA public TO vidra_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO vidra_readonly;
 ```
 
 ## 🐳 Docker Production Deployment
@@ -139,7 +139,7 @@ version: '3.8'
 
 services:
   app:
-    image: athena:latest
+    image: vidra:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"  # Only bind to localhost
@@ -179,15 +179,15 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-      POSTGRES_DB: athena
-      POSTGRES_USER: athena_app
+      POSTGRES_DB: vidra
+      POSTGRES_USER: vidra_app
     secrets:
       - db_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U athena_app"]
+      test: ["CMD-SHELL", "pg_isready -U vidra_app"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -239,7 +239,7 @@ secrets:
 ### 2. NGINX Configuration
 
 ```nginx
-upstream athena_backend {
+upstream vidra_backend {
     server app:8080 max_fails=3 fail_timeout=30s;
 }
 
@@ -273,7 +273,7 @@ server {
 
     # API endpoints
     location /api {
-        proxy_pass http://athena_backend;
+        proxy_pass http://vidra_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -308,7 +308,7 @@ The application exposes metrics at `/metrics`:
 ```yaml
 # prometheus.yml
 scrape_configs:
-  - job_name: 'athena'
+  - job_name: 'vidra'
     static_configs:
       - targets: ['app:9090']
     metrics_path: '/metrics'
@@ -458,11 +458,11 @@ Configure structured logging with log aggregation:
   bind 0.0.0.0
 </source>
 
-<match athena.**>
+<match vidra.**>
   @type elasticsearch
   host elasticsearch
   port 9200
-  index_name athena
+  index_name vidra
   type_name logs
 </match>
 ```
@@ -476,10 +476,10 @@ Configure structured logging with log aggregation:
 # deploy.sh
 
 # Build new image
-docker build -t athena:new .
+docker build -t vidra:new .
 
 # Test new image
-docker run --rm athena:new /app/athena --test
+docker run --rm vidra:new /app/vidra --test
 
 # Start new container alongside old
 docker-compose up -d --scale app=2
@@ -493,20 +493,20 @@ docker-compose stop app_old
 docker-compose rm -f app_old
 
 # Tag as latest
-docker tag athena:new athena:latest
+docker tag vidra:new vidra:latest
 ```
 
 ### 2. Database Migrations
 
 ```bash
 # Always backup before migrations
-pg_dump -h localhost -U athena_app athena > backup_$(date +%Y%m%d).sql
+pg_dump -h localhost -U vidra_app vidra > backup_$(date +%Y%m%d).sql
 
 # Run migrations
 make migrate-prod
 
 # Verify migrations
-psql -h localhost -U athena_app -d athena -c "SELECT * FROM schema_migrations;"
+psql -h localhost -U vidra_app -d vidra -c "SELECT * FROM schema_migrations;"
 ```
 
 ### 3. Rollback Plan
@@ -514,10 +514,10 @@ psql -h localhost -U athena_app -d athena -c "SELECT * FROM schema_migrations;"
 ```bash
 # Quick rollback
 docker-compose down
-docker-compose up -d --scale app=1 athena:previous
+docker-compose up -d --scale app=1 vidra:previous
 
 # Database rollback (if needed)
-psql -h localhost -U postgres -d athena < backup_20240101.sql
+psql -h localhost -U postgres -d vidra < backup_20240101.sql
 ```
 
 ## 🎯 Performance Tuning
@@ -530,13 +530,13 @@ See [Performance Tuning Guide](../operations/PERFORMANCE.md) for detailed config
 
 ```bash
 # Daily database backup
-0 2 * * * pg_dump -h localhost -U athena_app athena | gzip > /backup/athena_$(date +\%Y\%m\%d).sql.gz
+0 2 * * * pg_dump -h localhost -U vidra_app vidra | gzip > /backup/vidra_$(date +\%Y\%m\%d).sql.gz
 
 # Weekly full backup
-0 3 * * 0 tar -czf /backup/athena_full_$(date +\%Y\%m\%d).tar.gz /app/uploads /var/lib/postgresql/data
+0 3 * * 0 tar -czf /backup/vidra_full_$(date +\%Y\%m\%d).tar.gz /app/uploads /var/lib/postgresql/data
 
 # Sync to S3
-0 4 * * * aws s3 sync /backup s3://athena-backups/ --delete
+0 4 * * * aws s3 sync /backup s3://vidra-backups/ --delete
 ```
 
 ### 2. Monitoring Alerts
@@ -566,7 +566,7 @@ Configure alerts for:
 docker-compose logs -f app
 
 # Database console
-docker-compose exec postgres psql -U athena_app athena
+docker-compose exec postgres psql -U vidra_app vidra
 
 # Redis console
 docker-compose exec redis redis-cli
@@ -609,6 +609,6 @@ docker-compose stop
 
 For production support:
 
-- Create an issue: <https://github.com/yegamble/athena/issues>
+- Create an issue: <https://github.com/yegamble/vidra-core/issues>
 - Security issues: <security@yourdomain.com>
 - Documentation: <https://docs.yourdomain.com>

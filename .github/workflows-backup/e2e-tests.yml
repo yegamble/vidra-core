@@ -109,7 +109,7 @@ jobs:
         run: |
           cd tests/e2e
           echo "=== API Logs ==="
-          docker compose logs athena-api-e2e
+          docker compose logs vidra-api-e2e
           echo "=== PostgreSQL Logs ==="
           docker compose logs postgres-e2e
           echo "=== Redis Logs ==="

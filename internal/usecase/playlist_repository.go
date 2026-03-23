@@ -1,6 +1,6 @@
 package usecase
 
-import "athena/internal/port"
+import "vidra-core/internal/port"
 
 // PlaylistRepository defines the interface for playlist data operations
 type PlaylistRepository = port.PlaylistRepository

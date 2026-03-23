@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/testutil"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

@@ -1,4 +1,4 @@
-# Athena PeerTube Backend - Project Completion Summary
+# Vidra Core PeerTube Backend - Project Completion Summary
 
 ## 🎉 100% Complete - All Sprints Delivered
 
@@ -643,7 +643,7 @@ internal/torrent/*_test.go         # P2P tests
 
 ## Conclusion
 
-**Athena PeerTube Backend is 100% complete and production-ready.**
+**Vidra Core PeerTube Backend is 100% complete and production-ready.**
 
 All 20 sprints (14 feature + 6 quality programme) have been successfully implemented with:
 

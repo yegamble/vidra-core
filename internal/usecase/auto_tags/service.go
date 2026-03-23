@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"athena/internal/domain"
-	"athena/internal/port"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 )
 
 // Service handles business logic for automatic tag policies.

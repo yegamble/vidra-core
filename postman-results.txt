@@ -1,7 +1,7 @@
 Removing old Docker image...
-docker rmi athena:latest 2>/dev/null || true
+docker rmi vidra:latest 2>/dev/null || true
 Building fresh Docker image...
-docker build -t athena:latest . --no-cache
+docker build -t vidra:latest . --no-cache
 #0 building with "desktop-linux" instance using docker driver
 
 #1 [internal] load build definition from Dockerfile
@@ -235,10 +235,10 @@ docker build -t athena:latest . --no-cache
 #20 [stage-1 6/8] RUN mkdir -p storage/avatars storage/cache storage/captions storage/logs storage/previews storage/streaming-playlists/hls storage/thumbnails storage/torrents storage/web-videos storage/storyboards processed
 #20 DONE 0.1s
 
-#21 [stage-1 7/8] RUN adduser -D -s /bin/sh athena
+#21 [stage-1 7/8] RUN adduser -D -s /bin/sh vidra
 #21 DONE 0.1s
 
-#22 [stage-1 8/8] RUN chown -R athena:athena /app
+#22 [stage-1 8/8] RUN chown -R vidra:vidra /app
 #22 DONE 0.2s
 
 #23 exporting to image
@@ -248,14 +248,14 @@ docker build -t athena:latest . --no-cache
 #23 exporting config sha256:e33844b963671ae102a93acabb28a9d6fc2e990389761e3fd0d44f52389b0fa1 done
 #23 exporting attestation manifest sha256:bd67a98d7ee78bfa02c56f98031f0e1b41619db455ea13ef9805d20e5d813c8b done
 #23 exporting manifest list sha256:1f4a91e5fa00bbd3c45cfbe39b12023e3ef0476da88d41309e07328b06acd770 done
-#23 naming to docker.io/library/athena:latest done
-#23 unpacking to docker.io/library/athena:latest
-#23 unpacking to docker.io/library/athena:latest 0.6s done
+#23 naming to docker.io/library/vidra:latest done
+#23 unpacking to docker.io/library/vidra:latest
+#23 unpacking to docker.io/library/vidra:latest 0.6s done
 #23 DONE 3.1s
 
 View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/xuboyv2eg3csjd84v6yy26dka
 Starting test stack (DB, Redis, App, IPFS)...
-COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml up -d --build postgres-test redis-test ipfs-test app-test
+COMPOSE_PROJECT_NAME=vidra-test docker compose -f docker-compose.test.yml up -d --build postgres-test redis-test ipfs-test app-test
 #1 [internal] load local bake definitions
 #1 reading from stdin 526B done
 #1 DONE 0.0s
@@ -325,10 +325,10 @@ COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml up -d
 #19 [stage-1 6/8] RUN mkdir -p storage/avatars storage/cache storage/captions storage/logs storage/previews storage/streaming-playlists/hls storage/thumbnails storage/torrents storage/web-videos storage/storyboards processed
 #19 DONE 0.1s
 
-#20 [stage-1 7/8] RUN adduser -D -s /bin/sh athena
+#20 [stage-1 7/8] RUN adduser -D -s /bin/sh vidra
 #20 DONE 0.1s
 
-#21 [stage-1 8/8] RUN chown -R athena:athena /app
+#21 [stage-1 8/8] RUN chown -R vidra:vidra /app
 #21 DONE 0.2s
 
 #22 exporting to image
@@ -339,25 +339,25 @@ COMPOSE_PROJECT_NAME=athena-test docker compose -f docker-compose.test.yml up -d
 #22 exporting config sha256:ddcd8ed4b9ce88696f2043a77e7810dd454aae3ded9ae25526ed6154108e6a7b done
 #22 exporting attestation manifest sha256:5a185ded3511ece18065dfc0865f27d513fd5b8ae9ae19a1774f2f6e2eed9730 done
 #22 exporting manifest list sha256:ab194497b11490406033ac47e3b4399605961fed2d7b76d79b0e0cefd026f727 done
-#22 naming to docker.io/library/athena:latest done
-#22 unpacking to docker.io/library/athena:latest 0.1s done
+#22 naming to docker.io/library/vidra:latest done
+#22 unpacking to docker.io/library/vidra:latest 0.1s done
 #22 DONE 0.6s
 
 #23 resolving provenance for metadata file
 #23 DONE 0.0s
- athena:latest  Built
- Network athena-test_test-network  Creating
- Network athena-test_test-network  Created
- Container athena-test-ipfs-test-1  Creating
- Container athena-test-postgres-test-1  Creating
- Container athena-test-redis-test-1  Creating
- Container athena-test-postgres-test-1  Created
- Container athena-test-redis-test-1  Created
- Container athena-test-ipfs-test-1  Created
- Container athena-test-app-test-1  Creating
- Container athena-test-app-test-1  Created
- Container athena-test-redis-test-1  Starting
- Container athena-test-ipfs-test-1  Starting
- Container athena-test-postgres-test-1  Starting
-Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint athena-test-redis-test-1 (873ff70ff3b5882c0570977f57752da7499e7e8fdfe44267de3997622388f995): Bind for 0.0.0.0:6380 failed: port is already allocated
+ vidra:latest  Built
+ Network vidra-test_test-network  Creating
+ Network vidra-test_test-network  Created
+ Container vidra-test-ipfs-test-1  Creating
+ Container vidra-test-postgres-test-1  Creating
+ Container vidra-test-redis-test-1  Creating
+ Container vidra-test-postgres-test-1  Created
+ Container vidra-test-redis-test-1  Created
+ Container vidra-test-ipfs-test-1  Created
+ Container vidra-test-app-test-1  Creating
+ Container vidra-test-app-test-1  Created
+ Container vidra-test-redis-test-1  Starting
+ Container vidra-test-ipfs-test-1  Starting
+ Container vidra-test-postgres-test-1  Starting
+Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint vidra-test-redis-test-1 (873ff70ff3b5882c0570977f57752da7499e7e8fdfe44267de3997622388f995): Bind for 0.0.0.0:6380 failed: port is already allocated
 make: *** [postman-e2e] Error 1

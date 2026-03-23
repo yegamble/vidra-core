@@ -1,0 +1,110 @@
+{
+  "info": {
+    "name": "Vidra Core Federation API",
+    "_postman_id": "c7a7c7a7-0007-4000-9000-c7a7c7a7c7a7",
+    "description": "Postman collection for ActivityPub/ATProto federation endpoints: WebFinger, NodeInfo, ActivityPub actors, federation timeline.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
+    {"key": "access_token", "value": "", "type": "string"},
+    {"key": "federation_username", "value": "", "type": "string"},
+    {"key": "federation_domain", "value": "app-test", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "Federation Discovery - Happy Path",
+      "item": [
+        {
+          "name": "GET /.well-known/webfinger - WebFinger lookup",
+          "event": [
+            {"listen": "prerequest", "script": {"exec": [
+              "const envUsername = pm.environment.get('username');",
+              "pm.collectionVariables.set('federation_username', envUsername || 'testuser');"
+            ], "type": "text/javascript"}},
+            {"listen": "test", "script": {"exec": [
+              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+              "const json = pm.response.json();",
+              "pm.test('Has subject', () => pm.expect(json).to.have.property('subject'));"
+            ], "type": "text/javascript"}}
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/webfinger?resource=acct:{{federation_username}}@{{federation_domain}}",
+              "host": ["{{baseUrl}}"],
+              "path": [".well-known", "webfinger"],
+              "query": [{"key": "resource", "value": "acct:{{federation_username}}@{{federation_domain}}"}]
+            }
+          }
+        },
+        {
+          "name": "GET /.well-known/nodeinfo - NodeInfo discovery",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Has links', () => pm.expect(json).to.have.property('links'));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/.well-known/nodeinfo", "host": ["{{baseUrl}}"], "path": [".well-known", "nodeinfo"]}
+          }
+        },
+        {
+          "name": "GET /.well-known/atproto-did - ATProto DID",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/.well-known/atproto-did", "host": ["{{baseUrl}}"], "path": [".well-known", "atproto-did"]}
+          }
+        },
+        {
+          "name": "GET /nodeinfo/2.0 - NodeInfo 2.0",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Has version', () => pm.expect(json).to.have.property('version'));",
+            "pm.test('Version is 2.0', () => pm.expect(json.version).to.equal('2.0'));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/nodeinfo/2.0", "host": ["{{baseUrl}}"], "path": ["nodeinfo", "2.0"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/federation/timeline - Federation timeline",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/federation/timeline", "host": ["{{baseUrl}}"], "path": ["api", "v1", "federation", "timeline"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "ActivityPub Actors",
+      "item": [
+        {
+          "name": "GET /api/v1/accounts/:username - AP Actor profile",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Accept", "value": "application/activity+json"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/accounts/{{federation_username}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "accounts", "{{federation_username}}"]}
+          }
+        }
+      ]
+    }
+  ]
+}

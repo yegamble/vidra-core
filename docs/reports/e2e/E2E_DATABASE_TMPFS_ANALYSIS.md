@@ -17,7 +17,7 @@
 
 ### 1. tmpfs Configuration Status ✓
 
-**File:** `/home/user/athena/tests/e2e/docker-compose.yml` (Lines 16-17)
+**File:** `/home/user/vidra/tests/e2e/docker-compose.yml` (Lines 16-17)
 
 ```yaml
 postgres-e2e:
@@ -35,39 +35,39 @@ postgres-e2e:
 
 ### 2. COMPOSE_PROJECT_NAME Isolation - BROKEN ⚠️
 
-**File:** `/home/user/athena/tests/e2e/docker-compose.yml`
+**File:** `/home/user/vidra/tests/e2e/docker-compose.yml`
 
 **Problem:** Hardcoded `container_name` directives override project-based naming:
 
 ```yaml
-Line 9:   container_name: athena-e2e-postgres    # HARDCODED
-Line 27:  container_name: athena-e2e-redis       # HARDCODED
-Line 39:  container_name: athena-e2e-minio       # HARDCODED
-Line 56:  container_name: athena-e2e-clamav      # HARDCODED
-Line 75:  container_name: athena-e2e-api         # HARDCODED
-Line 127: name: athena-e2e-network               # HARDCODED NETWORK
+Line 9:   container_name: vidra-e2e-postgres    # HARDCODED
+Line 27:  container_name: vidra-e2e-redis       # HARDCODED
+Line 39:  container_name: vidra-e2e-minio       # HARDCODED
+Line 56:  container_name: vidra-e2e-clamav      # HARDCODED
+Line 75:  container_name: vidra-e2e-api         # HARDCODED
+Line 127: name: vidra-e2e-network               # HARDCODED NETWORK
 ```
 
-**Workflow Usage:** `/home/user/athena/.github/workflows/e2e-tests.yml`
+**Workflow Usage:** `/home/user/vidra/.github/workflows/e2e-tests.yml`
 
 ```bash
-Line 78:  COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose up -d
-Line 91:  COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose ps
-Line 134: COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose down -v
+Line 78:  COMPOSE_PROJECT_NAME=vidra-e2e-${{ github.run_id }} docker compose up -d
+Line 91:  COMPOSE_PROJECT_NAME=vidra-e2e-${{ github.run_id }} docker compose ps
+Line 134: COMPOSE_PROJECT_NAME=vidra-e2e-${{ github.run_id }} docker compose down -v
 ```
 
 **Impact:**
 
 - `COMPOSE_PROJECT_NAME` is used but **INEFFECTIVE** due to hardcoded names
 - All test runs share the same container names regardless of run_id
-- All test runs share the same network name (athena-e2e-network)
+- All test runs share the same network name (vidra-e2e-network)
 - If cleanup fails, containers persist and can be reused by subsequent runs
 - Network reuse means containers can discover and connect to wrong instances
 - This explains the 409 user collision errors!
 
 ### 3. Database Migration Status - NEVER RUN ⚠️
 
-**Dockerfile Analysis:** `/home/user/athena/Dockerfile` (Line 60)
+**Dockerfile Analysis:** `/home/user/vidra/Dockerfile` (Line 60)
 
 ```dockerfile
 CMD ["./server"]
@@ -77,7 +77,7 @@ CMD ["./server"]
 
 **Migration Files Examined:**
 
-- `/home/user/athena/migrations/002_create_users_table.sql` - No seed data
+- `/home/user/vidra/migrations/002_create_users_table.sql` - No seed data
 - All 63 migration files checked - No INSERT statements found
 - Migrations only contain table definitions, indexes, and schema changes
 
@@ -106,13 +106,13 @@ CMD ["./server"]
 **Current State Check:**
 
 ```bash
-$ docker volume ls --filter "name=athena"
+$ docker volume ls --filter "name=vidra"
 # Result: No volumes found
 
-$ docker ps -a --filter "name=athena-e2e"
+$ docker ps -a --filter "name=vidra-e2e"
 # Result: No containers running
 
-$ docker network ls --filter "name=athena"
+$ docker network ls --filter "name=vidra"
 # Result: No networks found
 ```
 
@@ -120,7 +120,7 @@ $ docker network ls --filter "name=athena"
 
 ### 5. Username Collision Prevention - IMPLEMENTED ✓
 
-**File:** `/home/user/athena/tests/e2e/scenarios/video_workflow_test.go`
+**File:** `/home/user/vidra/tests/e2e/scenarios/video_workflow_test.go`
 
 Lines 36-40:
 
@@ -144,7 +144,7 @@ password := "SecurePass123!"
 
 ### 6. Cleanup Process Analysis
 
-**File:** `/home/user/athena/.github/workflows/e2e-tests.yml`
+**File:** `/home/user/vidra/.github/workflows/e2e-tests.yml`
 
 **Cleanup Steps:**
 
@@ -156,7 +156,7 @@ docker stop $(docker ps -q --filter "publish=5433" ...) 2>/dev/null || true
 docker rm $(docker ps -aq --filter "publish=5433" ...) 2>/dev/null || true
 
 # Post-test cleanup (lines 132-134)
-COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }} docker compose down -v
+COMPOSE_PROJECT_NAME=vidra-e2e-${{ github.run_id }} docker compose down -v
 ```
 
 **Issues:**
@@ -230,11 +230,11 @@ The 409 "user already exists" errors occur due to a **perfect storm** of issues:
 ```yaml
 # BEFORE (BROKEN):
 postgres-e2e:
-  container_name: athena-e2e-postgres  # REMOVE THIS
+  container_name: vidra-e2e-postgres  # REMOVE THIS
 
 networks:
   default:
-    name: athena-e2e-network  # REMOVE THIS
+    name: vidra-e2e-network  # REMOVE THIS
 
 # AFTER (FIXED):
 postgres-e2e:
@@ -247,8 +247,8 @@ networks:
 
 **Impact:**
 
-- Each CI run gets unique container names: `athena-e2e-{run_id}_postgres-e2e_1`
-- Each CI run gets unique network: `athena-e2e-{run_id}_default`
+- Each CI run gets unique container names: `vidra-e2e-{run_id}_postgres-e2e_1`
+- Each CI run gets unique network: `vidra-e2e-{run_id}_default`
 - No container reuse between runs
 - No network reuse between runs
 - True isolation achieved
@@ -281,7 +281,7 @@ CMD ["./entrypoint.sh"]
 
 ```bash
 # Add after existing cleanup
-docker system prune -f --volumes --filter "label=com.docker.compose.project=athena-e2e*"
+docker system prune -f --volumes --filter "label=com.docker.compose.project=vidra-e2e*"
 ```
 
 ### LOW PRIORITY - Add Explicit Synchronization
@@ -317,7 +317,7 @@ To verify the fix works:
 3. **Confirm migrations run:**
 
    ```bash
-   docker logs test-123_athena-api-e2e_1 | grep -i migrate
+   docker logs test-123_vidra-api-e2e_1 | grep -i migrate
    # Should show: "Running database migrations..."
    ```
 
@@ -359,9 +359,9 @@ To verify the fix works:
 
 ## Files Requiring Changes
 
-1. `/home/user/athena/tests/e2e/docker-compose.yml` - Remove all container_name directives
-2. `/home/user/athena/Dockerfile` - Add migration runner and entrypoint
-3. `/home/user/athena/.github/workflows/e2e-tests.yml` - (Optional) Improve cleanup commands
+1. `/home/user/vidra/tests/e2e/docker-compose.yml` - Remove all container_name directives
+2. `/home/user/vidra/Dockerfile` - Add migration runner and entrypoint
+3. `/home/user/vidra/.github/workflows/e2e-tests.yml` - (Optional) Improve cleanup commands
 
 ## Conclusion
 

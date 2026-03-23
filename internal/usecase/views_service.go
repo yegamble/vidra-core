@@ -1,6 +1,6 @@
 package usecase
 
-import ucviews "athena/internal/usecase/views"
+import ucviews "vidra-core/internal/usecase/views"
 
 type ViewsService = ucviews.Service
 

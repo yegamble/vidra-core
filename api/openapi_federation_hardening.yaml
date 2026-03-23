@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Federation Hardening API
+  title: Vidra Core Federation Hardening API
   description: |
     Federation hardening features for managing reliability, security, and abuse prevention
     in the federated network. Includes dead letter queue management, blocklist administration,

@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - Video Uploads & Encoding
+  title: Vidra Core API - Video Uploads & Encoding
   description: |
     Endpoints for uploading videos and tracking encoding status.
 

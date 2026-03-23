@@ -12,16 +12,16 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 
-	"athena/internal/domain"
-	"athena/internal/port"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 )
 
-// idMap tracks PeerTube integer IDs → Athena UUIDs across extraction phases.
+// idMap tracks PeerTube integer IDs → Vidra Core UUIDs across extraction phases.
 type idMap struct {
-	users    map[int]string    // PT user id → Athena user ID (string)
-	channels map[int]uuid.UUID // PT channel id → Athena channel UUID
-	videos   map[int]string    // PT video id → Athena video ID (string)
-	comments map[int]uuid.UUID // PT comment id → Athena comment UUID
+	users    map[int]string    // PT user id → Vidra Core user ID (string)
+	channels map[int]uuid.UUID // PT channel id → Vidra Core channel UUID
+	videos   map[int]string    // PT video id → Vidra Core video ID (string)
+	comments map[int]uuid.UUID // PT comment id → Vidra Core comment UUID
 }
 
 func newIDMap() *idMap {
@@ -679,13 +679,13 @@ func (s *ETLService) extractComments(ctx context.Context, sourceDB *sqlx.DB, job
 		insertComment(r, nil)
 	}
 	for _, r := range replies {
-		parentAthenaID, ok := ids.comments[int(r.InReplyToID.Int64)]
+		parentVidraID, ok := ids.comments[int(r.InReplyToID.Int64)]
 		if !ok {
 			stats.Comments.Failed++
 			stats.Comments.Errors = append(stats.Comments.Errors, fmt.Sprintf("comment %d: parent %d not migrated", r.ID, r.InReplyToID.Int64))
 			continue
 		}
-		insertComment(r, &parentAthenaID)
+		insertComment(r, &parentVidraID)
 	}
 }
 

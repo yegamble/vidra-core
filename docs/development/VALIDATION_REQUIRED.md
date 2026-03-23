@@ -148,7 +148,7 @@ The web interface does not have access to shell/terminal, so you cannot run vali
    ```
    Please run these commands to validate:
 
-   cd /path/to/athena
+   cd /path/to/vidra
    make validate-all
 
    Or individually:
@@ -332,9 +332,9 @@ This validation requirement is enforced through:
 
 If you're unsure about any validation requirement, ask the user or refer to:
 
-- `/Users/yosefgamble/github/athena/docs/architecture/CLAUDE.md` - AI assistant requirements
-- `/Users/yosefgamble/github/athena/Makefile` - Available validation targets
-- `/Users/yosefgamble/github/athena/scripts/validate-all.sh` - Validation script
+- `/Users/yosefgamble/github/vidra/docs/architecture/CLAUDE.md` - AI assistant requirements
+- `/Users/yosefgamble/github/vidra/Makefile` - Available validation targets
+- `/Users/yosefgamble/github/vidra/scripts/validate-all.sh` - Validation script
 - This file - Validation requirements
 
 ---

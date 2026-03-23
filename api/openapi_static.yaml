@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Static File Serving API
+  title: Vidra Core Static File Serving API
   description: PeerTube-compatible static file serving for web-videos, HLS streaming playlists, and video downloads.
   version: 1.0.0
 

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/port"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
@@ -334,7 +334,7 @@ func TestRealService_CreateVideoFromImport(t *testing.T) {
 			Title:       "Imported title",
 			Description: "Imported description",
 			Duration:    42,
-			Tags:        []string{"athena", "import"},
+			Tags:        []string{"vidra", "import"},
 		}))
 		return imp
 	}

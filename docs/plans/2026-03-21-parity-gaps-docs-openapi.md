@@ -79,7 +79,7 @@ Type: Feature
   - Table-driven tests with testify `assert`/`require`
   - Constructor DI, no globals; UUID for IDs (`github.com/google/uuid`)
   - OpenAPI specs: one YAML per domain in `api/openapi_*.yaml`
-  - Postman collections: `postman/athena-<domain>.postman_collection.json`
+  - Postman collections: `postman/vidra-<domain>.postman_collection.json`
 
 - **Key files:**
   - `internal/httpapi/routes.go` — main route registration (~711 lines)
@@ -98,7 +98,7 @@ Type: Feature
   - Postman environment uses `{{baseUrl}}` variable pointing to `http://localhost:8080`
 
 - **Domain context:**
-  - PeerTube's per-user blocklist lets individual users block accounts and servers. Athena's admin blocklist blocks at the instance level. These are complementary, not conflicting.
+  - PeerTube's per-user blocklist lets individual users block accounts and servers. Vidra Core's admin blocklist blocks at the instance level. These are complementary, not conflicting.
   - Instance config endpoint returns public-facing server capabilities (signup policy, max file size, instance name, features enabled)
   - Channel avatar/banner uses the same IPFS-pinning flow as user avatars (see `authHandlers.UploadAvatar` in routes.go)
 
@@ -504,23 +504,23 @@ Type: Feature
 **Dependencies:** Tasks 1-9 (need endpoints to test), Task 10 (specs as reference)
 
 **Files:**
-- Create: `postman/athena-channels.postman_collection.json`
-- Create: `postman/athena-playlists.postman_collection.json`
-- Create: `postman/athena-feeds.postman_collection.json`
-- Create: `postman/athena-chapters-blacklist.postman_collection.json`
-- Create: `postman/athena-livestreaming.postman_collection.json`
-- Create: `postman/athena-federation.postman_collection.json`
-- Create: `postman/athena-moderation.postman_collection.json`
-- Create: `postman/athena-notifications.postman_collection.json`
-- Create: `postman/athena-blocklist.postman_collection.json`
-- Create: `postman/athena-instance-config.postman_collection.json`
+- Create: `postman/vidra-channels.postman_collection.json`
+- Create: `postman/vidra-playlists.postman_collection.json`
+- Create: `postman/vidra-feeds.postman_collection.json`
+- Create: `postman/vidra-chapters-blacklist.postman_collection.json`
+- Create: `postman/vidra-livestreaming.postman_collection.json`
+- Create: `postman/vidra-federation.postman_collection.json`
+- Create: `postman/vidra-moderation.postman_collection.json`
+- Create: `postman/vidra-notifications.postman_collection.json`
+- Create: `postman/vidra-blocklist.postman_collection.json`
+- Create: `postman/vidra-instance-config.postman_collection.json`
 - Modify: existing collections to add tests for new endpoints
 
 **Key Decisions / Notes:**
 - Each collection should use `{{baseUrl}}` and `{{authToken}}` variables
 - Include pre-request scripts for auth (login, save token)
 - Test assertions: status code, response envelope structure, required fields
-- Follow existing pattern from `postman/athena-auth.postman_collection.json` (61 requests, good reference)
+- Follow existing pattern from `postman/vidra-auth.postman_collection.json` (61 requests, good reference)
 - Cover: happy path, auth failure (401), not found (404), validation error (400)
 
 **Definition of Done:**
@@ -530,7 +530,7 @@ Type: Feature
 - [ ] All new gap endpoints (Tasks 1-9) are covered
 
 **Verify:**
-- `newman run postman/athena-<collection>.postman_collection.json -e postman/test-env.json` (smoke test)
+- `newman run postman/vidra-<collection>.postman_collection.json -e postman/test-env.json` (smoke test)
 
 ---
 

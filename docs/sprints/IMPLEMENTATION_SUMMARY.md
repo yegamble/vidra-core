@@ -1,8 +1,8 @@
-# Athena Video Import Implementation - Complete Summary
+# Vidra Core Video Import Implementation - Complete Summary
 
 ## 🎉 Sprint 1 Successfully Implemented
 
-This document summarizes the complete implementation of Sprint 1 (Video Import System) for the Athena PeerTube backend.
+This document summarizes the complete implementation of Sprint 1 (Video Import System) for the Vidra Core PeerTube backend.
 
 ---
 
@@ -92,10 +92,10 @@ DELETE /api/v1/videos/imports/:id   # Cancel import
 
 ```bash
 $ go test -short ./internal/domain ./internal/repository ./internal/usecase/import ./internal/httpapi -run "TestImport"
-ok      athena/internal/domain          0.336s
-ok      athena/internal/repository      0.566s
-ok      athena/internal/usecase/import  0.383s
-ok      athena/internal/httpapi         0.714s
+ok      vidra/internal/domain          0.336s
+ok      vidra/internal/repository      0.566s
+ok      vidra/internal/usecase/import  0.383s
+ok      vidra/internal/httpapi         0.714s
 ```
 
 ### Integration Tests (2 test suites)
@@ -169,7 +169,7 @@ yt-dlp --version
 bash scripts/run_test_migrations.sh
 
 # Or manually
-psql -h localhost -p 5433 -U test_user -d athena_test -f migrations/043_create_video_imports_table.sql
+psql -h localhost -p 5433 -U test_user -d vidra_test -f migrations/043_create_video_imports_table.sql
 ```
 
 ### 3. Run Tests

@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Remote Runners API
+  title: Vidra Core Remote Runners API
   description: |
     PeerTube-compatible remote runner system for distributed video encoding.
 

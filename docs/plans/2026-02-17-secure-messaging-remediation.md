@@ -86,7 +86,7 @@ Worktree: No
 - **Start command:** `docker compose up postgres redis -d && make run` (or `docker compose --profile test up -d`)
 - **Port:** 8080 (configurable via PORT env var)
 - **Health check:** `curl http://localhost:8080/health`
-- **Newman test command:** `newman run postman/athena-secure-messaging.postman_collection.json -e postman/test-env.json`
+- **Newman test command:** `newman run postman/vidra-secure-messaging.postman_collection.json -e postman/test-env.json`
 - **Prerequisites:** PostgreSQL running with migrations applied (`make migrate-up`), Redis running
 - **postman/test-env.json:** Must set `baseUrl=http://localhost:8080`. Test users are registered by the collection itself (no pre-seeding needed).
 
@@ -419,7 +419,7 @@ Worktree: No
 
 **Key Decisions / Notes:**
 
-- **IP Trust (MSG-SEC-009):** Change `GetClientIP` to prefer `r.RemoteAddr` as default. Only trust `X-Forwarded-For`/`X-Real-IP` when request comes through a trusted proxy. For now, since Athena uses nginx as reverse proxy (`NginxEnabled` in config), check if the connection comes from a local/private IP range before trusting forwarded headers. If `r.RemoteAddr` is not from a trusted proxy network (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), ignore forwarded headers.
+- **IP Trust (MSG-SEC-009):** Change `GetClientIP` to prefer `r.RemoteAddr` as default. Only trust `X-Forwarded-For`/`X-Real-IP` when request comes through a trusted proxy. For now, since Vidra Core uses nginx as reverse proxy (`NginxEnabled` in config), check if the connection comes from a local/private IP range before trusting forwarded headers. If `r.RemoteAddr` is not from a trusted proxy network (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), ignore forwarded headers.
 - **Session Timeout (MSG-SEC-010):** The `e2ee_service.go:251` sets 24-hour session expiry but OpenAPI says 15 minutes. Since we're removing server-side sessions in Task 3, this specific bug goes away. But update the OpenAPI docs to document the new model (no server-side sessions at all). If any session concept remains (e.g., key exchange timeout), align to 1 hour (matching key exchange expiry at `e2ee_service.go:356`).
 
 **Definition of Done:**
@@ -479,13 +479,13 @@ Worktree: No
 
 **Files:**
 
-- Create: `postman/athena-secure-messaging.postman_collection.json`
+- Create: `postman/vidra-secure-messaging.postman_collection.json`
 - Modify: `postman/test-env.json` (add E2EE-related variables if needed)
 
 **Key Decisions / Notes:**
 
 - **Two-user test flow (User A = sender, User B = recipient):**
-  1. Register User A (use existing auth collection pattern from `postman/athena-auth.postman_collection.json`)
+  1. Register User A (use existing auth collection pattern from `postman/vidra-auth.postman_collection.json`)
   2. Register User B
   3. User A: POST `/api/v1/e2ee/keys` — register identity key
   4. User B: POST `/api/v1/e2ee/keys` — register identity key
@@ -513,7 +513,7 @@ Worktree: No
 - **Simulated ciphertext:** Use Postman pre-request scripts to generate valid base64-encoded random bytes for test data. Content nonce: 24 random bytes base64-encoded (~32 chars). Encrypted content: 32+ random bytes base64-encoded. Signature: 64 random bytes base64-encoded. The service treats ciphertext as opaque blobs without length/format validation beyond non-empty base64.
 - **Test assertions:** Use Postman test scripts to validate response status codes, JSON structure, and that encrypted content is opaque (not plaintext)
 - **Collection variables:** `baseUrl`, `userA_token`, `userB_token`, `userA_id`, `userB_id`, `keyExchangeId`, `conversationId`
-- Follow existing collection pattern from `postman/athena-auth.postman_collection.json`
+- Follow existing collection pattern from `postman/vidra-auth.postman_collection.json`
 
 **Definition of Done:**
 
@@ -521,12 +521,12 @@ Worktree: No
 - [ ] Session management scenarios tested: encryption_status transitions verified via status endpoint, send-before-complete rejected with 412
 - [ ] At least 7 error cases tested (including send-while-pending)
 - [ ] Each request has test scripts validating status codes and response shape
-- [ ] Collection runs successfully with Newman: `newman run postman/athena-secure-messaging.postman_collection.json -e postman/test-env.json`
+- [ ] Collection runs successfully with Newman: `newman run postman/vidra-secure-messaging.postman_collection.json -e postman/test-env.json`
 - [ ] Collection variables properly chain responses (token from login → subsequent requests)
 
 **Verify:**
 
-- `newman run postman/athena-secure-messaging.postman_collection.json -e postman/test-env.json --dry-run` — collection structure is valid
+- `newman run postman/vidra-secure-messaging.postman_collection.json -e postman/test-env.json --dry-run` — collection structure is valid
 - Manual review of test scripts in collection
 
 ---

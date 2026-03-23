@@ -1,6 +1,6 @@
-# Athena API Examples
+# Vidra Core API Examples
 
-This document provides comprehensive examples for working with the Athena API, with a focus on the video categories system.
+This document provides comprehensive examples for working with the Vidra Core API, with a focus on the video categories system.
 
 ## Table of Contents
 

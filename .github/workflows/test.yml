@@ -154,7 +154,7 @@ jobs:
 
       - name: Run integration tests
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/vidra_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           IPFS_API: http://localhost:5001
           CLAMAV_HOST: localhost:3310
@@ -188,15 +188,15 @@ jobs:
       - name: Build binaries
         run: |
           echo "🔨 Building server..."
-          go build -v -o bin/athena ./cmd/server
-          ls -lh bin/athena
+          go build -v -o bin/vidra ./cmd/server
+          ls -lh bin/vidra
           echo "✅ Build successful"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: athena-binary
-          path: bin/athena
+          name: vidra-binary
+          path: bin/vidra
           retention-days: 7
 
   # ============================================================================
@@ -245,7 +245,7 @@ jobs:
       - name: Run integration tests with race detector
         env:
           CGO_ENABLED: "1"
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/vidra_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           IPFS_API: http://localhost:5001
           CLAMAV_HOST: localhost:3310

@@ -3,7 +3,7 @@ package video
 import (
 	"errors"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func isVideoNotFoundError(err error) bool {

@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"athena/internal/domain"
-	"athena/internal/testutil"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/testutil"
 )
 
 func BenchmarkBatchCreateUserViews(b *testing.B) {

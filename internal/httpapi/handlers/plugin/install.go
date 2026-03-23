@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"net/url"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
 )
 
 // PluginInstaller is the narrow interface for installing plugins.

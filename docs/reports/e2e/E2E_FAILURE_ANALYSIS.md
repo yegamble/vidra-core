@@ -23,7 +23,7 @@ After applying the database initialization fix, E2E tests are still failing with
 
 **Problem:** E2E test helper is calling the wrong API endpoint.
 
-**Location:** `/Users/yosefgamble/github/athena/tests/e2e/helpers.go` line 185
+**Location:** `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go` line 185
 
 ```go
 func (c *TestClient) UploadVideo(t *testing.T, videoPath, title, description string) (videoID string) {
@@ -38,7 +38,7 @@ func (c *TestClient) UploadVideo(t *testing.T, videoPath, title, description str
 }
 ```
 
-**API Routing (from `/Users/yosefgamble/github/athena/internal/httpapi/routes.go`):**
+**API Routing (from `/Users/yosefgamble/github/vidra/internal/httpapi/routes.go`):**
 
 ```go
 r.Route("/api/v1/videos", func(r chi.Router) {
@@ -90,9 +90,9 @@ Result: **400 Bad Request - "Invalid JSON payload"**
 
 **Problem:** User login fails with 401 Unauthorized.
 
-**Location:** `/Users/yosefgamble/github/athena/tests/e2e/helpers.go` line 137
+**Location:** `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go` line 137
 
-**Login Flow (from `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` lines 74-104):**
+**Login Flow (from `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go` lines 74-104):**
 
 ```go
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +146,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
    - User has 2FA enabled unexpectedly
    - No 2FA code provided
 
-**Test Flow (from `/Users/yosefgamble/github/athena/tests/e2e/scenarios/video_workflow_test.go`):**
+**Test Flow (from `/Users/yosefgamble/github/vidra/tests/e2e/scenarios/video_workflow_test.go`):**
 
 ```go
 // Line 38-43: Generate unique credentials
@@ -164,7 +164,7 @@ client2 := e2e.NewTestClient(cfg.BaseURL)
 userID2, token2 := client2.Login(t, username, password)  // ❌ Fails with 401
 ```
 
-**Login Helper (from `/Users/yosefgamble/github/athena/tests/e2e/helpers.go` lines 117-137):**
+**Login Helper (from `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go` lines 117-137):**
 
 ```go
 func (c *TestClient) Login(t *testing.T, username, password string) (userID, token string) {
@@ -265,7 +265,7 @@ The password is the same constant `"SecurePass123!"` in both cases, so it should
 
 ### Fix #1: Correct Video Upload Endpoint ✅ READY TO APPLY
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/helpers.go`
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go`
 
 **Change line 185:**
 
@@ -334,7 +334,7 @@ func (c *TestClient) UploadVideo(t *testing.T, videoPath, title, description str
 
 ### Fix #2: Add Diagnostic Logging for Login Issue 🔍 INVESTIGATION
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/helpers.go`
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go`
 
 **Enhance RegisterUser and Login helpers with diagnostics:**
 
@@ -590,7 +590,7 @@ Based on diagnostic logs, you may need to:
 4. **Verify API is using correct database:**
 
    ```bash
-   docker compose -f tests/e2e/docker-compose.yml logs athena-api-e2e | grep DATABASE_URL
+   docker compose -f tests/e2e/docker-compose.yml logs vidra-api-e2e | grep DATABASE_URL
    ```
 
 ---

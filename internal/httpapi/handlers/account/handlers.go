@@ -11,10 +11,10 @@ import (
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/usecase"
-	ucchannel "athena/internal/usecase/channel"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/usecase"
+	ucchannel "vidra-core/internal/usecase/channel"
 )
 
 // AccountHandlers handles PeerTube-compatible /accounts/{name}/* routes.

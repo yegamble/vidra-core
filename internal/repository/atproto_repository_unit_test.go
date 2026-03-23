@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"testing"
 
-	"athena/internal/crypto"
+	"vidra-core/internal/crypto"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"

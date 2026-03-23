@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/security"
-	importuc "athena/internal/usecase/import"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/security"
+	importuc "vidra-core/internal/usecase/import"
 
 	"github.com/go-chi/chi/v5"
 )

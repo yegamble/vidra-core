@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/bcrypt"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
 )
 
 // MockAccountDeletionRepo mocks the AccountDeletionRepository interface.

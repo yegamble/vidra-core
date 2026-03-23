@@ -15,9 +15,9 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/repository"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/repository"
 )
 
 // PasswordResetUserRepository defines the user operations needed for password reset.

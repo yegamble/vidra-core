@@ -55,7 +55,7 @@ Worktree: No
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- Existing Athena docker-compose.yml with app service
+- Existing Vidra Core docker-compose.yml with app service
 - Port 80 and/or 443 available on host
 
 ## Context for Implementer
@@ -74,7 +74,7 @@ Worktree: No
   - Wizard steps use `toggle-btn` with `data-mode` for docker/external toggles
   - Hidden `input` fields track mode state; form POSTs redirect to next step via `http.StatusSeeOther`
   - All config fields use `SCREAMING_SNAKE_CASE` env var names
-  - Docker services on `athena-network` bridge
+  - Docker services on `vidra-network` bridge
 
 - **Key files the implementer must read first:**
   - `docker-compose.yml` — existing service definitions, volumes, networks
@@ -94,7 +94,7 @@ Worktree: No
   - Self-signed certs need to exist before Nginx starts, so the cert generation script runs as a Docker entrypoint or init container
 
 - **Domain context:**
-  - Athena is a PeerTube-compatible video platform. Nginx must handle large file uploads (chunked, up to 32MB per chunk), HLS video streaming segments, and WebSocket connections for live chat.
+  - Vidra Core is a PeerTube-compatible video platform. Nginx must handle large file uploads (chunked, up to 32MB per chunk), HLS video streaming segments, and WebSocket connections for live chat.
   - The `storage` and `processed` Docker volumes contain static video files, thumbnails, and HLS segments that Nginx can serve directly.
 
 ## Runtime Environment

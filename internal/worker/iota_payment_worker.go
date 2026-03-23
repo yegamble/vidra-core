@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // IOTARepository defines the interface for IOTA data operations

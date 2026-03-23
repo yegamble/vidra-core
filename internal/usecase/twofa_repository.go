@@ -3,7 +3,7 @@ package usecase
 import (
 	"context"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // TwoFABackupCodeRepository defines methods for managing 2FA backup codes

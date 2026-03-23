@@ -276,7 +276,7 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.SMTPDisableSTARTTLS = GetBoolEnv("SMTP_DISABLE_STARTTLS", false)
 	cfg.SMTPCAFile = GetEnvOrDefault("SMTP_CA_FILE", "")
 	cfg.SMTPFromAddress = GetEnvOrDefault("SMTP_FROM", "noreply@localhost")
-	cfg.SMTPFromName = GetEnvOrDefault("SMTP_FROM_NAME", "Athena")
+	cfg.SMTPFromName = GetEnvOrDefault("SMTP_FROM_NAME", "Vidra Core")
 
 	cfg.VirusScanEnabled = GetBoolEnv("VIRUS_SCAN_ENABLED", prodDefault(setupMode, true, false))
 	cfg.ClamAVAddress = GetEnvOrDefault("CLAMAV_ADDRESS", "localhost:3310")

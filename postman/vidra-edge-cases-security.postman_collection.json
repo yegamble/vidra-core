@@ -1,0 +1,997 @@
+{
+  "info": {
+    "name": "Vidra Core Edge Cases & Security Tests",
+    "description": "Comprehensive edge case and security testing for Vidra Core API\n\n## Test Categories\n\n1. **SSRF Protection** - Server-Side Request Forgery prevention\n2. **Comment Edge Cases** - Comment counting and validation\n3. **Input Validation** - Boundary testing and injection attempts\n4. **Rate Limiting** - Concurrent request handling\n5. **Remote Video Import** - Federation and import security\n\n## Critical Security Tests\n\n- Private IP blocking (192.168.x.x, 10.x.x.x, 172.16.x.x)\n- AWS metadata service protection (169.254.169.254)\n- Localhost variants blocking\n- Protocol validation (HTTPS only)\n- File size limits\n- URL length limits\n- SQL injection attempts\n- XSS payload detection\n\n## Environment Variables\n\n- `baseUrl` - API base URL (e.g., http://localhost:8080)\n- `access_token` - JWT authentication token",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "edge-case-security-tests"
+  },
+  "item": [
+    {
+      "name": "01 - SSRF Protection Tests",
+      "item": [
+        {
+          "name": "Block Private IP 192.168.x.x",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject private IP range 192.168.x.x', () => {",
+                  "    pm.expect([400, 403]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Error message mentions SSRF or security', () => {",
+                  "    const response = pm.response.json();",
+                  "    const errorText = JSON.stringify(response).toLowerCase();",
+                  "    pm.expect(errorText).to.satisfy((text) => {",
+                  "        return text.includes('ssrf') || ",
+                  "               text.includes('blocked') || ",
+                  "               text.includes('private') ||",
+                  "               text.includes('security');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"http://192.168.1.1/video.mp4\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Block AWS Metadata Service",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should block AWS metadata service access', () => {",
+                  "    pm.expect([400, 403]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Response indicates security violation', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('error');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"http://169.254.169.254/latest/meta-data/iam/security-credentials/\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Block Localhost Variants",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const testCases = [",
+                  "    'http://localhost/video.mp4',",
+                  "    'http://127.0.0.1/video.mp4',",
+                  "    'http://0.0.0.0/video.mp4',",
+                  "    'http://[::1]/video.mp4'",
+                  "];",
+                  "",
+                  "pm.test('Should block all localhost variants', () => {",
+                  "    pm.expect([400, 403]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"http://localhost/video.mp4\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Block Private IP 10.x.x.x",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject private IP range 10.x.x.x', () => {",
+                  "    pm.expect([400, 403]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"http://10.0.0.1/video.mp4\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Block Private IP 172.16.x.x",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject private IP range 172.16.x.x', () => {",
+                  "    pm.expect([400, 403]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"http://172.16.0.1/video.mp4\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Protocol Validation Tests",
+      "item": [
+        {
+          "name": "Reject FTP Protocol",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject FTP protocol', () => {",
+                  "    pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "",
+                  "pm.test('Error indicates protocol issue', () => {",
+                  "    const response = pm.response.json();",
+                  "    const errorText = JSON.stringify(response).toLowerCase();",
+                  "    pm.expect(errorText).to.include('protocol');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"ftp://example.com/video.mp4\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Reject File Protocol",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject file:// protocol', () => {",
+                  "    pm.expect(pm.response.code).to.equal(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"file:///etc/passwd\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Reject JavaScript Protocol",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject javascript: protocol', () => {",
+                  "    pm.expect(pm.response.code).to.equal(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"javascript:alert(1)\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Reject Data URL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject data: URLs', () => {",
+                  "    pm.expect(pm.response.code).to.equal(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"data:text/html,<script>alert(1)</script>\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Input Validation Tests",
+      "item": [
+        {
+          "name": "Extremely Long URL",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const longUrl = 'https://example.com/' + 'A'.repeat(10000);",
+                  "pm.environment.set('long_url', longUrl);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject URLs exceeding max length', () => {",
+                  "    pm.expect([400, 413]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Response time is reasonable (no DoS)', () => {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"{{long_url}}\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Empty Source URL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject empty source_url', () => {",
+                  "    pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "",
+                  "pm.test('Error message indicates required field', () => {",
+                  "    const response = pm.response.json();",
+                  "    const errorText = JSON.stringify(response).toLowerCase();",
+                  "    pm.expect(errorText).to.include('required');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Malformed URL - No Protocol",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject URL without protocol', () => {",
+                  "    pm.expect(pm.response.code).to.equal(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"example.com/video.mp4\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Invalid Privacy Value",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject invalid privacy value', () => {",
+                  "    pm.expect([400, 422]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"https://example.com/video.mp4\",\n  \"target_privacy\": \"invalid_value\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Comment Edge Cases",
+      "item": [
+        {
+          "name": "Get Comments - Non-existent Video",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should handle non-existent video gracefully', () => {",
+                  "    pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('Returns empty comments array', () => {",
+                  "        const response = pm.response.json();",
+                  "        pm.expect(response.data).to.be.an('array').that.is.empty;",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/00000000-0000-0000-0000-000000000000/comments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "00000000-0000-0000-0000-000000000000", "comments"]
+            }
+          }
+        },
+        {
+          "name": "Get Comments - Invalid UUID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject invalid UUID format', () => {",
+                  "    pm.expect([400, 404]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/not-a-uuid/comments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "not-a-uuid", "comments"]
+            }
+          }
+        },
+        {
+          "name": "Create Comment - XSS Attempt",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('XSS payload should be sanitized or rejected', () => {",
+                  "    if (pm.response.code === 201) {",
+                  "        const response = pm.response.json();",
+                  "        const commentBody = response.data.body || response.body;",
+                  "        ",
+                  "        pm.test('Script tags removed or escaped', () => {",
+                  "            pm.expect(commentBody).to.not.include('<script>');",
+                  "            pm.expect(commentBody).to.not.include('javascript:');",
+                  "        });",
+                  "    } else {",
+                  "        pm.expect([400, 422]).to.include(pm.response.code);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"<script>alert('XSS')</script>This is a comment\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/comments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "{{test_video_id}}", "comments"]
+            }
+          }
+        },
+        {
+          "name": "Create Comment - SQL Injection Attempt",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('SQL injection should not cause errors', () => {",
+                  "    pm.expect([200, 201, 400, 422]).to.include(pm.response.code);",
+                  "    pm.expect(pm.response.code).to.not.equal(500);",
+                  "});",
+                  "",
+                  "pm.test('No database error exposed', () => {",
+                  "    const responseText = pm.response.text().toLowerCase();",
+                  "    pm.expect(responseText).to.not.include('sql');",
+                  "    pm.expect(responseText).to.not.include('database');",
+                  "    pm.expect(responseText).to.not.include('postgres');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"' OR '1'='1' -- \"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/comments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "{{test_video_id}}", "comments"]
+            }
+          }
+        },
+        {
+          "name": "Create Comment - Extremely Long Body",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const longComment = 'A'.repeat(15000);",
+                  "pm.environment.set('long_comment', longComment);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject or truncate extremely long comments', () => {",
+                  "    pm.expect([400, 413, 422]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Response time reasonable', () => {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(3000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"{{long_comment}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/comments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "{{test_video_id}}", "comments"]
+            }
+          }
+        },
+        {
+          "name": "Get Comments - Pagination Edge Case (Offset Beyond Total)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should handle offset beyond total gracefully', () => {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('Returns empty array', () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.data).to.be.an('array').that.is.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/comments?offset=999999&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "{{test_video_id}}", "comments"],
+              "query": [
+                {
+                  "key": "offset",
+                  "value": "999999"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Rate Limiting Tests",
+      "item": [
+        {
+          "name": "Import Rate Limit - Burst Test",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Track request number",
+                  "let requestNum = pm.environment.get('burst_request_num') || 0;",
+                  "requestNum++;",
+                  "pm.environment.set('burst_request_num', requestNum);",
+                  "console.log('Burst request #' + requestNum);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const requestNum = pm.environment.get('burst_request_num');",
+                  "",
+                  "if (requestNum <= 10) {",
+                  "    pm.test('First 10 requests should succeed or be rate limited', () => {",
+                  "        pm.expect([201, 429]).to.include(pm.response.code);",
+                  "    });",
+                  "} else {",
+                  "    pm.test('Subsequent requests should be rate limited', () => {",
+                  "        pm.expect(pm.response.code).to.equal(429);",
+                  "    });",
+                  "}",
+                  "",
+                  "if (pm.response.code === 429) {",
+                  "    pm.test('Rate limit error message provided', () => {",
+                  "        const response = pm.response.json();",
+                  "        pm.expect(response).to.have.property('error');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"https://sample-videos.com/video{{$randomInt}}/test.mp4\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Authentication Edge Cases",
+      "item": [
+        {
+          "name": "Import Without Auth Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject unauthenticated import request', () => {",
+                  "    pm.expect(pm.response.code).to.equal(401);",
+                  "});",
+                  "",
+                  "pm.test('Error indicates authentication required', () => {",
+                  "    const response = pm.response.json();",
+                  "    const errorText = JSON.stringify(response).toLowerCase();",
+                  "    pm.expect(errorText).to.satisfy((text) => {",
+                  "        return text.includes('unauthorized') || ",
+                  "               text.includes('authentication') ||",
+                  "               text.includes('auth');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"https://example.com/video.mp4\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Import With Invalid Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject invalid authentication token', () => {",
+                  "    pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer invalid_token_12345"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_url\": \"https://example.com/video.mp4\",\n  \"target_privacy\": \"private\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "imports"]
+            }
+          }
+        },
+        {
+          "name": "Create Comment Without Auth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Should reject unauthenticated comment creation', () => {",
+                  "    pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"Test comment without authentication\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/comments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "videos", "{{test_video_id}}", "comments"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

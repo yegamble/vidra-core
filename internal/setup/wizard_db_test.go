@@ -17,7 +17,7 @@ func TestCreateDatabaseIfNotExists(t *testing.T) {
 	}{
 		{
 			name:        "valid postgres connection",
-			databaseURL: "postgres://user:pass@localhost:5432/athena",
+			databaseURL: "postgres://user:pass@localhost:5432/vidra",
 			wantErr:     false,
 		},
 		{
@@ -54,14 +54,14 @@ func TestCreateAdminUser(t *testing.T) {
 		{
 			name:     "valid admin user",
 			username: "admin",
-			email:    "admin@athena.local",
+			email:    "admin@vidra.local",
 			password: "securepassword123",
 			wantErr:  false,
 		},
 		{
 			name:     "empty username",
 			username: "",
-			email:    "admin@athena.local",
+			email:    "admin@vidra.local",
 			password: "securepassword123",
 			wantErr:  true,
 		},
@@ -70,7 +70,7 @@ func TestCreateAdminUser(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			databaseURL := "postgres://user:pass@localhost:5432/athena"
+			databaseURL := "postgres://user:pass@localhost:5432/vidra"
 
 			err := CreateAdminUser(ctx, databaseURL, tt.username, tt.email, tt.password)
 
@@ -91,8 +91,8 @@ func TestExtractDatabaseName(t *testing.T) {
 	}{
 		{
 			name: "standard postgres URL",
-			url:  "postgres://user:pass@localhost:5432/athena",
-			want: "athena",
+			url:  "postgres://user:pass@localhost:5432/vidra",
+			want: "vidra",
 		},
 		{
 			name: "with query parameters",
@@ -128,7 +128,7 @@ func TestReplaceDatabaseName(t *testing.T) {
 	}{
 		{
 			name:    "replace database name",
-			url:     "postgres://user:pass@localhost:5432/athena",
+			url:     "postgres://user:pass@localhost:5432/vidra",
 			newName: "postgres",
 			want:    "postgres://user:pass@localhost:5432/postgres",
 		},

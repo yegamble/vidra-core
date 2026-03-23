@@ -1,6 +1,6 @@
-# Kubernetes Manifests for Athena
+# Kubernetes Manifests for Vidra Core
 
-This directory contains Kubernetes manifests for deploying Athena video platform to production.
+This directory contains Kubernetes manifests for deploying Vidra Core video platform to production.
 
 ## Directory Structure
 
@@ -30,19 +30,19 @@ See [docs/deployment/KUBERNETES_DEPLOYMENT.md](../docs/deployment/KUBERNETES_DEP
 
 ```bash
 # 1. Create secrets
-kubectl create secret generic athena-secrets \
+kubectl create secret generic vidra-secrets \
   --from-literal=database-url="postgres://..." \
   --from-literal=redis-url="redis://..." \
   --from-literal=jwt-secret="$(openssl rand -base64 64)"
 
 # 2. Update ingress hostname
-sed -i 's/athena.example.com/your-domain.com/g' base/ingress.yaml
+sed -i 's/vidra.example.com/your-domain.com/g' base/ingress.yaml
 
 # 3. Deploy
 kubectl apply -f base/
 
 # 4. Check status
-kubectl get pods -l app=athena
+kubectl get pods -l app=vidra
 ```
 
 ## Components
@@ -75,14 +75,14 @@ kubectl get pods -l app=athena
 
 ### 5. **Storage** (`pvc.yaml`)
 
-- **athena-storage**: 500Gi (videos, thumbnails, HLS segments)
-- **athena-quarantine**: 10Gi (quarantined malware files)
+- **vidra-storage**: 500Gi (videos, thumbnails, HLS segments)
+- **vidra-quarantine**: 10Gi (quarantined malware files)
 - **Access Mode**: ReadWriteMany (shared across pods)
 
 ### 6. **Monitoring** (`monitoring/`)
 
 - **Prometheus**: Metrics collection with custom alert rules
-- **Grafana**: Pre-configured dashboard for Athena metrics
+- **Grafana**: Pre-configured dashboard for Vidra Core metrics
 
 ## Configuration
 
@@ -114,7 +114,7 @@ data:
 
 ## Deployment Environments
 
-Athena uses a Blue/Green deployment strategy for zero-downtime updates.
+Vidra Core uses a Blue/Green deployment strategy for zero-downtime updates.
 
 ### Blue Environment (Active)
 
@@ -161,14 +161,14 @@ The following services must be deployed separately:
 
 ### Prometheus Metrics
 
-Athena exposes metrics at `:9090/metrics`:
+Vidra Core exposes metrics at `:9090/metrics`:
 
-- `athena_http_requests_total`: HTTP request counter
-- `athena_http_request_duration_seconds`: Request latency histogram
-- `athena_database_connections_in_use`: Active database connections
-- `athena_encoding_queue_depth`: Pending encoding jobs
-- `athena_virus_scan_total`: Virus scan results
-- `athena_activitypub_delivery_total`: Federation delivery status
+- `vidra_http_requests_total`: HTTP request counter
+- `vidra_http_request_duration_seconds`: Request latency histogram
+- `vidra_database_connections_in_use`: Active database connections
+- `vidra_encoding_queue_depth`: Pending encoding jobs
+- `vidra_virus_scan_total`: Virus scan results
+- `vidra_activitypub_delivery_total`: Federation delivery status
 
 ### Grafana Dashboards
 
@@ -200,7 +200,7 @@ Prometheus alert rules in `monitoring/prometheus-config.yaml`:
 ```bash
 # Check PVC status
 kubectl get pvc
-kubectl describe pvc athena-storage
+kubectl describe pvc vidra-storage
 
 # Check node resources
 kubectl describe nodes
@@ -255,30 +255,30 @@ kubectl get networkpolicies
 ```bash
 # Database backups (automated via RDS/Cloud SQL)
 # or manual:
-pg_dump "$DATABASE_URL" | gzip > athena-backup-$(date +%Y%m%d).sql.gz
+pg_dump "$DATABASE_URL" | gzip > vidra-backup-$(date +%Y%m%d).sql.gz
 
 # Storage backups (use Velero or cloud-native snapshots)
-velero backup create athena-storage --include-namespaces athena
+velero backup create vidra-storage --include-namespaces vidra
 ```
 
 ### Upgrades
 
 ```bash
 # Update image tag
-kubectl set image deployment/athena-api athena=ghcr.io/yegamble/athena:v1.2.0
+kubectl set image deployment/vidra-api vidra=ghcr.io/yegamble/vidra-core:v1.2.0
 
 # Monitor rollout
-kubectl rollout status deployment/athena-api
+kubectl rollout status deployment/vidra-api
 
 # Rollback if needed
-kubectl rollout undo deployment/athena-api
+kubectl rollout undo deployment/vidra-api
 ```
 
 ### Scaling
 
 ```bash
 # Manual scaling
-kubectl scale deployment/athena-api --replicas=10
+kubectl scale deployment/vidra-api --replicas=10
 
 # Check autoscaler status
 kubectl get hpa
@@ -286,13 +286,13 @@ kubectl get hpa
 
 ## Blue/Green Deployments
 
-Athena supports **zero-downtime blue/green deployments** for production:
+Vidra Core supports **zero-downtime blue/green deployments** for production:
 
 ```bash
 # Quick start
-kubectl label deployment athena-api version=blue -n athena --overwrite
+kubectl label deployment vidra-api version=blue -n vidra --overwrite
 kubectl apply -k overlays/green/
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"green"}}}'
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"green"}}}'
 ```
 
 **Learn more:**
@@ -325,5 +325,5 @@ kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"g
 
 For issues or questions:
 
-- GitHub Issues: <https://github.com/yegamble/athena/issues>
-- Documentation: <https://github.com/yegamble/athena/docs>
+- GitHub Issues: <https://github.com/yegamble/vidra-core/issues>
+- Documentation: <https://github.com/yegamble/vidra-core/docs>

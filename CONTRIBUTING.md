@@ -1,6 +1,6 @@
-# Contributing to Athena
+# Contributing to Vidra Core
 
-Thanks for contributing to Athena.
+Thanks for contributing to Vidra Core.
 
 ## Prerequisites
 
@@ -12,8 +12,8 @@ Thanks for contributing to Athena.
 ## Local Setup
 
 ```bash
-git clone https://github.com/yegamble/athena.git
-cd athena
+git clone https://github.com/yegamble/vidra-core.git
+cd vidra
 cp .env.example .env
 make deps
 make migrate-up
@@ -62,7 +62,7 @@ If you use AI coding tools, read:
 
 ## Running CI Locally with `act`
 
-Athena workflows are designed for GitHub Actions and can be exercised locally with [`act`](https://github.com/nektos/act).
+Vidra Core workflows are designed for GitHub Actions and can be exercised locally with [`act`](https://github.com/nektos/act).
 
 ### 1. Configure runner mappings
 
@@ -77,7 +77,7 @@ Copy `.secrets.example` to `.secrets` (do not commit) and customize values:
 
 ```bash
 cp .secrets.example .secrets
-DATABASE_URL=postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+DATABASE_URL=postgres://test_user:test_password@localhost:5432/vidra_test?sslmode=disable
 REDIS_URL=redis://localhost:6379/0
 JWT_SECRET=local-test-secret
 GITHUB_TOKEN=<optional, for workflows that call GitHub API>

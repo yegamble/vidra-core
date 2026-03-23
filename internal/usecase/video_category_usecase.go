@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"

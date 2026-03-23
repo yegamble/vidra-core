@@ -1,6 +1,6 @@
-# End-to-End (E2E) Testing for Athena
+# End-to-End (E2E) Testing for Vidra Core
 
-This directory contains the end-to-end testing framework for the Athena video platform. E2E tests validate complete user workflows from start to finish, testing the entire application stack.
+This directory contains the end-to-end testing framework for the Vidra Core video platform. E2E tests validate complete user workflows from start to finish, testing the entire application stack.
 
 ## Overview
 
@@ -66,14 +66,14 @@ tests/e2e/
 ### 1. Start Test Environment
 
 ```bash
-# Start all services (Postgres, Redis, MinIO, ClamAV, Athena API)
+# Start all services (Postgres, Redis, MinIO, ClamAV, Vidra Core API)
 docker-compose -f tests/e2e/docker-compose.yml up -d
 
 # Check service health
 docker-compose -f tests/e2e/docker-compose.yml ps
 
 # View logs
-docker-compose -f tests/e2e/docker-compose.yml logs -f athena-api-e2e
+docker-compose -f tests/e2e/docker-compose.yml logs -f vidra-api-e2e
 ```
 
 ### 2. Generate Test Fixtures
@@ -168,7 +168,7 @@ The `docker-compose.yml` file sets up a complete test environment:
 - **Redis** (port 6380) - Session storage
 - **MinIO** (ports 9000, 9001) - S3-compatible object storage
 - **ClamAV** (port 3311) - Virus scanning
-- **Athena API** (port 8080) - Application server
+- **Vidra Core API** (port 8080) - Application server
 
 All services include health checks to ensure proper startup order.
 
@@ -181,7 +181,7 @@ package scenarios
 
 import (
     "testing"
-    "github.com/yegamble/athena/tests/e2e"
+    "github.com/yegamble/vidra-core/tests/e2e"
 )
 
 func TestMyWorkflow(t *testing.T) {
@@ -305,7 +305,7 @@ jobs:
 docker-compose -f tests/e2e/docker-compose.yml logs -f
 
 # Specific service
-docker-compose -f tests/e2e/docker-compose.yml logs -f athena-api-e2e
+docker-compose -f tests/e2e/docker-compose.yml logs -f vidra-api-e2e
 
 # Database logs
 docker-compose -f tests/e2e/docker-compose.yml logs -f postgres-e2e
@@ -315,10 +315,10 @@ docker-compose -f tests/e2e/docker-compose.yml logs -f postgres-e2e
 
 ```bash
 # Access Postgres
-docker exec -it athena-e2e-postgres psql -U athena_test -d athena_e2e
+docker exec -it vidra-e2e-postgres psql -U vidra_test -d vidra_e2e
 
 # Access Redis
-docker exec -it athena-e2e-redis redis-cli
+docker exec -it vidra-e2e-redis redis-cli
 
 # Access MinIO console
 open http://localhost:9001  # user: minioadmin, pass: minioadmin
@@ -335,10 +335,10 @@ E2E_BASE_URL=http://localhost:8080 go test -v -count=1 ./tests/e2e/scenarios/...
 
 ```bash
 # Check uploaded videos
-docker exec athena-e2e-postgres psql -U athena_test -d athena_e2e -c "SELECT id, title, state FROM videos;"
+docker exec vidra-e2e-postgres psql -U vidra_test -d vidra_e2e -c "SELECT id, title, state FROM videos;"
 
 # Check users
-docker exec athena-e2e-postgres psql -U athena_test -d athena_e2e -c "SELECT id, username, email FROM users;"
+docker exec vidra-e2e-postgres psql -U vidra_test -d vidra_e2e -c "SELECT id, username, email FROM users;"
 ```
 
 ## Performance Testing Integration

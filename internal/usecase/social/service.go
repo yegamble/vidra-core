@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/security"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/security"
 )
 
 const maxConcurrentIngestions = 20

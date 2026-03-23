@@ -216,7 +216,7 @@ SMTP_PORT=587
 SMTP_USERNAME=noreply@example.com
 SMTP_PASSWORD=secret
 FROM_ADDRESS=noreply@example.com
-FROM_NAME="Athena Platform"
+FROM_NAME="Vidra Core Platform"
 BASE_URL=https://example.com
 
 # Verification Settings

@@ -1,4 +1,4 @@
-# Blue/Green Deployment Strategy for Athena
+# Blue/Green Deployment Strategy for Vidra Core
 
 **Version:** 1.0
 **Status:** Strategic Planning
@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-This document outlines a comprehensive blue/green deployment strategy for the Athena decentralized video platform, specifically designed to address the unique challenges of:
+This document outlines a comprehensive blue/green deployment strategy for the Vidra Core decentralized video platform, specifically designed to address the unique challenges of:
 
 - **Zero-downtime deployments** for a federated video platform
 - **Stateful component management** (PostgreSQL, Redis, IPFS content)
@@ -31,7 +31,7 @@ This document outlines a comprehensive blue/green deployment strategy for the At
 
 ## Architecture Overview
 
-### Blue/Green Model for Athena
+### Blue/Green Model for Vidra Core
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -83,14 +83,14 @@ This document outlines a comprehensive blue/green deployment strategy for the At
 
 **API Servers:**
 
-- Deployment: `athena-api-blue` and `athena-api-green`
+- Deployment: `vidra-api-blue` and `vidra-api-green`
 - Fully independent
 - Can run simultaneously without conflict
 - Tagged with version labels
 
 **Encoding Workers:**
 
-- Deployment: `athena-encoding-worker-blue` and `athena-encoding-worker-green`
+- Deployment: `vidra-encoding-worker-blue` and `vidra-encoding-worker-green`
 - Special handling: Blue workers complete existing jobs, Green starts new jobs
 - Coordinated via Redis job queue with version tagging
 
@@ -147,13 +147,13 @@ This document outlines a comprehensive blue/green deployment strategy for the At
 apiVersion: v1
 kind: Service
 metadata:
-  name: athena-api
+  name: vidra-api
   labels:
-    app: athena
+    app: vidra
     component: api
 spec:
   selector:
-    app: athena
+    app: vidra
     component: api
     version: blue      # <-- Switch this label
   ports:
@@ -164,7 +164,7 @@ spec:
 **Switch command:**
 
 ```bash
-kubectl patch service athena-api -p '{"spec":{"selector":{"version":"green"}}}'
+kubectl patch service vidra-api -p '{"spec":{"selector":{"version":"green"}}}'
 ```
 
 ### Option 2: Ingress Annotation Switching
@@ -184,20 +184,20 @@ kubectl patch service athena-api -p '{"spec":{"selector":{"version":"green"}}}'
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: athena-ingress-green
+  name: vidra-ingress-green
   annotations:
     nginx.ingress.kubernetes.io/canary: "true"
     nginx.ingress.kubernetes.io/canary-weight: "10"  # 10% traffic to green
 spec:
   rules:
-  - host: athena.example.com
+  - host: vidra.example.com
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: athena-api-green
+            name: vidra-api-green
             port:
               number: 80
 ```
@@ -206,14 +206,14 @@ spec:
 
 ```bash
 # 10% traffic to green
-kubectl patch ingress athena-ingress-green --type=merge -p '{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/canary-weight":"10"}}}'
+kubectl patch ingress vidra-ingress-green --type=merge -p '{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/canary-weight":"10"}}}'
 
 # 50% traffic to green
-kubectl patch ingress athena-ingress-green --type=merge -p '{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/canary-weight":"50"}}}'
+kubectl patch ingress vidra-ingress-green --type=merge -p '{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/canary-weight":"50"}}}'
 
 # 100% traffic to green (switch complete)
-kubectl patch service athena-api -p '{"spec":{"selector":{"version":"green"}}}'
-kubectl delete ingress athena-ingress-green
+kubectl patch service vidra-api -p '{"spec":{"selector":{"version":"green"}}}'
+kubectl delete ingress vidra-ingress-green
 ```
 
 ### Option 3: External Load Balancer (Advanced)
@@ -310,18 +310,18 @@ UPDATE videos SET old_status = new_status WHERE old_status IS NULL;
 
 ```bash
 # 1. Apply expand migration (before deploying Green)
-kubectl run athena-migrate \
-  --image=ghcr.io/yegamble/athena:v1.3.0 \
+kubectl run vidra-migrate \
+  --image=ghcr.io/yegamble/vidra-core:v1.3.0 \
   --restart=Never \
-  --namespace=athena \
-  --env="DATABASE_URL=$(kubectl get secret athena-secrets -n athena -o jsonpath='{.data.database-url}' | base64 -d)" \
-  --command -- /app/athena migrate up
+  --namespace=vidra \
+  --env="DATABASE_URL=$(kubectl get secret vidra-secrets -n vidra -o jsonpath='{.data.database-url}' | base64 -d)" \
+  --command -- /app/vidra migrate up
 
 # 2. Wait for migration to complete
-kubectl wait --for=condition=complete --timeout=600s job/athena-migrate -n athena
+kubectl wait --for=condition=complete --timeout=600s job/vidra-migrate -n vidra
 
 # 3. Verify migration
-kubectl logs athena-migrate -n athena
+kubectl logs vidra-migrate -n vidra
 
 # 4. Deploy Green (uses new schema)
 kubectl apply -f k8s/overlays/green/
@@ -352,11 +352,11 @@ goose -dir migrations postgres "$TEST_DATABASE_URL" up
 
 ```bash
 # Health check includes database connectivity
-curl http://athena-api-green/ready | jq '.checks.database'
+curl http://vidra-api-green/ready | jq '.checks.database'
 
 # Run smoke tests
 kubectl run smoke-test --image=curlimages/curl -i --rm --restart=Never -- \
-  sh -c "curl -f http://athena-api-green/api/v1/videos | grep -q 'videos'"
+  sh -c "curl -f http://vidra-api-green/api/v1/videos | grep -q 'videos'"
 ```
 
 ---
@@ -368,8 +368,8 @@ kubectl run smoke-test --image=curlimages/curl -i --rm --restart=Never -- \
 1. **Build and Push Docker Image**
 
    ```bash
-   docker build -t ghcr.io/yegamble/athena:v1.3.0 .
-   docker push ghcr.io/yegamble/athena:v1.3.0
+   docker build -t ghcr.io/yegamble/vidra-core:v1.3.0 .
+   docker push ghcr.io/yegamble/vidra-core:v1.3.0
    ```
 
 2. **Run Pre-Flight Tests**
@@ -394,22 +394,22 @@ kubectl apply -f - <<EOF
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: athena-migrate-$(date +%s)
-  namespace: athena
+  name: vidra-migrate-$(date +%s)
+  namespace: vidra
 spec:
   template:
     spec:
       restartPolicy: Never
       containers:
       - name: migrate
-        image: ghcr.io/yegamble/athena:v1.3.0
-        command: ["/app/athena"]
+        image: ghcr.io/yegamble/vidra-core:v1.3.0
+        command: ["/app/vidra"]
         args: ["migrate", "up"]
         env:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              name: athena-secrets
+              name: vidra-secrets
               key: database-url
 EOF
 ```
@@ -421,11 +421,11 @@ EOF
 kubectl apply -f k8s/overlays/green/deployment-api.yaml
 
 # Wait for pods to be ready
-kubectl wait --for=condition=ready pod -l app=athena,component=api,version=green --timeout=300s -n athena
+kubectl wait --for=condition=ready pod -l app=vidra,component=api,version=green --timeout=300s -n vidra
 
 # Check health
-kubectl run curl --image=curlimages/curl -i --rm --restart=Never -n athena -- \
-  curl -f http://athena-api-green/health
+kubectl run curl --image=curlimages/curl -i --rm --restart=Never -n vidra -- \
+  curl -f http://vidra-api-green/health
 ```
 
 #### Step 3: Run Smoke Tests
@@ -435,7 +435,7 @@ kubectl run curl --image=curlimages/curl -i --rm --restart=Never -n athena -- \
 kubectl apply -f k8s/jobs/smoke-tests.yaml
 
 # Monitor smoke test results
-kubectl logs -f job/smoke-tests -n athena
+kubectl logs -f job/smoke-tests -n vidra
 ```
 
 #### Step 4: Gradual Traffic Shift (Canary)
@@ -448,14 +448,14 @@ kubectl apply -f k8s/overlays/green/ingress-canary-10.yaml
 # Check error rates, latency, etc.
 
 # Increase to 50%
-kubectl patch ingress athena-ingress-green -n athena --type=merge \
+kubectl patch ingress vidra-ingress-green -n vidra --type=merge \
   -p '{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/canary-weight":"50"}}}'
 
 # Monitor for 10 minutes
 
 # Full switch to Green
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"green"}}}'
-kubectl delete ingress athena-ingress-green -n athena
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"green"}}}'
+kubectl delete ingress vidra-ingress-green -n vidra
 ```
 
 #### Step 5: Encoding Worker Migration
@@ -481,17 +481,17 @@ redis-cli HSET worker:config:green accepting_jobs true
 sleep 1800
 
 # Scale down Blue API servers
-kubectl scale deployment athena-api-blue --replicas=1 -n athena
+kubectl scale deployment vidra-api-blue --replicas=1 -n vidra
 
 # Wait 1 hour (keep minimal Blue capacity for emergency rollback)
 sleep 3600
 
 # Fully scale down Blue
-kubectl scale deployment athena-api-blue --replicas=0 -n athena
-kubectl scale deployment athena-encoding-worker-blue --replicas=0 -n athena
+kubectl scale deployment vidra-api-blue --replicas=0 -n vidra
+kubectl scale deployment vidra-encoding-worker-blue --replicas=0 -n vidra
 
 # Update labels
-kubectl label deployment athena-api-blue status=inactive -n athena --overwrite
+kubectl label deployment vidra-api-blue status=inactive -n vidra --overwrite
 ```
 
 ### Post-Deployment Phase
@@ -525,16 +525,16 @@ If issues detected immediately after traffic switch:
 
 ```bash
 # 1. Revert traffic to Blue
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"blue"}}}'
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"blue"}}}'
 
 # 2. Verify Blue health
-curl http://athena.example.com/health
+curl http://vidra.example.com/health
 
 # 3. Scale up Blue if needed
-kubectl scale deployment athena-api-blue --replicas=3 -n athena
+kubectl scale deployment vidra-api-blue --replicas=3 -n vidra
 
 # 4. Investigate Green issues
-kubectl logs -l app=athena,version=green -n athena --tail=500
+kubectl logs -l app=vidra,version=green -n vidra --tail=500
 ```
 
 **Expected Downtime:** < 5 seconds (time for service selector propagation)
@@ -545,18 +545,18 @@ If database migration causes issues:
 
 ```bash
 # 1. Revert traffic to Blue immediately
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"blue"}}}'
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"blue"}}}'
 
 # 2. Run migration rollback
-kubectl run athena-migrate-rollback \
-  --image=ghcr.io/yegamble/athena:v1.3.0 \
+kubectl run vidra-migrate-rollback \
+  --image=ghcr.io/yegamble/vidra-core:v1.3.0 \
   --restart=Never \
-  --namespace=athena \
+  --namespace=vidra \
   --env="DATABASE_URL=..." \
-  --command -- /app/athena migrate down
+  --command -- /app/vidra migrate down
 
 # 3. Verify database state
-kubectl run psql --image=postgres:15-alpine -i --rm --restart=Never -n athena -- \
+kubectl run psql --image=postgres:15-alpine -i --rm --restart=Never -n vidra -- \
   psql "$DATABASE_URL" -c "\dt"
 
 # 4. Clean up Green deployment
@@ -571,17 +571,17 @@ If issues discovered after Blue scaled down:
 
 ```bash
 # 1. Scale up Blue immediately
-kubectl scale deployment athena-api-blue --replicas=3 -n athena
-kubectl wait --for=condition=ready pod -l version=blue --timeout=120s -n athena
+kubectl scale deployment vidra-api-blue --replicas=3 -n vidra
+kubectl wait --for=condition=ready pod -l version=blue --timeout=120s -n vidra
 
 # 2. Switch traffic back to Blue
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"blue"}}}'
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"blue"}}}'
 
 # 3. Verify Blue serving traffic
-curl http://athena.example.com/health
+curl http://vidra.example.com/health
 
 # 4. Investigate Green issues
-kubectl describe pod -l version=green -n athena
+kubectl describe pod -l version=green -n vidra
 ```
 
 **Expected Downtime:** 1-2 minutes (time to scale up Blue pods)
@@ -611,7 +611,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: pre-switch-validation
-  namespace: athena
+  namespace: vidra
 spec:
   template:
     spec:
@@ -626,38 +626,38 @@ spec:
           set -e
 
           # Health check
-          curl -f http://athena-api-green/health || exit 1
+          curl -f http://vidra-api-green/health || exit 1
 
           # Readiness check
-          READY=$(curl -s http://athena-api-green/ready | jq -r '.status')
+          READY=$(curl -s http://vidra-api-green/ready | jq -r '.status')
           if [ "$READY" != "ok" ]; then
             echo "Readiness check failed"
             exit 1
           fi
 
           # Database connectivity
-          DB_STATUS=$(curl -s http://athena-api-green/ready | jq -r '.checks.database')
+          DB_STATUS=$(curl -s http://vidra-api-green/ready | jq -r '.checks.database')
           if [ "$DB_STATUS" != "ok" ]; then
             echo "Database check failed"
             exit 1
           fi
 
           # Redis connectivity
-          REDIS_STATUS=$(curl -s http://athena-api-green/ready | jq -r '.checks.redis')
+          REDIS_STATUS=$(curl -s http://vidra-api-green/ready | jq -r '.checks.redis')
           if [ "$REDIS_STATUS" != "ok" ]; then
             echo "Redis check failed"
             exit 1
           fi
 
           # IPFS connectivity
-          IPFS_STATUS=$(curl -s http://athena-api-green/ready | jq -r '.checks.ipfs')
+          IPFS_STATUS=$(curl -s http://vidra-api-green/ready | jq -r '.checks.ipfs')
           if [ "$IPFS_STATUS" != "ok" ]; then
             echo "IPFS check failed"
             exit 1
           fi
 
           # Queue depth check
-          QUEUE_STATUS=$(curl -s http://athena-api-green/ready | jq -r '.checks.queue')
+          QUEUE_STATUS=$(curl -s http://vidra-api-green/ready | jq -r '.checks.queue')
           if [ "$QUEUE_STATUS" != "ok" ]; then
             echo "Queue check failed"
             exit 1
@@ -673,7 +673,7 @@ spec:
 1. **Error Rate**
 
    ```promql
-   rate(athena_http_requests_total{status=~"5.."}[5m]) > 0.01
+   rate(vidra_http_requests_total{status=~"5.."}[5m]) > 0.01
    ```
 
    **Alert threshold:** > 1% error rate
@@ -681,7 +681,7 @@ spec:
 2. **Response Latency**
 
    ```promql
-   histogram_quantile(0.99, rate(athena_http_request_duration_seconds_bucket[5m])) > 2.0
+   histogram_quantile(0.99, rate(vidra_http_request_duration_seconds_bucket[5m])) > 2.0
    ```
 
    **Alert threshold:** p99 > 2 seconds
@@ -689,7 +689,7 @@ spec:
 3. **Federation Delivery Success**
 
    ```promql
-   rate(athena_activitypub_delivery_total{status="failed"}[5m]) / rate(athena_activitypub_delivery_total[5m]) > 0.05
+   rate(vidra_activitypub_delivery_total{status="failed"}[5m]) / rate(vidra_activitypub_delivery_total[5m]) > 0.05
    ```
 
    **Alert threshold:** > 5% failure rate
@@ -697,7 +697,7 @@ spec:
 4. **Database Connection Pool**
 
    ```promql
-   athena_database_connections_in_use / athena_database_connections_max > 0.9
+   vidra_database_connections_in_use / vidra_database_connections_max > 0.9
    ```
 
    **Alert threshold:** > 90% utilization
@@ -705,7 +705,7 @@ spec:
 5. **Encoding Queue Depth**
 
    ```promql
-   athena_encoding_queue_depth > 1000
+   vidra_encoding_queue_depth > 1000
    ```
 
    **Alert threshold:** > 1000 jobs
@@ -729,9 +729,9 @@ data:
       rules:
       - alert: HighErrorRateAfterDeployment
         expr: |
-          rate(athena_http_requests_total{status=~"5.."}[5m]) > 0.05
+          rate(vidra_http_requests_total{status=~"5.."}[5m]) > 0.05
           and
-          time() - kube_deployment_status_observed_generation{deployment="athena-api-green"} < 1800
+          time() - kube_deployment_status_observed_generation{deployment="vidra-api-green"} < 1800
         for: 2m
         labels:
           severity: critical
@@ -742,9 +742,9 @@ data:
 
       - alert: HighLatencyAfterDeployment
         expr: |
-          histogram_quantile(0.99, rate(athena_http_request_duration_seconds_bucket[5m])) > 3.0
+          histogram_quantile(0.99, rate(vidra_http_request_duration_seconds_bucket[5m])) > 3.0
           and
-          time() - kube_deployment_status_observed_generation{deployment="athena-api-green"} < 1800
+          time() - kube_deployment_status_observed_generation{deployment="vidra-api-green"} < 1800
         for: 5m
         labels:
           severity: warning
@@ -754,7 +754,7 @@ data:
           description: "p99 latency is {{ $value }}s"
 
       - alert: DatabaseConnectionPoolExhaustion
-        expr: athena_database_connections_in_use / athena_database_connections_max > 0.95
+        expr: vidra_database_connections_in_use / vidra_database_connections_max > 0.95
         for: 2m
         labels:
           severity: critical
@@ -768,7 +768,7 @@ data:
 
 After traffic switch, validate:
 
-- [ ] Homepage loads (`curl https://athena.example.com`)
+- [ ] Homepage loads (`curl https://vidra.example.com`)
 - [ ] User login works
 - [ ] Video upload works
 - [ ] Video playback works (HLS streaming)
@@ -808,10 +808,10 @@ Blue/green deployments temporarily double compute costs. For a video platform wi
 
 ```bash
 # After traffic switch, scale Blue to 1 replica
-kubectl scale deployment athena-api-blue --replicas=1 -n athena
+kubectl scale deployment vidra-api-blue --replicas=1 -n vidra
 
 # After 1 hour, scale to 0
-kubectl scale deployment athena-api-blue --replicas=0 -n athena
+kubectl scale deployment vidra-api-blue --replicas=0 -n vidra
 ```
 
 **Cost Savings:**
@@ -991,7 +991,7 @@ jobs:
     needs: [deploy-staging]
     environment:
       name: production
-      url: https://athena.example.com
+      url: https://vidra.example.com
     steps:
       # Manual approval required via GitHub UI
 ```
@@ -1004,7 +1004,7 @@ jobs:
 
 ### ActivityPub Continuous Uptime
 
-**Challenge:** External Mastodon/PeerTube instances expect Athena to be always reachable.
+**Challenge:** External Mastodon/PeerTube instances expect Vidra Core to be always reachable.
 
 **Solutions:**
 
@@ -1025,7 +1025,7 @@ jobs:
 
 4. **Webfinger Lookups:**
    - Must work during entire switchover
-   - Test: `curl https://athena.example.com/.well-known/webfinger?resource=acct:user@athena.example.com`
+   - Test: `curl https://vidra.example.com/.well-known/webfinger?resource=acct:user@vidra.example.com`
 
 ### BlueSky/ATProto Considerations
 
@@ -1035,7 +1035,7 @@ jobs:
 
 1. **DID Resolution:**
    - DID documents must remain accessible
-   - Test: `curl https://athena.example.com/.well-known/did.json`
+   - Test: `curl https://vidra.example.com/.well-known/did.json`
 
 2. **Lexicon API Compatibility:**
    - Ensure new Green version maintains backward compatibility
@@ -1054,16 +1054,16 @@ jobs:
   run: |
     # ActivityPub actor
     curl -f -H "Accept: application/activity+json" \
-      http://athena-api-green/users/testuser
+      http://vidra-api-green/users/testuser
 
     # Webfinger
-    curl -f http://athena-api-green/.well-known/webfinger?resource=acct:testuser@athena.example.com
+    curl -f http://vidra-api-green/.well-known/webfinger?resource=acct:testuser@vidra.example.com
 
     # ATProto DID
-    curl -f http://athena-api-green/.well-known/did.json
+    curl -f http://vidra-api-green/.well-known/did.json
 
     # NodeInfo
-    curl -f http://athena-api-green/.well-known/nodeinfo
+    curl -f http://vidra-api-green/.well-known/nodeinfo
 ```
 
 ---
@@ -1146,7 +1146,7 @@ Create a Grafana dashboard with:
 
 ## Conclusion
 
-This blue/green deployment strategy enables Athena to achieve:
+This blue/green deployment strategy enables Vidra Core to achieve:
 
 1. **True zero-downtime deployments** for a federated video platform
 2. **Instant rollback** capability with minimal risk
@@ -1154,7 +1154,7 @@ This blue/green deployment strategy enables Athena to achieve:
 4. **Cost-optimized** dual-environment operation
 5. **Federation-aware** switchover process
 
-By leveraging Kubernetes native features (service label selectors, HPA, ingress annotations) and implementing careful database migration patterns, Athena can deploy multiple times per day without user-visible downtime or federation disruption.
+By leveraging Kubernetes native features (service label selectors, HPA, ingress annotations) and implementing careful database migration patterns, Vidra Core can deploy multiple times per day without user-visible downtime or federation disruption.
 
 **Next Steps:**
 

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/usecase"
 )
 
 // mockAdminVideoRepo satisfies usecase.VideoRepository for admin handler tests.

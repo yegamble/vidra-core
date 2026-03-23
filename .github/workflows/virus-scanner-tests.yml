@@ -116,7 +116,7 @@ jobs:
 
       - name: Apply database migrations
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/vidra_test?sslmode=disable
         run: |
           make migrate-custom
 
@@ -127,7 +127,7 @@ jobs:
           CLAMAV_MAX_RETRIES: 3
           CLAMAV_FALLBACK_MODE: strict
           QUARANTINE_DIR: /tmp/quarantine
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/vidra_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
         run: |
           # Run against the security package so tests compile within package context
@@ -180,7 +180,7 @@ jobs:
 
       - name: Apply database migrations
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/vidra_test?sslmode=disable
         run: |
           make migrate-custom
 
@@ -191,7 +191,7 @@ jobs:
           CLAMAV_MAX_RETRIES: 3
           CLAMAV_FALLBACK_MODE: strict
           QUARANTINE_DIR: /tmp/quarantine
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/vidra_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
         run: |
           go test -v -race -timeout 25m \
@@ -233,7 +233,7 @@ jobs:
 
       - name: Start application
         env:
-          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/vidra_test?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           CLAMAV_ADDRESS: localhost:3310
           VIRUS_SCAN_ENABLED: true
@@ -241,7 +241,7 @@ jobs:
         run: |
           # Build and start the application
           make build
-          ./bin/athena --port 8082 &
+          ./bin/vidra --port 8082 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> $GITHUB_ENV
 
@@ -287,7 +287,7 @@ jobs:
         env:
           ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
         run: |
-          newman run postman/athena-virus-scanner-tests.postman_collection.json \
+          newman run postman/vidra-virus-scanner-tests.postman_collection.json \
             --environment postman/test-local.postman_environment.json \
             --env-var "baseUrl=http://localhost:8082" \
             --env-var "access_token=$ACCESS_TOKEN" \

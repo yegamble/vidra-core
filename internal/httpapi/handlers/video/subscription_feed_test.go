@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

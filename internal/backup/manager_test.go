@@ -91,7 +91,7 @@ func TestBackupManagerCreateBackup(t *testing.T) {
 		Target:        target,
 		AppVersion:    "1.0.0",
 		SchemaVersion: 61,
-		DatabaseURL:   "postgres://user:pass@localhost:5432/athena",
+		DatabaseURL:   "postgres://user:pass@localhost:5432/vidra",
 		RedisURL:      "redis://localhost:6379",
 	}
 

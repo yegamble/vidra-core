@@ -3,9 +3,9 @@ package video
 import (
 	"net/http"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/port"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/port"
 )
 
 // SearchChannelsHandler handles GET /api/v1/search/video-channels.

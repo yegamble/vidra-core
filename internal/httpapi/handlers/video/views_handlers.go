@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	ucviews "athena/internal/usecase/views"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	ucviews "vidra-core/internal/usecase/views"
 )
 
 // ViewsHandler handles all views tracking and analytics endpoints

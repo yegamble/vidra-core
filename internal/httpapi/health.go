@@ -1,8 +1,8 @@
 package httpapi
 
 import (
-	"athena/internal/health"
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/health"
+	"vidra-core/internal/httpapi/shared"
 	"log"
 	"net/http"
 	"time"

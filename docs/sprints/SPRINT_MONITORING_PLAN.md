@@ -7,7 +7,7 @@
 
 ## Overview
 
-Sprint 8 implements production-grade monitoring and observability for the Athena platform. This sprint focuses on metrics collection, visualization, alerting, and operational insights to ensure system reliability and performance.
+Sprint 8 implements production-grade monitoring and observability for the Vidra Core platform. This sprint focuses on metrics collection, visualization, alerting, and operational insights to ensure system reliability and performance.
 
 ## Goals
 
@@ -84,7 +84,7 @@ var (
     // HTTP Metrics
     HTTPRequestsTotal = promauto.NewCounterVec(
         prometheus.CounterOpts{
-            Name: "athena_http_requests_total",
+            Name: "vidra_http_requests_total",
             Help: "Total number of HTTP requests",
         },
         []string{"method", "path", "status"},
@@ -92,7 +92,7 @@ var (
 
     HTTPRequestDuration = promauto.NewHistogramVec(
         prometheus.HistogramOpts{
-            Name:    "athena_http_request_duration_seconds",
+            Name:    "vidra_http_request_duration_seconds",
             Help:    "HTTP request latency in seconds",
             Buckets: prometheus.DefBuckets,
         },
@@ -102,14 +102,14 @@ var (
     // RTMP Metrics
     RTMPActiveConnections = promauto.NewGauge(
         prometheus.GaugeOpts{
-            Name: "athena_rtmp_active_connections",
+            Name: "vidra_rtmp_active_connections",
             Help: "Number of active RTMP connections",
         },
     )
 
     RTMPConnectionsTotal = promauto.NewCounterVec(
         prometheus.CounterOpts{
-            Name: "athena_rtmp_connections_total",
+            Name: "vidra_rtmp_connections_total",
             Help: "Total number of RTMP connections",
         },
         []string{"status"}, // accepted, rejected
@@ -117,7 +117,7 @@ var (
 
     RTMPBytesReceived = promauto.NewCounter(
         prometheus.CounterOpts{
-            Name: "athena_rtmp_bytes_received_total",
+            Name: "vidra_rtmp_bytes_received_total",
             Help: "Total bytes received via RTMP",
         },
     )
@@ -125,14 +125,14 @@ var (
     // HLS Metrics
     HLSActiveTranscodes = promauto.NewGauge(
         prometheus.GaugeOpts{
-            Name: "athena_hls_active_transcodes",
+            Name: "vidra_hls_active_transcodes",
             Help: "Number of active HLS transcoding sessions",
         },
     )
 
     HLSTranscodeErrors = promauto.NewCounterVec(
         prometheus.CounterOpts{
-            Name: "athena_hls_transcode_errors_total",
+            Name: "vidra_hls_transcode_errors_total",
             Help: "Total number of HLS transcoding errors",
         },
         []string{"error_type"},
@@ -140,7 +140,7 @@ var (
 
     HLSSegmentsServed = promauto.NewCounterVec(
         prometheus.CounterOpts{
-            Name: "athena_hls_segments_served_total",
+            Name: "vidra_hls_segments_served_total",
             Help: "Total number of HLS segments served",
         },
         []string{"quality"},
@@ -149,21 +149,21 @@ var (
     // VOD Metrics
     VODQueueLength = promauto.NewGauge(
         prometheus.GaugeOpts{
-            Name: "athena_vod_queue_length",
+            Name: "vidra_vod_queue_length",
             Help: "Number of VOD jobs in queue",
         },
     )
 
     VODActiveJobs = promauto.NewGauge(
         prometheus.GaugeOpts{
-            Name: "athena_vod_active_jobs",
+            Name: "vidra_vod_active_jobs",
             Help: "Number of active VOD conversion jobs",
         },
     )
 
     VODConversionDuration = promauto.NewHistogram(
         prometheus.HistogramOpts{
-            Name:    "athena_vod_conversion_duration_seconds",
+            Name:    "vidra_vod_conversion_duration_seconds",
             Help:    "VOD conversion duration in seconds",
             Buckets: []float64{10, 30, 60, 120, 300, 600, 1200, 1800, 3600},
         },
@@ -171,7 +171,7 @@ var (
 
     VODConversionsTotal = promauto.NewCounterVec(
         prometheus.CounterOpts{
-            Name: "athena_vod_conversions_total",
+            Name: "vidra_vod_conversions_total",
             Help: "Total number of VOD conversions",
         },
         []string{"status"}, // completed, failed
@@ -180,14 +180,14 @@ var (
     // Live Stream Metrics
     LiveStreamsActive = promauto.NewGauge(
         prometheus.GaugeOpts{
-            Name: "athena_live_streams_active",
+            Name: "vidra_live_streams_active",
             Help: "Number of active live streams",
         },
     )
 
     LiveStreamViewers = promauto.NewGaugeVec(
         prometheus.GaugeOpts{
-            Name: "athena_live_stream_viewers",
+            Name: "vidra_live_stream_viewers",
             Help: "Number of viewers per live stream",
         },
         []string{"stream_id", "stream_title"},
@@ -195,7 +195,7 @@ var (
 
     LiveStreamDuration = promauto.NewHistogram(
         prometheus.HistogramOpts{
-            Name:    "athena_live_stream_duration_seconds",
+            Name:    "vidra_live_stream_duration_seconds",
             Help:    "Live stream duration in seconds",
             Buckets: []float64{300, 600, 1800, 3600, 7200, 10800, 14400, 21600},
         },
@@ -204,7 +204,7 @@ var (
     // Chat Metrics
     ChatActiveConnections = promauto.NewGaugeVec(
         prometheus.GaugeOpts{
-            Name: "athena_chat_active_connections",
+            Name: "vidra_chat_active_connections",
             Help: "Number of active chat WebSocket connections",
         },
         []string{"stream_id"},
@@ -212,7 +212,7 @@ var (
 
     ChatMessagesTotal = promauto.NewCounterVec(
         prometheus.CounterOpts{
-            Name: "athena_chat_messages_total",
+            Name: "vidra_chat_messages_total",
             Help: "Total number of chat messages",
         },
         []string{"stream_id", "type"},
@@ -220,7 +220,7 @@ var (
 
     ChatRateLimitExceeded = promauto.NewCounterVec(
         prometheus.CounterOpts{
-            Name: "athena_chat_rate_limit_exceeded_total",
+            Name: "vidra_chat_rate_limit_exceeded_total",
             Help: "Total number of rate limit violations",
         },
         []string{"user_id"},
@@ -229,21 +229,21 @@ var (
     // Database Metrics
     DBConnectionsActive = promauto.NewGauge(
         prometheus.GaugeOpts{
-            Name: "athena_db_connections_active",
+            Name: "vidra_db_connections_active",
             Help: "Number of active database connections",
         },
     )
 
     DBConnectionsIdle = promauto.NewGauge(
         prometheus.GaugeOpts{
-            Name: "athena_db_connections_idle",
+            Name: "vidra_db_connections_idle",
             Help: "Number of idle database connections",
         },
     )
 
     DBQueryDuration = promauto.NewHistogramVec(
         prometheus.HistogramOpts{
-            Name:    "athena_db_query_duration_seconds",
+            Name:    "vidra_db_query_duration_seconds",
             Help:    "Database query duration in seconds",
             Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.0},
         },
@@ -253,7 +253,7 @@ var (
     // Redis Metrics
     RedisCommandsTotal = promauto.NewCounterVec(
         prometheus.CounterOpts{
-            Name: "athena_redis_commands_total",
+            Name: "vidra_redis_commands_total",
             Help: "Total number of Redis commands",
         },
         []string{"command", "status"},
@@ -261,7 +261,7 @@ var (
 
     RedisCommandDuration = promauto.NewHistogramVec(
         prometheus.HistogramOpts{
-            Name:    "athena_redis_command_duration_seconds",
+            Name:    "vidra_redis_command_duration_seconds",
             Help:    "Redis command duration in seconds",
             Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1},
         },
@@ -271,7 +271,7 @@ var (
     // IPFS Metrics
     IPFSUploadDuration = promauto.NewHistogram(
         prometheus.HistogramOpts{
-            Name:    "athena_ipfs_upload_duration_seconds",
+            Name:    "vidra_ipfs_upload_duration_seconds",
             Help:    "IPFS upload duration in seconds",
             Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
         },
@@ -279,7 +279,7 @@ var (
 
     IPFSUploadsTotal = promauto.NewCounterVec(
         prometheus.CounterOpts{
-            Name: "athena_ipfs_uploads_total",
+            Name: "vidra_ipfs_uploads_total",
             Help: "Total number of IPFS uploads",
         },
         []string{"status"}, // success, failure
@@ -287,7 +287,7 @@ var (
 
     IPFSUploadBytes = promauto.NewCounter(
         prometheus.CounterOpts{
-            Name: "athena_ipfs_upload_bytes_total",
+            Name: "vidra_ipfs_upload_bytes_total",
             Help: "Total bytes uploaded to IPFS",
         },
     )
@@ -295,21 +295,21 @@ var (
     // System Metrics
     SystemCPUUsage = promauto.NewGauge(
         prometheus.GaugeOpts{
-            Name: "athena_system_cpu_usage_percent",
+            Name: "vidra_system_cpu_usage_percent",
             Help: "System CPU usage percentage",
         },
     )
 
     SystemMemoryUsage = promauto.NewGauge(
         prometheus.GaugeOpts{
-            Name: "athena_system_memory_usage_bytes",
+            Name: "vidra_system_memory_usage_bytes",
             Help: "System memory usage in bytes",
         },
     )
 
     SystemDiskUsage = promauto.NewGaugeVec(
         prometheus.GaugeOpts{
-            Name: "athena_system_disk_usage_bytes",
+            Name: "vidra_system_disk_usage_bytes",
             Help: "System disk usage in bytes",
         },
         []string{"mount_point"},
@@ -329,7 +329,7 @@ import (
     "strconv"
     "time"
 
-    "athena/internal/metrics"
+    "vidra-core/internal/metrics"
 )
 
 // Metrics middleware records HTTP metrics
@@ -404,7 +404,7 @@ func RegisterMetricsRoutes(r chi.Router) {
 
 ### 2.1 Dashboard Definitions
 
-**File**: `deployments/grafana/dashboards/athena-overview.json`
+**File**: `deployments/grafana/dashboards/vidra-overview.json`
 
 **Panels**:
 
@@ -444,7 +444,7 @@ func RegisterMetricsRoutes(r chi.Router) {
    - VOD conversion failures
    - IPFS upload failures
 
-**File**: `deployments/grafana/dashboards/athena-live-streams.json`
+**File**: `deployments/grafana/dashboards/vidra-live-streams.json`
 
 **Panels**:
 
@@ -480,15 +480,15 @@ datasources:
     editable: false
 ```
 
-**File**: `deployments/grafana/provisioning/dashboards/athena.yml`
+**File**: `deployments/grafana/provisioning/dashboards/vidra.yml`
 
 ```yaml
 apiVersion: 1
 
 providers:
-  - name: 'Athena Dashboards'
+  - name: 'Vidra Core Dashboards'
     orgId: 1
-    folder: 'Athena'
+    folder: 'Vidra Core'
     type: file
     disableDeletion: false
     updateIntervalSeconds: 10
@@ -501,29 +501,29 @@ providers:
 
 ### 3.1 Prometheus Alert Rules
 
-**File**: `deployments/prometheus/alerts/athena.yml`
+**File**: `deployments/prometheus/alerts/vidra.yml`
 
 ```yaml
 groups:
-  - name: athena_critical
+  - name: vidra_critical
     interval: 30s
     rules:
       # Service Health
       - alert: ServiceDown
-        expr: up{job="athena"} == 0
+        expr: up{job="vidra"} == 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Athena service is down"
-          description: "Athena service has been down for more than 1 minute"
+          summary: "Vidra Core service is down"
+          description: "Vidra Core service has been down for more than 1 minute"
 
       # High Error Rate
       - alert: HighHTTPErrorRate
         expr: |
-          sum(rate(athena_http_requests_total{status=~"5.."}[5m]))
+          sum(rate(vidra_http_requests_total{status=~"5.."}[5m]))
           /
-          sum(rate(athena_http_requests_total[5m]))
+          sum(rate(vidra_http_requests_total[5m]))
           > 0.05
         for: 2m
         labels:
@@ -534,7 +534,7 @@ groups:
 
       # Database Issues
       - alert: DatabaseConnectionPoolExhausted
-        expr: athena_db_connections_active >= 25
+        expr: vidra_db_connections_active >= 25
         for: 1m
         labels:
           severity: critical
@@ -545,7 +545,7 @@ groups:
       - alert: SlowDatabaseQueries
         expr: |
           histogram_quantile(0.95,
-            sum(rate(athena_db_query_duration_seconds_bucket[5m])) by (le, query_type)
+            sum(rate(vidra_db_query_duration_seconds_bucket[5m])) by (le, query_type)
           ) > 1.0
         for: 5m
         labels:
@@ -554,13 +554,13 @@ groups:
           summary: "Slow database queries detected"
           description: "95th percentile of {{ $labels.query_type }} queries is {{ $value }}s"
 
-  - name: athena_streaming
+  - name: vidra_streaming
     interval: 30s
     rules:
       # HLS Transcoding
       - alert: HLSTranscodingFailures
         expr: |
-          sum(rate(athena_hls_transcode_errors_total[5m]))
+          sum(rate(vidra_hls_transcode_errors_total[5m]))
           > 0.1
         for: 2m
         labels:
@@ -570,7 +570,7 @@ groups:
           description: "HLS transcoding error rate is {{ $value }} errors/sec"
 
       - alert: HighTranscodingLoad
-        expr: athena_hls_active_transcodes > 8
+        expr: vidra_hls_active_transcodes > 8
         for: 5m
         labels:
           severity: warning
@@ -580,7 +580,7 @@ groups:
 
       # VOD Conversion
       - alert: VODQueueBacklog
-        expr: athena_vod_queue_length > 50
+        expr: vidra_vod_queue_length > 50
         for: 5m
         labels:
           severity: warning
@@ -590,9 +590,9 @@ groups:
 
       - alert: VODConversionFailures
         expr: |
-          sum(rate(athena_vod_conversions_total{status="failed"}[10m]))
+          sum(rate(vidra_vod_conversions_total{status="failed"}[10m]))
           /
-          sum(rate(athena_vod_conversions_total[10m]))
+          sum(rate(vidra_vod_conversions_total[10m]))
           > 0.1
         for: 5m
         labels:
@@ -604,7 +604,7 @@ groups:
       - alert: SlowVODConversion
         expr: |
           histogram_quantile(0.95,
-            sum(rate(athena_vod_conversion_duration_seconds_bucket[10m])) by (le)
+            sum(rate(vidra_vod_conversion_duration_seconds_bucket[10m])) by (le)
           ) > 1800
         for: 10m
         labels:
@@ -613,12 +613,12 @@ groups:
           summary: "Slow VOD conversions"
           description: "95th percentile VOD conversion time is {{ $value }}s (30+ minutes)"
 
-  - name: athena_resources
+  - name: vidra_resources
     interval: 60s
     rules:
       # CPU
       - alert: HighCPUUsage
-        expr: athena_system_cpu_usage_percent > 80
+        expr: vidra_system_cpu_usage_percent > 80
         for: 5m
         labels:
           severity: warning
@@ -628,7 +628,7 @@ groups:
 
       # Memory
       - alert: HighMemoryUsage
-        expr: athena_system_memory_usage_bytes / 1024 / 1024 / 1024 > 14
+        expr: vidra_system_memory_usage_bytes / 1024 / 1024 / 1024 > 14
         for: 5m
         labels:
           severity: warning
@@ -639,7 +639,7 @@ groups:
       # Disk
       - alert: LowDiskSpace
         expr: |
-          athena_system_disk_usage_bytes{mount_point="/storage"}
+          vidra_system_disk_usage_bytes{mount_point="/storage"}
           / 1024 / 1024 / 1024
           > 900
         for: 10m
@@ -649,12 +649,12 @@ groups:
           summary: "Low disk space on /storage"
           description: "Disk usage is {{ $value | humanize }}GB (limit: 1TB)"
 
-  - name: athena_chat
+  - name: vidra_chat
     interval: 30s
     rules:
       - alert: HighChatRateLimitViolations
         expr: |
-          sum(rate(athena_chat_rate_limit_exceeded_total[5m]))
+          sum(rate(vidra_chat_rate_limit_exceeded_total[5m]))
           > 10
         for: 2m
         labels:
@@ -672,8 +672,8 @@ groups:
 global:
   resolve_timeout: 5m
   smtp_smarthost: 'smtp.gmail.com:587'
-  smtp_from: 'alerts@athena.example.com'
-  smtp_auth_username: 'alerts@athena.example.com'
+  smtp_from: 'alerts@vidra.example.com'
+  smtp_auth_username: 'alerts@vidra.example.com'
   smtp_auth_password: '${SMTP_PASSWORD}'
 
 route:
@@ -696,14 +696,14 @@ route:
 receivers:
   - name: 'email-notifications'
     email_configs:
-      - to: 'ops-team@athena.example.com'
+      - to: 'ops-team@vidra.example.com'
         headers:
-          Subject: '[Athena Alert] {{ .GroupLabels.alertname }}'
+          Subject: '[Vidra Core Alert] {{ .GroupLabels.alertname }}'
 
   - name: 'slack'
     slack_configs:
       - api_url: '${SLACK_WEBHOOK_URL}'
-        channel: '#athena-alerts'
+        channel: '#vidra-alerts'
         title: '{{ .GroupLabels.alertname }}'
         text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
 
@@ -797,7 +797,7 @@ import (
     "context"
     "net/http"
 
-    "athena/internal/obs"
+    "vidra-core/internal/obs"
 )
 
 // RequestID middleware adds a unique request ID to each request
@@ -826,7 +826,7 @@ version: '3.8'
 services:
   prometheus:
     image: prom/prometheus:latest
-    container_name: athena-prometheus
+    container_name: vidra-prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -838,11 +838,11 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--web.enable-lifecycle'
     networks:
-      - athena-monitoring
+      - vidra-monitoring
 
   grafana:
     image: grafana/grafana:latest
-    container_name: athena-grafana
+    container_name: vidra-grafana
     ports:
       - "3000:3000"
     environment:
@@ -856,11 +856,11 @@ services:
     depends_on:
       - prometheus
     networks:
-      - athena-monitoring
+      - vidra-monitoring
 
   alertmanager:
     image: prom/alertmanager:latest
-    container_name: athena-alertmanager
+    container_name: vidra-alertmanager
     ports:
       - "9093:9093"
     volumes:
@@ -870,7 +870,7 @@ services:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
     networks:
-      - athena-monitoring
+      - vidra-monitoring
 
 volumes:
   prometheus-data:
@@ -878,7 +878,7 @@ volumes:
   alertmanager-data:
 
 networks:
-  athena-monitoring:
+  vidra-monitoring:
     driver: bridge
 ```
 
@@ -891,7 +891,7 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    cluster: 'athena-production'
+    cluster: 'vidra-production'
 
 alerting:
   alertmanagers:
@@ -903,7 +903,7 @@ rule_files:
   - /etc/prometheus/alerts/*.yml
 
 scrape_configs:
-  - job_name: 'athena'
+  - job_name: 'vidra'
     static_configs:
       - targets: ['host.docker.internal:8080']
     metrics_path: /metrics
@@ -960,12 +960,12 @@ SMTP_PASSWORD=your-smtp-password
 ### Configuration (~600 lines)
 
 6. `deployments/prometheus/prometheus.yml` (~50 lines)
-7. `deployments/prometheus/alerts/athena.yml` (~300 lines)
+7. `deployments/prometheus/alerts/vidra.yml` (~300 lines)
 8. `deployments/prometheus/alertmanager.yml` (~50 lines)
 9. `deployments/grafana/provisioning/datasources/prometheus.yml` (~20 lines)
-10. `deployments/grafana/provisioning/dashboards/athena.yml` (~20 lines)
-11. `deployments/grafana/dashboards/athena-overview.json` (~800 lines)
-12. `deployments/grafana/dashboards/athena-live-streams.json` (~400 lines)
+10. `deployments/grafana/provisioning/dashboards/vidra.yml` (~20 lines)
+11. `deployments/grafana/dashboards/vidra-overview.json` (~800 lines)
+12. `deployments/grafana/dashboards/vidra-live-streams.json` (~400 lines)
 13. `docker-compose.monitoring.yml` (~80 lines)
 
 ### Documentation
@@ -1000,4 +1000,4 @@ After Sprint 8 completion:
 
 ---
 
-*Athena PeerTube Backend - Video Platform in Go*
+*Vidra Core PeerTube Backend - Video Platform in Go*

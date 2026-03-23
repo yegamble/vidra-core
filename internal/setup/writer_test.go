@@ -65,7 +65,7 @@ func TestWriteEnvFileWithExternalServices(t *testing.T) {
 
 	config := &WizardConfig{
 		PostgresMode:  "external",
-		DatabaseURL:   "postgres://user:pass@localhost:5432/athena",
+		DatabaseURL:   "postgres://user:pass@localhost:5432/vidra",
 		RedisMode:     "external",
 		RedisURL:      "redis://localhost:6379/0",
 		EnableIPFS:    true,
@@ -85,7 +85,7 @@ func TestWriteEnvFileWithExternalServices(t *testing.T) {
 
 	contentStr := string(content)
 	assert.Contains(t, contentStr, "POSTGRES_MODE=external")
-	assert.Contains(t, contentStr, "DATABASE_URL=postgres://user:pass@localhost:5432/athena")
+	assert.Contains(t, contentStr, "DATABASE_URL=postgres://user:pass@localhost:5432/vidra")
 	assert.Contains(t, contentStr, "REDIS_MODE=external")
 	assert.Contains(t, contentStr, "REDIS_URL=redis://localhost:6379/0")
 	assert.Contains(t, contentStr, "IPFS_MODE=external")
@@ -284,7 +284,7 @@ func TestWriteEnvFileWithEmailDocker(t *testing.T) {
 		SMTPHost:        "localhost",
 		SMTPPort:        1025,
 		SMTPFromAddress: "noreply@localhost",
-		SMTPFromName:    "Athena",
+		SMTPFromName:    "Vidra Core",
 		StoragePath:     "./data/storage",
 		JWTSecret:       "test-secret-at-least-32-characters",
 		NginxEnabled:    false,
@@ -302,7 +302,7 @@ func TestWriteEnvFileWithEmailDocker(t *testing.T) {
 	assert.Contains(t, contentStr, "SMTP_HOST=localhost")
 	assert.Contains(t, contentStr, "SMTP_PORT=1025")
 	assert.Contains(t, contentStr, "SMTP_FROM=noreply@localhost")
-	assert.Contains(t, contentStr, "SMTP_FROM_NAME=Athena")
+	assert.Contains(t, contentStr, "SMTP_FROM_NAME=Vidra Core")
 	assert.Contains(t, contentStr, "SMTP_TLS=false")
 }
 

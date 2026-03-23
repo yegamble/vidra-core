@@ -357,7 +357,7 @@ When modifying this action:
 
 ## License
 
-This action is part of the Athena project and follows the same license.
+This action is part of the Vidra Core project and follows the same license.
 
 ## See Also
 

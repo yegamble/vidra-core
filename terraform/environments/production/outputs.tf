@@ -113,12 +113,12 @@ output "cloudfront_distribution_id" {
 # IAM Outputs
 output "s3_access_role_arn" {
   description = "IAM role ARN for S3 access (for Kubernetes ServiceAccount)"
-  value       = aws_iam_role.athena_s3_access.arn
+  value       = aws_iam_role.vidra_s3_access.arn
 }
 
 output "secrets_access_role_arn" {
   description = "IAM role ARN for Secrets Manager access (for Kubernetes ServiceAccount)"
-  value       = aws_iam_role.athena_secrets_access.arn
+  value       = aws_iam_role.vidra_secrets_access.arn
 }
 
 # Connection Information

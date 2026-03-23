@@ -1,0 +1,1176 @@
+{
+  "info": {
+    "name": "Vidra Core ATProto / Social API",
+    "description": "ATProto (BlueSky) social graph and moderation API E2E tests.\n\nCovers all 17 endpoints under /api/v1/social/*:\n- Actor resolution and statistics (public)\n- Social graph: followers, following (public reads, authenticated writes)\n- Likes: create, delete, list\n- Comments: create, get, thread, delete\n- Moderation: apply label, get labels, remove label\n- Feed ingest from ATProto PDS\n\n**IPFS note:** IPFS-backed avatar uploads are exercised by the auth endpoints\n(PUT /api/v1/users/me/avatar). Those requests pass avatarUrl which may be\nresolved via IPFS if an IPFS gateway is configured. To exercise the full IPFS\npath, set IPFS_GATEWAY in the server environment and upload an avatar using\nthe vidra-auth collection. The IPFS CID is returned in the response.\n\n**ATProto Go test coverage:** PublishVideo, PublishComment, and PublishVideoBatch\nare covered by unit tests in internal/usecase/atproto_features_test.go with a\nmocked PDS HTTP server. Those tests pass without an external ATProto PDS.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const resolvedAccessToken = pm.environment.get('admin_access_token') || pm.environment.get('access_token') || pm.collectionVariables.get('access_token');",
+          "if (resolvedAccessToken) {",
+          "  pm.collectionVariables.set('resolved_access_token', resolvedAccessToken);",
+          "}",
+          "const testUri = pm.variables.get('test_uri');",
+          "if (testUri) {",
+          "  pm.collectionVariables.set('encoded_test_uri', encodeURIComponent(testUri));",
+          "}",
+          "const commentUri = pm.variables.get('comment_uri');",
+          "if (commentUri) {",
+          "  pm.collectionVariables.set('encoded_comment_uri', encodeURIComponent(commentUri));",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string",
+      "description": "JWT access token from login"
+    },
+    {
+      "key": "resolved_access_token",
+      "value": "",
+      "type": "string",
+      "description": "Resolved JWT token for authenticated requests"
+    },
+    {
+      "key": "test_handle",
+      "value": "alice.bsky.social",
+      "type": "string",
+      "description": "AT Protocol handle for actor resolution tests"
+    },
+    {
+      "key": "test_uri",
+      "value": "at://did:plc:test/app.bsky.feed.post/test123",
+      "type": "string",
+      "description": "AT URI for likes/comments"
+    },
+    {
+      "key": "test_did",
+      "value": "did:plc:test123",
+      "type": "string",
+      "description": "DID for moderation label tests"
+    },
+    {
+      "key": "comment_uri",
+      "value": "",
+      "type": "string",
+      "description": "URI of created comment (set during run)"
+    },
+    {
+      "key": "label_id",
+      "value": "",
+      "type": "string",
+      "description": "ID of created moderation label (set during run)"
+    }
+  ],
+  "item": [
+    {
+      "name": "Actor Discovery (Public)",
+      "description": "Public read endpoints for ATProto actor resolution \u2014 no auth required.",
+      "item": [
+        {
+          "name": "Get Actor by Handle",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/actors/{{test_handle}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "actors",
+                "{{test_handle}}"
+              ]
+            },
+            "description": "Resolve an ATProto actor by handle. Returns actor DID, profile, and metadata.\nReturns 404 if handle is not found in the ATProto PDS."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response has json body', function() {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.test('actor has data field with handle', function() {",
+                  "        pm.expect(body).to.have.property('data');",
+                  "        pm.expect(body.data).to.have.property('handle');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Actor Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/actors/{{test_handle}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "actors",
+                "{{test_handle}}",
+                "stats"
+              ]
+            },
+            "description": "Get social statistics for an ATProto actor: follower count, following count, post count."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Followers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/followers/{{test_handle}}?limit=20&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "followers",
+                "{{test_handle}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List followers of an ATProto actor with pagination."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Following",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/following/{{test_handle}}?limit=20&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "following",
+                "{{test_handle}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List accounts that an ATProto actor follows."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Likes for URI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/likes/{{encoded_test_uri}}?limit=20&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "likes",
+                "{{encoded_test_uri}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Get all likes for a given AT URI (video post, comment, etc)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Comments for URI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/comments/{{encoded_test_uri}}?limit=20&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comments",
+                "{{encoded_test_uri}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List comments on a given AT URI."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Comment Thread",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/comments/{{encoded_test_uri}}/thread?limit=50&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comments",
+                "{{encoded_test_uri}}",
+                "thread"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Get threaded conversation view rooted at the given AT URI."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Moderation Labels for DID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/moderation/labels/{{test_did}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "moderation",
+                "labels",
+                "{{test_did}}"
+              ]
+            },
+            "description": "Get active moderation labels applied to a DID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Social Graph (Authenticated)",
+      "description": "Follow / unfollow operations. Requires a valid JWT access_token.",
+      "item": [
+        {
+          "name": "Follow Actor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resolved_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"target\": \"{{test_handle}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/follow",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "follow"
+              ]
+            },
+            "description": "Follow an ATProto actor by handle or DID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('success response has status field', function() {",
+                  "        const body = pm.response.json();",
+                  "        pm.expect(body).to.have.nested.property('data.status');",
+                  "        pm.expect(body.data.status).to.equal('followed');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unfollow Actor",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resolved_access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/follow/{{test_handle}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "follow",
+                "{{test_handle}}"
+              ]
+            },
+            "description": "Unfollow an ATProto actor by handle."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('success response has status field', function() {",
+                  "        const body = pm.response.json();",
+                  "        pm.expect(body.data.status).to.equal('unfollowed');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Likes (Authenticated)",
+      "description": "Like and unlike AT URIs (video posts, comments).",
+      "item": [
+        {
+          "name": "Like a URI",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resolved_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actor_did\": \"{{test_did}}\",\n  \"subject_uri\": \"{{test_uri}}\",\n  \"subject_cid\": \"bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqcsgz7soitxq\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/like",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "like"
+              ]
+            },
+            "description": "Create a like record on an AT URI."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('like response has status liked', function() {",
+                  "        const body = pm.response.json();",
+                  "        pm.expect(body.data.status).to.equal('liked');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unlike a URI",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resolved_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actor_did\": \"{{test_did}}\",\n  \"subject_uri\": \"{{test_uri}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/like",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "like"
+              ]
+            },
+            "description": "Remove a like record from an AT URI."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('unlike response has status unliked', function() {",
+                  "        const body = pm.response.json();",
+                  "        pm.expect(body.data.status).to.equal('unliked');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Comments (Authenticated)",
+      "description": "Create and delete ATProto comment records with threaded reply support.",
+      "item": [
+        {
+          "name": "Create Comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resolved_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actor_did\": \"{{test_did}}\",\n  \"text\": \"Great video! Really well explained.\",\n  \"root_uri\": \"{{test_uri}}\",\n  \"root_cid\": \"bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqcsgz7soitxq\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/comment",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comment"
+              ]
+            },
+            "description": "Create a top-level comment on a video post URI."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 201', function() {",
+                  "pm.expect(pm.response.code).to.equal(201);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    pm.test('comment has uri field', function() {",
+                  "        const body = pm.response.json();",
+                  "        pm.expect(body).to.have.nested.property('data');",
+                  "        // Save comment URI for thread test and delete test",
+                  "        if (body.data && body.data.uri) {",
+                  "            pm.collectionVariables.set('comment_uri', body.data.uri);",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Threaded Reply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resolved_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actor_did\": \"{{test_did}}\",\n  \"text\": \"Replying to your comment!\",\n  \"root_uri\": \"{{test_uri}}\",\n  \"root_cid\": \"bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqcsgz7soitxq\",\n  \"parent_uri\": \"{{comment_uri}}\",\n  \"parent_cid\": \"bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqcsgz7soitxq\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/comment",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comment"
+              ]
+            },
+            "description": "Create a threaded reply: same root_uri as original, parent_uri pointing to the comment being replied to."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 201', function() {",
+                  "pm.expect(pm.response.code).to.equal(201);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Comment",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resolved_access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/comment/{{encoded_comment_uri}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comment",
+                "{{encoded_comment_uri}}"
+              ]
+            },
+            "description": "Delete a comment by AT URI. Requires authentication."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('deleted status', function() {",
+                  "        const body = pm.response.json();",
+                  "        pm.expect(body.data.status).to.equal('deleted');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Moderation (Authenticated)",
+      "description": "Apply and remove ATProto moderation labels on DIDs and URIs.",
+      "item": [
+        {
+          "name": "Apply Moderation Label",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resolved_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actor_did\": \"{{test_did}}\",\n  \"label_type\": \"spam\",\n  \"reason\": \"Automated spam detection\",\n  \"applied_by\": \"did:plc:moderator123\",\n  \"uri\": \"{{test_uri}}\",\n  \"expires_in\": 1440\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/moderation/label",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "moderation",
+                "label"
+              ]
+            },
+            "description": "Apply a moderation label to a DID or URI. expires_in is in minutes (1440 = 24 hours, 0 = no expiry)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('label applied status', function() {",
+                  "        const body = pm.response.json();",
+                  "        pm.expect(body.data.status).to.equal('label_applied');",
+                  "        if (body.data.id) {",
+                  "            pm.collectionVariables.set('label_id', body.data.id);",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Remove Moderation Label",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resolved_access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/moderation/label/{{label_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "moderation",
+                "label",
+                "{{label_id}}"
+              ]
+            },
+            "description": "Remove a moderation label by its ID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('label removed status', function() {",
+                  "        const body = pm.response.json();",
+                  "        pm.expect(body.data.status).to.equal('label_removed');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Feed Ingest (Authenticated)",
+      "description": "Ingest ATProto actor feeds from the PDS into the local database.",
+      "item": [
+        {
+          "name": "Ingest Actor Feed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resolved_access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/ingest/{{test_handle}}?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "ingest",
+                "{{test_handle}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Fetch and ingest posts from an ATProto actor's feed into the local social database. Requires authentication."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "pm.test('response is json', function() {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('ingest response has status field', function() {",
+                  "        const body = pm.response.json();",
+                  "        pm.expect(body.data.status).to.equal('ingested');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth Error Cases",
+      "description": "Verify that authenticated endpoints correctly return 401 without a valid token.",
+      "item": [
+        {
+          "name": "Follow without Auth \u2192 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"target\": \"{{test_handle}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/follow",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "follow"
+              ]
+            },
+            "description": "POST /social/follow without Authorization header must return 401."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unauthenticated follow returns 401', function() {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "",
+                  "pm.test('error response structure is correct', function() {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.success).to.equal(false);",
+                  "    pm.expect(body).to.have.property('error');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Comment without Auth \u2192 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actor_did\": \"{{test_did}}\",\n  \"text\": \"test comment\",\n  \"root_uri\": \"{{test_uri}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/comment",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "comment"
+              ]
+            },
+            "description": "POST /social/comment without Authorization must return 401."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unauthenticated comment creation returns 401', function() {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "",
+                  "pm.test('error response has success false', function() {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.success).to.equal(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Apply Label without Auth \u2192 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actor_did\": \"{{test_did}}\",\n  \"label_type\": \"spam\",\n  \"applied_by\": \"did:plc:test\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/social/moderation/label",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "social",
+                "moderation",
+                "label"
+              ]
+            },
+            "description": "POST /social/moderation/label without Authorization must return 401."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unauthenticated moderation returns 401', function() {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "",
+                  "pm.test('error response has success false', function() {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.success).to.equal(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

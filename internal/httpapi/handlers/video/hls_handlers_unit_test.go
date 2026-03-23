@@ -13,10 +13,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/livestream"
-	"athena/internal/middleware"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/livestream"
+	"vidra-core/internal/middleware"
 )
 
 type mockStreamRepoForHLS struct {

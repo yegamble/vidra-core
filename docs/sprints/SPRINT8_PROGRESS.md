@@ -505,4 +505,4 @@ qbittorrent downloaded.torrent
 **Integration Status**: 🔄 Pending route registration (deployment task)
 **Last Updated**: 2025-10-22
 
-*Athena PeerTube Backend - P2P Video Distribution*
+*Vidra Core PeerTube Backend - P2P Video Distribution*

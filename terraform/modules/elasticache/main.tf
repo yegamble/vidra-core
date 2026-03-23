@@ -1,4 +1,4 @@
-# ElastiCache Redis Module for Athena Platform
+# ElastiCache Redis Module for Vidra Core Platform
 # Creates Redis cluster with automatic failover and encryption
 
 locals {

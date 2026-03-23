@@ -1,4 +1,4 @@
-# Global Variables for Athena Infrastructure
+# Global Variables for Vidra Core Infrastructure
 
 variable "aws_region" {
   description = "AWS region for all resources"
@@ -9,7 +9,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Project name used for resource naming"
   type        = string
-  default     = "athena"
+  default     = "vidra"
 }
 
 variable "environment" {
@@ -33,7 +33,7 @@ variable "cost_center" {
 }
 
 variable "domain_name" {
-  description = "Domain name for the application (e.g., athena.example.com)"
+  description = "Domain name for the application (e.g., vidra.example.com)"
   type        = string
 }
 

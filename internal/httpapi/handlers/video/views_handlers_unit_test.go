@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	ucviews "athena/internal/usecase/views"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	ucviews "vidra-core/internal/usecase/views"
 )
 
 type unitViewsRepoStub struct {

@@ -273,7 +273,7 @@ jobs:
 
       - name: Build application
         run: |
-          go build -o athena-server ./cmd/server
+          go build -o vidra-server ./cmd/server
 
       - name: Run SSRF Attack Simulation Tests
         run: |

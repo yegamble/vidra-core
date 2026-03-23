@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena API - ATProto Social Graph
+  title: Vidra Core API - ATProto Social Graph
   description: |
     ATProto (BlueSky) social graph endpoints: actor resolution, follow graph,
     likes, comments (threaded), moderation labels, and feed ingest.

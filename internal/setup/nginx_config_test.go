@@ -34,7 +34,7 @@ func TestGenerateNginxConfigHTTP(t *testing.T) {
 	assert.Contains(t, contentStr, "server_name localhost")
 	assert.Contains(t, contentStr, "listen 80")
 	assert.Contains(t, contentStr, "server app:8080")
-	assert.Contains(t, contentStr, "proxy_pass http://athena_app")
+	assert.Contains(t, contentStr, "proxy_pass http://vidra_app")
 	assert.NotContains(t, contentStr, "ssl_certificate")
 	assert.Contains(t, contentStr, "include /etc/nginx/conf.d/common-security.conf")
 	assert.Contains(t, contentStr, "include /etc/nginx/conf.d/common-proxy.conf")
@@ -77,7 +77,7 @@ func TestGenerateNginxConfigHTTPSSelfsigned(t *testing.T) {
 	assert.Contains(t, contentStr, "ssl_certificate_key /etc/nginx/ssl/self-signed.key")
 	assert.Contains(t, contentStr, "add_header Strict-Transport-Security")
 	assert.Contains(t, contentStr, "server app:8080")
-	assert.Contains(t, contentStr, "proxy_pass http://athena_app")
+	assert.Contains(t, contentStr, "proxy_pass http://vidra_app")
 	assert.Contains(t, contentStr, "listen 80")
 	assert.Contains(t, contentStr, "return 301 https://")
 }
@@ -110,7 +110,7 @@ func TestGenerateNginxConfigHTTPSLetsencrypt(t *testing.T) {
 	assert.Contains(t, contentStr, "root /var/www/certbot")
 	assert.Contains(t, contentStr, "add_header Strict-Transport-Security")
 	assert.Contains(t, contentStr, "server app:8080")
-	assert.Contains(t, contentStr, "proxy_pass http://athena_app")
+	assert.Contains(t, contentStr, "proxy_pass http://vidra_app")
 }
 
 func TestGenerateNginxConfigCreatesOutputDir(t *testing.T) {

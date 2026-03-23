@@ -2,7 +2,7 @@
 
 **Date:** 2025-11-30
 **Auditor:** Claude (Documentation Engineer)
-**Project:** Athena Backend API
+**Project:** Vidra Core Backend API
 
 ---
 
@@ -179,10 +179,10 @@ npx @stoplight/spectral-cli lint api/*.yaml docs/*.yaml
 npx @openapitools/openapi-generator-cli generate \
   -i api/openapi.yaml \
   -g typescript-axios \
-  -o /tmp/athena-api-client
+  -o /tmp/vidra-api-client
 
 # 3. Test compilation
-cd /tmp/athena-api-client && npm install && npm run build
+cd /tmp/vidra-api-client && npm install && npm run build
 
 # 4. Update Postman collection
 # Import updated OpenAPI files to Postman
@@ -260,7 +260,7 @@ api/
 
 ## Conclusion
 
-The Athena API has a solid foundation, but documentation has drifted from implementation. The main issues are:
+The Vidra Core API has a solid foundation, but documentation has drifted from implementation. The main issues are:
 
 ✅ **Good:**
 

@@ -1,4 +1,4 @@
-# Athena Terraform Makefile
+# Vidra Core Terraform Makefile
 # Convenient commands for common infrastructure operations
 
 .PHONY: help bootstrap init plan apply destroy fmt validate clean status outputs
@@ -134,7 +134,7 @@ state-backup: init ## Backup Terraform state
 		terraform state pull > terraform.tfstate.backup.$$(date +%Y%m%d-%H%M%S)
 	@echo "Backup created!"
 
-import: init ## Import existing resource: make import ENV=prod ADDR=module.rds.aws_db_instance.main ID=athena-prod-db
+import: init ## Import existing resource: make import ENV=prod ADDR=module.rds.aws_db_instance.main ID=vidra-prod-db
 	@echo "Importing $(ID) as $(ADDR)..."
 	@cd environments/$(ENV) && terraform import $(ADDR) $(ID)
 
@@ -228,7 +228,7 @@ prod-apply: ## Apply production environment (requires confirmation)
 # Quick start
 quickstart: ## Quick start guide
 	@echo "===================================="
-	@echo "Athena Terraform Quick Start"
+	@echo "Vidra Core Terraform Quick Start"
 	@echo "===================================="
 	@echo ""
 	@echo "1. Bootstrap backend:"
@@ -250,5 +250,5 @@ quickstart: ## Quick start guide
 	@echo "6. Check status:"
 	@echo "   make outputs ENV=production"
 	@echo "   make kubectl-config ENV=production"
-	@echo "   kubectl get pods -n athena-production"
+	@echo "   kubectl get pods -n vidra-production"
 	@echo ""

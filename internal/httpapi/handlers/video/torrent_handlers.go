@@ -1,7 +1,7 @@
 package video
 
 import (
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/httpapi/shared"
 	"fmt"
 	"net/http"
 	"os"

@@ -11,7 +11,7 @@ data:
       scrape_interval: 15s
       evaluation_interval: 15s
       external_labels:
-        cluster: 'athena-production'
+        cluster: 'vidra-production'
         environment: 'production'
 
     # Alertmanager configuration
@@ -26,8 +26,8 @@ data:
 
     # Scrape configurations
     scrape_configs:
-      # Athena API servers
-      - job_name: 'athena-api'
+      # Vidra Core API servers
+      - job_name: 'vidra-api'
         kubernetes_sd_configs:
           - role: pod
             namespaces:
@@ -36,7 +36,7 @@ data:
         relabel_configs:
           - source_labels: [__meta_kubernetes_pod_label_app]
             action: keep
-            regex: athena
+            regex: vidra
           - source_labels: [__meta_kubernetes_pod_label_component]
             action: keep
             regex: api
@@ -48,8 +48,8 @@ data:
           - source_labels: [__meta_kubernetes_namespace]
             target_label: namespace
 
-      # Athena encoding workers
-      - job_name: 'athena-encoding-worker'
+      # Vidra Core encoding workers
+      - job_name: 'vidra-encoding-worker'
         kubernetes_sd_configs:
           - role: pod
             namespaces:
@@ -58,7 +58,7 @@ data:
         relabel_configs:
           - source_labels: [__meta_kubernetes_pod_label_app]
             action: keep
-            regex: athena
+            regex: vidra
           - source_labels: [__meta_kubernetes_pod_label_component]
             action: keep
             regex: encoding-worker
@@ -132,34 +132,34 @@ metadata:
   labels:
     app: prometheus
 data:
-  athena-alerts.yml: |
+  vidra-alerts.yml: |
     groups:
-    - name: athena_api
+    - name: vidra_api
       interval: 30s
       rules:
       # API Availability
-      - alert: AthenaAPIDown
-        expr: up{job="athena-api"} == 0
+      - alert: Vidra CoreAPIDown
+        expr: up{job="vidra-api"} == 0
         for: 5m
         labels:
           severity: critical
         annotations:
-          summary: "Athena API is down"
-          description: "Athena API {{ $labels.pod }} has been down for more than 5 minutes."
+          summary: "Vidra Core API is down"
+          description: "Vidra Core API {{ $labels.pod }} has been down for more than 5 minutes."
 
       # High Error Rate
-      - alert: AthenaHighErrorRate
-        expr: rate(athena_http_requests_total{status=~"5.."}[5m]) > 0.05
+      - alert: Vidra CoreHighErrorRate
+        expr: rate(vidra_http_requests_total{status=~"5.."}[5m]) > 0.05
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "High error rate detected"
-          description: "Athena API has a 5xx error rate above 5% (current: {{ $value }})"
+          description: "Vidra Core API has a 5xx error rate above 5% (current: {{ $value }})"
 
       # High Latency
-      - alert: AthenaHighLatency
-        expr: histogram_quantile(0.99, rate(athena_http_request_duration_seconds_bucket[5m])) > 2
+      - alert: Vidra CoreHighLatency
+        expr: histogram_quantile(0.99, rate(vidra_http_request_duration_seconds_bucket[5m])) > 2
         for: 10m
         labels:
           severity: warning
@@ -168,8 +168,8 @@ data:
           description: "99th percentile latency is above 2s (current: {{ $value }}s)"
 
       # Database Connection Pool Exhaustion
-      - alert: AthenaDBPoolExhaustion
-        expr: athena_database_connections_in_use / athena_database_connections_max > 0.9
+      - alert: Vidra CoreDBPoolExhaustion
+        expr: vidra_database_connections_in_use / vidra_database_connections_max > 0.9
         for: 5m
         labels:
           severity: warning
@@ -178,8 +178,8 @@ data:
           description: "Database connection pool is {{ $value | humanizePercentage }} full"
 
       # Redis Connection Issues
-      - alert: AthenaRedisDown
-        expr: athena_redis_ping_duration_seconds == 0
+      - alert: Vidra CoreRedisDown
+        expr: vidra_redis_ping_duration_seconds == 0
         for: 5m
         labels:
           severity: critical
@@ -188,8 +188,8 @@ data:
           description: "Redis connection has been down for more than 5 minutes"
 
       # High Encoding Queue Depth
-      - alert: AthenaHighEncodingQueue
-        expr: athena_encoding_queue_depth > 100
+      - alert: Vidra CoreHighEncodingQueue
+        expr: vidra_encoding_queue_depth > 100
         for: 15m
         labels:
           severity: warning
@@ -198,8 +198,8 @@ data:
           description: "Encoding queue has {{ $value }} pending jobs"
 
       # IPFS Gateway Issues
-      - alert: AthenaIPFSGatewayDown
-        expr: athena_ipfs_gateway_health == 0
+      - alert: Vidra CoreIPFSGatewayDown
+        expr: vidra_ipfs_gateway_health == 0
         for: 10m
         labels:
           severity: warning
@@ -208,8 +208,8 @@ data:
           description: "IPFS gateway {{ $labels.gateway }} has been unhealthy for 10+ minutes"
 
       # Virus Scanner Issues
-      - alert: AthenaClamAVDown
-        expr: athena_virus_scan_duration_seconds == 0
+      - alert: Vidra CoreClamAVDown
+        expr: vidra_virus_scan_duration_seconds == 0
         for: 5m
         labels:
           severity: critical
@@ -218,8 +218,8 @@ data:
           description: "ClamAV has been unreachable for 5+ minutes - blocking all uploads"
 
       # Malware Detection
-      - alert: AthenaMalwareDetected
-        expr: rate(athena_virus_scan_total{result="infected"}[5m]) > 0
+      - alert: Vidra CoreMalwareDetected
+        expr: rate(vidra_virus_scan_total{result="infected"}[5m]) > 0
         for: 1m
         labels:
           severity: warning
@@ -228,8 +228,8 @@ data:
           description: "Malware has been detected in uploaded files (rate: {{ $value }}/s)"
 
       # Pod Memory Pressure
-      - alert: AthenaHighMemoryUsage
-        expr: container_memory_usage_bytes{pod=~"athena-.*"} / container_spec_memory_limit_bytes{pod=~"athena-.*"} > 0.9
+      - alert: Vidra CoreHighMemoryUsage
+        expr: container_memory_usage_bytes{pod=~"vidra-.*"} / container_spec_memory_limit_bytes{pod=~"vidra-.*"} > 0.9
         for: 10m
         labels:
           severity: warning
@@ -238,8 +238,8 @@ data:
           description: "Pod {{ $labels.pod }} is using {{ $value | humanizePercentage }} of memory limit"
 
       # Pod CPU Pressure
-      - alert: AthenaHighCPUUsage
-        expr: rate(container_cpu_usage_seconds_total{pod=~"athena-.*"}[5m]) / container_spec_cpu_quota{pod=~"athena-.*"} > 0.9
+      - alert: Vidra CoreHighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{pod=~"vidra-.*"}[5m]) / container_spec_cpu_quota{pod=~"vidra-.*"} > 0.9
         for: 15m
         labels:
           severity: warning
@@ -248,8 +248,8 @@ data:
           description: "Pod {{ $labels.pod }} is using {{ $value | humanizePercentage }} of CPU limit"
 
       # Federation Delivery Failures
-      - alert: AthenaFederationDeliveryFailures
-        expr: rate(athena_activitypub_delivery_total{status="failed"}[5m]) > 0.1
+      - alert: Vidra CoreFederationDeliveryFailures
+        expr: rate(vidra_activitypub_delivery_total{status="failed"}[5m]) > 0.1
         for: 10m
         labels:
           severity: warning

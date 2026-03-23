@@ -1,0 +1,4783 @@
+{
+  "collection": {
+    "item": [
+      {
+        "id": "28447268-3d7e-4aae-a663-19464f8712ae",
+        "name": "Plugin Discovery",
+        "item": [
+          {
+            "id": "6d3de920-aec6-418b-9ee0-7e4463e0cf7d",
+            "name": "List Plugins",
+            "request": {
+              "description": {
+                "content": "List all installed plugins. Requires admin or mod role.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{admin_access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "eb29f970-1135-43b9-8a02-10094650c09e",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200', () => {",
+                    "  pm.expect(pm.response.code).to.equal(200);",
+                    "});",
+                    "const body = pm.response.json();",
+                    "pm.test('Response has success envelope', () => {",
+                    "  pm.expect(body.success).to.be.true;",
+                    "  pm.expect(body).to.have.property('data');",
+                    "});",
+                    "pm.test('Data is an array of plugins (may be empty in fresh env)', () => {",
+                    "  pm.expect(body.data).to.be.an('array');",
+                    "});"
+                  ],
+                  "_lastExecutionId": "e5847bdf-b3b9-4740-b71e-aaff99411f23"
+                }
+              }
+            ]
+          },
+          {
+            "id": "124cf226-a836-4000-84ad-896a5861f9b2",
+            "name": "List Available Plugins",
+            "request": {
+              "description": {
+                "content": "List plugins available from the registry.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "available"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{admin_access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "6f321ca2-e4a5-405f-82bf-553b86d825e5",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200', () => {",
+                    "  pm.expect(pm.response.code).to.equal(200);",
+                    "});",
+                    "const body = pm.response.json();",
+                    "pm.test('Response structure is valid', () => {",
+                    "  pm.expect(body).to.have.property('success', true);",
+                    "  pm.expect(body).to.have.property('data');",
+                    "});"
+                  ],
+                  "_lastExecutionId": "a11b44d2-c144-4fcd-94d7-2c1b87435099"
+                }
+              }
+            ]
+          },
+          {
+            "id": "2995bd74-2c70-40bb-929f-8d2c1ae25cc7",
+            "name": "Get Plugin by Name",
+            "request": {
+              "description": {
+                "content": "Get a specific plugin by its npm name.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "{{plugin_npm_name}}"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{admin_access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "prerequest",
+                "script": {
+                  "id": "ebda4bcd-d354-45ad-8fad-c631ca3f97b7",
+                  "type": "text/javascript",
+                  "exec": [
+                    "// Set a plugin name - use one that exists in the system or expect 404",
+                    "const name = pm.environment.get('plugin_npm_name') || 'peertube-plugin-hello-world';",
+                    "pm.environment.set('plugin_npm_name', name);"
+                  ],
+                  "_lastExecutionId": "55133cea-7c0f-461d-b75c-0d0fa9c3e10a"
+                }
+              },
+              {
+                "listen": "test",
+                "script": {
+                  "id": "b1dc5a72-4190-4793-8e51-3a0c63023dfa",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200 or 404', () => {",
+                    "  pm.expect([200, 404]).to.include(pm.response.code);",
+                    "});",
+                    "if (pm.response.code === 200) {",
+                    "  const body = pm.response.json();",
+                    "  pm.test('Plugin data structure', () => {",
+                    "    pm.expect(body.success).to.be.true;",
+                    "    pm.expect(body.data).to.have.property('name');",
+                    "    pm.expect(body.data).to.have.property('version');",
+                    "    pm.expect(body.data).to.have.property('status');",
+                    "  });",
+                    "}"
+                  ],
+                  "_lastExecutionId": "b8856721-d0eb-4b08-b8f6-0bcc9405b57c"
+                }
+              }
+            ]
+          }
+        ],
+        "event": []
+      },
+      {
+        "id": "7b3ad0fc-11d2-4383-9a3b-a9df7e365a88",
+        "name": "Plugin Settings",
+        "item": [
+          {
+            "id": "5523d226-fe2d-43cd-9d16-8916a7ea0c53",
+            "name": "Get Registered Settings",
+            "request": {
+              "description": {
+                "content": "Get the registered settings for a plugin.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "{{plugin_npm_name}}",
+                  "registered-settings"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{admin_access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "05e3d5e5-e3ed-476f-ac9f-1d54929c06af",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200 or 404', () => {",
+                    "  pm.expect([200, 404]).to.include(pm.response.code);",
+                    "});",
+                    "if (pm.response.code === 200) {",
+                    "  const body = pm.response.json();",
+                    "  pm.test('Settings structure valid', () => {",
+                    "    pm.expect(body.success).to.be.true;",
+                    "    pm.expect(body.data).to.have.property('npmName');",
+                    "    pm.expect(body.data).to.have.property('settings');",
+                    "    pm.expect(body.data).to.have.property('registeredSettings');",
+                    "  });",
+                    "}"
+                  ],
+                  "_lastExecutionId": "b7b38bd5-5d06-4d0b-ad32-7408e94b015f"
+                }
+              }
+            ]
+          },
+          {
+            "id": "5d121bc5-7e1e-41c5-9c59-9d60540b5f70",
+            "name": "Get Public Settings",
+            "request": {
+              "description": {
+                "content": "Get the public settings for a plugin (visible to non-admins).",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "{{plugin_npm_name}}",
+                  "public-settings"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{admin_access_token}}"
+                }
+              ],
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "a18d4ab4-8131-415a-8066-a8a103496816",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200 or 404', () => {",
+                    "  pm.expect([200, 404]).to.include(pm.response.code);",
+                    "});",
+                    "if (pm.response.code === 200) {",
+                    "  const body = pm.response.json();",
+                    "  pm.test('Public settings structure', () => {",
+                    "    pm.expect(body.success).to.be.true;",
+                    "    pm.expect(body.data).to.have.property('npmName');",
+                    "    pm.expect(body.data).to.have.property('publicSettings');",
+                    "  });",
+                    "}"
+                  ],
+                  "_lastExecutionId": "6444b105-7544-49a2-9c61-a2cb7d63cd3c"
+                }
+              }
+            ]
+          },
+          {
+            "id": "4bef90ed-139a-4a83-b1c3-f6e4ad4e55d7",
+            "name": "Update Plugin Settings",
+            "request": {
+              "description": {
+                "content": "Update plugin settings (PeerTube-compatible route).",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "{{plugin_npm_name}}",
+                  "settings"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{admin_access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "PUT",
+              "body": {
+                "mode": "raw",
+                "raw": "{\"settings\": {\"updated_via_postman\": true}}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "c25d07e2-da34-4f7e-8df2-542099d1ca5d",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 200 or 404', () => {",
+                    "  pm.expect([200, 404]).to.include(pm.response.code);",
+                    "});",
+                    "if (pm.response.code === 200) {",
+                    "  const body = pm.response.json();",
+                    "  pm.test('Settings update response', () => {",
+                    "    pm.expect(body.success).to.be.true;",
+                    "    pm.expect(body.data).to.have.property('npmName');",
+                    "    pm.expect(body.data).to.have.property('message');",
+                    "  });",
+                    "}"
+                  ],
+                  "_lastExecutionId": "912f453d-0e0c-40ed-a927-c7ed2e8f47de"
+                }
+              }
+            ]
+          }
+        ],
+        "event": []
+      },
+      {
+        "id": "05242c4b-9d5d-4b76-8ec5-e82475ec5186",
+        "name": "Plugin Install: Contract Validation",
+        "item": [
+          {
+            "id": "a3b2c0a6-f942-47a6-b615-2858c6f07444",
+            "name": "Install Plugin from URL - Missing URL (400)",
+            "request": {
+              "description": {
+                "content": "Attempt install without URL — verifies 400 error shape.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "install"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{admin_access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "f9728574-6b6a-442a-b9cb-bd87a62f1b0f",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 400 (missing URL)', () => {",
+                    "  pm.expect(pm.response.code).to.equal(400);",
+                    "});",
+                    "const body = pm.response.json();",
+                    "pm.test('Error response structure', () => {",
+                    "  pm.expect(body.success).to.be.false;",
+                    "  pm.expect(body).to.have.property('error');",
+                    "});"
+                  ],
+                  "_lastExecutionId": "5ead62a8-25bf-4655-a94a-0781f7422f3a"
+                }
+              }
+            ]
+          },
+          {
+            "id": "fc8a1353-6279-44bd-941d-2cd345f8a6e7",
+            "name": "Install Plugin from URL - FTP blocked (400)",
+            "request": {
+              "description": {
+                "content": "FTP URLs should be rejected (only HTTP/HTTPS allowed).",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "install"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{admin_access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{\"npmName\": \"test-plugin\", \"pluginVersion\": \"1.0.0\", \"url\": \"ftp://bad.example.com/plugin.zip\"}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "b5d629de-91be-465b-88a9-c6f0f64ca36d",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 400 (FTP not allowed)', () => {",
+                    "  pm.expect(pm.response.code).to.equal(400);",
+                    "});",
+                    "const body = pm.response.json();",
+                    "pm.test('Error response structure', () => {",
+                    "  pm.expect(body.success).to.be.false;",
+                    "  pm.expect(body).to.have.property('error');",
+                    "});"
+                  ],
+                  "_lastExecutionId": "92f8175c-abc9-427f-b735-edf712da55e4"
+                }
+              }
+            ]
+          },
+          {
+            "id": "6f715864-b867-45c5-8d1c-f813b275d912",
+            "name": "Uninstall Plugin - Not Found",
+            "request": {
+              "description": {
+                "content": "Uninstalling a non-existent plugin returns 404 or 400.",
+                "type": "text/plain"
+              },
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "uninstall"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{admin_access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{\"npmName\": \"nonexistent-plugin-xyz\"}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "b240aba0-6106-4a7d-9198-d708176cdbe8",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 400 or 404', () => {",
+                    "  pm.expect([400, 404]).to.include(pm.response.code);",
+                    "});"
+                  ],
+                  "_lastExecutionId": "8f2305f2-25a1-492d-9395-7fb0abb0302a"
+                }
+              }
+            ]
+          }
+        ],
+        "event": []
+      },
+      {
+        "id": "c023803e-4cb0-45dd-886d-b56baf216dba",
+        "name": "Auth Error Cases",
+        "item": [
+          {
+            "id": "af5e6200-dbc7-4123-ab8d-39b73670fa3b",
+            "name": "List Plugins - No Auth",
+            "request": {
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "method": "GET"
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "6cc8701a-c6d4-437a-a28b-6eb37ce816b7",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 401', () => {",
+                    "  pm.expect(pm.response.code).to.equal(401);",
+                    "});"
+                  ],
+                  "_lastExecutionId": "f2e8b1cd-f401-40e9-8960-a86892040fab"
+                }
+              }
+            ]
+          },
+          {
+            "id": "281b3175-875f-44a5-8876-ae79b658fd4a",
+            "name": "Install Plugin - No Auth",
+            "request": {
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "install"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "POST",
+              "body": {
+                "mode": "raw",
+                "raw": "{\"npmName\": \"some-plugin\", \"url\": \"http://example.com/plugin.zip\"}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "e644312c-4c87-44e4-abf8-2c1c66abea26",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 401', () => {",
+                    "  pm.expect(pm.response.code).to.equal(401);",
+                    "});"
+                  ],
+                  "_lastExecutionId": "6d4aa42c-0e55-4535-bf1b-e5d8faabcc65"
+                }
+              }
+            ]
+          },
+          {
+            "id": "7dcc0f97-d4ce-4d9e-9f45-9db437ba9627",
+            "name": "Update Settings - No Auth",
+            "request": {
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "some-plugin",
+                  "settings"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "PUT",
+              "body": {
+                "mode": "raw",
+                "raw": "{\"settings\": {}}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "32227c1c-caec-4ee9-927e-cbfb48ab647b",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 401', () => {",
+                    "  pm.expect(pm.response.code).to.equal(401);",
+                    "});"
+                  ],
+                  "_lastExecutionId": "b2cb14f7-a7f6-4f14-b202-f6adfec73ee1"
+                }
+              }
+            ]
+          },
+          {
+            "id": "3e36be88-8eee-42d2-9c56-a9a2d3a184a7",
+            "name": "Update Settings - Missing Settings Field (400)",
+            "request": {
+              "url": {
+                "path": [
+                  "api",
+                  "v1",
+                  "plugins",
+                  "{{plugin_npm_name}}",
+                  "settings"
+                ],
+                "host": [
+                  "{{baseUrl}}"
+                ],
+                "query": [],
+                "variable": []
+              },
+              "header": [
+                {
+                  "key": "Authorization",
+                  "value": "Bearer {{admin_access_token}}"
+                },
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "method": "PUT",
+              "body": {
+                "mode": "raw",
+                "raw": "{}"
+              }
+            },
+            "response": [],
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "id": "e633e014-4be6-49d6-8def-ca14941be678",
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test('Status is 400', () => {",
+                    "  pm.expect(pm.response.code).to.equal(400);",
+                    "});",
+                    "const body = pm.response.json();",
+                    "pm.test('Error about missing settings', () => {",
+                    "  pm.expect(body.success).to.be.false;",
+                    "});"
+                  ],
+                  "_lastExecutionId": "f7982dc4-18d8-4bd3-a5dc-91f886617194"
+                }
+              }
+            ]
+          }
+        ],
+        "event": []
+      }
+    ],
+    "event": [
+      {
+        "listen": "prerequest",
+        "script": {
+          "id": "82b55492-cb56-45c3-a88a-cd838ae58e54",
+          "type": "text/javascript",
+          "exec": [
+            "const adminToken = pm.environment.get('admin_access_token');",
+            "if (adminToken) {",
+            "  pm.collectionVariables.set('access_token', adminToken);",
+            "}"
+          ],
+          "_lastExecutionId": "c1a5c9e8-3b8f-4a8e-8bb7-6e82f5c88ef7"
+        }
+      }
+    ],
+    "variable": [],
+    "info": {
+      "_postman_id": "849f7c67-dc02-485f-8b07-d43124c03e9d",
+      "name": "Vidra Core Plugins API",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+      "description": {
+        "content": "Test collection for the plugin management lifecycle: list, get, enable, disable, settings, and contract-shape validation.\n\n## Lifecycle Covered\n\n1. **List plugins** — enumerate installed plugins\n2. **List available** — discover available plugins from registry\n3. **Get plugin** — retrieve specific plugin by name\n4. **Get settings** — read registered and public settings\n5. **Update settings** — change plugin configuration via PeerTube-compatible route\n6. **Enable/Disable** — toggle plugin status\n7. **Install contract** — validate install-from-URL request shape (may fail if URL unreachable)\n8. **Uninstall** — remove a plugin\n9. **Error cases** — auth failures and invalid inputs\n\n## Scope Note\n\nInstall-from-URL and Upload-plugin require a real plugin archive. These requests are included for API contract validation (response shape, auth, error codes) but may return 4xx if no archive is available in the test environment. Use the 'contract-only' tests to validate the API surface.\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - Admin JWT access token\n\n## Variables Set During Run\n\n- `plugin_npm_name` - Name of the plugin to test lifecycle operations on",
+        "type": "text/plain"
+      }
+    }
+  },
+  "environment": {
+    "_": {
+      "postman_variable_scope": "environment",
+      "postman_exported_at": "2026-03-23T18:30:54.473Z",
+      "postman_exported_using": "Newman/6.1.3"
+    },
+    "id": "0f7a1111-2222-4333-8444-bbbbbbbbbbbb",
+    "name": "Vidra Core Local",
+    "values": [
+      {
+        "type": "any",
+        "value": "http://app-test:8080",
+        "key": "baseUrl"
+      },
+      {
+        "type": "any",
+        "value": "user_1774290633402",
+        "key": "username"
+      },
+      {
+        "type": "any",
+        "value": "user_1774290633402@example.com",
+        "key": "email"
+      },
+      {
+        "type": "any",
+        "value": "Password123!",
+        "key": "password"
+      },
+      {
+        "type": "any",
+        "value": "f5f1559d-3fa7-49ed-83cb-289d449684ae",
+        "key": "user_id"
+      },
+      {
+        "type": "any",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8",
+        "key": "access_token"
+      },
+      {
+        "type": "any",
+        "value": "132c5bd1-91cd-4e30-8da0-f75c2bde2cad",
+        "key": "refresh_token"
+      },
+      {
+        "type": "any",
+        "value": "bafkreidggesxrtgthyu6zy5xyqlkjgyoz7dl75rv4skkmag3ivmbhr26ea",
+        "key": "avatar_ipfs_cid"
+      },
+      {
+        "type": "any",
+        "value": "f8130d69-acc1-4967-ae64-ce0d424096f1",
+        "key": "uploadedVideoId"
+      },
+      {
+        "type": "any",
+        "value": "a524cbba-84da-43e3-9d73-475138b0b662",
+        "key": "video_id"
+      },
+      {
+        "type": "any",
+        "value": "57b153b9-044c-4063-9393-68ac1f94d543",
+        "key": "test_video_id"
+      },
+      {
+        "type": "any",
+        "value": "test-video-1774290638028.mp4",
+        "key": "test_filename"
+      },
+      {
+        "type": "any",
+        "value": "d1afd7c6-fc52-427c-b072-dcfad39ef3a0",
+        "key": "upload_session_id"
+      },
+      {
+        "type": "any",
+        "value": 1,
+        "key": "total_chunks"
+      },
+      {
+        "type": "any",
+        "value": "8b46423f-33d8-496d-ac2c-89db2e060686",
+        "key": "upload_video_id"
+      },
+      {
+        "type": "any",
+        "value": "be8ae72e-9515-405a-af56-686ffd359883",
+        "key": "incomplete_upload_session_id"
+      },
+      {
+        "type": "any",
+        "value": "637829c8-23eb-47db-ac2a-f46436c9bf7f",
+        "key": "channel_id"
+      },
+      {
+        "type": "any",
+        "value": "b55c7d66-5694-4b21-86fa-601592a3594a",
+        "key": "subscription_channel_id"
+      },
+      {
+        "type": "any",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU",
+        "key": "admin_access_token"
+      },
+      {
+        "type": "any",
+        "value": "ptcollab1774290642749",
+        "key": "collaborator_username"
+      },
+      {
+        "type": "any",
+        "value": "ptcollab1774290642749@example.com",
+        "key": "collaborator_email"
+      },
+      {
+        "type": "any",
+        "value": "Password123!",
+        "key": "collaborator_password"
+      },
+      {
+        "type": "any",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiMzNkMzg4N2QtZTBiZi00M2I0LWE2ODYtNGUxOTVjNGJlMzg4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI4NDg0ZWRiMC02ZDhhLTQzMjYtODA4ZC01M2FjNDBkNGEwNDUifQ.0uZDFC4LTWchOoVmi--AHCSaax_Xs1z8kRVDjzXDaY8",
+        "key": "collaborator_access_token"
+      },
+      {
+        "type": "any",
+        "value": "ptcanonical1774290643131",
+        "key": "canonical_channel_handle"
+      },
+      {
+        "type": "any",
+        "value": "bb3e0311-9a07-456d-8e1e-e9ad6f0b71b6",
+        "key": "canonical_channel_id"
+      },
+      {
+        "type": "any",
+        "value": "8761c070-68bd-404f-8c42-455245eca7ab",
+        "key": "canonical_collaborator_id"
+      },
+      {
+        "type": "any",
+        "value": "ced632ae-9968-4245-a62d-575572220a2e",
+        "key": "runner_registration_token"
+      },
+      {
+        "type": "any",
+        "value": "5c884126-90d2-4917-8aa8-f59ccadd87be",
+        "key": "runner_registration_token_id"
+      },
+      {
+        "type": "any",
+        "value": "0d78a71c-f674-4214-a883-f79d0cd82666",
+        "key": "runner_id"
+      },
+      {
+        "type": "any",
+        "value": "e941f077-69a1-4936-a6a7-9c05374cdcab",
+        "key": "runner_token"
+      },
+      {
+        "type": "any",
+        "value": "6a22107a-4276-4c4f-927c-7103026c8e43",
+        "key": "block_account_id"
+      },
+      {
+        "type": "any",
+        "value": "blockeduser1774290644595",
+        "key": "account_name"
+      },
+      {
+        "type": "any",
+        "value": "e1caf4e7-28d2-44a8-8df2-4d48d54be397",
+        "key": "stream_id"
+      },
+      {
+        "type": "any",
+        "value": "e6df09ff-48e1-4aee-8d8d-b16c3531f63c",
+        "key": "runner_reg_token_id"
+      },
+      {
+        "type": "any",
+        "value": "2026-03-30T18:30:53.777Z",
+        "key": "token_expires_at"
+      },
+      {
+        "type": "any",
+        "value": "80ce43a4-deca-495d-b67d-735ecc7b73ba",
+        "key": "extra_reg_token_id"
+      },
+      {
+        "type": "any",
+        "value": "peertube-plugin-hello-world",
+        "key": "plugin_npm_name"
+      }
+    ]
+  },
+  "globals": {
+    "id": "ece70297-c816-4f77-897a-366ba1a9a4a7",
+    "values": []
+  },
+  "run": {
+    "stats": {
+      "iterations": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "items": {
+        "total": 13,
+        "pending": 0,
+        "failed": 0
+      },
+      "scripts": {
+        "total": 27,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequests": {
+        "total": 13,
+        "pending": 0,
+        "failed": 0
+      },
+      "requests": {
+        "total": 13,
+        "pending": 0,
+        "failed": 0
+      },
+      "tests": {
+        "total": 13,
+        "pending": 0,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 19,
+        "pending": 0,
+        "failed": 0
+      },
+      "testScripts": {
+        "total": 13,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequestScripts": {
+        "total": 14,
+        "pending": 0,
+        "failed": 0
+      }
+    },
+    "timings": {
+      "responseAverage": 7.230769230769231,
+      "responseMin": 3,
+      "responseMax": 36,
+      "responseSd": 8.692648053241014,
+      "dnsAverage": 0,
+      "dnsMin": 0,
+      "dnsMax": 0,
+      "dnsSd": 0,
+      "firstByteAverage": 0,
+      "firstByteMin": 0,
+      "firstByteMax": 0,
+      "firstByteSd": 0,
+      "started": 1774290654960,
+      "completed": 1774290655378
+    },
+    "executions": [
+      {
+        "cursor": {
+          "position": 0,
+          "iteration": 0,
+          "length": 13,
+          "cycles": 1,
+          "empty": false,
+          "eof": false,
+          "bof": true,
+          "cr": false,
+          "ref": "2d3fe950-4804-45ab-9a52-644b826e2efb",
+          "httpRequestId": "462c6c5d-88bd-427c-b630-b8ebd17ada3e"
+        },
+        "item": {
+          "id": "6d3de920-aec6-418b-9ee0-7e4463e0cf7d",
+          "name": "List Plugins",
+          "request": {
+            "description": {
+              "content": "List all installed plugins. Requires admin or mod role.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "eb29f970-1135-43b9-8a02-10094650c09e",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Response has success envelope', () => {",
+                  "  pm.expect(body.success).to.be.true;",
+                  "  pm.expect(body).to.have.property('data');",
+                  "});",
+                  "pm.test('Data is an array of plugins (may be empty in fresh env)', () => {",
+                  "  pm.expect(body.data).to.be.an('array');",
+                  "});"
+                ],
+                "_lastExecutionId": "e5847bdf-b3b9-4740-b71e-aaff99411f23"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "List all installed plugins. Requires admin or mod role.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "c179d14c-2180-4bb3-94cb-5e79a15b9b9f",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "069f5997-1062-46db-894b-740b73ef5bb1",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "BFwewQWFPUtakpgldFK-tg"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "51"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              91,
+              93,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 36,
+          "responseSize": 27
+        },
+        "id": "6d3de920-aec6-418b-9ee0-7e4463e0cf7d",
+        "assertions": [
+          {
+            "assertion": "Status is 200",
+            "skipped": false
+          },
+          {
+            "assertion": "Response has success envelope",
+            "skipped": false
+          },
+          {
+            "assertion": "Data is an array of plugins (may be empty in fresh env)",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "18f12a2c-c3f8-4b5b-8b9c-23e51d53549f",
+          "length": 13,
+          "cycles": 1,
+          "position": 1,
+          "iteration": 0,
+          "httpRequestId": "fbcf8971-80f5-4687-aca9-4603e550546a"
+        },
+        "item": {
+          "id": "124cf226-a836-4000-84ad-896a5861f9b2",
+          "name": "List Available Plugins",
+          "request": {
+            "description": {
+              "content": "List plugins available from the registry.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "available"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "6f321ca2-e4a5-405f-82bf-553b86d825e5",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Response structure is valid', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "  pm.expect(body).to.have.property('data');",
+                  "});"
+                ],
+                "_lastExecutionId": "a11b44d2-c144-4fcd-94d7-2c1b87435099"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "List plugins available from the registry.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "available"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "3233e803-6ca8-4281-916c-765b5a564515",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "0de1c760-c010-4859-882d-e00cecace36d",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "6-Iy7RigKYmgUei326a60Q"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "51"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              100,
+              97,
+              116,
+              97,
+              34,
+              58,
+              91,
+              93,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 3,
+          "responseSize": 27
+        },
+        "id": "124cf226-a836-4000-84ad-896a5861f9b2",
+        "assertions": [
+          {
+            "assertion": "Status is 200",
+            "skipped": false
+          },
+          {
+            "assertion": "Response structure is valid",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "22d3593a-20aa-4c1b-ab8f-33c907295538",
+          "length": 13,
+          "cycles": 1,
+          "position": 2,
+          "iteration": 0,
+          "httpRequestId": "e4bcc2c9-65ab-4ce8-9fa1-44f0a52f181e"
+        },
+        "item": {
+          "id": "2995bd74-2c70-40bb-929f-8d2c1ae25cc7",
+          "name": "Get Plugin by Name",
+          "request": {
+            "description": {
+              "content": "Get a specific plugin by its npm name.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "ebda4bcd-d354-45ad-8fad-c631ca3f97b7",
+                "type": "text/javascript",
+                "exec": [
+                  "// Set a plugin name - use one that exists in the system or expect 404",
+                  "const name = pm.environment.get('plugin_npm_name') || 'peertube-plugin-hello-world';",
+                  "pm.environment.set('plugin_npm_name', name);"
+                ],
+                "_lastExecutionId": "55133cea-7c0f-461d-b75c-0d0fa9c3e10a"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "b1dc5a72-4190-4793-8e51-3a0c63023dfa",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Plugin data structure', () => {",
+                  "    pm.expect(body.success).to.be.true;",
+                  "    pm.expect(body.data).to.have.property('name');",
+                  "    pm.expect(body.data).to.have.property('version');",
+                  "    pm.expect(body.data).to.have.property('status');",
+                  "  });",
+                  "}"
+                ],
+                "_lastExecutionId": "b8856721-d0eb-4b08-b8f6-0bcc9405b57c"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Get a specific plugin by its npm name.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "peertube-plugin-hello-world"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "c62f41d7-8c35-4831-af3e-6c6a068a3cb6",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "fb7c1a09-3972-4dae-b2a2-768fc1152fd1",
+          "status": "Not Found",
+          "code": 404,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "aMU_30c9nEs_YVDYblMjjw"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "100"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              78,
+              79,
+              84,
+              95,
+              70,
+              79,
+              85,
+              78,
+              68,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              78,
+              79,
+              84,
+              95,
+              70,
+              79,
+              85,
+              78,
+              68,
+              58,
+              32,
+              80,
+              108,
+              117,
+              103,
+              105,
+              110,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 3,
+          "responseSize": 87
+        },
+        "id": "2995bd74-2c70-40bb-929f-8d2c1ae25cc7",
+        "assertions": [
+          {
+            "assertion": "Status is 200 or 404",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "ac3c09c0-607f-41c3-9ee3-0427351ecdaf",
+          "length": 13,
+          "cycles": 1,
+          "position": 3,
+          "iteration": 0,
+          "httpRequestId": "ae08200a-6bef-439a-b197-599a4e91ff6e"
+        },
+        "item": {
+          "id": "5523d226-fe2d-43cd-9d16-8916a7ea0c53",
+          "name": "Get Registered Settings",
+          "request": {
+            "description": {
+              "content": "Get the registered settings for a plugin.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "registered-settings"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "05e3d5e5-e3ed-476f-ac9f-1d54929c06af",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Settings structure valid', () => {",
+                  "    pm.expect(body.success).to.be.true;",
+                  "    pm.expect(body.data).to.have.property('npmName');",
+                  "    pm.expect(body.data).to.have.property('settings');",
+                  "    pm.expect(body.data).to.have.property('registeredSettings');",
+                  "  });",
+                  "}"
+                ],
+                "_lastExecutionId": "b7b38bd5-5d06-4d0b-ad32-7408e94b015f"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Get the registered settings for a plugin.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "peertube-plugin-hello-world",
+              "registered-settings"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "ef46522c-1082-47a4-8ec6-39d3dda91352",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "6803eed8-b437-4861-b2a3-c28c8fca3ed1",
+          "status": "Not Found",
+          "code": 404,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "zkltUpC39fSnkBlAkk_3SQ"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "100"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              78,
+              79,
+              84,
+              95,
+              70,
+              79,
+              85,
+              78,
+              68,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              78,
+              79,
+              84,
+              95,
+              70,
+              79,
+              85,
+              78,
+              68,
+              58,
+              32,
+              80,
+              108,
+              117,
+              103,
+              105,
+              110,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 3,
+          "responseSize": 87
+        },
+        "id": "5523d226-fe2d-43cd-9d16-8916a7ea0c53",
+        "assertions": [
+          {
+            "assertion": "Status is 200 or 404",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "16dae554-48cd-48c2-879f-4b073355e894",
+          "length": 13,
+          "cycles": 1,
+          "position": 4,
+          "iteration": 0,
+          "httpRequestId": "a2b2ebf1-3204-4f86-9ee0-d8e097db6763"
+        },
+        "item": {
+          "id": "5d121bc5-7e1e-41c5-9c59-9d60540b5f70",
+          "name": "Get Public Settings",
+          "request": {
+            "description": {
+              "content": "Get the public settings for a plugin (visible to non-admins).",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "public-settings"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              }
+            ],
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "a18d4ab4-8131-415a-8066-a8a103496816",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Public settings structure', () => {",
+                  "    pm.expect(body.success).to.be.true;",
+                  "    pm.expect(body.data).to.have.property('npmName');",
+                  "    pm.expect(body.data).to.have.property('publicSettings');",
+                  "  });",
+                  "}"
+                ],
+                "_lastExecutionId": "6444b105-7544-49a2-9c61-a2cb7d63cd3c"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Get the public settings for a plugin (visible to non-admins).",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "peertube-plugin-hello-world",
+              "public-settings"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "afd54e45-967d-4774-9b77-24d6a0659c17",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "1de0b8c7-451c-4fb0-8a49-aa071266e16d",
+          "status": "Not Found",
+          "code": 404,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "i2dfaUlHc0NmPOeh-o1rDg"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "100"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              78,
+              79,
+              84,
+              95,
+              70,
+              79,
+              85,
+              78,
+              68,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              78,
+              79,
+              84,
+              95,
+              70,
+              79,
+              85,
+              78,
+              68,
+              58,
+              32,
+              80,
+              108,
+              117,
+              103,
+              105,
+              110,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 7,
+          "responseSize": 87
+        },
+        "id": "5d121bc5-7e1e-41c5-9c59-9d60540b5f70",
+        "assertions": [
+          {
+            "assertion": "Status is 200 or 404",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "1dfd1557-6100-4150-8a39-eedffc3719cc",
+          "length": 13,
+          "cycles": 1,
+          "position": 5,
+          "iteration": 0,
+          "httpRequestId": "245fb64b-65e1-4ea2-ab73-928c9f3d26e5"
+        },
+        "item": {
+          "id": "4bef90ed-139a-4a83-b1c3-f6e4ad4e55d7",
+          "name": "Update Plugin Settings",
+          "request": {
+            "description": {
+              "content": "Update plugin settings (PeerTube-compatible route).",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "settings"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "PUT",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"settings\": {\"updated_via_postman\": true}}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "c25d07e2-da34-4f7e-8df2-542099d1ca5d",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Settings update response', () => {",
+                  "    pm.expect(body.success).to.be.true;",
+                  "    pm.expect(body.data).to.have.property('npmName');",
+                  "    pm.expect(body.data).to.have.property('message');",
+                  "  });",
+                  "}"
+                ],
+                "_lastExecutionId": "912f453d-0e0c-40ed-a927-c7ed2e8f47de"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Update plugin settings (PeerTube-compatible route).",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "peertube-plugin-hello-world",
+              "settings"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "50764e36-4cac-4287-a45a-af0605c04f26",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "43",
+              "system": true
+            }
+          ],
+          "method": "PUT",
+          "body": {
+            "mode": "raw",
+            "raw": "{\"settings\": {\"updated_via_postman\": true}}"
+          }
+        },
+        "response": {
+          "id": "51da5e63-8b3f-441d-b763-161bc6c66652",
+          "status": "Not Found",
+          "code": 404,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "OCoC_leKQeGfGKjRE4167A"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "100"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              78,
+              79,
+              84,
+              95,
+              70,
+              79,
+              85,
+              78,
+              68,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              78,
+              79,
+              84,
+              95,
+              70,
+              79,
+              85,
+              78,
+              68,
+              58,
+              32,
+              80,
+              108,
+              117,
+              103,
+              105,
+              110,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 12,
+          "responseSize": 87
+        },
+        "id": "4bef90ed-139a-4a83-b1c3-f6e4ad4e55d7",
+        "assertions": [
+          {
+            "assertion": "Status is 200 or 404",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "ef7e65fd-12a1-4b5a-85d2-40df1defd3e7",
+          "length": 13,
+          "cycles": 1,
+          "position": 6,
+          "iteration": 0,
+          "httpRequestId": "f22994ce-d6e0-45b7-bdd5-47c7d5148c43"
+        },
+        "item": {
+          "id": "a3b2c0a6-f942-47a6-b615-2858c6f07444",
+          "name": "Install Plugin from URL - Missing URL (400)",
+          "request": {
+            "description": {
+              "content": "Attempt install without URL — verifies 400 error shape.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "install"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "f9728574-6b6a-442a-b9cb-bd87a62f1b0f",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400 (missing URL)', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Error response structure', () => {",
+                  "  pm.expect(body.success).to.be.false;",
+                  "  pm.expect(body).to.have.property('error');",
+                  "});"
+                ],
+                "_lastExecutionId": "5ead62a8-25bf-4655-a94a-0781f7422f3a"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Attempt install without URL — verifies 400 error shape.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "install"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "202cc66b-0939-4bf0-a8f5-0754bb6734ae",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "2",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{}"
+          }
+        },
+        "response": {
+          "id": "82280d45-72f7-40eb-97a1-5569b0009318",
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "1P1pu-0o5RKbjkTQ7MJG1Q"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "111"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              73,
+              78,
+              86,
+              65,
+              76,
+              73,
+              68,
+              95,
+              82,
+              69,
+              81,
+              85,
+              69,
+              83,
+              84,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              73,
+              78,
+              86,
+              65,
+              76,
+              73,
+              68,
+              95,
+              82,
+              69,
+              81,
+              85,
+              69,
+              83,
+              84,
+              58,
+              32,
+              112,
+              108,
+              117,
+              103,
+              105,
+              110,
+              85,
+              82,
+              76,
+              32,
+              105,
+              115,
+              32,
+              114,
+              101,
+              113,
+              117,
+              105,
+              114,
+              101,
+              100,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 104
+        },
+        "id": "a3b2c0a6-f942-47a6-b615-2858c6f07444",
+        "assertions": [
+          {
+            "assertion": "Status is 400 (missing URL)",
+            "skipped": false
+          },
+          {
+            "assertion": "Error response structure",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "54c5a934-ec62-4c47-89ea-4034e3ff5e36",
+          "length": 13,
+          "cycles": 1,
+          "position": 7,
+          "iteration": 0,
+          "httpRequestId": "76cef867-2a1d-4e9e-9197-3552f84371d8"
+        },
+        "item": {
+          "id": "fc8a1353-6279-44bd-941d-2cd345f8a6e7",
+          "name": "Install Plugin from URL - FTP blocked (400)",
+          "request": {
+            "description": {
+              "content": "FTP URLs should be rejected (only HTTP/HTTPS allowed).",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "install"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"npmName\": \"test-plugin\", \"pluginVersion\": \"1.0.0\", \"url\": \"ftp://bad.example.com/plugin.zip\"}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "b5d629de-91be-465b-88a9-c6f0f64ca36d",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400 (FTP not allowed)', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Error response structure', () => {",
+                  "  pm.expect(body.success).to.be.false;",
+                  "  pm.expect(body).to.have.property('error');",
+                  "});"
+                ],
+                "_lastExecutionId": "92f8175c-abc9-427f-b735-edf712da55e4"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "FTP URLs should be rejected (only HTTP/HTTPS allowed).",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "install"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "1a368165-1927-4764-8fa0-bf906cfa3577",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "95",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\"npmName\": \"test-plugin\", \"pluginVersion\": \"1.0.0\", \"url\": \"ftp://bad.example.com/plugin.zip\"}"
+          }
+        },
+        "response": {
+          "id": "914a7cb9-be27-429e-b869-20c81dcb0584",
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "MOH6NK9c-QXqm6h7DsQXIA"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "111"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              73,
+              78,
+              86,
+              65,
+              76,
+              73,
+              68,
+              95,
+              82,
+              69,
+              81,
+              85,
+              69,
+              83,
+              84,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              73,
+              78,
+              86,
+              65,
+              76,
+              73,
+              68,
+              95,
+              82,
+              69,
+              81,
+              85,
+              69,
+              83,
+              84,
+              58,
+              32,
+              112,
+              108,
+              117,
+              103,
+              105,
+              110,
+              85,
+              82,
+              76,
+              32,
+              105,
+              115,
+              32,
+              114,
+              101,
+              113,
+              117,
+              105,
+              114,
+              101,
+              100,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 3,
+          "responseSize": 104
+        },
+        "id": "fc8a1353-6279-44bd-941d-2cd345f8a6e7",
+        "assertions": [
+          {
+            "assertion": "Status is 400 (FTP not allowed)",
+            "skipped": false
+          },
+          {
+            "assertion": "Error response structure",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "63d53073-f389-42b9-b907-272636fc1bfb",
+          "length": 13,
+          "cycles": 1,
+          "position": 8,
+          "iteration": 0,
+          "httpRequestId": "33c9e357-051d-43f3-9d0d-0c7aa3ad21e2"
+        },
+        "item": {
+          "id": "6f715864-b867-45c5-8d1c-f813b275d912",
+          "name": "Uninstall Plugin - Not Found",
+          "request": {
+            "description": {
+              "content": "Uninstalling a non-existent plugin returns 404 or 400.",
+              "type": "text/plain"
+            },
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "uninstall"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"npmName\": \"nonexistent-plugin-xyz\"}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "b240aba0-6106-4a7d-9198-d708176cdbe8",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400 or 404', () => {",
+                  "  pm.expect([400, 404]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "_lastExecutionId": "8f2305f2-25a1-492d-9395-7fb0abb0302a"
+              }
+            }
+          ]
+        },
+        "request": {
+          "description": {
+            "content": "Uninstalling a non-existent plugin returns 404 or 400.",
+            "type": "text/plain"
+          },
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "uninstall"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "910c274d-9cc4-4e98-b47a-dd5aae4e8d59",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "37",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\"npmName\": \"nonexistent-plugin-xyz\"}"
+          }
+        },
+        "response": {
+          "id": "22b30a21-0b4e-4273-844e-d4fb88492b81",
+          "status": "Not Found",
+          "code": 404,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "oVpo96dzfao88vwujk7A9Q"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "100"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              78,
+              79,
+              84,
+              95,
+              70,
+              79,
+              85,
+              78,
+              68,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              78,
+              79,
+              84,
+              95,
+              70,
+              79,
+              85,
+              78,
+              68,
+              58,
+              32,
+              80,
+              108,
+              117,
+              103,
+              105,
+              110,
+              32,
+              110,
+              111,
+              116,
+              32,
+              102,
+              111,
+              117,
+              110,
+              100,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 87
+        },
+        "id": "6f715864-b867-45c5-8d1c-f813b275d912",
+        "assertions": [
+          {
+            "assertion": "Status is 400 or 404",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "de20a788-9b1e-4264-a2da-16cebdba946c",
+          "length": 13,
+          "cycles": 1,
+          "position": 9,
+          "iteration": 0,
+          "httpRequestId": "6df27819-4a47-47e0-bdf3-3709461d31e3"
+        },
+        "item": {
+          "id": "af5e6200-dbc7-4123-ab8d-39b73670fa3b",
+          "name": "List Plugins - No Auth",
+          "request": {
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "6cc8701a-c6d4-437a-a28b-6eb37ce816b7",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "_lastExecutionId": "f2e8b1cd-f401-40e9-8960-a86892040fab"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "16bdfd44-9146-470a-a976-7d5755cf3e37",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "98e11d83-be4f-410a-8f1a-aa1f7b8c1598",
+          "status": "Unauthorized",
+          "code": 401,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "0aK57d5dPPNhO5EBbx1O7w"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "115"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              77,
+              73,
+              83,
+              83,
+              73,
+              78,
+              71,
+              95,
+              65,
+              85,
+              84,
+              72,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              77,
+              73,
+              83,
+              83,
+              73,
+              78,
+              71,
+              95,
+              65,
+              85,
+              84,
+              72,
+              58,
+              32,
+              77,
+              105,
+              115,
+              115,
+              105,
+              110,
+              103,
+              32,
+              97,
+              117,
+              116,
+              104,
+              111,
+              114,
+              105,
+              122,
+              97,
+              116,
+              105,
+              111,
+              110,
+              32,
+              104,
+              101,
+              97,
+              100,
+              101,
+              114,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 8,
+          "responseSize": 105
+        },
+        "id": "af5e6200-dbc7-4123-ab8d-39b73670fa3b",
+        "assertions": [
+          {
+            "assertion": "Status is 401",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "dd0591e7-744f-4716-ab28-d17d3efd927d",
+          "length": 13,
+          "cycles": 1,
+          "position": 10,
+          "iteration": 0,
+          "httpRequestId": "f1122331-8117-4890-9a7f-f3e27224691d"
+        },
+        "item": {
+          "id": "281b3175-875f-44a5-8876-ae79b658fd4a",
+          "name": "Install Plugin - No Auth",
+          "request": {
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "install"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"npmName\": \"some-plugin\", \"url\": \"http://example.com/plugin.zip\"}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "e644312c-4c87-44e4-abf8-2c1c66abea26",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "_lastExecutionId": "6d4aa42c-0e55-4535-bf1b-e5d8faabcc65"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "install"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "9250c57d-3a3e-4ebd-a1aa-f481a1b52fb5",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "66",
+              "system": true
+            }
+          ],
+          "method": "POST",
+          "body": {
+            "mode": "raw",
+            "raw": "{\"npmName\": \"some-plugin\", \"url\": \"http://example.com/plugin.zip\"}"
+          }
+        },
+        "response": {
+          "id": "ab621489-7a4a-4045-bfbf-8a8f261430c6",
+          "status": "Unauthorized",
+          "code": 401,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "JdLKUlN8QsC0JFEZR1ZfBw"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "115"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              77,
+              73,
+              83,
+              83,
+              73,
+              78,
+              71,
+              95,
+              65,
+              85,
+              84,
+              72,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              77,
+              73,
+              83,
+              83,
+              73,
+              78,
+              71,
+              95,
+              65,
+              85,
+              84,
+              72,
+              58,
+              32,
+              77,
+              105,
+              115,
+              115,
+              105,
+              110,
+              103,
+              32,
+              97,
+              117,
+              116,
+              104,
+              111,
+              114,
+              105,
+              122,
+              97,
+              116,
+              105,
+              111,
+              110,
+              32,
+              104,
+              101,
+              97,
+              100,
+              101,
+              114,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 3,
+          "responseSize": 105
+        },
+        "id": "281b3175-875f-44a5-8876-ae79b658fd4a",
+        "assertions": [
+          {
+            "assertion": "Status is 401",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "a95b8bc3-70ef-4f3c-b54b-63d27bfe8f01",
+          "length": 13,
+          "cycles": 1,
+          "position": 11,
+          "iteration": 0,
+          "httpRequestId": "62720f17-4c07-4e32-8682-a95925c7ca32"
+        },
+        "item": {
+          "id": "7dcc0f97-d4ce-4d9e-9f45-9db437ba9627",
+          "name": "Update Settings - No Auth",
+          "request": {
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "some-plugin",
+                "settings"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "PUT",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"settings\": {}}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "32227c1c-caec-4ee9-927e-cbfb48ab647b",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "_lastExecutionId": "b2cb14f7-a7f6-4f14-b202-f6adfec73ee1"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "some-plugin",
+              "settings"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "55fe8ed1-6426-46ab-a652-3649c6745d2c",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "16",
+              "system": true
+            }
+          ],
+          "method": "PUT",
+          "body": {
+            "mode": "raw",
+            "raw": "{\"settings\": {}}"
+          }
+        },
+        "response": {
+          "id": "52e9ba21-56bb-45e0-9e09-7b82014a4833",
+          "status": "Unauthorized",
+          "code": 401,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "DCcaE9iTETurGZwvr5i-9g"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "115"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              77,
+              73,
+              83,
+              83,
+              73,
+              78,
+              71,
+              95,
+              65,
+              85,
+              84,
+              72,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              77,
+              73,
+              83,
+              83,
+              73,
+              78,
+              71,
+              95,
+              65,
+              85,
+              84,
+              72,
+              58,
+              32,
+              77,
+              105,
+              115,
+              115,
+              105,
+              110,
+              103,
+              32,
+              97,
+              117,
+              116,
+              104,
+              111,
+              114,
+              105,
+              122,
+              97,
+              116,
+              105,
+              111,
+              110,
+              32,
+              104,
+              101,
+              97,
+              100,
+              101,
+              114,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 105
+        },
+        "id": "7dcc0f97-d4ce-4d9e-9f45-9db437ba9627",
+        "assertions": [
+          {
+            "assertion": "Status is 401",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "4e6bb492-762f-4ac4-bf2b-2f8b4ed076de",
+          "length": 13,
+          "cycles": 1,
+          "position": 12,
+          "iteration": 0,
+          "httpRequestId": "76d203cf-e845-4137-b89c-28c2d5b5062a"
+        },
+        "item": {
+          "id": "3e36be88-8eee-42d2-9c56-a9a2d3a184a7",
+          "name": "Update Settings - Missing Settings Field (400)",
+          "request": {
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "settings"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "PUT",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "e633e014-4be6-49d6-8def-ca14941be678",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Error about missing settings', () => {",
+                  "  pm.expect(body.success).to.be.false;",
+                  "});"
+                ],
+                "_lastExecutionId": "f7982dc4-18d8-4bd3-a5dc-91f886617194"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "plugins",
+              "peertube-plugin-hello-world",
+              "settings"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "58e8b540-8c8f-4f25-9eda-be93d1ef855d",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            },
+            {
+              "key": "Content-Length",
+              "value": "2",
+              "system": true
+            }
+          ],
+          "method": "PUT",
+          "body": {
+            "mode": "raw",
+            "raw": "{}"
+          }
+        },
+        "response": {
+          "id": "6607355b-574b-4a77-9535-bca4170be8b8",
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "B89mU2N9HASgX2JhJcccDQ"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:55 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "99"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              101,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              123,
+              34,
+              99,
+              111,
+              100,
+              101,
+              34,
+              58,
+              34,
+              69,
+              82,
+              82,
+              79,
+              82,
+              34,
+              44,
+              34,
+              109,
+              101,
+              115,
+              115,
+              97,
+              103,
+              101,
+              34,
+              58,
+              34,
+              69,
+              82,
+              82,
+              79,
+              82,
+              58,
+              32,
+              83,
+              101,
+              116,
+              116,
+              105,
+              110,
+              103,
+              115,
+              32,
+              97,
+              114,
+              101,
+              32,
+              114,
+              101,
+              113,
+              117,
+              105,
+              114,
+              101,
+              100,
+              34,
+              125,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              34,
+              58,
+              102,
+              97,
+              108,
+              115,
+              101,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 84
+        },
+        "id": "3e36be88-8eee-42d2-9c56-a9a2d3a184a7",
+        "assertions": [
+          {
+            "assertion": "Status is 400",
+            "skipped": false
+          },
+          {
+            "assertion": "Error about missing settings",
+            "skipped": false
+          }
+        ]
+      }
+    ],
+    "transfers": {
+      "responseTotal": 1268
+    },
+    "failures": [],
+    "error": null
+  }
+}

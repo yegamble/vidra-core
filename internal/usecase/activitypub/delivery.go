@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/activitypub"
-	"athena/internal/domain"
+	"vidra-core/internal/activitypub"
+	"vidra-core/internal/domain"
 )
 
 func (s *Service) DeliverActivity(ctx context.Context, actorID, inboxURL string, activity interface{}) error {
@@ -31,7 +31,7 @@ func (s *Service) DeliverActivity(ctx context.Context, actorID, inboxURL string,
 	}
 
 	req.Header.Set("Content-Type", "application/activity+json")
-	req.Header.Set("User-Agent", "Athena/1.0")
+	req.Header.Set("User-Agent", "Vidra Core/1.0")
 	req.Header.Set("Host", req.URL.Host)
 
 	user, err := s.userRepo.GetByID(ctx, actorID)

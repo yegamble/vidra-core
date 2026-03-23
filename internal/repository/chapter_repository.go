@@ -6,7 +6,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // ChapterRepository defines data operations for video chapters.

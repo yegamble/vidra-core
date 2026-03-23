@@ -182,7 +182,7 @@ Worktree: No
 - Use `minio/minio:latest` image
 - Map ports: `19100:9000` (API), `19101:9001` (console) to avoid conflicts with IOTA (14265) and Whisper (9000)
 - Default credentials: `minioadmin`/`minioadmin`
-- Create default bucket `athena-test` on startup using `minio/mc` init container or entrypoint command
+- Create default bucket `vidra-test` on startup using `minio/mc` init container or entrypoint command
 - Use tmpfs for data (no persistence needed for tests)
 - Add healthcheck: `curl -f http://localhost:9000/minio/health/live`
 - Network: `test-integration-network` (new network for integration tests)
@@ -191,7 +191,7 @@ Worktree: No
 
 - [ ] `docker compose --profile test-integration up minio` starts MinIO successfully
 - [ ] MinIO API responds on `localhost:19100`
-- [ ] Default bucket `athena-test` exists after startup
+- [ ] Default bucket `vidra-test` exists after startup
 - [ ] Healthcheck passes within 30 seconds
 
 **Verify:**
@@ -236,12 +236,12 @@ Worktree: No
 - [ ] `GET /test/records` returns all records created during the session
 - [ ] `GET /health` returns 200
 - [ ] Smoke tests pass: `go test ./tests/mocks/atproto-pds/... -v`
-- [ ] Docker image builds: `docker build -t athena-mock-atproto tests/mocks/atproto-pds/`
+- [ ] Docker image builds: `docker build -t vidra-mock-atproto tests/mocks/atproto-pds/`
 
 **Verify:**
 
 - `cd tests/mocks/atproto-pds && go test -v && go build -o mock-atproto . && echo "Build OK"`
-- `docker build -t athena-mock-atproto tests/mocks/atproto-pds/`
+- `docker build -t vidra-mock-atproto tests/mocks/atproto-pds/`
 
 ### Task 4: Create mock ActivityPub server and mock IOTA RPC server
 
@@ -299,8 +299,8 @@ Worktree: No
 
 - `cd tests/mocks/activitypub && go test -v && go build -o mock-activitypub .`
 - `cd tests/mocks/iota-rpc && go test -v && go build -o mock-iota-rpc .`
-- `docker build -t athena-mock-activitypub tests/mocks/activitypub/`
-- `docker build -t athena-mock-iota-rpc tests/mocks/iota-rpc/`
+- `docker build -t vidra-mock-activitypub tests/mocks/activitypub/`
+- `docker build -t vidra-mock-iota-rpc tests/mocks/iota-rpc/`
 
 ### Task 5: Add all mock services to Docker Compose (test-integration profile)
 
@@ -325,7 +325,7 @@ Worktree: No
 - All on `test-integration-network`
 - Use tmpfs for ephemeral data where possible
 - Healthchecks on all services
-- Add `minio-init` service that creates the `athena-test` bucket using `minio/mc` (depends on MinIO health)
+- Add `minio-init` service that creates the `vidra-test` bucket using `minio/mc` (depends on MinIO health)
 
 **Definition of Done:**
 
@@ -443,7 +443,7 @@ Worktree: No
 **Key Decisions / Notes:**
 
 - Test the full S3 lifecycle: create backend → Upload file → Download file → Delete file → verify deletion with Exists()
-- **MinIO config:** `S3Config{Endpoint: "http://localhost:19100", Bucket: "athena-test", AccessKey: "minioadmin", SecretKey: "minioadmin", Region: "us-east-1", PathStyle: true}`. **PathStyle MUST be true** for MinIO (virtual-hosted-style addressing doesn't work with MinIO).
+- **MinIO config:** `S3Config{Endpoint: "http://localhost:19100", Bucket: "vidra-test", AccessKey: "minioadmin", SecretKey: "minioadmin", Region: "us-east-1", PathStyle: true}`. **PathStyle MUST be true** for MinIO (virtual-hosted-style addressing doesn't work with MinIO).
 - Test methods: `Upload()`, `UploadPrivate()`, `Download()`, `Delete()`, `DeleteMultiple()`, `Exists()`, `GetMetadata()`, `Copy()`, `GetSignedURL()`
 - Test with different file types (video, image, text) and sizes
 - Test S3 categories (if `s3_categories.go` provides upload path logic)

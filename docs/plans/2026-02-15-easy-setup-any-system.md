@@ -18,9 +18,9 @@ Worktree: No
 
 ## Summary
 
-**Goal:** Make Athena a "one-command" setup experience on any Linux/macOS system, with two deployment paths: (1) Docker Compose handles everything for single-server deployments, and (2) a web-based setup wizard for users with their own infrastructure who want to point Athena at existing Postgres/Redis/etc. Include a unified backup AND restore system supporting local, S3, and SFTP/FTP targets with forward-compatible versioned backups. Provide both a web UI and CLI for all operations.
+**Goal:** Make Vidra Core a "one-command" setup experience on any Linux/macOS system, with two deployment paths: (1) Docker Compose handles everything for single-server deployments, and (2) a web-based setup wizard for users with their own infrastructure who want to point Vidra Core at existing Postgres/Redis/etc. Include a unified backup AND restore system supporting local, S3, and SFTP/FTP targets with forward-compatible versioned backups. Provide both a web UI and CLI for all operations.
 
-**Architecture:** Four layers of improvements: (1) App-level changes -- auto-migration on startup via embedded Goose library, resource auto-detection, first-run setup wizard with Go HTML templates; (2) Docker-level changes -- smart entrypoint with service profiles and resource-aware startup; (3) A new backup/restore subsystem with pluggable storage backends, versioned backup manifests, and scheduled jobs; (4) A CLI tool (`athena-cli`) for power users to manage setup, backup, and restore from the terminal.
+**Architecture:** Four layers of improvements: (1) App-level changes -- auto-migration on startup via embedded Goose library, resource auto-detection, first-run setup wizard with Go HTML templates; (2) Docker-level changes -- smart entrypoint with service profiles and resource-aware startup; (3) A new backup/restore subsystem with pluggable storage backends, versioned backup manifests, and scheduled jobs; (4) A CLI tool (`vidra-cli`) for power users to manage setup, backup, and restore from the terminal.
 
 **Tech Stack:** Go (embedded Goose v3, `html/template`, `runtime` for resource detection), Docker Compose profiles, `pkg/sftp` for SFTP, existing AWS S3 SDK, `pg_dump`/`pg_restore`/`redis-cli` for DB/cache backup and restore.
 
@@ -30,14 +30,14 @@ Worktree: No
 
 - Embed Goose as a Go library for auto-migration on startup
 - First-run detection (is the app configured or fresh?)
-- Web-based setup wizard using Go `html/template` (served by Athena itself)
+- Web-based setup wizard using Go `html/template` (served by Vidra Core itself)
 - System resource auto-detection (RAM, CPU) to enable/disable heavy services
 - Docker Compose smart entrypoint with resource-aware service profiles
 - Backup system with Local, S3-compatible, and SFTP/FTP backends
 - **Restore system** via web UI and CLI with version-aware migration handling
 - **Backup versioning** with manifests that record schema version for forward compatibility
 - Backup scheduling (cron-like) and manual trigger API
-- **CLI tool** (`athena-cli`) for power users: setup, backup, restore, status
+- **CLI tool** (`vidra-cli`) for power users: setup, backup, restore, status
 - One-command install script for bare-metal Linux/macOS
 
 ### Out of Scope
@@ -75,7 +75,7 @@ Worktree: No
   - IPFS is optional when `REQUIRE_IPFS=false` (default in Docker). The app already handles graceful degradation.
   - The `init-shared-db.sql` creates the base schema, but Goose migrations layer on top. Auto-migration must handle both fresh DBs and existing ones.
   - Whisper service uses `latest-gpu` image tag which requires GPU. Non-GPU users need a CPU fallback.
-- **Domain context:** Athena is a PeerTube-compatible video backend. "Easy setup" means competing with PeerTube's install experience. The wizard must collect: database URL, Redis URL, JWT secret, storage path, and optionally IPFS/ClamAV/Whisper settings. PeerTube's Docker setup requires downloading compose file, editing .env, generating TLS certs, running docker compose -- we aim to simplify this.
+- **Domain context:** Vidra Core is a PeerTube-compatible video backend. "Easy setup" means competing with PeerTube's install experience. The wizard must collect: database URL, Redis URL, JWT secret, storage path, and optionally IPFS/ClamAV/Whisper settings. PeerTube's Docker setup requires downloading compose file, editing .env, generating TLS certs, running docker compose -- we aim to simplify this.
 - **UX research findings (setup wizards):**
   - 7 usability heuristics: simplicity, visibility of progress, accessible help, consistency, error prevention, error recovery (Back button), achievement feedback
   - Disable "Continue" button until step is valid (prevent errors)
@@ -104,7 +104,7 @@ Worktree: No
 - [x] Task 8: Backup system - SFTP/FTP backend
 - [x] Task 9: Restore system - core logic and web UI
 - [x] Task 10: Backup/restore API endpoints and scheduling
-- [x] Task 11: CLI tool (athena-cli)
+- [x] Task 11: CLI tool (vidra-cli)
 - [x] Task 12: One-command install script
 
 > Extended 2026-02-15: Tasks 13-19 added for incomplete implementations found during verification (Iteration 1)
@@ -181,7 +181,7 @@ Worktree: No
 
 ### Task 2: First-Run Detection and Setup Mode
 
-**Objective:** Detect whether Athena is running for the first time (no `.env` or database not configured) and enter a "setup mode" that serves the setup wizard instead of the normal API.
+**Objective:** Detect whether Vidra Core is running for the first time (no `.env` or database not configured) and enter a "setup mode" that serves the setup wizard instead of the normal API.
 
 **Dependencies:** Task 1
 
@@ -298,7 +298,7 @@ Worktree: No
 - The "Services" page shows resource auto-detection results and lets users override optional service toggles (IPFS, ClamAV, Whisper)
 - CSS uses a minimal, clean design (no external CSS frameworks). Inline in `layout.html`
 - The wizard writes `.env` atomically (write to temp file, then rename)
-- **Database validation chicken-and-egg:** When validating DB connection in the wizard, the target database (`athena`) may not exist yet. The wizard must: (1) Connect to the `postgres` default database first to verify credentials, (2) Check if the `athena` database exists, (3) If not, offer to create it (`CREATE DATABASE athena`), (4) Connect to `athena` and create required extensions (`CREATE EXTENSION IF NOT EXISTS ...`). This way the wizard handles fresh Postgres instances where only the default database exists
+- **Database validation chicken-and-egg:** When validating DB connection in the wizard, the target database (`vidra`) may not exist yet. The wizard must: (1) Connect to the `postgres` default database first to verify credentials, (2) Check if the `vidra` database exists, (3) If not, offer to create it (`CREATE DATABASE vidra`), (4) Connect to `vidra` and create required extensions (`CREATE EXTENSION IF NOT EXISTS ...`). This way the wizard handles fresh Postgres instances where only the default database exists
 - **Input validation:** Reject config values containing shell metacharacters (`;|&$\``), validate DATABASE_URL matches`postgres://` schema, validate Redis URL matches `redis://` schema, test connections are reachable before saving
 - **Initial admin account creation:** The Security step collects admin username, email, and password. On wizard completion (after `.env` is written and DB is reachable), the wizard creates the first admin user in the database with role `admin`. Password is hashed using bcrypt (matching existing user registration flow in `internal/usecase/`). If the admin user already exists (re-run scenario), skip creation and log a warning. This admin account is required -- the wizard does not complete without it.
 - On completion, set `SETUP_COMPLETED=true` in `.env` and show "Restart the server to apply settings"
@@ -309,7 +309,7 @@ Worktree: No
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
 - [ ] Wizard serves multi-step form in setup mode with breadcrumb navigation
-- [ ] Database connection is tested when user submits DB settings (connects to `postgres` DB first, then creates `athena` DB if needed)
+- [ ] Database connection is tested when user submits DB settings (connects to `postgres` DB first, then creates `vidra` DB if needed)
 - [ ] Wizard handles fresh Postgres where target database doesn't exist yet (creates it automatically)
 - [ ] Each service (Postgres, Redis, IPFS, ClamAV, Whisper) has a "Local Docker" / "External Service" toggle
 - [ ] Selecting "External Service" reveals URL + credentials fields and validates connectivity
@@ -383,7 +383,7 @@ Worktree: No
 
 ### Task 6: Backup System - Core Interface, Versioning, and Local Backend
 
-**Objective:** Build the backup system's core abstractions (interfaces, versioned backup manifests, job model, scheduler) and the first backend: local filesystem backup. Backups include a version manifest so older backups can be restored on newer versions of Athena.
+**Objective:** Build the backup system's core abstractions (interfaces, versioned backup manifests, job model, scheduler) and the first backend: local filesystem backup. Backups include a version manifest so older backups can be restored on newer versions of Vidra Core.
 
 **Dependencies:** Task 1
 
@@ -421,11 +421,11 @@ Worktree: No
 
 - `schema_version` is the Goose migration version at backup time (from Task 1's `CurrentVersion()`)
 - On restore, if `schema_version` < current, Goose auto-migrates after restore to bring DB to current version
-- This makes older backups forward-compatible with newer Athena versions
+- This makes older backups forward-compatible with newer Vidra Core versions
 - Backup manager handles: (1) PostgreSQL dump via `pg_dump`, (2) Redis RDB snapshot via `BGSAVE` + copy, (3) Storage directory tar/gzip, (4) Manifest generation
 - **Backup integrity:** Write `pg_dump` output to a local temp file first, verify exit code 0, then upload the completed archive to the target. Do NOT pipe `pg_dump` directly to remote upload -- if upload fails mid-stream, it leaves partial/corrupt backup files on the target with no indication they're incomplete. After successful upload, delete the temp file. This trades temporary disk usage for backup integrity guarantees.
 - Local backend writes to a configurable directory (default: `./backups/`)
-- Backup naming convention: `athena-backup-YYYY-MM-DD-HHMMSS.tar.gz`
+- Backup naming convention: `vidra-backup-YYYY-MM-DD-HHMMSS.tar.gz`
 - Scheduler uses a simple cron expression (daily at 2am by default)
 - Retention policy: keep last N backups (configurable, default 7)
 - Domain model tracks backup history (ID, timestamp, size, target, status, schema_version)
@@ -634,7 +634,7 @@ Worktree: No
 
 ---
 
-### Task 11: CLI Tool (athena-cli)
+### Task 11: CLI Tool (vidra-cli)
 
 **Objective:** Create a CLI tool for power users that provides all setup, backup, and restore functionality from the terminal. Shares the same core logic as the web UI but with a terminal interface.
 
@@ -653,15 +653,15 @@ Worktree: No
 **Key Decisions / Notes:**
 
 - CLI commands:
-  - `athena-cli setup` -- Interactive terminal setup (prompts for DB URL, Redis, etc.)
-  - `athena-cli setup --from-env .env.example` -- Non-interactive setup from env template
-  - `athena-cli backup create` -- Trigger immediate backup
-  - `athena-cli backup list` -- List available backups
-  - `athena-cli backup restore <backup-id>` -- Restore from a specific backup
-  - `athena-cli backup restore --latest` -- Restore from most recent backup
-  - `athena-cli status` -- Show system status (DB connection, migration version, services, disk usage)
-  - `athena-cli migrate` -- Run pending migrations manually
-  - `athena-cli migrate --status` -- Show migration status
+  - `vidra-cli setup` -- Interactive terminal setup (prompts for DB URL, Redis, etc.)
+  - `vidra-cli setup --from-env .env.example` -- Non-interactive setup from env template
+  - `vidra-cli backup create` -- Trigger immediate backup
+  - `vidra-cli backup list` -- List available backups
+  - `vidra-cli backup restore <backup-id>` -- Restore from a specific backup
+  - `vidra-cli backup restore --latest` -- Restore from most recent backup
+  - `vidra-cli status` -- Show system status (DB connection, migration version, services, disk usage)
+  - `vidra-cli migrate` -- Run pending migrations manually
+  - `vidra-cli migrate --status` -- Show migration status
 - Use Go `flag` package or lightweight CLI library (cobra is overkill for this)
 - CLI reuses the same `internal/backup`, `internal/setup`, `internal/database` packages as the server
 - CLI loads config from `.env` file (same as server) or accepts flags
@@ -672,11 +672,11 @@ Worktree: No
 
 - [ ] All tests pass (unit, integration if applicable)
 - [ ] No diagnostics errors (linting, type checking)
-- [ ] `athena-cli setup` runs interactive setup and writes valid `.env`
-- [ ] `athena-cli backup create` produces a backup archive
-- [ ] `athena-cli backup list` shows available backups with version info
-- [ ] `athena-cli backup restore <id>` restores and runs forward migrations
-- [ ] `athena-cli status` shows DB connection, migration version, service health
+- [ ] `vidra-cli setup` runs interactive setup and writes valid `.env`
+- [ ] `vidra-cli backup create` produces a backup archive
+- [ ] `vidra-cli backup list` shows available backups with version info
+- [ ] `vidra-cli backup restore <id>` restores and runs forward migrations
+- [ ] `vidra-cli status` shows DB connection, migration version, service health
 - [ ] `--json` flag produces machine-readable output for all commands
 
 **Verify:**
@@ -688,7 +688,7 @@ Worktree: No
 
 ### Task 12: One-Command Install Script
 
-**Objective:** Create a shell script that sets up Athena on a fresh Linux (Ubuntu/Debian, RHEL/CentOS) or macOS system with a single command.
+**Objective:** Create a shell script that sets up Vidra Core on a fresh Linux (Ubuntu/Debian, RHEL/CentOS) or macOS system with a single command.
 
 **Dependencies:** Task 1, Task 5
 
@@ -706,7 +706,7 @@ Worktree: No
 - Script flow:
   1. Detect OS and architecture
   2. Check/install prerequisites (Docker or native deps)
-  3. Clone or download Athena (if not already in repo)
+  3. Clone or download Vidra Core (if not already in repo)
   4. Copy `.env.example` to `.env` with auto-generated JWT secret
   5. Start services (Docker Compose or native)
   6. Wait for health check
@@ -745,7 +745,7 @@ Worktree: No
   3. Complete wizard with external Postgres/Redis -- verify no local containers for those services, app connects to external
   4. Trigger manual backup via API and CLI -- verify backup file created with manifest
   5. Restore from backup via web UI -- verify data restored and forward migrations applied
-  6. Run install script on fresh Ubuntu VM -- should result in working Athena instance
+  6. Run install script on fresh Ubuntu VM -- should result in working Vidra Core instance
 
 ## Risks and Mitigations
 
@@ -830,13 +830,13 @@ Worktree: No
 
 **Key Decisions / Notes:**
 
-- Database validation: connect to `postgres` default DB, check if `athena` exists, create if not, create extensions
+- Database validation: connect to `postgres` default DB, check if `vidra` exists, create if not, create extensions
 - Admin user: after .env is written, hash password with bcrypt, INSERT into users table with role=admin
 - Handle re-run scenario (admin exists → skip with warning)
 
 **Definition of Done:**
 
-- [ ] Wizard creates `athena` database when it doesn't exist
+- [ ] Wizard creates `vidra` database when it doesn't exist
 - [ ] Wizard creates extensions in the new database
 - [ ] Admin user is created in DB on wizard completion with bcrypt-hashed password
 - [ ] Re-running wizard with existing admin user skips creation gracefully
@@ -865,10 +865,10 @@ Worktree: No
 
 **Definition of Done:**
 
-- [ ] `athena-cli backup create` produces a backup archive
-- [ ] `athena-cli backup list` shows available backups
-- [ ] `athena-cli status` shows DB connection and migration version
-- [ ] `athena-cli migrate` runs pending migrations
+- [ ] `vidra-cli backup create` produces a backup archive
+- [ ] `vidra-cli backup list` shows available backups
+- [ ] `vidra-cli status` shows DB connection and migration version
+- [ ] `vidra-cli migrate` runs pending migrations
 - [ ] `--json` flag works for all commands
 
 ---
@@ -1029,8 +1029,8 @@ Worktree: No
 
 - [ ] Wizard calls `ValidateDatabaseURL` for external DB URLs and `ValidateJWTSecret` for custom secrets
 - [ ] Wizard completion calls `CreateDatabaseIfNotExists` then `CreateAdminUser` with bcrypt-hashed password
-- [ ] `athena-cli backup restore` calls `RestoreManager.Restore` with real target
-- [ ] `athena-cli setup` runs interactive prompts and writes valid `.env`
+- [ ] `vidra-cli backup restore` calls `RestoreManager.Restore` with real target
+- [ ] `vidra-cli setup` runs interactive prompts and writes valid `.env`
 - [ ] Backup archive includes `database.sql`, `redis.rdb` (via BGSAVE), `storage/` (via tar), and `manifest.json`
 - [ ] Restore extracts and applies Redis RDB and storage files
 - [ ] Backup scheduler registered in `app.go` startup with config from `BACKUP_SCHEDULE`/`BACKUP_RETENTION`

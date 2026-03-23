@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/usecase"
 )
 
 // PublicUser is the public-safe representation of a user.

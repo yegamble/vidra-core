@@ -6,8 +6,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	redis "github.com/redis/go-redis/v9"
 
-	"athena/internal/config"
-	"athena/internal/usecase"
+	"vidra-core/internal/config"
+	"vidra-core/internal/usecase"
 )
 
 // AuthHandlers holds dependencies for authentication handlers

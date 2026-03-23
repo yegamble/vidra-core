@@ -16,7 +16,7 @@ Provides common string manipulation and conversion functions:
 **Example**:
 
 ```go
-import "athena/pkg/strutil"
+import "vidra-core/pkg/strutil"
 
 // Convert SQL null string
 ptr := strutil.NullStringToPtr(sqlNullString)
@@ -32,7 +32,7 @@ summary := strutil.TruncateWithEllipsis(longText, 100)
 
 When adding new packages to `pkg/`:
 
-1. **No Internal Dependencies**: Packages must not import `athena/internal/*`
+1. **No Internal Dependencies**: Packages must not import `vidra/internal/*`
 2. **Well-Tested**: Include comprehensive unit tests
 3. **Documented**: Add godoc comments for all exported functions
 4. **Focused**: Each package should have a single, clear purpose

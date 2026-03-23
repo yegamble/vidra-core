@@ -211,11 +211,11 @@ COMMENT ON VIEW chat_stream_stats IS
 -- Grants
 -- ============================================================================
 -- Grant permissions if using restricted database user
--- GRANT SELECT, INSERT, UPDATE, DELETE ON chat_messages TO athena_app;
--- GRANT SELECT, INSERT, DELETE ON chat_moderators TO athena_app;
--- GRANT SELECT, INSERT, DELETE ON chat_bans TO athena_app;
--- GRANT EXECUTE ON FUNCTION is_user_banned(UUID, UUID) TO athena_app;
--- GRANT EXECUTE ON FUNCTION is_chat_moderator(UUID, UUID) TO athena_app;
--- GRANT EXECUTE ON FUNCTION get_chat_message_count(UUID) TO athena_app;
--- GRANT EXECUTE ON FUNCTION cleanup_expired_bans() TO athena_app;
--- GRANT SELECT ON chat_stream_stats TO athena_app;
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON chat_messages TO vidra_app;
+-- GRANT SELECT, INSERT, DELETE ON chat_moderators TO vidra_app;
+-- GRANT SELECT, INSERT, DELETE ON chat_bans TO vidra_app;
+-- GRANT EXECUTE ON FUNCTION is_user_banned(UUID, UUID) TO vidra_app;
+-- GRANT EXECUTE ON FUNCTION is_chat_moderator(UUID, UUID) TO vidra_app;
+-- GRANT EXECUTE ON FUNCTION get_chat_message_count(UUID) TO vidra_app;
+-- GRANT EXECUTE ON FUNCTION cleanup_expired_bans() TO vidra_app;
+-- GRANT SELECT ON chat_stream_stats TO vidra_app;

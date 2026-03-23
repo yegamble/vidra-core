@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/domain"
-	"athena/internal/testutil"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/testutil"
 )
 
 func TestViewsRepository_CreateUserView(t *testing.T) {

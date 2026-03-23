@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This document identifies edge cases, validation gaps, and potential breaking scenarios in the Athena API that could cause E2E test failures beyond the already-identified issues:
+This document identifies edge cases, validation gaps, and potential breaking scenarios in the Vidra Core API that could cause E2E test failures beyond the already-identified issues:
 
 1. **FIXED:** Database not initialized (init-shared-db.sql now mounted)
 2. **IDENTIFIED:** Login endpoint expects "email" but test sends "username"
@@ -27,8 +27,8 @@ This document identifies edge cases, validation gaps, and potential breaking sce
 
 ### CRITICAL: Login Endpoint Field Mismatch
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` (lines 73-184)
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/helpers.go` (lines 115-149)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go` (lines 73-184)
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go` (lines 115-149)
 
 **Current Handler Implementation:**
 
@@ -155,7 +155,7 @@ pm.test("Login with username instead of email should fail gracefully", function(
 
 ### CRITICAL: Type Assertion Without Validation
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` (lines 82-84)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go` (lines 82-84)
 
 **Issue:** Silent type assertion failures
 
@@ -212,7 +212,7 @@ pm.test("Login with non-string email returns proper error", function() {
 
 ### HIGH: Missing Email Format Validation
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` (lines 186-313)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go` (lines 186-313)
 
 **Issue:** Registration accepts any string as email without format validation
 
@@ -295,7 +295,7 @@ pm.test("Register with extremely long email fails", function() {
 
 ### HIGH: Password Strength Not Enforced
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` (line 229)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go` (line 229)
 
 **Issue:** No password complexity requirements
 
@@ -325,7 +325,7 @@ func validatePassword(password string) error {
 
 ### MEDIUM: Username Length and Character Validation
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` (line 194)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go` (line 194)
 
 **Issue:** No username format validation
 
@@ -362,7 +362,7 @@ func validateUsername(username string) error {
 
 ### MEDIUM: 2FA Bypass via Missing Service Check
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` (lines 116-125)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go` (lines 116-125)
 
 **Issue:** If 2FA service is nil but user has 2FA enabled, login is denied (correct), but error handling is inconsistent
 
@@ -400,15 +400,15 @@ if dUser.TwoFAEnabled {
 
 ### CRITICAL: Validation Strict Mode Missing from E2E Environment
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml` (lines 82-115)
-**File:** `/Users/yosefgamble/github/athena/internal/validation/checksum.go` (lines 26-68)
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml` (lines 82-115)
+**File:** `/Users/yosefgamble/github/vidra/internal/validation/checksum.go` (lines 26-68)
 
 **Issue:** E2E environment doesn't set validation configuration, defaults to permissive mode
 
 **Current E2E Env:**
 
 ```yaml
-athena-api-e2e:
+vidra-api-e2e:
   environment:
     # ... lots of config ...
     ENVIRONMENT: "test"
@@ -448,7 +448,7 @@ if expectedChecksum == "" {
 
 ```yaml
 # In tests/e2e/docker-compose.yml
-athena-api-e2e:
+vidra-api-e2e:
   environment:
     # Validation Configuration
     VALIDATION_STRICT_MODE: "false"          # Set explicitly for E2E
@@ -491,7 +491,7 @@ pm.test("Chunk upload without checksum in strict mode fails", function() {
 
 ### HIGH: ChunkSize Validation Missing
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go` (lines 384-416)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go` (lines 384-416)
 
 **Issue:** No validation of chunk size limits
 
@@ -581,7 +581,7 @@ pm.test("Initiate upload with chunk size exceeding limit fails", function() {
 
 ### HIGH: File Size Validation Missing
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go` (line 392)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go` (line 392)
 
 **Issue:** No validation of file size in InitiateUploadRequest
 
@@ -610,7 +610,7 @@ if req.FileSize > cfg.MaxUploadSize {
 
 ### MEDIUM: Chunk Index Validation Missing
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go` (lines 419-483)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go` (lines 419-483)
 
 **Issue:** No validation of chunk index bounds
 
@@ -658,7 +658,7 @@ if chunkIndex >= session.TotalChunks {
 
 ### MEDIUM: Chunk Data Size Validation Missing
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go` (lines 450-455)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go` (lines 450-455)
 
 **Issue:** No validation of chunk data size against expected chunk size
 
@@ -713,7 +713,7 @@ if int64(len(data)) > session.ChunkSize {
 
 ### MEDIUM: FileName Validation Missing
 
-**File:** `/Users/yosefgamble/github/athena/internal/domain/video.go` (lines 144-159)
+**File:** `/Users/yosefgamble/github/vidra/internal/domain/video.go` (lines 144-159)
 
 **Issue:** No validation of FileName in UploadSession
 
@@ -759,7 +759,7 @@ func validateFileName(filename string) error {
 
 ### HIGH: Video Title Length Not Enforced
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go` (lines 160-200)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go` (lines 160-200)
 
 **Issue:** Title validation only checks if empty, not length
 
@@ -808,7 +808,7 @@ if len(req.Title) < 1 {
 
 ### MEDIUM: Video Description Length Not Enforced
 
-**File:** `/Users/yosefgamble/github/athena/internal/domain/video.go` (line 127)
+**File:** `/Users/yosefgamble/github/vidra/internal/domain/video.go` (line 127)
 
 ```go
 type VideoUploadRequest struct {
@@ -836,7 +836,7 @@ if len(req.Description) > 5000 {
 
 ### MEDIUM: Tags Array Size Not Enforced
 
-**File:** `/Users/yosefgamble/github/athena/internal/domain/video.go` (line 129)
+**File:** `/Users/yosefgamble/github/vidra/internal/domain/video.go` (line 129)
 
 ```go
 type VideoUploadRequest struct {
@@ -874,7 +874,7 @@ for i, tag := range req.Tags {
 
 ### MEDIUM: Privacy Value Already Validated (Good)
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go` (lines 177-181)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go` (lines 177-181)
 
 ```go
 if req.Privacy != domain.PrivacyPublic && req.Privacy != domain.PrivacyUnlisted && req.Privacy != domain.PrivacyPrivate {
@@ -895,7 +895,7 @@ if req.Privacy != domain.PrivacyPublic && req.Privacy != domain.PrivacyUnlisted 
 
 ### LOW: Search Query Missing Validation
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go` (lines 72-111)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go` (lines 72-111)
 
 **Issue:** Search query has no length or safety validation
 
@@ -937,13 +937,13 @@ if len(query) > 200 {
 
 ### MEDIUM: Missing Required Environment Variables
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml`
-**Reference:** `/Users/yosefgamble/github/athena/.env.example`
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml`
+**Reference:** `/Users/yosefgamble/github/vidra/.env.example`
 
 **Currently Set in E2E:**
 
 ```yaml
-athena-api-e2e:
+vidra-api-e2e:
   environment:
     DATABASE_URL: ✅
     REDIS_URL: ✅
@@ -1001,7 +1001,7 @@ FFMPEG_PATH: ❌ (defaults to "ffmpeg")
 **Recommended Fix:**
 
 ```yaml
-athena-api-e2e:
+vidra-api-e2e:
   environment:
     # Existing vars...
 
@@ -1022,7 +1022,7 @@ athena-api-e2e:
     RATE_LIMIT_WINDOW: "60"
 
     # Storage (isolated directory)
-    STORAGE_DIR: "/tmp/athena-e2e-storage"
+    STORAGE_DIR: "/tmp/vidra-e2e-storage"
 
     # Session Configuration
     SESSION_TIMEOUT: "3600"        # 1 hour for E2E
@@ -1038,7 +1038,7 @@ athena-api-e2e:
 
 ### LOW: ClamAV Configuration Edge Cases
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml` (lines 54-66)
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml` (lines 54-66)
 
 **Current Configuration:**
 
@@ -1070,7 +1070,7 @@ clamav-e2e:
 
 ```yaml
 # In tests/e2e/docker-compose.yml
-athena-api-e2e:
+vidra-api-e2e:
   environment:
     # ClamAV Configuration
     CLAMAV_ADDRESS: "clamav-e2e:3310"
@@ -1087,7 +1087,7 @@ athena-api-e2e:
 
 ### HIGH: Concurrent Upload Session Creation
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go` (line 403)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go` (line 403)
 
 **Issue:** No mutex or transaction around upload session creation
 
@@ -1142,7 +1142,7 @@ pm.test("Concurrent upload initiations don't conflict", function() {
 
 ### MEDIUM: Duplicate Chunk Upload
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go` (line 470)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go` (line 470)
 
 **Issue:** No explicit handling of duplicate chunk uploads
 
@@ -1184,7 +1184,7 @@ for _, uploadedIdx := range session.UploadedChunks {
 
 ### MEDIUM: Stack Traces in Error Responses
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/shared/response.go`
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/shared/response.go`
 
 **Issue:** Need to verify error responses don't leak internal details
 
@@ -1228,7 +1228,7 @@ func WriteError(w http.ResponseWriter, statusCode int, err domain.DomainError) {
 
 ### LOW: User Enumeration via Registration
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` (lines 200-208)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go` (lines 200-208)
 
 **Issue:** Different error messages reveal if user exists
 
@@ -1258,7 +1258,7 @@ if _, err := s.userRepo.GetByUsername(r.Context(), req.Username); err == nil {
 
 ### MEDIUM: Display Name XSS Risk
 
-**File:** `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go` (lines 213-214)
+**File:** `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go` (lines 213-214)
 
 ```go
 displayName := ""
@@ -1314,7 +1314,7 @@ if req.DisplayName != nil {
     sleep 10
 
     docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e \\
-      psql -U athena_test -d athena_e2e -c "\\dt" | grep -E "users|videos|upload_sessions" || {
+      psql -U vidra_test -d vidra_e2e -c "\\dt" | grep -E "users|videos|upload_sessions" || {
         echo "ERROR: Critical tables missing from database"
         exit 1
       }
@@ -1333,7 +1333,7 @@ if req.DisplayName != nil {
 **Recommended Organization:**
 
 ```
-Athena E2E Tests/
+Vidra Core E2E Tests/
 ├── 01 - Health Checks/
 │   ├── Health endpoint responds
 │   ├── Readiness check - all services healthy
@@ -1455,7 +1455,7 @@ jobs:
 
       - name: Run Postman collection
         run: |
-          newman run tests/postman/Athena_E2E.postman_collection.json \\
+          newman run tests/postman/Vidra Core_E2E.postman_collection.json \\
             --environment tests/postman/E2E_Environment.postman_environment.json \\
             --reporters cli,htmlextra \\
             --reporter-htmlextra-export newman-report.html \\
@@ -1625,18 +1625,18 @@ func SecurityHeaders(next http.Handler) http.Handler {
 
 ### Immediate Fixes
 
-**1. `/Users/yosefgamble/github/athena/tests/e2e/helpers.go`**
+**1. `/Users/yosefgamble/github/vidra/tests/e2e/helpers.go`**
 
 - Line 119: Change `"username": username` to `"email": email` in Login function
 - OR update handler to accept both email and username
 
-**2. `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml`**
+**2. `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml`**
 
 - Add validation environment variables
 - Add missing upload configuration
 - Add rate limiting configuration
 
-**3. `/Users/yosefgamble/github/athena/internal/httpapi/handlers.go`**
+**3. `/Users/yosefgamble/github/vidra/internal/httpapi/handlers.go`**
 
 - Add type assertion validation (lines 82-84)
 - Add email format validation (line 201)
@@ -1644,7 +1644,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 
 ### High Priority
 
-**4. `/Users/yosefgamble/github/athena/internal/httpapi/handlers/video/videos.go`**
+**4. `/Users/yosefgamble/github/vidra/internal/httpapi/handlers/video/videos.go`**
 
 - Add chunk size validation (line 399)
 - Add file size validation (line 392)
@@ -1655,7 +1655,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 - Add description length validation
 - Add tags array validation (line 189)
 
-**5. Create new file: `/Users/yosefgamble/github/athena/internal/validation/input.go`**
+**5. Create new file: `/Users/yosefgamble/github/vidra/internal/validation/input.go`**
 
 - Centralized validation functions (email, password, username, etc.)
 

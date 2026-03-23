@@ -10,7 +10,7 @@ This process involves rewriting the git history and requires a forced push, whic
 1. **Backup the repository:** Make a local copy of the entire repository directory before starting.
 
     ```bash
-    cp -r athena athena-backup
+    cp -r vidra vidra-backup
     ```
 
 2. **Notify the team:** Inform all developers to stop pushing changes. They will need to re-clone the repository after this operation.
@@ -96,6 +96,6 @@ After the force push:
     ```bash
     # Developer machine
     cd ..
-    rm -rf athena
-    git clone https://github.com/yegamble/athena.git
+    rm -rf vidra
+    git clone https://github.com/yegamble/vidra-core.git
     ```

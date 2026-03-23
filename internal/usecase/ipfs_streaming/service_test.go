@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
+	"vidra-core/internal/config"
 
 	"github.com/stretchr/testify/assert"
 )

@@ -13,9 +13,9 @@ import (
 	"strings"
 	"sync"
 
-	"athena/internal/email"
-	"athena/internal/security"
-	"athena/internal/sysinfo"
+	"vidra-core/internal/email"
+	"vidra-core/internal/security"
+	"vidra-core/internal/sysinfo"
 )
 
 //go:embed templates/*.html
@@ -151,8 +151,8 @@ func NewWizard() *Wizard {
 		config: &WizardConfig{
 			PostgresMode:    "docker",
 			PostgresPort:    5432,
-			PostgresUser:    "athena",
-			PostgresDB:      "athena",
+			PostgresUser:    "vidra",
+			PostgresDB:      "vidra",
 			PostgresSSLMode: "disable",
 			RedisMode:       "docker",
 			IPFSMode:        "docker",
@@ -163,7 +163,7 @@ func NewWizard() *Wizard {
 			SMTPHost:        "localhost",
 			SMTPPort:        1025,
 			SMTPFromAddress: "noreply@localhost",
-			SMTPFromName:    "Athena",
+			SMTPFromName:    "Vidra Core",
 			StoragePath:     "./data/storage",
 			BackupEnabled:   true,
 			BackupTarget:    "local",

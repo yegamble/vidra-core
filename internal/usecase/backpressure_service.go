@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // BackpressureConfig defines backpressure settings

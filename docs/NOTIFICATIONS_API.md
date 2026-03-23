@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Athena notification system provides real-time updates to users about important events on the platform. Notifications are created automatically through database triggers and can be managed through a comprehensive REST API.
+The Vidra Core notification system provides real-time updates to users about important events on the platform. Notifications are created automatically through database triggers and can be managed through a comprehensive REST API.
 
 ## Notification Types
 

@@ -1,7 +1,7 @@
 package whisper
 
 import (
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 	"context"
 	"fmt"
 	"os"

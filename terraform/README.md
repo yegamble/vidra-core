@@ -1,6 +1,6 @@
-# Athena Video Platform - Terraform Infrastructure
+# Vidra Core Video Platform - Terraform Infrastructure
 
-This directory contains Infrastructure as Code (IaC) for deploying the Athena video platform to AWS.
+This directory contains Infrastructure as Code (IaC) for deploying the Vidra Core video platform to AWS.
 
 ## Architecture Overview
 
@@ -133,7 +133,7 @@ terraform apply tfplan
 ### 6. Configure kubectl
 
 ```bash
-aws eks update-kubeconfig --region us-east-1 --name athena-production-eks
+aws eks update-kubeconfig --region us-east-1 --name vidra-production-eks
 ```
 
 ### 7. Deploy Kubernetes Manifests
@@ -264,11 +264,11 @@ State is stored remotely in S3 with DynamoDB locking:
 ```hcl
 terraform {
   backend "s3" {
-    bucket         = "athena-terraform-state-production"
+    bucket         = "vidra-terraform-state-production"
     key            = "production/terraform.tfstate"
     region         = "us-east-1"
     encrypt        = true
-    dynamodb_table = "athena-terraform-locks"
+    dynamodb_table = "vidra-terraform-locks"
   }
 }
 ```

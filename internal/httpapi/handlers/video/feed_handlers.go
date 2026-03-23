@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/usecase"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/usecase"
 )
 
 // subscriptionFeedRepo is the narrow interface needed for subscription feeds.

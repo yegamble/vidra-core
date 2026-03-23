@@ -43,13 +43,13 @@ This report documents comprehensive fixes to align API documentation with actual
 **Files Modified**:
 
 ```
-/home/user/athena/internal/domain/twofa.go
-/home/user/athena/internal/httpapi/handlers/auth/twofa_handlers.go
+/home/user/vidra/internal/domain/twofa.go
+/home/user/vidra/internal/httpapi/handlers/auth/twofa_handlers.go
 ```
 
 **Changes**:
 
-**File**: `/home/user/athena/internal/domain/twofa.go`
+**File**: `/home/user/vidra/internal/domain/twofa.go`
 
 - **Lines 36-38**: Added `Message string` field to `TwoFAVerifySetupResponse`
 - **Lines 48-50**: Changed `TwoFADisableResponse` from `Disabled bool` to `Enabled bool` and added `Message string`
@@ -76,7 +76,7 @@ type TwoFADisableResponse struct {
 }
 ```
 
-**File**: `/home/user/athena/internal/httpapi/handlers/auth/twofa_handlers.go`
+**File**: `/home/user/vidra/internal/httpapi/handlers/auth/twofa_handlers.go`
 
 - **Lines 87-90**: Updated VerifyTwoFASetup handler to populate message field
 - **Lines 134-137**: Updated DisableTwoFA handler to use `Enabled: false` instead of `Disabled: true`
@@ -95,7 +95,7 @@ response := domain.TwoFADisableResponse{
 }
 ```
 
-**OpenAPI Spec**: `/home/user/athena/api/openapi_auth_2fa.yaml`
+**OpenAPI Spec**: `/home/user/vidra/api/openapi_auth_2fa.yaml`
 
 - Already correctly defined (no changes needed)
 - Lines 524-537: TwoFAVerifySetupResponse includes message field
@@ -110,16 +110,16 @@ response := domain.TwoFADisableResponse{
 **Files Modified**:
 
 ```
-/home/user/athena/api/openapi_analytics.yaml
+/home/user/vidra/api/openapi_analytics.yaml
 ```
 
 **Changes**:
 
-**File**: `/home/user/athena/api/openapi_analytics.yaml`
+**File**: `/home/user/vidra/api/openapi_analytics.yaml`
 
 - **Lines 582-685**: Completely rewrote `TrackViewRequest` schema to match implementation
 
-**Fields Added** (now matching `/home/user/athena/internal/domain/views.go` lines 298-349):
+**Fields Added** (now matching `/home/user/vidra/internal/domain/views.go` lines 298-349):
 
 ```yaml
 TrackViewRequest:
@@ -170,7 +170,7 @@ TrackViewRequest:
     connection_type: (wifi, cellular, ethernet)
 ```
 
-**Verification**: Matches `domain.ViewTrackingRequest` in `/home/user/athena/internal/domain/views.go` and test usage in `/home/user/athena/internal/httpapi/handlers/video/views_handlers_test.go` (lines 39-53).
+**Verification**: Matches `domain.ViewTrackingRequest` in `/home/user/vidra/internal/domain/views.go` and test usage in `/home/user/vidra/internal/httpapi/handlers/video/views_handlers_test.go` (lines 39-53).
 
 ---
 
@@ -181,12 +181,12 @@ TrackViewRequest:
 **Files Modified**:
 
 ```
-/home/user/athena/api/openapi_analytics.yaml
+/home/user/vidra/api/openapi_analytics.yaml
 ```
 
 **Changes**:
 
-**File**: `/home/user/athena/api/openapi_analytics.yaml`
+**File**: `/home/user/vidra/api/openapi_analytics.yaml`
 
 - **Lines 702-705**: Added `video_id` field to `TrackViewResponse` schema
 
@@ -204,7 +204,7 @@ TrackViewResponse:
           description: ID of the video that was viewed
 ```
 
-**Verification**: Matches handler response in `/home/user/athena/internal/httpapi/handlers/video/views_handlers.go` lines 67-73:
+**Verification**: Matches handler response in `/home/user/vidra/internal/httpapi/handlers/video/views_handlers.go` lines 67-73:
 
 ```go
 response := map[string]interface{}{
@@ -222,8 +222,8 @@ response := map[string]interface{}{
 
 **Verification**:
 
-- `/home/user/athena/api/openapi_analytics.yaml` lines 216-221: Analytics endpoint has 403 response
-- `/home/user/athena/api/openapi_analytics.yaml` lines 295-300: Daily stats endpoint has 403 response
+- `/home/user/vidra/api/openapi_analytics.yaml` lines 216-221: Analytics endpoint has 403 response
+- `/home/user/vidra/api/openapi_analytics.yaml` lines 295-300: Daily stats endpoint has 403 response
 
 ---
 
@@ -237,12 +237,12 @@ response := map[string]interface{}{
 **Files Modified**:
 
 ```
-/home/user/athena/api/openapi_analytics.yaml
+/home/user/vidra/api/openapi_analytics.yaml
 ```
 
 **Changes**:
 
-**File**: `/home/user/athena/api/openapi_analytics.yaml`
+**File**: `/home/user/vidra/api/openapi_analytics.yaml`
 
 **Lines 971-986**: Updated `FingerprintResponse` schema
 
@@ -279,7 +279,7 @@ data:
   created_at: "2024-01-15T10:30:00Z"
 ```
 
-**Verification**: Matches handler response in `/home/user/athena/internal/httpapi/handlers/video/views_handlers.go` lines 417-422:
+**Verification**: Matches handler response in `/home/user/vidra/internal/httpapi/handlers/video/views_handlers.go` lines 417-422:
 
 ```go
 response := map[string]interface{}{
@@ -297,8 +297,8 @@ response := map[string]interface{}{
 **Files Modified**:
 
 ```
-/home/user/athena/api/openapi_analytics.yaml
-/home/user/athena/api/openapi_auth_2fa.yaml
+/home/user/vidra/api/openapi_analytics.yaml
+/home/user/vidra/api/openapi_auth_2fa.yaml
 ```
 
 **Implementation Details**:
@@ -360,7 +360,7 @@ components:
             details: (string)
 ```
 
-**Verification**: Matches shared response utilities in `/home/user/athena/internal/httpapi/shared/response.go` lines 11-30:
+**Verification**: Matches shared response utilities in `/home/user/vidra/internal/httpapi/shared/response.go` lines 11-30:
 
 ```go
 type Response struct {
@@ -398,13 +398,13 @@ type Response struct {
 
 **Files Affected**:
 
-- `/home/user/athena/api/openapi_uploads.yaml` (lines 120-139)
-- `/home/user/athena/internal/httpapi/handlers/video/upload_handlers_test.go` (lines 159-168)
-- `/home/user/athena/postman/athena-uploads.postman_collection.json` (lines 159-174)
+- `/home/user/vidra/api/openapi_uploads.yaml` (lines 120-139)
+- `/home/user/vidra/internal/httpapi/handlers/video/upload_handlers_test.go` (lines 159-168)
+- `/home/user/vidra/postman/vidra-uploads.postman_collection.json` (lines 159-174)
 
 **Recommendation**:
 
-1. Examine `/home/user/athena/internal/httpapi/handlers/video/upload_handlers.go` (not found in this session)
+1. Examine `/home/user/vidra/internal/httpapi/handlers/video/upload_handlers.go` (not found in this session)
 2. Determine if handler uses headers (X-Chunk-Index, X-Chunk-Checksum) or form-data fields
 3. Update OpenAPI and Postman to match actual implementation
 4. Update unit tests if needed
@@ -417,8 +417,8 @@ type Response struct {
 
 **Investigation Findings**:
 
-- `/home/user/athena/api/openapi_uploads.yaml` line 116: `type: string, example: "upload_sess_1234567890abcdef"`
-- `/home/user/athena/internal/httpapi/handlers/video/upload_handlers_test.go`: Tests only check `NotEmpty`, not UUID format
+- `/home/user/vidra/api/openapi_uploads.yaml` line 116: `type: string, example: "upload_sess_1234567890abcdef"`
+- `/home/user/vidra/internal/httpapi/handlers/video/upload_handlers_test.go`: Tests only check `NotEmpty`, not UUID format
 
 **Contradiction**: The example "upload_sess_1234567890abcdef" is NOT a standard UUID format, and tests don't validate UUID format.
 
@@ -441,13 +441,13 @@ npx @redocly/cli lint <file.yaml>
 
 ### Results Summary
 
-**`/home/user/athena/api/openapi_analytics.yaml`**: ✅ Validated with minor warnings
+**`/home/user/vidra/api/openapi_analytics.yaml`**: ✅ Validated with minor warnings
 
 - ❌ 1 Error: Missing `servers` section (not critical)
 - ⚠️ 3 Warnings: Missing license, unused components, invalid media type examples
 - ✅ All schema structure issues fixed
 
-**`/home/user/athena/api/openapi_auth_2fa.yaml`**: ✅ Validated with minor warnings
+**`/home/user/vidra/api/openapi_auth_2fa.yaml`**: ✅ Validated with minor warnings
 
 - ⚠️ Warnings: Missing license, example.com servers, unused ErrorResponse component
 - ✅ All schema structure issues fixed
@@ -463,20 +463,20 @@ npx @redocly/cli lint <file.yaml>
 
 ### Go Source Files (3 files)
 
-1. **`/home/user/athena/internal/domain/twofa.go`**
+1. **`/home/user/vidra/internal/domain/twofa.go`**
    - Lines 36-38: Added `Message` field to `TwoFAVerifySetupResponse`
    - Lines 48-50: Changed `Disabled` to `Enabled` in `TwoFADisableResponse`, added `Message`
 
-2. **`/home/user/athena/internal/httpapi/handlers/auth/twofa_handlers.go`**
+2. **`/home/user/vidra/internal/httpapi/handlers/auth/twofa_handlers.go`**
    - Lines 87-90: VerifyTwoFASetup handler - populate message field
    - Lines 134-137: DisableTwoFA handler - use `Enabled: false`, populate message
 
-3. **`/home/user/athena/internal/httpapi/shared/response.go`**
+3. **`/home/user/vidra/internal/httpapi/shared/response.go`**
    - No changes (verified correct envelope pattern implementation)
 
 ### OpenAPI Specification Files (2 files)
 
-4. **`/home/user/athena/api/openapi_analytics.yaml`**
+4. **`/home/user/vidra/api/openapi_analytics.yaml`**
    - Lines 520-580: Added global SuccessResponse and ErrorResponse schemas
    - Lines 582-685: Completely rewrote TrackViewRequest with comprehensive fields
    - Lines 687-707: Updated TrackViewResponse to include video_id field
@@ -485,7 +485,7 @@ npx @redocly/cli lint <file.yaml>
    - Removed duplicate ErrorResponse schema
    - Fixed nullable type syntax for OpenAPI 3.0 compliance
 
-5. **`/home/user/athena/api/openapi_auth_2fa.yaml`**
+5. **`/home/user/vidra/api/openapi_auth_2fa.yaml`**
    - Lines 476-523: Added global SuccessResponse and ErrorResponse schemas
    - Fixed nullable type syntax for OpenAPI 3.0 compliance
    - No changes to 2FA endpoint specs (already correct)
@@ -705,7 +705,7 @@ npx @redocly/cli lint <file.yaml>
 
 ### Implementation Reference
 
-- **Source**: `/home/user/athena/internal/httpapi/shared/response.go`
+- **Source**: `/home/user/vidra/internal/httpapi/shared/response.go`
 - **Functions**: `WriteJSON()`, `WriteError()`, `WriteJSONWithMeta()`
 - **Usage**: All handlers use `shared.WriteJSON()` or `shared.WriteError()`
 

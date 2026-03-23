@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
 )
 
 // ClientConfigHandlers handles client configuration endpoints.

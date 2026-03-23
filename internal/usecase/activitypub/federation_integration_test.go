@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"athena/internal/config"
-	"athena/internal/domain"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
 )
 
 // TestVideoUploadToFederation tests the complete flow from video upload to federation

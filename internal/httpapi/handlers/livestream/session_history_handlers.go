@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

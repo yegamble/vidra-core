@@ -8,13 +8,13 @@ Successfully implemented comprehensive IPFS CID validation and cluster authentic
 
 ### Files Created
 
-1. **`/home/user/athena/internal/ipfs/cid_validation.go`** - CID validation with security hardening
-2. **`/home/user/athena/internal/ipfs/cluster_auth.go`** - Cluster authentication (Bearer token + mTLS)
+1. **`/home/user/vidra/internal/ipfs/cid_validation.go`** - CID validation with security hardening
+2. **`/home/user/vidra/internal/ipfs/cluster_auth.go`** - Cluster authentication (Bearer token + mTLS)
 
 ### Files Modified
 
-3. **`/home/user/athena/internal/ipfs/client.go`** - Integrated validation and authentication
-4. **`/home/user/athena/internal/config/config.go`** - Added cluster security configuration
+3. **`/home/user/vidra/internal/ipfs/client.go`** - Integrated validation and authentication
+4. **`/home/user/vidra/internal/config/config.go`** - Added cluster security configuration
 
 ## Security Features Implemented
 

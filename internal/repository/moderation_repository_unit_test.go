@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
@@ -69,7 +69,7 @@ func sampleInstanceConfig() domain.InstanceConfig {
 	now := time.Now()
 	return domain.InstanceConfig{
 		Key:         "instance_name",
-		Value:       json.RawMessage(`"Athena"`),
+		Value:       json.RawMessage(`"Vidra Core"`),
 		Description: sql.NullString{String: "The instance name", Valid: true},
 		IsPublic:    true,
 		CreatedAt:   now,
@@ -1197,7 +1197,7 @@ func TestModerationRepository_Unit_UpdateInstanceConfig(t *testing.T) {
 		repo, mock, cleanup := newModerationRepo(t)
 		defer cleanup()
 
-		value := json.RawMessage(`"Athena Instance"`)
+		value := json.RawMessage(`"Vidra Core Instance"`)
 
 		mock.ExpectExec(regexp.QuoteMeta(
 			`INSERT INTO instance_config (key, value, is_public)

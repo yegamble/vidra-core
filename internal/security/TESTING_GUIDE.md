@@ -138,7 +138,7 @@ npm install -g newman newman-reporter-htmlextra
 # (This is automated in run-virus-scanner-tests.sh)
 
 # Run Postman collection
-newman run postman/athena-virus-scanner-tests.postman_collection.json \
+newman run postman/vidra-virus-scanner-tests.postman_collection.json \
     --environment postman/test-local.postman_environment.json \
     --env-var "baseUrl=http://localhost:8080" \
     --env-var "access_token=YOUR_TOKEN_HERE" \

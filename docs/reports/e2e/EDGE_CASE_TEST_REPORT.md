@@ -349,7 +349,7 @@ The observability and messaging systems are **production-ready** based on edge c
 ```yaml
 # Observability overhead > 50ms per request
 - alert: HighObservabilityOverhead
-  expr: http_request_duration_seconds{job="athena"} > 0.050
+  expr: http_request_duration_seconds{job="vidra"} > 0.050
 
 # Database connection pool exhaustion
 - alert: ConnectionPoolExhausted
@@ -394,17 +394,17 @@ go test -bench=. -benchmem ./internal/middleware/...
 
 ### Test Files
 
-1. `/home/user/athena/internal/obs/edge_case_test.go`
+1. `/home/user/vidra/internal/obs/edge_case_test.go`
    - 34 edge case tests for observability primitives
    - Tests: nil loggers, extreme inputs, concurrent operations
    - Lines: 720
 
-2. `/home/user/athena/internal/middleware/observability_edge_case_test.go`
+2. `/home/user/vidra/internal/middleware/observability_edge_case_test.go`
    - 33 edge case tests for HTTP middleware
    - Tests: huge payloads, concurrent requests, performance
    - Lines: 620
 
-3. `/home/user/athena/internal/repository/database_edge_case_test.go`
+3. `/home/user/vidra/internal/repository/database_edge_case_test.go`
    - 16 edge case tests for database operations
    - Tests: unavailability, race conditions, notifications
    - Lines: 520

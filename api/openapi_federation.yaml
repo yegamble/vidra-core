@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Athena Federation API
+  title: Vidra Core Federation API
   description: ActivityPub and ATProto federation endpoints for cross-platform content syndication
   version: 1.0.0
 

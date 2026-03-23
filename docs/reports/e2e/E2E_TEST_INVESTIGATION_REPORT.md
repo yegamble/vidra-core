@@ -25,7 +25,7 @@ This error appears repeatedly in the PostgreSQL logs, confirming that the databa
 
 ### 1. Missing Database Initialization
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml`
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml`
 
 **Problem:** The E2E docker-compose.yml does NOT initialize the database schema
 
@@ -33,9 +33,9 @@ This error appears repeatedly in the PostgreSQL logs, confirming that the databa
 postgres-e2e:
   image: postgres:15-alpine
   environment:
-    POSTGRES_USER: athena_test
+    POSTGRES_USER: vidra_test
     POSTGRES_PASSWORD: test_password
-    POSTGRES_DB: athena_e2e
+    POSTGRES_DB: vidra_e2e
   ports:
     - "5433:5432"
   tmpfs:
@@ -46,7 +46,7 @@ postgres-e2e:
 
 **Contrast with Working Test Environment:**
 
-**File:** `/Users/yosefgamble/github/athena/docker-compose.test.yml` (Used for Postman E2E tests)
+**File:** `/Users/yosefgamble/github/vidra/docker-compose.test.yml` (Used for Postman E2E tests)
 
 ```yaml
 postgres-test:
@@ -54,7 +54,7 @@ postgres-test:
   tmpfs:
     - /var/lib/postgresql/data
   environment:
-    POSTGRES_DB: athena_test
+    POSTGRES_DB: vidra_test
     POSTGRES_USER: test_user
     POSTGRES_PASSWORD: test_password
   ports:
@@ -65,17 +65,17 @@ postgres-test:
 
 ### 2. Application Does Not Auto-Migrate
 
-**Investigation:** The Athena application server does NOT run migrations on startup.
+**Investigation:** The Vidra Core application server does NOT run migrations on startup.
 
 **Files Checked:**
 
-- `/Users/yosefgamble/github/athena/cmd/server/main.go` - No migration logic
-- `/Users/yosefgamble/github/athena/internal/app/app.go` - No migration runner in `initializeDatabase()`
-- `/Users/yosefgamble/github/athena/Dockerfile` - No migration step in CMD
+- `/Users/yosefgamble/github/vidra/cmd/server/main.go` - No migration logic
+- `/Users/yosefgamble/github/vidra/internal/app/app.go` - No migration runner in `initializeDatabase()`
+- `/Users/yosefgamble/github/vidra/Dockerfile` - No migration step in CMD
 
 **Migration System:** The project uses **Goose** for database migrations:
 
-- Migrations are in `/Users/yosefgamble/github/athena/migrations/*.sql` (63 migration files)
+- Migrations are in `/Users/yosefgamble/github/vidra/migrations/*.sql` (63 migration files)
 - Migrations must be run manually via `make migrate-*` commands or initialization scripts
 - No automatic migration on application startup
 
@@ -121,7 +121,7 @@ All three E2E tests failed with identical error:
 ### Database Connection Errors
 
 ```
-2025-11-22 18:33:15.393 UTC [146] FATAL:  database "athena_test" does not exist
+2025-11-22 18:33:15.393 UTC [146] FATAL:  database "vidra_test" does not exist
 ```
 
 Wait, this is interesting - even the **database itself** doesn't exist initially. PostgreSQL creates the database from `POSTGRES_DB` environment variable, but the tables/schema require initialization.
@@ -182,7 +182,7 @@ Critical tables needed for E2E tests:
 
 ### Current Test Design (Correct for Isolation)
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/scenarios/video_workflow_test.go`
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/scenarios/video_workflow_test.go`
 
 ```go
 // Each test generates unique username to avoid conflicts
@@ -277,13 +277,13 @@ Result: **Empty database, no tables, registration fails**
 
 ### 1. Missing Database Error
 
-Log shows: `FATAL: database "athena_test" does not exist`
+Log shows: `FATAL: database "vidra_test" does not exist`
 
 This is misleading - PostgreSQL creates the database from `POSTGRES_DB` env var, but there's a race condition where the app tries to connect before DB is fully ready. The healthcheck passes (pg_isready), but schema isn't initialized.
 
 ### 2. Test Video File Handling
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/scenarios/video_workflow_test.go` (lines 206-223)
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/scenarios/video_workflow_test.go` (lines 206-223)
 
 ```go
 func createTestVideoFile(t *testing.T) string {
@@ -299,7 +299,7 @@ func createTestVideoFile(t *testing.T) string {
 
 ### 3. Fixture Data Not Used
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/fixtures/data/users.json`
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/fixtures/data/users.json`
 
 Contains predefined users:
 
@@ -323,15 +323,15 @@ Contains predefined users:
 
 **Option A: Add Init Script to E2E Docker Compose (Recommended)**
 
-Modify `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml`:
+Modify `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml`:
 
 ```yaml
 postgres-e2e:
   image: postgres:15-alpine
   environment:
-    POSTGRES_USER: athena_test
+    POSTGRES_USER: vidra_test
     POSTGRES_PASSWORD: test_password
-    POSTGRES_DB: athena_e2e
+    POSTGRES_DB: vidra_e2e
   ports:
     - "5433:5432"
   volumes:
@@ -339,7 +339,7 @@ postgres-e2e:
   tmpfs:
     - /var/lib/postgresql/data
   healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U athena_test"]
+    test: ["CMD-SHELL", "pg_isready -U vidra_test"]
     interval: 5s
     timeout: 5s
     retries: 5
@@ -355,7 +355,7 @@ Modify `.github/workflows/e2e-tests.yml`:
     # Wait for Postgres to be ready
     sleep 5
     # Run migrations
-    DATABASE_URL="postgres://athena_test:test_password@localhost:5433/athena_e2e?sslmode=disable" \
+    DATABASE_URL="postgres://vidra_test:test_password@localhost:5433/vidra_e2e?sslmode=disable" \
     goose -dir migrations postgres "$DATABASE_URL" up
 
 - name: Run E2E tests
@@ -450,7 +450,7 @@ func TestWithTransaction(t *testing.T) {
 - name: Verify database schema
   run: |
     docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e \
-      psql -U athena_test -d athena_e2e -c "\dt" | grep users || {
+      psql -U vidra_test -d vidra_e2e -c "\dt" | grep users || {
         echo "ERROR: Database schema not initialized"
         exit 1
       }
@@ -463,7 +463,7 @@ func TestWithTransaction(t *testing.T) {
   run: |
     echo "Checking database connectivity..."
     docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e \
-      psql -U athena_test -d athena_e2e -c "SELECT 1"
+      psql -U vidra_test -d vidra_e2e -c "SELECT 1"
 
     echo "Checking Redis connectivity..."
     docker compose -f tests/e2e/docker-compose.yml exec -T redis-e2e \
@@ -487,11 +487,11 @@ func TestWithTransaction(t *testing.T) {
   run: |
     echo "=== Database State ==="
     docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e \
-      psql -U athena_test -d athena_e2e -c "\dt" || echo "No tables found"
+      psql -U vidra_test -d vidra_e2e -c "\dt" || echo "No tables found"
 
     echo "=== User Count ==="
     docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e \
-      psql -U athena_test -d athena_e2e -c "SELECT COUNT(*) FROM users" || echo "Users table missing"
+      psql -U vidra_test -d vidra_e2e -c "SELECT COUNT(*) FROM users" || echo "Users table missing"
 
     exit 1
 ```
@@ -500,7 +500,7 @@ func TestWithTransaction(t *testing.T) {
 
 #### Create Dedicated E2E Init Script
 
-Create `/Users/yosefgamble/github/athena/init-e2e-db.sql`:
+Create `/Users/yosefgamble/github/vidra/init-e2e-db.sql`:
 
 ```sql
 -- Minimal schema for E2E tests (subset of full schema)
@@ -592,7 +592,7 @@ ON CONFLICT (username) DO NOTHING;
 
 ```yaml
 healthcheck:
-  test: ["CMD-SHELL", "pg_isready -U athena_test"]
+  test: ["CMD-SHELL", "pg_isready -U vidra_test"]
   interval: 5s
   timeout: 5s
   retries: 5
@@ -606,7 +606,7 @@ healthcheck:
 
 ```yaml
 healthcheck:
-  test: ["CMD-SHELL", "psql -U athena_test -d athena_e2e -c 'SELECT 1 FROM users LIMIT 1' || exit 1"]
+  test: ["CMD-SHELL", "psql -U vidra_test -d vidra_e2e -c 'SELECT 1 FROM users LIMIT 1' || exit 1"]
   start_period: 30s
 ```
 
@@ -629,7 +629,7 @@ concurrency:
 **Current Implementation:**
 
 ```yaml
-athena-api-e2e:
+vidra-api-e2e:
   depends_on:
     postgres-e2e:
       condition: service_healthy
@@ -678,21 +678,21 @@ clamav-e2e:
 
 ```sql
 -- Create template once
-CREATE DATABASE athena_e2e_template;
+CREATE DATABASE vidra_e2e_template;
 -- Initialize schema in template
 \i init-shared-db.sql
 -- Mark as template
-UPDATE pg_database SET datistemplate = TRUE WHERE datname = 'athena_e2e_template';
+UPDATE pg_database SET datistemplate = TRUE WHERE datname = 'vidra_e2e_template';
 
 -- For each test run
-CREATE DATABASE athena_e2e WITH TEMPLATE athena_e2e_template;
+CREATE DATABASE vidra_e2e WITH TEMPLATE vidra_e2e_template;
 ```
 
 **Benefit:** 10-50x faster database initialization
 
 ### 2. Docker Layer Caching
 
-**Current:** Rebuilds Athena API image each time
+**Current:** Rebuilds Vidra Core API image each time
 
 **Optimization:** Use GitHub Actions cache
 
@@ -706,7 +706,7 @@ CREATE DATABASE athena_e2e WITH TEMPLATE athena_e2e_template;
     context: .
     push: false
     load: true
-    tags: athena-api-e2e:latest
+    tags: vidra-api-e2e:latest
     cache-from: type=gha
     cache-to: type=gha,mode=max
 ```
@@ -792,7 +792,7 @@ Capture on test failure:
 
 ### The Fix
 
-Add initialization script to `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml`:
+Add initialization script to `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml`:
 
 ```yaml
 volumes:
@@ -819,15 +819,15 @@ volumes:
 
 ### Primary Fix (Required)
 
-**File:** `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml`
+**File:** `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml`
 
 ```diff
   postgres-e2e:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: athena_test
+      POSTGRES_USER: vidra_test
       POSTGRES_PASSWORD: test_password
-      POSTGRES_DB: athena_e2e
+      POSTGRES_DB: vidra_e2e
     ports:
       - "5433:5432"
 +   volumes:
@@ -847,7 +847,7 @@ Add verification step after services start:
   run: |
     echo "Checking database tables..."
     docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e \
-      psql -U athena_test -d athena_e2e -c "\dt" | grep -E "users|videos" || {
+      psql -U vidra_test -d vidra_e2e -c "\dt" | grep -E "users|videos" || {
         echo "ERROR: Database schema not properly initialized"
         exit 1
       }
@@ -870,7 +870,7 @@ docker compose -f tests/e2e/docker-compose.yml up -d
 
 # Verify schema
 docker compose -f tests/e2e/docker-compose.yml exec postgres-e2e \
-  psql -U athena_test -d athena_e2e -c "\dt"
+  psql -U vidra_test -d vidra_e2e -c "\dt"
 
 # Should see: users, videos, sessions, etc.
 
@@ -936,19 +936,19 @@ E2E_BASE_URL=http://localhost:18080 go test -v ./tests/e2e/scenarios/...
 
 ### Related Files
 
-- `/Users/yosefgamble/github/athena/tests/e2e/docker-compose.yml` - E2E environment (NEEDS FIX)
-- `/Users/yosefgamble/github/athena/docker-compose.test.yml` - Postman tests (WORKING)
-- `/Users/yosefgamble/github/athena/init-shared-db.sql` - Database initialization script
-- `/Users/yosefgamble/github/athena/migrations/` - Migration files (63 files)
+- `/Users/yosefgamble/github/vidra/tests/e2e/docker-compose.yml` - E2E environment (NEEDS FIX)
+- `/Users/yosefgamble/github/vidra/docker-compose.test.yml` - Postman tests (WORKING)
+- `/Users/yosefgamble/github/vidra/init-shared-db.sql` - Database initialization script
+- `/Users/yosefgamble/github/vidra/migrations/` - Migration files (63 files)
 - `.github/workflows/e2e-tests.yml` - E2E workflow configuration
-- `/Users/yosefgamble/github/athena/tests/e2e/README.md` - E2E documentation
+- `/Users/yosefgamble/github/vidra/tests/e2e/README.md` - E2E documentation
 
 ### Migration System
 
 - Tool: Goose (<https://github.com/pressly/goose>)
 - Commands: `make migrate-*` in Makefile
 - Format: Versioned SQL files with up/down migrations
-- Location: `/Users/yosefgamble/github/athena/migrations/`
+- Location: `/Users/yosefgamble/github/vidra/migrations/`
 
 ### PostgreSQL Init Process
 

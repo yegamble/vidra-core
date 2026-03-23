@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"

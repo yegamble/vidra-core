@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-# Athena One-Command Install Script
-# Usage: curl -sSL https://raw.githubusercontent.com/yegamble/athena/main/scripts/install.sh | bash
+# Vidra Core One-Command Install Script
+# Usage: curl -sSL https://raw.githubusercontent.com/yegamble/vidra/main/scripts/install.sh | bash
 # Or safer: curl -O https://... && less install.sh && bash install.sh
 # From an existing clone: INSTALL_DIR=. bash scripts/install.sh
 # Options:
@@ -27,7 +27,7 @@ if [ -z "${INSTALL_DIR:-}" ]; then
     if [ -f "$SCRIPT_DIR/../docker-compose.yml" ]; then
         INSTALL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
     else
-        INSTALL_DIR="$HOME/athena"
+        INSTALL_DIR="$HOME/vidra"
     fi
 fi
 
@@ -116,33 +116,33 @@ generate_jwt_secret() {
     fi
 }
 
-# Setup Athena
-setup_athena() {
-    log_info "Setting up Athena in $INSTALL_DIR..."
+# Setup Vidra Core
+setup_vidra() {
+    log_info "Setting up Vidra Core in $INSTALL_DIR..."
 
     # Create install directory
     mkdir -p "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 
-    # Clone or update Athena
+    # Clone or update Vidra Core
     if [ -f "docker-compose.yml" ]; then
-        log_info "Athena files already present, skipping download"
+        log_info "Vidra Core files already present, skipping download"
     elif [ -d ".git" ]; then
         log_info "Existing git repository detected, pulling latest..."
         git pull --ff-only || {
             log_warn "git pull failed — continuing with existing files"
         }
     elif [ "$(ls -A .)" ]; then
-        log_error "Directory $INSTALL_DIR is not empty and is not an Athena checkout"
+        log_error "Directory $INSTALL_DIR is not empty and is not an Vidra Core checkout"
         log_error "Please use an empty directory or set INSTALL_DIR to a different path:"
-        log_error "  INSTALL_DIR=/path/to/athena bash install.sh"
+        log_error "  INSTALL_DIR=/path/to/vidra bash install.sh"
         exit 1
     else
-        log_info "Downloading Athena..."
+        log_info "Downloading Vidra Core..."
         if command -v git >/dev/null 2>&1; then
-            git clone https://github.com/yegamble/athena.git .
+            git clone https://github.com/yegamble/vidra-core.git .
         else
-            log_error "Git not found. Please install git or download Athena manually"
+            log_error "Git not found. Please install git or download Vidra Core manually"
             exit 1
         fi
     fi
@@ -151,7 +151,7 @@ setup_athena() {
     if [ ! -f .env ]; then
         log_info "Creating .env for setup mode..."
         cat > .env <<EOF
-# Athena Setup Mode
+# Vidra Core Setup Mode
 # The setup wizard at http://localhost:8080/setup/welcome will configure these.
 SETUP_COMPLETED=false
 PORT=8080
@@ -165,7 +165,7 @@ EOF
 
 # Start services
 start_services() {
-    log_info "Starting Athena services with Docker Compose..."
+    log_info "Starting Vidra Core services with Docker Compose..."
 
     COMPOSE_FLAGS="-d"
     if [ "$NO_CACHE" = "true" ]; then
@@ -187,14 +187,14 @@ start_services() {
 
 # Wait for health check
 wait_for_health() {
-    log_info "Waiting for Athena to be ready..."
+    log_info "Waiting for Vidra Core to be ready..."
 
     max_attempts=30
     attempt=0
 
     while [ $attempt -lt $max_attempts ]; do
         if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
-            log_info "Athena is ready!"
+            log_info "Vidra Core is ready!"
             return 0
         fi
 
@@ -212,10 +212,10 @@ wait_for_health() {
 print_success() {
     echo ""
     log_info "============================================"
-    log_info "Athena installation complete!"
+    log_info "Vidra Core installation complete!"
     log_info "============================================"
     echo ""
-    log_info "Access Athena at: http://localhost:8080"
+    log_info "Access Vidra Core at: http://localhost:8080"
     log_info "Setup wizard: http://localhost:8080/setup"
     echo ""
     log_info "Useful commands:"
@@ -227,7 +227,7 @@ print_success() {
 
 # Main installation flow
 main() {
-    log_info "Starting Athena installation (mode: $MODE)..."
+    log_info "Starting Vidra Core installation (mode: $MODE)..."
 
     detect_os
 
@@ -237,7 +237,7 @@ main() {
             install_docker
         fi
 
-        setup_athena
+        setup_vidra
         start_services
         wait_for_health
         print_success

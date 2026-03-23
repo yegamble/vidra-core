@@ -1,6 +1,6 @@
 # API Contract Policy
 
-This document defines how API contracts are managed, enforced, and changed in Athena.
+This document defines how API contracts are managed, enforced, and changed in Vidra Core.
 
 ## Source of Truth
 

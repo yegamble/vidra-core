@@ -7,15 +7,15 @@ services:
     image: postgres:15-alpine
     platform: linux/arm64
     environment:
-      POSTGRES_USER: athena_test
+      POSTGRES_USER: vidra_test
       POSTGRES_PASSWORD: test_password
-      POSTGRES_DB: athena_e2e
+      POSTGRES_DB: vidra_e2e
     ports:
       - "5433:5432"
     tmpfs:
       - /var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U athena_test"]
+      test: ["CMD-SHELL", "pg_isready -U vidra_test"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -32,8 +32,8 @@ services:
       timeout: 3s
       retries: 5
 
-  # Athena API Server (test instance)
-  athena-api-e2e:
+  # Vidra Core API Server (test instance)
+  vidra-api-e2e:
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -45,7 +45,7 @@ services:
         condition: service_healthy
     environment:
       # Database
-      DATABASE_URL: "postgres://athena_test:test_password@postgres-e2e:5432/athena_e2e?sslmode=disable"
+      DATABASE_URL: "postgres://vidra_test:test_password@postgres-e2e:5432/vidra_e2e?sslmode=disable"
 
       # Redis
       REDIS_URL: "redis://redis-e2e:6379/0"
@@ -54,7 +54,7 @@ services:
       S3_ENDPOINT: "http://localhost:9000"
       S3_ACCESS_KEY: "minioadmin"
       S3_SECRET_KEY: "minioadmin"
-      S3_BUCKET: "athena-test"
+      S3_BUCKET: "vidra-test"
       S3_REGION: "us-east-1"
       S3_USE_SSL: "false"
 

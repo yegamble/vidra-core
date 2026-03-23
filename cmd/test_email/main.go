@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"athena/internal/email"
+	"vidra-core/internal/email"
 
 	"github.com/joho/godotenv"
 )
@@ -26,7 +26,7 @@ func main() {
 		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
 		FromAddress:  os.Getenv("SMTP_FROM"),
 		FromName:     os.Getenv("SMTP_FROM_NAME"),
-		BaseURL:      "https://athena.example.com", // Test URL
+		BaseURL:      "https://vidra.example.com", // Test URL
 	}
 
 	// Parse SMTP port if provided
@@ -56,7 +56,7 @@ func main() {
 	// Send verification email (as a test)
 	err := emailService.SendVerificationEmail(
 		ctx,
-		"test@athenaemail.com",
+		"test@vidraemail.com",
 		"Test User",
 		"test-verification-token-12345",
 		"123456",

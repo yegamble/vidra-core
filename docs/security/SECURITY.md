@@ -2,7 +2,7 @@
 
 ## Reporting Security Vulnerabilities
 
-If you discover a security vulnerability in Athena, please report it by creating a private security advisory on GitHub or by contacting the maintainers directly at <security@athena-project.com>.
+If you discover a security vulnerability in Vidra Core, please report it by creating a private security advisory on GitHub or by contacting the maintainers directly at <security@vidra-project.com>.
 
 **Do not** disclose security vulnerabilities in public issues or pull requests.
 
@@ -15,7 +15,7 @@ If you discover a security vulnerability in Athena, please report it by creating
 
 ## Security Advisories
 
-### CVE-ATHENA-2025-001: Virus Scanner Retry Logic Bypass
+### CVE-VIDRA-2025-001: Virus Scanner Retry Logic Bypass
 
 **Date Reported**: 2025-01-16
 **Date Fixed**: 2025-01-16
@@ -158,7 +158,7 @@ WHERE vsl.scan_result IN ('warning', 'error')
 4. **Configuration**: Ensure production uses strict mode:
 
 ```bash
-# /etc/athena/.env or environment variables
+# /etc/vidra/.env or environment variables
 CLAMAV_FALLBACK_MODE=strict
 ```
 
@@ -226,7 +226,7 @@ CLAMAV_MAX_RETRIES=3              # Limited retries
 CLAMAV_AUTO_QUARANTINE=true       # Auto-quarantine infected files
 QUARANTINE_DIR=/var/quarantine    # Isolated filesystem mount
 QUARANTINE_RETENTION_DAYS=90      # Extended retention for forensics
-CLAMAV_AUDIT_LOG=/var/log/athena/virus_scan.log  # Dedicated audit log
+CLAMAV_AUDIT_LOG=/var/log/vidra/virus_scan.log  # Dedicated audit log
 ```
 
 2. **ClamAV Service Hardening**:
@@ -251,7 +251,7 @@ services:
       reservations:
         memory: 1G
     networks:
-      - athena-backend  # Isolated network
+      - vidra-backend  # Isolated network
 ```
 
 3. **Monitoring & Alerting**:
@@ -298,7 +298,7 @@ services:
 
 #### Credits
 
-Discovered and fixed by: Athena Security Team
+Discovered and fixed by: Vidra Core Security Team
 
 ---
 
@@ -379,7 +379,7 @@ go test -v -tags=security ./tests/integration/...
 
 ## Compliance
 
-Athena follows security best practices aligned with:
+Vidra Core follows security best practices aligned with:
 
 - OWASP Top 10 (2021)
 - NIST Cybersecurity Framework
@@ -390,9 +390,9 @@ Athena follows security best practices aligned with:
 
 For security-related inquiries:
 
-- **Email**: <security@athena-project.com> (for vulnerability reports)
-- **GitHub Security Advisories**: [Create Private Advisory](https://github.com/yegamble/athena/security/advisories/new)
-- **Public Discussions**: [GitHub Discussions](https://github.com/yegamble/athena/discussions) (non-sensitive topics only)
+- **Email**: <security@vidra-project.com> (for vulnerability reports)
+- **GitHub Security Advisories**: [Create Private Advisory](https://github.com/yegamble/vidra-core/security/advisories/new)
+- **Public Discussions**: [GitHub Discussions](https://github.com/yegamble/vidra-core/discussions) (non-sensitive topics only)
 
 ## Acknowledgments
 

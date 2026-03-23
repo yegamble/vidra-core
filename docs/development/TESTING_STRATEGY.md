@@ -1,6 +1,6 @@
 # Testing Strategy
 
-This document outlines the comprehensive testing strategy for the Athena video platform, including test types, coverage requirements, and best practices.
+This document outlines the comprehensive testing strategy for the Vidra Core video platform, including test types, coverage requirements, and best practices.
 
 ## Overview
 
@@ -203,7 +203,7 @@ func TestVirusScanner_EICAR_Detection(t *testing.T) {
     assert.Contains(t, result.Virus, "EICAR")
 }
 
-func TestVirusScanner_RetryLogic_CVE_ATHENA_2025_001(t *testing.T) {
+func TestVirusScanner_RetryLogic_CVE_VIDRA_2025_001(t *testing.T) {
     // Test P1 vulnerability fix
     scanner := setupScannerWithUnreachableClamAV(t)
 
@@ -217,7 +217,7 @@ func TestVirusScanner_RetryLogic_CVE_ATHENA_2025_001(t *testing.T) {
 
 **Critical Security Tests**:
 
-- ✅ CVE-ATHENA-2025-001 (Virus scanner retry bypass)
+- ✅ CVE-VIDRA-2025-001 (Virus scanner retry bypass)
 - ✅ SQL injection prevention
 - ✅ CSRF token validation
 - ✅ JWT signature verification
@@ -488,7 +488,7 @@ INSERT INTO videos (id, user_id, title, privacy) VALUES
 **Apply Seed**:
 
 ```bash
-psql -U athena -d athena_test -f testdata/seed.sql
+psql -U vidra -d vidra_test -f testdata/seed.sql
 ```
 
 ---
@@ -745,8 +745,8 @@ go test ./internal/usecase/encoding -v -run "Progress"
 go test ./internal/httpapi/handlers/video -v -run "EncodingJob"
 
 # Run Postman E2E tests
-newman run postman/athena-encoding-jobs.postman_collection.json \
-  -e postman/athena.local.postman_environment.json
+newman run postman/vidra-encoding-jobs.postman_collection.json \
+  -e postman/vidra.local.postman_environment.json
 ```
 
 ---

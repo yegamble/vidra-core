@@ -22,7 +22,7 @@ Type: Feature
 
 **Goal:** Add missing backend API endpoints required by the Iris frontend, including public user profiles, admin user/video management, view history route wiring, payment response envelope normalization, and notification preferences.
 
-**Architecture:** All new endpoints follow Athena's existing handler patterns — closure-style handlers in `internal/httpapi/handlers/`, using `shared.WriteJSON`/`shared.WriteError` for responses, `middleware.Auth` for JWT validation, and `middleware.RequireRole` for admin access control. Repository layer methods already exist for most operations (`UserRepo.GetByID`, `List`, `Count`, `Update`; `VideoRepo.List`). New domain models needed only for notification preferences.
+**Architecture:** All new endpoints follow Vidra Core's existing handler patterns — closure-style handlers in `internal/httpapi/handlers/`, using `shared.WriteJSON`/`shared.WriteError` for responses, `middleware.Auth` for JWT validation, and `middleware.RequireRole` for admin access control. Repository layer methods already exist for most operations (`UserRepo.GetByID`, `List`, `Count`, `Update`; `VideoRepo.List`). New domain models needed only for notification preferences.
 
 **Tech Stack:** Go (Chi router), PostgreSQL (SQLX), existing repository layer
 
@@ -294,7 +294,7 @@ Type: Feature
 - Change all `h.successResponse(w, data, status)` calls to `shared.WriteJSON(w, status, data)`
 - Change all `h.errorResponse(w, msg, status)` calls to `shared.WriteError(w, status, domain.NewDomainError("CODE", msg))` with appropriate error codes
 - Delete the `successResponse` and `errorResponse` helper methods
-- Add `"athena/internal/httpapi/shared"` and `"athena/internal/domain"` imports
+- Add `"vidra-core/internal/httpapi/shared"` and `"vidra-core/internal/domain"` imports
 - **CRITICAL:** Tests at `payment_handlers_test.go` use `resp["error"].(string)` type assertions. After this change, `error` becomes `map[string]interface{}` (ErrorInfo object). These assertions will PANIC (not fail gracefully). Must change to `resp["error"].(map[string]interface{})["message"].(string)` or use a helper.
 
 **Definition of Done:**

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/usecase"
+	"vidra-core/internal/usecase"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"

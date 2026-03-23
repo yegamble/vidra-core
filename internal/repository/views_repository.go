@@ -10,7 +10,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 type ViewsRepository struct {

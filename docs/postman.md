@@ -1,14 +1,14 @@
-Postman: Athena Auth API
+Postman: Vidra Core Auth API
 
 Overview
 
-- Collection: `postman/athena-auth.postman_collection.json`
-- Environment (template): `postman/athena.local.postman_environment.json`
+- Collection: `postman/vidra-auth.postman_collection.json`
+- Environment (template): `postman/vidra.local.postman_environment.json`
 
 Usage
 
 - Import the collection and the environment into Postman.
-- Select the `Athena Local` environment. Ensure `baseUrl` points to your running server (default `http://localhost:8080`).
+- Select the `Vidra Core Local` environment. Ensure `baseUrl` points to your running server (default `http://localhost:8080`).
 - Run requests in order for a happy-path flow:
   1) Register
   2) Login

@@ -5,7 +5,7 @@
 This guide provides instructions for running the comprehensive security test suite added to validate the P1 virus scanner retry logic vulnerability fix.
 
 **Total Tests Added**: 11 critical security tests + 3 business logic validation tests
-**Test File**: `/Users/yosefgamble/github/athena/internal/security/virus_scanner_test.go`
+**Test File**: `/Users/yosefgamble/github/vidra/internal/security/virus_scanner_test.go`
 **Lines**: 167-871 (new security tests)
 
 ---
@@ -33,7 +33,7 @@ This guide provides instructions for running the comprehensive security test sui
 ### 1. Run All Security Tests (Recommended)
 
 ```bash
-cd /Users/yosefgamble/github/athena
+cd /Users/yosefgamble/github/vidra
 go test -v ./internal/security -run TestVirusScanner
 ```
 
@@ -680,8 +680,8 @@ docker logs -f clamav  # Wait for "clamd started"
 
 ## Contact & Support
 
-- **Test Issues**: Check `/Users/yosefgamble/github/athena/internal/security/virus_scanner_test.go`
-- **Implementation**: See `/Users/yosefgamble/github/athena/internal/security/virus_scanner.go`
-- **Security Analysis**: See `/Users/yosefgamble/github/athena/SECURITY_ANALYSIS_VIRUS_SCANNER.md`
+- **Test Issues**: Check `/Users/yosefgamble/github/vidra/internal/security/virus_scanner_test.go`
+- **Implementation**: See `/Users/yosefgamble/github/vidra/internal/security/virus_scanner.go`
+- **Security Analysis**: See `/Users/yosefgamble/github/vidra/SECURITY_ANALYSIS_VIRUS_SCANNER.md`
 
 **Remember**: An infected file must NEVER be marked clean. All tests enforce this invariant.

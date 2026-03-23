@@ -1,8 +1,8 @@
-# Athena Platform - Terraform Architecture Summary
+# Vidra Core Platform - Terraform Architecture Summary
 
 ## Executive Summary
 
-This Terraform infrastructure provides a production-ready, highly available, and cost-optimized deployment for the Athena video platform on AWS. The architecture is designed to handle video encoding workloads with auto-scaling, redundancy, and comprehensive monitoring.
+This Terraform infrastructure provides a production-ready, highly available, and cost-optimized deployment for the Vidra Core video platform on AWS. The architecture is designed to handle video encoding workloads with auto-scaling, redundancy, and comprehensive monitoring.
 
 ## Quick Assessment
 
@@ -317,11 +317,11 @@ Critical alarms (SNS notifications):
 All logs centralized in CloudWatch Logs:
 
 ```
-/aws/eks/athena-production-eks/cluster      # EKS control plane
-/aws/eks/athena-production-eks/containers   # Application logs
-/aws/rds/instance/athena-production-postgres/postgresql  # Database logs
-/aws/elasticache/athena-production-redis/slow-log        # Redis slow queries
-/aws/vpc/athena-production                  # VPC Flow Logs
+/aws/eks/vidra-production-eks/cluster      # EKS control plane
+/aws/eks/vidra-production-eks/containers   # Application logs
+/aws/rds/instance/vidra-production-postgres/postgresql  # Database logs
+/aws/elasticache/vidra-production-redis/slow-log        # Redis slow queries
+/aws/vpc/vidra-production                  # VPC Flow Logs
 ```
 
 Retention:
@@ -398,10 +398,10 @@ terraform apply
 
 ```bash
 # Export from old database
-pg_dump -h old-db.example.com -U postgres athena > dump.sql
+pg_dump -h old-db.example.com -U postgres vidra > dump.sql
 
 # Import to new database
-POD=$(kubectl get pod -l app=athena -o jsonpath='{.items[0].metadata.name}')
+POD=$(kubectl get pod -l app=vidra -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -i $POD -- psql $DATABASE_URL < dump.sql
 ```
 
@@ -409,7 +409,7 @@ kubectl exec -i $POD -- psql $DATABASE_URL < dump.sql
 
 ```bash
 # Sync videos to S3
-aws s3 sync /old/storage s3://athena-production-videos-xxxxx/
+aws s3 sync /old/storage s3://vidra-production-videos-xxxxx/
 
 # Sync shared storage to EFS
 kubectl run -it sync --image=alpine --restart=Never -- sh
@@ -458,7 +458,7 @@ Development environment example:
 module "networking" {
   source = "../../modules/networking"
 
-  project_name       = "athena"
+  project_name       = "vidra"
   environment        = "dev"
   vpc_cidr           = "10.1.0.0/16"
   availability_zones = ["us-east-1a"]  # Single AZ
@@ -483,7 +483,7 @@ Modules are project-agnostic:
 ```hcl
 # Different project
 module "my_rds" {
-  source = "git::https://github.com/yegamble/athena.git//terraform/modules/rds?ref=v1.0.0"
+  source = "git::https://github.com/yegamble/vidra-core.git//terraform/modules/rds?ref=v1.0.0"
 
   project_name   = "my-app"
   environment    = "production"

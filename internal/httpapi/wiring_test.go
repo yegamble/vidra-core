@@ -12,16 +12,16 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
-	"athena/internal/chat"
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/httpapi/shared"
-	"athena/internal/middleware"
-	"athena/internal/plugin"
-	"athena/internal/repository"
-	"athena/internal/usecase"
-	"athena/internal/usecase/captiongen"
-	importuc "athena/internal/usecase/import"
+	"vidra-core/internal/chat"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/plugin"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase"
+	"vidra-core/internal/usecase/captiongen"
+	importuc "vidra-core/internal/usecase/import"
 )
 
 type captionGenStub struct{}

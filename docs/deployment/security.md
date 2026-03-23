@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers security best practices and configuration for production deployment of Athena.
+This guide covers security best practices and configuration for production deployment of Vidra Core.
 
 ## Environment Security
 
@@ -83,35 +83,35 @@ CORS_MAX_AGE=86400
 
 ```sql
 -- Create application user with minimal privileges
-CREATE USER athena_app WITH PASSWORD 'strong_password';
-GRANT CONNECT ON DATABASE athena TO athena_app;
-GRANT USAGE ON SCHEMA public TO athena_app;
+CREATE USER vidra_app WITH PASSWORD 'strong_password';
+GRANT CONNECT ON DATABASE vidra TO vidra_app;
+GRANT USAGE ON SCHEMA public TO vidra_app;
 
 -- Grant only necessary table permissions
-GRANT SELECT, INSERT, UPDATE, DELETE ON users TO athena_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON videos TO athena_app;
-GRANT SELECT, INSERT, UPDATE ON channels TO athena_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON users TO vidra_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON videos TO vidra_app;
+GRANT SELECT, INSERT, UPDATE ON channels TO vidra_app;
 -- Continue for other tables...
 
 -- Create read-only user for analytics
-CREATE USER athena_readonly WITH PASSWORD 'strong_password';
-GRANT CONNECT ON DATABASE athena TO athena_readonly;
-GRANT USAGE ON SCHEMA public TO athena_readonly;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO athena_readonly;
+CREATE USER vidra_readonly WITH PASSWORD 'strong_password';
+GRANT CONNECT ON DATABASE vidra TO vidra_readonly;
+GRANT USAGE ON SCHEMA public TO vidra_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO vidra_readonly;
 
 -- Revoke unnecessary privileges
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-REVOKE ALL ON DATABASE athena FROM PUBLIC;
+REVOKE ALL ON DATABASE vidra FROM PUBLIC;
 ```
 
 ### Connection Security
 
 ```bash
 # Force SSL connections
-DATABASE_URL=postgres://user:pass@host:5432/athena?sslmode=require
+DATABASE_URL=postgres://user:pass@host:5432/vidra?sslmode=require
 
 # Certificate validation
-DATABASE_URL=postgres://user:pass@host:5432/athena?sslmode=verify-full&sslcert=client.crt&sslkey=client.key&sslrootcert=ca.crt
+DATABASE_URL=postgres://user:pass@host:5432/vidra?sslmode=verify-full&sslcert=client.crt&sslkey=client.key&sslrootcert=ca.crt
 ```
 
 ### SQL Injection Prevention
@@ -135,8 +135,8 @@ db.Query("SELECT * FROM users WHERE id = " + userID)
 JWT_SECRET=<64-character-hex-string>  # Never share or commit
 JWT_ACCESS_TOKEN_EXPIRY=15m           # Short-lived access tokens
 JWT_REFRESH_TOKEN_EXPIRY=7d           # Longer refresh tokens
-JWT_ISSUER=athena.yourdomain.com
-JWT_AUDIENCE=athena-api
+JWT_ISSUER=vidra.yourdomain.com
+JWT_AUDIENCE=vidra-api
 ```
 
 ### Password Policy
@@ -200,7 +200,7 @@ CLAMAV_FALLBACK_MODE=strict         # strict|warn|allow
 QUARANTINE_DIR=/var/quarantine      # Isolated directory for infected files
 CLAMAV_AUTO_QUARANTINE=true         # Auto-quarantine infected files
 QUARANTINE_RETENTION_DAYS=30        # Days to keep quarantined files (forensics)
-CLAMAV_AUDIT_LOG=/var/log/athena/virus_scan.log  # Audit trail
+CLAMAV_AUDIT_LOG=/var/log/vidra/virus_scan.log  # Audit trail
 ```
 
 #### ClamAV Deployment (Docker)
@@ -210,7 +210,7 @@ CLAMAV_AUDIT_LOG=/var/log/athena/virus_scan.log  # Audit trail
 services:
   clamav:
     image: clamav/clamav:latest
-    container_name: athena-clamav
+    container_name: vidra-clamav
     restart: unless-stopped
     volumes:
       - clamav-signatures:/var/lib/clamav  # Virus signature database
@@ -230,7 +230,7 @@ services:
         reservations:
           memory: 1G
     networks:
-      - athena-backend  # Isolated network
+      - vidra-backend  # Isolated network
 
   app:
     depends_on:
@@ -245,13 +245,13 @@ services:
 
 ```bash
 # Check ClamAV health
-docker exec athena-clamav clamdscan --ping
+docker exec vidra-clamav clamdscan --ping
 
 # Monitor scan logs
-tail -f /var/log/athena/virus_scan.log
+tail -f /var/log/vidra/virus_scan.log
 
 # Database query for scan statistics
-psql -U athena_user -d athena -c "
+psql -U vidra_user -d vidra -c "
   SELECT
     scan_result,
     COUNT(*) as total,
@@ -274,7 +274,7 @@ ls -lh /var/quarantine/
 
 **Critical**: Always use `CLAMAV_FALLBACK_MODE=strict` in production to prevent infected file uploads during scanner outages.
 
-**CVE-ATHENA-2025-001 Mitigation**:
+**CVE-VIDRA-2025-001 Mitigation**:
 
 - Ensure ClamAV version is up-to-date
 - Monitor scanner availability with health checks
@@ -333,7 +333,7 @@ ssl_stapling_verify on;
 ```bash
 # Audit logging
 ENABLE_AUDIT_LOG=true
-AUDIT_LOG_FILE=/var/log/athena/audit.log
+AUDIT_LOG_FILE=/var/log/vidra/audit.log
 AUDIT_LOG_LEVEL=info
 
 # Events to log
@@ -369,10 +369,10 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 govulncheck ./...
 
 # Docker image scanning
-docker scan athena:latest
+docker scan vidra:latest
 
 # Trivy scanning
-trivy image athena:latest
+trivy image vidra:latest
 ```
 
 ### Security Updates
@@ -384,7 +384,7 @@ go mod tidy
 
 # Update base images
 docker pull alpine:latest
-docker build --pull -t athena:latest .
+docker build --pull -t vidra:latest .
 
 # System updates
 apt update && apt upgrade -y
@@ -396,13 +396,13 @@ apt update && apt upgrade -y
 
 ```bash
 # Failed login attempts
-grep "authentication failed" /var/log/athena/app.log | tail -20
+grep "authentication failed" /var/log/vidra/app.log | tail -20
 
 # Suspicious API usage
-grep "rate limit exceeded" /var/log/athena/app.log | tail -20
+grep "rate limit exceeded" /var/log/vidra/app.log | tail -20
 
 # Database intrusion attempts
-grep "SQL injection" /var/log/athena/security.log
+grep "SQL injection" /var/log/vidra/security.log
 ```
 
 ### Emergency Procedures

@@ -108,8 +108,8 @@ Worktree: No
 
 **Verify:**
 
-- `cd /Users/yosefgamble/github/athena && go test -bench=BenchmarkSelectHealthyGateway -benchmem -count=5 ./internal/usecase/ipfs_streaming/ | tee /tmp/bench-baseline.txt` — benchmarks run and results saved
-- `cd /Users/yosefgamble/github/athena && go test -race ./internal/usecase/ipfs_streaming/` — no race conditions
+- `cd /Users/yosefgamble/github/vidra && go test -bench=BenchmarkSelectHealthyGateway -benchmem -count=5 ./internal/usecase/ipfs_streaming/ | tee /tmp/bench-baseline.txt` — benchmarks run and results saved
+- `cd /Users/yosefgamble/github/vidra && go test -race ./internal/usecase/ipfs_streaming/` — no race conditions
 
 ### Task 2: Convert currentIndex to atomic and optimize selectHealthyGateway
 
@@ -157,9 +157,9 @@ Worktree: No
 
 **Verify:**
 
-- `cd /Users/yosefgamble/github/athena && go test -v ./internal/usecase/ipfs_streaming/` — all tests pass
-- `cd /Users/yosefgamble/github/athena && go test -race ./internal/usecase/ipfs_streaming/` — no race conditions
-- `cd /Users/yosefgamble/github/athena && go vet ./internal/usecase/ipfs_streaming/` — no issues
+- `cd /Users/yosefgamble/github/vidra && go test -v ./internal/usecase/ipfs_streaming/` — all tests pass
+- `cd /Users/yosefgamble/github/vidra && go test -race ./internal/usecase/ipfs_streaming/` — no race conditions
+- `cd /Users/yosefgamble/github/vidra && go vet ./internal/usecase/ipfs_streaming/` — no issues
 
 ### Task 3: Run benchmarks, verify improvement, and create PR
 
@@ -191,9 +191,9 @@ Worktree: No
 
 **Verify:**
 
-- `cd /Users/yosefgamble/github/athena && go test -bench=BenchmarkSelectHealthyGateway -benchmem -count=5 ./internal/usecase/ipfs_streaming/ | tee /tmp/bench-optimized.txt` — benchmarks complete
+- `cd /Users/yosefgamble/github/vidra && go test -bench=BenchmarkSelectHealthyGateway -benchmem -count=5 ./internal/usecase/ipfs_streaming/ | tee /tmp/bench-optimized.txt` — benchmarks complete
 - `benchstat /tmp/bench-baseline.txt /tmp/bench-optimized.txt` — comparison shows results
-- `cd /Users/yosefgamble/github/athena && go test -race ./internal/usecase/ipfs_streaming/` — no race conditions
+- `cd /Users/yosefgamble/github/vidra && go test -race ./internal/usecase/ipfs_streaming/` — no race conditions
 
 ## Testing Strategy
 

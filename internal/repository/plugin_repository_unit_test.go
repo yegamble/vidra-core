@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
@@ -38,7 +38,7 @@ func samplePluginRecord() *domain.PluginRecord {
 		ID:          uuid.New(),
 		Name:        "sample-plugin",
 		Version:     "1.2.3",
-		Author:      "Athena",
+		Author:      "Vidra Core",
 		Description: "Plugin for tests",
 		Status:      domain.PluginStatusInstalled,
 		Config:      map[string]any{"enabled": true, "max": 10.0},

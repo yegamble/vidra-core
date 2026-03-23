@@ -9,7 +9,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 // StudioJobRepository is the SQLX implementation of port.StudioJobRepository.

@@ -1,17 +1,17 @@
 # PeerTube Compatibility Status
 
 **Last Updated**: 2026-03-23
-**Scope**: PeerTube-aligned API/runtime compatibility for Athena native APIs, plus Athena-only features that must coexist with that compatibility
+**Scope**: PeerTube-aligned API/runtime compatibility for Vidra Core native APIs, plus Vidra Core-only features that must coexist with that compatibility
 
 ## Summary
 
-Athena currently has a strong, validated PeerTube-shaped runtime surface. OpenAPI verification passes, `go test -short ./...` passes, and the Docker-backed Newman suite passes across 19 stateful collections covering PeerTube-style routes and Athena-specific extensions.
+Vidra Core currently has a strong, validated PeerTube-shaped runtime surface. OpenAPI verification passes, `go test -short ./...` passes, and the Docker-backed Newman suite passes across 19 stateful collections covering PeerTube-style routes and Vidra Core-specific extensions.
 
-That said, Athena is **not yet feature-complete for full PeerTube instance migration**. The main missing capability is a real ETL/import pipeline that can ingest a PeerTube database dump and storage layout into Athena automatically.
+That said, Vidra Core is **not yet feature-complete for full PeerTube instance migration**. The main missing capability is a real ETL/import pipeline that can ingest a PeerTube database dump and storage layout into Vidra Core automatically.
 
 ## Compatibility Matrix
 
-| Area | Athena Endpoints | PeerTube Capability | Status | Notes |
+| Area | Vidra Core Endpoints | PeerTube Capability | Status | Notes |
 |---|---|---|---|---|
 | Channels | `/api/v1/channels`, `/api/v1/channels/{id}`, `/api/v1/channels/{id}/videos` | Video channels as first-class publishers | ✅ Implemented | Validated in Go and Newman |
 | Channel subscriptions | `/api/v1/channels/{id}/subscribe`, `/api/v1/channels/{id}/subscribers`, `/api/v1/videos/subscriptions` | Channel follow + subscription feed | ✅ Implemented | Legacy compatibility shims still exist |
@@ -44,9 +44,9 @@ A compatibility tag remains present for matching operations:
 
 - `PeerTube-Compat`
 
-## Extra Athena Features
+## Extra Vidra Core Features
 
-Athena extends beyond PeerTube and these extra surfaces are also validated in the Docker test profile:
+Vidra Core extends beyond PeerTube and these extra surfaces are also validated in the Docker test profile:
 
 - Secure messaging
 - IOTA payments
@@ -61,7 +61,7 @@ The current validation baseline proves:
 - `./scripts/verify-openapi.sh` passes
 - `env -u GOROOT go test -short ./...` passes
 - 19 selected Newman collections pass against the live Docker `test` profile
-- PeerTube-canonical route aliases are exercised in the same stateful suite as Athena-native routes
+- PeerTube-canonical route aliases are exercised in the same stateful suite as Vidra Core-native routes
 - ATProto, payments, secure messaging, and IPFS do not break the PeerTube-shaped runtime surface
 
 ## Intentional Deviations
@@ -70,13 +70,13 @@ These are current differences from strict one-to-one PeerTube parity:
 
 1. Pagination style is still mixed by endpoint family.
 2. Response envelope conventions differ by handler family.
-3. Athena is multi-protocol and multi-feature by design, including ATProto, messaging, payments, and IPFS in the same product surface.
+3. Vidra Core is multi-protocol and multi-feature by design, including ATProto, messaging, payments, and IPFS in the same product surface.
 
 ## Remaining Gaps
 
-1. Athena does not yet ship a real PeerTube ETL/importer for database plus media migration.
-2. Athena does not yet run fixture-based migration rehearsals proving imported PeerTube data behaves correctly after cutover.
-3. Athena does not yet run an upstream PeerTube UI/client compatibility suite.
+1. Vidra Core does not yet ship a real PeerTube ETL/importer for database plus media migration.
+2. Vidra Core does not yet run fixture-based migration rehearsals proving imported PeerTube data behaves correctly after cutover.
+3. Vidra Core does not yet run an upstream PeerTube UI/client compatibility suite.
 4. Full one-to-one schema parity is still not guaranteed for every list/detail payload.
 
 ## Next Actions

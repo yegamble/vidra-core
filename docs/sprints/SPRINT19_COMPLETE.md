@@ -66,7 +66,7 @@ Ensure all living documentation reflects the actual implementation. Fix broken l
 **Validated & Fixed:**
 
 - Removed reference to non-existent `docker-compose.prod.yml`
-- Fixed database credentials to match `docker-compose.yml` (athena_user:athena_password)
+- Fixed database credentials to match `docker-compose.yml` (vidra_user:vidra_password)
 - Removed non-existent `/api/v1/status` endpoint
 - Clarified metrics endpoint on port 9090 (not 8080)
 - Fixed all `psql` commands with correct credentials and database name
@@ -236,7 +236,7 @@ All Sprint 19 acceptance criteria from Quality Programme met:
 
 - **External Images Pinned:** 4 (ipfs/kubo x3, clamav/clamav x1)
 - **Images with Notes:** 1 (whisper - no versioned tags available)
-- **Local Build Images:** 1 (athena:latest - intentionally unpinned)
+- **Local Build Images:** 1 (vidra:latest - intentionally unpinned)
 
 ---
 

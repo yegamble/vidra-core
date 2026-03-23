@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/domain"
-	"athena/internal/middleware"
-	"athena/internal/usecase/captiongen"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/usecase/captiongen"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

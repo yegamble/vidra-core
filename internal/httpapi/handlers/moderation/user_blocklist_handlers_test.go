@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/domain"
-	"athena/internal/httpapi/handlers/moderation"
-	"athena/internal/middleware"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/handlers/moderation"
+	"vidra-core/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

@@ -84,7 +84,7 @@ func TestSFTPBackend_buildPath(t *testing.T) {
 
 func TestSFTPBackend_TOFU_PersistsKnownHost(t *testing.T) {
 	tmpDir := t.TempDir()
-	knownHostsFile := filepath.Join(tmpDir, "known_hosts_athena")
+	knownHostsFile := filepath.Join(tmpDir, "known_hosts_vidra")
 
 	backend := NewSFTPBackend(SFTPConfig{
 		Host:           "sftp.example.com",
@@ -103,7 +103,7 @@ func TestSFTPBackend_TOFU_PersistsKnownHost(t *testing.T) {
 
 func TestSFTPBackend_TOFU_ReadsExistingKnownHost(t *testing.T) {
 	tmpDir := t.TempDir()
-	knownHostsFile := filepath.Join(tmpDir, "known_hosts_athena")
+	knownHostsFile := filepath.Join(tmpDir, "known_hosts_vidra")
 
 	// Write a fake known host key
 	fakeKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTesting\n"

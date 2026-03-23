@@ -12,7 +12,7 @@
 
 ### 1. Test Files Created
 
-#### `/home/user/athena/internal/security/virus_scanner_test.go`
+#### `/home/user/vidra/internal/security/virus_scanner_test.go`
 
 - **Lines**: 600+
 - **Test Functions**: 23
@@ -41,7 +41,7 @@
 - Integration with upload/FFmpeg/IPFS workflows
 - User notification on malware detection
 
-#### `/home/user/athena/internal/security/file_type_blocker_test.go`
+#### `/home/user/vidra/internal/security/file_type_blocker_test.go`
 
 - **Lines**: 500+
 - **Test Functions**: 18
@@ -71,7 +71,7 @@
 
 ### 2. Docker Compose Test Setup
 
-#### `/home/user/athena/docker-compose.test.yml` (Enhanced)
+#### `/home/user/vidra/docker-compose.test.yml` (Enhanced)
 
 - ✅ Added `clamav-test` service
 - ✅ ClamAV signature persistence volume
@@ -91,7 +91,7 @@
 
 ### 3. Test Fixtures
 
-#### `/home/user/athena/testdata/virus_scanner/`
+#### `/home/user/vidra/testdata/virus_scanner/`
 
 | File | Size | Purpose |
 |------|------|---------|
@@ -102,7 +102,7 @@
 | `nested.zip` | 865 bytes | Archive nesting test |
 | `README.md` | 2.3KB | Fixture documentation |
 
-#### `/home/user/athena/testdata/virus_scanner/blocked_types/`
+#### `/home/user/vidra/testdata/virus_scanner/blocked_types/`
 
 Blocked file type examples:
 
@@ -114,7 +114,7 @@ Blocked file type examples:
 
 ### 4. Documentation
 
-#### `/home/user/athena/internal/security/TESTING.md`
+#### `/home/user/vidra/internal/security/TESTING.md`
 
 - **Lines**: 400+
 - **Sections**: 15
@@ -132,7 +132,7 @@ Blocked file type examples:
 - Code coverage targets
 - EICAR explanation
 
-#### `/home/user/athena/testdata/virus_scanner/README.md`
+#### `/home/user/vidra/testdata/virus_scanner/README.md`
 
 - Fixture descriptions
 - Security notes
@@ -141,7 +141,7 @@ Blocked file type examples:
 
 ### 5. Test Runner Script
 
-#### `/home/user/athena/scripts/run-security-tests.sh`
+#### `/home/user/vidra/scripts/run-security-tests.sh`
 
 - **Lines**: 200+
 - **Executable**: ✅
@@ -228,31 +228,31 @@ func NewFileTypeBlocker() *FileTypeBlocker {
 
 ### New Files Created (8)
 
-1. `/home/user/athena/internal/security/virus_scanner_test.go` (600+ lines)
-2. `/home/user/athena/internal/security/file_type_blocker_test.go` (500+ lines)
-3. `/home/user/athena/internal/security/TESTING.md` (400+ lines)
-4. `/home/user/athena/scripts/run-security-tests.sh` (200+ lines)
-5. `/home/user/athena/testdata/virus_scanner/README.md` (2.3KB)
-6. `/home/user/athena/testdata/virus_scanner/clean_file.txt`
-7. `/home/user/athena/testdata/virus_scanner/eicar.txt`
-8. `/home/user/athena/testdata/virus_scanner/clean_video.mp4`
+1. `/home/user/vidra/internal/security/virus_scanner_test.go` (600+ lines)
+2. `/home/user/vidra/internal/security/file_type_blocker_test.go` (500+ lines)
+3. `/home/user/vidra/internal/security/TESTING.md` (400+ lines)
+4. `/home/user/vidra/scripts/run-security-tests.sh` (200+ lines)
+5. `/home/user/vidra/testdata/virus_scanner/README.md` (2.3KB)
+6. `/home/user/vidra/testdata/virus_scanner/clean_file.txt`
+7. `/home/user/vidra/testdata/virus_scanner/eicar.txt`
+8. `/home/user/vidra/testdata/virus_scanner/clean_video.mp4`
 
 ### Files Modified (1)
 
-1. `/home/user/athena/docker-compose.test.yml` (added ClamAV service)
+1. `/home/user/vidra/docker-compose.test.yml` (added ClamAV service)
 
 ### Generated Files (2)
 
-1. `/home/user/athena/testdata/virus_scanner/large_clean.bin` (100MB)
-2. `/home/user/athena/testdata/virus_scanner/nested.zip` (865 bytes)
+1. `/home/user/vidra/testdata/virus_scanner/large_clean.bin` (100MB)
+2. `/home/user/vidra/testdata/virus_scanner/nested.zip` (865 bytes)
 
 ### Blocked Type Fixtures (5)
 
-1. `/home/user/athena/testdata/virus_scanner/blocked_types/test.exe`
-2. `/home/user/athena/testdata/virus_scanner/blocked_types/test.bat`
-3. `/home/user/athena/testdata/virus_scanner/blocked_types/test.ps1`
-4. `/home/user/athena/testdata/virus_scanner/blocked_types/test.sh`
-5. `/home/user/athena/testdata/virus_scanner/blocked_types/test.py`
+1. `/home/user/vidra/testdata/virus_scanner/blocked_types/test.exe`
+2. `/home/user/vidra/testdata/virus_scanner/blocked_types/test.bat`
+3. `/home/user/vidra/testdata/virus_scanner/blocked_types/test.ps1`
+4. `/home/user/vidra/testdata/virus_scanner/blocked_types/test.sh`
+5. `/home/user/vidra/testdata/virus_scanner/blocked_types/test.py`
 
 ---
 
@@ -387,20 +387,20 @@ To verify this delivery:
 
 ```bash
 # Check test files exist and compile
-ls -lh /home/user/athena/internal/security/*_test.go
+ls -lh /home/user/vidra/internal/security/*_test.go
 go test -c ./internal/security/virus_scanner_test.go
 go test -c ./internal/security/file_type_blocker_test.go
 
 # Check fixtures exist
-ls -lh /home/user/athena/testdata/virus_scanner/
+ls -lh /home/user/vidra/testdata/virus_scanner/
 
 # Check Docker config updated
-grep -A 10 "clamav-test:" /home/user/athena/docker-compose.test.yml
+grep -A 10 "clamav-test:" /home/user/vidra/docker-compose.test.yml
 
 # Count test functions
-grep -c "^func Test" /home/user/athena/internal/security/virus_scanner_test.go
-grep -c "^func Test" /home/user/athena/internal/security/file_type_blocker_test.go
-grep -c "^func Benchmark" /home/user/athena/internal/security/virus_scanner_test.go
+grep -c "^func Test" /home/user/vidra/internal/security/virus_scanner_test.go
+grep -c "^func Test" /home/user/vidra/internal/security/file_type_blocker_test.go
+grep -c "^func Benchmark" /home/user/vidra/internal/security/virus_scanner_test.go
 ```
 
 Expected output:

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the Cross-Site Scripting (XSS) protection measures implemented for the Athena video platform's comment system.
+This document describes the Cross-Site Scripting (XSS) protection measures implemented for the Vidra Core video platform's comment system.
 
 ## Implementation Status
 
@@ -113,13 +113,13 @@ The implementation blocks all major XSS attack vectors:
 
 ### Unit Tests
 
-- **File**: `/home/user/athena/internal/security/html_sanitizer_test.go`
+- **File**: `/home/user/vidra/internal/security/html_sanitizer_test.go`
 - **Coverage**: 30+ XSS attack vectors tested
 - **Performance**: Benchmarks included
 
 ### Integration Tests
 
-- **File**: `/home/user/athena/internal/httpapi/handlers/social/comments_integration_test.go`
+- **File**: `/home/user/vidra/internal/httpapi/handlers/social/comments_integration_test.go`
 - **Coverage**: End-to-end XSS prevention tests
 - **Scenarios**: Create, update, flag operations
 

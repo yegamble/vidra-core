@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"athena/internal/backup"
-	backupUsecase "athena/internal/usecase/backup"
+	"vidra-core/internal/backup"
+	backupUsecase "vidra-core/internal/usecase/backup"
 
 	"github.com/go-chi/chi/v5"
 )

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/repository"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"

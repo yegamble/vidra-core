@@ -1,6 +1,6 @@
 # Validation System
 
-This directory contains scripts for portable, cross-platform validation of the Athena codebase.
+This directory contains scripts for portable, cross-platform validation of the Vidra Core codebase.
 
 ## Quick Start
 
@@ -293,7 +293,7 @@ Runs unit tests (excluding integration tests).
 
 Ensures code compiles successfully.
 
-**Command**: `go build -o /tmp/athena-server-validate ./cmd/server`
+**Command**: `go build -o /tmp/vidra-server-validate ./cmd/server`
 
 **Failure Resolution**:
 
@@ -447,7 +447,7 @@ Typical validation times:
 
 ## For Claude Instances
 
-See `/Users/yosefgamble/github/athena/VALIDATION_REQUIRED.md` for requirements specific to Claude AI assistants.
+See `/Users/yosefgamble/github/vidra/VALIDATION_REQUIRED.md` for requirements specific to Claude AI assistants.
 
 **Key Points**:
 
@@ -460,10 +460,10 @@ See `/Users/yosefgamble/github/athena/VALIDATION_REQUIRED.md` for requirements s
 For issues or questions:
 
 1. Check this README
-2. Review `/Users/yosefgamble/github/athena/VALIDATION_REQUIRED.md`
-3. Check `/Users/yosefgamble/github/athena/docs/architecture/CLAUDE.md`
+2. Review `/Users/yosefgamble/github/vidra/VALIDATION_REQUIRED.md`
+3. Check `/Users/yosefgamble/github/vidra/docs/architecture/CLAUDE.md`
 4. Open an issue in the repository
 
 ## License
 
-Same as the Athena project.
+Same as the Vidra Core project.

@@ -9,7 +9,7 @@ version: '3.8'
 
 services:
   app:
-    image: athena:latest
+    image: vidra:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"  # Only bind to localhost
@@ -49,15 +49,15 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-      POSTGRES_DB: athena
-      POSTGRES_USER: athena_app
+      POSTGRES_DB: vidra
+      POSTGRES_USER: vidra_app
     secrets:
       - db_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U athena_app"]
+      test: ["CMD-SHELL", "pg_isready -U vidra_app"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -114,9 +114,9 @@ services:
           memory: 2G
 
   ffmpeg-worker:
-    image: athena:latest
+    image: vidra:latest
     restart: unless-stopped
-    command: ["./athena-server", "--worker-mode"]
+    command: ["./vidra-server", "--worker-mode"]
     env_file:
       - .env.production
     volumes:
@@ -157,7 +157,7 @@ RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-w -s" -o athena-server ./cmd/server
+    go build -ldflags="-w -s" -o vidra-server ./cmd/server
 
 # Production stage
 FROM alpine:3.18
@@ -166,29 +166,29 @@ RUN apk add --no-cache ca-certificates ffmpeg
 
 WORKDIR /app
 
-COPY --from=builder /app/athena-server .
+COPY --from=builder /app/vidra-server .
 COPY --from=builder /app/migrations ./migrations
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD ["./athena-server", "health"]
+  CMD ["./vidra-server", "health"]
 
-CMD ["./athena-server"]
+CMD ["./vidra-server"]
 ```
 
 ### Build Commands
 
 ```bash
 # Build image
-docker build -t athena:latest .
+docker build -t vidra:latest .
 
 # Build with specific version
-docker build -t athena:v1.0.0 .
+docker build -t vidra:v1.0.0 .
 
 # Build and push to registry
-docker build -t registry.example.com/athena:latest .
-docker push registry.example.com/athena:latest
+docker build -t registry.example.com/vidra:latest .
+docker push registry.example.com/vidra:latest
 ```
 
 ## Deployment Steps
@@ -197,14 +197,14 @@ docker push registry.example.com/athena:latest
 
 ```bash
 # Create directory structure
-mkdir -p athena/{uploads,logs,processed,ssl,secrets}
+mkdir -p vidra/{uploads,logs,processed,ssl,secrets}
 
 # Generate secrets
-openssl rand -hex 32 > athena/secrets/db_password.txt
-openssl rand -hex 32 > athena/secrets/jwt_secret.txt
+openssl rand -hex 32 > vidra/secrets/db_password.txt
+openssl rand -hex 32 > vidra/secrets/jwt_secret.txt
 
 # Set permissions
-chmod 600 athena/secrets/*
+chmod 600 vidra/secrets/*
 ```
 
 ### 2. Configure Environment
@@ -218,7 +218,7 @@ LOG_LEVEL=info
 SERVER_PORT=8080
 
 # Database
-DATABASE_URL=postgres://athena_app:CHANGE_ME@postgres:5432/athena?sslmode=disable
+DATABASE_URL=postgres://vidra_app:CHANGE_ME@postgres:5432/vidra?sslmode=disable
 DATABASE_MAX_CONNECTIONS=25
 DATABASE_MAX_IDLE=5
 
@@ -254,8 +254,8 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 CREATE EXTENSION IF NOT EXISTS "unaccent";
 
 -- Create application user
-CREATE USER athena_app WITH PASSWORD 'CHANGE_ME';
-GRANT ALL PRIVILEGES ON DATABASE athena TO athena_app;
+CREATE USER vidra_app WITH PASSWORD 'CHANGE_ME';
+GRANT ALL PRIVILEGES ON DATABASE vidra TO vidra_app;
 
 -- Performance settings
 ALTER SYSTEM SET shared_buffers = '256MB';
@@ -283,7 +283,7 @@ docker compose ps
 docker compose logs -f
 
 # Run migrations
-docker compose exec app ./athena-server migrate
+docker compose exec app ./vidra-server migrate
 ```
 
 ## Service Management
@@ -308,23 +308,23 @@ docker compose up -d --scale ffmpeg-worker=4
 
 ```bash
 # Pull latest image
-docker pull athena:latest
+docker pull vidra:latest
 
 # Rolling update
 docker compose up -d --no-deps app
 
 # Verify new version
-docker compose exec app ./athena-server version
+docker compose exec app ./vidra-server version
 ```
 
 ### Maintenance Mode
 
 ```bash
 # Enable maintenance mode
-docker compose exec app ./athena-server maintenance --enable
+docker compose exec app ./vidra-server maintenance --enable
 
 # Disable maintenance mode
-docker compose exec app ./athena-server maintenance --disable
+docker compose exec app ./vidra-server maintenance --disable
 ```
 
 ## Monitoring
@@ -369,7 +369,7 @@ BACKUP_DIR="/backups/$DATE"
 mkdir -p $BACKUP_DIR
 
 # Backup database
-docker compose exec -T postgres pg_dump -U athena_app athena | gzip > $BACKUP_DIR/postgres.sql.gz
+docker compose exec -T postgres pg_dump -U vidra_app vidra | gzip > $BACKUP_DIR/postgres.sql.gz
 
 # Backup Redis
 docker compose exec -T redis redis-cli SAVE
@@ -392,7 +392,7 @@ tar czf $BACKUP_DIR/ipfs.tar.gz ./ipfs_data
 BACKUP_DIR="/backups/20240101_120000"
 
 # Restore database
-gunzip < $BACKUP_DIR/postgres.sql.gz | docker compose exec -T postgres psql -U athena_app athena
+gunzip < $BACKUP_DIR/postgres.sql.gz | docker compose exec -T postgres psql -U vidra_app vidra
 
 # Restore Redis
 docker compose cp $BACKUP_DIR/redis.rdb redis:/data/dump.rdb
@@ -440,7 +440,7 @@ docker compose logs postgres
 docker compose exec app cat /proc/meminfo
 
 # Adjust GOGC
-docker compose exec app sh -c 'export GOGC=50 && ./athena-server'
+docker compose exec app sh -c 'export GOGC=50 && ./vidra-server'
 ```
 
 ### Debug Mode
@@ -453,7 +453,7 @@ docker compose run -e LOG_LEVEL=debug app
 docker compose exec app sh
 
 # Attach to running container
-docker attach athena_app_1
+docker attach vidra_app_1
 ```
 
 ## Security Best Practices
@@ -500,7 +500,7 @@ tmpfs:
 # Enable build cache
 x-build-cache: &build-cache
   cache_from:
-    - athena:cache
+    - vidra:cache
   cache_to:
     - type=inline
 ```

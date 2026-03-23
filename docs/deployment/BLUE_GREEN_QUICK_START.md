@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Athena already deployed on Kubernetes
+- Vidra Core already deployed on Kubernetes
 - kubectl configured
 - GitHub Actions enabled
 
@@ -13,14 +13,14 @@
 ### 1. Label Current Deployment as "Blue"
 
 ```bash
-cd /home/user/athena
+cd /home/user/vidra
 
 # Label existing deployment
-kubectl label deployment athena-api version=blue -n athena --overwrite
-kubectl label deployment athena-encoding-worker version=blue -n athena --overwrite
+kubectl label deployment vidra-api version=blue -n vidra --overwrite
+kubectl label deployment vidra-encoding-worker version=blue -n vidra --overwrite
 
 # Update service to use version selector
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"blue"}}}'
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"blue"}}}'
 ```
 
 ### 2. Configure GitHub Secrets
@@ -30,7 +30,7 @@ kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"b
 cat ~/.kube/config | base64 | gh secret set KUBE_CONFIG --body-file=-
 
 # Add database URL
-gh secret set DATABASE_URL --body "postgres://user:pass@host:5432/athena"
+gh secret set DATABASE_URL --body "postgres://user:pass@host:5432/vidra"
 ```
 
 ### 3. Test Green Deployment
@@ -40,11 +40,11 @@ gh secret set DATABASE_URL --body "postgres://user:pass@host:5432/athena"
 kubectl apply -k k8s/overlays/green/
 
 # Verify green pods running
-kubectl get pods -l version=green -n athena
+kubectl get pods -l version=green -n vidra
 
 # Test green health
-kubectl run test --image=curlimages/curl --restart=Never --rm -i -n athena \
-  -- curl http://athena-api-green/health
+kubectl run test --image=curlimages/curl --restart=Never --rm -i -n vidra \
+  -- curl http://vidra-api-green/health
 
 # Clean up
 kubectl delete -k k8s/overlays/green/
@@ -73,26 +73,26 @@ gh run watch
 kubectl apply -k k8s/overlays/green/
 
 # 2. Wait for ready
-kubectl wait --for=condition=ready pod -l version=green --timeout=5m -n athena
+kubectl wait --for=condition=ready pod -l version=green --timeout=5m -n vidra
 
 # 3. Run validation
 kubectl apply -f k8s/jobs/pre-switch-validation.yaml
-kubectl logs job/pre-switch-validation -n athena
+kubectl logs job/pre-switch-validation -n vidra
 
 # 4. Switch traffic (10% canary)
 kubectl apply -f k8s/overlays/green/ingress-canary.yaml
-kubectl patch ingress athena-ingress-green-canary -n athena --type=merge \
+kubectl patch ingress vidra-ingress-green-canary -n vidra --type=merge \
   -p '{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/canary-weight":"10"}}}'
 
 # 5. Monitor for 10 minutes
 # Check Grafana: error rate, latency, etc.
 
 # 6. Full switch
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"green"}}}'
-kubectl delete ingress athena-ingress-green-canary -n athena
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"green"}}}'
+kubectl delete ingress vidra-ingress-green-canary -n vidra
 
 # 7. Scale down blue
-kubectl scale deployment athena-api-blue --replicas=1 -n athena
+kubectl scale deployment vidra-api-blue --replicas=1 -n vidra
 ```
 
 ## Emergency Rollback
@@ -102,7 +102,7 @@ kubectl scale deployment athena-api-blue --replicas=1 -n athena
 ./scripts/rollback-deployment.sh
 
 # Or manual
-kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"blue"}}}'
+kubectl patch service vidra-api -n vidra -p '{"spec":{"selector":{"version":"blue"}}}'
 ```
 
 ## What You Get
@@ -134,14 +134,14 @@ kubectl patch service athena-api -n athena -p '{"spec":{"selector":{"version":"b
 **Pods stuck pending?**
 
 ```bash
-kubectl describe pod <pod-name> -n athena
+kubectl describe pod <pod-name> -n vidra
 # Check PVC, resources, node capacity
 ```
 
 **Service selector not working?**
 
 ```bash
-kubectl get endpoints athena-api -n athena
+kubectl get endpoints vidra-api -n vidra
 # Should show pods with matching labels
 ```
 
@@ -149,12 +149,12 @@ kubectl get endpoints athena-api -n athena
 
 ```bash
 # Port-forward for testing
-kubectl port-forward svc/athena-api-green 8080:80 -n athena
+kubectl port-forward svc/vidra-api-green 8080:80 -n vidra
 curl http://localhost:8080/health
 ```
 
 ## Support
 
-- GitHub Issues: <https://github.com/yegamble/athena/issues>
+- GitHub Issues: <https://github.com/yegamble/vidra-core/issues>
 - Documentation: `docs/deployment/`
-- Slack: #athena-deployments
+- Slack: #vidra-deployments

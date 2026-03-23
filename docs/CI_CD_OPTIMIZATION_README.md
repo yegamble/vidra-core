@@ -1,6 +1,6 @@
 # CI/CD Optimization Package - README
 
-Complete CI/CD optimization analysis and implementation package for the Athena project.
+Complete CI/CD optimization analysis and implementation package for the Vidra Core project.
 
 ---
 

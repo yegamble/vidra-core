@@ -129,7 +129,7 @@ github-runner ALL=(ALL) NOPASSWD:ALL
 
 ### 1. CI/CD Configuration Guide (371 lines)
 
-**File:** `/root/athena/docs/development/CI_CD_CONFIGURATION.md`
+**File:** `/root/vidra/docs/development/CI_CD_CONFIGURATION.md`
 
 **Contents:**
 
@@ -147,7 +147,7 @@ github-runner ALL=(ALL) NOPASSWD:ALL
 
 ### 2. API Documentation Audit Report
 
-**File:** `/root/athena/docs/API_DOCUMENTATION_AUDIT_REPORT.md`
+**File:** `/root/vidra/docs/API_DOCUMENTATION_AUDIT_REPORT.md`
 
 **Contents:**
 
@@ -161,7 +161,7 @@ github-runner ALL=(ALL) NOPASSWD:ALL
 
 ### 3. Documentation Sync Guide
 
-**File:** `/root/athena/docs/DOCUMENTATION_SYNC_GUIDE.md`
+**File:** `/root/vidra/docs/DOCUMENTATION_SYNC_GUIDE.md`
 
 **Contents:**
 
@@ -175,7 +175,7 @@ github-runner ALL=(ALL) NOPASSWD:ALL
 
 ### 4. Breaking Changes Analysis (72KB)
 
-**File:** `/root/athena/BREAKING_CHANGES_ANALYSIS.md`
+**File:** `/root/vidra/BREAKING_CHANGES_ANALYSIS.md`
 
 **Contents:**
 
@@ -192,7 +192,7 @@ github-runner ALL=(ALL) NOPASSWD:ALL
 
 ### 5. Security Test Improvements
 
-**File:** `/root/athena/postman/athena-edge-cases-security.postman_collection.json`
+**File:** `/root/vidra/postman/vidra-edge-cases-security.postman_collection.json`
 
 **Contents:**
 
@@ -419,15 +419,15 @@ github-runner ALL=(ALL) NOPASSWD:ALL
 
 ### Key Files Created/Modified
 
-- `/root/athena/docs/development/CI_CD_CONFIGURATION.md`
-- `/root/athena/docs/API_DOCUMENTATION_AUDIT_REPORT.md`
-- `/root/athena/docs/DOCUMENTATION_SYNC_GUIDE.md`
-- `/root/athena/BREAKING_CHANGES_ANALYSIS.md`
-- `/root/athena/EXECUTIVE_SUMMARY.md`
-- `/root/athena/QUICK_REFERENCE_SECURITY_FIXES.md`
-- `/root/athena/postman/athena-edge-cases-security.postman_collection.json`
-- `/root/athena/internal/usecase/activitypub/comment_publisher_test.go`
-- `/root/athena/internal/usecase/payments/payment_service_test.go`
+- `/root/vidra/docs/development/CI_CD_CONFIGURATION.md`
+- `/root/vidra/docs/API_DOCUMENTATION_AUDIT_REPORT.md`
+- `/root/vidra/docs/DOCUMENTATION_SYNC_GUIDE.md`
+- `/root/vidra/BREAKING_CHANGES_ANALYSIS.md`
+- `/root/vidra/EXECUTIVE_SUMMARY.md`
+- `/root/vidra/QUICK_REFERENCE_SECURITY_FIXES.md`
+- `/root/vidra/postman/vidra-edge-cases-security.postman_collection.json`
+- `/root/vidra/internal/usecase/activitypub/comment_publisher_test.go`
+- `/root/vidra/internal/usecase/payments/payment_service_test.go`
 
 ### System Configuration
 
@@ -437,8 +437,8 @@ github-runner ALL=(ALL) NOPASSWD:ALL
 
 ### GitHub Actions Runs
 
-- Latest run: <https://github.com/yegamble/athena/actions/runs/19456572272>
-- Branch: <https://github.com/yegamble/athena/tree/claude/fix-github-actions-ci-01HqHZjEpmgT4ec8xqBJs4mD>
+- Latest run: <https://github.com/yegamble/vidra-core/actions/runs/19456572272>
+- Branch: <https://github.com/yegamble/vidra-core/tree/claude/fix-github-actions-ci-01HqHZjEpmgT4ec8xqBJs4mD>
 
 ---
 

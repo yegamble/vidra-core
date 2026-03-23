@@ -1,0 +1,155 @@
+{
+  "info": {
+    "name": "Vidra Core Notifications API",
+    "_postman_id": "c9a9c9a9-0009-4000-9000-c9a9c9a9c9a9",
+    "description": "Postman collection for notification management: list, mark as read, batch mark-read, delete.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
+    {"key": "access_token", "value": "", "type": "string"},
+    {"key": "notification_id", "value": "", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "Notifications - Happy Path",
+      "item": [
+        {
+          "name": "GET /api/v1/notifications - List notifications",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "const notifications = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);",
+            "pm.test('Has data array', () => pm.expect(notifications).to.be.an('array'));",
+            "if (notifications.length > 0) {",
+            "  pm.collectionVariables.set('notification_id', notifications[0].id);",
+            "} else {",
+            "  pm.collectionVariables.set('notification_id', '00000000-0000-0000-0000-000000000000');",
+            "  console.log('No notifications available; using placeholder UUID for negative-path assertions');",
+            "}"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/notifications", "host": ["{{baseUrl}}"], "path": ["api", "v1", "notifications"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/notifications/unread-count - Unread count",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Has count', () => pm.expect(json).to.satisfy(r => (r.data && r.data.unread_count !== undefined) || r.unread_count !== undefined || typeof r === 'number'));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/notifications/unread-count", "host": ["{{baseUrl}}"], "path": ["api", "v1", "notifications", "unread-count"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/notifications/stats - Notification stats",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/notifications/stats", "host": ["{{baseUrl}}"], "path": ["api", "v1", "notifications", "stats"]}
+          }
+        },
+        {
+          "name": "PUT /api/v1/notifications/:id/read - Mark single as read",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200, 204, or 404', () => pm.expect([200, 204, 404]).to.include(pm.response.code));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/notifications/{{notification_id}}/read", "host": ["{{baseUrl}}"], "path": ["api", "v1", "notifications", "{{notification_id}}", "read"]}
+          }
+        },
+        {
+          "name": "POST /api/v1/notifications/read - Batch mark-read (with IDs)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 204', () => pm.response.to.have.status(204));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"ids\": [\"{{notification_id}}\"]\n}"},
+            "url": {"raw": "{{baseUrl}}/api/v1/notifications/read", "host": ["{{baseUrl}}"], "path": ["api", "v1", "notifications", "read"]}
+          }
+        },
+        {
+          "name": "POST /api/v1/notifications/read - Batch mark-read (all, empty IDs)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 204', () => pm.response.to.have.status(204));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"ids\": []\n}"},
+            "url": {"raw": "{{baseUrl}}/api/v1/notifications/read", "host": ["{{baseUrl}}"], "path": ["api", "v1", "notifications", "read"]}
+          }
+        },
+        {
+          "name": "PUT /api/v1/notifications/read-all - Mark all as read",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 204 or 200', () => pm.expect([200, 204]).to.include(pm.response.code));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/notifications/read-all", "host": ["{{baseUrl}}"], "path": ["api", "v1", "notifications", "read-all"]}
+          }
+        },
+        {
+          "name": "DELETE /api/v1/notifications/:id - Delete notification",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 204 or 404', () => pm.expect([204, 404]).to.include(pm.response.code));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "DELETE",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/notifications/{{notification_id}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "notifications", "{{notification_id}}"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications - Error Path",
+      "item": [
+        {
+          "name": "GET /api/v1/notifications - Unauthenticated (401)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/notifications", "host": ["{{baseUrl}}"], "path": ["api", "v1", "notifications"]}
+          }
+        },
+        {
+          "name": "POST /api/v1/notifications/read - Unauthenticated (401)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {"mode": "raw", "raw": "{\n  \"ids\": []\n}"},
+            "url": {"raw": "{{baseUrl}}/api/v1/notifications/read", "host": ["{{baseUrl}}"], "path": ["api", "v1", "notifications", "read"]}
+          }
+        }
+      ]
+    }
+  ]
+}

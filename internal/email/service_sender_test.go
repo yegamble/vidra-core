@@ -42,7 +42,7 @@ var _ EmailSender = (*fakeSender)(nil)
 
 func TestService_UsesTLS_On465(t *testing.T) {
 	fs := &fakeSender{}
-	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 465, FromAddress: "no-reply@example.com", FromName: "Athena", BaseURL: "https://app.example.com"}
+	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 465, FromAddress: "no-reply@example.com", FromName: "Vidra Core", BaseURL: "https://app.example.com"}
 	svc := NewServiceWithSender(cfg, fs)
 
 	err := svc.SendVerificationEmail(context.Background(), "user@example.com", "alice", "tok", "123456")
@@ -59,7 +59,7 @@ func TestService_UsesTLS_On465(t *testing.T) {
 
 func TestService_UsesSTARTTLS_On587(t *testing.T) {
 	fs := &fakeSender{}
-	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 587, FromAddress: "no-reply@example.com", FromName: "Athena", BaseURL: "https://app.example.com"}
+	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 587, FromAddress: "no-reply@example.com", FromName: "Vidra Core", BaseURL: "https://app.example.com"}
 	svc := NewServiceWithSender(cfg, fs)
 
 	err := svc.SendPasswordResetEmail(context.Background(), "user@example.com", "bob", "resettok")
@@ -76,7 +76,7 @@ func TestService_UsesSTARTTLS_On587(t *testing.T) {
 
 func TestService_UsesPlain_OtherPorts(t *testing.T) {
 	fs := &fakeSender{}
-	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 1025, FromAddress: "no-reply@example.com", FromName: "Athena", BaseURL: "https://app.example.com"}
+	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 1025, FromAddress: "no-reply@example.com", FromName: "Vidra Core", BaseURL: "https://app.example.com"}
 	svc := NewServiceWithSender(cfg, fs)
 
 	err := svc.SendVerificationEmail(context.Background(), "user@example.com", "alice", "tok", "123456")
@@ -91,7 +91,7 @@ func TestService_UsesPlain_OtherPorts(t *testing.T) {
 
 func TestService_ConfigDrivenTLS_ForceTLSOnNonStandardPort(t *testing.T) {
 	fs := &fakeSender{}
-	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 2525, TLS: true, FromAddress: "no-reply@example.com", FromName: "Athena", BaseURL: "https://app.example.com"}
+	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 2525, TLS: true, FromAddress: "no-reply@example.com", FromName: "Vidra Core", BaseURL: "https://app.example.com"}
 	svc := NewServiceWithSender(cfg, fs)
 
 	err := svc.SendVerificationEmail(context.Background(), "user@example.com", "alice", "tok", "123456")
@@ -104,7 +104,7 @@ func TestService_ConfigDrivenTLS_ForceTLSOnNonStandardPort(t *testing.T) {
 
 func TestService_ConfigDrivenTLS_DisableSTARTTLSOn587(t *testing.T) {
 	fs := &fakeSender{}
-	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 587, DisableSTARTTLS: true, FromAddress: "no-reply@example.com", FromName: "Athena", BaseURL: "https://app.example.com"}
+	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 587, DisableSTARTTLS: true, FromAddress: "no-reply@example.com", FromName: "Vidra Core", BaseURL: "https://app.example.com"}
 	svc := NewServiceWithSender(cfg, fs)
 
 	err := svc.SendVerificationEmail(context.Background(), "user@example.com", "alice", "tok", "123456")
@@ -116,7 +116,7 @@ func TestService_ConfigDrivenTLS_DisableSTARTTLSOn587(t *testing.T) {
 
 func TestService_SendmailTransport_ReturnsError(t *testing.T) {
 	fs := &fakeSender{}
-	cfg := &Config{Transport: "sendmail", SendmailPath: "/usr/sbin/sendmail", FromAddress: "no-reply@example.com", FromName: "Athena", BaseURL: "https://app.example.com"}
+	cfg := &Config{Transport: "sendmail", SendmailPath: "/usr/sbin/sendmail", FromAddress: "no-reply@example.com", FromName: "Vidra Core", BaseURL: "https://app.example.com"}
 	svc := NewServiceWithSender(cfg, fs)
 
 	err := svc.SendVerificationEmail(context.Background(), "user@example.com", "alice", "tok", "123456")
@@ -126,7 +126,7 @@ func TestService_SendmailTransport_ReturnsError(t *testing.T) {
 
 func TestService_BackwardCompat_Port465FallsBackToTLS(t *testing.T) {
 	fs := &fakeSender{}
-	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 465, TLS: false, DisableSTARTTLS: false, FromAddress: "no-reply@example.com", FromName: "Athena", BaseURL: "https://app.example.com"}
+	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 465, TLS: false, DisableSTARTTLS: false, FromAddress: "no-reply@example.com", FromName: "Vidra Core", BaseURL: "https://app.example.com"}
 	svc := NewServiceWithSender(cfg, fs)
 
 	err := svc.SendVerificationEmail(context.Background(), "user@example.com", "alice", "tok", "123456")
@@ -136,7 +136,7 @@ func TestService_BackwardCompat_Port465FallsBackToTLS(t *testing.T) {
 
 func TestService_BackwardCompat_Port2525FallsBackToPlain(t *testing.T) {
 	fs := &fakeSender{}
-	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 2525, TLS: false, DisableSTARTTLS: false, FromAddress: "no-reply@example.com", FromName: "Athena", BaseURL: "https://app.example.com"}
+	cfg := &Config{SMTPHost: "smtp.example.com", SMTPPort: 2525, TLS: false, DisableSTARTTLS: false, FromAddress: "no-reply@example.com", FromName: "Vidra Core", BaseURL: "https://app.example.com"}
 	svc := NewServiceWithSender(cfg, fs)
 
 	err := svc.SendVerificationEmail(context.Background(), "user@example.com", "alice", "tok", "123456")

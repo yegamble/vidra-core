@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-echo "=== Athena Docker Entrypoint ==="
+echo "=== Vidra Core Docker Entrypoint ==="
 
 # Detect resource limits (cgroup v2, then v1, then host)
 detect_ram_gb() {
@@ -143,7 +143,7 @@ if [ "$WAIT_POSTGRES" = "1" ]; then
     POSTGRES_HOST=$(echo "$DATABASE_URL" | sed 's|.*@\([^:]*\):.*|\1|')
     POSTGRES_PORT=$(echo "$DATABASE_URL" | sed 's|.*:\([0-9]*\)/.*|\1|')
 
-    until pg_isready -h "${POSTGRES_HOST:-postgres}" -p "${POSTGRES_PORT:-5432}" -U "${POSTGRES_USER:-athena_user}" >/dev/null 2>&1; do
+    until pg_isready -h "${POSTGRES_HOST:-postgres}" -p "${POSTGRES_PORT:-5432}" -U "${POSTGRES_USER:-vidra_user}" >/dev/null 2>&1; do
         echo "  PostgreSQL is unavailable - sleeping"
         sleep 2
     done

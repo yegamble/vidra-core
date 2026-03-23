@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func writeMockExecutable(t *testing.T, body string) string {

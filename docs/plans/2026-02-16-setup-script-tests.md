@@ -99,7 +99,7 @@ Worktree: No
 - Use temp directories (`mktemp -d`) for each test case
 - Mock `docker` and `git` commands with shell functions that return predictable results
 - Mock `docker compose` to avoid actually starting containers
-- Test the `setup_athena` function's 4 branches: `docker-compose.yml` exists, `.git` exists, non-empty dir, empty dir
+- Test the `setup_vidra` function's 4 branches: `docker-compose.yml` exists, `.git` exists, non-empty dir, empty dir
 - Test `INSTALL_DIR` auto-detection when run from `scripts/` subdirectory
 - Test `.env` generation: verify `SETUP_COMPLETED=false`, `PORT=8080`, `REQUIRE_IPFS=false` are present
 - Test that pre-existing `.env` is preserved (not overwritten)
@@ -246,7 +246,7 @@ Worktree: No
 |---|----------|----------|
 | 1 | GET / | 303 redirect to /setup/welcome |
 | 2 | GET /health | 200, {"status":"setup_required"} |
-| 3 | GET /setup/welcome | 200, HTML with "Welcome to Athena Setup" |
+| 3 | GET /setup/welcome | 200, HTML with "Welcome to Vidra Core Setup" |
 | 4 | GET /setup/database | 200, HTML with "Database" |
 | 5 | GET /setup/services | 200, HTML with "Services" |
 | 6 | GET /setup/storage | 200, HTML with "Storage" |

@@ -10,7 +10,7 @@ This tool encrypts existing plaintext ActivityPub private keys stored in the dat
 
 ### What This Tool Does
 
-1. Connects to the Athena database
+1. Connects to the Vidra Core database
 2. Identifies all unencrypted private keys
 3. Encrypts each key using AES-256-GCM
 4. Updates the database with encrypted keys
@@ -29,7 +29,7 @@ This tool encrypts existing plaintext ActivityPub private keys stored in the dat
 **CRITICAL:** Always backup before running this tool!
 
 ```bash
-pg_dump -U athena_user -d athena > athena_backup_$(date +%Y%m%d_%H%M%S).sql
+pg_dump -U vidra_user -d vidra > vidra_backup_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 ### 2. Generate Encryption Key
@@ -50,7 +50,7 @@ openssl rand -base64 48
 
 ```bash
 export ACTIVITYPUB_KEY_ENCRYPTION_KEY="your-generated-key-here"
-export DATABASE_URL="postgres://user:pass@localhost:5432/athena"
+export DATABASE_URL="postgres://user:pass@localhost:5432/vidra"
 ```
 
 Or use a `.env` file in the project root.
@@ -68,7 +68,7 @@ go run cmd/encrypt-activitypub-keys/main.go
 ```bash
 # Create .env file with your settings
 cat > .env << EOF
-DATABASE_URL=postgres://athena_user:password@localhost:5432/athena
+DATABASE_URL=postgres://vidra_user:password@localhost:5432/vidra
 ACTIVITYPUB_KEY_ENCRYPTION_KEY=your-generated-key-here
 ENABLE_ACTIVITYPUB=true
 EOF
@@ -113,7 +113,7 @@ After running the migration, verify that keys are encrypted:
 
 ```bash
 # Connect to your database
-psql -U athena_user -d athena
+psql -U vidra_user -d vidra
 
 # Check encryption status
 SELECT
@@ -312,13 +312,13 @@ After running this tool:
 2. **Restart application:**
 
    ```bash
-   systemctl restart athena
+   systemctl restart vidra
    ```
 
 3. **Verify in logs:**
 
    ```bash
-   journalctl -u athena | grep -i "activitypub.*encryption"
+   journalctl -u vidra | grep -i "activitypub.*encryption"
    ```
 
 The application will automatically:
@@ -338,22 +338,22 @@ The application will automatically:
 2. **Check Logs:**
 
    ```bash
-   journalctl -u athena -n 100
+   journalctl -u vidra -n 100
    ```
 
 3. **Contact Security Team:**
-   - Critical issues: <security@athena.example>
-   - General questions: <support@athena.example>
+   - Critical issues: <security@vidra.example>
+   - General questions: <support@vidra.example>
 
 ### Reporting Security Issues
 
 **Do NOT open public issues for security vulnerabilities!**
 
-Report security issues to: <security@athena.example>
+Report security issues to: <security@vidra.example>
 
 ## License
 
-This tool is part of the Athena platform and is subject to the same license terms.
+This tool is part of the Vidra Core platform and is subject to the same license terms.
 
 ---
 

@@ -1,12 +1,12 @@
 # Monitoring Setup Guide
 
-This guide explains how to set up monitoring for the Athena Video Platform using Prometheus and Grafana.
+This guide explains how to set up monitoring for the Vidra Core Video Platform using Prometheus and Grafana.
 For operational procedures and incident response, see the [Operations Runbook](RUNBOOK.md).
 
 ## Prerequisites
 
 - Docker and Docker Compose
-- Running Athena instance (using `docker-compose.yml`)
+- Running Vidra Core instance (using `docker-compose.yml`)
 
 ## Quick Start
 
@@ -35,7 +35,7 @@ For operational procedures and incident response, see the [Operations Runbook](R
 
 The configuration is in `prometheus.yml`. It is configured to scrape:
 
-- Athena App (metrics endpoint `:9090/metrics`)
+- Vidra Core App (metrics endpoint `:9090/metrics`)
 - Redis Exporter
 - Postgres Exporter
 
@@ -58,7 +58,7 @@ The configuration is in `prometheus.yml`. It is configured to scrape:
   - Change the Grafana admin password immediately.
   - Put Grafana behind a reverse proxy (Nginx) with SSL.
   - Restrict access to port 9090 (Prometheus) if not needed externally.
-- **Network:** The monitoring stack expects to attach to the default network. The main application uses the `athena-network` network (see `docker-compose.yml`). You may need to configure the monitoring stack to connect to this network. Check `docker network ls` to find the correct network name.
+- **Network:** The monitoring stack expects to attach to the default network. The main application uses the `vidra-network` network (see `docker-compose.yml`). You may need to configure the monitoring stack to connect to this network. Check `docker network ls` to find the correct network name.
 
 ## Troubleshooting
 

@@ -4,16 +4,16 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: athena-ingress-green-canary
+  name: vidra-ingress-green-canary
   labels:
-    app: athena
+    app: vidra
     deployment-color: green
   annotations:
     # NGINX Ingress canary annotations
     nginx.ingress.kubernetes.io/canary: "true"
     nginx.ingress.kubernetes.io/canary-weight: "0"  # Start with 0%, increase gradually
 
-    # Standard Athena ingress settings
+    # Standard Vidra Core ingress settings
     nginx.ingress.kubernetes.io/proxy-body-size: "5g"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
@@ -26,13 +26,13 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-  - host: athena.example.com  # Should match main ingress
+  - host: vidra.example.com  # Should match main ingress
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: athena-api-green
+            name: vidra-api-green
             port:
               number: 80

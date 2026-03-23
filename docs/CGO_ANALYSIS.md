@@ -33,7 +33,7 @@ zombiezen.com/go/sqlite v0.13.1
 **Dependency Chain:**
 
 ```
-athena
+vidra
 └── github.com/anacrolix/torrent v1.59.1
     ├── github.com/go-llsqlite/adapter (CGO required)
     ├── github.com/go-llsqlite/crawshaw (CGO required)
@@ -284,8 +284,8 @@ go list -deps ./cmd/server | grep -i sqlite
 # Should only show indirect deps, not used at runtime
 
 # Build and check binary
-go build -o bin/athena ./cmd/server
-ldd bin/athena  # Should say "not a dynamic executable"
+go build -o bin/vidra ./cmd/server
+ldd bin/vidra  # Should say "not a dynamic executable"
 ```
 
 ### CI/CD Validation

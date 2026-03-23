@@ -1,5 +1,5 @@
 #!/bin/sh
-# Nginx entrypoint script for Athena
+# Nginx entrypoint script for Vidra Core
 # Handles conditional SSL certificate generation before starting nginx
 
 set -e
@@ -16,7 +16,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-printf "${GREEN}Athena Nginx Entrypoint${NC}\n"
+printf "${GREEN}Vidra Core Nginx Entrypoint${NC}\n"
 echo "Protocol: $NGINX_PROTOCOL"
 echo "Domain: $NGINX_DOMAIN"
 

@@ -1,6 +1,6 @@
 package usecase
 
-import "athena/internal/port"
+import "vidra-core/internal/port"
 
 type UploadRepository = port.UploadRepository
 type EncodingRepository = port.EncodingRepository

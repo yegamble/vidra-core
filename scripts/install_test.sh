@@ -127,8 +127,8 @@ test_existing_docker_compose() {
     # Create docker-compose.yml (simulates existing installation)
     touch "$TEST_DIR/docker-compose.yml"
 
-    # Run setup_athena
-    setup_athena 2>&1 | grep -q "already present" && \
+    # Run setup_vidra
+    setup_vidra 2>&1 | grep -q "already present" && \
         test_pass "Test 1: Skips clone when docker-compose.yml exists" || \
         test_fail "Test 1: Skips clone when docker-compose.yml exists" "Expected 'already present' message"
 
@@ -145,8 +145,8 @@ test_existing_git_repo() {
     # Create .git directory (simulates git clone)
     mkdir -p "$TEST_DIR/.git"
 
-    # Run setup_athena
-    setup_athena 2>&1 | grep -q "git repository detected" && \
+    # Run setup_vidra
+    setup_vidra 2>&1 | grep -q "git repository detected" && \
         test_pass "Test 2: Runs git pull when .git exists" || \
         test_fail "Test 2: Runs git pull when .git exists" "Expected 'git repository detected' message"
 
@@ -163,8 +163,8 @@ test_non_empty_invalid_dir() {
     # Create a file (makes directory non-empty)
     touch "$TEST_DIR/somefile.txt"
 
-    # Run setup_athena - should exit with error
-    if setup_athena 2>&1 | grep -q "not empty"; then
+    # Run setup_vidra - should exit with error
+    if setup_vidra 2>&1 | grep -q "not empty"; then
         test_pass "Test 3: Exits with error for non-empty invalid directory"
     else
         test_fail "Test 3: Exits with error for non-empty invalid directory" "Expected 'not empty' error message"
@@ -181,9 +181,9 @@ test_empty_directory_clone() {
     mock_docker
 
     # Directory is empty, should trigger clone
-    setup_athena 2>&1 | grep -q "Downloading Athena" && \
+    setup_vidra 2>&1 | grep -q "Downloading Vidra Core" && \
         test_pass "Test 4: Clones repository in empty directory" || \
-        test_fail "Test 4: Clones repository in empty directory" "Expected 'Downloading Athena' message"
+        test_fail "Test 4: Clones repository in empty directory" "Expected 'Downloading Vidra Core' message"
 
     teardown_test
 }
@@ -197,7 +197,7 @@ test_custom_install_dir() {
     mock_git
     mock_docker
 
-    setup_athena 2>&1 | grep -q "$CUSTOM_DIR" && \
+    setup_vidra 2>&1 | grep -q "$CUSTOM_DIR" && \
         test_pass "Test 5: Respects custom INSTALL_DIR" || \
         test_fail "Test 5: Respects custom INSTALL_DIR" "Expected custom directory to be used"
 
@@ -243,8 +243,8 @@ test_preserve_existing_env() {
     echo "CUSTOM_VAR=value" > "$TEST_DIR/.env"
     touch "$TEST_DIR/docker-compose.yml"
 
-    # Run setup_athena
-    setup_athena >/dev/null 2>&1
+    # Run setup_vidra
+    setup_vidra >/dev/null 2>&1
 
     # Check that custom content is preserved
     if grep -q "CUSTOM_VAR=value" "$TEST_DIR/.env"; then
@@ -322,7 +322,7 @@ test_generated_env_contents() {
     mock_docker
 
     # Empty directory triggers .env creation
-    setup_athena >/dev/null 2>&1
+    setup_vidra >/dev/null 2>&1
 
     # Check .env contents
     errors=""

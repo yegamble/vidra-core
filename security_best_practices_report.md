@@ -1,4 +1,4 @@
-# Messaging & Secure Messaging Security Review (Athena)
+# Messaging & Secure Messaging Security Review (Vidra Core)
 
 Date: 2026-02-17
 Scope: Direct messaging (`/api/v1/messages`), secure messaging/E2EE code paths, and live stream chat WebSocket messaging.

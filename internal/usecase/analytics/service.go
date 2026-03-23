@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/port"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/google/uuid"
 	"github.com/mssola/user_agent"

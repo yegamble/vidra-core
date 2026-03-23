@@ -181,7 +181,7 @@ PASS: TestVideoImport_SetMetadata
 PASS: TestVideoImport_GetMetadata
 PASS: TestVideoImport_GetSourcePlatform (9 cases)
 PASS: TestVideoImport_StateMachine
-ok   athena/internal/domain 0.223s
+ok   vidra/internal/domain 0.223s
 ```
 
 ### 8. CI/CD Pipeline ✓

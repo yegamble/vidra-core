@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 )
 
 func (s *Service) GetOutbox(ctx context.Context, username string, page int, limit int) (*domain.OrderedCollectionPage, error) {

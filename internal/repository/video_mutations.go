@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 	"context"
 	"encoding/json"
 

@@ -8,7 +8,7 @@
 
 ## Critical Fix #1: SSRF Protection
 
-### File to Create: `/root/athena/internal/usecase/import/url_validator.go`
+### File to Create: `/root/vidra/internal/usecase/import/url_validator.go`
 
 ```go
 package importuc
@@ -89,7 +89,7 @@ func isBlockedIP(ip net.IP) bool {
 }
 ```
 
-### File to Modify: `/root/athena/internal/httpapi/handlers/video/import_handlers.go`
+### File to Modify: `/root/vidra/internal/httpapi/handlers/video/import_handlers.go`
 
 Add this validation in the `CreateImport` function BEFORE line 89:
 
@@ -107,7 +107,7 @@ if err := ValidateImportURL(req.SourceURL); err != nil {
 
 ## Critical Fix #2: File Size Validation
 
-### File to Create: `/root/athena/internal/usecase/import/file_validator.go`
+### File to Create: `/root/vidra/internal/usecase/import/file_validator.go`
 
 ```go
 package importuc
@@ -165,7 +165,7 @@ if err := ValidateRemoteFileSize(ctx, importReq.SourceURL); err != nil {
 
 ## Critical Fix #3: Input Sanitization
 
-### File to Modify: `/root/athena/internal/httpapi/handlers/social/comments.go`
+### File to Modify: `/root/vidra/internal/httpapi/handlers/social/comments.go`
 
 Add HTML escaping in `CreateComment` function:
 
@@ -182,7 +182,7 @@ if len(req.Body) == 0 || len(req.Body) > 10000 {
 req.Body = html.EscapeString(req.Body)
 ```
 
-### File to Modify: `/root/athena/internal/httpapi/handlers/video/import_handlers.go`
+### File to Modify: `/root/vidra/internal/httpapi/handlers/video/import_handlers.go`
 
 Add privacy validation:
 
@@ -209,7 +209,7 @@ if req.TargetPrivacy == "" {
 ### Step 1: Run Unit Tests
 
 ```bash
-cd /root/athena
+cd /root/vidra
 
 # Test URL validator
 go test ./internal/usecase/import -v -run TestValidateImportURL
@@ -228,7 +228,7 @@ go test ./... -short
 npm install -g newman
 
 # Run security tests
-newman run postman/athena-edge-cases-security.postman_collection.json \
+newman run postman/vidra-edge-cases-security.postman_collection.json \
   -e postman/test-local.postman_environment.json \
   --folder "01 - SSRF Protection Tests"
 
@@ -276,7 +276,7 @@ curl -X POST http://localhost:8080/api/v1/videos/imports \
 
 ## Unit Tests to Add
 
-### File to Create: `/root/athena/internal/usecase/import/url_validator_test.go`
+### File to Create: `/root/vidra/internal/usecase/import/url_validator_test.go`
 
 ```go
 package importuc
@@ -422,6 +422,6 @@ Set up alerts if:
 
 ## Questions?
 
-See full analysis: `/root/athena/BREAKING_CHANGES_ANALYSIS.md`
-See tests: `/root/athena/postman/athena-edge-cases-security.postman_collection.json`
-See summary: `/root/athena/EXECUTIVE_SUMMARY.md`
+See full analysis: `/root/vidra/BREAKING_CHANGES_ANALYSIS.md`
+See tests: `/root/vidra/postman/vidra-edge-cases-security.postman_collection.json`
+See summary: `/root/vidra/EXECUTIVE_SUMMARY.md`

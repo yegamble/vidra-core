@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/repository"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"

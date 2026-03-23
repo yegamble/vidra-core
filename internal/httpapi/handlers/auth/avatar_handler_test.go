@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/config"
-	"athena/internal/domain"
-	"athena/internal/generated"
-	"athena/internal/testutil"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/generated"
+	"vidra-core/internal/testutil"
 )
 
 // Test that filenames with backslash in extension are rejected (defense-in-depth)

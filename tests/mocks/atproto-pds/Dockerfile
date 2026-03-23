@@ -3,7 +3,7 @@ WORKDIR /build
 COPY main.go .
 COPY main_test.go .
 # Initialize a minimal module (the mock is a standalone binary)
-RUN go mod init athena-mock-atproto && go build -o mock-atproto .
+RUN go mod init vidra-mock-atproto && go build -o mock-atproto .
 
 FROM alpine:3.18
 RUN apk add --no-cache ca-certificates

@@ -15,7 +15,7 @@ import (
 
 	"golang.org/x/crypto/blake2b"
 
-	"athena/internal/domain"
+	"vidra-core/internal/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

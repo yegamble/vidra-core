@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Athena project includes a comprehensive, portable validation system that works across all platforms and environments, including:
+The Vidra Core project includes a comprehensive, portable validation system that works across all platforms and environments, including:
 
 - **Claude Code CLI** (with shell access)
 - **Claude Web Interface** (without shell access)
@@ -83,14 +83,14 @@ The system includes special documentation and requirements for Claude AI instanc
 - Must provide exact commands
 - Must not claim work is complete without user confirmation
 
-See `/Users/yosefgamble/github/athena/VALIDATION_REQUIRED.md` for full requirements.
+See `/Users/yosefgamble/github/vidra/VALIDATION_REQUIRED.md` for full requirements.
 
 ## Architecture
 
 ### File Structure
 
 ```
-athena/
+vidra/
 ├── VALIDATION_REQUIRED.md          # Main requirements document (Claude-focused)
 ├── .validation-quickref.md         # Quick reference card
 ├── README.md                       # Updated with validation info
@@ -289,7 +289,7 @@ build:       # Build server
 ```bash
 # First time
 git clone <repo>
-cd athena
+cd vidra
 ./scripts/setup-validation.sh  # Interactive setup
 
 # Daily workflow
@@ -303,7 +303,7 @@ git commit -m "changes"        # Pre-commit hook runs automatically
 ```bash
 # First time
 git clone <repo>
-cd athena
+cd vidra
 ./scripts/setup-validation.sh  # Interactive setup
 
 # Daily workflow
@@ -317,7 +317,7 @@ git commit -m "changes"
 ```bash
 # First time
 git clone <repo>
-cd athena
+cd vidra
 ./scripts/setup-validation.sh  # Interactive setup
 
 # Daily workflow
@@ -351,7 +351,7 @@ Claude: "I've made the changes to [files].
 IMPORTANT: Validations are required before using these changes.
 
 Please run:
-  cd /path/to/athena
+  cd /path/to/vidra
   make validate-all
 
 This will check:
@@ -681,4 +681,4 @@ For issues or questions:
 
 ## License
 
-Same as the Athena project.
+Same as the Vidra Core project.

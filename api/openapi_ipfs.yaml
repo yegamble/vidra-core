@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
-  title: Athena API - IPFS Streaming
+  title: Vidra Core API - IPFS Streaming
   description: |
-    Endpoints for Athena's IPFS-backed streaming diagnostics.
+    Endpoints for Vidra Core's IPFS-backed streaming diagnostics.
 
-    These routes are Athena-specific extensions that complement the PeerTube-compatible
+    These routes are Vidra Core-specific extensions that complement the PeerTube-compatible
     media surface by exposing gateway health and request metrics for IPFS delivery.
   version: 1.0.0
 

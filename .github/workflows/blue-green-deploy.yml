@@ -29,9 +29,9 @@ on:
 
 env:
   KUBECONFIG_PATH: /tmp/kubeconfig
-  NAMESPACE: athena
+  NAMESPACE: vidra
   REGISTRY: ghcr.io
-  IMAGE_NAME: yegamble/athena
+  IMAGE_NAME: yegamble/vidra
 
 permissions:
   contents: read
@@ -84,7 +84,7 @@ jobs:
         id: detect
         run: |
           # Detect which color (blue/green) is currently active
-          CURRENT_VERSION=$(kubectl get service athena-api -n ${{ env.NAMESPACE }} \
+          CURRENT_VERSION=$(kubectl get service vidra-api -n ${{ env.NAMESPACE }} \
             -o jsonpath='{.spec.selector.version}' 2>/dev/null || echo "none")
 
           if [ "$CURRENT_VERSION" = "blue" ]; then
@@ -110,7 +110,7 @@ jobs:
     if: ${{ !inputs.skip_staging }}
     environment:
       name: staging
-      url: https://staging.athena.example.com
+      url: https://staging.vidra.example.com
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -122,10 +122,10 @@ jobs:
 
       - name: Deploy to staging
         run: |
-          kubectl set image deployment/athena-api athena=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }} \
-            -n athena-staging
+          kubectl set image deployment/vidra-api vidra=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }} \
+            -n vidra-staging
 
-          kubectl rollout status deployment/athena-api -n athena-staging --timeout=5m
+          kubectl rollout status deployment/vidra-api -n vidra-staging --timeout=5m
 
       - name: Run staging smoke tests
         run: |
@@ -134,8 +134,8 @@ jobs:
             --restart=Never \
             --rm \
             -i \
-            -n athena-staging \
-            -- sh -c "curl -f http://athena-api/health && curl -f http://athena-api/ready"
+            -n vidra-staging \
+            -- sh -c "curl -f http://vidra-api/health && curl -f http://vidra-api/ready"
 
       - name: Run E2E tests against staging
         run: |
@@ -172,7 +172,7 @@ jobs:
             -i \
             -n ${{ env.NAMESPACE }} \
             --env="DATABASE_URL=${{ secrets.DATABASE_URL }}" \
-            -- /app/athena migrate status | tee migration_status.txt
+            -- /app/vidra migrate status | tee migration_status.txt
 
           if grep -q "pending" migration_status.txt; then
             echo "has_pending=true" >> $GITHUB_OUTPUT
@@ -188,7 +188,7 @@ jobs:
           apiVersion: batch/v1
           kind: Job
           metadata:
-            name: athena-migrate-${TIMESTAMP}
+            name: vidra-migrate-${TIMESTAMP}
             namespace: ${{ env.NAMESPACE }}
           spec:
             backoffLimit: 0
@@ -199,7 +199,7 @@ jobs:
                 containers:
                 - name: migrate
                   image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
-                  command: ["/app/athena"]
+                  command: ["/app/vidra"]
                   args: ["migrate", "up"]
                   env:
                   - name: DATABASE_URL
@@ -207,10 +207,10 @@ jobs:
           EOF
 
           # Wait for migration to complete
-          kubectl wait --for=condition=complete --timeout=600s job/athena-migrate-${TIMESTAMP} -n ${{ env.NAMESPACE }}
+          kubectl wait --for=condition=complete --timeout=600s job/vidra-migrate-${TIMESTAMP} -n ${{ env.NAMESPACE }}
 
           # Show migration logs
-          kubectl logs job/athena-migrate-${TIMESTAMP} -n ${{ env.NAMESPACE }}
+          kubectl logs job/vidra-migrate-${TIMESTAMP} -n ${{ env.NAMESPACE }}
 
       - name: Verify migration success
         run: |
@@ -222,7 +222,7 @@ jobs:
             -i \
             -n ${{ env.NAMESPACE }} \
             --env="DATABASE_URL=${{ secrets.DATABASE_URL }}" \
-            -- /app/athena migrate status
+            -- /app/vidra migrate status
 
   deploy-target-environment:
     name: Deploy ${{ needs.validate-input.outputs.target_color }} Environment
@@ -255,7 +255,7 @@ jobs:
 
           # Update kustomization with new image
           cd k8s/overlays/${TARGET_COLOR}
-          kustomize edit set image ghcr.io/yegamble/athena=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+          kustomize edit set image ghcr.io/yegamble/vidra-core=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
 
       - name: Deploy target environment
         run: |
@@ -265,8 +265,8 @@ jobs:
           kubectl apply -k k8s/overlays/${TARGET_COLOR}
 
           # Wait for rollout
-          kubectl rollout status deployment/athena-api-${TARGET_COLOR} -n ${{ env.NAMESPACE }} --timeout=10m
-          kubectl rollout status deployment/athena-encoding-worker-${TARGET_COLOR} -n ${{ env.NAMESPACE }} --timeout=10m
+          kubectl rollout status deployment/vidra-api-${TARGET_COLOR} -n ${{ env.NAMESPACE }} --timeout=10m
+          kubectl rollout status deployment/vidra-encoding-worker-${TARGET_COLOR} -n ${{ env.NAMESPACE }} --timeout=10m
 
       - name: Verify deployment
         run: |
@@ -308,7 +308,7 @@ jobs:
 
           # Update target service
           kubectl set env job/pre-switch-validation \
-            TARGET_SERVICE=athena-api-${TARGET_COLOR} \
+            TARGET_SERVICE=vidra-api-${TARGET_COLOR} \
             -n ${{ env.NAMESPACE }}
 
           # Wait for job to complete
@@ -323,7 +323,7 @@ jobs:
 
           kubectl apply -f k8s/jobs/smoke-tests.yaml
           kubectl set env job/smoke-tests \
-            BASE_URL=http://athena-api-${TARGET_COLOR} \
+            BASE_URL=http://vidra-api-${TARGET_COLOR} \
             -n ${{ env.NAMESPACE }}
 
           kubectl wait --for=condition=complete --timeout=300s job/smoke-tests -n ${{ env.NAMESPACE }}
@@ -353,7 +353,7 @@ jobs:
           kubectl apply -f k8s/overlays/${TARGET_COLOR}/ingress-canary.yaml
 
           # Set canary weight
-          kubectl patch ingress athena-ingress-${TARGET_COLOR}-canary -n ${{ env.NAMESPACE }} --type=merge \
+          kubectl patch ingress vidra-ingress-${TARGET_COLOR}-canary -n ${{ env.NAMESPACE }} --type=merge \
             -p '{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/canary-weight":"${{ inputs.canary_percentage }}"}}}'
 
           echo "Canary deployment active: ${{ inputs.canary_percentage }}% traffic to ${TARGET_COLOR}"
@@ -395,10 +395,10 @@ jobs:
           echo "Switching 100% traffic to ${TARGET_COLOR}..."
 
           # Update service selector
-          kubectl patch service athena-api -n ${{ env.NAMESPACE }} -p "{\"spec\":{\"selector\":{\"version\":\"${TARGET_COLOR}\"}}}"
+          kubectl patch service vidra-api -n ${{ env.NAMESPACE }} -p "{\"spec\":{\"selector\":{\"version\":\"${TARGET_COLOR}\"}}}"
 
           # Remove canary ingress
-          kubectl delete ingress athena-ingress-${TARGET_COLOR}-canary -n ${{ env.NAMESPACE }} || true
+          kubectl delete ingress vidra-ingress-${TARGET_COLOR}-canary -n ${{ env.NAMESPACE }} || true
 
           echo "Traffic switch complete: ${TARGET_COLOR} is now active"
 
@@ -417,7 +417,7 @@ jobs:
               --rm \
               -i \
               -n ${{ env.NAMESPACE }} \
-              -- curl -f http://athena-api/health
+              -- curl -f http://vidra-api/health
 
             sleep 300  # 5 minutes
           done
@@ -431,8 +431,8 @@ jobs:
           if [ "$CURRENT_COLOR" != "none" ]; then
             echo "Scaling down ${CURRENT_COLOR} environment to 1 replica (standby mode)..."
 
-            kubectl scale deployment athena-api-${CURRENT_COLOR} --replicas=1 -n ${{ env.NAMESPACE }}
-            kubectl scale deployment athena-encoding-worker-${CURRENT_COLOR} --replicas=0 -n ${{ env.NAMESPACE }}
+            kubectl scale deployment vidra-api-${CURRENT_COLOR} --replicas=1 -n ${{ env.NAMESPACE }}
+            kubectl scale deployment vidra-encoding-worker-${CURRENT_COLOR} --replicas=0 -n ${{ env.NAMESPACE }}
 
             echo "Old environment scaled down, keeping 1 API replica for emergency rollback"
           fi
@@ -451,7 +451,7 @@ jobs:
           curl -X POST "$SLACK_WEBHOOK_URL" \
             -H 'Content-Type: application/json' \
             -d '{
-              "text": "✅ Athena Blue/Green Deployment Successful",
+              "text": "✅ Vidra Core Blue/Green Deployment Successful",
               "blocks": [
                 {
                   "type": "section",
@@ -486,11 +486,11 @@ jobs:
             echo "ROLLBACK: Switching traffic back to ${CURRENT_COLOR}"
 
             # Scale up old environment if needed
-            kubectl scale deployment athena-api-${CURRENT_COLOR} --replicas=3 -n ${{ env.NAMESPACE }}
+            kubectl scale deployment vidra-api-${CURRENT_COLOR} --replicas=3 -n ${{ env.NAMESPACE }}
             kubectl wait --for=condition=ready pod -l version=${CURRENT_COLOR} --timeout=120s -n ${{ env.NAMESPACE }}
 
             # Switch traffic back
-            kubectl patch service athena-api -n ${{ env.NAMESPACE }} -p "{\"spec\":{\"selector\":{\"version\":\"${CURRENT_COLOR}\"}}}"
+            kubectl patch service vidra-api -n ${{ env.NAMESPACE }} -p "{\"spec\":{\"selector\":{\"version\":\"${CURRENT_COLOR}\"}}}"
 
             echo "Rollback complete: ${CURRENT_COLOR} is active again"
           else
@@ -503,7 +503,7 @@ jobs:
           curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
             -H 'Content-Type: application/json' \
             -d '{
-              "text": "❌ Athena Deployment FAILED - Rollback Executed",
+              "text": "❌ Vidra Core Deployment FAILED - Rollback Executed",
               "blocks": [
                 {
                   "type": "section",

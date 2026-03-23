@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"athena/internal/port"
+	"vidra-core/internal/port"
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"

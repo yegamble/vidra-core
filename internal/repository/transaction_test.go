@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"athena/internal/domain"
-	"athena/internal/testutil"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/testutil"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"

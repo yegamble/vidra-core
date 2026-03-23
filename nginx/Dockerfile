@@ -1,4 +1,4 @@
-# Athena Nginx Reverse Proxy
+# Vidra Core Nginx Reverse Proxy
 # Extends official nginx:alpine with openssl and curl for SSL generation and healthchecks
 
 FROM nginx:1.27-alpine

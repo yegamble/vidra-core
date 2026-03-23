@@ -2,7 +2,7 @@ FROM golang:1.24-alpine AS builder
 WORKDIR /build
 COPY main.go .
 COPY main_test.go .
-RUN go mod init athena-mock-activitypub && go build -o mock-activitypub .
+RUN go mod init vidra-mock-activitypub && go build -o mock-activitypub .
 
 FROM alpine:3.18
 RUN apk add --no-cache ca-certificates

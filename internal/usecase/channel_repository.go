@@ -1,6 +1,6 @@
 package usecase
 
-import "athena/internal/port"
+import "vidra-core/internal/port"
 
 // ChannelRepository defines the interface for channel data operations
 type ChannelRepository = port.ChannelRepository
