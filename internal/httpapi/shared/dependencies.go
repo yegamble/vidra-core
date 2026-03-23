@@ -115,6 +115,12 @@ type HandlerDependencies struct {
 
 	EncodingScheduler *scheduler.EncodingScheduler
 
+	// New feature repositories (typed as any; handler packages define their own interfaces)
+	ArchiveRepo        any // user.ArchiveRepository
+	ChannelSyncRepo    any // channel.ChannelSyncRepository
+	PlayerSettingsRepo any // player.PlayerSettingsRepository
+	LogRepo            any // admin.LogRepository
+
 	DB               *sql.DB
 	Redis            *redis.Client
 	JWTSecret        string

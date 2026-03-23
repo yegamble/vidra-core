@@ -1,6 +1,7 @@
 # PeerTube Import Parity Implementation Plan
 
 Created: 2026-03-22
+Updated: 2026-03-23 (comprehensive audit pass)
 Status: VERIFIED WITH FOLLOW-UP
 Approved: Yes
 Iterations: 0
@@ -10,6 +11,30 @@ Type: Feature
 ## Summary
 
 **Goal:** Close the API/runtime parity gaps and produce an accurate gap report that distinguishes validated PeerTube-shaped runtime behavior from the still-missing PeerTube ETL/importer.
+
+## 2026-03-23 Comprehensive Audit Results
+
+A full audit was performed comparing Athena against PeerTube v8.1.0's REST API surface. See `docs/reports/peertube-parity-gap-report.md` for the complete findings. Key metrics:
+
+- **API parity**: ~85% of ~270+ PeerTube endpoints (33 categories COMPLETE, 5 PARTIAL, 15 MISSING — most missing are low-impact admin/moderation)
+- **Tests**: 4,687 functions, 77/77 packages pass, build clean
+- **Newman**: 19/29 collections in CI, all pass (341/468 requests automated)
+- **OpenAPI**: 20 specs (22,582 lines), but ~80-90 endpoints undocumented (~30-35%)
+- **Extra features**: 8 Athena-only features fully implemented (~1,000 tests)
+
+### Remaining Work (prioritized)
+
+**P0 — Client Compatibility**: Static file serving aliases (`/static/web-videos/`, `/static/streaming-playlists/hls/`), PeerTube URL aliases for playlists, uploads, captions, notifications, blocklists.
+
+**P1 — Newman CI**: Add 7 existing collections to CI runner, create 4 new collections (captions, 2FA, chat, redundancy), add E2E workflow chains.
+
+**P2 — OpenAPI**: Create 4 new spec files (notifications, messaging, runners, backup), extend existing specs for ~80 undocumented endpoints, fix quality issues.
+
+**P3 — Missing Features**: Watched words + automatic tags (12 endpoints), user data import/export (7), video passwords (4), source replacement (3), file management (5), comment approval, storyboards, embed privacy, channel sync, player settings, server debug/logs, bulk ops, client config, overviews (~48 endpoints total).
+
+**P4 — Migration Tooling**: PeerTube dump import pipeline, fixture-based migration E2E, upstream compatibility harness.
+
+**P5 — Code Quality**: Remove unused `extractPlugin`, fix silent IPFS pin failures, complete plugin `InstallFromURL`, fix `PublishVideoBatch` empty refs.
 **Architecture:** Add real-artifact unit/integration tests for plugin and runner lifecycles, a federation import E2E scenario, wire the ATProto PDS mock into the Docker test profile, and promote the selected Newman collections to live validation.
 **Tech Stack:** Go 1.24 (testify, httptest, archive/zip), Docker Compose, Postman/Newman, OpenAPI YAML
 

@@ -59,12 +59,12 @@ func installPluginArchive(
 	}
 
 	existing, err := pluginRepo.GetByName(ctx, manifest.Name)
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		if !overwrite {
 			return nil, domain.ErrPluginAlreadyExists
 		}
-	case err == domain.ErrPluginNotFound:
+	case domain.ErrPluginNotFound:
 		if overwrite {
 			return nil, domain.ErrPluginNotFound
 		}

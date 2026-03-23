@@ -8,6 +8,7 @@ import (
 	backuphandlers "athena/internal/httpapi/handlers/backup"
 	"athena/internal/httpapi/handlers/channel"
 	compat "athena/internal/httpapi/handlers/compat"
+	clientconfig "athena/internal/httpapi/handlers/config"
 	"athena/internal/httpapi/handlers/federation"
 	"athena/internal/httpapi/handlers/livestream"
 	"athena/internal/httpapi/handlers/messaging"
@@ -15,10 +16,12 @@ import (
 	"athena/internal/httpapi/handlers/misc"
 	"athena/internal/httpapi/handlers/moderation"
 	"athena/internal/httpapi/handlers/payments"
+	"athena/internal/httpapi/handlers/player"
 	pluginhandlers "athena/internal/httpapi/handlers/plugin"
 	runnerhandlers "athena/internal/httpapi/handlers/runner"
 	"athena/internal/httpapi/handlers/social"
 	statichandlers "athena/internal/httpapi/handlers/static"
+	userhandlers "athena/internal/httpapi/handlers/user"
 	"athena/internal/httpapi/handlers/video"
 	"athena/internal/httpapi/handlers/watchedwords"
 	"athena/internal/httpapi/shared"
@@ -371,6 +374,24 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 				r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/token-sessions", tokenSessionHandlers.ListTokenSessions)
 				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/token-sessions/{tokenSessionId}/revoke", tokenSessionHandlers.RevokeTokenSession)
 			}
+
+			// User data import/export (archive) routes
+			if archiveRepo, ok := deps.ArchiveRepo.(userhandlers.ArchiveRepository); ok {
+				archiveHandlers := userhandlers.NewArchiveHandlers(archiveRepo)
+				r.Route("/{userId}/exports", func(r chi.Router) {
+					r.Use(middleware.Auth(cfg.JWTSecret))
+					r.Post("/request", archiveHandlers.RequestExport)
+					r.Get("/", archiveHandlers.ListExports)
+					r.Delete("/{id}", archiveHandlers.DeleteExport)
+				})
+				r.Route("/{userId}/imports", func(r chi.Router) {
+					r.Use(middleware.Auth(cfg.JWTSecret))
+					r.Post("/import-resumable", archiveHandlers.InitImportResumable)
+					r.Put("/import-resumable", archiveHandlers.UploadImportChunk)
+					r.Delete("/import-resumable", archiveHandlers.CancelImportResumable)
+					r.Get("/latest", archiveHandlers.GetLatestImport)
+				})
+			}
 		})
 
 		// PeerTube-compatible /video-channels/{channelHandle} routes
@@ -396,6 +417,32 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 				r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{channelHandle}/collaborators/{collaboratorId}", collaboratorsNotImplemented)
 			}
 		})
+
+		// Video channel syncs
+		if syncRepo, ok := deps.ChannelSyncRepo.(channel.ChannelSyncRepository); ok {
+			syncHandlers := channel.NewSyncHandlers(syncRepo)
+			r.Route("/video-channel-syncs", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Post("/", syncHandlers.CreateSync)
+				r.Delete("/{id}", syncHandlers.DeleteSync)
+				r.Post("/{id}/trigger-now", syncHandlers.TriggerSync)
+			})
+		}
+
+		// Player settings
+		if psRepo, ok := deps.PlayerSettingsRepo.(player.PlayerSettingsRepository); ok {
+			playerHandlers := player.NewSettingsHandlers(psRepo)
+			r.Route("/player-settings", func(r chi.Router) {
+				r.Get("/videos/{videoId}", playerHandlers.GetVideoSettings)
+				r.With(middleware.Auth(cfg.JWTSecret)).Put("/videos/{videoId}", playerHandlers.UpdateVideoSettings)
+				r.Get("/video-channels/{handle}", playerHandlers.GetChannelSettings)
+				r.With(middleware.Auth(cfg.JWTSecret)).Put("/video-channels/{handle}", playerHandlers.UpdateChannelSettings)
+			})
+		}
+
+		// Client configuration
+		clientConfigHandlers := clientconfig.NewClientConfigHandlers()
+		r.Post("/client-config/update-interface-language", clientConfigHandlers.UpdateInterfaceLanguage)
 
 		// Playlist privacies (public, unauthenticated)
 		r.Route("/video-playlists", func(r chi.Router) {
@@ -635,6 +682,20 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Delete("/server/followers/{host}", sfHandlers.DeleteFollower)
 		}
 		r.Post("/server/contact", misc.ContactFormHandler())
+
+		// Server debug endpoints (admin only)
+		debugHandlers := admin.NewDebugHandlers()
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Get("/server/debug", debugHandlers.GetDebugInfo)
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Post("/server/debug/run-command", debugHandlers.RunCommand)
+
+		// Server log endpoints
+		if logRepo, ok := deps.LogRepo.(admin.LogRepository); ok {
+			logHandlers := admin.NewLogHandlers(logRepo)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Get("/server/logs", logHandlers.GetServerLogs)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Get("/server/audit-logs", logHandlers.GetAuditLogs)
+			r.Post("/server/logs/client", logHandlers.CreateClientLog)
+		}
+
 		r.Get("/oauth-clients/local", misc.GetOAuthLocalHandler("local", cfg.JWTSecret))
 
 		r.Route("/playlists", func(r chi.Router) {
