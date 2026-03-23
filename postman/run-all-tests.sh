@@ -73,6 +73,9 @@ athena-e2e-auth-flow.postman_collection.json
 athena-e2e-video-lifecycle.postman_collection.json
 athena-e2e-payment-flow.postman_collection.json
 athena-frontend-api-gaps.postman_collection.json
+athena-registration-edge-cases.postman_collection.json
+athena-edge-cases-security.postman_collection.json
+athena-virus-scanner-tests.postman_collection.json
 "
 
 collections_run=0

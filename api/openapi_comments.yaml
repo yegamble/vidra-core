@@ -186,7 +186,7 @@ paths:
 
     delete:
       summary: Delete a comment (soft delete)
-      operationId: deleteComment
+      operationId: comments_deleteComment
       tags:
         - Comments
         - PeerTube-Compat

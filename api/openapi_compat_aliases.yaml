@@ -66,7 +66,7 @@ paths:
     get:
       summary: List video categories (PeerTube alias)
       description: Alias for GET /api/v1/categories
-      operationId: listVideoCategories
+      operationId: compat_aliases_listVideoCategories
       tags:
         - Videos (PeerTube Compat)
       responses:
@@ -267,7 +267,7 @@ paths:
         The captionId parameter accepts both a UUID (Athena native) and a language
         code (PeerTube compatible, e.g., "en", "fr"). When a language code is provided,
         it is resolved to the caption ID for that video.
-      operationId: updateCaption
+      operationId: compat_aliases_updateCaption
       tags:
         - Captions (PeerTube Compat)
       security:
@@ -293,7 +293,7 @@ paths:
           description: Caption not found
     delete:
       summary: Delete a caption by ID or language code
-      operationId: deleteCaption
+      operationId: compat_aliases_deleteCaption
       tags:
         - Captions (PeerTube Compat)
       security:

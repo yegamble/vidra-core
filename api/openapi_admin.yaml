@@ -46,7 +46,7 @@ paths:
         - PeerTube-Compat
       summary: List all users
       description: List all users with admin/moderator access
-      operationId: adminListUsers
+      operationId: admin_listUsers
       security:
         - bearerAuth: []
       responses:
@@ -75,7 +75,7 @@ paths:
         - PeerTube-Compat
       summary: Update a user
       description: Admin updates user properties (role, quota, etc.)
-      operationId: adminUpdateUser
+      operationId: admin_updateUser
       security:
         - bearerAuth: []
       parameters:
@@ -199,7 +199,7 @@ paths:
         - PeerTube-Compat
       summary: List all videos (admin)
       description: List all videos across all users. Admin/moderator only.
-      operationId: adminListVideos
+      operationId: admin_listVideos
       security:
         - bearerAuth: []
       responses:
@@ -721,7 +721,7 @@ paths:
         - PeerTube-Compat
       summary: List OAuth clients
       description: List all registered OAuth clients. Admin only.
-      operationId: adminListOAuthClients
+      operationId: admin_listOAuthClients
       security:
         - bearerAuth: []
       responses:
@@ -749,7 +749,7 @@ paths:
         - PeerTube-Compat
       summary: Create an OAuth client
       description: Create a new OAuth client application. Admin only.
-      operationId: adminCreateOAuthClient
+      operationId: admin_createOAuthClient
       security:
         - bearerAuth: []
       requestBody:
@@ -782,7 +782,7 @@ paths:
         - PeerTube-Compat
       summary: Rotate OAuth client secret
       description: Generate a new client secret for an OAuth client. Admin only.
-      operationId: adminRotateOAuthClientSecret
+      operationId: admin_rotateOAuthClientSecret
       security:
         - bearerAuth: []
       parameters:
@@ -818,7 +818,7 @@ paths:
         - PeerTube-Compat
       summary: Delete an OAuth client
       description: Delete an OAuth client. Admin only.
-      operationId: adminDeleteOAuthClient
+      operationId: admin_deleteOAuthClient
       security:
         - bearerAuth: []
       parameters:
@@ -970,7 +970,7 @@ paths:
         - PeerTube-Compat
       summary: Get instance about
       description: Get public about information for this instance
-      operationId: getInstanceAbout
+      operationId: admin_getInstanceAbout
       security: []
       responses:
         '200':
@@ -987,7 +987,7 @@ paths:
         - PeerTube-Compat
       summary: Get instance statistics
       description: Get public statistics for this instance (user count, video count, etc.)
-      operationId: getInstanceStats
+      operationId: admin_getInstanceStats
       security: []
       responses:
         '200':
@@ -1006,7 +1006,7 @@ paths:
         - PeerTube-Compat
       summary: Get public config
       description: Get the public instance configuration
-      operationId: getPublicConfig
+      operationId: admin_getPublicConfig
       security: []
       responses:
         '200':

@@ -520,7 +520,7 @@ paths:
         - Users
       summary: Get my channels
       description: Returns all channels owned by the authenticated user
-      operationId: getMyChannels
+      operationId: channels_getMyChannels
       responses:
         '200':
           description: List of user's channels

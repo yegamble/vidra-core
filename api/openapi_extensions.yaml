@@ -35,7 +35,7 @@ paths:
   /api/v1/views/history:
     get:
       summary: Get view history
-      operationId: getViewHistory
+      operationId: extensions_getViewHistory
       description: >
         Returns the authenticated user's watch history with filtering options.
         Admins can view other users' history by specifying user_id.
@@ -405,7 +405,7 @@ paths:
   /api/v1/video-channels/{channelHandle}/collaborators:
     get:
       summary: List channel collaborators
-      operationId: listChannelCollaborators
+      operationId: extensions_listChannelCollaborators
       description: >
         List all collaborators for a channel. Requires channel owner or
         accepted collaborator status.
@@ -447,7 +447,7 @@ paths:
   /api/v1/video-channels/{channelHandle}/collaborators/invite:
     post:
       summary: Invite a channel collaborator
-      operationId: inviteChannelCollaborator
+      operationId: extensions_inviteChannelCollaborator
       description: >
         Invite a user to collaborate on a channel. Only the channel owner
         can invite collaborators.
@@ -507,7 +507,7 @@ paths:
   /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}/accept:
     post:
       summary: Accept collaborator invitation
-      operationId: acceptChannelCollaborator
+      operationId: extensions_acceptChannelCollaborator
       description: The invited user accepts the collaboration invitation
       tags:
         - Channel Collaborators
@@ -545,7 +545,7 @@ paths:
   /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}/reject:
     post:
       summary: Reject collaborator invitation
-      operationId: rejectChannelCollaborator
+      operationId: extensions_rejectChannelCollaborator
       description: The invited user rejects the collaboration invitation
       tags:
         - Channel Collaborators
@@ -583,7 +583,7 @@ paths:
   /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}:
     delete:
       summary: Remove a channel collaborator
-      operationId: deleteChannelCollaborator
+      operationId: extensions_deleteChannelCollaborator
       description: >
         Remove a collaborator from a channel. Channel owner can remove
         anyone; collaborators can remove themselves.
@@ -621,7 +621,7 @@ paths:
   /api/v1/trending:
     get:
       summary: Get trending videos
-      operationId: getTrendingVideos
+      operationId: extensions_getTrendingVideos
       description: >
         Returns currently trending videos based on view counts and engagement.
         Supports pagination and optional detailed responses.
@@ -755,7 +755,7 @@ paths:
   /api/v1/categories:
     get:
       summary: List video categories
-      operationId: listVideoCategories
+      operationId: extensions_listVideoCategories
       description: Returns all video categories with optional filtering and pagination
       tags:
         - Video Categories
@@ -962,7 +962,7 @@ paths:
 
     post:
       summary: Block an account
-      operationId: blockAccount
+      operationId: extensions_blockAccount
       description: Block a user account for the authenticated user
       tags:
         - User Blocklists
@@ -1000,7 +1000,7 @@ paths:
   /api/v1/blocklist/accounts/{accountName}:
     delete:
       summary: Unblock an account
-      operationId: unblockAccount
+      operationId: extensions_unblockAccount
       description: Remove a block on a user account
       tags:
         - User Blocklists
@@ -1053,7 +1053,7 @@ paths:
 
     post:
       summary: Block a server
-      operationId: blockServer
+      operationId: extensions_blockServer
       description: Block an entire server/instance for the authenticated user
       tags:
         - User Blocklists
@@ -1087,7 +1087,7 @@ paths:
   /api/v1/blocklist/servers/{host}:
     delete:
       summary: Unblock a server
-      operationId: unblockServer
+      operationId: extensions_unblockServer
       description: Remove a block on a server
       tags:
         - User Blocklists
@@ -1112,7 +1112,7 @@ paths:
   /api/v1/blocklist/status:
     get:
       summary: Get blocklist status
-      operationId: getBlocklistStatus
+      operationId: extensions_getBlocklistStatus
       description: Get the blocklist feature status for the authenticated user
       tags:
         - User Blocklists

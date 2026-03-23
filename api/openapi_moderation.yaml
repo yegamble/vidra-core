@@ -318,7 +318,7 @@ paths:
         - PeerTube-Compat
       summary: Get instance information
       description: Get public information about this instance
-      operationId: getInstanceAbout
+      operationId: moderation_getInstanceAbout
       security: []
       responses:
         '200':
@@ -340,7 +340,7 @@ paths:
         - PeerTube-Compat
       summary: Get public instance configuration
       description: Returns public configuration for this instance (signup settings, video limits, features). No authentication required.
-      operationId: getPublicConfig
+      operationId: moderation_getPublicConfig
       security: []
       responses:
         '200':
@@ -379,7 +379,7 @@ paths:
         - PeerTube-Compat
       summary: Get instance statistics
       description: Returns aggregate statistics for this instance (user count, video count). No authentication required.
-      operationId: getInstanceStats
+      operationId: moderation_getInstanceStats
       security: []
       responses:
         '200':

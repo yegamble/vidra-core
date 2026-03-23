@@ -5149,7 +5149,7 @@ paths:
         - Messages
       summary: Mark message as read
       description: Mark a message as read
-      operationId: markMessageRead
+      operationId: markMessageAsRead
       parameters:
         - name: messageId
           in: path
@@ -5210,7 +5210,7 @@ paths:
         - Conversations
       summary: Get conversations
       description: Get user's conversation list
-      operationId: getConversations
+      operationId: listConversations
       responses:
         '200':
           description: List of conversations

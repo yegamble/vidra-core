@@ -113,7 +113,7 @@ paths:
         - Engagement metrics (likes, comments, shares)
         - Traffic sources
         - Watch time statistics
-      operationId: getVideoAnalytics
+      operationId: analytics_getVideoAnalytics
       parameters:
         - name: id
           in: path
@@ -315,7 +315,7 @@ paths:
       description: |
         Get the most-viewed videos on the platform.
         Results can be filtered by time period and category.
-      operationId: getTopVideos
+      operationId: analytics_getTopVideos
       parameters:
         - name: period
           in: query
@@ -394,7 +394,7 @@ paths:
         - Comment activity
         - Share count
         - Watch time completion rate
-      operationId: getTrendingVideos
+      operationId: analytics_getTrendingVideos
       parameters:
         - name: category
           in: query

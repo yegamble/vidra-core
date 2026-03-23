@@ -20,7 +20,7 @@ paths:
       description: |
         Retrieve notifications for the authenticated user with optional filtering by read status
         and notification type. Supports pagination via limit/offset or page/pageSize.
-      operationId: listNotifications
+      operationId: notifications_listNotifications
       security:
         - bearerAuth: []
       parameters:
@@ -135,7 +135,7 @@ paths:
         - Notifications
       summary: Get notification statistics
       description: Returns aggregate notification statistics for the authenticated user, broken down by type
-      operationId: getNotificationStats
+      operationId: notifications_getNotificationStats
       security:
         - bearerAuth: []
       responses:
@@ -266,7 +266,7 @@ paths:
         - Notifications
       summary: Delete a notification
       description: Permanently deletes a notification for the authenticated user
-      operationId: deleteNotification
+      operationId: notifications_deleteNotification
       security:
         - bearerAuth: []
       parameters:

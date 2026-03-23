@@ -40,7 +40,7 @@ paths:
         that must be used for subsequent chunk uploads.
 
         The session expires after 24 hours of inactivity.
-      operationId: initiateUpload
+      operationId: uploads_initiateUpload
       requestBody:
         required: true
         content:
@@ -106,7 +106,7 @@ paths:
         Each chunk must match the chunk_size specified during initiation (except the last chunk).
 
         Supports resumable uploads - if a chunk fails, you can retry it.
-      operationId: uploadChunk
+      operationId: uploads_uploadChunk
       parameters:
         - name: sessionId
           in: path
@@ -230,7 +230,7 @@ paths:
         The server will merge chunks, validate the file, and enqueue for encoding.
 
         This triggers async video processing (transcoding, thumbnail generation, etc.).
-      operationId: completeUpload
+      operationId: uploads_completeUpload
       parameters:
         - name: sessionId
           in: path
@@ -324,7 +324,7 @@ paths:
         - Uploads
       summary: Get upload session status
       description: Check the current status of an upload session, including which chunks have been received.
-      operationId: getUploadStatus
+      operationId: uploads_getUploadStatus
       parameters:
         - name: sessionId
           in: path
@@ -374,7 +374,7 @@ paths:
       description: |
         Get information needed to resume an interrupted upload.
         Returns list of successfully uploaded chunk indexes.
-      operationId: resumeUpload
+      operationId: uploads_resumeUpload
       parameters:
         - name: sessionId
           in: path
@@ -621,7 +621,7 @@ paths:
 
         Supports filtering by video_id, user_id, or job_id.
         Status is cached in Redis for performance.
-      operationId: getEncodingStatus
+      operationId: uploads_getEncodingStatus
       parameters:
         - name: video_id
           in: query

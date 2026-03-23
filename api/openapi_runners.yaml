@@ -31,7 +31,7 @@ paths:
         - PeerTube-Compat
       summary: Generate a registration token
       description: Create a new registration token that runners can use to register. Admin/moderator only.
-      operationId: generateRunnerRegistrationToken
+      operationId: runners_generateRunnerRegistrationToken
       security:
         - bearerAuth: []
       requestBody:
@@ -69,7 +69,7 @@ paths:
         - PeerTube-Compat
       summary: List registration tokens
       description: List all registration tokens. Admin/moderator only.
-      operationId: listRunnerRegistrationTokens
+      operationId: runners_listRunnerRegistrationTokens
       security:
         - bearerAuth: []
       responses:
@@ -103,7 +103,7 @@ paths:
         - PeerTube-Compat
       summary: Delete a registration token
       description: Delete a registration token by ID. Admin/moderator only.
-      operationId: deleteRunnerRegistrationToken
+      operationId: runners_deleteRunnerRegistrationToken
       security:
         - bearerAuth: []
       parameters:
@@ -145,7 +145,7 @@ paths:
       description: |
         Register a new remote runner using a valid registration token.
         Returns the runner's unique authentication token for subsequent API calls.
-      operationId: registerRunner
+      operationId: runners_registerRunner
       security: []
       requestBody:
         required: true
@@ -204,7 +204,7 @@ paths:
         - PeerTube-Compat
       summary: Unregister a runner
       description: Unregister a runner using its runner token. Provided via X-Runner-Token header or request body.
-      operationId: unregisterRunner
+      operationId: runners_unregisterRunner
       security: []
       requestBody:
         required: false
@@ -239,7 +239,7 @@ paths:
         - PeerTube-Compat
       summary: List runners
       description: List all registered runners. Admin/moderator only. Runner tokens are redacted.
-      operationId: listRunners
+      operationId: runners_listRunners
       security:
         - bearerAuth: []
       responses:
@@ -273,7 +273,7 @@ paths:
         - PeerTube-Compat
       summary: Delete a runner
       description: Delete a registered runner by ID. Admin/moderator only.
-      operationId: deleteRunner
+      operationId: runners_deleteRunner
       security:
         - bearerAuth: []
       parameters:
@@ -315,7 +315,7 @@ paths:
       description: |
         Runner requests the next available encoding job. Authenticated via runner token.
         Returns 204 No Content if no jobs are available.
-      operationId: requestRunnerJob
+      operationId: runners_requestRunnerJob
       security: []
       parameters:
         - $ref: '#/components/parameters/RunnerTokenHeader'
@@ -356,7 +356,7 @@ paths:
         - PeerTube-Compat
       summary: Accept a job
       description: Runner accepts an assigned job, transitioning it to the accepted state
-      operationId: acceptRunnerJob
+      operationId: runners_acceptRunnerJob
       security: []
       parameters:
         - $ref: '#/components/parameters/JobUUID'
@@ -393,7 +393,7 @@ paths:
         - PeerTube-Compat
       summary: Abort a job
       description: Runner aborts an assigned job. The encoding job is re-queued for another runner.
-      operationId: abortRunnerJob
+      operationId: runners_abortRunnerJob
       security: []
       parameters:
         - $ref: '#/components/parameters/JobUUID'
@@ -430,7 +430,7 @@ paths:
         - PeerTube-Compat
       summary: Update job progress
       description: Runner reports progress and metadata for an assigned job
-      operationId: updateRunnerJob
+      operationId: runners_updateRunnerJob
       security: []
       parameters:
         - $ref: '#/components/parameters/JobUUID'
@@ -561,7 +561,7 @@ paths:
         - PeerTube-Compat
       summary: List runner jobs
       description: List all runner job assignments with runner and encoding job details. Admin/moderator only.
-      operationId: listRunnerJobs
+      operationId: runners_listRunnerJobs
       security:
         - bearerAuth: []
       responses:
@@ -595,7 +595,7 @@ paths:
         - PeerTube-Compat
       summary: Cancel a runner job
       description: Admin cancels a runner job assignment. Admin/moderator only.
-      operationId: cancelRunnerJob
+      operationId: runners_cancelRunnerJob
       security:
         - bearerAuth: []
       parameters:
@@ -623,7 +623,7 @@ paths:
       description: |
         Admin deletes a runner job assignment. If the encoding job is currently processing,
         it is reset to pending. Admin/moderator only.
-      operationId: deleteRunnerJob
+      operationId: runners_deleteRunnerJob
       security:
         - bearerAuth: []
       parameters:

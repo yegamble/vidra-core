@@ -500,7 +500,7 @@ paths:
         - Social - Comments
       summary: Delete a comment
       description: Remove a comment record by AT URI.
-      operationId: deleteComment
+      operationId: social_deleteComment
       parameters:
         - name: uri
           in: path

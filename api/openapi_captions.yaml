@@ -285,7 +285,7 @@ paths:
         - PeerTube-Compat
       summary: Update caption metadata
       description: Update the label or language code of an existing caption. Only video owner can update.
-      operationId: updateCaption
+      operationId: captions_updateCaption
       parameters:
         - name: id
           in: path
@@ -361,7 +361,7 @@ paths:
         - PeerTube-Compat
       summary: Delete a caption
       description: Delete a caption track from a video. Only video owner can delete.
-      operationId: deleteCaption
+      operationId: captions_deleteCaption
       parameters:
         - name: id
           in: path

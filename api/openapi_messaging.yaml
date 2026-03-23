@@ -32,7 +32,7 @@ paths:
         - PeerTube-Compat
       summary: Send a message
       description: Send a direct message to another user
-      operationId: sendMessage
+      operationId: messaging_sendMessage
       security:
         - bearerAuth: []
       requestBody:
@@ -74,7 +74,7 @@ paths:
         - PeerTube-Compat
       summary: Get messages
       description: Retrieve messages in a conversation with another user. The `conversation_with` parameter is required.
-      operationId: getMessages
+      operationId: messaging_getMessages
       security:
         - bearerAuth: []
       parameters:
@@ -130,7 +130,7 @@ paths:
         - PeerTube-Compat
       summary: Mark message as read
       description: Mark a specific message as read
-      operationId: markMessageAsRead
+      operationId: messaging_markMessageAsRead
       security:
         - bearerAuth: []
       parameters:
@@ -179,7 +179,7 @@ paths:
         - PeerTube-Compat
       summary: Delete a message
       description: Delete a message. The message is soft-deleted for the requesting user.
-      operationId: deleteMessage
+      operationId: messaging_deleteMessage
       security:
         - bearerAuth: []
       parameters:
@@ -230,7 +230,7 @@ paths:
         - PeerTube-Compat
       summary: List conversations
       description: Retrieve a paginated list of conversations for the authenticated user
-      operationId: listConversations
+      operationId: messaging_listConversations
       security:
         - bearerAuth: []
       parameters:
@@ -297,7 +297,7 @@ paths:
         - E2EE
       summary: Register identity key
       description: Register a public identity key and signing key for end-to-end encryption
-      operationId: registerIdentityKey
+      operationId: messaging_registerIdentityKey
       security:
         - bearerAuth: []
       requestBody:
@@ -377,7 +377,7 @@ paths:
         - E2EE
       summary: Get E2EE status
       description: Returns the E2EE status for the authenticated user (key registration, version, last rotation)
-      operationId: getE2EEStatus
+      operationId: messaging_getE2EEStatus
       security:
         - bearerAuth: []
       responses:
@@ -396,7 +396,7 @@ paths:
         - E2EE
       summary: Initiate key exchange
       description: Initiate an E2EE key exchange with another user to establish encrypted messaging
-      operationId: initiateKeyExchange
+      operationId: messaging_initiateKeyExchange
       security:
         - bearerAuth: []
       requestBody:
@@ -433,7 +433,7 @@ paths:
         - E2EE
       summary: Accept key exchange
       description: Accept a pending key exchange request to complete E2EE setup for a conversation
-      operationId: acceptKeyExchange
+      operationId: messaging_acceptKeyExchange
       security:
         - bearerAuth: []
       requestBody:
@@ -489,7 +489,7 @@ paths:
         - E2EE
       summary: List pending key exchanges
       description: List all pending key exchange requests for the authenticated user
-      operationId: getPendingKeyExchanges
+      operationId: messaging_getPendingKeyExchanges
       security:
         - bearerAuth: []
       responses:
@@ -515,7 +515,7 @@ paths:
         - E2EE
       summary: Store encrypted message
       description: Store an end-to-end encrypted message. Requires a completed key exchange with the recipient.
-      operationId: storeEncryptedMessage
+      operationId: messaging_storeEncryptedMessage
       security:
         - bearerAuth: []
       requestBody:
@@ -555,7 +555,7 @@ paths:
         - E2EE
       summary: Get encrypted messages
       description: Retrieve encrypted messages for a conversation. Caller must be a participant.
-      operationId: getEncryptedMessages
+      operationId: messaging_getEncryptedMessages
       security:
         - bearerAuth: []
       parameters:
