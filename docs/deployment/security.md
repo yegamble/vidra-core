@@ -69,12 +69,11 @@ RATE_LIMIT_API=100/minute
 
 ```bash
 # CORS settings
-ENABLE_CORS=true
-CORS_ORIGINS=https://yourdomain.com,https://app.yourdomain.com
-CORS_METHODS=GET,POST,PUT,DELETE,OPTIONS
-CORS_HEADERS=Content-Type,Authorization
-CORS_CREDENTIALS=true
-CORS_MAX_AGE=86400
+# When specific origins are listed, credentials are automatically allowed.
+# When set to "*", credentials are NOT sent (browser security requirement).
+CORS_ALLOWED_ORIGINS=https://yourdomain.com,https://app.yourdomain.com
+CORS_ALLOWED_METHODS=GET,POST,PUT,DELETE,OPTIONS
+CORS_ALLOWED_HEADERS=Content-Type,Authorization
 ```
 
 ## Database Security
