@@ -1,0 +1,218 @@
+{
+  "info": {
+    "name": "Athena User Import/Export API",
+    "description": "Test collection for user data export and import: request export, list exports, import user data.\n\nPeerTube-compatible user data portability endpoints.\n\n## Environment Variables Required\n- `baseUrl` - API base URL\n- `access_token` - JWT access token",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Export",
+      "item": [
+        {
+          "name": "Request User Export",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 201 or 202', () => {",
+                  "  pm.expect([200, 201, 202]).to.include(pm.response.code);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Export initiated', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/exports/request",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "exports", "request"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Exports",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Exports list returned', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/exports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "exports"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Import",
+      "item": [
+        {
+          "name": "Init User Import (resumable)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is valid response', () => {",
+                  "  pm.expect([200, 201, 202, 400, 501]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Import initiated', () => {",
+                  "    pm.expect(body).to.have.property('success', true);",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/imports/resumable",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "imports", "resumable"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Latest Import Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Import status returned', () => {",
+                  "    pm.expect(body).to.have.property('success', true);",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/imports/latest",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "imports", "latest"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Error: Export Without Auth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/exports/request",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "exports", "request"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Error: Import Without Auth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/imports/resumable",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "me", "imports", "resumable"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
