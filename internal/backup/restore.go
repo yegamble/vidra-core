@@ -61,6 +61,33 @@ func (r *RestoreManager) ListBackups(ctx context.Context) ([]BackupEntry, error)
 func (r *RestoreManager) Restore(ctx context.Context, opts RestoreOptions, progressChan chan<- RestoreProgress) error {
 	defer close(progressChan)
 
+	manifest, err := r.downloadAndExtract(ctx, opts, progressChan)
+	if err != nil {
+		return err
+	}
+
+	r.createPreRestoreBackup(ctx, opts, progressChan)
+
+	if err := r.restoreComponents(ctx, progressChan); err != nil {
+		return err
+	}
+
+	if err := r.runMigrationsIfNeeded(ctx, opts, manifest, progressChan); err != nil {
+		return err
+	}
+
+	progressChan <- RestoreProgress{
+		Stage:     "complete",
+		Progress:  1.0,
+		Message:   "Restore completed successfully",
+		Completed: true,
+	}
+
+	return nil
+}
+
+// downloadAndExtract downloads the backup archive, extracts it, and validates the manifest.
+func (r *RestoreManager) downloadAndExtract(ctx context.Context, opts RestoreOptions, progressChan chan<- RestoreProgress) (*Manifest, error) {
 	progressChan <- RestoreProgress{
 		Stage:    "downloading",
 		Progress: 0.1,
@@ -69,11 +96,8 @@ func (r *RestoreManager) Restore(ctx context.Context, opts RestoreOptions, progr
 
 	reader, err := r.target.Download(ctx, opts.BackupPath)
 	if err != nil {
-		progressChan <- RestoreProgress{
-			Stage: "error",
-			Error: fmt.Sprintf("failed to download backup: %v", err),
-		}
-		return fmt.Errorf("downloading backup: %w", err)
+		progressChan <- RestoreProgress{Stage: "error", Error: fmt.Sprintf("failed to download backup: %v", err)}
+		return nil, fmt.Errorf("downloading backup: %w", err)
 	}
 	defer reader.Close()
 
@@ -85,19 +109,13 @@ func (r *RestoreManager) Restore(ctx context.Context, opts RestoreOptions, progr
 
 	manifest, err := r.extractBackup(ctx, reader)
 	if err != nil {
-		progressChan <- RestoreProgress{
-			Stage: "error",
-			Error: fmt.Sprintf("failed to extract backup: %v", err),
-		}
-		return fmt.Errorf("extracting backup: %w", err)
+		progressChan <- RestoreProgress{Stage: "error", Error: fmt.Sprintf("failed to extract backup: %v", err)}
+		return nil, fmt.Errorf("extracting backup: %w", err)
 	}
 
 	if err := r.validateManifest(manifest); err != nil {
-		progressChan <- RestoreProgress{
-			Stage: "error",
-			Error: fmt.Sprintf("invalid manifest: %v", err),
-		}
-		return fmt.Errorf("validating manifest: %w", err)
+		progressChan <- RestoreProgress{Stage: "error", Error: fmt.Sprintf("invalid manifest: %v", err)}
+		return nil, fmt.Errorf("validating manifest: %w", err)
 	}
 
 	progressChan <- RestoreProgress{
@@ -107,98 +125,84 @@ func (r *RestoreManager) Restore(ctx context.Context, opts RestoreOptions, progr
 		SchemaFrom: manifest.SchemaVersion,
 	}
 
-	if opts.CreatePreBackup && r.BackupMgr != nil {
-		progressChan <- RestoreProgress{
-			Stage:    "pre_backup",
-			Progress: 0.4,
-			Message:  "Creating pre-restore backup...",
-		}
+	return manifest, nil
+}
 
-		if _, err := r.BackupMgr.CreateBackup(ctx); err != nil {
-			progressChan <- RestoreProgress{
-				Stage:   "pre_backup",
-				Message: fmt.Sprintf("Warning: pre-backup failed: %v", err),
-			}
-		}
+// createPreRestoreBackup creates a safety backup before restoring, if requested.
+func (r *RestoreManager) createPreRestoreBackup(ctx context.Context, opts RestoreOptions, progressChan chan<- RestoreProgress) {
+	if !opts.CreatePreBackup || r.BackupMgr == nil {
+		return
 	}
 
 	progressChan <- RestoreProgress{
-		Stage:    "restoring_db",
-		Progress: 0.5,
-		Message:  "Restoring database...",
+		Stage:    "pre_backup",
+		Progress: 0.4,
+		Message:  "Creating pre-restore backup...",
 	}
+
+	if _, err := r.BackupMgr.CreateBackup(ctx); err != nil {
+		progressChan <- RestoreProgress{
+			Stage:   "pre_backup",
+			Message: fmt.Sprintf("Warning: pre-backup failed: %v", err),
+		}
+	}
+}
+
+// restoreComponents restores the database, Redis, and storage from extracted backup files.
+func (r *RestoreManager) restoreComponents(ctx context.Context, progressChan chan<- RestoreProgress) error {
+	// Restore database
+	progressChan <- RestoreProgress{Stage: "restoring_db", Progress: 0.5, Message: "Restoring database..."}
 
 	dbPath := filepath.Join(r.tempDir, "database.sql")
 	if _, err := os.Stat(dbPath); err == nil {
 		if err := r.restoreDatabase(ctx, dbPath); err != nil {
-			progressChan <- RestoreProgress{
-				Stage: "error",
-				Error: fmt.Sprintf("database restore failed: %v", err),
-			}
+			progressChan <- RestoreProgress{Stage: "error", Error: fmt.Sprintf("database restore failed: %v", err)}
 			return fmt.Errorf("restoring database: %w", err)
 		}
 	} else {
-		progressChan <- RestoreProgress{
-			Stage:   "restoring_db",
-			Message: "Skipping database restore (not included in backup)",
-		}
+		progressChan <- RestoreProgress{Stage: "restoring_db", Message: "Skipping database restore (not included in backup)"}
 	}
 
-	progressChan <- RestoreProgress{
-		Stage:    "restoring_redis",
-		Progress: 0.7,
-		Message:  "Restoring Redis...",
-	}
+	// Restore Redis (non-fatal)
+	progressChan <- RestoreProgress{Stage: "restoring_redis", Progress: 0.7, Message: "Restoring Redis..."}
 
 	redisPath := filepath.Join(r.tempDir, "redis.rdb")
 	if _, err := os.Stat(redisPath); err == nil {
 		if err := r.restoreRedis(ctx, redisPath); err != nil {
-			progressChan <- RestoreProgress{
-				Stage:   "restoring_redis",
-				Message: fmt.Sprintf("Warning: Redis restore failed: %v", err),
-			}
+			progressChan <- RestoreProgress{Stage: "restoring_redis", Message: fmt.Sprintf("Warning: Redis restore failed: %v", err)}
 		}
 	}
 
-	progressChan <- RestoreProgress{
-		Stage:    "restoring_storage",
-		Progress: 0.8,
-		Message:  "Restoring storage files...",
-	}
+	// Restore storage (non-fatal)
+	progressChan <- RestoreProgress{Stage: "restoring_storage", Progress: 0.8, Message: "Restoring storage files..."}
 
 	storageArchive := filepath.Join(r.tempDir, "storage.tar.gz")
 	if _, err := os.Stat(storageArchive); err == nil {
 		if err := r.restoreStorage(ctx, storageArchive); err != nil {
-			progressChan <- RestoreProgress{
-				Stage:   "restoring_storage",
-				Message: fmt.Sprintf("Warning: Storage restore failed: %v", err),
-			}
+			progressChan <- RestoreProgress{Stage: "restoring_storage", Message: fmt.Sprintf("Warning: Storage restore failed: %v", err)}
 		}
 	}
 
-	if opts.RunMigrations && manifest.SchemaVersion < r.CurrentSchema {
-		progressChan <- RestoreProgress{
-			Stage:      "migrations",
-			Progress:   0.9,
-			Message:    "Running forward migrations...",
-			SchemaFrom: manifest.SchemaVersion,
-			SchemaTo:   r.CurrentSchema,
-		}
+	return nil
+}
 
-		if err := r.runForwardMigrations(ctx); err != nil {
-			progressChan <- RestoreProgress{
-				Stage: "error",
-				Error: fmt.Sprintf("migration failed: %v", err),
-			}
-			return fmt.Errorf("running migrations: %w", err)
-		}
+// runMigrationsIfNeeded runs forward migrations when the backup schema is older than the current schema.
+func (r *RestoreManager) runMigrationsIfNeeded(ctx context.Context, opts RestoreOptions, manifest *Manifest, progressChan chan<- RestoreProgress) error {
+	if !opts.RunMigrations || manifest.SchemaVersion >= r.CurrentSchema {
+		return nil
 	}
 
 	progressChan <- RestoreProgress{
-		Stage:     "complete",
-		Progress:  1.0,
-		Message:   "Restore completed successfully",
-		Completed: true,
+		Stage:      "migrations",
+		Progress:   0.9,
+		Message:    "Running forward migrations...",
+		SchemaFrom: manifest.SchemaVersion,
+		SchemaTo:   r.CurrentSchema,
+	}
+
+	if err := r.runForwardMigrations(ctx); err != nil {
+		progressChan <- RestoreProgress{Stage: "error", Error: fmt.Sprintf("migration failed: %v", err)}
+		return fmt.Errorf("running migrations: %w", err)
 	}
 
 	return nil

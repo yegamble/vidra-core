@@ -316,6 +316,94 @@ func TestValidateBinaryPath(t *testing.T) {
 	}
 }
 
+// --- validateMediaPath tests ---
+
+func TestValidateMediaPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid absolute path",
+			path:    "/data/uploads/web-videos/abc123.mp4",
+			wantErr: false,
+		},
+		{
+			name:    "valid relative path",
+			path:    "uploads/web-videos/abc123.mp4",
+			wantErr: false,
+		},
+		{
+			name:    "empty path",
+			path:    "",
+			wantErr: true,
+			errMsg:  "empty media path",
+		},
+		{
+			name:    "path traversal with dot-dot",
+			path:    "/data/uploads/../../etc/passwd",
+			wantErr: true,
+			errMsg:  "directory traversal",
+		},
+		{
+			name:    "relative path traversal",
+			path:    "../../../etc/shadow",
+			wantErr: true,
+			errMsg:  "directory traversal",
+		},
+		{
+			name:    "null byte injection",
+			path:    "/data/uploads/video.mp4\x00.txt",
+			wantErr: true,
+			errMsg:  "null byte",
+		},
+		{
+			name:    "filename starting with dash",
+			path:    "/data/uploads/-malicious.mp4",
+			wantErr: true,
+			errMsg:  "starts with dash",
+		},
+		{
+			name:    "just a dash filename",
+			path:    "/data/uploads/-",
+			wantErr: true,
+			errMsg:  "starts with dash",
+		},
+		{
+			name:    "path with spaces is allowed",
+			path:    "/data/uploads/my video.mp4",
+			wantErr: false,
+		},
+		{
+			name:    "path with unicode is allowed",
+			path:    "/data/uploads/vidéo.mp4",
+			wantErr: false,
+		},
+		{
+			name:    "UUID-based path typical of system",
+			path:    "/data/uploads/web-videos/550e8400-e29b-41d4-a716-446655440000.mp4",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMediaPath(tt.path)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 // --- generateMasterPlaylist tests ---
 
 func TestGenerateMasterPlaylist_BasicResolutions(t *testing.T) {

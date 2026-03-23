@@ -276,8 +276,19 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 	return videos, total, nil
 }
 
-func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
-	baseQuery := `
+// searchQueryBuilder accumulates query clauses and arguments for video search.
+type searchQueryBuilder struct {
+	baseQuery  string
+	countQuery string
+	args       []interface{}
+	argIndex   int
+	// sortArgsCount tracks extra args added for relevance sorting (not used in count query).
+	sortArgsCount int
+}
+
+func newSearchQueryBuilder() *searchQueryBuilder {
+	return &searchQueryBuilder{
+		baseQuery: `
         SELECT id, thumbnail_id, title, description, duration, views,
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
@@ -285,72 +296,71 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
                created_at, updated_at, output_paths, thumbnail_path, preview_path
         FROM videos
         WHERE privacy = 'public' AND status = 'completed'
-          AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
+          AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`,
+		countQuery: `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed' AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`,
+		args:       []interface{}{},
+		argIndex:   1,
+	}
+}
 
-	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed' AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
-
-	args := []interface{}{}
-	argIndex := 1
-
-	if req.Query != "" {
-		searchCondition := fmt.Sprintf(` AND (
+func (qb *searchQueryBuilder) addTextSearch(query string) {
+	if query == "" {
+		return
+	}
+	searchCondition := fmt.Sprintf(` AND (
             to_tsvector('english', title || ' ' || description) @@ plainto_tsquery('english', $%d)
             OR title ILIKE $%d
             OR description ILIKE $%d
-        )`, argIndex, argIndex+1, argIndex+2)
+        )`, qb.argIndex, qb.argIndex+1, qb.argIndex+2)
 
-		baseQuery += searchCondition
-		countQuery += searchCondition
+	qb.baseQuery += searchCondition
+	qb.countQuery += searchCondition
 
-		likeQuery := "%" + req.Query + "%"
-		args = append(args, req.Query, likeQuery, likeQuery)
-		argIndex += 3
+	likeQuery := "%" + query + "%"
+	qb.args = append(qb.args, query, likeQuery, likeQuery)
+	qb.argIndex += 3
+}
+
+func (qb *searchQueryBuilder) addTagFilter(tags []string) {
+	if len(tags) == 0 {
+		return
 	}
+	tagCondition := fmt.Sprintf(" AND tags && $%d", qb.argIndex)
+	qb.baseQuery += tagCondition
+	qb.countQuery += tagCondition
+	qb.args = append(qb.args, pq.Array(tags))
+	qb.argIndex++
+}
 
-	if len(req.Tags) > 0 {
-		tagCondition := fmt.Sprintf(" AND tags && $%d", argIndex)
-		baseQuery += tagCondition
-		countQuery += tagCondition
-		args = append(args, pq.Array(req.Tags))
-		argIndex++
+func (qb *searchQueryBuilder) addCategoryFilter(categoryID *int) {
+	if categoryID == nil {
+		return
 	}
+	qb.baseQuery += fmt.Sprintf(" AND category_id = $%d", qb.argIndex)
+	qb.countQuery += fmt.Sprintf(" AND category_id = $%d", qb.argIndex)
+	qb.args = append(qb.args, categoryID)
+	qb.argIndex++
+}
 
-	if req.CategoryID != nil {
-		baseQuery += fmt.Sprintf(" AND category_id = $%d", argIndex)
-		countQuery += fmt.Sprintf(" AND category_id = $%d", argIndex)
-		args = append(args, req.CategoryID)
-		argIndex++
+func (qb *searchQueryBuilder) addLanguageFilter(language string) {
+	if language == "" {
+		return
 	}
+	qb.baseQuery += fmt.Sprintf(" AND language = $%d", qb.argIndex)
+	qb.countQuery += fmt.Sprintf(" AND language = $%d", qb.argIndex)
+	qb.args = append(qb.args, language)
+	qb.argIndex++
+}
 
-	if req.Language != "" {
-		baseQuery += fmt.Sprintf(" AND language = $%d", argIndex)
-		countQuery += fmt.Sprintf(" AND language = $%d", argIndex)
-		args = append(args, req.Language)
-		argIndex++
-	}
-
-	orderBy := "upload_date"
-	sortArgsCount := 0
-	if req.Sort != "" {
-		switch req.Sort {
-		case "title", "views", "upload_date", "duration", "relevance":
-			if req.Sort == "relevance" && req.Query != "" {
-				orderBy = fmt.Sprintf("ts_rank(to_tsvector('english', title || ' ' || description), plainto_tsquery('english', $%d))", argIndex)
-				args = append(args, req.Query)
-				argIndex++
-				sortArgsCount++
-			} else {
-				orderBy = req.Sort
-			}
-		}
-	}
+func (qb *searchQueryBuilder) addSortAndPagination(req *domain.VideoSearchRequest) {
+	orderBy := qb.resolveOrderBy(req)
 
 	direction := "DESC"
 	if req.Order == "asc" {
 		direction = "ASC"
 	}
 
-	baseQuery += fmt.Sprintf(" ORDER BY %s %s", orderBy, direction)
+	qb.baseQuery += fmt.Sprintf(" ORDER BY %s %s", orderBy, direction)
 
 	limit := 20
 	if req.Limit > 0 && req.Limit <= 100 {
@@ -361,16 +371,48 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 		offset = req.Offset
 	}
 
-	baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
-	args = append(args, limit, offset)
+	qb.baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", qb.argIndex, qb.argIndex+1)
+	qb.args = append(qb.args, limit, offset)
+}
+
+func (qb *searchQueryBuilder) resolveOrderBy(req *domain.VideoSearchRequest) string {
+	orderBy := "upload_date"
+	if req.Sort != "" {
+		switch req.Sort {
+		case "title", "views", "upload_date", "duration", "relevance":
+			if req.Sort == "relevance" && req.Query != "" {
+				orderBy = fmt.Sprintf("ts_rank(to_tsvector('english', title || ' ' || description), plainto_tsquery('english', $%d))", qb.argIndex)
+				qb.args = append(qb.args, req.Query)
+				qb.argIndex++
+				qb.sortArgsCount++
+			} else {
+				orderBy = req.Sort
+			}
+		}
+	}
+	return orderBy
+}
+
+// countArgs returns the args slice suitable for the count query (excludes sort and pagination args).
+func (qb *searchQueryBuilder) countArgs() []interface{} {
+	return qb.args[:len(qb.args)-2-qb.sortArgsCount]
+}
+
+func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
+	qb := newSearchQueryBuilder()
+	qb.addTextSearch(req.Query)
+	qb.addTagFilter(req.Tags)
+	qb.addCategoryFilter(req.CategoryID)
+	qb.addLanguageFilter(req.Language)
+	qb.addSortAndPagination(req)
 
 	var total int64
-	err := r.db.QueryRowContext(ctx, countQuery, args[:len(args)-2-sortArgsCount]...).Scan(&total)
+	err := r.db.QueryRowContext(ctx, qb.countQuery, qb.countArgs()...).Scan(&total)
 	if err != nil {
 		return nil, 0, domain.NewDomainError("COUNT_FAILED", "Failed to count search results")
 	}
 
-	rows, err := r.db.QueryContext(ctx, baseQuery, args...)
+	rows, err := r.db.QueryContext(ctx, qb.baseQuery, qb.args...)
 	if err != nil {
 		return nil, 0, domain.NewDomainError("QUERY_FAILED", "Failed to search videos")
 	}

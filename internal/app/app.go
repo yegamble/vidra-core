@@ -283,6 +283,20 @@ func (app *Application) verifyIPFSConnection() error {
 }
 
 func (app *Application) initializeDependencies() *Dependencies {
+	deps := app.initializeRepositories()
+	app.initializeEmailServices(deps)
+	app.initializeCoreServices(deps)
+	app.initializeEncodingPipeline(deps)
+	app.initializeFederationServices(deps)
+	app.initializeInfrastructureServices(deps)
+	app.initializeLiveStreaming(deps)
+	app.WireImportDependencies(deps)
+	app.initializePayments(deps)
+
+	return deps
+}
+
+func (app *Application) initializeRepositories() *Dependencies {
 	deps := &Dependencies{
 		UserRepo:              repository.NewUserRepository(app.DB),
 		VideoRepo:             repository.NewVideoRepository(app.DB),
@@ -324,6 +338,10 @@ func (app *Application) initializeDependencies() *Dependencies {
 		deps.IOTARepo = repository.NewIOTARepository(app.DB)
 	}
 
+	return deps
+}
+
+func (app *Application) initializeEmailServices(deps *Dependencies) {
 	if app.Config.EnableEmail {
 		emailConfig := email.NewConfigFromAppConfig(app.Config)
 		deps.EmailService = email.NewService(emailConfig)
@@ -338,7 +356,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 			deps.EmailService,
 		)
 	}
+}
 
+func (app *Application) initializeCoreServices(deps *Dependencies) {
 	redisSessionRepo := repository.NewRedisSessionRepository(app.Redis)
 	deps.SessionRepo = repository.NewCompositeAuthRepository(deps.AuthRepo, redisSessionRepo)
 
@@ -376,7 +396,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 		deps.AtprotoService.StartBackgroundRefresh(context.Background(), time.Duration(app.Config.ATProtoRefreshIntervalSeconds)*time.Second)
 		app.atprotoService = deps.AtprotoService
 	}
+}
 
+func (app *Application) initializeEncodingPipeline(deps *Dependencies) {
 	deps.IPFSClient = ipfs.NewClient(
 		app.Config.IPFSApi,
 		app.Config.IPFSCluster,
@@ -403,35 +425,45 @@ func (app *Application) initializeDependencies() *Dependencies {
 		}
 	}
 
-	if app.Config.EnableS3 && app.Config.S3Bucket != "" {
-		s3Cfg := storage.S3Config{
-			Endpoint:  app.Config.S3Endpoint,
-			Bucket:    app.Config.S3Bucket,
-			AccessKey: app.Config.S3AccessKey,
-			SecretKey: app.Config.S3SecretKey,
-			Region:    app.Config.S3Region,
-		}
-		if s3b, err := storage.NewS3Backend(s3Cfg); err == nil {
-			type s3WireableEnc interface {
-				WithS3Backend(backend storage.StorageBackend) ucenc.Service
-			}
-			if sw, ok := deps.EncodingService.(s3WireableEnc); ok {
-				deps.EncodingService = sw.WithS3Backend(s3b)
-			}
-			// Wire S3 backend into captiongen so it can download source videos from S3.
-			if deps.CaptionGenService != nil {
-				type s3WireableCaption interface {
-					WithS3Backend(backend storage.StorageBackend) captiongen.Service
-				}
-				if sc, ok := deps.CaptionGenService.(s3WireableCaption); ok {
-					deps.CaptionGenService = sc.WithS3Backend(s3b)
-				}
-			}
-		} else {
-			log.Printf("S3 backend init failed (encoding): %v", err)
-		}
+	app.wireS3Backend(deps)
+}
+
+func (app *Application) wireS3Backend(deps *Dependencies) {
+	if !app.Config.EnableS3 || app.Config.S3Bucket == "" {
+		return
 	}
 
+	s3Cfg := storage.S3Config{
+		Endpoint:  app.Config.S3Endpoint,
+		Bucket:    app.Config.S3Bucket,
+		AccessKey: app.Config.S3AccessKey,
+		SecretKey: app.Config.S3SecretKey,
+		Region:    app.Config.S3Region,
+	}
+	s3b, err := storage.NewS3Backend(s3Cfg)
+	if err != nil {
+		log.Printf("S3 backend init failed (encoding): %v", err)
+		return
+	}
+
+	type s3WireableEnc interface {
+		WithS3Backend(backend storage.StorageBackend) ucenc.Service
+	}
+	if sw, ok := deps.EncodingService.(s3WireableEnc); ok {
+		deps.EncodingService = sw.WithS3Backend(s3b)
+	}
+	// Wire S3 backend into captiongen so it can download source videos from S3.
+	if deps.CaptionGenService != nil {
+		type s3WireableCaption interface {
+			WithS3Backend(backend storage.StorageBackend) captiongen.Service
+		}
+		if sc, ok := deps.CaptionGenService.(s3WireableCaption); ok {
+			deps.CaptionGenService = sc.WithS3Backend(s3b)
+		}
+	}
+}
+
+func (app *Application) initializeFederationServices(deps *Dependencies) {
 	if app.Config.EnableATProto {
 		deps.FederationService = usecase.NewFederationService(
 			deps.FederationRepo,
@@ -464,7 +496,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 			app.Config,
 		)
 	}
+}
 
+func (app *Application) initializeInfrastructureServices(deps *Dependencies) {
 	deps.IPFSStreamingService = ucipfs.NewService(app.Config)
 
 	chatRepo := repository.NewChatRepository(app.DB)
@@ -486,7 +520,9 @@ func (app *Application) initializeDependencies() *Dependencies {
 
 	deps.AnalyticsRepo = repository.NewAnalyticsRepository(app.DB)
 	log.Println("Analytics repository created")
+}
 
+func (app *Application) initializeLiveStreaming(deps *Dependencies) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.InfoLevel)
 	deps.StreamManager = livestream.NewStreamManager(
@@ -496,7 +532,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 		logger,
 	)
 
-	deps.ChatServer = chat.NewChatServer(app.Config, chatRepo, deps.LiveStreamRepo, app.Redis, logger)
+	deps.ChatServer = chat.NewChatServer(app.Config, deps.ChatRepo, deps.LiveStreamRepo, app.Redis, logger)
 
 	if app.Config.EnableLiveStreaming {
 		log.Println("Initializing HLS transcoder...")
@@ -529,44 +565,46 @@ func (app *Application) initializeDependencies() *Dependencies {
 		app.hlsTranscoder = hlsTranscoder
 		app.vodConverter = vodConverter
 	}
+}
 
-	app.WireImportDependencies(deps)
-
-	if app.Config.EnableIOTA && deps.IOTARepo != nil {
-		iotaClient := payments.NewIOTAClient(app.Config.IOTANodeURL)
-
-		var encKey []byte
-		if app.Config.IOTAWalletEncryptionKey != "" {
-			if k, err := repository.DecodeTokenKey(app.Config.IOTAWalletEncryptionKey); err == nil {
-				encKey = k
-			} else {
-				log.Printf("Warning: Failed to decode IOTA wallet encryption key, using default")
-				encKey = []byte(app.Config.JWTSecret)[:32]
-			}
-		} else {
-			encKey = []byte(app.Config.JWTSecret)
-			if len(encKey) > 32 {
-				encKey = encKey[:32]
-			} else if len(encKey) < 32 {
-				padded := make([]byte, 32)
-				copy(padded, encKey)
-				encKey = padded
-			}
-		}
-
-		deps.PaymentService = ucpayments.NewPaymentService(
-			deps.IOTARepo,
-			iotaClient,
-			encKey,
-		)
-
-		log.Println("IOTA payment service initialized")
-
-		app.iotaPaymentWorker = worker.NewIOTAPaymentWorker(deps.IOTARepo, iotaClient)
-		log.Println("IOTA payment worker created")
+func (app *Application) initializePayments(deps *Dependencies) {
+	if !app.Config.EnableIOTA || deps.IOTARepo == nil {
+		return
 	}
 
-	return deps
+	iotaClient := payments.NewIOTAClient(app.Config.IOTANodeURL)
+	encKey := app.resolveIOTAEncryptionKey()
+
+	deps.PaymentService = ucpayments.NewPaymentService(
+		deps.IOTARepo,
+		iotaClient,
+		encKey,
+	)
+
+	log.Println("IOTA payment service initialized")
+
+	app.iotaPaymentWorker = worker.NewIOTAPaymentWorker(deps.IOTARepo, iotaClient)
+	log.Println("IOTA payment worker created")
+}
+
+func (app *Application) resolveIOTAEncryptionKey() []byte {
+	if app.Config.IOTAWalletEncryptionKey != "" {
+		if k, err := repository.DecodeTokenKey(app.Config.IOTAWalletEncryptionKey); err == nil {
+			return k
+		}
+		log.Printf("Warning: Failed to decode IOTA wallet encryption key, using default")
+		return []byte(app.Config.JWTSecret)[:32]
+	}
+
+	encKey := []byte(app.Config.JWTSecret)
+	if len(encKey) > 32 {
+		encKey = encKey[:32]
+	} else if len(encKey) < 32 {
+		padded := make([]byte, 32)
+		copy(padded, encKey)
+		encKey = padded
+	}
+	return encKey
 }
 
 func (app *Application) ensureValidationAdmin(userRepo usecase.UserRepository) error {

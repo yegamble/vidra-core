@@ -749,10 +749,10 @@ func validateMediaPath(path string) error {
 		return fmt.Errorf("empty media path")
 	}
 
-	cleanPath := filepath.Clean(path)
-
-	// Reject path traversal
-	if strings.Contains(cleanPath, "..") {
+	// Check for traversal in the raw path before filepath.Clean resolves it.
+	// filepath.Clean resolves "/data/../../etc/passwd" to "/etc/passwd" removing
+	// the ".." evidence, so we must check the original input.
+	if strings.Contains(path, "..") {
 		return fmt.Errorf("media path contains directory traversal: %s", path)
 	}
 
@@ -762,6 +762,7 @@ func validateMediaPath(path string) error {
 	}
 
 	// Reject paths starting with '-' which ffmpeg would interpret as flags
+	cleanPath := filepath.Clean(path)
 	base := filepath.Base(cleanPath)
 	if strings.HasPrefix(base, "-") {
 		return fmt.Errorf("media path filename starts with dash: %s", path)

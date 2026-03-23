@@ -270,8 +270,7 @@ func TestIOTAPaymentWorker_ProcessPayments(t *testing.T) {
 			setupMocks: func(repo *MockIOTAPaymentRepository, client *MockIOTAPaymentClient) {
 				repo.On("GetActivePaymentIntents", mock.Anything).
 					Return([]*domain.IOTAPaymentIntent{}, nil)
-				repo.On("GetExpiredPaymentIntents", mock.Anything).
-					Return([]*domain.IOTAPaymentIntent{}, nil)
+				repo.On("BatchExpirePaymentIntents", mock.Anything).Return(int64(0), nil)
 			},
 			wantErr: false,
 		},
@@ -434,8 +433,8 @@ func TestIOTAPaymentWorker_StartStop(t *testing.T) {
 
 	mockRepo.On("GetActivePaymentIntents", mock.Anything).
 		Return([]*domain.IOTAPaymentIntent{}, nil).Maybe()
-	mockRepo.On("GetExpiredPaymentIntents", mock.Anything).
-		Return([]*domain.IOTAPaymentIntent{}, nil).Maybe()
+	mockRepo.On("BatchExpirePaymentIntents", mock.Anything).
+		Return(int64(0), nil).Maybe()
 
 	worker := NewIOTAPaymentWorker(mockRepo, mockClient)
 	ctx := context.Background()
@@ -455,8 +454,8 @@ func TestIOTAPaymentWorker_ContextCancellation(t *testing.T) {
 
 	mockRepo.On("GetActivePaymentIntents", mock.Anything).
 		Return([]*domain.IOTAPaymentIntent{}, nil).Maybe()
-	mockRepo.On("GetExpiredPaymentIntents", mock.Anything).
-		Return([]*domain.IOTAPaymentIntent{}, nil).Maybe()
+	mockRepo.On("BatchExpirePaymentIntents", mock.Anything).
+		Return(int64(0), nil).Maybe()
 
 	worker := NewIOTAPaymentWorker(mockRepo, mockClient)
 	ctx, cancel := context.WithCancel(context.Background())

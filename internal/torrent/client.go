@@ -174,9 +174,31 @@ func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client,
 		logger = logrus.New()
 	}
 
-	// Create torrent client config
+	clientConfig := buildTorrentConfigFromApp(cfg)
+	logDHTStatus(logger, cfg)
+
+	torrentClient, err := torrent.NewClient(clientConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create torrent client: %w", err)
+	}
+
+	client := assembleClientFromApp(cfg, torrentClient, logger)
+
+	logger.WithFields(logrus.Fields{
+		"dht_enabled":     cfg.EnableDHT,
+		"pex_enabled":     cfg.EnablePEX,
+		"webtorrent":      cfg.EnableWebTorrent,
+		"listen_port":     cfg.TorrentListenPort,
+		"max_connections": cfg.TorrentMaxConnections,
+		"bootstrap_nodes": len(cfg.DHTBootstrapNodes),
+	}).Info("Torrent client created with advanced P2P features")
+
+	return client, nil
+}
+
+// buildTorrentConfigFromApp creates the anacrolix torrent client config from app config.
+func buildTorrentConfigFromApp(cfg *config.Config) *torrent.ClientConfig {
 	clientConfig := torrent.NewDefaultClientConfig()
-	// Set listen port (the library will bind to 0.0.0.0 by default)
 	clientConfig.SetListenAddr(fmt.Sprintf(":%d", cfg.TorrentListenPort))
 	clientConfig.DisableTCP = false
 	clientConfig.DisableUTP = false
@@ -188,13 +210,17 @@ func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client,
 	clientConfig.DisableWebtorrent = !cfg.EnableWebTorrent
 	clientConfig.DisableTrackers = false
 	clientConfig.Debug = cfg.LogLevel == "debug"
+	clientConfig.DefaultStorage = storage.NewFileByInfoHash(cfg.TorrentDataDir)
 
-	// DHT will use the library's default bootstrap nodes if enabled
-	// The library includes:
-	// - router.bittorrent.com:6881
-	// - dht.transmissionbt.com:6881
-	// - router.utorrent.com:6881
-	// Custom bootstrap nodes can be added via future enhancement if needed
+	if cfg.TorrentMaxConnections > 0 {
+		clientConfig.EstablishedConnsPerTorrent = cfg.TorrentMaxConnections / 10
+	}
+
+	return clientConfig
+}
+
+// logDHTStatus logs DHT bootstrap information when DHT is enabled.
+func logDHTStatus(logger *logrus.Logger, cfg *config.Config) {
 	if cfg.EnableDHT {
 		logger.WithFields(logrus.Fields{
 			"default_nodes": []string{
@@ -204,24 +230,12 @@ func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client,
 			},
 		}).Info("DHT enabled with default bootstrap nodes")
 	}
+}
 
-	// Set storage
-	clientConfig.DefaultStorage = storage.NewFileByInfoHash(cfg.TorrentDataDir)
-
-	// Set connection limits
-	if cfg.TorrentMaxConnections > 0 {
-		clientConfig.EstablishedConnsPerTorrent = cfg.TorrentMaxConnections / 10 // per torrent
-	}
-
-	// Create the client
-	torrentClient, err := torrent.NewClient(clientConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create torrent client: %w", err)
-	}
-
+// assembleClientFromApp creates the Client struct and bandwidth manager from app config.
+func assembleClientFromApp(cfg *config.Config, torrentClient *torrent.Client, logger *logrus.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create local copies of rate limits to avoid race condition
 	uploadLimit := cfg.TorrentUploadRateLimit
 	downloadLimit := cfg.TorrentDownloadRateLimit
 
@@ -250,25 +264,11 @@ func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client,
 		logger:    logger,
 	}
 
-	// Initialize bandwidth manager if rate limits are set
-	// Use local copies instead of reading from cfg pointer
 	if uploadLimit > 0 || downloadLimit > 0 {
-		client.rateLimiter = NewBandwidthManager(
-			uploadLimit,
-			downloadLimit,
-		)
+		client.rateLimiter = NewBandwidthManager(uploadLimit, downloadLimit)
 	}
 
-	logger.WithFields(logrus.Fields{
-		"dht_enabled":     cfg.EnableDHT,
-		"pex_enabled":     cfg.EnablePEX,
-		"webtorrent":      cfg.EnableWebTorrent,
-		"listen_port":     cfg.TorrentListenPort,
-		"max_connections": cfg.TorrentMaxConnections,
-		"bootstrap_nodes": len(cfg.DHTBootstrapNodes),
-	}).Info("Torrent client created with advanced P2P features")
-
-	return client, nil
+	return client
 }
 
 // Download represents an active download

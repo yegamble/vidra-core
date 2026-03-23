@@ -15,12 +15,12 @@ import (
 
 func TestCalculateRate(t *testing.T) {
 	tests := []struct {
-		name       string
-		bytes      int64
-		startedAt  time.Time
-		wantZero   bool
-		wantMinGt  float64 // if not wantZero, rate must be > this value
-		wantMaxLt  float64 // if non-zero, rate must be < this value
+		name      string
+		bytes     int64
+		startedAt time.Time
+		wantZero  bool
+		wantMinGt float64 // if not wantZero, rate must be > this value
+		wantMaxLt float64 // if non-zero, rate must be < this value
 	}{
 		{
 			name:      "zero bytes returns zero",

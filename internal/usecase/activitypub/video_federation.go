@@ -34,114 +34,13 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 		State:        1,
 	}
 
-	if video.Description != "" {
-		videoObj.Content = video.Description
-		videoObj.Summary = video.Description
-	}
-
-	if video.Duration > 0 {
-		hours := video.Duration / 3600
-		minutes := (video.Duration % 3600) / 60
-		seconds := video.Duration % 60
-		if hours > 0 {
-			videoObj.Duration = fmt.Sprintf("PT%dH%dM%dS", hours, minutes, seconds)
-		} else if minutes > 0 {
-			videoObj.Duration = fmt.Sprintf("PT%dM%dS", minutes, seconds)
-		} else {
-			videoObj.Duration = fmt.Sprintf("PT%dS", seconds)
-		}
-	}
-
-	videoObj.CommentsEnabled = true
-	videoObj.DownloadEnabled = true
-	videoObj.Sensitive = video.Privacy == domain.PrivacyPrivate
-	videoObj.WaitTranscoding = video.Status == domain.StatusProcessing
-
-	videoObj.Views = int(video.Views)
-
-	if len(video.Tags) > 0 {
-		videoObj.Tag = make([]domain.APTag, len(video.Tags))
-		for i, tag := range video.Tags {
-			videoObj.Tag[i] = domain.APTag{
-				Type: "Hashtag",
-				Name: "#" + tag,
-			}
-		}
-	}
-
-	if video.Category != nil {
-		videoObj.Category = &domain.APCategory{
-			Identifier: video.Category.ID.String(),
-			Name:       video.Category.Name,
-		}
-	}
-
-	if video.Language != "" {
-		videoObj.Language = &domain.APLanguage{
-			Identifier: video.Language,
-		}
-	}
-
-	if len(video.OutputPaths) > 0 {
-		mp4URL := domain.APUrl{
-			Type:      "Link",
-			MediaType: "video/mp4",
-			Href:      fmt.Sprintf("%s/videos/%s/stream", s.cfg.PublicBaseURL, video.ID),
-			Height:    video.Metadata.Height,
-			Width:     video.Metadata.Width,
-		}
-		videoObj.URL = append(videoObj.URL, mp4URL)
-
-		hlsURL := domain.APUrl{
-			Type:      "Link",
-			MediaType: "application/x-mpegURL",
-			Href:      fmt.Sprintf("%s/videos/%s/master.m3u8", s.cfg.PublicBaseURL, video.ID),
-		}
-		videoObj.URL = append(videoObj.URL, hlsURL)
-
-		for quality, path := range video.OutputPaths {
-			variantURL := domain.APUrl{
-				Type:      "Link",
-				MediaType: "application/x-mpegURL",
-				Href:      fmt.Sprintf("%s%s", s.cfg.PublicBaseURL, path),
-			}
-			var height int
-			if _, err := fmt.Sscanf(quality, "%dp", &height); err == nil {
-				variantURL.Height = height
-				if video.Metadata.Width > 0 && video.Metadata.Height > 0 {
-					variantURL.Width = (height * video.Metadata.Width) / video.Metadata.Height
-				} else {
-					variantURL.Width = (height * 16) / 9
-				}
-			}
-			videoObj.URL = append(videoObj.URL, variantURL)
-		}
-	}
-
-	if video.ThumbnailPath != "" {
-		thumbnailURL := video.ThumbnailPath
-		if !strings.HasPrefix(thumbnailURL, "http") {
-			thumbnailURL = strings.TrimPrefix(thumbnailURL, "/")
-			thumbnailURL = fmt.Sprintf("%s/%s", s.cfg.PublicBaseURL, thumbnailURL)
-		}
-		icon := domain.Image{
-			Type:      "Image",
-			URL:       thumbnailURL,
-			MediaType: "image/jpeg",
-		}
-		videoObj.Icon = []domain.Image{icon}
-	}
-
-	switch video.Privacy {
-	case domain.PrivacyPublic:
-		videoObj.To = []string{ActivityPubPublic}
-		videoObj.Cc = []string{actorID + "/followers"}
-	case domain.PrivacyUnlisted:
-		videoObj.To = []string{actorID + "/followers"}
-		videoObj.Cc = []string{ActivityPubPublic}
-	case domain.PrivacyPrivate:
-		videoObj.To = []string{actorID + "/followers"}
-	}
+	s.populateVideoDescription(videoObj, video)
+	s.populateVideoDuration(videoObj, video)
+	s.populateVideoFlags(videoObj, video)
+	s.populateVideoMetadata(videoObj, video)
+	s.populateVideoURLs(videoObj, video)
+	s.populateVideoThumbnail(videoObj, video)
+	s.populateVideoAudience(videoObj, video, actorID)
 
 	videoObj.Likes = videoID + "/likes"
 	videoObj.Dislikes = videoID + "/dislikes"
@@ -149,6 +48,136 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 	videoObj.Comments = videoID + "/comments"
 
 	return videoObj, nil
+}
+
+// populateVideoDescription sets the content and summary from the video description.
+func (s *Service) populateVideoDescription(obj *domain.VideoObject, video *domain.Video) {
+	if video.Description != "" {
+		obj.Content = video.Description
+		obj.Summary = video.Description
+	}
+}
+
+// populateVideoDuration formats the video duration as an ISO 8601 duration string.
+func (s *Service) populateVideoDuration(obj *domain.VideoObject, video *domain.Video) {
+	if video.Duration <= 0 {
+		return
+	}
+	hours := video.Duration / 3600
+	minutes := (video.Duration % 3600) / 60
+	seconds := video.Duration % 60
+	if hours > 0 {
+		obj.Duration = fmt.Sprintf("PT%dH%dM%dS", hours, minutes, seconds)
+	} else if minutes > 0 {
+		obj.Duration = fmt.Sprintf("PT%dM%dS", minutes, seconds)
+	} else {
+		obj.Duration = fmt.Sprintf("PT%dS", seconds)
+	}
+}
+
+// populateVideoFlags sets boolean flags and view count on the video object.
+func (s *Service) populateVideoFlags(obj *domain.VideoObject, video *domain.Video) {
+	obj.CommentsEnabled = true
+	obj.DownloadEnabled = true
+	obj.Sensitive = video.Privacy == domain.PrivacyPrivate
+	obj.WaitTranscoding = video.Status == domain.StatusProcessing
+	obj.Views = int(video.Views)
+}
+
+// populateVideoMetadata sets tags, category, and language on the video object.
+func (s *Service) populateVideoMetadata(obj *domain.VideoObject, video *domain.Video) {
+	if len(video.Tags) > 0 {
+		obj.Tag = make([]domain.APTag, len(video.Tags))
+		for i, tag := range video.Tags {
+			obj.Tag[i] = domain.APTag{
+				Type: "Hashtag",
+				Name: "#" + tag,
+			}
+		}
+	}
+
+	if video.Category != nil {
+		obj.Category = &domain.APCategory{
+			Identifier: video.Category.ID.String(),
+			Name:       video.Category.Name,
+		}
+	}
+
+	if video.Language != "" {
+		obj.Language = &domain.APLanguage{
+			Identifier: video.Language,
+		}
+	}
+}
+
+// populateVideoURLs builds streaming URLs (MP4, HLS, and per-quality variants) from output paths.
+func (s *Service) populateVideoURLs(obj *domain.VideoObject, video *domain.Video) {
+	if len(video.OutputPaths) == 0 {
+		return
+	}
+
+	obj.URL = append(obj.URL, domain.APUrl{
+		Type:      "Link",
+		MediaType: "video/mp4",
+		Href:      fmt.Sprintf("%s/videos/%s/stream", s.cfg.PublicBaseURL, video.ID),
+		Height:    video.Metadata.Height,
+		Width:     video.Metadata.Width,
+	})
+
+	obj.URL = append(obj.URL, domain.APUrl{
+		Type:      "Link",
+		MediaType: "application/x-mpegURL",
+		Href:      fmt.Sprintf("%s/videos/%s/master.m3u8", s.cfg.PublicBaseURL, video.ID),
+	})
+
+	for quality, path := range video.OutputPaths {
+		variantURL := domain.APUrl{
+			Type:      "Link",
+			MediaType: "application/x-mpegURL",
+			Href:      fmt.Sprintf("%s%s", s.cfg.PublicBaseURL, path),
+		}
+		var height int
+		if _, err := fmt.Sscanf(quality, "%dp", &height); err == nil {
+			variantURL.Height = height
+			if video.Metadata.Width > 0 && video.Metadata.Height > 0 {
+				variantURL.Width = (height * video.Metadata.Width) / video.Metadata.Height
+			} else {
+				variantURL.Width = (height * 16) / 9
+			}
+		}
+		obj.URL = append(obj.URL, variantURL)
+	}
+}
+
+// populateVideoThumbnail sets the icon/thumbnail on the video object.
+func (s *Service) populateVideoThumbnail(obj *domain.VideoObject, video *domain.Video) {
+	if video.ThumbnailPath == "" {
+		return
+	}
+	thumbnailURL := video.ThumbnailPath
+	if !strings.HasPrefix(thumbnailURL, "http") {
+		thumbnailURL = strings.TrimPrefix(thumbnailURL, "/")
+		thumbnailURL = fmt.Sprintf("%s/%s", s.cfg.PublicBaseURL, thumbnailURL)
+	}
+	obj.Icon = []domain.Image{{
+		Type:      "Image",
+		URL:       thumbnailURL,
+		MediaType: "image/jpeg",
+	}}
+}
+
+// populateVideoAudience sets the To/Cc audience fields based on video privacy.
+func (s *Service) populateVideoAudience(obj *domain.VideoObject, video *domain.Video, actorID string) {
+	switch video.Privacy {
+	case domain.PrivacyPublic:
+		obj.To = []string{ActivityPubPublic}
+		obj.Cc = []string{actorID + "/followers"}
+	case domain.PrivacyUnlisted:
+		obj.To = []string{actorID + "/followers"}
+		obj.Cc = []string{ActivityPubPublic}
+	case domain.PrivacyPrivate:
+		obj.To = []string{actorID + "/followers"}
+	}
 }
 
 func (s *Service) CreateVideoActivity(ctx context.Context, video *domain.Video) (*domain.Activity, error) {
