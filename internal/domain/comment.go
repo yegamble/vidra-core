@@ -16,18 +16,20 @@ const (
 )
 
 type Comment struct {
-	ID        uuid.UUID     `json:"id" db:"id"`
-	VideoID   uuid.UUID     `json:"video_id" db:"video_id"`
-	UserID    uuid.UUID     `json:"user_id" db:"user_id"`
-	ParentID  *uuid.UUID    `json:"parent_id,omitempty" db:"parent_id"`
-	Body      string        `json:"body" db:"body"`
-	Status    CommentStatus `json:"status" db:"status"`
-	FlagCount int           `json:"flag_count" db:"flag_count"`
-	EditedAt  *time.Time    `json:"edited_at,omitempty" db:"edited_at"`
-	CreatedAt time.Time     `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time     `json:"updated_at" db:"updated_at"`
-	User      *User         `json:"user,omitempty"`
-	Replies   []*Comment    `json:"replies,omitempty"`
+	ID            uuid.UUID     `json:"id" db:"id"`
+	VideoID       uuid.UUID     `json:"video_id" db:"video_id"`
+	UserID        uuid.UUID     `json:"user_id" db:"user_id"`
+	ParentID      *uuid.UUID    `json:"parent_id,omitempty" db:"parent_id"`
+	Body          string        `json:"body" db:"body"`
+	Status        CommentStatus `json:"status" db:"status"`
+	FlagCount     int           `json:"flag_count" db:"flag_count"`
+	HeldForReview bool          `json:"held_for_review" db:"held_for_review"`
+	Approved      bool          `json:"approved" db:"approved"`
+	EditedAt      *time.Time    `json:"edited_at,omitempty" db:"edited_at"`
+	CreatedAt     time.Time     `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time     `json:"updated_at" db:"updated_at"`
+	User          *User         `json:"user,omitempty"`
+	Replies       []*Comment    `json:"replies,omitempty"`
 }
 
 type CommentFlag struct {
@@ -79,4 +81,22 @@ type CommentWithUser struct {
 	Comment
 	Username string  `json:"username" db:"username"`
 	Avatar   *string `json:"avatar,omitempty" db:"avatar"`
+}
+
+// AdminCommentListOptions provides filtering for instance-wide comment listing.
+type AdminCommentListOptions struct {
+	VideoID       *uuid.UUID
+	AccountName   *string
+	Status        *CommentStatus
+	HeldForReview *bool
+	SearchText    *string
+	Limit         int
+	Offset        int
+	OrderBy       string
+}
+
+// BulkRemoveCommentsRequest represents a request to bulk-remove comments by account.
+type BulkRemoveCommentsRequest struct {
+	AccountName string `json:"accountName" validate:"required,min=1"`
+	Scope       string `json:"scope" validate:"required,oneof=instance my-videos"`
 }

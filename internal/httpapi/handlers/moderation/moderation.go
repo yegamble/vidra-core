@@ -428,3 +428,38 @@ func (h *ModerationHandlers) DeleteBlocklistEntry(w http.ResponseWriter, r *http
 	// 204 No Content per tests
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// ListMyAbuses handles GET /api/v1/users/me/abuses
+func (h *ModerationHandlers) ListMyAbuses(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("UNAUTHORIZED", "Authentication required"))
+		return
+	}
+
+	limit := 20
+	offset := 0
+
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	reports, total, err := h.moderationRepo.ListAbuseReportsByReporter(r.Context(), userID.String(), limit, offset)
+	if err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to list abuse reports"))
+		return
+	}
+
+	shared.WriteJSONWithMeta(w, http.StatusOK, reports, &shared.Meta{
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
+}

@@ -163,6 +163,35 @@ func (r *ModerationRepository) DeleteAbuseReport(ctx context.Context, reportID s
 	return nil
 }
 
+// ListAbuseReportsByReporter lists abuse reports filed by a specific user.
+func (r *ModerationRepository) ListAbuseReportsByReporter(ctx context.Context, reporterID string, limit, offset int) ([]*domain.AbuseReport, int64, error) {
+	var reports []*domain.AbuseReport
+	var total int64
+
+	err := r.db.GetContext(ctx, &total,
+		"SELECT COUNT(*) FROM abuse_reports WHERE reporter_id = $1", reporterID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count abuse reports by reporter: %w", err)
+	}
+
+	query := `
+		SELECT id, reporter_id, reason, details, status, moderator_notes,
+		       moderated_by, moderated_at, reported_entity_type,
+		       reported_video_id, reported_comment_id, reported_user_id,
+		       reported_channel_id, created_at, updated_at
+		FROM abuse_reports
+		WHERE reporter_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	err = r.db.SelectContext(ctx, &reports, query, reporterID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list abuse reports by reporter: %w", err)
+	}
+
+	return reports, total, nil
+}
+
 // CreateBlocklistEntry creates a new blocklist entry
 func (r *ModerationRepository) CreateBlocklistEntry(ctx context.Context, entry *domain.BlocklistEntry) error {
 	query := `

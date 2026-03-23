@@ -366,3 +366,112 @@ func (r *commentRepository) IsOwner(ctx context.Context, commentID, userID uuid.
 
 	return exists, nil
 }
+
+func (r *commentRepository) ListAll(ctx context.Context, opts domain.AdminCommentListOptions) ([]*domain.CommentWithUser, int64, error) {
+	comments := []*domain.CommentWithUser{}
+
+	baseQuery := `
+		FROM comments c
+		JOIN users u ON c.user_id = u.id
+		LEFT JOIN user_avatars ua ON u.id = ua.user_id
+		WHERE 1=1`
+
+	args := []interface{}{}
+	argCount := 0
+
+	if opts.VideoID != nil {
+		argCount++
+		baseQuery += fmt.Sprintf(" AND c.video_id = $%d", argCount)
+		args = append(args, *opts.VideoID)
+	}
+	if opts.AccountName != nil {
+		argCount++
+		baseQuery += fmt.Sprintf(" AND u.username = $%d", argCount)
+		args = append(args, *opts.AccountName)
+	}
+	if opts.Status != nil {
+		argCount++
+		baseQuery += fmt.Sprintf(" AND c.status = $%d", argCount)
+		args = append(args, string(*opts.Status))
+	}
+	if opts.HeldForReview != nil {
+		argCount++
+		baseQuery += fmt.Sprintf(" AND c.held_for_review = $%d", argCount)
+		args = append(args, *opts.HeldForReview)
+	}
+	if opts.SearchText != nil && *opts.SearchText != "" {
+		argCount++
+		baseQuery += fmt.Sprintf(" AND c.body ILIKE $%d", argCount)
+		args = append(args, "%"+*opts.SearchText+"%")
+	}
+
+	// Count total
+	var total int64
+	countArgs := make([]interface{}, len(args))
+	copy(countArgs, args)
+	err := r.db.GetContext(ctx, &total, "SELECT COUNT(*) "+baseQuery, countArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count comments: %w", err)
+	}
+
+	// Fetch page
+	selectQuery := `SELECT c.id, c.video_id, c.user_id, c.parent_id, c.body, c.status,
+		       c.flag_count, c.held_for_review, c.approved, c.edited_at, c.created_at, c.updated_at,
+		       u.username, ua.webp_ipfs_cid as avatar ` + baseQuery
+
+	orderBy := "c.created_at DESC"
+	if opts.OrderBy == "oldest" {
+		orderBy = "c.created_at ASC"
+	}
+	selectQuery += " ORDER BY " + orderBy
+
+	argCount++
+	selectQuery += fmt.Sprintf(" LIMIT $%d", argCount)
+	args = append(args, opts.Limit)
+
+	argCount++
+	selectQuery += fmt.Sprintf(" OFFSET $%d", argCount)
+	args = append(args, opts.Offset)
+
+	err = r.db.SelectContext(ctx, &comments, selectQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list all comments: %w", err)
+	}
+
+	return comments, total, nil
+}
+
+func (r *commentRepository) Approve(ctx context.Context, id uuid.UUID) error {
+	query := `
+		UPDATE comments
+		SET approved = true, held_for_review = false, updated_at = $1
+		WHERE id = $2`
+
+	result, err := r.db.ExecContext(ctx, query, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to approve comment: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return domain.ErrNotFound
+	}
+
+	return nil
+}
+
+func (r *commentRepository) BulkRemoveByAccount(ctx context.Context, accountName string) (int64, error) {
+	query := `
+		UPDATE comments
+		SET status = 'deleted', updated_at = $1
+		WHERE user_id IN (SELECT id FROM users WHERE username = $2)
+		  AND status = 'active'`
+
+	result, err := r.db.ExecContext(ctx, query, time.Now(), accountName)
+	if err != nil {
+		return 0, fmt.Errorf("failed to bulk remove comments: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	return rows, nil
+}

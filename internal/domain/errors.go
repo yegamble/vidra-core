@@ -58,6 +58,11 @@ var (
 	ErrNotificationNotFound = errors.New("notification not found")
 )
 
+var (
+	ErrWatchedWordListNotFound = errors.New("watched word list not found")
+	ErrAutoTagPolicyNotFound   = errors.New("auto tag policy not found")
+)
+
 type DomainError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

@@ -106,7 +106,7 @@ var (
 	}{
 		{
 			status: http.StatusNotFound,
-			errors: []error{domain.ErrNotFound, domain.ErrUserNotFound, domain.ErrVideoNotFound, domain.ErrMessageNotFound, domain.ErrConversationNotFound},
+			errors: []error{domain.ErrNotFound, domain.ErrUserNotFound, domain.ErrVideoNotFound, domain.ErrMessageNotFound, domain.ErrConversationNotFound, domain.ErrWatchedWordListNotFound, domain.ErrAutoTagPolicyNotFound},
 		},
 		{
 			status: http.StatusUnauthorized,

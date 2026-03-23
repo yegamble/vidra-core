@@ -1,0 +1,325 @@
+openapi: 3.0.3
+info:
+  title: Athena Watched Words API
+  description: CRUD operations for watched word lists used in content moderation
+  version: 1.0.0
+
+paths:
+  /api/v1/watched-words/accounts/{accountName}/lists:
+    get:
+      summary: List account watched word lists
+      operationId: listAccountWatchedWords
+      tags: [Watched Words]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: accountName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of watched word lists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchedWordListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create account watched word list
+      operationId: createAccountWatchedWordList
+      tags: [Watched Words]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: accountName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWatchedWordListRequest'
+      responses:
+        '200':
+          description: Created watched word list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchedWordListItemResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/watched-words/accounts/{accountName}/lists/{listId}:
+    put:
+      summary: Update account watched word list
+      operationId: updateAccountWatchedWordList
+      tags: [Watched Words]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: accountName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: listId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWatchedWordListRequest'
+      responses:
+        '200':
+          description: Updated watched word list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchedWordListItemResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete account watched word list
+      operationId: deleteAccountWatchedWordList
+      tags: [Watched Words]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: accountName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: listId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/watched-words/server/lists:
+    get:
+      summary: List server-level watched word lists
+      operationId: listServerWatchedWords
+      tags: [Watched Words]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of server watched word lists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchedWordListResponse'
+
+    post:
+      summary: Create server-level watched word list
+      operationId: createServerWatchedWordList
+      tags: [Watched Words]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWatchedWordListRequest'
+      responses:
+        '200':
+          description: Created server watched word list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchedWordListItemResponse'
+
+  /api/v1/watched-words/server/lists/{listId}:
+    put:
+      summary: Update server-level watched word list
+      operationId: updateServerWatchedWordList
+      tags: [Watched Words]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWatchedWordListRequest'
+      responses:
+        '200':
+          description: Updated server watched word list
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete server-level watched word list
+      operationId: deleteServerWatchedWordList
+      tags: [Watched Words]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    WatchedWordList:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        accountName:
+          type: string
+          nullable: true
+        listName:
+          type: string
+        words:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateWatchedWordListRequest:
+      type: object
+      required: [listName, words]
+      properties:
+        listName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        words:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+          minItems: 1
+
+    UpdateWatchedWordListRequest:
+      type: object
+      properties:
+        listName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        words:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+
+    WatchedWordListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchedWordList'
+
+    WatchedWordListItemResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/WatchedWordList'
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  message:
+                    type: string
