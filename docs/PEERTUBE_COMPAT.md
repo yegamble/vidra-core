@@ -1,90 +1,86 @@
 # PeerTube Compatibility Status
 
-**Last Updated**: 2026-02-10
-**Scope**: PeerTube-inspired API/resource compatibility for Athena native APIs (no facade layer)
+**Last Updated**: 2026-03-23
+**Scope**: PeerTube-aligned API/runtime compatibility for Athena native APIs, plus Athena-only features that must coexist with that compatibility
 
 ## Summary
 
-Athena now implements the major PeerTube-aligned API areas (channels, channel subscriptions, comments, ratings, playlists, captions, OAuth2, instance/oEmbed, and ActivityPub discovery). Compatibility is functional for common client flows, with a small set of intentional deviations documented below.
+Athena currently has a strong, validated PeerTube-shaped runtime surface. OpenAPI verification passes, `go test -short ./...` passes, and the Docker-backed Newman suite passes across 19 stateful collections covering PeerTube-style routes and Athena-specific extensions.
+
+That said, Athena is **not yet feature-complete for full PeerTube instance migration**. The main missing capability is a real ETL/import pipeline that can ingest a PeerTube database dump and storage layout into Athena automatically.
 
 ## Compatibility Matrix
 
 | Area | Athena Endpoints | PeerTube Capability | Status | Notes |
 |---|---|---|---|---|
-| Channels | `/api/v1/channels`, `/api/v1/channels/{id}`, `/api/v1/channels/{id}/videos` | Video channels as first-class publishers | ✅ Implemented | Channel/account model is active; videos are channel-linked |
-| Channel subscriptions | `/api/v1/channels/{id}/subscribe`, `/api/v1/channels/{id}/subscribers`, `/api/v1/videos/subscriptions` | Channel follow + subscription feed | ✅ Implemented | Legacy user subscription endpoints remain as compatibility shims |
-| Comments (threaded) | `/api/v1/videos/{videoId}/comments`, `/api/v1/comments/{commentId}`, `/api/v1/comments/{commentId}/flag`, `/api/v1/comments/{commentId}/moderate` | Threaded comments + moderation | ✅ Implemented | Reply threading via `parentId`; moderation + flagging supported |
-| Ratings | `/api/v1/videos/{videoId}/rating` | Like/dislike interactions | ✅ Implemented | Idempotent rating behavior covered by tests |
-| Playlists | `/api/v1/playlists`, `/api/v1/playlists/{playlistId}`, `/api/v1/playlists/{playlistId}/items` | Playlist CRUD + item management | ✅ Implemented | Includes ordering endpoint and watch-later convenience |
-| Captions | `/api/v1/videos/{id}/captions`, `/api/v1/videos/{id}/captions/{captionId}`, `/api/v1/videos/{id}/captions/{captionId}/content` | Subtitle upload/list/delete/fetch | ✅ Implemented | VTT/SRT with language metadata supported |
-| OAuth2 | `/oauth/token`, `/oauth/authorize`, `/oauth/revoke`, `/oauth/introspect` | OAuth2 auth flows | ✅ Implemented | Includes auth code + revocation + introspection |
-| Instance metadata | `/api/v1/instance/about`, `/oembed` | Instance/about + oEmbed | ✅ Implemented | Admin instance config APIs also available |
-| Federation discovery | `/.well-known/webfinger`, `/.well-known/nodeinfo`, `/nodeinfo/2.0` | ActivityPub/NodeInfo discovery | ✅ Implemented | Actor and inbox/outbox endpoints implemented |
+| Channels | `/api/v1/channels`, `/api/v1/channels/{id}`, `/api/v1/channels/{id}/videos` | Video channels as first-class publishers | ✅ Implemented | Validated in Go and Newman |
+| Channel subscriptions | `/api/v1/channels/{id}/subscribe`, `/api/v1/channels/{id}/subscribers`, `/api/v1/videos/subscriptions` | Channel follow + subscription feed | ✅ Implemented | Legacy compatibility shims still exist |
+| Comments (threaded) | `/api/v1/videos/{videoId}/comments`, `/api/v1/comments/{commentId}` | Threaded comments + moderation | ✅ Implemented | Comment threading and moderation validated |
+| Ratings | `/api/v1/videos/{videoId}/rating` | Like/dislike interactions | ✅ Implemented | Covered by existing tests |
+| Playlists | `/api/v1/playlists`, `/api/v1/playlists/{playlistId}`, `/api/v1/playlists/{playlistId}/items` | Playlist CRUD + item management | ✅ Implemented | Core behavior implemented |
+| Captions | `/api/v1/videos/{id}/captions`, `/api/v1/videos/{id}/captions/{captionId}` | Subtitle upload/list/delete/fetch | ✅ Implemented | Core caption flows implemented |
+| OAuth2 and instance metadata | `/oauth/*`, `/api/v1/config`, `/api/v1/config/about`, `/oembed` | Auth bootstrap, about/config, oEmbed | ✅ Implemented | Covered in runtime validation |
+| Imports | `/api/v1/videos/imports`, PeerTube-style aliases on import inputs | Import lifecycle APIs | ✅ Implemented | Runtime semantics validated; ETL importer still missing |
+| Registrations, jobs, plugins, runners | `/api/v1/admin/*`, PeerTube-canonical aliases | Admin and worker lifecycle surfaces | ✅ Implemented | Live-validated in Newman |
+| Federation discovery | `/.well-known/webfinger`, `/.well-known/nodeinfo`, `/nodeinfo/2.0` | ActivityPub/NodeInfo discovery | ✅ Implemented | E2E validated |
+| Full PeerTube instance migration | N/A | Import PeerTube DB + media and keep behavior intact | ⚠️ Partial | Planning/documentation exists, but no shipped importer/ETL tool |
 
 ## OpenAPI Coverage
 
-PeerTube-aligned routes are documented in:
+PeerTube-aligned and adjacent routes are documented in:
 
+- `api/openapi.yaml`
 - `api/openapi_channels.yaml`
 - `api/openapi_comments.yaml`
 - `api/openapi_ratings_playlists.yaml`
 - `api/openapi_captions.yaml`
 - `api/openapi_moderation.yaml`
 - `api/openapi_federation.yaml`
-- `api/openapi.yaml` (OAuth2 + core)
+- `api/openapi_social.yaml`
+- `api/openapi_payments.yaml`
+- `api/openapi_ipfs.yaml`
 
-A compatibility tag is now present across these specs for matching operations:
+A compatibility tag remains present for matching operations:
 
 - `PeerTube-Compat`
 
+## Extra Athena Features
+
+Athena extends beyond PeerTube and these extra surfaces are also validated in the Docker test profile:
+
+- Secure messaging
+- IOTA payments
+- IPFS routes
+- ATProto social flows
+- Livestreaming
+
+## What Is Verified
+
+The current validation baseline proves:
+
+- `./scripts/verify-openapi.sh` passes
+- `env -u GOROOT go test -short ./...` passes
+- 19 selected Newman collections pass against the live Docker `test` profile
+- PeerTube-canonical route aliases are exercised in the same stateful suite as Athena-native routes
+- ATProto, payments, secure messaging, and IPFS do not break the PeerTube-shaped runtime surface
+
 ## Intentional Deviations
 
-These are current intentional differences from strict PeerTube shape parity:
+These are current differences from strict one-to-one PeerTube parity:
 
-1. Pagination style is mixed by endpoint family.
-
-- Some endpoints use `page/pageSize`; others use `limit/offset`.
-
+1. Pagination style is still mixed by endpoint family.
 2. Response envelope conventions differ by handler family.
-
-- Many handlers return wrapped payloads (for example `data`, `pagination`, `success`) rather than a single global envelope standard.
-
-3. Legacy compatibility routes are retained.
-
-- User-based subscription routes remain available while channel-based subscriptions are canonical.
-
-4. Federation is multi-protocol.
-
-- Athena includes ATProto in addition to ActivityPub; this extends beyond strict PeerTube scope.
-
-## Test Verification
-
-PeerTube-relevant behavior is already covered in existing handler integration/unit suites:
-
-- Channels/subscriptions:
-  - `internal/httpapi/handlers/channel/channel_subscriptions_integration_test.go`
-  - `internal/httpapi/handlers/channel/subscriptions_backward_compat_test.go`
-  - `internal/httpapi/handlers/channel/subscriptions_pagination_test.go`
-- Comments/threading:
-  - `internal/httpapi/handlers/social/comments_integration_test.go`
-- Ratings/playlists:
-  - `internal/httpapi/handlers/social/ratings_playlists_integration_test.go`
-- Captions:
-  - `internal/httpapi/handlers/social/captions_integration_test.go`
-- Instance/oEmbed:
-  - `internal/httpapi/handlers/moderation/moderation_test.go`
-  - `internal/httpapi/handlers/moderation/moderation_integration_test.go`
-- ActivityPub NodeInfo discovery:
-  - `internal/httpapi/handlers/federation/activitypub_test.go`
+3. Athena is multi-protocol and multi-feature by design, including ATProto, messaging, payments, and IPFS in the same product surface.
 
 ## Remaining Gaps
 
-1. Full one-to-one response-schema parity with PeerTube for every list/details payload.
-2. Uniform pagination contract across all compatibility routes.
-3. Expanded compatibility conformance tests that assert strict JSON schema parity against PeerTube fixtures.
+1. Athena does not yet ship a real PeerTube ETL/importer for database plus media migration.
+2. Athena does not yet run fixture-based migration rehearsals proving imported PeerTube data behaves correctly after cutover.
+3. Athena does not yet run an upstream PeerTube UI/client compatibility suite.
+4. Full one-to-one schema parity is still not guaranteed for every list/detail payload.
 
 ## Next Actions
 
-1. Add schema-level compatibility assertions for channels/comments/playlists/captions response contracts.
-2. Standardize pagination contract for compat-tagged routes.
-3. Keep legacy shims time-boxed and remove once clients have migrated.
+1. Implement a real PeerTube dump/media import pipeline with dry-run and validation reporting.
+2. Add fixture-based migration E2E coverage for users, channels, videos, comments, playlists, captions, and subscriptions.
+3. Add an upstream compatibility harness to detect API/behavior drift against PeerTube itself.

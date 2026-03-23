@@ -1,7 +1,7 @@
 # PeerTube Import Parity Implementation Plan
 
 Created: 2026-03-22
-Status: VERIFIED
+Status: VERIFIED WITH FOLLOW-UP
 Approved: Yes
 Iterations: 0
 Worktree: No
@@ -9,8 +9,8 @@ Type: Feature
 
 ## Summary
 
-**Goal:** Close all remaining PeerTube parity gaps until the gap report shows full confidence in import compatibility — no more "not yet complete" confidence statements or recommended next steps.
-**Architecture:** Add real-artifact unit/integration tests for plugin and runner lifecycles, a federation import E2E scenario, wire the ATProto PDS mock into the Docker test profile, and promote all 18 Newman collections to live validation.
+**Goal:** Close the API/runtime parity gaps and produce an accurate gap report that distinguishes validated PeerTube-shaped runtime behavior from the still-missing PeerTube ETL/importer.
+**Architecture:** Add real-artifact unit/integration tests for plugin and runner lifecycles, a federation import E2E scenario, wire the ATProto PDS mock into the Docker test profile, and promote the selected Newman collections to live validation.
 **Tech Stack:** Go 1.24 (testify, httptest, archive/zip), Docker Compose, Postman/Newman, OpenAPI YAML
 
 ## Scope
@@ -21,8 +21,8 @@ Type: Feature
 2. Full runner lifecycle handler integration test (single coherent register→job→upload→success chain)
 3. Federation import E2E test proving discovery, follow, and timeline flows
 4. ATProto PDS mock wired into Docker `test` profile for live Newman assertions
-5. Promote all 18 Newman collections from "API contract" to "live validated"
-6. Gap report rewrite: remove all "not complete" language and recommended next steps
+5. Promote the selected Newman collections from "API contract" to "live validated"
+6. Gap report rewrite: reflect the green runtime baseline while explicitly calling out any remaining real migration gaps
 7. Documentation accuracy pass (test counts, Newman status)
 
 ### Out of Scope
@@ -31,6 +31,7 @@ Type: Feature
 - Real plugin binary execution (requires sandboxing infrastructure)
 - Real FFmpeg encoding via remote runner agent (requires runner agent binary)
 - ATProto PDS mock extensions beyond existing XRPC endpoints
+- Real PeerTube dump-plus-media ETL/import tooling
 
 ## Context for Implementer
 
@@ -93,9 +94,9 @@ Type: Feature
 2. A single Go test proves the complete runner lifecycle: register → request → accept → update → upload → success → completed state
 3. A Go E2E test proves federation discovery (WebFinger + NodeInfo) and server follow/unfollow lifecycle
 4. Docker test profile includes ATProto PDS mock and `app-test` connects to it
-5. All 18 Newman collections pass as "validated against live server" (0 "API contract only")
-6. Gap report confidence statement says import compatibility IS complete (no "not yet" or "still not" language)
-7. Gap report has zero recommended next steps related to the current parity scope
+5. All selected Newman collections pass as "validated against live server" (currently 19 in `postman/run-all-tests.sh`)
+6. Gap report accurately states that API/runtime parity confidence is high, while full PeerTube ETL/import confidence remains lower because the importer itself is not shipped
+7. Gap report recommended next steps are limited to the remaining migration-specific gaps
 
 ### Artifacts
 
@@ -263,8 +264,8 @@ Type: Feature
 **Definition of Done:**
 
 - [ ] All 5 collections updated with live assertions
-- [ ] All 18 collections pass when run against Docker test profile
-- [ ] Gap report can state "Validated against live server: 18" (not "13 + 5 API contract")
+- [ ] All selected collections pass when run against Docker test profile
+- [ ] Gap report can state the current live-validated collection count accurately
 
 **Verify:**
 
@@ -275,7 +276,7 @@ Type: Feature
 
 ### Task 6: Gap report & documentation update
 
-**Objective:** Rewrite the gap report to declare full parity confidence, remove all recommended next steps, and update documentation with accurate test counts.
+**Objective:** Rewrite the gap report to reflect the green runtime baseline, preserve the remaining ETL/import gap, and update documentation with accurate test counts.
 **Dependencies:** Tasks 1-5
 
 **Files:**
@@ -286,24 +287,24 @@ Type: Feature
 
 **Key Decisions / Notes:**
 
-- Gap report "What is not true yet" section: remove or rewrite — all items are now addressed
-- Gap report "Recommended Next Steps" section: remove or mark all as completed
-- Gap report "Confidence Statement" section: rewrite to state confidence IS complete
-- Gap report Newman coverage table: update all 18 to "Pass" with "Validated against live server"
+- Gap report "What is not true yet" section: keep only the genuine remaining migration/tooling gaps
+- Gap report "Recommended Next Steps" section: focus only on the remaining migration-specific work
+- Gap report "Confidence Statement" section: distinguish runtime parity from ETL/import readiness
+- Gap report Newman coverage table: update the live-validated collection count accurately
 - Update `.claude/rules/project.md` test counts to reflect new test files
-- Update `postman/README.md` to reflect all 18 collections as live-validated
+- Update `postman/README.md` to reflect the current live-validated collection set accurately
 
 **Definition of Done:**
 
-- [ ] Gap report has zero "not yet complete" confidence statements
-- [ ] Gap report has zero open recommended next steps
-- [ ] Newman coverage shows 18/18 validated against live server
+- [ ] Gap report clearly distinguishes runtime parity from missing migration tooling
+- [ ] Gap report recommended next steps cover only the remaining migration work
+- [ ] Newman coverage shows the correct live-validated collection count
 - [ ] Project docs reflect accurate test counts
 - [ ] `postman/README.md` reflects accurate collection status
 
 **Verify:**
 
-- `grep -c "not yet\|still not\|not complete" docs/reports/peertube-parity-gap-report.md` returns 0
+- `rg -n "ETL|importer|migration" docs/reports/peertube-parity-gap-report.md` shows the remaining migration/tooling gap explicitly
 
 ---
 
