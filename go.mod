@@ -8,7 +8,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/HugoSmits86/nativewebp v1.2.0
 	github.com/anacrolix/torrent v1.59.1
-	github.com/aws/aws-sdk-go-v2 v1.39.6
+	github.com/aws/aws-sdk-go-v2 v1.41.4
 	github.com/aws/aws-sdk-go-v2/config v1.31.17
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.24
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.20.3
@@ -76,7 +76,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.40.2 // indirect
-	github.com/aws/smithy-go v1.23.2 // indirect
+	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/benbjohnson/immutable v0.4.1-0.20221220213129-8932b999621d // indirect
