@@ -1,0 +1,395 @@
+openapi: 3.0.3
+info:
+  title: Athena Notifications API
+  description: User notification management endpoints including listing, read status, and batch operations
+  version: 1.0.0
+
+tags:
+  - name: Notifications
+    description: User notification management
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  /api/v1/notifications:
+    get:
+      tags:
+        - Notifications
+        - PeerTube-Compat
+      summary: List notifications
+      description: |
+        Retrieve notifications for the authenticated user with optional filtering by read status
+        and notification type. Supports pagination via limit/offset or page/pageSize.
+      operationId: listNotifications
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: unread
+          in: query
+          description: Filter by read status (true = unread only, false = read only)
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - name: types
+          in: query
+          description: Comma-separated list of notification types to filter by
+          schema:
+            type: string
+          example: "new_video,comment"
+        - name: type
+          in: query
+          description: Single notification type filter (can be repeated)
+          schema:
+            type: string
+            enum:
+              - new_video
+              - video_processed
+              - video_failed
+              - new_subscriber
+              - comment
+              - mention
+              - system
+              - new_message
+              - message_read
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Notifications retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '400':
+          description: Invalid filter parameters (e.g., unknown notification type)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/notifications/unread-count:
+    get:
+      tags:
+        - Notifications
+        - PeerTube-Compat
+      summary: Get unread notification count
+      description: Returns the number of unread notifications for the authenticated user
+      operationId: getUnreadNotificationCount
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Unread count retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      unread_count:
+                        type: integer
+                        minimum: 0
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/notifications/stats:
+    get:
+      tags:
+        - Notifications
+      summary: Get notification statistics
+      description: Returns aggregate notification statistics for the authenticated user, broken down by type
+      operationId: getNotificationStats
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Notification statistics retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/NotificationStats'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/notifications/{id}/read:
+    put:
+      tags:
+        - Notifications
+        - PeerTube-Compat
+      summary: Mark notification as read
+      description: Marks a single notification as read for the authenticated user
+      operationId: markNotificationAsRead
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Notification ID
+      responses:
+        '200':
+          description: Notification marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      success:
+                        type: boolean
+        '400':
+          description: Invalid notification ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Notification not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/notifications/read-all:
+    put:
+      tags:
+        - Notifications
+        - PeerTube-Compat
+      summary: Mark all notifications as read
+      description: Marks all notifications as read for the authenticated user
+      operationId: markAllNotificationsAsRead
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: All notifications marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      success:
+                        type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/notifications/read:
+    post:
+      tags:
+        - Notifications
+        - PeerTube-Compat
+      summary: Batch mark notifications as read
+      description: |
+        Marks specific notifications as read by ID. If the `ids` array is empty or omitted,
+        marks all notifications as read (PeerTube-compatible behavior).
+      operationId: batchMarkNotificationsAsRead
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: Notification IDs to mark as read. Empty or omitted marks all.
+      responses:
+        '204':
+          description: Notifications marked as read (no content)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/notifications/{id}:
+    delete:
+      tags:
+        - Notifications
+      summary: Delete a notification
+      description: Permanently deletes a notification for the authenticated user
+      operationId: deleteNotification
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Notification ID
+      responses:
+        '204':
+          description: Notification deleted (no content)
+        '400':
+          description: Invalid notification ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Notification not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum:
+            - new_video
+            - video_processed
+            - video_failed
+            - new_subscriber
+            - comment
+            - mention
+            - system
+            - new_message
+            - message_read
+        title:
+          type: string
+        message:
+          type: string
+        data:
+          type: object
+          description: Structured data associated with the notification
+          additionalProperties: true
+        read:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    NotificationStats:
+      type: object
+      properties:
+        total_count:
+          type: integer
+        unread_count:
+          type: integer
+        by_type:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Count of notifications broken down by type
+
+    PaginationMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: string

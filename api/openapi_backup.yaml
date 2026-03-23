@@ -1,0 +1,273 @@
+openapi: 3.0.3
+info:
+  title: Athena Backup & Restore API
+  description: Admin endpoints for server backup creation, listing, deletion, and restore operations
+  version: 1.0.0
+
+tags:
+  - name: Backup
+    description: Server backup management (admin only)
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  /api/v1/admin/backups:
+    get:
+      tags:
+        - Backup
+        - PeerTube-Compat
+      summary: List backups
+      description: List all available backups. Admin/moderator only.
+      operationId: listBackups
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Backups retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backups:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Backup'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags:
+        - Backup
+        - PeerTube-Compat
+      summary: Trigger a backup
+      description: |
+        Start a new backup operation. Optionally specify which components to include
+        (database, Redis, storage) and directories to exclude. Admin/moderator only.
+      operationId: triggerBackup
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerBackupRequest'
+      responses:
+        '202':
+          description: Backup started (asynchronous operation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: backup started
+                  components:
+                    type: array
+                    items:
+                      type: string
+                    description: List of components included in the backup
+        '400':
+          description: Invalid request (e.g., unsafe directory path)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/backups/{id}:
+    delete:
+      tags:
+        - Backup
+        - PeerTube-Compat
+      summary: Delete a backup
+      description: Delete a backup by ID. Admin/moderator only.
+      operationId: deleteBackup
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Backup identifier
+      responses:
+        '200':
+          description: Backup deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deleted
+        '400':
+          description: Invalid or missing backup ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/backups/{id}/restore:
+    post:
+      tags:
+        - Backup
+        - PeerTube-Compat
+      summary: Restore from backup
+      description: |
+        Start a restore operation from a backup. Creates a pre-restore backup automatically
+        and runs pending migrations after restore. Admin/moderator only.
+      operationId: restoreBackup
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Backup identifier to restore from
+      responses:
+        '202':
+          description: Restore started (asynchronous operation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: restore started
+        '400':
+          description: Invalid or missing backup ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/backups/restore/status:
+    get:
+      tags:
+        - Backup
+        - PeerTube-Compat
+      summary: Get restore status
+      description: Check the status of the current restore operation. Admin/moderator only.
+      operationId: getRestoreStatus
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Restore status retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: no active restore
+                    description: Status of the current restore operation
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions (admin/moderator required)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    Backup:
+      type: object
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+        size:
+          type: integer
+          format: int64
+          description: Backup size in bytes
+        components:
+          type: array
+          items:
+            type: string
+          description: Components included (database, redis, storage)
+        created_at:
+          type: string
+          format: date-time
+
+    TriggerBackupRequest:
+      type: object
+      properties:
+        include_database:
+          type: boolean
+          description: Include database in backup (default true)
+        include_redis:
+          type: boolean
+          description: Include Redis data in backup (default true)
+        include_storage:
+          type: boolean
+          description: Include file storage in backup (default true)
+        exclude_dirs:
+          type: array
+          items:
+            type: string
+          description: Directories to exclude from storage backup
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string

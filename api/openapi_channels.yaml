@@ -1,8 +1,18 @@
-# Channel Subscription Endpoints for OpenAPI
-# This should be inserted into the main openapi.yaml file
+openapi: 3.0.3
+info:
+  title: Athena Channels & Subscriptions API
+  description: Channel management, subscriptions, and channel media endpoints
+  version: 1.0.0
 
-  # ===== CHANNEL ENDPOINTS =====
+tags:
+  - name: Channels
+    description: Channel management
+  - name: Subscriptions
+    description: Channel subscriptions
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
 
+paths:
   /api/v1/channels:
     get:
       tags:
@@ -557,7 +567,12 @@
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-# ===== SCHEMAS FOR CHANNELS =====
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
 
   schemas:
     Channel:
@@ -895,3 +910,32 @@
           description: Forbidden - not the channel owner
         '404':
           description: Channel not found
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+
+    Video:
+      type: object
+      description: Video summary (see main openapi.yaml for full schema)
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string

@@ -1,0 +1,930 @@
+openapi: 3.0.3
+info:
+  title: Athena Messaging API
+  description: |
+    Direct messaging and end-to-end encrypted (E2EE) messaging endpoints.
+
+    ## Direct Messages
+    Standard text messaging between users with read receipts and conversation management.
+
+    ## E2EE Messaging
+    End-to-end encrypted messaging using public key cryptography with key exchange protocol.
+    Requires identity key registration before use.
+  version: 1.0.0
+
+tags:
+  - name: Messages
+    description: Direct messaging between users
+  - name: Conversations
+    description: Conversation management
+  - name: E2EE
+    description: End-to-end encrypted messaging
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  # ===== Direct Messages =====
+
+  /api/v1/messages:
+    post:
+      tags:
+        - Messages
+        - PeerTube-Compat
+      summary: Send a message
+      description: Send a direct message to another user
+      operationId: sendMessage
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '201':
+          description: Message sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/MessageResponse'
+        '400':
+          description: Invalid request (validation error, cannot message self)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Recipient not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags:
+        - Messages
+        - PeerTube-Compat
+      summary: Get messages
+      description: Retrieve messages in a conversation with another user. The `conversation_with` parameter is required.
+      operationId: getMessages
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: conversation_with
+          in: query
+          required: true
+          description: User ID of the conversation partner
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+        - name: before
+          in: query
+          description: Return messages before this message ID (cursor-based pagination)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Messages retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/MessagesResponse'
+        '400':
+          description: Missing or invalid conversation_with parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/messages/{messageId}/read:
+    put:
+      tags:
+        - Messages
+        - PeerTube-Compat
+      summary: Mark message as read
+      description: Mark a specific message as read
+      operationId: markMessageAsRead
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Message ID
+      responses:
+        '200':
+          description: Message marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: success
+        '400':
+          description: Missing or invalid message ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Message not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/messages/{messageId}:
+    delete:
+      tags:
+        - Messages
+        - PeerTube-Compat
+      summary: Delete a message
+      description: Delete a message. The message is soft-deleted for the requesting user.
+      operationId: deleteMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Message ID
+      responses:
+        '200':
+          description: Message deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: success
+        '400':
+          description: Missing or invalid message ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Message not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===== Conversations =====
+
+  /api/v1/conversations:
+    get:
+      tags:
+        - Conversations
+        - PeerTube-Compat
+      summary: List conversations
+      description: Retrieve a paginated list of conversations for the authenticated user
+      operationId: listConversations
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Conversations retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/ConversationsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/conversations/unread-count:
+    get:
+      tags:
+        - Conversations
+        - PeerTube-Compat
+      summary: Get unread conversation count
+      description: Returns the total number of unread messages across all conversations
+      operationId: getUnreadConversationCount
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Unread count retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      unread_count:
+                        type: integer
+                        minimum: 0
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ===== E2EE Endpoints =====
+
+  /api/v1/e2ee/keys:
+    post:
+      tags:
+        - E2EE
+      summary: Register identity key
+      description: Register a public identity key and signing key for end-to-end encryption
+      operationId: registerIdentityKey
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterIdentityKeyRequest'
+      responses:
+        '200':
+          description: Identity key registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Identity key registered successfully
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Identity key already registered for this user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+
+  /api/v1/e2ee/keys/{userId}:
+    get:
+      tags:
+        - E2EE
+      summary: Get public keys
+      description: Retrieve the public identity and signing keys for a user
+      operationId: getPublicKeys
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Target user ID
+      responses:
+        '200':
+          description: Public keys retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicKeyBundle'
+        '400':
+          description: Invalid user ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No keys registered for this user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+
+  /api/v1/e2ee/status:
+    get:
+      tags:
+        - E2EE
+      summary: Get E2EE status
+      description: Returns the E2EE status for the authenticated user (key registration, version, last rotation)
+      operationId: getE2EEStatus
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: E2EE status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/e2ee/key-exchange:
+    post:
+      tags:
+        - E2EE
+      summary: Initiate key exchange
+      description: Initiate an E2EE key exchange with another user to establish encrypted messaging
+      operationId: initiateKeyExchange
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitiateKeyExchangeRequest'
+      responses:
+        '201':
+          description: Key exchange initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyExchangeResponse'
+        '400':
+          description: Invalid request (cannot exchange with yourself, validation error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Conversation already has E2EE enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+
+  /api/v1/e2ee/key-exchange/accept:
+    post:
+      tags:
+        - E2EE
+      summary: Accept key exchange
+      description: Accept a pending key exchange request to complete E2EE setup for a conversation
+      operationId: acceptKeyExchange
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptKeyExchangeRequest'
+      responses:
+        '200':
+          description: Key exchange accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Key exchange accepted successfully
+                  status:
+                    type: string
+                    example: active
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not authorized to accept this key exchange
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+        '404':
+          description: Key exchange not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+        '410':
+          description: Key exchange has expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+
+  /api/v1/e2ee/key-exchange/pending:
+    get:
+      tags:
+        - E2EE
+      summary: List pending key exchanges
+      description: List all pending key exchange requests for the authenticated user
+      operationId: getPendingKeyExchanges
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pending key exchanges retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key_exchanges:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KeyExchangeMessage'
+                  total:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/e2ee/messages:
+    post:
+      tags:
+        - E2EE
+      summary: Store encrypted message
+      description: Store an end-to-end encrypted message. Requires a completed key exchange with the recipient.
+      operationId: storeEncryptedMessage
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreEncryptedMessageRequest'
+      responses:
+        '201':
+          description: Encrypted message stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    $ref: '#/components/schemas/Message'
+        '400':
+          description: Invalid request (cannot send to yourself, validation error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '412':
+          description: Key exchange not complete for this conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+
+  /api/v1/e2ee/messages/{conversationId}:
+    get:
+      tags:
+        - E2EE
+      summary: Get encrypted messages
+      description: Retrieve encrypted messages for a conversation. Caller must be a participant.
+      operationId: getEncryptedMessages
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Conversation ID
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Encrypted messages retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+        '400':
+          description: Missing conversation ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not a participant in this conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+        '404':
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EEErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    SendMessageRequest:
+      type: object
+      required:
+        - recipient_id
+        - content
+      properties:
+        recipient_id:
+          type: string
+          format: uuid
+          description: ID of the message recipient
+        content:
+          type: string
+          maxLength: 2000
+          description: Message content
+        parent_message_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID of parent message for replies
+        is_encrypted:
+          type: boolean
+          default: false
+          description: Whether the message content is encrypted
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+        sender_id:
+          type: string
+        recipient_id:
+          type: string
+        content:
+          type: string
+          nullable: true
+        message_type:
+          type: string
+          enum: [text, system, key_exchange, secure]
+        is_read:
+          type: boolean
+        is_deleted_by_sender:
+          type: boolean
+        is_deleted_by_recipient:
+          type: boolean
+        parent_message_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        encrypted_content:
+          type: string
+          nullable: true
+        content_nonce:
+          type: string
+          nullable: true
+        pgp_signature:
+          type: string
+          nullable: true
+        is_encrypted:
+          type: boolean
+        encryption_version:
+          type: integer
+
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          $ref: '#/components/schemas/Message'
+
+    MessagesResponse:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        total:
+          type: integer
+        has_more:
+          type: boolean
+
+    Conversation:
+      type: object
+      properties:
+        id:
+          type: string
+        participant_one_id:
+          type: string
+        participant_two_id:
+          type: string
+        last_message_id:
+          type: string
+          nullable: true
+        last_message_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        encryption_status:
+          type: string
+          enum: [none, pending, active]
+        is_encrypted:
+          type: boolean
+        key_exchange_complete:
+          type: boolean
+        encryption_version:
+          type: integer
+        last_key_rotation:
+          type: string
+          format: date-time
+          nullable: true
+        unread_count:
+          type: integer
+
+    ConversationsResponse:
+      type: object
+      properties:
+        conversations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Conversation'
+        total:
+          type: integer
+        has_more:
+          type: boolean
+
+    RegisterIdentityKeyRequest:
+      type: object
+      required:
+        - public_identity_key
+        - public_signing_key
+      properties:
+        public_identity_key:
+          type: string
+          maxLength: 256
+          description: Base64-encoded public identity key
+        public_signing_key:
+          type: string
+          maxLength: 256
+          description: Base64-encoded public signing key
+
+    PublicKeyBundle:
+      type: object
+      properties:
+        public_identity_key:
+          type: string
+        public_signing_key:
+          type: string
+        key_version:
+          type: integer
+        last_key_rotation:
+          type: string
+          format: date-time
+          nullable: true
+
+    E2EEStatusResponse:
+      type: object
+      properties:
+        has_identity_key:
+          type: boolean
+        key_version:
+          type: integer
+        last_key_rotation:
+          type: string
+          format: date-time
+          nullable: true
+
+    InitiateKeyExchangeRequest:
+      type: object
+      required:
+        - recipient_id
+        - sender_public_key
+      properties:
+        recipient_id:
+          type: string
+          format: uuid
+          description: ID of the user to initiate key exchange with
+        sender_public_key:
+          type: string
+          maxLength: 256
+          description: Sender's ephemeral public key for this exchange
+
+    AcceptKeyExchangeRequest:
+      type: object
+      required:
+        - key_exchange_id
+        - public_key
+      properties:
+        key_exchange_id:
+          type: string
+          format: uuid
+          description: ID of the key exchange to accept
+        public_key:
+          type: string
+          maxLength: 256
+          description: Recipient's ephemeral public key
+
+    StoreEncryptedMessageRequest:
+      type: object
+      required:
+        - recipient_id
+        - encrypted_content
+        - content_nonce
+        - signature
+      properties:
+        recipient_id:
+          type: string
+          format: uuid
+        encrypted_content:
+          type: string
+          maxLength: 8192
+          description: Base64-encoded encrypted message content
+        content_nonce:
+          type: string
+          minLength: 32
+          maxLength: 32
+          description: Cryptographic nonce used for encryption
+        signature:
+          type: string
+          maxLength: 128
+          description: Digital signature of the message
+        parent_message_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    KeyExchangeMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sender_id:
+          type: string
+        recipient_id:
+          type: string
+        sender_public_key:
+          type: string
+        status:
+          type: string
+          enum: [pending, accepted, expired]
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    KeyExchangeResponse:
+      type: object
+      properties:
+        key_exchange:
+          $ref: '#/components/schemas/KeyExchangeMessage'
+        status:
+          type: string
+          example: initiated
+
+    E2EEErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: string

@@ -1,0 +1,1376 @@
+openapi: 3.0.3
+info:
+  title: Athena Extended API
+  version: 1.0.0
+  description: >
+    Additional API endpoints for watch history, token sessions, video ownership
+    transfer, channel collaborators, trending videos, contact form, video
+    categories, and user blocklists.
+
+tags:
+  - name: Watch History
+    description: User watch history management
+  - name: Token Sessions
+    description: User token/session management
+  - name: Video Ownership
+    description: Video ownership transfer workflow
+  - name: Channel Collaborators
+    description: Channel collaborator invite and management
+  - name: Trending
+    description: Trending video discovery
+  - name: Contact
+    description: Instance contact form
+  - name: Video Categories
+    description: Video category management
+  - name: User Blocklists
+    description: Per-user account and server blocking
+  - name: OAuth
+    description: OAuth client endpoints
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  # ──────────────── Watch History ────────────────
+
+  /api/v1/views/history:
+    get:
+      summary: Get view history
+      operationId: getViewHistory
+      description: >
+        Returns the authenticated user's watch history with filtering options.
+        Admins can view other users' history by specifying user_id.
+      tags:
+        - Watch History
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: video_id
+          schema:
+            type: string
+            format: uuid
+          description: Filter by specific video
+        - in: query
+          name: user_id
+          schema:
+            type: string
+            format: uuid
+          description: Filter by user (admin only for other users)
+        - in: query
+          name: start_date
+          schema:
+            type: string
+            format: date
+          description: Start date filter (YYYY-MM-DD)
+        - in: query
+          name: end_date
+          schema:
+            type: string
+            format: date
+          description: End date filter (YYYY-MM-DD)
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 100
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: View history retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ViewHistoryEntry'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - cannot access other user's history
+
+  /api/v1/users/me/history/videos:
+    get:
+      summary: Get my watch history (alias)
+      operationId: getMyWatchHistory
+      description: Alias for GET /api/v1/views/history scoped to the authenticated user
+      tags:
+        - Watch History
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 100
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Watch history retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ViewHistoryEntry'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          description: Unauthorized
+
+    delete:
+      summary: Clear watch history
+      operationId: clearWatchHistory
+      description: Clears the authenticated user's entire watch history
+      tags:
+        - Watch History
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Watch history cleared
+        '401':
+          description: Unauthorized
+
+  /api/v1/users/me/history/videos/{videoId}:
+    delete:
+      summary: Remove video from watch history
+      operationId: removeVideoFromHistory
+      description: Removes a specific video from the authenticated user's watch history
+      tags:
+        - Watch History
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: videoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the video to remove from history
+      responses:
+        '204':
+          description: Video removed from history
+        '401':
+          description: Unauthorized
+        '404':
+          description: Video not found in history
+
+  # ──────────────── Token Sessions ────────────────
+
+  /api/v1/users/{id}/token-sessions:
+    get:
+      summary: List token sessions
+      operationId: listTokenSessions
+      description: >
+        List all active token sessions for a user. Users can view their own
+        sessions; admins can view any user's sessions.
+      tags:
+        - Token Sessions
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: User ID
+      responses:
+        '200':
+          description: Token sessions listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TokenSession'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - can only view own sessions unless admin
+
+  /api/v1/users/{id}/token-sessions/{tokenSessionId}/revoke:
+    post:
+      summary: Revoke a token session
+      operationId: revokeTokenSession
+      description: >
+        Revoke a specific token session. Users can revoke their own sessions;
+        admins can revoke any user's sessions.
+      tags:
+        - Token Sessions
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: User ID
+        - in: path
+          name: tokenSessionId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Token session ID to revoke
+      responses:
+        '204':
+          description: Token session revoked
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - can only revoke own sessions unless admin
+        '404':
+          description: Token session not found
+
+  # ──────────────── Video Ownership Transfer ────────────────
+
+  /api/v1/videos/{id}/give-ownership:
+    post:
+      summary: Initiate video ownership transfer
+      operationId: giveVideoOwnership
+      description: >
+        The authenticated video owner initiates a transfer to another user
+        by username. Creates a pending ownership change request.
+      tags:
+        - Video Ownership
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Video ID to transfer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+              properties:
+                username:
+                  type: string
+                  description: Username of the intended new owner
+      responses:
+        '204':
+          description: Ownership transfer initiated
+        '400':
+          description: Invalid request - username required
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - you do not own this video
+        '404':
+          description: Video not found
+
+  /api/v1/users/me/videos/ownership:
+    get:
+      summary: List pending ownership changes
+      operationId: listVideoOwnershipChanges
+      description: >
+        Returns pending ownership change requests where the authenticated
+        user is the prospective new owner.
+      tags:
+        - Video Ownership
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Ownership changes listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VideoOwnershipChange'
+                  total:
+                    type: integer
+        '401':
+          description: Unauthorized
+
+  /api/v1/users/me/videos/ownership/{id}/accept:
+    post:
+      summary: Accept video ownership transfer
+      operationId: acceptVideoOwnership
+      description: >
+        The prospective new owner accepts the transfer. The video's owner is
+        updated and the change status is set to accepted.
+      tags:
+        - Video Ownership
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Ownership change request ID
+      responses:
+        '204':
+          description: Ownership accepted
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - you are not the intended new owner
+        '404':
+          description: Ownership change not found
+
+  /api/v1/users/me/videos/ownership/{id}/refuse:
+    post:
+      summary: Refuse video ownership transfer
+      operationId: refuseVideoOwnership
+      description: The prospective new owner refuses the transfer
+      tags:
+        - Video Ownership
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Ownership change request ID
+      responses:
+        '204':
+          description: Ownership refused
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - you are not the intended new owner
+        '404':
+          description: Ownership change not found
+
+  # ──────────────── Channel Collaborators ────────────────
+
+  /api/v1/video-channels/{channelHandle}/collaborators:
+    get:
+      summary: List channel collaborators
+      operationId: listChannelCollaborators
+      description: >
+        List all collaborators for a channel. Requires channel owner or
+        accepted collaborator status.
+      tags:
+        - Channel Collaborators
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: channelHandle
+          required: true
+          schema:
+            type: string
+          description: Channel handle
+      responses:
+        '200':
+          description: Collaborators listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChannelCollaborator'
+                  total:
+                    type: integer
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - not an owner or collaborator
+        '404':
+          description: Channel not found
+
+  /api/v1/video-channels/{channelHandle}/collaborators/invite:
+    post:
+      summary: Invite a channel collaborator
+      operationId: inviteChannelCollaborator
+      description: >
+        Invite a user to collaborate on a channel. Only the channel owner
+        can invite collaborators.
+      tags:
+        - Channel Collaborators
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: channelHandle
+          required: true
+          schema:
+            type: string
+          description: Channel handle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                  description: User ID of the invitee
+                username:
+                  type: string
+                  description: Username of the invitee
+                account:
+                  type: string
+                  description: Account name of the invitee (alias)
+                accountName:
+                  type: string
+                  description: Account name of the invitee (alias)
+                role:
+                  type: string
+                  enum: [editor, moderator]
+                  default: editor
+                  description: Role for the collaborator
+      responses:
+        '201':
+          description: Collaborator invited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelCollaborator'
+        '400':
+          description: Invalid request or self-invite
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - only channel owner can invite
+        '404':
+          description: Channel or user not found
+
+  /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}/accept:
+    post:
+      summary: Accept collaborator invitation
+      operationId: acceptChannelCollaborator
+      description: The invited user accepts the collaboration invitation
+      tags:
+        - Channel Collaborators
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: channelHandle
+          required: true
+          schema:
+            type: string
+          description: Channel handle
+        - in: path
+          name: collaboratorId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Collaborator record ID
+      responses:
+        '200':
+          description: Invitation accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelCollaborator'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - not the invited user
+        '404':
+          description: Invitation not found
+
+  /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}/reject:
+    post:
+      summary: Reject collaborator invitation
+      operationId: rejectChannelCollaborator
+      description: The invited user rejects the collaboration invitation
+      tags:
+        - Channel Collaborators
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: channelHandle
+          required: true
+          schema:
+            type: string
+          description: Channel handle
+        - in: path
+          name: collaboratorId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Collaborator record ID
+      responses:
+        '200':
+          description: Invitation rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelCollaborator'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - not the invited user
+        '404':
+          description: Invitation not found
+
+  /api/v1/video-channels/{channelHandle}/collaborators/{collaboratorId}:
+    delete:
+      summary: Remove a channel collaborator
+      operationId: deleteChannelCollaborator
+      description: >
+        Remove a collaborator from a channel. Channel owner can remove
+        anyone; collaborators can remove themselves.
+      tags:
+        - Channel Collaborators
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: channelHandle
+          required: true
+          schema:
+            type: string
+          description: Channel handle
+        - in: path
+          name: collaboratorId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Collaborator record ID
+      responses:
+        '204':
+          description: Collaborator removed
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - not owner or the collaborator themselves
+        '404':
+          description: Collaborator not found
+
+  # ──────────────── Trending ────────────────
+
+  /api/v1/trending:
+    get:
+      summary: Get trending videos
+      operationId: getTrendingVideos
+      description: >
+        Returns currently trending videos based on view counts and engagement.
+        Supports pagination and optional detailed responses.
+      tags:
+        - Trending
+        - PeerTube-Compat
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Number of trending videos to return
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Items per page
+        - in: query
+          name: include_details
+          schema:
+            type: string
+            enum: ['true', 'false']
+            default: 'false'
+          description: Include detailed trending metrics
+      responses:
+        '200':
+          description: Trending videos retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      videos:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TrendingVideo'
+                      limit:
+                        type: integer
+                      updated_at:
+                        type: string
+                        format: date-time
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '400':
+          description: Invalid parameters
+
+  # ──────────────── Contact Form ────────────────
+
+  /api/v1/server/contact:
+    post:
+      summary: Submit contact form
+      operationId: submitContactForm
+      description: Submit a contact form message to the instance administrators
+      tags:
+        - Contact
+        - PeerTube-Compat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - fromEmail
+                - body
+              properties:
+                fromName:
+                  type: string
+                  description: Sender's name
+                fromEmail:
+                  type: string
+                  format: email
+                  description: Sender's email address
+                body:
+                  type: string
+                  minLength: 1
+                  description: Message body
+      responses:
+        '204':
+          description: Contact form submitted successfully
+        '400':
+          description: Invalid request - fromEmail and body required
+
+  # ──────────────── OAuth Local Client ────────────────
+
+  /api/v1/oauth-clients/local:
+    get:
+      summary: Get local OAuth client
+      operationId: getLocalOAuthClient
+      description: >
+        Returns the local OAuth client credentials used for password-grant
+        authentication flows (PeerTube compatibility).
+      tags:
+        - OAuth
+        - PeerTube-Compat
+      responses:
+        '200':
+          description: Local OAuth client retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_id:
+                    type: string
+                    description: OAuth client ID
+                  client_secret:
+                    type: string
+                    description: OAuth client secret
+
+  # ──────────────── Video Categories ────────────────
+
+  /api/v1/categories:
+    get:
+      summary: List video categories
+      operationId: listVideoCategories
+      description: Returns all video categories with optional filtering and pagination
+      tags:
+        - Video Categories
+        - PeerTube-Compat
+      parameters:
+        - in: query
+          name: active_only
+          schema:
+            type: string
+            enum: ['true', 'false']
+            default: 'true'
+          description: Only return active categories
+        - in: query
+          name: order_by
+          schema:
+            type: string
+            enum: [display_order, name, created_at]
+            default: display_order
+          description: Field to order by
+        - in: query
+          name: order_dir
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+          description: Order direction
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Categories retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VideoCategory'
+
+  /api/v1/categories/{id}:
+    get:
+      summary: Get a video category
+      operationId: getVideoCategory
+      description: Get a category by UUID or slug
+      tags:
+        - Video Categories
+        - PeerTube-Compat
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Category UUID or slug
+      responses:
+        '200':
+          description: Category retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoCategory'
+        '404':
+          description: Category not found
+
+  /api/v1/admin/categories:
+    post:
+      summary: Create a video category (admin)
+      operationId: adminCreateVideoCategory
+      description: Create a new video category (admin only)
+      tags:
+        - Video Categories
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVideoCategoryRequest'
+      responses:
+        '201':
+          description: Category created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoCategory'
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - admin only
+
+  /api/v1/admin/categories/{id}:
+    put:
+      summary: Update a video category (admin)
+      operationId: adminUpdateVideoCategory
+      description: Update an existing video category (admin only)
+      tags:
+        - Video Categories
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Category ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVideoCategoryRequest'
+      responses:
+        '200':
+          description: Category updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoCategory'
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - admin only
+        '404':
+          description: Category not found
+
+    delete:
+      summary: Delete a video category (admin)
+      operationId: adminDeleteVideoCategory
+      description: Delete a video category (admin only)
+      tags:
+        - Video Categories
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Category ID
+      responses:
+        '204':
+          description: Category deleted
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - admin only
+        '404':
+          description: Category not found
+
+  # ──────────────── User Blocklists ────────────────
+
+  /api/v1/blocklist/accounts:
+    get:
+      summary: List blocked accounts
+      operationId: listAccountBlocks
+      description: List all accounts blocked by the authenticated user
+      tags:
+        - User Blocklists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Blocked accounts listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserBlock'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          description: Unauthorized
+
+    post:
+      summary: Block an account
+      operationId: blockAccount
+      description: Block a user account for the authenticated user
+      tags:
+        - User Blocklists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - accountId
+              properties:
+                accountName:
+                  type: string
+                  description: Account username to block
+                accountId:
+                  type: string
+                  format: uuid
+                  description: Account UUID to block
+      responses:
+        '201':
+          description: Account blocked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserBlock'
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+
+  /api/v1/blocklist/accounts/{accountName}:
+    delete:
+      summary: Unblock an account
+      operationId: unblockAccount
+      description: Remove a block on a user account
+      tags:
+        - User Blocklists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: accountName
+          required: true
+          schema:
+            type: string
+          description: Account username to unblock
+      responses:
+        '204':
+          description: Account unblocked
+        '401':
+          description: Unauthorized
+        '404':
+          description: Block not found
+
+  /api/v1/blocklist/servers:
+    get:
+      summary: List blocked servers
+      operationId: listServerBlocks
+      description: List all servers blocked by the authenticated user
+      tags:
+        - User Blocklists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Blocked servers listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserBlock'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          description: Unauthorized
+
+    post:
+      summary: Block a server
+      operationId: blockServer
+      description: Block an entire server/instance for the authenticated user
+      tags:
+        - User Blocklists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - host
+              properties:
+                host:
+                  type: string
+                  description: Server hostname to block
+      responses:
+        '201':
+          description: Server blocked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserBlock'
+        '400':
+          description: Invalid request - host required
+        '401':
+          description: Unauthorized
+
+  /api/v1/blocklist/servers/{host}:
+    delete:
+      summary: Unblock a server
+      operationId: unblockServer
+      description: Remove a block on a server
+      tags:
+        - User Blocklists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: host
+          required: true
+          schema:
+            type: string
+          description: Server hostname to unblock
+      responses:
+        '204':
+          description: Server unblocked
+        '401':
+          description: Unauthorized
+        '404':
+          description: Block not found
+
+  /api/v1/blocklist/status:
+    get:
+      summary: Get blocklist status
+      operationId: getBlocklistStatus
+      description: Get the blocklist feature status for the authenticated user
+      tags:
+        - User Blocklists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Blocklist status retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      account_blocks_count:
+                        type: integer
+                      server_blocks_count:
+                        type: integer
+        '401':
+          description: Unauthorized
+
+components:
+  schemas:
+    ViewHistoryEntry:
+      type: object
+      properties:
+        video_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        watched_at:
+          type: string
+          format: date-time
+        duration_watched:
+          type: integer
+          description: Duration watched in seconds
+        video:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            title:
+              type: string
+            thumbnail_url:
+              type: string
+              format: uri
+            duration:
+              type: integer
+
+    TokenSession:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        device_name:
+          type: string
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        last_used_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+
+    VideoOwnershipChange:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        initiator_id:
+          type: string
+          format: uuid
+        next_owner_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, accepted, refused]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ChannelCollaborator:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        invited_by:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [editor, moderator]
+        status:
+          type: string
+          enum: [pending, accepted, rejected]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TrendingVideo:
+      type: object
+      properties:
+        video_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        views:
+          type: integer
+        trending_score:
+          type: number
+          format: float
+        thumbnail_url:
+          type: string
+          format: uri
+
+    VideoCategory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+          nullable: true
+        active:
+          type: boolean
+        display_order:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateVideoCategoryRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        slug:
+          type: string
+          description: URL-friendly slug (auto-generated from name if omitted)
+        description:
+          type: string
+          nullable: true
+        active:
+          type: boolean
+          default: true
+        display_order:
+          type: integer
+          default: 0
+
+    UpdateVideoCategoryRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        slug:
+          type: string
+        description:
+          type: string
+          nullable: true
+        active:
+          type: boolean
+        display_order:
+          type: integer
+
+    UserBlock:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        target_account_id:
+          type: string
+          format: uuid
+          nullable: true
+        target_host:
+          type: string
+          nullable: true
+        block_type:
+          type: string
+          enum: [account, server]
+        created_at:
+          type: string
+          format: date-time
+
+    PaginationMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
