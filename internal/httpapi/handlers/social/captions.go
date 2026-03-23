@@ -228,10 +228,10 @@ func (h *CaptionHandlers) UpdateCaption(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	captionIDStr := chi.URLParam(r, "captionId")
-	captionID, err := uuid.Parse(captionIDStr)
+	// Resolve caption: accept either a UUID (captionId) or a language code.
+	captionID, err := h.resolveCaptionID(r, videoID)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid caption ID"))
+		shared.WriteError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -302,10 +302,10 @@ func (h *CaptionHandlers) DeleteCaption(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	captionIDStr := chi.URLParam(r, "captionId")
-	captionID, err := uuid.Parse(captionIDStr)
+	// Resolve caption: accept either a UUID (captionId) or a language code.
+	captionID, err := h.resolveCaptionID(r, videoID)
 	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid caption ID"))
+		shared.WriteError(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -351,4 +351,30 @@ func (h *CaptionHandlers) DeleteCaption(w http.ResponseWriter, r *http.Request) 
 	shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"status": "deleted",
 	})
+}
+
+// resolveCaptionID resolves the "captionId" URL parameter which may be either
+// a UUID (Athena-native) or a language code (PeerTube-compatible).
+// It first tries UUID parsing; on failure it treats the value as a language
+// code and looks up the caption by video + language.
+func (h *CaptionHandlers) resolveCaptionID(r *http.Request, videoID uuid.UUID) (uuid.UUID, error) {
+	param := chi.URLParam(r, "captionId")
+	if param == "" {
+		return uuid.Nil, fmt.Errorf("caption identifier is required")
+	}
+
+	// Try UUID first (Athena native path).
+	if id, err := uuid.Parse(param); err == nil {
+		return id, nil
+	}
+
+	// Fall back to language code lookup (PeerTube compat).
+	if h.captionService == nil {
+		return uuid.Nil, fmt.Errorf("invalid caption ID: %s", param)
+	}
+	caption, err := h.captionService.GetCaptionByVideoAndLanguage(r.Context(), videoID, param)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("caption not found for language %q: %w", param, err)
+	}
+	return caption.ID, nil
 }

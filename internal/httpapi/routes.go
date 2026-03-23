@@ -10,12 +10,14 @@ import (
 	"athena/internal/httpapi/handlers/federation"
 	"athena/internal/httpapi/handlers/livestream"
 	"athena/internal/httpapi/handlers/messaging"
+	metricshandlers "athena/internal/httpapi/handlers/metrics"
 	"athena/internal/httpapi/handlers/misc"
 	"athena/internal/httpapi/handlers/moderation"
 	"athena/internal/httpapi/handlers/payments"
 	pluginhandlers "athena/internal/httpapi/handlers/plugin"
 	runnerhandlers "athena/internal/httpapi/handlers/runner"
 	"athena/internal/httpapi/handlers/social"
+	statichandlers "athena/internal/httpapi/handlers/static"
 	"athena/internal/httpapi/handlers/video"
 	"athena/internal/httpapi/shared"
 	"athena/internal/repository"
@@ -190,6 +192,18 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.Get("/privacies", video.GetVideoPrivacies)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/top", viewsHandler.GetTopVideos)
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", video.UploadVideoFileHandler(deps.VideoRepo, cfg))
+
+			// PeerTube-compatible resumable upload alias
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload-resumable", video.InitiateUploadHandler(deps.UploadService, deps.VideoRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/upload-resumable", compat.PeerTubeNotImplemented("Resumable upload chunk via PUT"))
+			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/upload-resumable", compat.PeerTubeNotImplemented("Resumable upload cancel"))
+
+			// PeerTube-compatible category alias: GET /videos/categories → /categories
+			if deps.VideoCategoryUseCase != nil {
+				catHandler := video.NewVideoCategoryHandler(deps.VideoCategoryUseCase)
+				r.Get("/categories", catHandler.ListCategories)
+			}
+
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", video.GetVideoHandler(deps.VideoRepo, deps.CaptionService))
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", video.StreamVideoHandler(deps.VideoRepo))
 			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/source", video.GetVideoSourceHandler(deps.VideoRepo))
@@ -666,9 +680,12 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.Get("/about", instanceHandlers.GetInstanceAbout)
 			r.Get("/stats", instanceHandlers.GetPublicStats)
 		})
+
+		registerPeerTubeAliasRoutes(r, deps, cfg)
 	})
 
 	registerExternalFeatureRoutes(r, deps, cfg.JWTSecret)
+	registerPeerTubeCompatRoutes(r, deps, cfg)
 
 	r.Get("/oembed", admin.NewInstanceHandlers(deps.ModerationRepo, deps.UserRepo, deps.VideoRepo).OEmbed)
 
@@ -1023,4 +1040,104 @@ func registerAdminAPIRoutes(
 			})
 		}
 	})
+}
+
+// registerPeerTubeCompatRoutes registers static file serving and download routes
+// outside /api/v1. These use PeerTube-compatible URL paths.
+func registerPeerTubeCompatRoutes(r chi.Router, deps *shared.HandlerDependencies, cfg *config.Config) {
+	staticH := statichandlers.NewHandlers(cfg, deps.VideoRepo)
+
+	// Static web-video files
+	r.Route("/static/web-videos", func(r chi.Router) {
+		r.Get("/{filename}", staticH.ServeWebVideo)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/private/{filename}", staticH.ServePrivateWebVideo)
+	})
+
+	// Static HLS streaming playlists
+	r.Route("/static/streaming-playlists/hls", func(r chi.Router) {
+		r.Get("/{filename}", staticH.ServeHLSFile)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/private/{filename}", staticH.ServePrivateHLSFile)
+	})
+
+	// Video download endpoint
+	r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/download/videos/generate/{videoId}", staticH.DownloadVideo)
+}
+
+// registerPeerTubeAliasRoutes registers PeerTube-compatible URL aliases inside the
+// /api/v1 router. These are thin proxies that forward to existing handlers.
+func registerPeerTubeAliasRoutes(r chi.Router, deps *shared.HandlerDependencies, cfg *config.Config) {
+	// Note: Resumable upload aliases (POST/PUT/DELETE /videos/upload-resumable) and
+	// category alias (GET /videos/categories) are registered inline in the
+	// /videos Route block above to avoid wildcard conflicts with /{id}.
+
+	// --- Notification aliases ---
+	// PeerTube: /api/v1/users/me/notifications/* → our /api/v1/notifications/*
+	if deps.NotificationService != nil {
+		notificationHandlers := messaging.NewNotificationHandlers(deps.NotificationService)
+		r.Route("/users/me/notifications", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Get("/", notificationHandlers.GetNotifications)
+			r.Get("/unread-count", notificationHandlers.GetUnreadCount)
+			r.Get("/stats", notificationHandlers.GetNotificationStats)
+			r.Put("/{id}/read", notificationHandlers.MarkAsRead)
+			r.Put("/read-all", notificationHandlers.MarkAllAsRead)
+			r.Post("/read-all", notificationHandlers.MarkAllAsRead) // PeerTube uses POST
+			r.Post("/read", notificationHandlers.MarkBatchAsRead)
+			r.Delete("/{id}", notificationHandlers.DeleteNotification)
+		})
+	}
+
+	// --- Blocklist aliases ---
+	// PeerTube: /api/v1/users/me/blocklist/* → our /api/v1/blocklist/*
+	if deps.UserBlockRepo != nil {
+		userBlockHandlers := moderation.NewUserBlocklistHandlers(deps.UserBlockRepo)
+		r.Route("/users/me/blocklist", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Route("/accounts", func(r chi.Router) {
+				r.Get("/", userBlockHandlers.ListAccountBlocks)
+				r.Post("/", userBlockHandlers.BlockAccount)
+				r.Delete("/{accountName}", userBlockHandlers.UnblockAccount)
+			})
+			r.Route("/servers", func(r chi.Router) {
+				r.Get("/", userBlockHandlers.ListServerBlocks)
+				r.Post("/", userBlockHandlers.BlockServer)
+				r.Delete("/{host}", userBlockHandlers.UnblockServer)
+			})
+		})
+	}
+
+	// --- Playlist alias ---
+	// PeerTube: /api/v1/video-playlists/* → our /api/v1/playlists/*
+	// Note: /video-playlists/privacies is already registered in a separate Route block.
+	// Use individual route registrations to avoid shadowing that subrouter.
+	if deps.PlaylistService != nil {
+		playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/video-playlists", playlistHandlers.ListPlaylists)
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/video-playlists", playlistHandlers.CreatePlaylist)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/video-playlists/{id}", playlistHandlers.GetPlaylist)
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/video-playlists/{id}", playlistHandlers.UpdatePlaylist)
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/video-playlists/{id}", playlistHandlers.DeletePlaylist)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/video-playlists/{id}/items", playlistHandlers.GetPlaylistItems)
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/video-playlists/{id}/items", playlistHandlers.AddVideoToPlaylist)
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/video-playlists/{id}/items/{itemId}", playlistHandlers.RemoveVideoFromPlaylist)
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/video-playlists/{id}/items/{itemId}/reorder", playlistHandlers.ReorderPlaylistItem)
+	}
+
+	// --- Channel handle aliases ---
+	// PeerTube: PUT/DELETE /api/v1/video-channels/{handle}
+	if deps.ChannelService != nil {
+		aliasHandlers := compat.NewAliasHandlers(deps.CaptionRepo, deps.ChannelService, deps.VideoRepo)
+		channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
+
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/video-channels/{handle}", aliasHandlers.ResolveChannelHandle(channelHandlers.UpdateChannel))
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/video-channels/{handle}", aliasHandlers.ResolveChannelHandle(channelHandlers.DeleteChannel))
+	}
+
+	// Note: Caption language aliases (PUT/DELETE /videos/{id}/captions/{captionLanguage})
+	// are handled by the existing {captionId} handlers which accept both UUIDs and
+	// language codes. See the caption handler's UpdateCaption/DeleteCaption methods.
+
+	// --- Playback metrics ---
+	playbackHandler := metricshandlers.NewPlaybackHandler()
+	r.Post("/metrics/playback", playbackHandler.ReportPlaybackMetrics)
 }

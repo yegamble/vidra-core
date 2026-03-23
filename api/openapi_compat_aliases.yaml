@@ -1,0 +1,383 @@
+openapi: 3.0.3
+info:
+  title: Athena PeerTube Compatibility Aliases
+  description: |
+    PeerTube-compatible URL aliases that forward to Athena's canonical endpoints.
+    These routes exist so PeerTube clients can interact with Athena without modification.
+  version: 1.0.0
+
+paths:
+  # --- Resumable upload aliases ---
+  /api/v1/videos/upload-resumable:
+    post:
+      summary: Initiate a resumable upload (PeerTube alias)
+      description: Alias for POST /api/v1/uploads/initiate
+      operationId: initiateResumableUpload
+      tags:
+        - Uploads (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filename:
+                  type: string
+                fileSize:
+                  type: integer
+                  format: int64
+                chunkSize:
+                  type: integer
+                mimeType:
+                  type: string
+      responses:
+        "201":
+          description: Upload session created
+        "401":
+          description: Unauthorized
+    put:
+      summary: Upload a chunk (PeerTube alias)
+      description: Not yet implemented in Athena.
+      operationId: uploadResumableChunk
+      tags:
+        - Uploads (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      responses:
+        "501":
+          description: Not implemented
+    delete:
+      summary: Cancel a resumable upload (PeerTube alias)
+      description: Not yet implemented in Athena.
+      operationId: cancelResumableUpload
+      tags:
+        - Uploads (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      responses:
+        "501":
+          description: Not implemented
+
+  # --- Category alias ---
+  /api/v1/videos/categories:
+    get:
+      summary: List video categories (PeerTube alias)
+      description: Alias for GET /api/v1/categories
+      operationId: listVideoCategories
+      tags:
+        - Videos (PeerTube Compat)
+      responses:
+        "200":
+          description: List of video categories
+
+  # --- Notification aliases ---
+  /api/v1/users/me/notifications:
+    get:
+      summary: List notifications (PeerTube alias)
+      description: Alias for GET /api/v1/notifications
+      operationId: listUserNotifications
+      tags:
+        - Notifications (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of notifications
+
+  /api/v1/users/me/notifications/read-all:
+    post:
+      summary: Mark all notifications as read (PeerTube alias)
+      description: PeerTube uses POST, Athena uses PUT /api/v1/notifications/read-all
+      operationId: markAllNotificationsReadPost
+      tags:
+        - Notifications (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All notifications marked as read
+
+  # --- Blocklist aliases ---
+  /api/v1/users/me/blocklist/accounts:
+    get:
+      summary: List blocked accounts (PeerTube alias)
+      description: Alias for GET /api/v1/blocklist/accounts
+      operationId: listUserBlockedAccounts
+      tags:
+        - Blocklist (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of blocked accounts
+    post:
+      summary: Block an account (PeerTube alias)
+      operationId: blockUserAccount
+      tags:
+        - Blocklist (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Account blocked
+
+  /api/v1/users/me/blocklist/servers:
+    get:
+      summary: List blocked servers (PeerTube alias)
+      description: Alias for GET /api/v1/blocklist/servers
+      operationId: listUserBlockedServers
+      tags:
+        - Blocklist (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of blocked servers
+    post:
+      summary: Block a server (PeerTube alias)
+      operationId: blockUserServer
+      tags:
+        - Blocklist (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Server blocked
+
+  # --- Playlist aliases ---
+  /api/v1/video-playlists:
+    get:
+      summary: List playlists (PeerTube alias)
+      description: Alias for GET /api/v1/playlists
+      operationId: listVideoPlaylists
+      tags:
+        - Playlists (PeerTube Compat)
+      responses:
+        "200":
+          description: List of playlists
+    post:
+      summary: Create a playlist (PeerTube alias)
+      operationId: createVideoPlaylist
+      tags:
+        - Playlists (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: Playlist created
+
+  /api/v1/video-playlists/{id}:
+    get:
+      summary: Get a playlist (PeerTube alias)
+      operationId: getVideoPlaylist
+      tags:
+        - Playlists (PeerTube Compat)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Playlist details
+    put:
+      summary: Update a playlist (PeerTube alias)
+      operationId: updateVideoPlaylist
+      tags:
+        - Playlists (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Playlist updated
+    delete:
+      summary: Delete a playlist (PeerTube alias)
+      operationId: deleteVideoPlaylist
+      tags:
+        - Playlists (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Playlist deleted
+
+  # --- Channel handle aliases ---
+  /api/v1/video-channels/{handle}:
+    put:
+      summary: Update a channel by handle (PeerTube alias)
+      description: Resolves the handle to channel ID, then forwards to PUT /api/v1/channels/{id}
+      operationId: updateChannelByHandle
+      tags:
+        - Channels (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Channel handle (e.g., "my_channel")
+      responses:
+        "200":
+          description: Channel updated
+        "404":
+          description: Channel not found for handle
+    delete:
+      summary: Delete a channel by handle (PeerTube alias)
+      description: Resolves the handle to channel ID, then forwards to DELETE /api/v1/channels/{id}
+      operationId: deleteChannelByHandle
+      tags:
+        - Channels (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Channel deleted
+        "404":
+          description: Channel not found for handle
+
+  # --- Caption language alias ---
+  /api/v1/videos/{id}/captions/{captionId}:
+    put:
+      summary: Update a caption by ID or language code
+      description: |
+        The captionId parameter accepts both a UUID (Athena native) and a language
+        code (PeerTube compatible, e.g., "en", "fr"). When a language code is provided,
+        it is resolved to the caption ID for that video.
+      operationId: updateCaption
+      tags:
+        - Captions (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Video UUID
+        - name: captionId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Caption UUID or language code (e.g., "en", "fr")
+      responses:
+        "200":
+          description: Caption updated
+        "404":
+          description: Caption not found
+    delete:
+      summary: Delete a caption by ID or language code
+      operationId: deleteCaption
+      tags:
+        - Captions (PeerTube Compat)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: captionId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Caption UUID or language code
+      responses:
+        "200":
+          description: Caption deleted
+        "404":
+          description: Caption not found
+
+  # --- Playback metrics ---
+  /api/v1/metrics/playback:
+    post:
+      summary: Report playback metrics
+      description: Accepts PeerTube-compatible playback metrics from clients.
+      operationId: reportPlaybackMetrics
+      tags:
+        - Metrics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - videoId
+              properties:
+                playerMode:
+                  type: string
+                resolution:
+                  type: integer
+                fps:
+                  type: integer
+                p2pEnabled:
+                  type: boolean
+                p2pPeers:
+                  type: integer
+                resolutionChanges:
+                  type: integer
+                errors:
+                  type: integer
+                downloadedBytesP2P:
+                  type: integer
+                  format: int64
+                uploadedBytesP2P:
+                  type: integer
+                  format: int64
+                videoId:
+                  type: string
+                bufferStalled:
+                  type: integer
+                watchDuration:
+                  type: number
+                  format: double
+      responses:
+        "200":
+          description: Metrics received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  receivedAt:
+                    type: string
+                    format: date-time
+        "400":
+          description: Invalid request body
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

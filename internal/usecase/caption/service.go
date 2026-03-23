@@ -115,6 +115,21 @@ func (s *Service) GetCaptionByID(ctx context.Context, captionID uuid.UUID) (*dom
 	return caption, nil
 }
 
+// GetCaptionByVideoAndLanguage looks up a caption by video ID and language code.
+func (s *Service) GetCaptionByVideoAndLanguage(ctx context.Context, videoID uuid.UUID, languageCode string) (*domain.Caption, error) {
+	caption, err := s.captionRepo.GetByVideoAndLanguage(ctx, videoID, languageCode)
+	if err != nil {
+		return nil, err
+	}
+
+	video, err := s.videoRepo.GetByID(ctx, caption.VideoID.String())
+	if err == nil {
+		caption.URL = s.generateCaptionURL(video, caption)
+	}
+
+	return caption, nil
+}
+
 // GetCaptionsByVideoID gets all captions for a video
 func (s *Service) GetCaptionsByVideoID(ctx context.Context, videoID uuid.UUID) (*domain.CaptionListResponse, error) {
 	// Verify video exists

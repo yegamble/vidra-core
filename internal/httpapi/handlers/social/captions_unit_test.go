@@ -21,12 +21,13 @@ import (
 )
 
 type mockCaptionService struct {
-	createCaptionFn        func(ctx context.Context, videoID uuid.UUID, req *domain.CreateCaptionRequest, file io.Reader) (*domain.Caption, error)
-	getCaptionsByVideoIDFn func(ctx context.Context, videoID uuid.UUID) (*domain.CaptionListResponse, error)
-	getCaptionByIDFn       func(ctx context.Context, captionID uuid.UUID) (*domain.Caption, error)
-	getCaptionContentFn    func(ctx context.Context, captionID uuid.UUID) (io.ReadCloser, string, error)
-	updateCaptionFn        func(ctx context.Context, captionID uuid.UUID, req *domain.UpdateCaptionRequest) (*domain.Caption, error)
-	deleteCaptionFn        func(ctx context.Context, captionID uuid.UUID) error
+	createCaptionFn                func(ctx context.Context, videoID uuid.UUID, req *domain.CreateCaptionRequest, file io.Reader) (*domain.Caption, error)
+	getCaptionsByVideoIDFn         func(ctx context.Context, videoID uuid.UUID) (*domain.CaptionListResponse, error)
+	getCaptionByIDFn               func(ctx context.Context, captionID uuid.UUID) (*domain.Caption, error)
+	getCaptionByVideoAndLanguageFn func(ctx context.Context, videoID uuid.UUID, languageCode string) (*domain.Caption, error)
+	getCaptionContentFn            func(ctx context.Context, captionID uuid.UUID) (io.ReadCloser, string, error)
+	updateCaptionFn                func(ctx context.Context, captionID uuid.UUID, req *domain.UpdateCaptionRequest) (*domain.Caption, error)
+	deleteCaptionFn                func(ctx context.Context, captionID uuid.UUID) error
 }
 
 func (m *mockCaptionService) CreateCaption(ctx context.Context, videoID uuid.UUID, req *domain.CreateCaptionRequest, file io.Reader) (*domain.Caption, error) {
@@ -48,6 +49,13 @@ func (m *mockCaptionService) GetCaptionByID(ctx context.Context, captionID uuid.
 		return m.getCaptionByIDFn(ctx, captionID)
 	}
 	return nil, nil
+}
+
+func (m *mockCaptionService) GetCaptionByVideoAndLanguage(ctx context.Context, videoID uuid.UUID, languageCode string) (*domain.Caption, error) {
+	if m.getCaptionByVideoAndLanguageFn != nil {
+		return m.getCaptionByVideoAndLanguageFn(ctx, videoID, languageCode)
+	}
+	return nil, domain.ErrNotFound
 }
 
 func (m *mockCaptionService) GetCaptionContent(ctx context.Context, captionID uuid.UUID) (io.ReadCloser, string, error) {
