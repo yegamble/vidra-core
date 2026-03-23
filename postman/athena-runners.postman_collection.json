@@ -4,6 +4,20 @@
     "description": "Test collection for the remote runner lifecycle: registration, job dispatch, progress updates, file upload, and admin management.\n\n## Lifecycle Covered\n\n1. **Admin Setup** - Create registration token\n2. **Runner Registration** - Runner registers with token, receives runner token\n3. **Job Request** - Runner polls for available encoding job\n4. **Job Accept** - Runner claims the job\n5. **Progress Updates** - Runner reports intermediate progress\n6. **Success/Error/Abort** - Runner reports terminal state\n7. **File Upload** - Runner posts encoded output files\n8. **Admin Cleanup** - Cancel, delete jobs, delete runner\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL (e.g., http://localhost:8080)\n- `access_token` - Admin JWT access token\n\n## Variables Set During Run\n\n- `runner_registration_token` - Token used to register a runner\n- `runner_token` - Token returned after runner registration\n- `runner_id` - UUID of the registered runner\n- `runner_reg_token_id` - UUID of the registration token (for cleanup)\n- `runner_job_uuid` - UUID of the accepted job",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const adminToken = pm.environment.get('admin_access_token');",
+          "if (adminToken) {",
+          "  pm.collectionVariables.set('access_token', adminToken);",
+          "}"
+        ]
+      }
+    }
+  ],
   "item": [
     {
       "name": "Admin: Registration Tokens",
@@ -24,6 +38,7 @@
                   "  pm.expect(body).to.have.property('data');",
                   "  pm.expect(body.data).to.have.property('total');",
                   "  pm.expect(body.data).to.have.property('data');",
+                  "  pm.expect(body.data.total).to.equal(0);",
                   "  pm.expect(body.data.data).to.be.an('array');",
                   "});"
                 ],
@@ -34,7 +49,7 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/runners/registration-tokens",
@@ -72,7 +87,7 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" },
               { "key": "Content-Type", "value": "application/json", "type": "text" }
             ],
             "body": {
@@ -109,7 +124,7 @@
                   "});",
                   "const body = pm.response.json();",
                   "pm.test('Expiry present in response', () => {",
-                  "  pm.expect(body.data).to.have.property('expires_at');",
+                  "  pm.expect(body.data).to.have.property('expiresAt');",
                   "});",
                   "// Clean up this extra token (save id for deletion)",
                   "pm.environment.set('extra_reg_token_id', body.data.id);"
@@ -121,7 +136,7 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" },
               { "key": "Content-Type", "value": "application/json", "type": "text" }
             ],
             "body": {
@@ -154,7 +169,7 @@
           "request": {
             "method": "DELETE",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/runners/registration-tokens/{{extra_reg_token_id}}",
@@ -246,7 +261,7 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/runners/",
@@ -657,7 +672,7 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/runners/jobs",
@@ -685,7 +700,7 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/runners/jobs/00000000-0000-0000-0000-000000000000/cancel",
@@ -713,7 +728,7 @@
           "request": {
             "method": "DELETE",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/runners/jobs/00000000-0000-0000-0000-000000000000",
@@ -878,7 +893,7 @@
           "request": {
             "method": "DELETE",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              { "key": "Authorization", "value": "Bearer {{admin_access_token}}", "type": "text" }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/runners/registration-tokens/{{runner_reg_token_id}}",

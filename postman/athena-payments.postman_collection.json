@@ -24,7 +24,7 @@
                   "  pm.test('Wallet fields returned', () => {",
                   "    pm.expect(body.success).to.be.true;",
                   "    pm.expect(body.data).to.have.property('address');",
-                  "    pm.expect(body.data).to.have.property('balance');",
+                    "    pm.expect(body.data).to.have.property('balance_iota');",
                   "    pm.expect(body.data).to.have.property('user_id');",
                   "  });",
                   "  // Save wallet address for subsequent requests",
@@ -82,10 +82,10 @@
                   "  pm.test('Wallet data structure', () => {",
                   "    pm.expect(body.success).to.be.true;",
                   "    pm.expect(body.data).to.have.property('address');",
-                  "    pm.expect(body.data).to.have.property('balance');",
-                  "    pm.expect(body.data.balance).to.be.a('number').and.at.least(0);",
+                    "    pm.expect(body.data).to.have.property('balance_iota');",
+                    "    pm.expect(body.data.balance_iota).to.be.a('number').and.at.least(0);",
                   "  });",
-                  "  console.log('Wallet balance:', body.data.balance, 'IOTA');",
+                  "  console.log('Wallet balance:', body.data.balance_iota, 'IOTA');",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -218,17 +218,33 @@
           "name": "Create Payment Intent - With Video ID",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const videoId = pm.environment.get('test_video_id') || pm.environment.get('video_id') || '00000000-0000-0000-0000-000000000001';",
+                  "pm.collectionVariables.set('payment_video_id', videoId);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Status is 201 or 500', () => {",
-                  "  pm.expect([201, 500]).to.include(pm.response.code);",
+                  "pm.test('Status is 201 or 404', () => {",
+                  "  pm.expect([201, 404]).to.include(pm.response.code);",
                   "});",
                   "if (pm.response.code === 201) {",
                   "  const body = pm.response.json();",
                   "  pm.test('Video-linked intent returned', () => {",
                   "    pm.expect(body.data).to.have.property('id');",
                   "    pm.expect(body.data.amount_iota).to.equal(500);",
+                  "  });",
+                  "} else {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('VIDEO_NOT_FOUND error code', () => {",
+                  "    pm.expect(body.success).to.be.false;",
+                  "    pm.expect(body.error.code).to.equal('VIDEO_NOT_FOUND');",
                   "  });",
                   "}"
                 ],
@@ -252,7 +268,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"amount_iota\": 500,\n  \"video_id\": \"00000000-0000-0000-0000-000000000001\"\n}"
+              "raw": "{\n  \"amount_iota\": 500,\n  \"video_id\": \"{{payment_video_id}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/intents",
@@ -508,7 +524,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/payments/intents/nonexistent-intent-id-12345",
+              "raw": "{{baseUrl}}/api/v1/payments/intents/00000000-0000-0000-0000-000000000000",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -517,7 +533,7 @@
                 "v1",
                 "payments",
                 "intents",
-                "nonexistent-intent-id-12345"
+                "00000000-0000-0000-0000-000000000000"
               ]
             }
           },
@@ -586,7 +602,7 @@
                   "  pm.test('Transaction list structure', () => {",
                   "    pm.expect(body.success).to.be.true;",
                   "    // transactions may be array or wrapped object",
-                  "    pm.expect(body.data !== null && body.data !== undefined).to.be.true;",
+                  "    pm.expect(body.data).to.be.an('array');",
                   "  });",
                   "}"
                 ],

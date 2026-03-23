@@ -14,6 +14,7 @@ info:
     - **Analytics:** See `openapi_analytics.yaml` for view tracking and trending
     - **Live Streaming:** See `openapi_livestreaming.yaml` for RTMP ingest and HLS delivery
     - **Video Imports:** See `openapi_imports.yaml` for external URL imports
+    - **IPFS Streaming:** See `openapi_ipfs.yaml` for gateway health and delivery metrics
     - **Captions:** See `openapi_captions.yaml` for subtitle management
     - **Federation:** See `openapi_federation.yaml` and `openapi_federation_hardening.yaml`
     - **Plugins:** See `openapi_plugins.yaml` for plugin system

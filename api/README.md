@@ -60,38 +60,43 @@ The API documentation is split into modular files by functional domain for bette
    - Rate limiting (10 imports/minute)
    - Progress tracking
 
+7. **`openapi_ipfs.yaml`** - IPFS Streaming Diagnostics
+   - IPFS delivery metrics
+   - Gateway health visibility
+   - Athena-specific operational endpoints
+
 ### Domain Specs
 
-7. **`openapi_comments.yaml`** - Comment System
+8. **`openapi_comments.yaml`** - Comment System
    - Video comments (CRUD)
    - Comment flagging and moderation
    - Nested comment support
 
-8. **`openapi_channels.yaml`** - Channel Management
+9. **`openapi_channels.yaml`** - Channel Management
    - Channel CRUD operations
    - Channel subscriptions
    - Subscriber listing
    - Channel videos
 
-9. **`openapi_captions.yaml`** - Video Captions/Subtitles
+10. **`openapi_captions.yaml`** - Video Captions/Subtitles
    - Caption upload (VTT, SRT formats)
    - Caption metadata management
    - IPFS storage integration
    - Auto-generated caption support
 
-10. **`openapi_ratings_playlists.yaml`** - Ratings & Playlists
+11. **`openapi_ratings_playlists.yaml`** - Ratings & Playlists
     - Video like/dislike system
     - Playlist management (create, update, delete)
     - Watch Later special playlist
     - Playlist item reordering
 
-11. **`openapi_moderation.yaml`** - Moderation & Instance Config
+12. **`openapi_moderation.yaml`** - Moderation & Instance Config
     - Abuse reports
     - Blocklist management
     - Instance configuration (admin)
     - oEmbed endpoint
 
-12. **`openapi_chat.yaml`** - WebSocket Chat
+13. **`openapi_chat.yaml`** - WebSocket Chat
     - Live chat for streams (10,000+ concurrent connections)
     - Role-based moderation (owner/moderator permissions)
     - User bans (temporary/permanent) and timeouts
@@ -99,34 +104,34 @@ The API documentation is split into modular files by functional domain for bette
     - Rate limiting (5 msg/10s users, 10 msg/10s moderators)
     - Chat statistics and analytics
 
-13. **`openapi_federation.yaml`** - ActivityPub Federation
+14. **`openapi_federation.yaml`** - ActivityPub Federation
     - Federation timeline
     - ActivityPub discovery endpoints (.well-known)
     - Actor endpoints (inbox, outbox, followers, following)
 
-14. **`openapi_federation_hardening.yaml`** - Federation Security
+15. **`openapi_federation_hardening.yaml`** - Federation Security
     - Dead letter queue management
     - Instance/actor blocklists
     - Abuse reports
     - Dashboard and health metrics
 
-15. **`openapi_plugins.yaml`** - Plugin System
+16. **`openapi_plugins.yaml`** - Plugin System
     - Plugin installation and management
     - Enable/disable plugins
     - Plugin configuration
     - Plugin statistics
 
-16. **`openapi_redundancy.yaml`** - Video Redundancy
+17. **`openapi_redundancy.yaml`** - Video Redundancy
     - Peer management
     - Redundancy policies
     - Synchronization
 
-17. **`openapi_social.yaml`** - Social & ATProto
+18. **`openapi_social.yaml`** - Social & ATProto
     - ATProto actor resolution and stats
     - Follow graph endpoints
     - Likes, comments, labels, and ingest routes
 
-18. **`openapi_payments.yaml`** - IOTA Payments (beta / feature-flagged)
+19. **`openapi_payments.yaml`** - IOTA Payments (beta / feature-flagged)
     - Wallet creation and retrieval
     - Payment intents
     - Transaction history
@@ -164,6 +169,7 @@ docker run -p 8080:8080 \
     {url: '/api/openapi_analytics.yaml', name: 'Analytics & Views'}, \
     {url: '/api/openapi_livestreaming.yaml', name: 'Live Streaming'}, \
     {url: '/api/openapi_imports.yaml', name: 'Video Imports'}, \
+    {url: '/api/openapi_ipfs.yaml', name: 'IPFS Streaming'}, \
     {url: '/api/openapi_comments.yaml', name: 'Comments'}, \
     {url: '/api/openapi_channels.yaml', name: 'Channels'}, \
     {url: '/api/openapi_captions.yaml', name: 'Captions'}, \

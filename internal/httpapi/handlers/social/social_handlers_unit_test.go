@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -225,6 +226,7 @@ func newTestSocialHandler(repo *mockSocialRepo) *SocialHandler {
 func newTestSocialHandlerWithPDS(repo *mockSocialRepo, pdsURL string) *SocialHandler {
 	cfg := &config.Config{
 		ATProtoPDSURL:      pdsURL,
+		ATProtoHandle:      "test.handle",
 		ATProtoAppPassword: "test-token",
 	}
 	svc := ucsocial.NewService(cfg, repo, nil, nil)
@@ -238,6 +240,7 @@ func newTestSocialHandlerWithPDS(repo *mockSocialRepo, pdsURL string) *SocialHan
 func newTestSocialHandlerWithPDSStrict(repo *mockSocialRepo, pdsURL string) *SocialHandler {
 	cfg := &config.Config{
 		ATProtoPDSURL:      pdsURL,
+		ATProtoHandle:      "test.handle",
 		ATProtoAppPassword: "test-token",
 	}
 	svc := ucsocial.NewService(cfg, repo, nil, nil)
@@ -845,8 +848,10 @@ func TestUnit_Unlike_SuccessWithPDS(t *testing.T) {
 }
 
 func TestUnit_GetLikes_Success(t *testing.T) {
+	expectedURI := "at://did:plc:other/post/1"
 	repo := &mockSocialRepo{
 		getLikesFn: func(_ context.Context, uri string, limit, offset int) ([]domain.Like, error) {
+			assert.Equal(t, expectedURI, uri)
 			return []domain.Like{
 				{ActorDID: "did:plc:fan1", SubjectURI: uri, URI: "at://did:plc:fan1/app.bsky.feed.like/1", CreatedAt: time.Now()},
 			}, nil
@@ -854,8 +859,8 @@ func TestUnit_GetLikes_Success(t *testing.T) {
 	}
 	h := newTestSocialHandler(repo)
 
-	req := httptest.NewRequest(http.MethodGet, "/social/likes/at%3A%2F%2Fdid%3Aplc%3Aother%2Fpost%2F1", nil)
-	req = withChiParam(req, map[string]string{"uri": "at://did:plc:other/post/1"})
+	req := httptest.NewRequest(http.MethodGet, "/social/likes/"+url.PathEscape(expectedURI), nil)
+	req = withChiParam(req, map[string]string{"uri": url.PathEscape(expectedURI)})
 	rec := httptest.NewRecorder()
 
 	h.GetLikes(rec, req)
@@ -961,8 +966,9 @@ func TestUnit_DeleteComment_ServiceError(t *testing.T) {
 	repo := &mockSocialRepo{}
 	h := newTestSocialHandler(repo)
 
-	req := httptest.NewRequest(http.MethodDelete, "/social/comment/at%3A%2F%2Fdid%3Aplc%3Ame%2Fapp.bsky.feed.post%2Fabc", nil)
-	req = withChiParam(req, map[string]string{"uri": "at://did:plc:me/app.bsky.feed.post/abc"})
+	commentURI := "at://did:plc:me/app.bsky.feed.post/abc"
+	req := httptest.NewRequest(http.MethodDelete, "/social/comment/"+url.PathEscape(commentURI), nil)
+	req = withChiParam(req, map[string]string{"uri": url.PathEscape(commentURI)})
 	rec := httptest.NewRecorder()
 
 	h.DeleteComment(rec, req)
@@ -976,16 +982,18 @@ func TestUnit_DeleteComment_SuccessWithPDS(t *testing.T) {
 	defer pds.Close()
 
 	var commentDeleted bool
+	commentURI := "at://did:plc:me/app.bsky.feed.post/abc"
 	repo := &mockSocialRepo{
-		deleteCommentFn: func(_ context.Context, _ string) error {
+		deleteCommentFn: func(_ context.Context, uri string) error {
+			assert.Equal(t, commentURI, uri)
 			commentDeleted = true
 			return nil
 		},
 	}
 	h := newTestSocialHandlerWithPDS(repo, pds.URL)
 
-	req := httptest.NewRequest(http.MethodDelete, "/social/comment/uri", nil)
-	req = withChiParam(req, map[string]string{"uri": "at://did:plc:me/app.bsky.feed.post/abc"})
+	req := httptest.NewRequest(http.MethodDelete, "/social/comment/"+url.PathEscape(commentURI), nil)
+	req = withChiParam(req, map[string]string{"uri": url.PathEscape(commentURI)})
 	rec := httptest.NewRecorder()
 
 	h.DeleteComment(rec, req)
@@ -995,8 +1003,10 @@ func TestUnit_DeleteComment_SuccessWithPDS(t *testing.T) {
 }
 
 func TestUnit_GetComments_Success(t *testing.T) {
+	expectedURI := "at://did:plc:other/post/1"
 	repo := &mockSocialRepo{
 		getCommentsFn: func(_ context.Context, rootURI string, limit, offset int) ([]domain.SocialComment, error) {
+			assert.Equal(t, expectedURI, rootURI)
 			return []domain.SocialComment{
 				{ActorDID: "did:plc:commenter", URI: "at://did:plc:commenter/post/1", Text: "nice!", RootURI: rootURI, CreatedAt: time.Now(), IndexedAt: time.Now()},
 			}, nil
@@ -1004,8 +1014,8 @@ func TestUnit_GetComments_Success(t *testing.T) {
 	}
 	h := newTestSocialHandler(repo)
 
-	req := httptest.NewRequest(http.MethodGet, "/social/comments/at%3A%2F%2Fdid%3Aplc%3Aother%2Fpost%2F1", nil)
-	req = withChiParam(req, map[string]string{"uri": "at://did:plc:other/post/1"})
+	req := httptest.NewRequest(http.MethodGet, "/social/comments/"+url.PathEscape(expectedURI), nil)
+	req = withChiParam(req, map[string]string{"uri": url.PathEscape(expectedURI)})
 	rec := httptest.NewRecorder()
 
 	h.GetComments(rec, req)
@@ -1056,8 +1066,10 @@ func TestUnit_GetComments_PaginationDefaults(t *testing.T) {
 }
 
 func TestUnit_GetCommentThread_Success(t *testing.T) {
+	expectedURI := "at://parent"
 	repo := &mockSocialRepo{
 		getCommentThreadFn: func(_ context.Context, parentURI string, limit, offset int) ([]domain.SocialComment, error) {
+			assert.Equal(t, expectedURI, parentURI)
 			return []domain.SocialComment{
 				{ActorDID: "did:plc:r1", URI: "at://r1/post/1", Text: "reply1", RootURI: parentURI, CreatedAt: time.Now(), IndexedAt: time.Now()},
 				{ActorDID: "did:plc:r2", URI: "at://r2/post/2", Text: "reply2", RootURI: parentURI, CreatedAt: time.Now(), IndexedAt: time.Now()},
@@ -1066,8 +1078,8 @@ func TestUnit_GetCommentThread_Success(t *testing.T) {
 	}
 	h := newTestSocialHandler(repo)
 
-	req := httptest.NewRequest(http.MethodGet, "/social/comments/at%3A%2F%2Fparent/thread", nil)
-	req = withChiParam(req, map[string]string{"uri": "at://parent"})
+	req := httptest.NewRequest(http.MethodGet, "/social/comments/"+url.PathEscape(expectedURI)+"/thread", nil)
+	req = withChiParam(req, map[string]string{"uri": url.PathEscape(expectedURI)})
 	rec := httptest.NewRecorder()
 
 	h.GetCommentThread(rec, req)

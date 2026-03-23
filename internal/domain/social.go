@@ -17,28 +17,31 @@ const (
 
 // Follow represents an ATProto follow relationship
 type Follow struct {
-	ID           string          `json:"id" db:"id"`
-	FollowerDID  string          `json:"follower_did" db:"follower_did"`   // ATProto DID of follower
-	FollowingDID string          `json:"following_did" db:"following_did"` // ATProto DID of followed account
-	URI          string          `json:"uri" db:"uri"`                     // at:// URI of follow record
-	CID          *string         `json:"cid,omitempty" db:"cid"`           // CID of the follow record
-	CreatedAt    time.Time       `json:"created_at" db:"created_at"`
-	RevokedAt    *time.Time      `json:"revoked_at,omitempty" db:"revoked_at"` // When unfollowed
-	Raw          json.RawMessage `json:"raw,omitempty" db:"raw"`               // Raw ATProto record
+	ID              string          `json:"id" db:"id"`
+	FollowerDID     string          `json:"follower_did" db:"follower_did"`   // ATProto DID of follower
+	FollowingDID    string          `json:"following_did" db:"following_did"` // ATProto DID of followed account
+	FollowerHandle  *string         `json:"follower_handle,omitempty" db:"follower_handle"`
+	FollowingHandle *string         `json:"following_handle,omitempty" db:"following_handle"`
+	URI             string          `json:"uri" db:"uri"`           // at:// URI of follow record
+	CID             *string         `json:"cid,omitempty" db:"cid"` // CID of the follow record
+	CreatedAt       time.Time       `json:"created_at" db:"created_at"`
+	RevokedAt       *time.Time      `json:"revoked_at,omitempty" db:"revoked_at"` // When unfollowed
+	Raw             json.RawMessage `json:"raw,omitempty" db:"raw"`               // Raw ATProto record
 }
 
 // Like represents an ATProto like on a post/video
 type Like struct {
-	ID         string          `json:"id" db:"id"`
-	ActorDID   string          `json:"actor_did" db:"actor_did"`     // Who liked
-	SubjectURI string          `json:"subject_uri" db:"subject_uri"` // What was liked (at:// URI)
-	SubjectCID *string         `json:"subject_cid,omitempty" db:"subject_cid"`
-	URI        string          `json:"uri" db:"uri"` // at:// URI of like record
-	CID        *string         `json:"cid,omitempty" db:"cid"`
-	CreatedAt  time.Time       `json:"created_at" db:"created_at"`
-	VideoID    *string         `json:"video_id,omitempty" db:"video_id"` // Local video if applicable
-	PostID     *string         `json:"post_id,omitempty" db:"post_id"`   // Federated post if applicable
-	Raw        json.RawMessage `json:"raw,omitempty" db:"raw"`
+	ID          string          `json:"id" db:"id"`
+	ActorDID    string          `json:"actor_did" db:"actor_did"` // Who liked
+	ActorHandle *string         `json:"actor_handle,omitempty" db:"actor_handle"`
+	SubjectURI  string          `json:"subject_uri" db:"subject_uri"` // What was liked (at:// URI)
+	SubjectCID  *string         `json:"subject_cid,omitempty" db:"subject_cid"`
+	URI         string          `json:"uri" db:"uri"` // at:// URI of like record
+	CID         *string         `json:"cid,omitempty" db:"cid"`
+	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
+	VideoID     *string         `json:"video_id,omitempty" db:"video_id"` // Local video if applicable
+	PostID      *string         `json:"post_id,omitempty" db:"post_id"`   // Federated post if applicable
+	Raw         json.RawMessage `json:"raw,omitempty" db:"raw"`
 }
 
 // SocialComment represents an ATProto reply/comment
@@ -46,6 +49,7 @@ type SocialComment struct {
 	ID          string          `json:"id" db:"id"`
 	ActorDID    string          `json:"actor_did" db:"actor_did"`
 	ActorHandle *string         `json:"actor_handle,omitempty" db:"actor_handle"`
+	DisplayName *string         `json:"display_name,omitempty" db:"display_name"`
 	URI         string          `json:"uri" db:"uri"` // at:// URI of comment record
 	CID         *string         `json:"cid,omitempty" db:"cid"`
 	Text        string          `json:"text" db:"text"`

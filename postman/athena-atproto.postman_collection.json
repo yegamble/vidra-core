@@ -4,6 +4,28 @@
     "description": "ATProto (BlueSky) social graph and moderation API E2E tests.\n\nCovers all 17 endpoints under /api/v1/social/*:\n- Actor resolution and statistics (public)\n- Social graph: followers, following (public reads, authenticated writes)\n- Likes: create, delete, list\n- Comments: create, get, thread, delete\n- Moderation: apply label, get labels, remove label\n- Feed ingest from ATProto PDS\n\n**IPFS note:** IPFS-backed avatar uploads are exercised by the auth endpoints\n(PUT /api/v1/users/me/avatar). Those requests pass avatarUrl which may be\nresolved via IPFS if an IPFS gateway is configured. To exercise the full IPFS\npath, set IPFS_GATEWAY in the server environment and upload an avatar using\nthe athena-auth collection. The IPFS CID is returned in the response.\n\n**ATProto Go test coverage:** PublishVideo, PublishComment, and PublishVideoBatch\nare covered by unit tests in internal/usecase/atproto_features_test.go with a\nmocked PDS HTTP server. Those tests pass without an external ATProto PDS.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const resolvedAccessToken = pm.environment.get('admin_access_token') || pm.environment.get('access_token') || pm.collectionVariables.get('access_token');",
+          "if (resolvedAccessToken) {",
+          "  pm.collectionVariables.set('resolved_access_token', resolvedAccessToken);",
+          "}",
+          "const testUri = pm.variables.get('test_uri');",
+          "if (testUri) {",
+          "  pm.collectionVariables.set('encoded_test_uri', encodeURIComponent(testUri));",
+          "}",
+          "const commentUri = pm.variables.get('comment_uri');",
+          "if (commentUri) {",
+          "  pm.collectionVariables.set('encoded_comment_uri', encodeURIComponent(commentUri));",
+          "}"
+        ]
+      }
+    }
+  ],
   "variable": [
     {
       "key": "baseUrl",
@@ -15,6 +37,12 @@
       "value": "",
       "type": "string",
       "description": "JWT access token from login"
+    },
+    {
+      "key": "resolved_access_token",
+      "value": "",
+      "type": "string",
+      "description": "Resolved JWT token for authenticated requests"
     },
     {
       "key": "test_handle",
@@ -78,10 +106,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Accept 200 (actor found) or 404 (actor not in PDS)",
-                  "// 500 is not acceptable \u2014 ATProto PDS mock is available in test environment",
-                  "pm.test('response is 200 or 404', function() {",
-                  "    pm.expect([200, 404]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response has json body', function() {",
@@ -127,10 +153,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 404 (not 500)', function() {",
-                  "    // 500 is expected if handle is not resolvable in test env",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 404]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -177,9 +201,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 404 (not 500)', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 404]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -226,9 +249,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 404 (not 500)', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 404]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -245,7 +267,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/social/likes/{{test_uri}}?limit=20&offset=0",
+              "raw": "{{baseUrl}}/api/v1/social/likes/{{encoded_test_uri}}?limit=20&offset=0",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -254,7 +276,7 @@
                 "v1",
                 "social",
                 "likes",
-                "{{test_uri}}"
+                "{{encoded_test_uri}}"
               ],
               "query": [
                 {
@@ -275,9 +297,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 404 (not 500)', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 404]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -294,7 +315,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/social/comments/{{test_uri}}?limit=20&offset=0",
+              "raw": "{{baseUrl}}/api/v1/social/comments/{{encoded_test_uri}}?limit=20&offset=0",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -303,7 +324,7 @@
                 "v1",
                 "social",
                 "comments",
-                "{{test_uri}}"
+                "{{encoded_test_uri}}"
               ],
               "query": [
                 {
@@ -324,9 +345,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 404 (not 500)', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 404]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -343,7 +363,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/social/comments/{{test_uri}}/thread?limit=50&offset=0",
+              "raw": "{{baseUrl}}/api/v1/social/comments/{{encoded_test_uri}}/thread?limit=50&offset=0",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -352,7 +372,7 @@
                 "v1",
                 "social",
                 "comments",
-                "{{test_uri}}",
+                "{{encoded_test_uri}}",
                 "thread"
               ],
               "query": [
@@ -374,9 +394,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 404 (not 500)', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 404]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -414,9 +433,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 404 (not 500)', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 404]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -440,7 +458,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{resolved_access_token}}",
                 "type": "text"
               },
               {
@@ -473,10 +491,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 401 or 500', function() {",
-                  "    // 401 if no valid token; 500 if PDS not available in test env",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 401]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -502,7 +518,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{resolved_access_token}}",
                 "type": "text"
               }
             ],
@@ -527,9 +543,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 401 or 500', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 401]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -560,7 +575,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{resolved_access_token}}",
                 "type": "text"
               },
               {
@@ -593,9 +608,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 401 or 500', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 401]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
@@ -616,7 +630,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{resolved_access_token}}",
                 "type": "text"
               },
               {
@@ -649,9 +663,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 401 or 500', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 401]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
@@ -678,7 +691,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{resolved_access_token}}",
                 "type": "text"
               },
               {
@@ -711,9 +724,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 201 or 401 or 500', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([201, 401]).to.include(pm.response.code);",
+                  "pm.test('response is 201', function() {",
+                  "pm.expect(pm.response.code).to.equal(201);",
                   "});",
                   "",
                   "if (pm.response.code === 201) {",
@@ -738,7 +750,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{resolved_access_token}}",
                 "type": "text"
               },
               {
@@ -771,9 +783,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 201 or 401 or 500', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([201, 401]).to.include(pm.response.code);",
+                  "pm.test('response is 201', function() {",
+                  "pm.expect(pm.response.code).to.equal(201);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",
@@ -791,12 +802,12 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{resolved_access_token}}",
                 "type": "text"
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/social/comment/{{comment_uri}}",
+              "raw": "{{baseUrl}}/api/v1/social/comment/{{encoded_comment_uri}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -805,7 +816,7 @@
                 "v1",
                 "social",
                 "comment",
-                "{{comment_uri}}"
+                "{{encoded_comment_uri}}"
               ]
             },
             "description": "Delete a comment by AT URI. Requires authentication."
@@ -816,9 +827,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 401 or 500', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 401]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
@@ -845,7 +855,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{resolved_access_token}}",
                 "type": "text"
               },
               {
@@ -879,15 +889,17 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 401 or 500', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 401]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
                   "    pm.test('label applied status', function() {",
                   "        const body = pm.response.json();",
                   "        pm.expect(body.data.status).to.equal('label_applied');",
+                  "        if (body.data.id) {",
+                  "            pm.collectionVariables.set('label_id', body.data.id);",
+                  "        }",
                   "    });",
                   "}"
                 ]
@@ -902,7 +914,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{resolved_access_token}}",
                 "type": "text"
               }
             ],
@@ -928,9 +940,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 401 or 500', function() {",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 401]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "if (pm.response.code === 200) {",
@@ -957,7 +968,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{resolved_access_token}}",
                 "type": "text"
               }
             ],
@@ -980,7 +991,7 @@
                 }
               ]
             },
-            "description": "Fetch and ingest posts from an ATProto actor's feed into the local social database.\nRequires authentication. Returns 500 if the PDS is not available."
+            "description": "Fetch and ingest posts from an ATProto actor's feed into the local social database. Requires authentication."
           },
           "event": [
             {
@@ -988,10 +999,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('response is 200 or 401 or 500', function() {",
-                  "    // 500 expected if ATProto PDS not configured in test env",
-                  "    // 500 not acceptable \u2014 ATProto PDS mock is available",
-                  "pm.expect([200, 401]).to.include(pm.response.code);",
+                  "pm.test('response is 200', function() {",
+                  "pm.expect(pm.response.code).to.equal(200);",
                   "});",
                   "",
                   "pm.test('response is json', function() {",

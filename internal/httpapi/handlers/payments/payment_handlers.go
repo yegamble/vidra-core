@@ -2,6 +2,7 @@ package payments
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -36,7 +37,7 @@ func (h *PaymentHandler) CreateWallet(w http.ResponseWriter, r *http.Request) {
 
 	wallet, err := h.service.CreateWallet(r.Context(), userID)
 	if err != nil {
-		if err == domain.ErrWalletAlreadyExists {
+		if errors.Is(err, domain.ErrWalletAlreadyExists) {
 			shared.WriteError(w, http.StatusConflict, domain.NewDomainError("WALLET_EXISTS", "Wallet already exists for this user"))
 			return
 		}
@@ -57,7 +58,7 @@ func (h *PaymentHandler) GetWallet(w http.ResponseWriter, r *http.Request) {
 
 	wallet, err := h.service.GetWallet(r.Context(), userID)
 	if err != nil {
-		if err == domain.ErrWalletNotFound {
+		if errors.Is(err, domain.ErrWalletNotFound) {
 			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("WALLET_NOT_FOUND", "Wallet not found"))
 			return
 		}
@@ -98,6 +99,10 @@ func (h *PaymentHandler) CreatePaymentIntent(w http.ResponseWriter, r *http.Requ
 
 	intent, err := h.service.CreatePaymentIntent(r.Context(), userID, req.VideoID, req.AmountIOTA)
 	if err != nil {
+		if errors.Is(err, domain.ErrVideoNotFound) {
+			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
+			return
+		}
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("CREATE_INTENT_FAILED", "Failed to create payment intent"))
 		return
 	}
@@ -121,7 +126,7 @@ func (h *PaymentHandler) GetPaymentIntent(w http.ResponseWriter, r *http.Request
 
 	intent, err := h.service.GetPaymentIntent(r.Context(), intentID)
 	if err != nil {
-		if err == domain.ErrPaymentIntentNotFound {
+		if errors.Is(err, domain.ErrPaymentIntentNotFound) {
 			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("INTENT_NOT_FOUND", "Payment intent not found"))
 			return
 		}
@@ -151,7 +156,7 @@ func (h *PaymentHandler) GetTransactionHistory(w http.ResponseWriter, r *http.Re
 
 	transactions, err := h.service.GetTransactionHistory(r.Context(), userID, limit, offset)
 	if err != nil {
-		if err == domain.ErrWalletNotFound {
+		if errors.Is(err, domain.ErrWalletNotFound) {
 			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("WALLET_NOT_FOUND", "Wallet not found"))
 			return
 		}

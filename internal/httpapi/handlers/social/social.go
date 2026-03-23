@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"time"
 
 	"athena/internal/usecase"
@@ -21,6 +22,20 @@ func NewSocialHandler(socialService *usecase.SocialService) *SocialHandler {
 	return &SocialHandler{
 		socialService: socialService,
 	}
+}
+
+func decodeURIParam(r *http.Request, name string) (string, error) {
+	uri := chi.URLParam(r, name)
+	if uri == "" {
+		return "", nil
+	}
+
+	decoded, err := url.PathUnescape(uri)
+	if err != nil {
+		return "", err
+	}
+
+	return decoded, nil
 }
 
 func (h *SocialHandler) RegisterRoutes(r chi.Router, jwtSecret string) {
@@ -183,7 +198,11 @@ func (h *SocialHandler) Unlike(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SocialHandler) GetLikes(w http.ResponseWriter, r *http.Request) {
-	uri := chi.URLParam(r, "uri")
+	uri, err := decodeURIParam(r, "uri")
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid uri"))
+		return
+	}
 	limit := shared.GetIntParam(r, "limit", 50)
 	offset := shared.GetIntParam(r, "offset", 0)
 
@@ -230,7 +249,11 @@ func (h *SocialHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SocialHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
-	uri := chi.URLParam(r, "uri")
+	uri, err := decodeURIParam(r, "uri")
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid uri"))
+		return
+	}
 
 	if err := h.socialService.DeleteComment(r.Context(), uri); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to delete comment"))
@@ -241,7 +264,11 @@ func (h *SocialHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SocialHandler) GetComments(w http.ResponseWriter, r *http.Request) {
-	uri := chi.URLParam(r, "uri")
+	uri, err := decodeURIParam(r, "uri")
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid uri"))
+		return
+	}
 	limit := shared.GetIntParam(r, "limit", 50)
 	offset := shared.GetIntParam(r, "offset", 0)
 
@@ -255,7 +282,11 @@ func (h *SocialHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SocialHandler) GetCommentThread(w http.ResponseWriter, r *http.Request) {
-	uri := chi.URLParam(r, "uri")
+	uri, err := decodeURIParam(r, "uri")
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid uri"))
+		return
+	}
 	limit := shared.GetIntParam(r, "limit", 50)
 	offset := shared.GetIntParam(r, "offset", 0)
 
@@ -303,7 +334,24 @@ func (h *SocialHandler) ApplyLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shared.WriteJSON(w, http.StatusOK, map[string]string{"status": "label_applied"})
+	response := map[string]string{"status": "label_applied"}
+	if labels, listErr := h.socialService.GetModerationLabels(r.Context(), req.ActorDID); listErr == nil {
+		for _, label := range labels {
+			if label.LabelType != req.LabelType || label.AppliedBy != req.AppliedBy {
+				continue
+			}
+			if req.URI == "" && label.URI != nil {
+				continue
+			}
+			if req.URI != "" && (label.URI == nil || *label.URI != req.URI) {
+				continue
+			}
+			response["id"] = label.ID
+			break
+		}
+	}
+
+	shared.WriteJSON(w, http.StatusOK, response)
 }
 
 func (h *SocialHandler) RemoveLabel(w http.ResponseWriter, r *http.Request) {

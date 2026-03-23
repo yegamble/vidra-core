@@ -205,6 +205,11 @@ func TestHandlers_ListRegistrationTokens_Empty(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ListRegistrationTokens(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
+	var env listEnvelope
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &env))
+	require.Equal(t, 0, env.Data.Total)
+	require.NotNil(t, env.Data.Data)
+	require.Empty(t, env.Data.Data)
 }
 
 func TestHandlers_CreateRegistrationToken(t *testing.T) {

@@ -71,6 +71,9 @@ func NewService(
 	encKey []byte,
 ) *Service {
 	urlValidator := security.NewURLValidator()
+	if cfg != nil && cfg.ValidationTestMode {
+		urlValidator = security.NewURLValidatorAllowPrivate()
+	}
 	return &Service{
 		cfg:          cfg,
 		socialRepo:   socialRepo,
@@ -131,8 +134,13 @@ func (s *Service) Follow(ctx context.Context, followerDID, targetHandle string) 
 		return fmt.Errorf("resolve target actor: %w", err)
 	}
 
+	requesterDID, err := s.actorDIDForRequester(ctx, followerDID)
+	if err != nil {
+		return fmt.Errorf("resolve requester actor: %w", err)
+	}
+
 	// Check if already following
-	isFollowing, _ := s.socialRepo.IsFollowing(ctx, followerDID, targetActor.DID)
+	isFollowing, _ := s.socialRepo.IsFollowing(ctx, requesterDID, targetActor.DID)
 	if isFollowing {
 		return fmt.Errorf("already following")
 	}
@@ -144,14 +152,14 @@ func (s *Service) Follow(ctx context.Context, followerDID, targetHandle string) 
 		CreatedAt: time.Now().UTC(),
 	}
 
-	uri, cid, err := s.createRecord(ctx, followerDID, "app.bsky.graph.follow", record)
+	uri, cid, err := s.createRecord(ctx, requesterDID, "app.bsky.graph.follow", record)
 	if err != nil {
 		return fmt.Errorf("create follow record: %w", err)
 	}
 
 	// Store in database
 	follow := &domain.Follow{
-		FollowerDID:  followerDID,
+		FollowerDID:  requesterDID,
 		FollowingDID: targetActor.DID,
 		URI:          uri,
 		CID:          &cid,
@@ -171,8 +179,13 @@ func (s *Service) Unfollow(ctx context.Context, followerDID, targetHandle string
 		return fmt.Errorf("resolve target actor: %w", err)
 	}
 
+	requesterDID, err := s.actorDIDForRequester(ctx, followerDID)
+	if err != nil {
+		return fmt.Errorf("resolve requester actor: %w", err)
+	}
+
 	// Get follow record URI
-	follow, err := s.socialRepo.GetFollow(ctx, followerDID, targetActor.DID)
+	follow, err := s.socialRepo.GetFollow(ctx, requesterDID, targetActor.DID)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return fmt.Errorf("not following")
@@ -524,7 +537,46 @@ func (s *Service) resolveActor(ctx context.Context, handle string) (*domain.ATPr
 	}
 
 	// Get profile
-	return s.getProfile(ctx, result.DID)
+	actor, err := s.getProfile(ctx, result.DID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.socialRepo.UpsertActor(ctx, actor); err != nil {
+		return nil, fmt.Errorf("cache actor: %w", err)
+	}
+
+	return actor, nil
+}
+
+func (s *Service) actorDIDForRequester(ctx context.Context, actorOrUserID string) (string, error) {
+	identifier := strings.TrimSpace(actorOrUserID)
+	if identifier == "" {
+		return "", fmt.Errorf("missing actor identifier")
+	}
+	if strings.HasPrefix(identifier, "did:") {
+		return identifier, nil
+	}
+
+	var handle string
+	if s.cfg != nil {
+		handle = strings.TrimSpace(s.cfg.ATProtoHandle)
+	}
+	if handle == "" {
+		return "", fmt.Errorf("local user %s is not linked to an ATProto actor", identifier)
+	}
+
+	actor, err := s.resolveActor(ctx, handle)
+	if err != nil {
+		return "", err
+	}
+
+	actor.LocalUserID = &identifier
+	if err := s.socialRepo.UpsertActor(ctx, actor); err != nil {
+		return "", fmt.Errorf("link actor to local user: %w", err)
+	}
+
+	return actor.DID, nil
 }
 
 func (s *Service) getProfile(ctx context.Context, did string) (*domain.ATProtoActor, error) {
@@ -715,9 +767,57 @@ func (s *Service) getActorFeed(ctx context.Context, did string, limit int) (map[
 }
 
 func (s *Service) getAccessToken(ctx context.Context) (string, error) {
-	// This would integrate with the atproto service's session management
-	// For now, returning a placeholder
-	return s.cfg.ATProtoAppPassword, nil
+	if token := strings.TrimSpace(s.cfg.ATProtoAuthToken); token != "" {
+		return token, nil
+	}
+
+	handle := strings.TrimSpace(s.cfg.ATProtoHandle)
+	appPassword := strings.TrimSpace(s.cfg.ATProtoAppPassword)
+	if handle == "" || appPassword == "" {
+		return "", fmt.Errorf("missing ATProto handle or app password")
+	}
+
+	pds := strings.TrimRight(s.cfg.ATProtoPDSURL, "/")
+	url := pds + "/xrpc/com.atproto.server.createSession"
+
+	if err := s.urlValidator.ValidateURL(url); err != nil {
+		return "", fmt.Errorf("invalid or unsafe PDS URL: %w", err)
+	}
+
+	bodyData, _ := json.Marshal(map[string]string{
+		"identifier": handle,
+		"password":   appPassword,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyData))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("create session failed: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		AccessJWT string `json:"accessJwt"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	if result.AccessJWT == "" {
+		return "", fmt.Errorf("create session returned empty access token")
+	}
+
+	return result.AccessJWT, nil
 }
 
 func (s *Service) createLabel(ctx context.Context, label *domain.ModerationLabel) error {

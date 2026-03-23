@@ -18,6 +18,19 @@ type SocialRepository struct {
 	db *sqlx.DB
 }
 
+const atprotoActorSelectColumns = `
+	did,
+	handle,
+	display_name,
+	bio,
+	avatar_url,
+	banner_url,
+	created_at,
+	updated_at,
+	indexed_at,
+	COALESCE(labels, '[]'::jsonb) AS labels,
+	local_user_id::text AS local_user_id`
+
 // NewSocialRepository creates a new social repository instance
 func NewSocialRepository(db *sqlx.DB) *SocialRepository {
 	return &SocialRepository{db: db}
@@ -25,7 +38,7 @@ func NewSocialRepository(db *sqlx.DB) *SocialRepository {
 
 // UpsertActor creates or updates an ATProto actor
 func (r *SocialRepository) UpsertActor(ctx context.Context, actor *domain.ATProtoActor) error {
-	query := `
+	query := fmt.Sprintf(`
 		INSERT INTO atproto_actors (
 			did, handle, display_name, bio, avatar_url, banner_url,
 			created_at, updated_at, indexed_at, labels, local_user_id
@@ -42,19 +55,21 @@ func (r *SocialRepository) UpsertActor(ctx context.Context, actor *domain.ATProt
 			indexed_at = EXCLUDED.indexed_at,
 			labels = EXCLUDED.labels,
 			local_user_id = COALESCE(EXCLUDED.local_user_id, atproto_actors.local_user_id)
-		RETURNING *`
+		RETURNING %s`, atprotoActorSelectColumns)
+
+	labels := jsonRawToDBValue(actor.Labels)
 
 	return r.db.GetContext(ctx, actor, query,
 		actor.DID, actor.Handle, actor.DisplayName, actor.Bio,
 		actor.AvatarURL, actor.BannerURL, actor.CreatedAt,
-		actor.UpdatedAt, actor.IndexedAt, actor.Labels, actor.LocalUserID,
+		actor.UpdatedAt, actor.IndexedAt, labels, actor.LocalUserID,
 	)
 }
 
 // GetActorByDID retrieves an actor by DID
 func (r *SocialRepository) GetActorByDID(ctx context.Context, did string) (*domain.ATProtoActor, error) {
 	var actor domain.ATProtoActor
-	query := `SELECT * FROM atproto_actors WHERE did = $1`
+	query := fmt.Sprintf(`SELECT %s FROM atproto_actors WHERE did = $1`, atprotoActorSelectColumns)
 	err := r.db.GetContext(ctx, &actor, query, did)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("actor not found")
@@ -65,7 +80,7 @@ func (r *SocialRepository) GetActorByDID(ctx context.Context, did string) (*doma
 // GetActorByHandle retrieves an actor by handle
 func (r *SocialRepository) GetActorByHandle(ctx context.Context, handle string) (*domain.ATProtoActor, error) {
 	var actor domain.ATProtoActor
-	query := `SELECT * FROM atproto_actors WHERE handle = $1`
+	query := fmt.Sprintf(`SELECT %s FROM atproto_actors WHERE handle = $1`, atprotoActorSelectColumns)
 	err := r.db.GetContext(ctx, &actor, query, handle)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("actor not found")
@@ -85,9 +100,11 @@ func (r *SocialRepository) CreateFollow(ctx context.Context, follow *domain.Foll
 			raw = EXCLUDED.raw
 		RETURNING id`
 
+	raw := jsonRawToDBValue(follow.Raw)
+
 	return r.db.GetContext(ctx, &follow.ID, query,
 		follow.FollowerDID, follow.FollowingDID,
-		follow.URI, follow.CID, follow.CreatedAt, follow.Raw,
+		follow.URI, follow.CID, follow.CreatedAt, raw,
 	)
 }
 
@@ -171,10 +188,12 @@ func (r *SocialRepository) CreateLike(ctx context.Context, like *domain.Like) er
 			raw = EXCLUDED.raw
 		RETURNING id`
 
+	raw := jsonRawToDBValue(like.Raw)
+
 	return r.db.GetContext(ctx, &like.ID, query,
 		like.ActorDID, like.SubjectURI, like.SubjectCID,
 		like.URI, like.CID, like.CreatedAt,
-		like.VideoID, like.PostID, like.Raw,
+		like.VideoID, like.PostID, raw,
 	)
 }
 
@@ -245,12 +264,15 @@ func (r *SocialRepository) CreateComment(ctx context.Context, comment *domain.So
 			raw = EXCLUDED.raw
 		RETURNING id`
 
+	labels := jsonRawToDBValue(comment.Labels)
+	raw := jsonRawToDBValue(comment.Raw)
+
 	return r.db.GetContext(ctx, &comment.ID, query,
 		comment.ActorDID, comment.ActorHandle, comment.URI, comment.CID,
 		comment.Text, comment.ParentURI, comment.ParentCID,
 		comment.RootURI, comment.RootCID, comment.CreatedAt,
 		comment.IndexedAt, comment.VideoID, comment.PostID,
-		comment.Labels, comment.Blocked, comment.Raw,
+		labels, comment.Blocked, raw,
 	)
 }
 
@@ -264,7 +286,25 @@ func (r *SocialRepository) DeleteComment(ctx context.Context, uri string) error 
 // GetComments retrieves comments for a subject (root URI)
 func (r *SocialRepository) GetComments(ctx context.Context, rootURI string, limit, offset int) ([]domain.SocialComment, error) {
 	query := `
-		SELECT c.*, a.handle as actor_handle, a.display_name
+		SELECT
+			c.id,
+			c.actor_did,
+			a.handle as actor_handle,
+			a.display_name,
+			c.uri,
+			c.cid,
+			c.text,
+			c.parent_uri,
+			c.parent_cid,
+			c.root_uri,
+			c.root_cid,
+			c.created_at,
+			c.indexed_at,
+			c.video_id,
+			c.post_id,
+			COALESCE(c.labels, '[]'::jsonb) as labels,
+			c.blocked,
+			c.raw
 		FROM atproto_comments c
 		JOIN atproto_actors a ON c.actor_did = a.did
 		WHERE c.root_uri = $1 AND c.blocked = FALSE
@@ -279,7 +319,25 @@ func (r *SocialRepository) GetComments(ctx context.Context, rootURI string, limi
 // GetCommentThread retrieves a comment thread (replies to a specific comment)
 func (r *SocialRepository) GetCommentThread(ctx context.Context, parentURI string, limit, offset int) ([]domain.SocialComment, error) {
 	query := `
-		SELECT c.*, a.handle as actor_handle, a.display_name
+		SELECT
+			c.id,
+			c.actor_did,
+			a.handle as actor_handle,
+			a.display_name,
+			c.uri,
+			c.cid,
+			c.text,
+			c.parent_uri,
+			c.parent_cid,
+			c.root_uri,
+			c.root_cid,
+			c.created_at,
+			c.indexed_at,
+			c.video_id,
+			c.post_id,
+			COALESCE(c.labels, '[]'::jsonb) as labels,
+			c.blocked,
+			c.raw
 		FROM atproto_comments c
 		JOIN atproto_actors a ON c.actor_did = a.did
 		WHERE c.parent_uri = $1 AND c.blocked = FALSE
@@ -300,10 +358,12 @@ func (r *SocialRepository) CreateModerationLabel(ctx context.Context, label *dom
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id`
 
+	raw := jsonRawToDBValue(label.Raw)
+
 	return r.db.GetContext(ctx, &label.ID, query,
 		label.ActorDID, label.LabelType, label.Reason,
 		label.AppliedBy, label.URI, label.CreatedAt,
-		label.ExpiresAt, label.Raw,
+		label.ExpiresAt, raw,
 	)
 }
 
@@ -317,7 +377,17 @@ func (r *SocialRepository) RemoveModerationLabel(ctx context.Context, id string)
 // GetModerationLabels retrieves moderation labels for an actor
 func (r *SocialRepository) GetModerationLabels(ctx context.Context, actorDID string) ([]domain.ModerationLabel, error) {
 	query := `
-		SELECT * FROM atproto_moderation_labels
+		SELECT
+			id,
+			actor_did,
+			label_type,
+			reason,
+			applied_by,
+			uri,
+			created_at,
+			expires_at,
+			COALESCE(raw, '{}'::jsonb) as raw
+		FROM atproto_moderation_labels
 		WHERE actor_did = $1
 		AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
 		ORDER BY created_at DESC`
@@ -433,7 +503,7 @@ func (r *SocialRepository) BatchUpsertActors(ctx context.Context, actors []domai
 			args = append(args,
 				actor.DID, actor.Handle, actor.DisplayName, actor.Bio,
 				actor.AvatarURL, actor.BannerURL, actor.CreatedAt,
-				actor.UpdatedAt, actor.IndexedAt, actor.Labels,
+				actor.UpdatedAt, actor.IndexedAt, jsonRawToDBValue(actor.Labels),
 			)
 		}
 

@@ -592,6 +592,9 @@ paths:
                       status:
                         type: string
                         example: label_applied
+                      id:
+                        type: string
+                        description: Newly created moderation label ID when available
         '400':
           description: Invalid request
           content:

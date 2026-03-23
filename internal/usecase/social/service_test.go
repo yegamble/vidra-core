@@ -24,7 +24,12 @@ import (
 type mockSocialRepo struct{ mock.Mock }
 
 func (m *mockSocialRepo) UpsertActor(ctx context.Context, actor *domain.ATProtoActor) error {
-	return m.Called(ctx, actor).Error(0)
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "UpsertActor" {
+			return m.Called(ctx, actor).Error(0)
+		}
+	}
+	return nil
 }
 func (m *mockSocialRepo) GetActorByDID(ctx context.Context, did string) (*domain.ATProtoActor, error) {
 	args := m.Called(ctx, did)
@@ -504,6 +509,15 @@ func TestDeleteRecord_InvalidURI(t *testing.T) {
 func newTestServiceWithPDS(t *testing.T, handlers map[string]http.HandlerFunc) (*Service, *mockSocialRepo, *httptest.Server) {
 	t.Helper()
 	mux := http.NewServeMux()
+	mux.HandleFunc("/xrpc/com.atproto.server.createSession", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"accessJwt":  "test-token",
+			"refreshJwt": "test-refresh-token",
+			"did":        "did:plc:test123",
+		})
+	})
 	for path, h := range handlers {
 		mux.HandleFunc(path, h)
 	}
@@ -514,6 +528,7 @@ func newTestServiceWithPDS(t *testing.T, handlers map[string]http.HandlerFunc) (
 	atproto := new(mockAtprotoPublisher)
 	cfg := &config.Config{
 		ATProtoPDSURL:        ts.URL,
+		ATProtoHandle:        "test.handle",
 		ATProtoAppPassword:   "test-token",
 		EnableATProtoLabeler: false,
 	}

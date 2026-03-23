@@ -165,7 +165,15 @@ func (s *PaymentService) GetTransactionHistory(ctx context.Context, userID strin
 		return nil, err
 	}
 
-	return s.repo.GetTransactionsByWalletID(ctx, wallet.ID, limit, offset)
+	transactions, err := s.repo.GetTransactionsByWalletID(ctx, wallet.ID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	if transactions == nil {
+		return []*domain.IOTATransaction{}, nil
+	}
+
+	return transactions, nil
 }
 
 func (s *PaymentService) EncryptPrivateKey(seed string) ([]byte, []byte, error) {

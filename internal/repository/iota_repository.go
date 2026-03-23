@@ -95,10 +95,17 @@ func (r *IOTARepository) CreatePaymentIntent(ctx context.Context, intent *domain
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW(), NOW())
 		RETURNING created_at, updated_at
 	`
-	return r.db.QueryRowContext(ctx, query,
+	err := r.db.QueryRowContext(ctx, query,
 		intent.ID, intent.UserID, intent.VideoID, intent.AmountIOTA,
 		intent.PaymentAddress, intent.Status, intent.ExpiresAt, metadata,
 	).Scan(&intent.CreatedAt, &intent.UpdatedAt)
+	if err != nil {
+		if isForeignKeyViolation(err) {
+			return domain.ErrVideoNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 func (r *IOTARepository) GetPaymentIntentByID(ctx context.Context, intentID string) (*domain.IOTAPaymentIntent, error) {

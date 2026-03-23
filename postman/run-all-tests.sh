@@ -47,6 +47,7 @@ athena-notifications.postman_collection.json
 athena-livestreaming.postman_collection.json
 athena-federation.postman_collection.json
 athena-secure-messaging.postman_collection.json
+athena-ipfs.postman_collection.json
 athena-runners.postman_collection.json
 athena-plugins.postman_collection.json
 athena-payments.postman_collection.json

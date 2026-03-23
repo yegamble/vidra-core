@@ -4,6 +4,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,7 @@ type state struct {
 	mu            sync.Mutex
 	accessTokens  map[string]string // accessToken -> did
 	refreshTokens map[string]string // refreshToken -> did
+	handles       map[string]string // did -> handle
 	records       []recordEntry
 	blobs         []blobEntry
 }
@@ -47,10 +49,24 @@ func randomToken() string {
 	return hex.EncodeToString(b)
 }
 
+func didForHandle(handle string) string {
+	normalized := strings.ToLower(strings.TrimSpace(handle))
+	switch normalized {
+	case "", "alice.bsky.social":
+		return "did:plc:test123"
+	case "test.handle":
+		return "did:plc:testhandle"
+	}
+
+	sum := sha1.Sum([]byte(normalized))
+	return "did:plc:" + hex.EncodeToString(sum[:8])
+}
+
 func newState() *state {
 	return &state{
 		accessTokens:  make(map[string]string),
 		refreshTokens: make(map[string]string),
+		handles:       make(map[string]string),
 	}
 }
 
@@ -117,7 +133,10 @@ func newRouter() http.Handler {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 			return
 		}
-		did := "did:plc:test123"
+		did := didForHandle(req.Identifier)
+		s.mu.Lock()
+		s.handles[did] = req.Identifier
+		s.mu.Unlock()
 		accessToken, refreshToken := s.issueTokens(did)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"accessJwt":  accessToken,
@@ -158,7 +177,7 @@ func newRouter() http.Handler {
 			return
 		}
 		token := extractBearer(r)
-		did, ok := s.validateAccess(token)
+		tokenDID, ok := s.validateAccess(token)
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 			return
@@ -174,10 +193,15 @@ func newRouter() http.Handler {
 			return
 		}
 
+		repoDID := strings.TrimSpace(req.Repo)
+		if repoDID == "" {
+			repoDID = tokenDID
+		}
+
 		cid := "bafyreid" + randomToken()[:12]
-		uri := fmt.Sprintf("at://%s/%s/%s", did, req.Collection, randomToken()[:8])
+		uri := fmt.Sprintf("at://%s/%s/%s", repoDID, req.Collection, randomToken()[:8])
 		entry := recordEntry{
-			Repo:       req.Repo,
+			Repo:       repoDID,
 			Collection: req.Collection,
 			Record:     req.Record,
 			URI:        uri,
@@ -289,8 +313,36 @@ func newRouter() http.Handler {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing handle"})
 			return
 		}
+		did := didForHandle(handle)
+		s.mu.Lock()
+		s.handles[did] = handle
+		s.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"did": "did:plc:test123",
+			"did": did,
+		})
+	})
+
+	// Get profile — returns profile details for a resolved DID
+	mux.HandleFunc("/xrpc/app.bsky.actor.getProfile", func(w http.ResponseWriter, r *http.Request) {
+		actor := r.URL.Query().Get("actor")
+		if actor == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing actor"})
+			return
+		}
+
+		s.mu.Lock()
+		handle := s.handles[actor]
+		s.mu.Unlock()
+		if handle == "" {
+			handle = "alice.bsky.social"
+		}
+
+		displayName := strings.Split(handle, ".")[0]
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"did":         actor,
+			"handle":      handle,
+			"displayName": displayName,
+			"description": "Mock ATProto profile",
 		})
 	})
 

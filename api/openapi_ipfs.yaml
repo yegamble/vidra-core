@@ -1,0 +1,91 @@
+openapi: 3.0.3
+info:
+  title: Athena API - IPFS Streaming
+  description: |
+    Endpoints for Athena's IPFS-backed streaming diagnostics.
+
+    These routes are Athena-specific extensions that complement the PeerTube-compatible
+    media surface by exposing gateway health and request metrics for IPFS delivery.
+  version: 1.0.0
+
+paths:
+  /api/v1/ipfs/metrics:
+    get:
+      tags:
+        - IPFS
+      summary: Get IPFS streaming metrics
+      description: Returns aggregated request, success, failure, and cache counters for IPFS-backed streaming.
+      operationId: getIPFSMetrics
+      security: []
+      responses:
+        '200':
+          description: IPFS metrics payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - ipfs
+                  - local
+                  - cache
+                properties:
+                  ipfs:
+                    $ref: '#/components/schemas/MetricsBucket'
+                  local:
+                    $ref: '#/components/schemas/MetricsBucket'
+                  cache:
+                    $ref: '#/components/schemas/CacheBucket'
+        '503':
+          description: IPFS streaming is disabled
+
+  /api/v1/ipfs/gateways:
+    get:
+      tags:
+        - IPFS
+      summary: Get IPFS gateway health
+      description: Returns the configured IPFS gateways and their current health state.
+      operationId: getIPFSGatewayHealth
+      security: []
+      responses:
+        '200':
+          description: Gateway health payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - gateways
+                properties:
+                  gateways:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '503':
+          description: IPFS streaming is disabled
+
+components:
+  schemas:
+    MetricsBucket:
+      type: object
+      required:
+        - requests
+        - successes
+        - failures
+      properties:
+        requests:
+          type: integer
+        successes:
+          type: integer
+        failures:
+          type: integer
+    CacheBucket:
+      type: object
+      required:
+        - hits
+        - misses
+      properties:
+        hits:
+          type: integer
+        misses:
+          type: integer

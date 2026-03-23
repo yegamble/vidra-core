@@ -4,6 +4,20 @@
     "description": "Test collection for the plugin management lifecycle: list, get, enable, disable, settings, and contract-shape validation.\n\n## Lifecycle Covered\n\n1. **List plugins** \u2014 enumerate installed plugins\n2. **List available** \u2014 discover available plugins from registry\n3. **Get plugin** \u2014 retrieve specific plugin by name\n4. **Get settings** \u2014 read registered and public settings\n5. **Update settings** \u2014 change plugin configuration via PeerTube-compatible route\n6. **Enable/Disable** \u2014 toggle plugin status\n7. **Install contract** \u2014 validate install-from-URL request shape (may fail if URL unreachable)\n8. **Uninstall** \u2014 remove a plugin\n9. **Error cases** \u2014 auth failures and invalid inputs\n\n## Scope Note\n\nInstall-from-URL and Upload-plugin require a real plugin archive. These requests are included for API contract validation (response shape, auth, error codes) but may return 4xx if no archive is available in the test environment. Use the 'contract-only' tests to validate the API surface.\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - Admin JWT access token\n\n## Variables Set During Run\n\n- `plugin_npm_name` - Name of the plugin to test lifecycle operations on",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const adminToken = pm.environment.get('admin_access_token');",
+          "if (adminToken) {",
+          "  pm.collectionVariables.set('access_token', adminToken);",
+          "}"
+        ]
+      }
+    }
+  ],
   "item": [
     {
       "name": "Plugin Discovery",
@@ -36,7 +50,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{admin_access_token}}",
                 "type": "text"
               }
             ],
@@ -80,7 +94,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{admin_access_token}}",
                 "type": "text"
               }
             ],
@@ -140,7 +154,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{admin_access_token}}",
                 "type": "text"
               }
             ],
@@ -194,7 +208,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{admin_access_token}}",
                 "type": "text"
               }
             ],
@@ -243,7 +257,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{admin_access_token}}",
                 "type": "text"
               }
             ],
@@ -292,7 +306,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{admin_access_token}}",
                 "type": "text"
               },
               {
@@ -352,7 +366,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{admin_access_token}}",
                 "type": "text"
               },
               {
@@ -406,7 +420,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{admin_access_token}}",
                 "type": "text"
               },
               {
@@ -455,7 +469,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{admin_access_token}}",
                 "type": "text"
               },
               {
@@ -632,7 +646,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{access_token}}",
+                "value": "Bearer {{admin_access_token}}",
                 "type": "text"
               },
               {

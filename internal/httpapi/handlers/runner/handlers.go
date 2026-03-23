@@ -67,6 +67,9 @@ func (h *Handlers) ListRegistrationTokens(w http.ResponseWriter, r *http.Request
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("list registration tokens: %w", err))
 		return
 	}
+	if tokens == nil {
+		tokens = []*domain.RemoteRunnerRegistrationToken{}
+	}
 	shared.WriteJSON(w, http.StatusOK, map[string]any{"total": len(tokens), "data": tokens})
 }
 

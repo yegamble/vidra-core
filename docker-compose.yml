@@ -414,17 +414,26 @@ services:
         condition: service_healthy
       mock-atproto-pds-test:
         condition: service_healthy
+      iota-node-test:
+        condition: service_started
     environment:
       DATABASE_URL: postgres://test_user:test_password@postgres-test:5432/athena_test?sslmode=disable
       REDIS_URL: redis://redis-test:6379/0
       JWT_SECRET: test-jwt-secret
+      ENABLE_IPFS_STREAMING: "true"
       IPFS_API: http://ipfs-test:5001
+      IPFS_GATEWAY_URLS: http://ipfs-test:8080
       REQUIRE_IPFS: "false"
       PUBLIC_BASE_URL: http://app-test:8080
       ENABLE_ACTIVITYPUB: "true"
       ACTIVITYPUB_DOMAIN: app-test
       ACTIVITYPUB_KEY_ENCRYPTION_KEY: test-activitypub-key-32-characters
+      ENABLE_ATPROTO: "true"
       ATPROTO_PDS_URL: http://mock-atproto-pds-test:8080
+      ATPROTO_HANDLE: test.handle
+      ATPROTO_APP_PASSWORD: test-password
+      ENABLE_IOTA: "true"
+      IOTA_NODE_URL: http://iota-node-test:9000
       PORT: 8080
       VALIDATION_TEST_MODE: "true"
       VALIDATION_TEST_ADMIN_USERNAME: admin

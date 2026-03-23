@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"athena/internal/domain"
 	"athena/internal/middleware"
@@ -54,6 +55,17 @@ type CreateImportRequest struct {
 	ChannelID      *string `json:"channel_id,omitempty"`
 	TargetPrivacy  string  `json:"target_privacy"`
 	TargetCategory *string `json:"target_category,omitempty"`
+	TargetURL      string  `json:"targetUrl,omitempty"`
+	ChannelIDAlias *string `json:"channelId,omitempty"`
+	MagnetURI      string  `json:"magnetUri,omitempty"`
+	Privacy        any     `json:"privacy,omitempty"`
+	Category       any     `json:"category,omitempty"`
+	Video          *struct {
+		Name        string `json:"name,omitempty"`
+		Description string `json:"description,omitempty"`
+		Privacy     any    `json:"privacy,omitempty"`
+		Category    any    `json:"category,omitempty"`
+	} `json:"video,omitempty"`
 }
 
 // ImportResponse represents the response for import operations
@@ -89,9 +101,14 @@ func (h *ImportHandlers) CreateImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateImportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := parseCreateImportRequest(r)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+
+	if unsupported := unsupportedImportSource(req); unsupported != "" {
+		writeError(w, http.StatusBadRequest, unsupported+" imports are not supported", nil)
 		return
 	}
 
@@ -384,19 +401,151 @@ func parsePagination(r *http.Request) (limit, offset int) {
 	limit = 20 // Default
 	offset = 0
 
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+	if limitStr := firstNonEmpty(r.URL.Query().Get("limit"), r.URL.Query().Get("count")); limitStr != "" {
 		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 100 {
 			limit = parsed
 		}
 	}
 
-	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+	if offsetStr := firstNonEmpty(r.URL.Query().Get("offset"), r.URL.Query().Get("start")); offsetStr != "" {
 		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
 			offset = parsed
 		}
 	}
 
 	return limit, offset
+}
+
+func parseCreateImportRequest(r *http.Request) (CreateImportRequest, error) {
+	var req CreateImportRequest
+
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "multipart/form-data") || strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		if err := r.ParseMultipartForm(32 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+			return req, err
+		}
+
+		req.SourceURL = strings.TrimSpace(firstNonEmpty(r.FormValue("source_url"), r.FormValue("targetUrl")))
+		req.TargetURL = strings.TrimSpace(r.FormValue("targetUrl"))
+		req.MagnetURI = strings.TrimSpace(r.FormValue("magnetUri"))
+		req.ChannelID = nonEmptyStringPtr(r.FormValue("channel_id"))
+		req.ChannelIDAlias = nonEmptyStringPtr(r.FormValue("channelId"))
+		req.TargetPrivacy = strings.TrimSpace(r.FormValue("target_privacy"))
+		req.TargetCategory = nonEmptyStringPtr(r.FormValue("target_category"))
+		req.Privacy = firstNonEmpty(r.FormValue("privacy"), r.FormValue("video.privacy"))
+		req.Category = firstNonEmpty(r.FormValue("category"), r.FormValue("video.category"))
+
+		if file, _, err := r.FormFile("torrentfile"); err == nil {
+			req.MagnetURI = firstNonEmpty(req.MagnetURI, "torrentfile")
+			_ = file.Close()
+		}
+
+		normalizeCreateImportRequest(&req)
+		return req, nil
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return req, err
+	}
+
+	normalizeCreateImportRequest(&req)
+	return req, nil
+}
+
+func normalizeCreateImportRequest(req *CreateImportRequest) {
+	req.SourceURL = strings.TrimSpace(firstNonEmpty(req.SourceURL, req.TargetURL))
+	req.TargetURL = strings.TrimSpace(req.TargetURL)
+	req.MagnetURI = strings.TrimSpace(req.MagnetURI)
+
+	if req.ChannelID == nil {
+		req.ChannelID = cloneStringPtr(req.ChannelIDAlias)
+	}
+
+	if req.TargetPrivacy == "" {
+		req.TargetPrivacy = normalizeImportPrivacy(req.Privacy)
+	}
+	if req.TargetPrivacy == "" && req.Video != nil {
+		req.TargetPrivacy = normalizeImportPrivacy(req.Video.Privacy)
+	}
+
+	if req.TargetCategory == nil {
+		req.TargetCategory = normalizeImportCategory(req.Category)
+	}
+	if req.TargetCategory == nil && req.Video != nil {
+		req.TargetCategory = normalizeImportCategory(req.Video.Category)
+	}
+}
+
+func unsupportedImportSource(req CreateImportRequest) string {
+	if strings.TrimSpace(req.SourceURL) != "" {
+		return ""
+	}
+	if strings.TrimSpace(req.MagnetURI) != "" {
+		return "magnetUri"
+	}
+	return ""
+}
+
+func normalizeImportPrivacy(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", string(domain.PrivacyPublic):
+			return string(domain.PrivacyPublic)
+		case "2", string(domain.PrivacyUnlisted):
+			return string(domain.PrivacyUnlisted)
+		case "3", "4", string(domain.PrivacyPrivate), "internal":
+			return string(domain.PrivacyPrivate)
+		default:
+			return ""
+		}
+	case float64:
+		return normalizeImportPrivacy(strconv.Itoa(int(v)))
+	case json.Number:
+		return normalizeImportPrivacy(v.String())
+	default:
+		return ""
+	}
+}
+
+func normalizeImportCategory(value any) *string {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case string:
+		return nonEmptyStringPtr(v)
+	case float64:
+		return nonEmptyStringPtr(strconv.Itoa(int(v)))
+	case json.Number:
+		return nonEmptyStringPtr(v.String())
+	default:
+		return nil
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func nonEmptyStringPtr(value string) *string {
+	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		return &trimmed
+	}
+	return nil
+}
+
+func cloneStringPtr(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	return nonEmptyStringPtr(*value)
 }
 
 // getUserID extracts user ID from request context (set by auth middleware)

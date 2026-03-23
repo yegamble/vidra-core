@@ -154,6 +154,7 @@ func sampleComment() domain.SocialComment {
 	now := time.Now().Truncate(time.Microsecond)
 	cid := "bafyreicmt"
 	actorHandle := "alice.bsky.social"
+	displayName := "Alice"
 	parentURI := "at://did:plc:author/app.bsky.feed.post/parent"
 	parentCID := "bafyreiparent"
 	rootCID := "bafyreiroot"
@@ -162,6 +163,7 @@ func sampleComment() domain.SocialComment {
 		ID:          "1",
 		ActorDID:    "did:plc:commenter",
 		ActorHandle: &actorHandle,
+		DisplayName: &displayName,
 		URI:         "at://did:plc:commenter/app.bsky.feed.post/comment1",
 		CID:         &cid,
 		Text:        "Great video!",
@@ -181,7 +183,7 @@ func sampleComment() domain.SocialComment {
 
 func commentColumns() []string {
 	return []string{
-		"id", "actor_did", "actor_handle", "uri", "cid", "text",
+		"id", "actor_did", "actor_handle", "display_name", "uri", "cid", "text",
 		"parent_uri", "parent_cid", "root_uri", "root_cid",
 		"created_at", "indexed_at", "video_id", "post_id",
 		"labels", "blocked", "raw",
@@ -190,7 +192,7 @@ func commentColumns() []string {
 
 func commentRow(c domain.SocialComment) *sqlmock.Rows {
 	return sqlmock.NewRows(commentColumns()).AddRow(
-		c.ID, c.ActorDID, c.ActorHandle, c.URI, c.CID, c.Text,
+		c.ID, c.ActorDID, c.ActorHandle, c.DisplayName, c.URI, c.CID, c.Text,
 		c.ParentURI, c.ParentCID, c.RootURI, c.RootCID,
 		c.CreatedAt, c.IndexedAt, c.VideoID, c.PostID,
 		c.Labels, c.Blocked, c.Raw,
@@ -246,7 +248,7 @@ func TestSocialRepository_Unit_UpsertActor(t *testing.T) {
 			WithArgs(
 				actor.DID, actor.Handle, actor.DisplayName, actor.Bio,
 				actor.AvatarURL, actor.BannerURL, actor.CreatedAt,
-				actor.UpdatedAt, actor.IndexedAt, actor.Labels, actor.LocalUserID,
+				actor.UpdatedAt, actor.IndexedAt, jsonRawToDBValue(actor.Labels), actor.LocalUserID,
 			).
 			WillReturnRows(actorRow(actor))
 
@@ -266,7 +268,7 @@ func TestSocialRepository_Unit_UpsertActor(t *testing.T) {
 			WithArgs(
 				actor.DID, actor.Handle, actor.DisplayName, actor.Bio,
 				actor.AvatarURL, actor.BannerURL, actor.CreatedAt,
-				actor.UpdatedAt, actor.IndexedAt, actor.Labels, actor.LocalUserID,
+				actor.UpdatedAt, actor.IndexedAt, jsonRawToDBValue(actor.Labels), actor.LocalUserID,
 			).
 			WillReturnError(errors.New("insert failed"))
 
@@ -290,7 +292,17 @@ func TestSocialRepository_Unit_GetActorByDID(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT * FROM atproto_actors WHERE did = $1`)).
+			`SELECT did,
+	handle,
+	display_name,
+	bio,
+	avatar_url,
+	banner_url,
+	created_at,
+	updated_at,
+	indexed_at,
+	COALESCE(labels, '[]'::jsonb) AS labels,
+	local_user_id::text AS local_user_id FROM atproto_actors WHERE did = $1`)).
 			WithArgs(actor.DID).
 			WillReturnRows(actorRow(actor))
 
@@ -307,7 +319,17 @@ func TestSocialRepository_Unit_GetActorByDID(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT * FROM atproto_actors WHERE did = $1`)).
+			`SELECT did,
+	handle,
+	display_name,
+	bio,
+	avatar_url,
+	banner_url,
+	created_at,
+	updated_at,
+	indexed_at,
+	COALESCE(labels, '[]'::jsonb) AS labels,
+	local_user_id::text AS local_user_id FROM atproto_actors WHERE did = $1`)).
 			WithArgs("did:plc:missing").
 			WillReturnError(sql.ErrNoRows)
 
@@ -323,7 +345,17 @@ func TestSocialRepository_Unit_GetActorByDID(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT * FROM atproto_actors WHERE did = $1`)).
+			`SELECT did,
+	handle,
+	display_name,
+	bio,
+	avatar_url,
+	banner_url,
+	created_at,
+	updated_at,
+	indexed_at,
+	COALESCE(labels, '[]'::jsonb) AS labels,
+	local_user_id::text AS local_user_id FROM atproto_actors WHERE did = $1`)).
 			WithArgs(actor.DID).
 			WillReturnError(errors.New("connection refused"))
 
@@ -348,7 +380,17 @@ func TestSocialRepository_Unit_GetActorByHandle(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT * FROM atproto_actors WHERE handle = $1`)).
+			`SELECT did,
+	handle,
+	display_name,
+	bio,
+	avatar_url,
+	banner_url,
+	created_at,
+	updated_at,
+	indexed_at,
+	COALESCE(labels, '[]'::jsonb) AS labels,
+	local_user_id::text AS local_user_id FROM atproto_actors WHERE handle = $1`)).
 			WithArgs(actor.Handle).
 			WillReturnRows(actorRow(actor))
 
@@ -364,7 +406,17 @@ func TestSocialRepository_Unit_GetActorByHandle(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT * FROM atproto_actors WHERE handle = $1`)).
+			`SELECT did,
+	handle,
+	display_name,
+	bio,
+	avatar_url,
+	banner_url,
+	created_at,
+	updated_at,
+	indexed_at,
+	COALESCE(labels, '[]'::jsonb) AS labels,
+	local_user_id::text AS local_user_id FROM atproto_actors WHERE handle = $1`)).
 			WithArgs("missing.bsky.social").
 			WillReturnError(sql.ErrNoRows)
 
@@ -380,7 +432,17 @@ func TestSocialRepository_Unit_GetActorByHandle(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT * FROM atproto_actors WHERE handle = $1`)).
+			`SELECT did,
+	handle,
+	display_name,
+	bio,
+	avatar_url,
+	banner_url,
+	created_at,
+	updated_at,
+	indexed_at,
+	COALESCE(labels, '[]'::jsonb) AS labels,
+	local_user_id::text AS local_user_id FROM atproto_actors WHERE handle = $1`)).
 			WithArgs(actor.Handle).
 			WillReturnError(errors.New("timeout"))
 
@@ -390,6 +452,36 @@ func TestSocialRepository_Unit_GetActorByHandle(t *testing.T) {
 		assert.Contains(t, err.Error(), "timeout")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
+}
+
+func TestSocialRepository_Unit_GetActorByHandle_NullLocalUserID(t *testing.T) {
+	ctx := context.Background()
+	repo, mock, cleanup := newSocialRepo(t)
+	defer cleanup()
+
+	actor := sampleActor()
+	actor.LocalUserID = nil
+
+	mock.ExpectQuery(regexp.QuoteMeta(
+		`SELECT did,
+	handle,
+	display_name,
+	bio,
+	avatar_url,
+	banner_url,
+	created_at,
+	updated_at,
+	indexed_at,
+	COALESCE(labels, '[]'::jsonb) AS labels,
+	local_user_id::text AS local_user_id FROM atproto_actors WHERE handle = $1`)).
+		WithArgs(actor.Handle).
+		WillReturnRows(actorRow(actor))
+
+	got, err := repo.GetActorByHandle(ctx, actor.Handle)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Nil(t, got.LocalUserID)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +500,7 @@ func TestSocialRepository_Unit_CreateFollow(t *testing.T) {
 			`INSERT INTO atproto_follows`)).
 			WithArgs(
 				follow.FollowerDID, follow.FollowingDID,
-				follow.URI, follow.CID, follow.CreatedAt, follow.Raw,
+				follow.URI, follow.CID, follow.CreatedAt, jsonRawToDBValue(follow.Raw),
 			).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("42"))
 
@@ -427,7 +519,7 @@ func TestSocialRepository_Unit_CreateFollow(t *testing.T) {
 			`INSERT INTO atproto_follows`)).
 			WithArgs(
 				follow.FollowerDID, follow.FollowingDID,
-				follow.URI, follow.CID, follow.CreatedAt, follow.Raw,
+				follow.URI, follow.CID, follow.CreatedAt, jsonRawToDBValue(follow.Raw),
 			).
 			WillReturnError(errors.New("insert failed"))
 
@@ -701,7 +793,7 @@ func TestSocialRepository_Unit_CreateLike(t *testing.T) {
 			WithArgs(
 				like.ActorDID, like.SubjectURI, like.SubjectCID,
 				like.URI, like.CID, like.CreatedAt,
-				like.VideoID, like.PostID, like.Raw,
+				like.VideoID, like.PostID, jsonRawToDBValue(like.Raw),
 			).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("99"))
 
@@ -721,7 +813,7 @@ func TestSocialRepository_Unit_CreateLike(t *testing.T) {
 			WithArgs(
 				like.ActorDID, like.SubjectURI, like.SubjectCID,
 				like.URI, like.CID, like.CreatedAt,
-				like.VideoID, like.PostID, like.Raw,
+				like.VideoID, like.PostID, jsonRawToDBValue(like.Raw),
 			).
 			WillReturnError(errors.New("insert failed"))
 
@@ -898,7 +990,7 @@ func TestSocialRepository_Unit_CreateComment(t *testing.T) {
 				c.Text, c.ParentURI, c.ParentCID,
 				c.RootURI, c.RootCID, c.CreatedAt,
 				c.IndexedAt, c.VideoID, c.PostID,
-				c.Labels, c.Blocked, c.Raw,
+				jsonRawToDBValue(c.Labels), c.Blocked, jsonRawToDBValue(c.Raw),
 			).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("77"))
 
@@ -920,7 +1012,7 @@ func TestSocialRepository_Unit_CreateComment(t *testing.T) {
 				c.Text, c.ParentURI, c.ParentCID,
 				c.RootURI, c.RootCID, c.CreatedAt,
 				c.IndexedAt, c.VideoID, c.PostID,
-				c.Labels, c.Blocked, c.Raw,
+				jsonRawToDBValue(c.Labels), c.Blocked, jsonRawToDBValue(c.Raw),
 			).
 			WillReturnError(errors.New("insert failed"))
 
@@ -983,7 +1075,11 @@ func TestSocialRepository_Unit_GetComments(t *testing.T) {
 
 		c := sampleComment()
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT c.*, a.handle as actor_handle, a.display_name`)).
+			`SELECT
+			c.id,
+			c.actor_did,
+			a.handle as actor_handle,
+			a.display_name,`)).
 			WithArgs(rootURI, 10, 0).
 			WillReturnRows(commentRow(c))
 
@@ -999,7 +1095,11 @@ func TestSocialRepository_Unit_GetComments(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT c.*, a.handle as actor_handle, a.display_name`)).
+			`SELECT
+			c.id,
+			c.actor_did,
+			a.handle as actor_handle,
+			a.display_name,`)).
 			WithArgs(rootURI, 10, 0).
 			WillReturnRows(sqlmock.NewRows(commentColumns()))
 
@@ -1014,7 +1114,11 @@ func TestSocialRepository_Unit_GetComments(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT c.*, a.handle as actor_handle, a.display_name`)).
+			`SELECT
+			c.id,
+			c.actor_did,
+			a.handle as actor_handle,
+			a.display_name,`)).
 			WithArgs(rootURI, 10, 0).
 			WillReturnError(errors.New("query failed"))
 
@@ -1039,7 +1143,11 @@ func TestSocialRepository_Unit_GetCommentThread(t *testing.T) {
 
 		c := sampleComment()
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT c.*, a.handle as actor_handle, a.display_name`)).
+			`SELECT
+			c.id,
+			c.actor_did,
+			a.handle as actor_handle,
+			a.display_name,`)).
 			WithArgs(parentURI, 10, 0).
 			WillReturnRows(commentRow(c))
 
@@ -1055,7 +1163,11 @@ func TestSocialRepository_Unit_GetCommentThread(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT c.*, a.handle as actor_handle, a.display_name`)).
+			`SELECT
+			c.id,
+			c.actor_did,
+			a.handle as actor_handle,
+			a.display_name,`)).
 			WithArgs(parentURI, 10, 0).
 			WillReturnError(errors.New("query failed"))
 
@@ -1083,7 +1195,7 @@ func TestSocialRepository_Unit_CreateModerationLabel(t *testing.T) {
 			WithArgs(
 				label.ActorDID, label.LabelType, label.Reason,
 				label.AppliedBy, label.URI, label.CreatedAt,
-				label.ExpiresAt, label.Raw,
+				label.ExpiresAt, jsonRawToDBValue(label.Raw),
 			).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("55"))
 
@@ -1103,7 +1215,7 @@ func TestSocialRepository_Unit_CreateModerationLabel(t *testing.T) {
 			WithArgs(
 				label.ActorDID, label.LabelType, label.Reason,
 				label.AppliedBy, label.URI, label.CreatedAt,
-				label.ExpiresAt, label.Raw,
+				label.ExpiresAt, jsonRawToDBValue(label.Raw),
 			).
 			WillReturnError(errors.New("insert failed"))
 
@@ -1165,7 +1277,17 @@ func TestSocialRepository_Unit_GetModerationLabels(t *testing.T) {
 
 		label := sampleModerationLabel()
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT * FROM atproto_moderation_labels`)).
+			`SELECT
+			id,
+			actor_did,
+			label_type,
+			reason,
+			applied_by,
+			uri,
+			created_at,
+			expires_at,
+			COALESCE(raw, '{}'::jsonb) as raw
+		FROM atproto_moderation_labels`)).
 			WithArgs(actorDID).
 			WillReturnRows(modLabelRow(label))
 
@@ -1181,7 +1303,17 @@ func TestSocialRepository_Unit_GetModerationLabels(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT * FROM atproto_moderation_labels`)).
+			`SELECT
+			id,
+			actor_did,
+			label_type,
+			reason,
+			applied_by,
+			uri,
+			created_at,
+			expires_at,
+			COALESCE(raw, '{}'::jsonb) as raw
+		FROM atproto_moderation_labels`)).
 			WithArgs(actorDID).
 			WillReturnRows(sqlmock.NewRows(modLabelColumns()))
 
@@ -1196,7 +1328,17 @@ func TestSocialRepository_Unit_GetModerationLabels(t *testing.T) {
 		defer cleanup()
 
 		mock.ExpectQuery(regexp.QuoteMeta(
-			`SELECT * FROM atproto_moderation_labels`)).
+			`SELECT
+			id,
+			actor_did,
+			label_type,
+			reason,
+			applied_by,
+			uri,
+			created_at,
+			expires_at,
+			COALESCE(raw, '{}'::jsonb) as raw
+		FROM atproto_moderation_labels`)).
 			WithArgs(actorDID).
 			WillReturnError(errors.New("query failed"))
 

@@ -1,0 +1,993 @@
+{
+  "collection": {
+    "item": [
+      {
+        "id": "36f4e8c7-0301-46eb-96e9-739f1a72a514",
+        "name": "Get IPFS Metrics",
+        "request": {
+          "url": {
+            "path": [
+              "api",
+              "v1",
+              "ipfs",
+              "metrics"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "method": "GET"
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "42c90d57-e0fd-4529-848c-3347125d2e9b",
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Status is 200', () => {",
+                "  pm.expect(pm.response.code).to.equal(200);",
+                "});",
+                "const body = pm.response.json();",
+                "pm.test('Metrics payload contains IPFS, local, and cache blocks', () => {",
+                "  pm.expect(body).to.have.property('ipfs');",
+                "  pm.expect(body).to.have.property('local');",
+                "  pm.expect(body).to.have.property('cache');",
+                "});"
+              ],
+              "_lastExecutionId": "f6e7f78c-d58b-4b0f-b881-c774291257ce"
+            }
+          }
+        ]
+      },
+      {
+        "id": "d55ab86d-97ab-4dbe-a00e-2f815fa01ff7",
+        "name": "Get IPFS Gateway Health",
+        "request": {
+          "url": {
+            "path": [
+              "api",
+              "v1",
+              "ipfs",
+              "gateways"
+            ],
+            "host": [
+              "{{baseUrl}}"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "method": "GET"
+        },
+        "response": [],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "id": "4e2fe808-cafc-487d-a49d-8414d9982013",
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Status is 200', () => {",
+                "  pm.expect(pm.response.code).to.equal(200);",
+                "});",
+                "const body = pm.response.json();",
+                "pm.test('Gateway payload contains at least one gateway entry', () => {",
+                "  pm.expect(body).to.have.property('gateways');",
+                "  pm.expect(body.gateways).to.be.an('array').that.is.not.empty;",
+                "});"
+              ],
+              "_lastExecutionId": "8a69a27e-6f0e-450d-8488-e03518913924"
+            }
+          }
+        ]
+      }
+    ],
+    "event": [],
+    "variable": [],
+    "info": {
+      "_postman_id": "aab7a42c-f6d4-47ba-8523-45ff9d8c62c0",
+      "name": "Athena IPFS Streaming API",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+      "description": {
+        "content": "Validates Athena's IPFS streaming metrics and gateway health endpoints.",
+        "type": "text/plain"
+      }
+    }
+  },
+  "environment": {
+    "_": {
+      "postman_variable_scope": "environment",
+      "postman_exported_at": "2026-03-23T18:30:52.568Z",
+      "postman_exported_using": "Newman/6.1.3"
+    },
+    "id": "0f7a1111-2222-4333-8444-bbbbbbbbbbbb",
+    "name": "Athena Local",
+    "values": [
+      {
+        "type": "any",
+        "value": "http://app-test:8080",
+        "key": "baseUrl"
+      },
+      {
+        "type": "any",
+        "value": "user_1774290633402",
+        "key": "username"
+      },
+      {
+        "type": "any",
+        "value": "user_1774290633402@example.com",
+        "key": "email"
+      },
+      {
+        "type": "any",
+        "value": "Password123!",
+        "key": "password"
+      },
+      {
+        "type": "any",
+        "value": "f5f1559d-3fa7-49ed-83cb-289d449684ae",
+        "key": "user_id"
+      },
+      {
+        "type": "any",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1MzQsImlhdCI6MTc3NDI5MDYzNCwianRpIjoiOGFhNDBlODAtMzhlYi00ZTgyLThhNDktZWQ4YmIwZTIxMWY2Iiwicm9sZSI6InVzZXIiLCJzdWIiOiJmNWYxNTU5ZC0zZmE3LTQ5ZWQtODNjYi0yODlkNDQ5Njg0YWUifQ.3-cM9v-f97-QBOnxGFgPGSDf5QBnpz_ebO1ZUUgpKF8",
+        "key": "access_token"
+      },
+      {
+        "type": "any",
+        "value": "132c5bd1-91cd-4e30-8da0-f75c2bde2cad",
+        "key": "refresh_token"
+      },
+      {
+        "type": "any",
+        "value": "bafkreidggesxrtgthyu6zy5xyqlkjgyoz7dl75rv4skkmag3ivmbhr26ea",
+        "key": "avatar_ipfs_cid"
+      },
+      {
+        "type": "any",
+        "value": "f8130d69-acc1-4967-ae64-ce0d424096f1",
+        "key": "uploadedVideoId"
+      },
+      {
+        "type": "any",
+        "value": "a524cbba-84da-43e3-9d73-475138b0b662",
+        "key": "video_id"
+      },
+      {
+        "type": "any",
+        "value": "57b153b9-044c-4063-9393-68ac1f94d543",
+        "key": "test_video_id"
+      },
+      {
+        "type": "any",
+        "value": "test-video-1774290638028.mp4",
+        "key": "test_filename"
+      },
+      {
+        "type": "any",
+        "value": "d1afd7c6-fc52-427c-b072-dcfad39ef3a0",
+        "key": "upload_session_id"
+      },
+      {
+        "type": "any",
+        "value": 1,
+        "key": "total_chunks"
+      },
+      {
+        "type": "any",
+        "value": "8b46423f-33d8-496d-ac2c-89db2e060686",
+        "key": "upload_video_id"
+      },
+      {
+        "type": "any",
+        "value": "be8ae72e-9515-405a-af56-686ffd359883",
+        "key": "incomplete_upload_session_id"
+      },
+      {
+        "type": "any",
+        "value": "637829c8-23eb-47db-ac2a-f46436c9bf7f",
+        "key": "channel_id"
+      },
+      {
+        "type": "any",
+        "value": "b55c7d66-5694-4b21-86fa-601592a3594a",
+        "key": "subscription_channel_id"
+      },
+      {
+        "type": "any",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiNTQ4Yzg5OGYtNjA2Mi00ZGYxLWFhOTItYzViYzZlNGY4OGJlIiwicm9sZSI6ImFkbWluIiwic3ViIjoiYTdmODcyMTgtMDdmYS00YmM5LTgwYjAtODJlNjI4NjIyYThhIn0.V6pCx54X4UfFIWnSxa8pM--Z6FQ7PDPKPnc5q1w71AU",
+        "key": "admin_access_token"
+      },
+      {
+        "type": "any",
+        "value": "ptcollab1774290642749",
+        "key": "collaborator_username"
+      },
+      {
+        "type": "any",
+        "value": "ptcollab1774290642749@example.com",
+        "key": "collaborator_email"
+      },
+      {
+        "type": "any",
+        "value": "Password123!",
+        "key": "collaborator_password"
+      },
+      {
+        "type": "any",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQyOTE1NDIsImlhdCI6MTc3NDI5MDY0MiwianRpIjoiMzNkMzg4N2QtZTBiZi00M2I0LWE2ODYtNGUxOTVjNGJlMzg4Iiwicm9sZSI6InVzZXIiLCJzdWIiOiI4NDg0ZWRiMC02ZDhhLTQzMjYtODA4ZC01M2FjNDBkNGEwNDUifQ.0uZDFC4LTWchOoVmi--AHCSaax_Xs1z8kRVDjzXDaY8",
+        "key": "collaborator_access_token"
+      },
+      {
+        "type": "any",
+        "value": "ptcanonical1774290643131",
+        "key": "canonical_channel_handle"
+      },
+      {
+        "type": "any",
+        "value": "bb3e0311-9a07-456d-8e1e-e9ad6f0b71b6",
+        "key": "canonical_channel_id"
+      },
+      {
+        "type": "any",
+        "value": "8761c070-68bd-404f-8c42-455245eca7ab",
+        "key": "canonical_collaborator_id"
+      },
+      {
+        "type": "any",
+        "value": "29369087-54fb-44dc-98a5-cbb2796a9270",
+        "key": "runner_registration_token"
+      },
+      {
+        "type": "any",
+        "value": "5c884126-90d2-4917-8aa8-f59ccadd87be",
+        "key": "runner_registration_token_id"
+      },
+      {
+        "type": "any",
+        "value": "94715a11-33a4-47c3-bf22-4ffa70372410",
+        "key": "runner_id"
+      },
+      {
+        "type": "any",
+        "value": "62d22454-8bdf-495c-a60f-d894b20957fc",
+        "key": "runner_token"
+      },
+      {
+        "type": "any",
+        "value": "6a22107a-4276-4c4f-927c-7103026c8e43",
+        "key": "block_account_id"
+      },
+      {
+        "type": "any",
+        "value": "blockeduser1774290644595",
+        "key": "account_name"
+      },
+      {
+        "type": "any",
+        "value": "e1caf4e7-28d2-44a8-8df2-4d48d54be397",
+        "key": "stream_id"
+      }
+    ]
+  },
+  "globals": {
+    "id": "934d986d-3705-4b43-804b-78b9e7d4f23f",
+    "values": []
+  },
+  "run": {
+    "stats": {
+      "iterations": {
+        "total": 1,
+        "pending": 0,
+        "failed": 0
+      },
+      "items": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "scripts": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequests": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "requests": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "tests": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 4,
+        "pending": 0,
+        "failed": 0
+      },
+      "testScripts": {
+        "total": 2,
+        "pending": 0,
+        "failed": 0
+      },
+      "prerequestScripts": {
+        "total": 0,
+        "pending": 0,
+        "failed": 0
+      }
+    },
+    "timings": {
+      "responseAverage": 24.5,
+      "responseMin": 4,
+      "responseMax": 45,
+      "responseSd": 20.5,
+      "dnsAverage": 0,
+      "dnsMin": 0,
+      "dnsMax": 0,
+      "dnsSd": 0,
+      "firstByteAverage": 0,
+      "firstByteMin": 0,
+      "firstByteMax": 0,
+      "firstByteSd": 0,
+      "started": 1774290653050,
+      "completed": 1774290653151
+    },
+    "executions": [
+      {
+        "cursor": {
+          "position": 0,
+          "iteration": 0,
+          "length": 2,
+          "cycles": 1,
+          "empty": false,
+          "eof": false,
+          "bof": true,
+          "cr": false,
+          "ref": "d6a28638-09e4-4c2e-9ba4-47bb9d961098",
+          "httpRequestId": "aecc9002-f330-4f39-833d-63e637338356"
+        },
+        "item": {
+          "id": "36f4e8c7-0301-46eb-96e9-739f1a72a514",
+          "name": "Get IPFS Metrics",
+          "request": {
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "ipfs",
+                "metrics"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "42c90d57-e0fd-4529-848c-3347125d2e9b",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Metrics payload contains IPFS, local, and cache blocks', () => {",
+                  "  pm.expect(body).to.have.property('ipfs');",
+                  "  pm.expect(body).to.have.property('local');",
+                  "  pm.expect(body).to.have.property('cache');",
+                  "});"
+                ],
+                "_lastExecutionId": "f6e7f78c-d58b-4b0f-b881-c774291257ce"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "ipfs",
+              "metrics"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "4c54f72e-c003-4c1c-bf61-62f93b096421",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "149b92ac-6e9c-4e99-aad8-fb970fe6ad87",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "pcVIUFGYSJGqPhfnuzMeqw"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:53 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "93"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              99,
+              97,
+              99,
+              104,
+              101,
+              34,
+              58,
+              123,
+              34,
+              104,
+              105,
+              116,
+              115,
+              34,
+              58,
+              48,
+              44,
+              34,
+              109,
+              105,
+              115,
+              115,
+              101,
+              115,
+              34,
+              58,
+              48,
+              125,
+              44,
+              34,
+              105,
+              112,
+              102,
+              115,
+              34,
+              58,
+              123,
+              34,
+              102,
+              97,
+              105,
+              108,
+              117,
+              114,
+              101,
+              115,
+              34,
+              58,
+              48,
+              44,
+              34,
+              114,
+              101,
+              113,
+              117,
+              101,
+              115,
+              116,
+              115,
+              34,
+              58,
+              48,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              101,
+              115,
+              34,
+              58,
+              48,
+              125,
+              44,
+              34,
+              108,
+              111,
+              99,
+              97,
+              108,
+              34,
+              58,
+              123,
+              34,
+              102,
+              97,
+              105,
+              108,
+              117,
+              114,
+              101,
+              115,
+              34,
+              58,
+              48,
+              44,
+              34,
+              114,
+              101,
+              113,
+              117,
+              101,
+              115,
+              116,
+              115,
+              34,
+              58,
+              48,
+              44,
+              34,
+              115,
+              117,
+              99,
+              99,
+              101,
+              115,
+              115,
+              101,
+              115,
+              34,
+              58,
+              48,
+              125,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 45,
+          "responseSize": 131
+        },
+        "id": "36f4e8c7-0301-46eb-96e9-739f1a72a514",
+        "assertions": [
+          {
+            "assertion": "Status is 200",
+            "skipped": false
+          },
+          {
+            "assertion": "Metrics payload contains IPFS, local, and cache blocks",
+            "skipped": false
+          }
+        ]
+      },
+      {
+        "cursor": {
+          "ref": "dd660664-1095-49ae-b2bf-eeea33ee7f5f",
+          "length": 2,
+          "cycles": 1,
+          "position": 1,
+          "iteration": 0,
+          "httpRequestId": "8b9384ba-2d98-4761-bd13-0a4adf1c270a"
+        },
+        "item": {
+          "id": "d55ab86d-97ab-4dbe-a00e-2f815fa01ff7",
+          "name": "Get IPFS Gateway Health",
+          "request": {
+            "url": {
+              "path": [
+                "api",
+                "v1",
+                "ipfs",
+                "gateways"
+              ],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "query": [],
+              "variable": []
+            },
+            "method": "GET"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "4e2fe808-cafc-487d-a49d-8414d9982013",
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Gateway payload contains at least one gateway entry', () => {",
+                  "  pm.expect(body).to.have.property('gateways');",
+                  "  pm.expect(body.gateways).to.be.an('array').that.is.not.empty;",
+                  "});"
+                ],
+                "_lastExecutionId": "8a69a27e-6f0e-450d-8488-e03518913924"
+              }
+            }
+          ]
+        },
+        "request": {
+          "url": {
+            "protocol": "http",
+            "port": "8080",
+            "path": [
+              "api",
+              "v1",
+              "ipfs",
+              "gateways"
+            ],
+            "host": [
+              "app-test"
+            ],
+            "query": [],
+            "variable": []
+          },
+          "header": [
+            {
+              "key": "User-Agent",
+              "value": "PostmanRuntime/7.39.0",
+              "system": true
+            },
+            {
+              "key": "Accept",
+              "value": "*/*",
+              "system": true
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-cache",
+              "system": true
+            },
+            {
+              "key": "Postman-Token",
+              "value": "ab186994-528a-4de9-9071-8d06af1619a5",
+              "system": true
+            },
+            {
+              "key": "Host",
+              "value": "app-test:8080",
+              "system": true
+            },
+            {
+              "key": "Accept-Encoding",
+              "value": "gzip, deflate, br",
+              "system": true
+            },
+            {
+              "key": "Connection",
+              "value": "keep-alive",
+              "system": true
+            }
+          ],
+          "method": "GET"
+        },
+        "response": {
+          "id": "3bf612ca-8074-4539-9baa-8fe77c74f54e",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Encoding",
+              "value": "gzip"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Vary",
+              "value": "Accept-Encoding"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Request-Id",
+              "value": "GTVmKdSK8HR8EjsbquUxxw"
+            },
+            {
+              "key": "X-Xss-Protection",
+              "value": "1; mode=block"
+            },
+            {
+              "key": "Date",
+              "value": "Mon, 23 Mar 2026 18:30:53 GMT"
+            },
+            {
+              "key": "Content-Length",
+              "value": "155"
+            }
+          ],
+          "stream": {
+            "type": "Buffer",
+            "data": [
+              123,
+              34,
+              103,
+              97,
+              116,
+              101,
+              119,
+              97,
+              121,
+              115,
+              34,
+              58,
+              91,
+              123,
+              34,
+              85,
+              82,
+              76,
+              34,
+              58,
+              34,
+              104,
+              116,
+              116,
+              112,
+              58,
+              47,
+              47,
+              105,
+              112,
+              102,
+              115,
+              45,
+              116,
+              101,
+              115,
+              116,
+              58,
+              56,
+              48,
+              56,
+              48,
+              34,
+              44,
+              34,
+              72,
+              101,
+              97,
+              108,
+              116,
+              104,
+              121,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              44,
+              34,
+              76,
+              97,
+              115,
+              116,
+              67,
+              104,
+              101,
+              99,
+              107,
+              101,
+              100,
+              34,
+              58,
+              34,
+              50,
+              48,
+              50,
+              54,
+              45,
+              48,
+              51,
+              45,
+              50,
+              51,
+              84,
+              49,
+              56,
+              58,
+              51,
+              48,
+              58,
+              50,
+              50,
+              46,
+              48,
+              49,
+              56,
+              50,
+              48,
+              51,
+              55,
+              57,
+              52,
+              90,
+              34,
+              44,
+              34,
+              76,
+              97,
+              115,
+              116,
+              69,
+              114,
+              114,
+              111,
+              114,
+              34,
+              58,
+              110,
+              117,
+              108,
+              108,
+              44,
+              34,
+              82,
+              101,
+              115,
+              112,
+              111,
+              110,
+              115,
+              101,
+              84,
+              105,
+              109,
+              101,
+              77,
+              115,
+              34,
+              58,
+              48,
+              125,
+              93,
+              125,
+              10
+            ]
+          },
+          "cookie": [],
+          "responseTime": 4,
+          "responseSize": 145
+        },
+        "id": "d55ab86d-97ab-4dbe-a00e-2f815fa01ff7",
+        "assertions": [
+          {
+            "assertion": "Status is 200",
+            "skipped": false
+          },
+          {
+            "assertion": "Gateway payload contains at least one gateway entry",
+            "skipped": false
+          }
+        ]
+      }
+    ],
+    "transfers": {
+      "responseTotal": 248
+    },
+    "failures": [],
+    "error": null
+  }
+}

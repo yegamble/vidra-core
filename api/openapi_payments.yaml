@@ -105,6 +105,12 @@ paths:
                 $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          description: Referenced video was not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -178,23 +184,19 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: object
-                    properties:
-                      transactions:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/IOTATransaction'
-                      total:
-                        type: integer
-                        description: Total number of transactions
-                      limit:
-                        type: integer
-                      offset:
-                        type: integer
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IOTATransaction'
                   success: { type: boolean, example: true }
                 required: [data, success]
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
 

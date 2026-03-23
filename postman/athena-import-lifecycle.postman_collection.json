@@ -87,8 +87,8 @@
                   "});",
                   "const body = pm.response.json();",
                   "pm.test('Error response present', () => {",
-                  "  pm.expect(body.success).to.be.false;",
                   "  pm.expect(body).to.have.property('error');",
+                  "  pm.expect(body).to.have.property('message');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -140,7 +140,8 @@
                   "});",
                   "const body = pm.response.json();",
                   "pm.test('SSRF error response', () => {",
-                  "  pm.expect(body.success).to.be.false;",
+                  "  pm.expect(body).to.have.property('error');",
+                  "  pm.expect(body).to.have.property('message');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -297,8 +298,8 @@
                   "});",
                   "const body = pm.response.json();",
                   "pm.test('Not found error structure', () => {",
-                  "  pm.expect(body.success).to.be.false;",
                   "  pm.expect(body).to.have.property('error');",
+                  "  pm.expect(body).to.have.property('message');",
                   "});"
                 ],
                 "type": "text/javascript"
