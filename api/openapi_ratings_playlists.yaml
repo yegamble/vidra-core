@@ -1,0 +1,749 @@
+openapi: 3.0.3
+info:
+  title: Ratings and Playlists API
+  version: 1.0.0
+  description: API endpoints for video ratings (like/dislike) and user playlists management
+
+tags:
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  /api/v1/videos/{videoId}/rating:
+    get:
+      summary: Get rating statistics for a video
+      operationId: getVideoRatingStats
+      tags:
+        - Ratings
+        - PeerTube-Compat
+      parameters:
+        - in: path
+          name: videoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the video
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Rating statistics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoRatingStats'
+        '404':
+          description: Video not found
+
+    put:
+      summary: Set or update rating for a video
+      operationId: setVideoRating
+      tags:
+        - Ratings
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: videoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the video to rate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - rating
+              properties:
+                rating:
+                  type: integer
+                  enum: [-1, 0, 1]
+                  description: Rating value (-1=dislike, 0=none/neutral, 1=like)
+              example:
+                rating: 1
+      responses:
+        '204':
+          description: Rating set successfully
+        '400':
+          description: Invalid rating value
+        '401':
+          description: Unauthorized
+        '404':
+          description: Video not found
+
+    delete:
+      summary: Remove rating from a video
+      operationId: removeVideoRating
+      tags:
+        - Ratings
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: videoId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the video
+      responses:
+        '204':
+          description: Rating removed successfully
+        '401':
+          description: Unauthorized
+        '404':
+          description: Video not found
+
+  /api/v1/user/ratings:
+    get:
+      summary: Get current user's ratings
+      operationId: getUserRatings
+      tags:
+        - Ratings
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of ratings to return
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of ratings to skip
+      responses:
+        '200':
+          description: User ratings retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VideoRating'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          description: Unauthorized
+
+  /api/v1/playlists:
+    get:
+      summary: List playlists
+      operationId: listPlaylists
+      tags:
+        - Playlists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: userId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by user ID (omit for current user)
+        - in: query
+          name: privacy
+          schema:
+            type: string
+            enum: [public, unlisted, private]
+          description: Filter by privacy setting
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - in: query
+          name: orderBy
+          schema:
+            type: string
+            enum: [created_at, updated_at, name]
+            default: created_at
+      responses:
+        '200':
+          description: Playlists retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaylistListResponse'
+        '401':
+          description: Unauthorized
+
+    post:
+      summary: Create a new playlist
+      operationId: createPlaylist
+      tags:
+        - Playlists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePlaylistRequest'
+      responses:
+        '201':
+          description: Playlist created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+
+  /api/v1/playlists/{playlistId}:
+    get:
+      summary: Get a specific playlist
+      operationId: getPlaylist
+      tags:
+        - Playlists
+        - PeerTube-Compat
+      parameters:
+        - in: path
+          name: playlistId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Playlist retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaylistWithItems'
+        '401':
+          description: Unauthorized for private playlists
+        '403':
+          description: Forbidden
+        '404':
+          description: Playlist not found
+
+    put:
+      summary: Update a playlist
+      operationId: updatePlaylist
+      tags:
+        - Playlists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: playlistId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePlaylistRequest'
+      responses:
+        '204':
+          description: Playlist updated successfully
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - not the owner
+        '404':
+          description: Playlist not found
+
+    delete:
+      summary: Delete a playlist
+      operationId: deletePlaylist
+      tags:
+        - Playlists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: playlistId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Playlist deleted successfully
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - not the owner or system playlist
+        '404':
+          description: Playlist not found
+
+  /api/v1/playlists/{playlistId}/items:
+    get:
+      summary: Get items in a playlist
+      operationId: getPlaylistItems
+      tags:
+        - Playlists
+        - PeerTube-Compat
+      parameters:
+        - in: path
+          name: playlistId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Playlist items retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PlaylistItem'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          description: Unauthorized for private playlists
+        '404':
+          description: Playlist not found
+
+    post:
+      summary: Add video to playlist
+      operationId: addVideoToPlaylist
+      tags:
+        - Playlists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: playlistId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddToPlaylistRequest'
+      responses:
+        '201':
+          description: Video added to playlist successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaylistItem'
+        '400':
+          description: Invalid request or video already in playlist
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - not the owner
+        '404':
+          description: Playlist or video not found
+
+  /api/v1/playlists/{playlistId}/items/{itemId}:
+    delete:
+      summary: Remove video from playlist
+      operationId: removeVideoFromPlaylist
+      tags:
+        - Playlists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: playlistId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: itemId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Video removed from playlist successfully
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - not the owner
+        '404':
+          description: Playlist or item not found
+
+  /api/v1/playlists/{playlistId}/items/{itemId}/reorder:
+    put:
+      summary: Reorder item in playlist
+      operationId: reorderPlaylistItem
+      tags:
+        - Playlists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: playlistId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: itemId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - position
+              properties:
+                position:
+                  type: integer
+                  minimum: 0
+                  description: New position for the item
+      responses:
+        '204':
+          description: Item reordered successfully
+        '400':
+          description: Invalid position
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - not the owner
+        '404':
+          description: Playlist or item not found
+
+  /api/v1/playlists/watch-later:
+    get:
+      summary: Get or create watch later playlist
+      operationId: getWatchLaterPlaylist
+      tags:
+        - Playlists
+        - PeerTube-Compat
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Watch later playlist retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+        '201':
+          description: Watch later playlist created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+        '401':
+          description: Unauthorized
+
+  /api/v1/users/me/watch-later:
+    get:
+      summary: Get my watch later playlist
+      operationId: getMyWatchLaterPlaylist
+      description: Get the authenticated user's watch later playlist (alias for convenience)
+      tags:
+        - Playlists
+        - PeerTube-Compat
+        - Users
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Watch later playlist retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaylistWithItems'
+        '401':
+          description: Unauthorized
+
+components:
+  schemas:
+    VideoRating:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          enum: [-1, 0, 1]
+          description: -1=dislike, 0=none, 1=like
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    VideoRatingStats:
+      type: object
+      properties:
+        video_id:
+          type: string
+          format: uuid
+        likes_count:
+          type: integer
+          minimum: 0
+        dislikes_count:
+          type: integer
+          minimum: 0
+        user_rating:
+          type: integer
+          enum: [-1, 0, 1]
+          description: Current user's rating if authenticated
+      example:
+        video_id: "123e4567-e89b-12d3-a456-426614174000"
+        likes_count: 1250
+        dislikes_count: 42
+        user_rating: 1
+
+    Playlist:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        thumbnail_url:
+          type: string
+          format: uri
+          nullable: true
+        is_watch_later:
+          type: boolean
+        item_count:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PlaylistItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        playlist_id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+          minimum: 0
+        added_at:
+          type: string
+          format: date-time
+        video:
+          $ref: '#/components/schemas/Video'
+
+    PlaylistWithItems:
+      allOf:
+        - $ref: '#/components/schemas/Playlist'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/PlaylistItem'
+
+    CreatePlaylistRequest:
+      type: object
+      required:
+        - name
+        - privacy
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        thumbnail_url:
+          type: string
+          format: uri
+          nullable: true
+      example:
+        name: "My Favorite Videos"
+        description: "A collection of my favorite videos"
+        privacy: "public"
+
+    UpdatePlaylistRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        thumbnail_url:
+          type: string
+          format: uri
+          nullable: true
+
+    AddToPlaylistRequest:
+      type: object
+      required:
+        - video_id
+      properties:
+        video_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: Position in playlist, null to append to end
+
+    PlaylistListResponse:
+      type: object
+      properties:
+        playlists:
+          type: array
+          items:
+            $ref: '#/components/schemas/Playlist'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    Video:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        duration:
+          type: integer
+        views:
+          type: integer
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        thumbnail_url:
+          type: string
+          format: uri
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        # Include rating stats when fetching videos
+        likes_count:
+          type: integer
+        dislikes_count:
+          type: integer
+
+    Pagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -1,0 +1,326 @@
+openapi: 3.0.3
+info:
+  title: Athena Notifications API
+  description: API endpoints for managing user notifications in the Athena video platform
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Development server
+  - url: https://api.athena.example.com/api/v1
+    description: Production server
+
+security:
+  - bearerAuth: []
+
+paths:
+  /notifications:
+    get:
+      summary: Get user notifications
+      description: Retrieve notifications for the authenticated user
+      operationId: getNotifications
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of notifications to return (1-100)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          description: Number of notifications to skip
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: unread
+          in: query
+          description: Filter by read status
+          required: false
+          schema:
+            type: boolean
+        - name: types
+          in: query
+          description: Comma-separated list of notification types to filter
+          required: false
+          schema:
+            type: string
+            example: "new_video,comment,mention"
+      responses:
+        '200':
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /notifications/unread-count:
+    get:
+      summary: Get unread notification count
+      description: Returns the count of unread notifications for the authenticated user
+      operationId: getUnreadCount
+      responses:
+        '200':
+          description: Unread notification count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread_count:
+                    type: integer
+                    example: 5
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /notifications/stats:
+    get:
+      summary: Get notification statistics
+      description: Returns detailed statistics about user notifications
+      operationId: getNotificationStats
+      responses:
+        '200':
+          description: Notification statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationStats'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /notifications/{id}/read:
+    put:
+      summary: Mark notification as read
+      description: Marks a specific notification as read
+      operationId: markNotificationAsRead
+      parameters:
+        - name: id
+          in: path
+          description: Notification ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notification marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /notifications/read-all:
+    put:
+      summary: Mark all notifications as read
+      description: Marks all notifications for the authenticated user as read
+      operationId: markAllNotificationsAsRead
+      responses:
+        '200':
+          description: All notifications marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /notifications/{id}:
+    delete:
+      summary: Delete notification
+      description: Deletes a specific notification
+      operationId: deleteNotification
+      parameters:
+        - name: id
+          in: path
+          description: Notification ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Notification deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Notification:
+      type: object
+      required:
+        - id
+        - user_id
+        - type
+        - title
+        - message
+        - data
+        - read
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique notification identifier
+        user_id:
+          type: string
+          format: uuid
+          description: ID of the user who receives this notification
+        type:
+          type: string
+          enum:
+            - new_video
+            - video_processed
+            - video_failed
+            - new_subscriber
+            - comment
+            - mention
+            - system
+          description: Type of notification
+        title:
+          type: string
+          description: Notification title
+          example: "New video from TechChannel"
+        message:
+          type: string
+          description: Notification message
+          example: "TechChannel uploaded: Understanding Kubernetes"
+        data:
+          type: object
+          description: Additional notification data
+          properties:
+            video_id:
+              type: string
+              format: uuid
+              description: Related video ID (if applicable)
+            channel_id:
+              type: string
+              format: uuid
+              description: Channel ID (if applicable)
+            channel_name:
+              type: string
+              description: Channel name
+            video_title:
+              type: string
+              description: Video title
+            thumbnail_cid:
+              type: string
+              description: IPFS CID of the video thumbnail
+            subscriber_id:
+              type: string
+              format: uuid
+              description: Subscriber ID (for new_subscriber notifications)
+            comment_id:
+              type: string
+              format: uuid
+              description: Comment ID (for comment notifications)
+            comment_text:
+              type: string
+              description: Comment text preview
+        read:
+          type: boolean
+          description: Whether the notification has been read
+          example: false
+        created_at:
+          type: string
+          format: date-time
+          description: When the notification was created
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the notification was marked as read
+
+    NotificationStats:
+      type: object
+      properties:
+        total_count:
+          type: integer
+          description: Total number of notifications
+          example: 42
+        unread_count:
+          type: integer
+          description: Number of unread notifications
+          example: 5
+        by_type:
+          type: object
+          description: Count of notifications by type
+          additionalProperties:
+            type: integer
+          example:
+            new_video: 20
+            comment: 15
+            mention: 5
+            new_subscriber: 2
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Unauthorized"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Notification not found"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Internal server error"

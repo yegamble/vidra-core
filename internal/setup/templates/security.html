@@ -1,0 +1,134 @@
+{{define "content"}}
+<h2 style="margin-bottom: 20px;">Security Configuration</h2>
+
+<p style="margin-bottom: 20px; color: #6b7280;">
+    Configure security settings and create the initial administrator account.
+</p>
+
+<form id="wizardForm" action="/setup/security" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
+    <h3 style="margin-bottom: 15px;">JWT Secret</h3>
+
+    <div class="form-group">
+        <label for="jwt_secret">JWT Secret Key</label>
+        <div style="display: flex; gap: 10px;">
+            <input type="text" id="jwt_secret" name="JWT_SECRET"
+                   value="{{.Config.JWTSecret}}"
+                   readonly
+                   style="flex: 1;">
+            <button type="button" class="btn btn-secondary" onclick="copySecret()">Copy</button>
+            <button type="button" class="btn btn-secondary" onclick="toggleCustomize()">Customize</button>
+        </div>
+        <div class="help-text">
+            Auto-generated secure random key. Click "Customize" to provide your own (min 32 characters).
+        </div>
+    </div>
+
+    <div id="custom-secret" style="display: none; margin-top: 15px;">
+        <div class="form-group">
+            <label for="jwt_secret_custom">Custom JWT Secret (min 32 chars)</label>
+            <input type="text" id="jwt_secret_custom" name="JWT_SECRET_CUSTOM"
+                   placeholder="Enter at least 32 characters"
+                   minlength="32">
+            <div class="help-text">
+                Weak values like "secret", "password", "12345" are rejected.
+            </div>
+        </div>
+    </div>
+
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">Administrator Account</h3>
+
+    <div class="alert alert-info">
+        This account will have full administrative privileges.
+    </div>
+
+    <div class="form-group">
+        <label for="admin_username">Username *</label>
+        <input type="text" id="admin_username" name="ADMIN_USERNAME"
+               value="{{.Config.AdminUsername}}"
+               required
+               pattern="[a-zA-Z0-9_-]+"
+               placeholder="admin">
+        <div class="help-text">
+            Only letters, numbers, underscore, and hyphen allowed
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label for="admin_email">Email *</label>
+        <input type="email" id="admin_email" name="ADMIN_EMAIL"
+               value="{{.Config.AdminEmail}}"
+               required
+               placeholder="admin@example.com">
+    </div>
+
+    <div class="form-group">
+        <label for="admin_password">Password *</label>
+        <input type="password" id="admin_password" name="ADMIN_PASSWORD"
+               required
+               minlength="8"
+               placeholder="Min 8 characters">
+        <div class="help-text">
+            Minimum 8 characters. Use a strong, unique password.
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label for="admin_password_confirm">Confirm Password *</label>
+        <input type="password" id="admin_password_confirm" name="ADMIN_PASSWORD_CONFIRM"
+               required
+               minlength="8"
+               placeholder="Retype password">
+    </div>
+
+    <div id="password-match-error" class="alert alert-error" style="display: none;">
+        Passwords do not match
+    </div>
+</form>
+
+<script>
+function copySecret() {
+    const secret = document.getElementById('jwt_secret');
+    secret.select();
+    document.execCommand('copy');
+    alert('JWT Secret copied to clipboard');
+}
+
+function toggleCustomize() {
+    const customDiv = document.getElementById('custom-secret');
+    const display = customDiv.style.display;
+    customDiv.style.display = display === 'none' ? 'block' : 'none';
+
+    if (display !== 'none') {
+        // Switching back to auto-generated
+        document.getElementById('jwt_secret_custom').value = '';
+    }
+}
+
+// Password match validation
+document.getElementById('admin_password_confirm').addEventListener('input', function() {
+    const password = document.getElementById('admin_password').value;
+    const confirm = this.value;
+    const errorDiv = document.getElementById('password-match-error');
+
+    if (password !== confirm && confirm.length > 0) {
+        errorDiv.style.display = 'block';
+    } else {
+        errorDiv.style.display = 'none';
+    }
+});
+
+// Form submission validation
+document.getElementById('wizardForm').addEventListener('submit', function(e) {
+    const password = document.getElementById('admin_password').value;
+    const confirm = document.getElementById('admin_password_confirm').value;
+
+    if (password !== confirm) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        document.getElementById('password-match-error').style.display = 'block';
+        return false;
+    }
+});
+</script>
+{{end}}

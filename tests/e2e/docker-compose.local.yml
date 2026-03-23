@@ -1,0 +1,95 @@
+# Minimal E2E Test Environment for local testing
+# This file provides only the essential services needed to run E2E tests
+
+services:
+  # PostgreSQL Test Database
+  postgres-e2e:
+    image: postgres:15-alpine
+    platform: linux/arm64
+    environment:
+      POSTGRES_USER: athena_test
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: athena_e2e
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U athena_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Test Cache
+  redis-e2e:
+    image: redis:7-alpine
+    platform: linux/arm64
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Athena API Server (test instance)
+  athena-api-e2e:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    platform: linux/arm64
+    depends_on:
+      postgres-e2e:
+        condition: service_healthy
+      redis-e2e:
+        condition: service_healthy
+    environment:
+      # Database
+      DATABASE_URL: "postgres://athena_test:test_password@postgres-e2e:5432/athena_e2e?sslmode=disable"
+
+      # Redis
+      REDIS_URL: "redis://redis-e2e:6379/0"
+
+      # Mock S3 settings (tests will handle storage differently)
+      S3_ENDPOINT: "http://localhost:9000"
+      S3_ACCESS_KEY: "minioadmin"
+      S3_SECRET_KEY: "minioadmin"
+      S3_BUCKET: "athena-test"
+      S3_REGION: "us-east-1"
+      S3_USE_SSL: "false"
+
+      # Disable ClamAV for local testing
+      CLAMAV_ADDRESS: ""
+      CLAMAV_TIMEOUT: "0"
+
+      # Application
+      PORT: "8080"
+      JWT_SECRET: "test-jwt-secret-for-e2e-testing-only"
+      PUBLIC_BASE_URL: "http://localhost:18080"
+      ENVIRONMENT: "test"
+
+      # Validation
+      VALIDATION_TEST_MODE: "true"
+
+      # Storage
+      STORAGE_DIR: "/tmp/storage"
+
+      # Features
+      ENABLE_IPFS: "false"
+      REQUIRE_IPFS: "false"
+      ENABLE_IOTA: "false"
+      ENABLE_TORRENT: "false"
+
+      # Logging
+      LOG_LEVEL: "debug"
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  default:

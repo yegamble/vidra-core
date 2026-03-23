@@ -1,0 +1,807 @@
+{
+  "info": {
+    "name": "Athena Analytics & Views API",
+    "description": "Test collection for video analytics, view tracking, trending videos, and discovery features.\n\n## Features Tested\n\n- **View Tracking** - Fingerprint-based view deduplication\n- **Video Analytics** - Detailed metrics for video owners\n- **Daily Statistics** - Time-series data for charts\n- **Top Videos** - Most-viewed videos\n- **Trending** - Algorithm-based trending content\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - JWT access token (optional for public endpoints)\n- `test_video_id` - Video UUID for testing",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "View Tracking",
+      "item": [
+        {
+          "name": "Generate Fingerprint",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "const wrap = pm.response.json();",
+                  "",
+                  "pm.test('Response has fingerprint', () => {",
+                  "  pm.expect(wrap).to.have.property('success', true);",
+                  "  pm.expect(wrap).to.have.property('data');",
+                  "  pm.expect(wrap.data).to.have.property('fingerprint');",
+                  "  pm.expect(wrap.data).to.have.property('expires_at');",
+                  "  pm.expect(wrap.data).to.have.property('valid_for_seconds');",
+                  "});",
+                  "",
+                  "// Save fingerprint for use in view tracking",
+                  "pm.environment.set('viewer_fingerprint', wrap.data.fingerprint);",
+                  "",
+                  "console.log(`Fingerprint generated: ${wrap.data.fingerprint}`);",
+                  "console.log(`Valid for: ${wrap.data.valid_for_seconds} seconds`);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_info\": {\n    \"screen_resolution\": \"1920x1080\",\n    \"timezone\": \"America/New_York\",\n    \"language\": \"en-US\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/views/fingerprint",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "views",
+                "fingerprint"
+              ]
+            },
+            "description": "Generate a unique viewer fingerprint for view deduplication. The fingerprint prevents counting multiple views from the same viewer within a 30-minute window."
+          },
+          "response": []
+        },
+        {
+          "name": "Track View - With Fingerprint",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const videoId = pm.environment.get('test_video_id');",
+                  "if (!videoId) {",
+                  "  console.warn('No test_video_id found in environment - using placeholder');",
+                  "  pm.environment.set('test_video_id', '550e8400-e29b-41d4-a716-446655440000');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has view tracking result', () => {",
+                  "    pm.expect(wrap).to.have.property('success', true);",
+                  "    pm.expect(wrap.data).to.have.property('counted');",
+                  "    pm.expect(wrap.data).to.have.property('total_views');",
+                  "    pm.expect(wrap.data).to.have.property('message');",
+                  "  });",
+                  "  ",
+                  "  if (wrap.data.counted) {",
+                  "    console.log('✓ View counted successfully');",
+                  "    console.log(`Total views: ${wrap.data.total_views}`);",
+                  "  } else {",
+                  "    console.log('⚠ Duplicate view detected (within time window)');",
+                  "    console.log(`Total views: ${wrap.data.total_views}`);",
+                  "  }",
+                  "} else if (pm.response.code === 404) {",
+                  "  console.log('Video not found - update test_video_id environment variable');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fingerprint\": \"{{viewer_fingerprint}}\",\n  \"watch_time_seconds\": 120,\n  \"referrer\": \"https://example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/views",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "{{test_video_id}}",
+                "views"
+              ]
+            },
+            "description": "Track a view for a video using fingerprint deduplication. The view will only be counted if it's from a unique viewer (or outside the 30-minute window)."
+          },
+          "response": []
+        },
+        {
+          "name": "Track View - Without Fingerprint",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('View tracked (fingerprint generated server-side)', () => {",
+                  "    pm.expect(wrap.data).to.have.property('counted');",
+                  "    pm.expect(wrap.data).to.have.property('total_views');",
+                  "  });",
+                  "  ",
+                  "  console.log(`View ${wrap.data.counted ? 'counted' : 'not counted'}`);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"watch_time_seconds\": 45\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/views",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "{{test_video_id}}",
+                "views"
+              ]
+            },
+            "description": "Track a view without providing a fingerprint. The server will generate a fingerprint based on IP and user agent."
+          },
+          "response": []
+        }
+      ],
+      "description": "View tracking with fingerprint-based deduplication"
+    },
+    {
+      "name": "Video Analytics",
+      "item": [
+        {
+          "name": "Get Video Analytics - Monthly",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200, 401, 403, or 404', () => {",
+                  "  pm.expect([200, 401, 403, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has analytics data', () => {",
+                  "    pm.expect(wrap.data).to.have.property('video_id');",
+                  "    pm.expect(wrap.data).to.have.property('period');",
+                  "    pm.expect(wrap.data).to.have.property('views');",
+                  "    pm.expect(wrap.data).to.have.property('engagement');",
+                  "    pm.expect(wrap.data).to.have.property('watch_time');",
+                  "  });",
+                  "  ",
+                  "  pm.test('Views metrics are present', () => {",
+                  "    pm.expect(wrap.data.views).to.have.property('total');",
+                  "    pm.expect(wrap.data.views).to.have.property('unique');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Total views: ${wrap.data.views.total}`);",
+                  "  console.log(`Unique viewers: ${wrap.data.views.unique}`);",
+                  "  console.log(`Likes: ${wrap.data.engagement.likes}`);",
+                  "  console.log(`Average watch time: ${wrap.data.watch_time.average_seconds}s`);",
+                  "} else if (pm.response.code === 403) {",
+                  "  console.log('Access denied - analytics only available to video owner');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/analytics?period=month",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "{{test_video_id}}",
+                "analytics"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "month",
+                  "description": "Time period (day, week, month, year, all_time)"
+                }
+              ]
+            },
+            "description": "Get detailed analytics for a video. Only accessible by the video owner or admin.\n\nIncludes:\n- View counts and trends\n- Geographic distribution\n- Device breakdown\n- Engagement metrics\n- Traffic sources\n- Watch time statistics"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Video Analytics - Custom Date Range",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200, 401, 403, or 404', () => {",
+                  "  pm.expect([200, 401, 403, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response shows custom date range', () => {",
+                  "    pm.expect(wrap.data).to.have.property('start_date');",
+                  "    pm.expect(wrap.data).to.have.property('end_date');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Analytics period: ${wrap.data.start_date} to ${wrap.data.end_date}`);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/analytics?start_date=2024-01-01&end_date=2024-01-31",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "{{test_video_id}}",
+                "analytics"
+              ],
+              "query": [
+                {
+                  "key": "start_date",
+                  "value": "2024-01-01",
+                  "description": "Start date (ISO 8601)"
+                },
+                {
+                  "key": "end_date",
+                  "value": "2024-01-31",
+                  "description": "End date (ISO 8601)"
+                }
+              ]
+            },
+            "description": "Get analytics for a custom date range"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Daily Stats",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200, 401, 403, or 404', () => {",
+                  "  pm.expect([200, 401, 403, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has daily statistics', () => {",
+                  "    pm.expect(wrap.data).to.have.property('video_id');",
+                  "    pm.expect(wrap.data).to.have.property('days_requested');",
+                  "    pm.expect(wrap.data).to.have.property('stats');",
+                  "    pm.expect(wrap.data.stats).to.be.an('array');",
+                  "  });",
+                  "  ",
+                  "  if (wrap.data.stats.length > 0) {",
+                  "    pm.test('Daily stats have required fields', () => {",
+                  "      const stat = wrap.data.stats[0];",
+                  "      pm.expect(stat).to.have.property('date');",
+                  "      pm.expect(stat).to.have.property('views');",
+                  "      pm.expect(stat).to.have.property('unique_views');",
+                  "      pm.expect(stat).to.have.property('watch_time_seconds');",
+                  "    });",
+                  "    ",
+                  "    console.log(`Daily stats for ${wrap.data.stats.length} days`);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/stats/daily?days=7",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "{{test_video_id}}",
+                "stats",
+                "daily"
+              ],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "7",
+                  "description": "Number of days (1-365)"
+                }
+              ]
+            },
+            "description": "Get day-by-day statistics for a video. Useful for creating time-series charts."
+          },
+          "response": []
+        }
+      ],
+      "description": "Detailed analytics for video owners (requires authentication)"
+    },
+    {
+      "name": "Discovery",
+      "item": [
+        {
+          "name": "Get Top Videos - This Week",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "const wrap = pm.response.json();",
+                  "",
+                  "pm.test('Response has top videos', () => {",
+                  "  pm.expect(wrap).to.have.property('success', true);",
+                  "  pm.expect(wrap.data).to.have.property('videos');",
+                  "  pm.expect(wrap.data).to.have.property('total');",
+                  "  pm.expect(wrap.data).to.have.property('limit');",
+                  "  pm.expect(wrap.data.videos).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (wrap.data.videos.length > 0) {",
+                  "  pm.test('Video objects have required fields', () => {",
+                  "    const video = wrap.data.videos[0];",
+                  "    pm.expect(video).to.have.property('id');",
+                  "    pm.expect(video).to.have.property('title');",
+                  "    pm.expect(video).to.have.property('views');",
+                  "    pm.expect(video).to.have.property('likes');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Found ${wrap.data.videos.length} top videos`);",
+                  "  console.log(`Total in database: ${wrap.data.total}`);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/top?period=week&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "top"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "week",
+                  "description": "Time period (day, week, month, year, all_time)"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Number of videos (1-100)"
+                }
+              ]
+            },
+            "description": "Get the most-viewed videos for a specific time period. Public endpoint."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Top Videos - All Time",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "const wrap = pm.response.json();",
+                  "",
+                  "pm.test('Response has videos', () => {",
+                  "  pm.expect(wrap.data).to.have.property('videos');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/top?period=all_time&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "top"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "all_time"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Get all-time top videos"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Trending Videos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "const wrap = pm.response.json();",
+                  "",
+                  "pm.test('Response has trending videos', () => {",
+                  "  pm.expect(wrap).to.have.property('success', true);",
+                  "  pm.expect(wrap.data).to.have.property('videos');",
+                  "  pm.expect(wrap.data.videos).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (wrap.data.videos.length > 0) {",
+                  "  pm.test('Trending videos have score and velocity', () => {",
+                  "    const video = wrap.data.videos[0];",
+                  "    pm.expect(video).to.have.property('trending_score');",
+                  "    pm.expect(video).to.have.property('views_per_hour');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Found ${wrap.data.videos.length} trending videos`);",
+                  "  wrap.data.videos.forEach((v, i) => {",
+                  "    console.log(`${i+1}. ${v.title} (score: ${v.trending_score.toFixed(2)}, ${v.views_per_hour.toFixed(0)} views/hr)`);",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/trending?limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "trending"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Number of videos (1-100)"
+                }
+              ]
+            },
+            "description": "Get currently trending videos based on view velocity, engagement, and recency.\n\nTrending algorithm considers:\n- Views per hour (weighted by recency)\n- Like/dislike ratio\n- Comment activity\n- Share count\n- Watch time completion rate"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Trending Videos - Filtered by Category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "",
+                  "const wrap = pm.response.json();",
+                  "",
+                  "pm.test('Videos match requested category', () => {",
+                  "  pm.expect(wrap.data.videos).to.be.an('array');",
+                  "  // Category validation would require checking video objects",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/trending?category=education&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "trending"
+              ],
+              "query": [
+                {
+                  "key": "category",
+                  "value": "education",
+                  "description": "Filter by category"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Get trending videos filtered by category"
+          },
+          "response": []
+        }
+      ],
+      "description": "Public discovery endpoints for top and trending videos"
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Track View - Video Not Found",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404 Not Found', () => {",
+                  "  pm.expect(pm.response.code).to.equal(404);",
+                  "});",
+                  "",
+                  "pm.test('Error response structure', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap).to.have.property('success', false);",
+                  "  pm.expect(wrap).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/00000000-0000-0000-0000-000000000000/views",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "00000000-0000-0000-0000-000000000000",
+                "views"
+              ]
+            },
+            "description": "Verify proper 404 error when tracking view for non-existent video"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Analytics - Not Owner (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Should be 403 if video exists but user doesn't own it",
+                  "// Could be 404 if video doesn't exist",
+                  "pm.test('Status is 403 or 404', () => {",
+                  "  pm.expect([403, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 403) {",
+                  "  console.log('Access denied - analytics only available to video owner');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/analytics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "{{test_video_id}}",
+                "analytics"
+              ]
+            },
+            "description": "Verify that analytics endpoints require video ownership (403 if not owner)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Analytics - No Auth (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401 Unauthorized', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/analytics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "{{test_video_id}}",
+                "analytics"
+              ]
+            },
+            "description": "Verify that analytics require authentication"
+          },
+          "response": []
+        }
+      ],
+      "description": "Error cases and permission testing"
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ]
+}

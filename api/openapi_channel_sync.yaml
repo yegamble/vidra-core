@@ -1,0 +1,124 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Video Channel Sync
+  description: |
+    Endpoints for managing video channel synchronization with external platforms.
+
+    ## Sync Lifecycle
+
+    1. POST /api/v1/video-channel-syncs - Create sync configuration
+    2. POST /api/v1/video-channel-syncs/{id}/trigger-now - Trigger immediate sync
+    3. DELETE /api/v1/video-channel-syncs/{id} - Remove sync
+
+    ## States
+
+    - 1: synced
+    - 2: processing
+    - 3: waiting_first_run
+  version: 1.0.0
+
+paths:
+  /api/v1/video-channel-syncs:
+    post:
+      summary: Create a video channel sync
+      operationId: createChannelSync
+      tags: [Channel Sync]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [externalChannelUrl, videoChannelId]
+              properties:
+                externalChannelUrl:
+                  type: string
+                  format: uri
+                videoChannelId:
+                  type: string
+      responses:
+        '200':
+          description: Sync created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelSyncResponse'
+        '400':
+          description: Invalid request
+
+  /api/v1/video-channel-syncs/{id}:
+    delete:
+      summary: Delete a video channel sync
+      operationId: deleteChannelSync
+      tags: [Channel Sync]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Sync deleted
+        '404':
+          description: Sync not found
+
+  /api/v1/video-channel-syncs/{id}/trigger-now:
+    post:
+      summary: Trigger immediate sync
+      operationId: triggerChannelSync
+      tags: [Channel Sync]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Sync triggered
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ChannelSync:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        channelId:
+          type: string
+        externalChannelUrl:
+          type: string
+        state:
+          type: integer
+          description: "1=synced, 2=processing, 3=waiting_first_run"
+        lastSyncAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    ChannelSyncResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/ChannelSync'

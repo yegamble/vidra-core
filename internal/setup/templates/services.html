@@ -1,0 +1,287 @@
+{{define "content"}}
+<h2 style="margin-bottom: 20px;">Services Configuration</h2>
+
+<p style="margin-bottom: 20px; color: #6b7280;">
+    Configure optional services based on your needs and system resources.
+</p>
+
+{{if .Recommendation}}
+<div class="alert alert-info">
+    <strong>Resource Detection</strong>
+    <ul style="margin-top: 10px; margin-left: 20px;">
+        <li>Available RAM: {{printf "%.1f" .SystemResources.RAMGB}}GB</li>
+        <li>CPU Cores: {{.SystemResources.CPUCores}}</li>
+    </ul>
+    <p style="margin-top: 10px;">{{.Recommendation}}</p>
+</div>
+{{end}}
+
+<form id="wizardForm" action="/setup/services" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
+    <!-- Redis -->
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">Redis (Required)</h3>
+    <div class="form-group">
+        <div class="toggle-group" data-service="redis">
+            <div class="toggle-btn {{if eq .Config.RedisMode "docker"}}active{{end}}" data-mode="docker">
+                <strong>Local Docker</strong>
+            </div>
+            <div class="toggle-btn {{if eq .Config.RedisMode "external"}}active{{end}}" data-mode="external">
+                <strong>External Service</strong>
+            </div>
+        </div>
+        <input type="hidden" name="REDIS_MODE" value="{{or .Config.RedisMode "docker"}}">
+    </div>
+
+    <div class="external-fields {{if eq .Config.RedisMode "external"}}show{{end}}">
+        <div class="form-group">
+            <label for="redis_url">Redis URL</label>
+            <input type="text" id="redis_url" name="REDIS_URL"
+                   value="{{.Config.RedisURL}}"
+                   placeholder="redis://localhost:6379/0">
+        </div>
+        <button type="button" class="btn btn-secondary" onclick="testRedis()" style="margin-top: 10px;">
+            Test Connection
+        </button>
+        <div id="redisTestResult" style="margin-top: 10px;"></div>
+    </div>
+
+    <!-- IPFS -->
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">IPFS (Optional - P2P Storage)</h3>
+    <div class="form-group">
+        <label>
+            <input type="checkbox" name="ENABLE_IPFS" value="true" {{if .Config.EnableIPFS}}checked{{end}}>
+            Enable IPFS for distributed storage
+        </label>
+    </div>
+
+    <div id="ipfs-config" style="{{if not .Config.EnableIPFS}}display:none{{end}}">
+        <div class="form-group">
+            <div class="toggle-group" data-service="ipfs">
+                <div class="toggle-btn {{if eq .Config.IPFSMode "docker"}}active{{end}}" data-mode="docker">
+                    <strong>Local Docker</strong>
+                </div>
+                <div class="toggle-btn {{if eq .Config.IPFSMode "external"}}active{{end}}" data-mode="external">
+                    <strong>External Service</strong>
+                </div>
+            </div>
+            <input type="hidden" name="IPFS_MODE" value="{{or .Config.IPFSMode "docker"}}">
+        </div>
+
+        <div class="external-fields {{if eq .Config.IPFSMode "external"}}show{{end}}">
+            <div class="form-group">
+                <label for="ipfs_api">IPFS API URL</label>
+                <input type="text" id="ipfs_api" name="IPFS_API_URL"
+                       value="{{.Config.IPFSAPIUrl}}"
+                       placeholder="http://localhost:5001">
+            </div>
+            <button type="button" class="btn btn-secondary" onclick="testIPFS()" style="margin-top: 10px;">
+                Test Connection
+            </button>
+            <div id="ipfsTestResult" style="margin-top: 10px;"></div>
+        </div>
+    </div>
+
+    <!-- IOTA -->
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">IOTA Payments (Optional)</h3>
+    <div class="form-group">
+        <label>
+            <input type="checkbox" name="ENABLE_IOTA" value="true" {{if .Config.EnableIOTA}}checked{{end}}>
+            Enable IOTA payment processing
+        </label>
+        <div class="help-text">Accept IOTA cryptocurrency payments. Requires an IOTA Rebased node.</div>
+    </div>
+
+    <div id="iota-config" style="{{if not .Config.EnableIOTA}}display:none{{end}}">
+        <div class="form-group">
+            <label>Network</label>
+            <select name="IOTA_NETWORK">
+                <option value="testnet" {{if eq .Config.IOTANetwork "testnet"}}selected{{end}}>Testnet (recommended for development)</option>
+                <option value="mainnet" {{if eq .Config.IOTANetwork "mainnet"}}selected{{end}}>Mainnet (production)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <div class="toggle-group" data-service="iota">
+                <div class="toggle-btn {{if eq .Config.IOTAMode "docker"}}active{{end}}" data-mode="docker">
+                    <strong>Local Docker</strong>
+                </div>
+                <div class="toggle-btn {{if eq .Config.IOTAMode "external"}}active{{end}}" data-mode="external">
+                    <strong>External Node</strong>
+                </div>
+            </div>
+            <input type="hidden" name="IOTA_MODE" value="{{or .Config.IOTAMode "docker"}}">
+        </div>
+
+        <div class="external-fields {{if eq .Config.IOTAMode "external"}}show{{end}}">
+            <div class="form-group">
+                <label for="iota_node_url">IOTA Node URL</label>
+                <input type="text" id="iota_node_url" name="IOTA_NODE_URL"
+                       value="{{.Config.IOTANodeURL}}"
+                       placeholder="http://localhost:14265">
+                <div class="help-text">JSON-RPC endpoint of your IOTA Rebased fullnode.</div>
+            </div>
+            <button type="button" class="btn btn-secondary" onclick="testIOTA()" style="margin-top: 10px;">
+                Test Connection
+            </button>
+            <div id="iotaTestResult" style="margin-top: 10px;"></div>
+        </div>
+    </div>
+
+    <!-- ClamAV -->
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">ClamAV (Optional - Virus Scanning)</h3>
+    <div class="form-group">
+        <label>
+            <input type="checkbox" name="ENABLE_CLAMAV" value="true" {{if .Config.EnableClamAV}}checked{{end}}>
+            Enable virus scanning for uploaded files
+        </label>
+        <div class="help-text">Requires 2GB+ RAM</div>
+    </div>
+
+    <!-- Whisper -->
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">Whisper (Optional - Captions)</h3>
+    <div class="form-group">
+        <label>
+            <input type="checkbox" name="ENABLE_WHISPER" value="true" {{if .Config.EnableWhisper}}checked{{end}}>
+            Enable automatic caption generation
+        </label>
+        <div class="help-text">Requires 4GB+ RAM. GPU recommended for faster processing.</div>
+    </div>
+</form>
+
+<script>
+document.querySelector('input[name="ENABLE_IPFS"]').addEventListener('change', function(e) {
+    document.getElementById('ipfs-config').style.display = e.target.checked ? 'block' : 'none';
+});
+document.querySelector('input[name="ENABLE_IOTA"]').addEventListener('change', function(e) {
+    document.getElementById('iota-config').style.display = e.target.checked ? 'block' : 'none';
+});
+
+function testRedis() {
+    const url = document.getElementById('redis_url').value;
+    if (!url) {
+        document.getElementById('redisTestResult').innerHTML =
+            '<div class="alert alert-error">Please enter a Redis URL</div>';
+        return;
+    }
+
+    // Parse redis://[user:pass@]host:port/db
+    const match = url.match(/redis:\/\/(?:([^:]+):([^@]+)@)?([^:\/]+):(\d+)(?:\/(\d+))?/);
+    if (!match) {
+        document.getElementById('redisTestResult').innerHTML =
+            '<div class="alert alert-error">Invalid Redis URL format</div>';
+        return;
+    }
+
+    const host = match[3];
+    const port = parseInt(match[4]);
+    const password = match[2] || '';
+
+    document.getElementById('redisTestResult').innerHTML = '<p>Testing connection...</p>';
+
+    fetch('/setup/test-redis', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ host, port, password })
+    })
+    .then(r => r.json())
+    .then(data => {
+        const resultDiv = document.getElementById('redisTestResult');
+        resultDiv.innerHTML = '';
+        const alert = document.createElement('div');
+        if (data.success) {
+            alert.className = 'alert alert-success';
+            alert.textContent = '✓ ' + data.message;
+        } else {
+            alert.className = 'alert alert-error';
+            alert.textContent = '✗ ' + data.error;
+        }
+        resultDiv.appendChild(alert);
+    })
+    .catch(e => {
+        const resultDiv = document.getElementById('redisTestResult');
+        resultDiv.innerHTML = '';
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-error';
+        alert.textContent = '✗ Connection failed';
+        resultDiv.appendChild(alert);
+    });
+}
+
+function testIPFS() {
+    const url = document.getElementById('ipfs_api').value;
+    if (!url) {
+        document.getElementById('ipfsTestResult').innerHTML =
+            '<div class="alert alert-error">Please enter an IPFS API URL</div>';
+        return;
+    }
+
+    document.getElementById('ipfsTestResult').innerHTML = '<p>Testing connection...</p>';
+
+    fetch('/setup/test-ipfs', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ url })
+    })
+    .then(r => r.json())
+    .then(data => {
+        const resultDiv = document.getElementById('ipfsTestResult');
+        resultDiv.innerHTML = '';
+        const alert = document.createElement('div');
+        if (data.success) {
+            alert.className = 'alert alert-success';
+            alert.textContent = '✓ ' + data.message;
+        } else {
+            alert.className = 'alert alert-error';
+            alert.textContent = '✗ ' + data.error;
+        }
+        resultDiv.appendChild(alert);
+    })
+    .catch(e => {
+        const resultDiv = document.getElementById('ipfsTestResult');
+        resultDiv.innerHTML = '';
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-error';
+        alert.textContent = '✗ Connection failed';
+        resultDiv.appendChild(alert);
+    });
+}
+
+function testIOTA() {
+    const url = document.getElementById('iota_node_url').value;
+    if (!url) {
+        document.getElementById('iotaTestResult').innerHTML =
+            '<div class="alert alert-error">Please enter an IOTA node URL</div>';
+        return;
+    }
+
+    document.getElementById('iotaTestResult').innerHTML = '<p>Testing connection...</p>';
+
+    fetch('/setup/test-iota', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ url })
+    })
+    .then(r => r.json())
+    .then(data => {
+        const resultDiv = document.getElementById('iotaTestResult');
+        resultDiv.innerHTML = '';
+        const alert = document.createElement('div');
+        if (data.success) {
+            alert.className = 'alert alert-success';
+            alert.textContent = '✓ ' + data.message;
+        } else {
+            alert.className = 'alert alert-error';
+            alert.textContent = '✗ ' + data.error;
+        }
+        resultDiv.appendChild(alert);
+    })
+    .catch(e => {
+        const resultDiv = document.getElementById('iotaTestResult');
+        resultDiv.innerHTML = '';
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-error';
+        alert.textContent = '✗ Connection failed';
+        resultDiv.appendChild(alert);
+    });
+}
+</script>
+{{end}}

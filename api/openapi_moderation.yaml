@@ -1,0 +1,1025 @@
+openapi: 3.0.3
+info:
+  title: Athena Moderation & Instance API
+  description: Admin moderation features, instance configuration, and oEmbed support
+  version: 1.0.0
+
+tags:
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  /api/v1/abuse-reports:
+    post:
+      tags:
+        - Moderation
+        - PeerTube-Compat
+      summary: Create an abuse report
+      description: Report abusive content (video, comment, user, or channel)
+      operationId: createAbuseReport
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAbuseReportRequest'
+      responses:
+        '201':
+          description: Abuse report created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AbuseReport'
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/admin/abuse-reports:
+    get:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: List abuse reports
+      description: List all abuse reports (admin/moderator only)
+      operationId: listAbuseReports
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, accepted, rejected, investigating]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AbuseReport'
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/abuse-reports/{id}:
+    get:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: Get an abuse report
+      description: Get a specific abuse report by ID (admin/moderator only)
+      operationId: getAbuseReport
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AbuseReport'
+                  success:
+                    type: boolean
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: Update an abuse report
+      description: Update the status of an abuse report (admin/moderator only)
+      operationId: updateAbuseReport
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAbuseReportRequest'
+      responses:
+        '200':
+          description: Report updated successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: Delete an abuse report
+      description: Delete an abuse report (admin only)
+      operationId: deleteAbuseReport
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Report deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/admin/blocklist:
+    get:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: List blocklist entries
+      description: List all blocklist entries (admin/moderator only)
+      operationId: listBlocklistEntries
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [user, domain, ip, email]
+        - name: active_only
+          in: query
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BlocklistEntry'
+                  total:
+                    type: integer
+                  success:
+                    type: boolean
+
+    post:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: Create blocklist entry
+      description: Add a new entry to the blocklist (admin/moderator only)
+      operationId: createBlocklistEntry
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBlocklistEntryRequest'
+      responses:
+        '201':
+          description: Entry created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/BlocklistEntry'
+                  success:
+                    type: boolean
+
+  /api/v1/admin/blocklist/{id}:
+    put:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: Update blocklist entry
+      description: Update a blocklist entry (admin/moderator only)
+      operationId: updateBlocklistEntry
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_active:
+                  type: boolean
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+      responses:
+        '200':
+          description: Entry updated successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: Delete blocklist entry
+      description: Remove an entry from the blocklist (admin only)
+      operationId: deleteBlocklistEntry
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Entry deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/instance/about:
+    get:
+      tags:
+        - Instance
+        - PeerTube-Compat
+      summary: Get instance information
+      description: Get public information about this instance
+      operationId: moderation_getInstanceAbout
+      security: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceInfo'
+                  success:
+                    type: boolean
+
+  /api/v1/config:
+    get:
+      tags:
+        - Instance
+        - PeerTube-Compat
+      summary: Get public instance configuration
+      description: Returns public configuration for this instance (signup settings, video limits, features). No authentication required.
+      operationId: moderation_getPublicConfig
+      security: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicConfig'
+
+  /api/v1/config/about:
+    get:
+      tags:
+        - Instance
+        - PeerTube-Compat
+      summary: Get instance about information
+      description: Returns public about information for this instance (name, description, rules, contact). No authentication required.
+      operationId: getPublicConfigAbout
+      security: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceInfo'
+                  success:
+                    type: boolean
+
+  /api/v1/instance/stats:
+    get:
+      tags:
+        - Instance
+        - PeerTube-Compat
+      summary: Get instance statistics
+      description: Returns aggregate statistics for this instance (user count, video count). No authentication required.
+      operationId: moderation_getInstanceStats
+      security: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceStats'
+
+  /api/v1/admin/instance/config:
+    get:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: List instance configurations
+      description: List all instance configuration values (admin only)
+      operationId: listInstanceConfigs
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InstanceConfig'
+                  success:
+                    type: boolean
+
+  /api/v1/admin/instance/config/{key}:
+    get:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: Get instance configuration
+      description: Get a specific instance configuration value (admin only)
+      operationId: getInstanceConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceConfig'
+                  success:
+                    type: boolean
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Admin
+        - PeerTube-Compat
+      summary: Update instance configuration
+      description: Update an instance configuration value (admin only)
+      operationId: updateInstanceConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInstanceConfigRequest'
+      responses:
+        '200':
+          description: Configuration updated successfully
+
+  /oembed:
+    get:
+      tags:
+        - oEmbed
+        - PeerTube-Compat
+      summary: Get oEmbed data
+      description: Get oEmbed data for a video URL
+      operationId: oembed
+      security: []
+      parameters:
+        - name: url
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The URL of the video
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, xml]
+            default: json
+        - name: maxwidth
+          in: query
+          schema:
+            type: string
+        - name: maxheight
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OEmbedResponse'
+            application/xml:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/admin/abuse-reports/{id}/messages:
+    get:
+      tags:
+        - Admin
+        - Moderation
+      summary: List abuse report messages
+      operationId: listAbuseReportMessages
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AbuseMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags:
+        - Admin
+        - Moderation
+      summary: Add message to abuse report
+      operationId: createAbuseReportMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+      responses:
+        '201':
+          description: Message created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AbuseMessage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/abuse-reports/{id}/messages/{messageId}:
+    delete:
+      tags:
+        - Admin
+        - Moderation
+      summary: Delete abuse report message
+      operationId: deleteAbuseReportMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: messageId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Message deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  schemas:
+    AbuseMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        abuseReportId:
+          type: string
+          format: uuid
+        senderId:
+          type: string
+        message:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    PublicConfig:
+      type: object
+      description: Public instance configuration (PeerTube-compatible)
+      properties:
+        instance:
+          type: object
+          properties:
+            name:
+              type: string
+            shortDescription:
+              type: string
+            description:
+              type: string
+            isNSFW:
+              type: boolean
+            defaultNSFWPolicy:
+              type: string
+            serverVersion:
+              type: string
+        signup:
+          type: object
+          properties:
+            allowed:
+              type: boolean
+            allowedForCurrentIP:
+              type: boolean
+            requiresEmailVerification:
+              type: boolean
+        video:
+          type: object
+          properties:
+            file:
+              type: object
+              properties:
+                size:
+                  type: object
+                  properties:
+                    max:
+                      type: integer
+                      format: int64
+        features:
+          type: object
+          properties:
+            signup:
+              type: boolean
+            login:
+              type: boolean
+
+    InstanceStats:
+      type: object
+      description: Aggregate instance statistics (PeerTube-compatible)
+      properties:
+        totalUsers:
+          type: integer
+          format: int64
+        totalDailyActiveUsers:
+          type: integer
+          format: int64
+        totalWeeklyActiveUsers:
+          type: integer
+          format: int64
+        totalMonthlyActiveUsers:
+          type: integer
+          format: int64
+        totalLocalVideos:
+          type: integer
+          format: int64
+        totalLocalVideoViews:
+          type: integer
+          format: int64
+        totalInstanceFollowers:
+          type: integer
+          format: int64
+        totalInstanceFollowing:
+          type: integer
+          format: int64
+        totalVideos:
+          type: integer
+          format: int64
+
+    AbuseReport:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        reporter_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        details:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, accepted, rejected, investigating]
+        moderator_notes:
+          type: string
+          nullable: true
+        moderated_by:
+          type: string
+          format: uuid
+          nullable: true
+        moderated_at:
+          type: string
+          format: date-time
+          nullable: true
+        entity_type:
+          type: string
+          enum: [video, comment, user, channel]
+        video_id:
+          type: string
+          format: uuid
+          nullable: true
+        comment_id:
+          type: string
+          format: uuid
+          nullable: true
+        user_id:
+          type: string
+          format: uuid
+          nullable: true
+        channel_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateAbuseReportRequest:
+      type: object
+      required:
+        - reason
+        - entity_type
+        - entity_id
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 1000
+        details:
+          type: string
+          maxLength: 5000
+        entity_type:
+          type: string
+          enum: [video, comment, user, channel]
+        entity_id:
+          type: string
+          format: uuid
+
+    UpdateAbuseReportRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [pending, accepted, rejected, investigating]
+        moderator_notes:
+          type: string
+          maxLength: 5000
+
+    BlocklistEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        block_type:
+          type: string
+          enum: [user, domain, ip, email]
+        blocked_value:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        blocked_by:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateBlocklistEntryRequest:
+      type: object
+      required:
+        - block_type
+        - blocked_value
+      properties:
+        block_type:
+          type: string
+          enum: [user, domain, ip, email]
+        blocked_value:
+          type: string
+          minLength: 1
+          maxLength: 255
+        reason:
+          type: string
+          maxLength: 1000
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    InstanceConfig:
+      type: object
+      properties:
+        key:
+          type: string
+        value:
+          type: object
+        description:
+          type: string
+          nullable: true
+        is_public:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UpdateInstanceConfigRequest:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: object
+        is_public:
+          type: boolean
+
+    InstanceInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        version:
+          type: string
+        contact_email:
+          type: string
+        terms_url:
+          type: string
+        privacy_url:
+          type: string
+        rules:
+          type: array
+          items:
+            type: string
+        languages:
+          type: array
+          items:
+            type: string
+        categories:
+          type: array
+          items:
+            type: string
+        default_nsfw_policy:
+          type: string
+        signup_enabled:
+          type: boolean
+        total_users:
+          type: integer
+          format: int64
+        total_videos:
+          type: integer
+          format: int64
+        total_local_videos:
+          type: integer
+          format: int64
+        total_instance_views:
+          type: integer
+          format: int64
+
+    OEmbedResponse:
+      type: object
+      properties:
+        version:
+          type: string
+        type:
+          type: string
+        title:
+          type: string
+        author_name:
+          type: string
+        author_url:
+          type: string
+        provider_name:
+          type: string
+        provider_url:
+          type: string
+        width:
+          type: string
+        height:
+          type: string
+        html:
+          type: string
+        thumbnail_url:
+          type: string
+        thumbnail_width:
+          type: integer
+        thumbnail_height:
+          type: integer
+        duration:
+          type: integer
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  message:
+                    type: string
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  message:
+                    type: string
+
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  message:
+                    type: string
+
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  message:
+                    type: string
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

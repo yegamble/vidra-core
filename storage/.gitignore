@@ -1,0 +1,6 @@
+# Ignore all runtime artifacts under storage
+*
+
+# Keep only placeholders tracked
+!.gitignore
+!.gitkeep

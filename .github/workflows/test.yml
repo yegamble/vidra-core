@@ -1,0 +1,259 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: write  # Required for golangci-lint-action annotations
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.24"
+  GOPROXY: "https://proxy.golang.org,direct"  # Official Go proxy with direct fallback
+  # Runner configuration: uses ubuntu-latest by default, falls back to self-hosted via vars.RUNNER
+  DEFAULT_RUNNER: "ubuntu-latest"
+
+jobs:
+  # ============================================================================
+  # FAST TESTS - Run in parallel
+  # ============================================================================
+  shell-tests:
+    name: Shell Script Tests
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Docker Compose config
+        run: docker compose config --quiet
+
+      - name: Run install.sh tests
+        run: bash scripts/install_test.sh
+
+      - name: Run nginx script tests
+        run: bash nginx/scripts/nginx_test.sh
+
+  unit:
+    name: Unit Tests
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: ./.github/actions/install-gcc
+
+      - name: Run unit tests
+        run: COVERAGE_OUT=coverage.out make test-unit
+
+      - name: Enforce coverage baseline
+        run: ./scripts/check-coverage-threshold.sh coverage.out 35.0
+
+      - name: Enforce per-package coverage thresholds
+        run: ./scripts/check-per-package-coverage.sh coverage.out
+
+  lint:
+    name: Code Quality (Lint & Format)
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: ./.github/actions/install-gcc
+
+      - name: Check formatting
+        run: |
+          # Ensure GOPATH/bin is in PATH for installed tools
+          export PATH="$(go env GOPATH)/bin:$PATH"
+
+          # Use go list to get only actual Go source directories (excludes .git, vendor, etc.)
+          UNFORMATTED=$(gofmt -l $(go list -f '{{.Dir}}' ./...) 2>/dev/null || true)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "Go files are not formatted. Run: gofmt -w ."
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+          if ! command -v goimports &> /dev/null; then
+            go install golang.org/x/tools/cmd/goimports@latest
+          fi
+
+          BADIMPORTS=$(goimports -l $(go list -f '{{.Dir}}' ./...) 2>/dev/null || true)
+          if [ -n "$BADIMPORTS" ]; then
+            echo "Go files have incorrect imports. Run: goimports -w ."
+            echo "$BADIMPORTS"
+            exit 1
+          fi
+
+      - name: Run golangci-lint (GitHub Actions)
+        if: ${{ !env.ACT }}
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          args: --timeout=10m
+          skip-cache: true  # We manage cache ourselves
+
+      - name: Run golangci-lint (act local)
+        if: ${{ env.ACT == 'true' }}
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          if ! command -v golangci-lint &> /dev/null; then
+            echo "Installing golangci-lint via binary..."
+            curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+              | sh -s -- -b "$(go env GOPATH)/bin"
+          fi
+          golangci-lint run --timeout=10m
+
+  # ============================================================================
+  # INTEGRATION TESTS - Run after unit tests pass
+  # ============================================================================
+  integration:
+    name: Integration Tests
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    needs: [unit]
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: ./.github/actions/install-gcc
+
+      - name: Start services with docker compose
+        run: |
+          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci clamav-ci
+          docker compose --profile ci ps
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+          IPFS_API: http://localhost:5001
+          CLAMAV_HOST: localhost:3310
+          JWT_SECRET: test-jwt-secret
+        run: make test-integration-ci
+
+      - name: Cleanup services
+        if: always()
+        run: |
+          docker compose --profile ci down -v
+          docker compose --profile ci ps
+
+  # ============================================================================
+  # BUILD - Run after lint and unit tests pass
+  # ============================================================================
+  build:
+    name: Build
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    needs: [lint, unit]
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: ./.github/actions/install-gcc
+
+      - name: Build binaries
+        run: |
+          echo "🔨 Building server..."
+          go build -v -o bin/athena ./cmd/server
+          ls -lh bin/athena
+          echo "✅ Build successful"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-binary
+          path: bin/athena
+          retention-days: 7
+
+  # ============================================================================
+  # RACE DETECTION TESTS - Run last (slowest tests)
+  # ============================================================================
+  unit-race:
+    name: Unit Tests (Race)
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    needs: [unit, lint]
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: ./.github/actions/install-gcc
+
+      - name: Run unit tests with race detector
+        env:
+          CGO_ENABLED: "1"
+        run: make test-unit-race
+
+  integration-race:
+    name: Integration Tests (Race)
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    needs: [integration]
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: ./.github/actions/install-gcc
+
+      - name: Start services with docker compose
+        run: |
+          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci clamav-ci
+          docker compose --profile ci ps
+
+      - name: Run integration tests with race detector
+        env:
+          CGO_ENABLED: "1"
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/athena_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+          IPFS_API: http://localhost:5001
+          CLAMAV_HOST: localhost:3310
+          JWT_SECRET: test-jwt-secret
+        run: make test-integration-ci-race
+
+      - name: Cleanup services
+        if: always()
+        run: |
+          docker compose --profile ci down -v
+          docker compose --profile ci ps

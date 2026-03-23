@@ -1,0 +1,681 @@
+{
+  "info": {
+    "name": "Athena Plugins API",
+    "description": "Test collection for the plugin management lifecycle: list, get, enable, disable, settings, and contract-shape validation.\n\n## Lifecycle Covered\n\n1. **List plugins** \u2014 enumerate installed plugins\n2. **List available** \u2014 discover available plugins from registry\n3. **Get plugin** \u2014 retrieve specific plugin by name\n4. **Get settings** \u2014 read registered and public settings\n5. **Update settings** \u2014 change plugin configuration via PeerTube-compatible route\n6. **Enable/Disable** \u2014 toggle plugin status\n7. **Install contract** \u2014 validate install-from-URL request shape (may fail if URL unreachable)\n8. **Uninstall** \u2014 remove a plugin\n9. **Error cases** \u2014 auth failures and invalid inputs\n\n## Scope Note\n\nInstall-from-URL and Upload-plugin require a real plugin archive. These requests are included for API contract validation (response shape, auth, error codes) but may return 4xx if no archive is available in the test environment. Use the 'contract-only' tests to validate the API surface.\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - Admin JWT access token\n\n## Variables Set During Run\n\n- `plugin_npm_name` - Name of the plugin to test lifecycle operations on",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const adminToken = pm.environment.get('admin_access_token');",
+          "if (adminToken) {",
+          "  pm.collectionVariables.set('access_token', adminToken);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Plugin Discovery",
+      "item": [
+        {
+          "name": "List Plugins",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Response has success envelope', () => {",
+                  "  pm.expect(body.success).to.be.true;",
+                  "  pm.expect(body).to.have.property('data');",
+                  "});",
+                  "pm.test('Data is an array of plugins (may be empty in fresh env)', () => {",
+                  "  pm.expect(body.data).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins"
+              ]
+            },
+            "description": "List all installed plugins. Requires admin or mod role."
+          },
+          "response": []
+        },
+        {
+          "name": "List Available Plugins",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Response structure is valid', () => {",
+                  "  pm.expect(body).to.have.property('success', true);",
+                  "  pm.expect(body).to.have.property('data');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/available",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "available"
+              ]
+            },
+            "description": "List plugins available from the registry."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Plugin by Name",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Set a plugin name - use one that exists in the system or expect 404",
+                  "const name = pm.environment.get('plugin_npm_name') || 'peertube-plugin-hello-world';",
+                  "pm.environment.set('plugin_npm_name', name);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Plugin data structure', () => {",
+                  "    pm.expect(body.success).to.be.true;",
+                  "    pm.expect(body.data).to.have.property('name');",
+                  "    pm.expect(body.data).to.have.property('version');",
+                  "    pm.expect(body.data).to.have.property('status');",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/{{plugin_npm_name}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}"
+              ]
+            },
+            "description": "Get a specific plugin by its npm name."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Plugin Settings",
+      "item": [
+        {
+          "name": "Get Registered Settings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Settings structure valid', () => {",
+                  "    pm.expect(body.success).to.be.true;",
+                  "    pm.expect(body.data).to.have.property('npmName');",
+                  "    pm.expect(body.data).to.have.property('settings');",
+                  "    pm.expect(body.data).to.have.property('registeredSettings');",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/{{plugin_npm_name}}/registered-settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "registered-settings"
+              ]
+            },
+            "description": "Get the registered settings for a plugin."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Public Settings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Public settings structure', () => {",
+                  "    pm.expect(body.success).to.be.true;",
+                  "    pm.expect(body.data).to.have.property('npmName');",
+                  "    pm.expect(body.data).to.have.property('publicSettings');",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/{{plugin_npm_name}}/public-settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "public-settings"
+              ]
+            },
+            "description": "Get the public settings for a plugin (visible to non-admins)."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Plugin Settings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Settings update response', () => {",
+                  "    pm.expect(body.success).to.be.true;",
+                  "    pm.expect(body.data).to.have.property('npmName');",
+                  "    pm.expect(body.data).to.have.property('message');",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"settings\": {\"updated_via_postman\": true}}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/{{plugin_npm_name}}/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "settings"
+              ]
+            },
+            "description": "Update plugin settings (PeerTube-compatible route)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Plugin Install: Contract Validation",
+      "item": [
+        {
+          "name": "Install Plugin from URL - Missing URL (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 (missing URL)', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Error response structure', () => {",
+                  "  pm.expect(body.success).to.be.false;",
+                  "  pm.expect(body).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/install",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "install"
+              ]
+            },
+            "description": "Attempt install without URL \u2014 verifies 400 error shape."
+          },
+          "response": []
+        },
+        {
+          "name": "Install Plugin from URL - FTP blocked (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 (FTP not allowed)', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Error response structure', () => {",
+                  "  pm.expect(body.success).to.be.false;",
+                  "  pm.expect(body).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"npmName\": \"test-plugin\", \"pluginVersion\": \"1.0.0\", \"url\": \"ftp://bad.example.com/plugin.zip\"}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/install",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "install"
+              ]
+            },
+            "description": "FTP URLs should be rejected (only HTTP/HTTPS allowed)."
+          },
+          "response": []
+        },
+        {
+          "name": "Uninstall Plugin - Not Found",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 or 404', () => {",
+                  "  pm.expect([400, 404]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"npmName\": \"nonexistent-plugin-xyz\"}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/uninstall",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "uninstall"
+              ]
+            },
+            "description": "Uninstalling a non-existent plugin returns 404 or 400."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth Error Cases",
+      "item": [
+        {
+          "name": "List Plugins - No Auth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Install Plugin - No Auth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"npmName\": \"some-plugin\", \"url\": \"http://example.com/plugin.zip\"}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/install",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "install"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Settings - No Auth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"settings\": {}}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/some-plugin/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "some-plugin",
+                "settings"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Settings - Missing Settings Field (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Error about missing settings', () => {",
+                  "  pm.expect(body.success).to.be.false;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/plugins/{{plugin_npm_name}}/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "plugins",
+                "{{plugin_npm_name}}",
+                "settings"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

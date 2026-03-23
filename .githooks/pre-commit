@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+
+#
+# Git pre-commit hook for Athena project
+#
+# - Enforces gofmt on staged Go files
+# - Re-stages any files that were reformatted
+# - Runs lint and optional pre-commit hooks
+#
+# To bypass (not recommended): git commit --no-verify
+
+set -euo pipefail
+
+echo "Running pre-commit validations..."
+echo ""
+
+# Change to repository root
+cd "$(git rev-parse --show-toplevel)"
+
+# Timeout controls (seconds). Set to 0 to disable timeouts.
+LINT_TIMEOUT_SECONDS="${LINT_TIMEOUT_SECONDS:-180}"
+HOOK_TIMEOUT_SECONDS="${HOOK_TIMEOUT_SECONDS:-240}"
+# Default skip list for slow hooks; set PRECOMMIT_SKIP_HOOKS="" to run everything.
+PRECOMMIT_SKIP_HOOKS="${PRECOMMIT_SKIP_HOOKS-go-unit-tests,test-coverage}"
+
+# Run a command with a timeout. Returns 124 on timeout.
+run_with_timeout() {
+    local timeout_secs="$1"
+    shift
+
+    if [ "$timeout_secs" -le 0 ]; then
+        "$@"
+        return $?
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$timeout_secs" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout = int(sys.argv[1])
+cmd = sys.argv[2:]
+proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
+
+try:
+    proc.wait(timeout=timeout)
+    sys.exit(proc.returncode)
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+
+    sys.exit(124)
+PY
+        return $?
+    fi
+
+    "$@"
+}
+
+# Track failures
+FAILURES=0
+
+# 1) Format only staged Go files and re-stage them
+echo "[1/3] Enforcing gofmt on staged Go files..."
+
+if ! command -v gofmt >/dev/null 2>&1; then
+    echo "✗ gofmt not found in PATH. Please install Go toolchain."
+    exit 1
+fi
+
+STAGED_GO_FILES=()
+while IFS= read -r -d '' staged_file; do
+    case "$staged_file" in
+        *.go) STAGED_GO_FILES+=("$staged_file") ;;
+    esac
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+if [ "${#STAGED_GO_FILES[@]}" -eq 0 ]; then
+    echo "✓ No staged Go files"
+else
+    NEED_FMT_FILES=()
+    while IFS= read -r file_to_format; do
+        [ -n "$file_to_format" ] && NEED_FMT_FILES+=("$file_to_format")
+    done < <(gofmt -s -l "${STAGED_GO_FILES[@]}" || true)
+
+    if [ "${#NEED_FMT_FILES[@]}" -gt 0 ]; then
+        echo "Formatting and re-staging:"
+        gofmt -s -w "${NEED_FMT_FILES[@]}"
+        for f in "${NEED_FMT_FILES[@]}"; do
+            echo "  → $f"
+            git add -- "$f"
+        done
+        echo "✓ gofmt applied to ${#NEED_FMT_FILES[@]} file(s)"
+    else
+        echo "✓ All staged Go files are gofmt clean"
+    fi
+fi
+
+# 2) Lint (may auto-fix import groups if configured)
+echo "[2/3] Running linter..."
+if run_with_timeout "$LINT_TIMEOUT_SECONDS" make lint; then
+    echo "✓ Linting passed"
+else
+    lint_rc=$?
+    if [ "$lint_rc" -eq 124 ]; then
+        echo "✗ Linting timed out after ${LINT_TIMEOUT_SECONDS}s"
+    else
+        echo "✗ Linting failed"
+    fi
+    echo "  Fix the issues or run: make lint"
+    FAILURES=$((FAILURES + 1))
+fi
+
+# 3) Run optional pre-commit hooks (e.g., yamllint) if available
+if command -v pre-commit >/dev/null 2>&1; then
+    if [ "$FAILURES" -gt 0 ]; then
+        echo "[3/3] Skipping pre-commit hooks (previous checks failed)"
+    else
+        echo "[3/3] Running pre-commit hooks on staged files..."
+        if [ -n "$PRECOMMIT_SKIP_HOOKS" ]; then
+            echo "  Skipping slow hooks: $PRECOMMIT_SKIP_HOOKS"
+        fi
+
+        if [ -n "$PRECOMMIT_SKIP_HOOKS" ]; then
+            if run_with_timeout "$HOOK_TIMEOUT_SECONDS" env SKIP="$PRECOMMIT_SKIP_HOOKS" pre-commit run --hook-stage commit; then
+                echo "✓ Pre-commit hooks passed"
+            else
+                precommit_rc=$?
+                if [ "$precommit_rc" -eq 124 ]; then
+                    echo "✗ Pre-commit hooks timed out after ${HOOK_TIMEOUT_SECONDS}s"
+                else
+                    echo "✗ Pre-commit hooks failed"
+                fi
+                FAILURES=$((FAILURES + 1))
+            fi
+        else
+            if run_with_timeout "$HOOK_TIMEOUT_SECONDS" pre-commit run --hook-stage commit; then
+                echo "✓ Pre-commit hooks passed"
+            else
+                precommit_rc=$?
+                if [ "$precommit_rc" -eq 124 ]; then
+                    echo "✗ Pre-commit hooks timed out after ${HOOK_TIMEOUT_SECONDS}s"
+                else
+                    echo "✗ Pre-commit hooks failed"
+                fi
+                FAILURES=$((FAILURES + 1))
+            fi
+        fi
+    fi
+else
+    echo "[3/3] Skipping pre-commit hooks (not installed)"
+fi
+
+echo ""
+
+if [ $FAILURES -eq 0 ]; then
+    echo "✓ All pre-commit validations passed"
+    exit 0
+else
+    echo "✗ $FAILURES validation(s) failed"
+    echo ""
+    echo "Fix the issues above or use --no-verify to bypass (not recommended)"
+    exit 1
+fi

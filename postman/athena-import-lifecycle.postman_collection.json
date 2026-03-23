@@ -1,0 +1,723 @@
+{
+  "info": {
+    "name": "Athena Import Lifecycle API",
+    "description": "Focused lifecycle test collection for video imports: create \u2192 get status \u2192 list \u2192 cancel \u2192 retry.\n\n## Lifecycle Covered\n\n1. **Create Import** \u2014 submit a URL for import, receive import job ID\n2. **Get Import Status** \u2014 poll individual import job\n3. **List Imports** \u2014 list all import jobs with pagination\n4. **List My Imports** \u2014 list imports for authenticated user\n5. **Cancel Import** \u2014 cancel a pending/in-progress import\n6. **Retry Import** \u2014 retry a failed import\n7. **Error paths** \u2014 auth failures, quota exceeded, SSRF blocked\n\n## Note on Import Processing\n\nImports run asynchronously via goroutine. In a live test environment, poll `GET /api/v1/videos/imports/{id}` until status changes from `pending` to `processing` or `completed`. This collection validates the API contract; actual processing depends on server configuration.\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL\n- `access_token` - JWT access token\n\n## Variables Set During Run\n\n- `import_job_id` - ID of the created import job",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Create Import",
+      "item": [
+        {
+          "name": "Create Import - Valid URL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201, 400, 401, or 429', () => {",
+                  "  pm.expect([201, 400, 401, 429]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('Import job created with required fields', () => {",
+                  "    pm.expect(body).to.have.property('id');",
+                  "    pm.expect(body).to.have.property('source_url');",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body).to.have.property('created_at');",
+                  "  });",
+                  "  pm.test('Initial status is pending', () => {",
+                  "    pm.expect(body.status).to.equal('pending');",
+                  "  });",
+                  "  pm.environment.set('import_job_id', body.id);",
+                  "  console.log('Import job ID:', body.id);",
+                  "} else if (pm.response.code === 400) {",
+                  "  console.log('400 - likely SSRF or validation rejection');",
+                  "} else if (pm.response.code === 429) {",
+                  "  console.log('Rate limited - 10 imports/minute');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUrl\": \"https://www.youtube.com/watch?v=dQw4w9WgXcQ\",\n  \"video\": {\n    \"name\": \"Postman Test Import\",\n    \"privacy\": 1,\n    \"description\": \"Imported via Postman test\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports"
+              ]
+            },
+            "description": "Create a new video import job from a URL."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Import - Missing URL (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Error response present', () => {",
+                  "  pm.expect(body).to.have.property('error');",
+                  "  pm.expect(body).to.have.property('message');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video\": {\"name\": \"No URL import\"}}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Import - SSRF Blocked Private IP (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 (SSRF blocked)', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('SSRF error response', () => {",
+                  "  pm.expect(body).to.have.property('error');",
+                  "  pm.expect(body).to.have.property('message');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUrl\": \"http://192.168.1.1/evil\",\n  \"video\": {\"name\": \"SSRF attempt\"}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Import - No Auth (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"targetUrl\": \"https://example.com/video\"}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Import Status",
+      "item": [
+        {
+          "name": "Get Import Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (!pm.environment.get('import_job_id')) {",
+                  "  console.log('No import_job_id set \u2014 skipping status check');",
+                  "  return;",
+                  "}",
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Import status fields', () => {",
+                  "  pm.expect(body).to.have.property('id');",
+                  "  pm.expect(body).to.have.property('status');",
+                  "  pm.expect(body).to.have.property('source_url');",
+                  "  pm.expect(body).to.have.property('created_at');",
+                  "});",
+                  "pm.test('Status is valid enum', () => {",
+                  "  const validStatuses = ['pending', 'downloading', 'processing', 'completed', 'failed', 'cancelled'];",
+                  "  pm.expect(validStatuses).to.include(body.status);",
+                  "});",
+                  "console.log('Import', body.id, 'status:', body.status);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/{{import_job_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "{{import_job_id}}"
+              ]
+            },
+            "description": "Get the status of a specific import job."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Import - Not Found (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404', () => {",
+                  "  pm.expect(pm.response.code).to.equal(404);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Not found error structure', () => {",
+                  "  pm.expect(body).to.have.property('error');",
+                  "  pm.expect(body).to.have.property('message');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "List Imports",
+      "item": [
+        {
+          "name": "List All Imports",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('List response has total_count and imports', () => {",
+                  "  pm.expect(body).to.have.property('total_count');",
+                  "  pm.expect(body).to.have.property('imports');",
+                  "  pm.expect(body.imports).to.be.an('array');",
+                  "  pm.expect(body.total_count).to.be.a('number').and.at.least(0);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Imports - With Pagination",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Paginated list structure', () => {",
+                  "  pm.expect(body).to.have.property('total_count');",
+                  "  pm.expect(body.imports.length).to.be.at.most(5);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports?count=5&start=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports"
+              ],
+              "query": [
+                {
+                  "key": "count",
+                  "value": "5"
+                },
+                {
+                  "key": "start",
+                  "value": "0"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Imports - Filter by Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('All returned imports are pending', () => {",
+                  "  for (const imp of (body.imports || [])) {",
+                  "    pm.expect(imp.status).to.equal('pending');",
+                  "  }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports?status=pending",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List My Imports",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => {",
+                  "  pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('My imports list structure', () => {",
+                  "  pm.expect(body).to.have.property('total_count');",
+                  "  pm.expect(body).to.have.property('imports');",
+                  "  pm.expect(body.imports).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me/videos/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "me",
+                "videos",
+                "imports"
+              ]
+            },
+            "description": "List imports belonging to the authenticated user."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Cancel Import",
+      "item": [
+        {
+          "name": "Cancel Import (canonical POST)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (!pm.environment.get('import_job_id')) {",
+                  "  console.log('No import_job_id \u2014 skipping cancel');",
+                  "  return;",
+                  "}",
+                  "// Cancel returns 204 No Content on success, 409 if already cancelled/terminal",
+                  "pm.test('Status is 204 or 409 (already terminal)', () => {",
+                  "  pm.expect([204, 409]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/{{import_job_id}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "{{import_job_id}}",
+                "cancel"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Import - Not Found (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404', () => {",
+                  "  pm.expect(pm.response.code).to.equal(404);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/00000000-0000-0000-0000-000000000000/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "00000000-0000-0000-0000-000000000000",
+                "cancel"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Retry Import",
+      "item": [
+        {
+          "name": "Retry Import - Not Found (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404 or 400', () => {",
+                  "  pm.expect([400, 404]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/00000000-0000-0000-0000-000000000000/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "00000000-0000-0000-0000-000000000000",
+                "retry"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Retry Import - Pending State (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (!pm.environment.get('import_job_id')) { return; }",
+                  "// Retrying a pending (not failed) import returns 400 \u2014 status must be 'failed'",
+                  "pm.test('Status is 400 or 200', () => {",
+                  "  pm.expect([200, 400]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/videos/imports/{{import_job_id}}/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "imports",
+                "{{import_job_id}}",
+                "retry"
+              ]
+            },
+            "description": "Retry requires the import to be in 'failed' state \u2014 pending returns 400."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

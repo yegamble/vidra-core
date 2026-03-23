@@ -1,0 +1,59 @@
+# Docker Compose Override Example
+#
+# This file demonstrates how to customize the Athena setup.
+# Copy this file to `docker-compose.override.yml` and modify as needed.
+# docker-compose.override.yml is automatically loaded by Docker Compose.
+#
+# DO NOT commit docker-compose.override.yml to version control!
+
+services:
+  # Example: Use external PostgreSQL instead of local container
+  # postgres:
+  #   scale: 0  # Don't start the local container
+
+  # app:
+  #   environment:
+  #     POSTGRES_MODE: external
+  #     DATABASE_URL: postgres://user:pass@external-db.example.com:5432/athena
+
+  # Example: Use external Redis
+  # redis:
+  #   scale: 0
+
+  # app:
+  #   environment:
+  #     REDIS_MODE: external
+  #     REDIS_URL: redis://external-redis.example.com:6379/0
+
+  # Example: Enable IPFS with custom settings
+  # app:
+  #   environment:
+  #     ENABLE_IPFS: "true"
+  #     IPFS_MODE: docker
+
+  # Example: Use GPU-enabled Whisper
+  # whisper:
+  #   image: onerahmet/openai-whisper-asr-webservice:latest-gpu
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+
+  # Example: Custom port mapping
+  # app:
+  #   ports:
+  #     - "3000:8080"
+
+  # Example: Mount custom configuration
+  # app:
+  #   volumes:
+  #     - ./custom-config.yaml:/app/config.yaml:ro
+
+  # Example: Development mode with live reload
+  # app:
+  #   volumes:
+  #     - ./:/app:delegated
+  #   command: go run ./cmd/server

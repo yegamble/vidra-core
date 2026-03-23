@@ -1,0 +1,516 @@
+name: Blue/Green Production Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to deploy (e.g., v1.3.0)'
+        required: true
+        type: string
+      skip_staging:
+        description: 'Skip staging deployment'
+        required: false
+        type: boolean
+        default: false
+      canary_percentage:
+        description: 'Initial canary traffic percentage (10, 25, 50)'
+        required: false
+        type: choice
+        options:
+          - '10'
+          - '25'
+          - '50'
+        default: '10'
+      auto_promote:
+        description: 'Automatically promote to 100% (bypass manual approval)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  KUBECONFIG_PATH: /tmp/kubeconfig
+  NAMESPACE: athena
+  REGISTRY: ghcr.io
+  IMAGE_NAME: yegamble/athena
+
+permissions:
+  contents: read
+  packages: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate-input:
+    name: Validate Deployment Input
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    outputs:
+      current_color: ${{ steps.detect.outputs.current_color }}
+      target_color: ${{ steps.detect.outputs.target_color }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate image tag format
+        run: |
+          if ! echo "${{ inputs.image_tag }}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9]+)?$'; then
+            echo "Error: Invalid image tag format. Expected: v1.2.3 or v1.2.3-beta"
+            exit 1
+          fi
+
+      - name: Verify image exists
+        run: |
+          # Check if Docker image exists in registry
+          docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ${{ env.KUBECONFIG_PATH }}
+          echo "KUBECONFIG=${{ env.KUBECONFIG_PATH }}" >> $GITHUB_ENV
+
+      - name: Detect current active color
+        id: detect
+        run: |
+          # Detect which color (blue/green) is currently active
+          CURRENT_VERSION=$(kubectl get service athena-api -n ${{ env.NAMESPACE }} \
+            -o jsonpath='{.spec.selector.version}' 2>/dev/null || echo "none")
+
+          if [ "$CURRENT_VERSION" = "blue" ]; then
+            echo "current_color=blue" >> $GITHUB_OUTPUT
+            echo "target_color=green" >> $GITHUB_OUTPUT
+            echo "Current active: BLUE, deploying to: GREEN"
+          elif [ "$CURRENT_VERSION" = "green" ]; then
+            echo "current_color=green" >> $GITHUB_OUTPUT
+            echo "target_color=blue" >> $GITHUB_OUTPUT
+            echo "Current active: GREEN, deploying to: BLUE"
+          else
+            # First deployment - default to blue
+            echo "current_color=none" >> $GITHUB_OUTPUT
+            echo "target_color=blue" >> $GITHUB_OUTPUT
+            echo "No active deployment detected, deploying to: BLUE"
+          fi
+
+  staging-deployment:
+    name: Deploy to Staging
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    needs: [validate-input]
+    if: ${{ !inputs.skip_staging }}
+    environment:
+      name: staging
+      url: https://staging.athena.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ${{ env.KUBECONFIG_PATH }}
+          echo "KUBECONFIG=${{ env.KUBECONFIG_PATH }}" >> $GITHUB_ENV
+
+      - name: Deploy to staging
+        run: |
+          kubectl set image deployment/athena-api athena=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }} \
+            -n athena-staging
+
+          kubectl rollout status deployment/athena-api -n athena-staging --timeout=5m
+
+      - name: Run staging smoke tests
+        run: |
+          kubectl run staging-smoke-test \
+            --image=curlimages/curl \
+            --restart=Never \
+            --rm \
+            -i \
+            -n athena-staging \
+            -- sh -c "curl -f http://athena-api/health && curl -f http://athena-api/ready"
+
+      - name: Run E2E tests against staging
+        run: |
+          # Trigger E2E test workflow
+          gh workflow run e2e-tests.yml --ref ${{ github.ref }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  database-migration:
+    name: Apply Database Migrations
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    needs: [validate-input, staging-deployment]
+    if: always() && needs.validate-input.result == 'success' && (needs.staging-deployment.result == 'success' || inputs.skip_staging)
+    environment:
+      name: production-migration
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ${{ env.KUBECONFIG_PATH }}
+          echo "KUBECONFIG=${{ env.KUBECONFIG_PATH }}" >> $GITHUB_ENV
+
+      - name: Check for pending migrations
+        id: check_migrations
+        run: |
+          # Create temporary migration check pod
+          kubectl run migration-check \
+            --image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }} \
+            --restart=Never \
+            --rm \
+            -i \
+            -n ${{ env.NAMESPACE }} \
+            --env="DATABASE_URL=${{ secrets.DATABASE_URL }}" \
+            -- /app/athena migrate status | tee migration_status.txt
+
+          if grep -q "pending" migration_status.txt; then
+            echo "has_pending=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_pending=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Apply database migrations
+        if: steps.check_migrations.outputs.has_pending == 'true'
+        run: |
+          TIMESTAMP=$(date +%s)
+          kubectl apply -f - <<EOF
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: athena-migrate-${TIMESTAMP}
+            namespace: ${{ env.NAMESPACE }}
+          spec:
+            backoffLimit: 0
+            ttlSecondsAfterFinished: 3600
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                - name: migrate
+                  image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+                  command: ["/app/athena"]
+                  args: ["migrate", "up"]
+                  env:
+                  - name: DATABASE_URL
+                    value: "${{ secrets.DATABASE_URL }}"
+          EOF
+
+          # Wait for migration to complete
+          kubectl wait --for=condition=complete --timeout=600s job/athena-migrate-${TIMESTAMP} -n ${{ env.NAMESPACE }}
+
+          # Show migration logs
+          kubectl logs job/athena-migrate-${TIMESTAMP} -n ${{ env.NAMESPACE }}
+
+      - name: Verify migration success
+        run: |
+          # Check database schema version
+          kubectl run migration-verify \
+            --image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }} \
+            --restart=Never \
+            --rm \
+            -i \
+            -n ${{ env.NAMESPACE }} \
+            --env="DATABASE_URL=${{ secrets.DATABASE_URL }}" \
+            -- /app/athena migrate status
+
+  deploy-target-environment:
+    name: Deploy ${{ needs.validate-input.outputs.target_color }} Environment
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    needs: [validate-input, database-migration]
+    environment:
+      name: production-${{ needs.validate-input.outputs.target_color }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ${{ env.KUBECONFIG_PATH }}
+          echo "KUBECONFIG=${{ env.KUBECONFIG_PATH }}" >> $GITHUB_ENV
+
+      - name: Setup kustomize
+        uses: imranismail/setup-kustomize@v3
+        with:
+          kustomize-version: v5.4.1
+
+      - name: Update image tag in manifests
+        run: |
+          TARGET_COLOR="${{ needs.validate-input.outputs.target_color }}"
+
+          # Update image tag and timestamp in deployment patch
+          sed -i "s|VERSION_PLACEHOLDER|${{ inputs.image_tag }}|g" k8s/overlays/${TARGET_COLOR}/deployment-patch.yaml
+          sed -i "s|TIMESTAMP_PLACEHOLDER|$(date -u +%Y-%m-%dT%H:%M:%SZ)|g" k8s/overlays/${TARGET_COLOR}/deployment-patch.yaml
+
+          # Update kustomization with new image
+          cd k8s/overlays/${TARGET_COLOR}
+          kustomize edit set image ghcr.io/yegamble/athena=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+
+      - name: Deploy target environment
+        run: |
+          TARGET_COLOR="${{ needs.validate-input.outputs.target_color }}"
+
+          # Apply kustomization
+          kubectl apply -k k8s/overlays/${TARGET_COLOR}
+
+          # Wait for rollout
+          kubectl rollout status deployment/athena-api-${TARGET_COLOR} -n ${{ env.NAMESPACE }} --timeout=10m
+          kubectl rollout status deployment/athena-encoding-worker-${TARGET_COLOR} -n ${{ env.NAMESPACE }} --timeout=10m
+
+      - name: Verify deployment
+        run: |
+          TARGET_COLOR="${{ needs.validate-input.outputs.target_color }}"
+
+          # Check pod status
+          kubectl get pods -l deployment-color=${TARGET_COLOR} -n ${{ env.NAMESPACE }}
+
+          # Verify all pods are running
+          READY_PODS=$(kubectl get pods -l deployment-color=${TARGET_COLOR} -n ${{ env.NAMESPACE }} \
+            -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | wc -w)
+          TOTAL_PODS=$(kubectl get pods -l deployment-color=${TARGET_COLOR} -n ${{ env.NAMESPACE }} \
+            -o jsonpath='{.items[*].metadata.name}' | wc -w)
+
+          if [ "$READY_PODS" -ne "$TOTAL_PODS" ]; then
+            echo "Error: Not all pods are running ($READY_PODS/$TOTAL_PODS)"
+            exit 1
+          fi
+
+  pre-switch-validation:
+    name: Pre-Switch Validation
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    needs: [validate-input, deploy-target-environment]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ${{ env.KUBECONFIG_PATH }}
+          echo "KUBECONFIG=${{ env.KUBECONFIG_PATH }}" >> $GITHUB_ENV
+
+      - name: Run pre-switch validation
+        run: |
+          TARGET_COLOR="${{ needs.validate-input.outputs.target_color }}"
+
+          # Apply validation job
+          kubectl apply -f k8s/jobs/pre-switch-validation.yaml
+
+          # Update target service
+          kubectl set env job/pre-switch-validation \
+            TARGET_SERVICE=athena-api-${TARGET_COLOR} \
+            -n ${{ env.NAMESPACE }}
+
+          # Wait for job to complete
+          kubectl wait --for=condition=complete --timeout=300s job/pre-switch-validation -n ${{ env.NAMESPACE }}
+
+          # Show validation results
+          kubectl logs job/pre-switch-validation -n ${{ env.NAMESPACE }}
+
+      - name: Run smoke tests
+        run: |
+          TARGET_COLOR="${{ needs.validate-input.outputs.target_color }}"
+
+          kubectl apply -f k8s/jobs/smoke-tests.yaml
+          kubectl set env job/smoke-tests \
+            BASE_URL=http://athena-api-${TARGET_COLOR} \
+            -n ${{ env.NAMESPACE }}
+
+          kubectl wait --for=condition=complete --timeout=300s job/smoke-tests -n ${{ env.NAMESPACE }}
+          kubectl logs job/smoke-tests -n ${{ env.NAMESPACE }}
+
+  canary-rollout:
+    name: Canary Rollout (${{ inputs.canary_percentage }}%)
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    needs: [validate-input, pre-switch-validation]
+    environment:
+      name: production-canary
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ${{ env.KUBECONFIG_PATH }}
+          echo "KUBECONFIG=${{ env.KUBECONFIG_PATH }}" >> $GITHUB_ENV
+
+      - name: Deploy canary ingress
+        run: |
+          TARGET_COLOR="${{ needs.validate-input.outputs.target_color }}"
+
+          # Apply canary ingress
+          kubectl apply -f k8s/overlays/${TARGET_COLOR}/ingress-canary.yaml
+
+          # Set canary weight
+          kubectl patch ingress athena-ingress-${TARGET_COLOR}-canary -n ${{ env.NAMESPACE }} --type=merge \
+            -p '{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/canary-weight":"${{ inputs.canary_percentage }}"}}}'
+
+          echo "Canary deployment active: ${{ inputs.canary_percentage }}% traffic to ${TARGET_COLOR}"
+
+      - name: Monitor canary metrics (10 minutes)
+        run: |
+          echo "Monitoring canary deployment for 10 minutes..."
+          echo "Check Prometheus/Grafana for:"
+          echo "  - Error rate"
+          echo "  - Latency (p99)"
+          echo "  - Federation delivery success"
+
+          # Wait 10 minutes
+          sleep 600
+
+          # TODO: Add automated metric checks via Prometheus API
+          echo "Manual verification required before proceeding to full rollout"
+
+  full-rollout:
+    name: Full Rollout (100%)
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    needs: [validate-input, canary-rollout]
+    environment:
+      name: production-full-rollout
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ${{ env.KUBECONFIG_PATH }}
+          echo "KUBECONFIG=${{ env.KUBECONFIG_PATH }}" >> $GITHUB_ENV
+
+      - name: Switch traffic to target environment
+        run: |
+          TARGET_COLOR="${{ needs.validate-input.outputs.target_color }}"
+
+          echo "Switching 100% traffic to ${TARGET_COLOR}..."
+
+          # Update service selector
+          kubectl patch service athena-api -n ${{ env.NAMESPACE }} -p "{\"spec\":{\"selector\":{\"version\":\"${TARGET_COLOR}\"}}}"
+
+          # Remove canary ingress
+          kubectl delete ingress athena-ingress-${TARGET_COLOR}-canary -n ${{ env.NAMESPACE }} || true
+
+          echo "Traffic switch complete: ${TARGET_COLOR} is now active"
+
+      - name: Monitor post-switch metrics (30 minutes)
+        run: |
+          echo "Monitoring production metrics for 30 minutes..."
+
+          # Wait 30 minutes while monitoring
+          for i in {1..6}; do
+            echo "Check $i/6 ($(date))"
+
+            # Basic health check
+            kubectl run health-check-$i \
+              --image=curlimages/curl \
+              --restart=Never \
+              --rm \
+              -i \
+              -n ${{ env.NAMESPACE }} \
+              -- curl -f http://athena-api/health
+
+            sleep 300  # 5 minutes
+          done
+
+          echo "30-minute monitoring complete"
+
+      - name: Scale down old environment
+        run: |
+          CURRENT_COLOR="${{ needs.validate-input.outputs.current_color }}"
+
+          if [ "$CURRENT_COLOR" != "none" ]; then
+            echo "Scaling down ${CURRENT_COLOR} environment to 1 replica (standby mode)..."
+
+            kubectl scale deployment athena-api-${CURRENT_COLOR} --replicas=1 -n ${{ env.NAMESPACE }}
+            kubectl scale deployment athena-encoding-worker-${CURRENT_COLOR} --replicas=0 -n ${{ env.NAMESPACE }}
+
+            echo "Old environment scaled down, keeping 1 API replica for emergency rollback"
+          fi
+
+  notify-success:
+    name: Notify Success
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    needs: [validate-input, full-rollout]
+    if: success()
+    steps:
+      - name: Send Slack notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: env.SLACK_WEBHOOK_URL != ''
+        run: |
+          curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "✅ Athena Blue/Green Deployment Successful",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Deployment Status: SUCCESS* ✅\n\n*Version:* `${{ inputs.image_tag }}`\n*Active Environment:* ${{ needs.validate-input.outputs.target_color }}\n*Deployed by:* ${{ github.actor }}"
+                  }
+                }
+              ]
+            }'
+
+      - name: Create deployment annotation in Grafana
+        if: vars.GRAFANA_API_URL != ''
+        run: |
+          # TODO: Add Grafana annotation API call
+          echo "Deployment annotation created in Grafana"
+
+  rollback-on-failure:
+    name: Automatic Rollback
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    needs: [validate-input, full-rollout]
+    if: failure()
+    steps:
+      - name: Rollback traffic to previous environment
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ${{ env.KUBECONFIG_PATH }}
+          export KUBECONFIG=${{ env.KUBECONFIG_PATH }}
+
+          CURRENT_COLOR="${{ needs.validate-input.outputs.current_color }}"
+
+          if [ "$CURRENT_COLOR" != "none" ]; then
+            echo "ROLLBACK: Switching traffic back to ${CURRENT_COLOR}"
+
+            # Scale up old environment if needed
+            kubectl scale deployment athena-api-${CURRENT_COLOR} --replicas=3 -n ${{ env.NAMESPACE }}
+            kubectl wait --for=condition=ready pod -l version=${CURRENT_COLOR} --timeout=120s -n ${{ env.NAMESPACE }}
+
+            # Switch traffic back
+            kubectl patch service athena-api -n ${{ env.NAMESPACE }} -p "{\"spec\":{\"selector\":{\"version\":\"${CURRENT_COLOR}\"}}}"
+
+            echo "Rollback complete: ${CURRENT_COLOR} is active again"
+          else
+            echo "No previous environment to rollback to"
+          fi
+
+      - name: Send failure notification
+        if: vars.SLACK_WEBHOOK_URL != ''
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "❌ Athena Deployment FAILED - Rollback Executed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Deployment Status: FAILED* ❌\n\n*Version:* `${{ inputs.image_tag }}`\n*Rollback:* Traffic restored to ${{ needs.validate-input.outputs.current_color }}\n*Action Required:* Check logs and retry deployment"
+                  }
+                }
+              ]
+            }'

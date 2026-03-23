@@ -1,0 +1,773 @@
+{
+  "info": {
+    "name": "Athena Uploads & Encoding API",
+    "description": "Test collection for chunked video uploads, encoding status tracking, and resume functionality.\n\n## Workflow\n\n1. **Initiate Upload** - Create upload session\n2. **Upload Chunks** - Upload file in chunks\n3. **Complete Upload** - Finalize and start encoding\n4. **Get Status** - Monitor upload progress\n5. **Get Encoding Status** - Track video processing\n\n## Environment Variables Required\n\n- `baseUrl` - API base URL (e.g., http://localhost:8080)\n- `access_token` - JWT access token from login",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Chunked Upload Flow",
+      "item": [
+        {
+          "name": "Initiate Upload",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Check authentication",
+                  "const accessToken = pm.environment.get('access_token');",
+                  "if (!accessToken || accessToken.length === 0) {",
+                  "  console.warn('No access token found - upload will fail with 401');",
+                  "}",
+                  "",
+                  "// Generate test filename with timestamp",
+                  "const timestamp = new Date().getTime();",
+                  "pm.environment.set('test_filename', `test-video-${timestamp}.mp4`);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201 or 401', () => {",
+                  "  pm.expect([201, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has success field', () => {",
+                  "    pm.expect(wrap).to.have.property('success', true);",
+                  "  });",
+                  "  ",
+                  "  pm.test('Response has data with session_id', () => {",
+                  "    pm.expect(wrap).to.have.property('data');",
+                  "    pm.expect(wrap.data).to.have.property('session_id');",
+                  "    pm.expect(wrap.data).to.have.property('chunk_size');",
+                  "    pm.expect(wrap.data).to.have.property('total_chunks');",
+                  "    pm.expect(wrap.data).to.have.property('upload_url');",
+                  "  });",
+                  "  ",
+                  "  // Save session_id for subsequent requests",
+                  "  pm.environment.set('upload_session_id', wrap.data.session_id);",
+                  "  pm.environment.set('total_chunks', wrap.data.total_chunks);",
+                  "  ",
+                  "  console.log(`Upload session created: ${wrap.data.session_id}`);",
+                  "  console.log(`Total chunks: ${wrap.data.total_chunks}`);",
+                  "} else if (pm.response.code === 401) {",
+                  "  console.log('Skipped: No authentication token');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"{{test_filename}}\",\n  \"file_size\": 5242880,\n  \"chunk_size\": 5242880,\n  \"video_metadata\": {\n    \"title\": \"Test Chunked Upload Video\",\n    \"description\": \"Testing chunked upload functionality\",\n    \"privacy\": \"unlisted\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "initiate"
+              ]
+            },
+            "description": "Initiate a chunked upload session. Returns a session ID for uploading chunks."
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Chunk 0",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const sessionId = pm.environment.get('upload_session_id');",
+                  "if (!sessionId) {",
+                  "  console.warn('No upload session ID found - run Initiate Upload first');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200, 401, or 404', () => {",
+                  "  pm.expect([200, 401, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has success field', () => {",
+                  "    pm.expect(wrap).to.have.property('success', true);",
+                  "  });",
+                  "  ",
+                  "  pm.test('Chunk upload confirmed', () => {",
+                  "    pm.expect(wrap.data).to.have.property('chunk_index', 0);",
+                  "    pm.expect(wrap.data).to.have.property('uploaded', true);",
+                  "    pm.expect(wrap.data).to.have.property('remaining_chunks');",
+                  "  });",
+                  "  ",
+                  "  const remainingChunks = Array.isArray(wrap.data.remaining_chunks) ? wrap.data.remaining_chunks : [];",
+                  "  console.log(`Remaining chunks: ${remainingChunks.length}`);",
+                  "} else if (pm.response.code === 404) {",
+                  "  console.log('Upload session not found or expired');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream",
+                "type": "text"
+              },
+              {
+                "key": "X-Chunk-Index",
+                "value": "0",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": "/etc/newman/test-files/video-chunk-0.bin"
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/{{upload_session_id}}/chunks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_session_id}}",
+                "chunks"
+              ]
+            },
+            "description": "Upload the first chunk (index 0). Chunks must be uploaded in order."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Upload Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200, 401, or 404', () => {",
+                  "  pm.expect([200, 401, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has upload status', () => {",
+                  "    pm.expect(wrap.data).to.have.property('id');",
+                  "    pm.expect(wrap.data).to.have.property('video_id');",
+                  "    pm.expect(wrap.data).to.have.property('total_chunks');",
+                  "    pm.expect(wrap.data).to.have.property('uploaded_chunks');",
+                  "    pm.expect(wrap.data).to.have.property('status');",
+                  "  });",
+                  "  ",
+                  "  pm.environment.set('upload_video_id', wrap.data.video_id);",
+                  "  console.log(`Upload progress: ${wrap.data.uploaded_chunks.length}/${wrap.data.total_chunks} chunks`);",
+                  "  console.log(`Status: ${wrap.data.status}`);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/{{upload_session_id}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_session_id}}",
+                "status"
+              ]
+            },
+            "description": "Check the current status of an upload session, including which chunks have been received."
+          },
+          "response": []
+        },
+        {
+          "name": "Resume Upload Info",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200, 401, or 404', () => {",
+                  "  pm.expect([200, 401, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has resume information', () => {",
+                  "    pm.expect(wrap.data).to.have.property('uploaded_chunks');",
+                  "    pm.expect(wrap.data).to.have.property('remaining_chunks');",
+                  "    pm.expect(wrap.data).to.have.property('progress_percent');",
+                  "  });",
+                  "  ",
+                  "  const remainingChunks = Array.isArray(wrap.data.remaining_chunks) ? wrap.data.remaining_chunks : [];",
+                  "  const nextChunkIndex = remainingChunks.length > 0 ? remainingChunks[0] : 'none';",
+                  "  console.log(`Next chunk to upload: ${nextChunkIndex}`);",
+                  "  console.log(`Remaining chunks: ${remainingChunks.join(', ')}`);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/{{upload_session_id}}/resume",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_session_id}}",
+                "resume"
+              ]
+            },
+            "description": "Get information needed to resume an interrupted upload. Returns list of uploaded and missing chunks."
+          },
+          "response": []
+        },
+        {
+          "name": "Complete Upload",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Accept 200 (complete) or 400 (incomplete - missing chunks)",
+                  "pm.test('Status is 200, 400, 401, or 404', () => {",
+                  "  pm.expect([200, 400, 401, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Upload completed successfully', () => {",
+                  "    pm.expect(wrap.data).to.have.property('session_id');",
+                  "    pm.expect(wrap.data).to.have.property('status');",
+                  "    pm.expect(wrap.data).to.have.property('message');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Upload complete for session: ${wrap.data.session_id}`);",
+                  "  console.log(wrap.data.message);",
+                  "} else if (pm.response.code === 400) {",
+                  "  const wrap = pm.response.json();",
+                  "  console.log(`Upload incomplete: ${wrap.error.message}`);",
+                  "  if (wrap.error.details && wrap.error.details.missing_chunks) {",
+                  "    console.log(`Missing chunks: ${wrap.error.details.missing_chunks.join(', ')}`);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/{{upload_session_id}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_session_id}}",
+                "complete"
+              ]
+            },
+            "description": "Finalize the upload after all chunks have been uploaded. Triggers video processing and encoding."
+          },
+          "response": []
+        }
+      ],
+      "description": "Complete chunked upload workflow from initiation to completion"
+    },
+    {
+      "name": "Encoding Status",
+      "item": [
+        {
+          "name": "Get Encoding Status - By Video ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 401', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has encoding scheduler summary', () => {",
+                  "    pm.expect(wrap.data).to.have.property('pending');",
+                  "    pm.expect(wrap.data).to.have.property('processing');",
+                  "    pm.expect(wrap.data).to.have.property('completed');",
+                  "    pm.expect(wrap.data).to.have.property('failed');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Encoding summary: pending=${wrap.data.pending}, processing=${wrap.data.processing}, completed=${wrap.data.completed}, failed=${wrap.data.failed}`);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/encoding/status?video_id={{upload_video_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "encoding",
+                "status"
+              ],
+              "query": [
+                {
+                  "key": "video_id",
+                  "value": "{{upload_video_id}}",
+                  "description": "Filter by video UUID"
+                }
+              ]
+            },
+            "description": "Get encoding job status for a specific video. Shows progress, completed variants, and current encoding status."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Encoding Status - By Job ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 401', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response has encoding scheduler summary', () => {",
+                  "    pm.expect(wrap.data).to.have.property('pending');",
+                  "    pm.expect(wrap.data).to.have.property('processing');",
+                  "    pm.expect(wrap.data).to.have.property('completed');",
+                  "    pm.expect(wrap.data).to.have.property('failed');",
+                  "  });",
+                  "  console.log(`Encoding summary: pending=${wrap.data.pending}, processing=${wrap.data.processing}`);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/encoding/status?job_id={{encoding_job_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "encoding",
+                "status"
+              ],
+              "query": [
+                {
+                  "key": "job_id",
+                  "value": "{{encoding_job_id}}",
+                  "description": "Specific encoding job ID"
+                }
+              ]
+            },
+            "description": "Get status of a specific encoding job by job ID."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Encoding Status - All Processing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 401', () => {",
+                  "  pm.expect([200, 401]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Response shows encoding scheduler summary', () => {",
+                  "    pm.expect(wrap.data).to.have.property('pending');",
+                  "    pm.expect(wrap.data).to.have.property('processing');",
+                  "    pm.expect(wrap.data).to.have.property('completed');",
+                  "    pm.expect(wrap.data).to.have.property('failed');",
+                  "  });",
+                  "  ",
+                  "  console.log(`Currently processing jobs: ${wrap.data.processing}`);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/encoding/status?status=processing",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "encoding",
+                "status"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "processing",
+                  "description": "Filter by status (pending, processing, completed, failed)"
+                }
+              ]
+            },
+            "description": "Get all currently processing encoding jobs."
+          },
+          "response": []
+        }
+      ],
+      "description": "Track video encoding/transcoding status with progress information"
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Initiate Upload - Missing Auth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401 Unauthorized', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "});",
+                  "",
+                  "pm.test('Error response has correct structure', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap).to.have.property('success', false);",
+                  "  pm.expect(wrap).to.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"test.mp4\",\n  \"file_size\": 52428800\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "initiate"
+              ]
+            },
+            "description": "Verify that upload initiation fails without authentication"
+          },
+          "response": []
+        },
+        {
+          "name": "Initiate Upload - Incomplete Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const wrap = pm.response.json();",
+                  "pm.test('Incomplete-session upload was created', () => {",
+                  "  pm.expect(wrap).to.have.nested.property('data.session_id');",
+                  "});",
+                  "pm.environment.set('incomplete_upload_session_id', wrap.data.session_id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"incomplete-test.mp4\",\n  \"file_size\": 10485760,\n  \"chunk_size\": 5242880\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/initiate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "initiate"
+              ]
+            },
+            "description": "Create a separate upload session that intentionally remains incomplete for negative-path testing"
+          },
+          "response": []
+        },
+        {
+          "name": "Complete Upload - Missing Chunks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// This test expects 400 if chunks are missing",
+                  "pm.test('Status is 400 or 404', () => {",
+                  "  pm.expect([400, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 400) {",
+                  "  const wrap = pm.response.json();",
+                  "  ",
+                  "  pm.test('Error indicates incomplete upload', () => {",
+                  "    pm.expect(wrap.error.message.toLowerCase()).to.match(/incomplete|not all chunks|uploaded/);",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/{{incomplete_upload_session_id}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{incomplete_upload_session_id}}",
+                "complete"
+              ]
+            },
+            "description": "Verify that completing an upload with missing chunks returns 400 error with details"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Status - Invalid Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 Bad Request', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "});",
+                  "",
+                  "pm.test('Error response indicates session not found', () => {",
+                  "  const wrap = pm.response.json();",
+                  "  pm.expect(wrap).to.have.property('success', false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/uploads/invalid_session_id_12345/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "invalid_session_id_12345",
+                "status"
+              ]
+            },
+            "description": "Verify proper error handling for non-existent upload sessions"
+          },
+          "response": []
+        }
+      ],
+      "description": "Error cases and negative testing scenarios"
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ]
+}

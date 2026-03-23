@@ -1,0 +1,179 @@
+name: Database Migration Validation
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'migrations/**'
+      - '.github/workflows/goose-migrate.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'migrations/**'
+      - '.github/workflows/goose-migrate.yml'
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.24'
+  POSTGRES_VERSION: '15'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate-migrations:
+    name: Validate Migrations
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: test_db
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+
+      - name: Setup Go (cached)
+        uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - name: Install Goose
+        uses: ./.github/actions/retry-command
+        with:
+          command: 'go install github.com/pressly/goose/v3/cmd/goose@latest'
+          max_attempts: '5'
+          description: 'Installing Goose migration tool'
+
+      - name: Verify Goose installation
+        run: goose -version
+
+      - name: Setup test database
+        env:
+          DATABASE_URL: postgres://test_user:test_pass@localhost:5435/test_db?sslmode=disable
+        run: |
+          echo "Creating test database schema..."
+          PGPASSWORD=test_pass psql -h localhost -p 5435 -U test_user -d test_db -c "SELECT version();"
+
+      - name: Validate migration files
+        run: |
+          echo "Validating migration file format..."
+          goose -dir migrations validate
+
+      - name: Test migrations up
+        env:
+          DATABASE_URL: postgres://test_user:test_pass@localhost:5435/test_db?sslmode=disable
+        run: |
+          echo "Running migrations..."
+          goose -dir migrations postgres "$DATABASE_URL" up
+
+      - name: Check migration status
+        env:
+          DATABASE_URL: postgres://test_user:test_pass@localhost:5435/test_db?sslmode=disable
+        run: |
+          echo "Current migration status:"
+          goose -dir migrations postgres "$DATABASE_URL" status
+
+      - name: Test migration rollback
+        env:
+          DATABASE_URL: postgres://test_user:test_pass@localhost:5435/test_db?sslmode=disable
+        run: |
+          echo "Testing rollback of last migration..."
+          CURRENT_VERSION=$(goose -dir migrations postgres "$DATABASE_URL" version 2>/dev/null || echo "0")
+          if [ "$CURRENT_VERSION" -gt "0" ]; then
+            goose -dir migrations postgres "$DATABASE_URL" down
+            echo "Rollback successful"
+            # Re-apply the migration
+            goose -dir migrations postgres "$DATABASE_URL" up
+          else
+            echo "No migrations to rollback"
+          fi
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const success = ${{ job.status == 'success' }};
+            if (success) {
+              const body = `## ✅ Database Migration Validation Successful
+
+              All migrations have been validated and tested successfully.
+
+              **Validation Results:**
+              - ✅ Migration files are valid
+              - ✅ Migrations apply cleanly
+              - ✅ Rollback tested (where applicable)
+
+              You can safely merge these migration changes.`;
+
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            } else {
+              const body = `## ❌ Database Migration Validation Failed
+
+              Migration validation encountered errors. Please review the logs above and:
+
+              1. Check migration file syntax (must have Goose directives)
+              2. Ensure migrations are reversible where required
+              3. Validate SQL syntax
+              4. Check for data-dependent changes
+
+              Run locally:
+              \`\`\`bash
+              make migrate-validate
+              make migrate-up
+              \`\`\`
+
+              See docs/MIGRATION_TO_GOOSE.md for more information.`;
+
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-logs
+          retention-days: 7
+          path: |
+            migrations/
+            *.log

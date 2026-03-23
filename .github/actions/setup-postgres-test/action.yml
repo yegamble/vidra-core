@@ -1,0 +1,33 @@
+name: 'Setup PostgreSQL Test Environment'
+description: 'Configures PostgreSQL service for integration tests'
+
+outputs:
+  database-url:
+    description: 'PostgreSQL connection URL'
+    value: ${{ steps.set-outputs.outputs.database-url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install PostgreSQL client
+      shell: bash
+      run: |
+        # Check if psql is already installed
+        if ! command -v psql &> /dev/null; then
+          # Check if running as root (UID 0) - no sudo needed
+          if [ "$(id -u)" -eq 0 ]; then
+            apt-get update -qq
+            apt-get install -y postgresql-client
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql-client
+          fi
+        else
+          echo "PostgreSQL client already installed"
+        fi
+
+    - name: Set database URL output
+      id: set-outputs
+      shell: bash
+      run: |
+        echo "database-url=postgres://test_user:test_password@postgres:5432/athena_test?sslmode=disable" >> $GITHUB_OUTPUT

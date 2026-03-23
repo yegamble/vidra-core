@@ -1,0 +1,78 @@
+{{define "content"}}
+<div class="checkmark">✓</div>
+
+<h2 style="text-align: center; margin-bottom: 20px;">Setup Complete!</h2>
+
+<div class="alert alert-success">
+    <strong>Your Athena instance is configured and ready to use.</strong>
+</div>
+
+<div style="margin-top: 30px; padding: 20px; background: #f9fafb; border-radius: 8px;">
+    <h3 style="margin-bottom: 15px;">What was configured:</h3>
+    <ul style="line-height: 1.8; color: #4b5563;">
+        <li>✓ Database connection established</li>
+        <li>✓ Services configured (Redis{{if .Config.EnableIPFS}}, IPFS{{end}}{{if .Config.EnableClamAV}}, ClamAV{{end}}{{if .Config.EnableWhisper}}, Whisper{{end}})</li>
+        <li>✓ Storage paths created</li>
+        {{if .Config.BackupEnabled}}
+        <li>✓ Backup system configured</li>
+        {{end}}
+        <li>✓ Security settings applied</li>
+        <li>✓ Administrator account created</li>
+        <li>✓ Database migrations applied ({{.MigrationCount}} migrations)</li>
+    </ul>
+</div>
+
+<div style="margin-top: 30px; padding: 20px; border: 2px solid #667eea; border-radius: 8px; background: #ede9fe;">
+    <h3 style="margin-bottom: 15px; color: #667eea;">Next Steps:</h3>
+    <ol style="line-height: 2; color: #4b5563;">
+        <li>The server will restart automatically in 5 seconds</li>
+        <li>After restart, log in with your administrator credentials</li>
+        <li>Start uploading videos and configuring your platform</li>
+    </ol>
+</div>
+
+<div style="margin-top: 30px; padding: 20px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px;">
+    <h3 style="margin-bottom: 10px; color: #92400e;">⚠️ Important:</h3>
+    <p style="color: #78350f; line-height: 1.6;">
+        Your configuration has been saved to <code>.env</code>.
+        Keep this file secure as it contains sensitive information including your JWT secret.
+        Make sure to back up this file regularly.
+    </p>
+</div>
+
+<div style="margin-top: 30px; text-align: center;">
+    <p style="color: #6b7280; font-size: 14px;">
+        Configuration file: <code>.env</code><br>
+        Admin username: <strong>{{.Config.AdminUsername}}</strong><br>
+        Access URL: <strong>http://localhost:{{or .Port "8080"}}</strong>
+    </p>
+</div>
+
+<div style="margin-top: 30px; text-align: center;">
+    <div id="countdown" style="font-size: 18px; color: #667eea; font-weight: 600;">
+        Restarting in <span id="seconds">5</span> seconds...
+    </div>
+</div>
+
+<script>
+let seconds = 5;
+const countdownEl = document.getElementById('seconds');
+
+const interval = setInterval(() => {
+    seconds--;
+    countdownEl.textContent = seconds;
+
+    if (seconds <= 0) {
+        clearInterval(interval);
+        document.getElementById('countdown').textContent = 'Restarting server...';
+        // Trigger server restart
+        fetch('/setup/restart', {method: 'POST'})
+            .then(() => {
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 3000);
+            });
+    }
+}, 1000);
+</script>
+{{end}}

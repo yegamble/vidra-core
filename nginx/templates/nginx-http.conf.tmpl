@@ -1,0 +1,85 @@
+# Athena Nginx Configuration - HTTP Mode
+# Generated from template by setup wizard
+
+# Rate limiting zone
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
+
+# Gzip compression
+gzip on;
+gzip_vary on;
+gzip_min_length 1024;
+gzip_types text/plain text/css application/json application/javascript text/xml application/xml video/mp2t application/vnd.apple.mpegurl;
+
+# Upstream - Athena Go application
+upstream athena_app {
+    server {{.UpstreamAddr}};
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name {{.Domain}};
+
+    # Client upload limits (unlimited - app handles chunked uploads)
+    client_max_body_size 0;
+
+    # Security headers
+    include /etc/nginx/conf.d/common-security.conf;
+
+    # Nginx health check endpoint (direct, not proxied)
+    location /nginx-health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+
+    # Static files - storage volume
+    location /storage/ {
+        alias /app/storage/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
+
+    # Static files - processed volume (thumbnails, HLS segments)
+    location /processed/ {
+        alias /app/processed/;
+
+        # Different caching for different file types
+        location ~* \.(m3u8)$ {
+            expires 1h;
+            add_header Cache-Control "public";
+        }
+        location ~* \.(ts)$ {
+            expires 1h;
+            add_header Cache-Control "public";
+        }
+        location ~* \.(jpg|jpeg|png|webp)$ {
+            expires 7d;
+            add_header Cache-Control "public, immutable";
+        }
+
+        access_log off;
+    }
+
+    # WebSocket endpoint for live chat
+    location /ws/ {
+        proxy_pass http://athena_app;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        include /etc/nginx/conf.d/common-proxy.conf;
+    }
+
+    # API endpoints with rate limiting
+    location /api/ {
+        limit_req zone=api_limit burst=20 nodelay;
+        proxy_pass http://athena_app;
+        include /etc/nginx/conf.d/common-proxy.conf;
+    }
+
+    # All other requests proxied to app
+    location / {
+        proxy_pass http://athena_app;
+        include /etc/nginx/conf.d/common-proxy.conf;
+    }
+}

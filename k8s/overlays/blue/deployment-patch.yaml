@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: athena-api
+  labels:
+    version: blue
+spec:
+  template:
+    metadata:
+      labels:
+        version: blue
+      annotations:
+        deployment.athena/color: "blue"
+        deployment.athena/timestamp: "TIMESTAMP_PLACEHOLDER"
+    spec:
+      containers:
+      - name: athena
+        env:
+        - name: DEPLOYMENT_COLOR
+          value: "blue"
+        - name: DEPLOYMENT_VERSION
+          value: "VERSION_PLACEHOLDER"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: athena-encoding-worker
+  labels:
+    version: blue
+spec:
+  template:
+    metadata:
+      labels:
+        version: blue
+      annotations:
+        deployment.athena/color: "blue"
+    spec:
+      terminationGracePeriodSeconds: 7200  # 2 hours for encoding jobs
+      containers:
+      - name: encoding-worker
+        env:
+        - name: DEPLOYMENT_COLOR
+          value: "blue"
+        - name: WORKER_VERSION
+          value: "blue"
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                echo "Blue worker shutting down gracefully..."
+                # Stop accepting new jobs
+                redis-cli -u "$REDIS_URL" HSET "worker:$(hostname):status" accepting_jobs false
+                # Wait for current job to complete (max 2 hours)
+                timeout=7200
+                elapsed=0
+                while [ $elapsed -lt $timeout ]; do
+                  current_job=$(redis-cli -u "$REDIS_URL" HGET "worker:$(hostname):current_job" || echo "")
+                  if [ -z "$current_job" ] || [ "$current_job" = "(nil)" ]; then
+                    echo "No active job, safe to terminate"
+                    exit 0
+                  fi
+                  echo "Waiting for job $current_job to complete... ($elapsed/$timeout seconds)"
+                  sleep 30
+                  elapsed=$((elapsed + 30))
+                done
+                echo "Timeout reached, forcing shutdown"

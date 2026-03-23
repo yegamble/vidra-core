@@ -1,0 +1,116 @@
+{
+  "info": {
+    "name": "Athena Video Chapters & Blacklist API",
+    "_postman_id": "c5a5c5a5-0005-4000-9000-c5a5c5a5c5a5",
+    "description": "Postman collection for video chapter management and admin video blacklist endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
+    {"key": "access_token", "value": "", "type": "string"},
+    {"key": "video_id", "value": "", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "Chapters - Happy Path",
+      "item": [
+        {
+          "name": "GET /api/v1/videos/:id/chapters - List chapters",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/chapters", "host": ["{{baseUrl}}"], "path": ["api", "v1", "videos", "{{video_id}}", "chapters"]}
+          }
+        },
+        {
+          "name": "PUT /api/v1/videos/:id/chapters - Set chapters",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200 or 204', () => pm.expect([200, 204]).to.include(pm.response.code));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"chapters\": [\n    {\"timecode\": 0, \"title\": \"Introduction\"},\n    {\"timecode\": 60, \"title\": \"Chapter 1\"}\n  ]\n}"},
+            "url": {"raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/chapters", "host": ["{{baseUrl}}"], "path": ["api", "v1", "videos", "{{video_id}}", "chapters"]}
+          }
+        },
+        {
+          "name": "GET /api/v1/videos/:id/description - Get description",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/description", "host": ["{{baseUrl}}"], "path": ["api", "v1", "videos", "{{video_id}}", "description"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Video Blacklist - Happy Path (Admin)",
+      "item": [
+        {
+          "name": "GET /api/v1/videos/blacklist - List blacklisted videos",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/videos/blacklist", "host": ["{{baseUrl}}"], "path": ["api", "v1", "videos", "blacklist"]}
+          }
+        },
+        {
+          "name": "POST /api/v1/videos/:id/blacklist - Blacklist video",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 204 or 201', () => pm.expect([201, 204]).to.include(pm.response.code));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"reason\": \"Violates community guidelines\"\n}"},
+            "url": {"raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/blacklist", "host": ["{{baseUrl}}"], "path": ["api", "v1", "videos", "{{video_id}}", "blacklist"]}
+          }
+        },
+        {
+          "name": "DELETE /api/v1/videos/:id/blacklist - Remove from blacklist",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 204', () => pm.response.to.have.status(204));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "DELETE",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/blacklist", "host": ["{{baseUrl}}"], "path": ["api", "v1", "videos", "{{video_id}}", "blacklist"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chapters - Error Path",
+      "item": [
+        {
+          "name": "PUT /api/v1/videos/:id/chapters - Unauthenticated (401)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {"mode": "raw", "raw": "{\n  \"chapters\": []\n}"},
+            "url": {"raw": "{{baseUrl}}/api/v1/videos/{{video_id}}/chapters", "host": ["{{baseUrl}}"], "path": ["api", "v1", "videos", "{{video_id}}", "chapters"]}
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "info": {
+    "name": "Athena IPFS Streaming API",
+    "description": "Validates Athena's IPFS streaming metrics and gateway health endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get IPFS Metrics",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', () => {",
+              "  pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('Metrics payload contains IPFS, local, and cache blocks', () => {",
+              "  pm.expect(body).to.have.property('ipfs');",
+              "  pm.expect(body).to.have.property('local');",
+              "  pm.expect(body).to.have.property('cache');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/ipfs/metrics",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "ipfs",
+            "metrics"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get IPFS Gateway Health",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', () => {",
+              "  pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('Gateway payload contains at least one gateway entry', () => {",
+              "  pm.expect(body).to.have.property('gateways');",
+              "  pm.expect(body.gateways).to.be.an('array').that.is.not.empty;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/ipfs/gateways",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "ipfs",
+            "gateways"
+          ]
+        }
+      },
+      "response": []
+    }
+  ]
+}

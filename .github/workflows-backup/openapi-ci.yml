@@ -1,0 +1,135 @@
+name: OpenAPI Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'api/openapi.yaml'
+      - 'api/*.yaml'
+      - 'docs/openapi/**'
+      - '.github/workflows/openapi-ci.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'api/openapi.yaml'
+      - 'api/*.yaml'
+      - 'docs/openapi/**'
+      - '.github/workflows/openapi-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    name: Validate OpenAPI Spec
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'  # Use Node 20 for consistency
+
+      - name: Install Swagger CLI
+        run: |
+          # Install with retry logic and exponential backoff
+          max_attempts=5
+          for i in $(seq 1 $max_attempts); do
+            if npm install -g @apidevtools/swagger-cli@latest; then
+              echo "Swagger CLI installed successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Install attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Validate OpenAPI spec
+        run: |
+          echo "Validating OpenAPI specification..."
+          # Fail the job if validation fails
+          make validate-openapi
+
+      - name: Generate API Documentation Preview
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "OpenAPI validation complete"
+          echo "Documentation can be generated from validated spec"
+
+  generate-docs:
+    name: Generate API Documentation
+    runs-on: self-hosted
+    needs: validate
+    if: github.ref == 'refs/heads/main' && success()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'  # Use Node 20 for better compatibility
+
+      - name: Install documentation tools
+        run: |
+          # Install modern tools with retry logic and exponential backoff
+          max_attempts=5
+
+          # Install @redocly/cli
+          for i in $(seq 1 $max_attempts); do
+            if npm install -g @redocly/cli@latest; then
+              echo "@redocly/cli installed successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Install attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
+
+          # Install @apidevtools/swagger-cli
+          for i in $(seq 1 $max_attempts); do
+            if npm install -g @apidevtools/swagger-cli@latest; then
+              echo "@apidevtools/swagger-cli installed successfully on attempt $i"
+              break
+            else
+              if [ $i -lt $max_attempts ]; then
+                delay=$((2 ** (i - 1) * 2))
+                echo "Install attempt $i failed, retrying in ${delay} seconds..."
+                sleep $delay
+              else
+                echo "All $max_attempts attempts failed"
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Generate documentation
+        run: |
+          echo "Generating API documentation from OpenAPI spec..."
+          # Use Makefile which handles both api/openapi.yaml and root openapi.yaml
+          make generate-docs
+
+      - name: Upload documentation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-docs
+          path: docs/api/
+          retention-days: 30

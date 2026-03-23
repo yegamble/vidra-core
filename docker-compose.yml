@@ -1,0 +1,764 @@
+services:
+  # ---------------------------------------------------------------------------
+  # Development stack (default profile)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: athena
+      POSTGRES_USER: athena_user
+      POSTGRES_PASSWORD: athena_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U athena_user -d athena"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - athena-network
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - athena-network
+
+  ipfs:
+    profiles: ["full", "ipfs"]
+    image: ipfs/kubo:v0.32.1
+    restart: unless-stopped
+    environment:
+      - IPFS_PROFILE=server
+    ports:
+      - "4001:4001"      # Swarm TCP — required for p2p connectivity
+      - "4001:4001/udp"  # Swarm QUIC — required for p2p connectivity
+      - "5001:5001"      # API
+      - "9090:8080"      # Gateway — local IPFS content retrieval (9090 avoids conflict with app:8080)
+    volumes:
+      - ipfs_staging:/export
+      - ipfs_data:/data/ipfs
+      - ./docker/ipfs/configure-node.sh:/container-init.d/001-configure-node.sh:ro
+    healthcheck:
+      test: ["CMD", "wget", "--post-data=''", "-qO-", "http://localhost:5001/api/v0/version"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+    networks:
+      - athena-network
+
+  clamav:
+    profiles: ["full", "media"]
+    image: clamav/clamav:stable
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav_signatures:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+    mem_limit: 2g
+    networks:
+      - athena-network
+
+  mailpit:
+    profiles: ["full", "mail"]
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8025/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - athena-network
+
+  whisper:
+    profiles: ["full", "media"]
+    # Using CPU-compatible image by default; use whisper-gpu profile for GPU variant
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    restart: unless-stopped
+    environment:
+      - ASR_MODEL=base
+      - ASR_ENGINE=openai_whisper
+    ports:
+      - "9000:9000"
+    volumes:
+      - whisper_models:/root/.cache/whisper
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - athena-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+  # IOTA Rebased fullnode (testnet). Pinned to v1.16.2 on 2026-02-17.
+  # JSON-RPC API version: Rebased v1.16.x (iota_ and iotax_ prefixes).
+  # Host port 14265 avoids collision with Whisper which binds host port 9000.
+  # Container-to-container: http://iota-node:9000  |  Host access: http://localhost:14265
+  # GraphQL API port 9125 — expose when GraphQL support is added in Phase 2
+  iota-node:
+    profiles: ["iota", "full"]
+    image: iotaledger/iota-node:v1.16.2
+    restart: on-failure:3
+    entrypoint: ["/entrypoint.sh"]
+    ports:
+      - "14265:9000"    # JSON-RPC (host:container)
+    volumes:
+      - iota_data:/opt/iota/db
+      - ./docker/iota/fullnode.yaml:/opt/iota/config/fullnode.yaml:ro
+      - ./docker/iota/entrypoint.sh:/entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json",
+             "-d", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"iota_getLatestCheckpointSequenceNumber\",\"params\":[]}",
+             "http://localhost:9000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - athena-network
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      # Service modes (docker or external)
+      POSTGRES_MODE: ${POSTGRES_MODE:-docker}
+      REDIS_MODE: ${REDIS_MODE:-docker}
+      IPFS_MODE: ${IPFS_MODE:-docker}
+
+      # Database
+      DATABASE_URL: ${DATABASE_URL:-postgres://athena_user:athena_password@postgres:5432/athena?sslmode=disable}
+
+      # Redis
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+
+      # Security
+      JWT_SECRET: ${JWT_SECRET:-}
+
+      # Optional services
+      ENABLE_IPFS: ${ENABLE_IPFS:-false}
+      IPFS_API: ${IPFS_API:-http://ipfs:5001}
+      IPFS_LOCAL_GATEWAY_URL: ${IPFS_LOCAL_GATEWAY_URL:-http://ipfs:8080}
+      REQUIRE_IPFS: ${REQUIRE_IPFS:-false}
+
+      # IOTA Rebased node (container-to-container uses port 9000; host access uses 14265)
+      ENABLE_IOTA: ${ENABLE_IOTA:-false}
+      IOTA_MODE: ${IOTA_MODE:-docker}
+      IOTA_NETWORK: ${IOTA_NETWORK:-testnet}
+      IOTA_NODE_URL: ${IOTA_NODE_URL:-http://iota-node:9000}
+
+      ENABLE_CLAMAV: ${ENABLE_CLAMAV:-false}
+
+      ENABLE_WHISPER: ${ENABLE_WHISPER:-false}
+      ENABLE_CAPTION_GENERATION: ${ENABLE_CAPTION_GENERATION:-false}
+
+      # Email / SMTP
+      ENABLE_EMAIL: ${ENABLE_EMAIL:-false}
+      SMTP_TRANSPORT: ${SMTP_TRANSPORT:-smtp}
+      SMTP_SENDMAIL_PATH: ${SMTP_SENDMAIL_PATH:-/usr/sbin/sendmail}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_TLS: ${SMTP_TLS:-false}
+      SMTP_DISABLE_STARTTLS: ${SMTP_DISABLE_STARTTLS:-false}
+      SMTP_CA_FILE: ${SMTP_CA_FILE:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@localhost}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Athena}
+      WHISPER_PROVIDER: ${WHISPER_PROVIDER:-local}
+      WHISPER_API_URL: ${WHISPER_API_URL:-http://whisper:9000}
+      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-base}
+      CAPTION_GENERATION_WORKERS: ${CAPTION_GENERATION_WORKERS:-2}
+
+      # Server
+      PORT: 8080
+    volumes:
+      - storage:/app/storage
+      - processed:/app/processed
+    networks:
+      - athena-network
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    environment:
+      NGINX_DOMAIN: ${NGINX_DOMAIN:-localhost}
+      NGINX_PROTOCOL: ${NGINX_PROTOCOL:-http}
+      NGINX_TLS_MODE: ${NGINX_TLS_MODE:-self-signed}
+    volumes:
+      - ./nginx/conf:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - storage:/app/storage:ro
+      - processed:/app/processed:ro
+      - certbot_conf:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    networks:
+      - athena-network
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/nginx-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  certbot:
+    profiles: ["letsencrypt"]
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    environment:
+      NGINX_DOMAIN: ${NGINX_DOMAIN:-localhost}
+      NGINX_LETSENCRYPT_EMAIL: ${NGINX_LETSENCRYPT_EMAIL:-}
+    volumes:
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    command: >
+      sh -c "
+      if [ ! -f /etc/letsencrypt/live/$NGINX_DOMAIN/fullchain.pem ]; then
+        echo 'Acquiring Let'\''s Encrypt certificate for $NGINX_DOMAIN...';
+        certbot certonly --webroot -w /var/www/certbot -d $NGINX_DOMAIN --email $NGINX_LETSENCRYPT_EMAIL --agree-tos --non-interactive || echo 'WARNING: Certificate acquisition failed. Check that domain points to this server.';
+      fi;
+      trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --post-hook 'nginx -s reload' || true;
+        sleep 12h & wait $!;
+      done
+      "
+    networks:
+      - athena-network
+
+  # ---------------------------------------------------------------------------
+  # Local test stack (profile: test)
+  # ---------------------------------------------------------------------------
+  postgres-test:
+    profiles: ["test"]
+    image: postgres:15-alpine
+    tmpfs:
+      - /var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: athena_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d athena_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    networks:
+      - test-network
+
+  redis-test:
+    profiles: ["test"]
+    image: redis:7-alpine
+    tmpfs:
+      - /data
+    ports:
+      - "6380:6379"
+    command: redis-server --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-network
+
+  ipfs-test:
+    profiles: ["test"]
+    image: ipfs/kubo:v0.32.1
+    tmpfs:
+      - /export
+      - /data/ipfs
+    environment:
+      - IPFS_PROFILE=server
+    ports:
+      - "15001:5001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q -T 3 http://127.0.0.1:5001/api/v0/version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+    networks:
+      - test-network
+
+  iota-node-test:
+    profiles: ["test"]
+    image: iotaledger/iota-node:v1.16.2
+    entrypoint: ["/entrypoint.sh"]
+    tmpfs:
+      - /opt/iota/db
+    ports:
+      - "19000:9000"    # JSON-RPC (host:container) — test port
+    volumes:
+      - ./docker/iota/fullnode.yaml:/opt/iota/config/fullnode.yaml:ro
+      - ./docker/iota/entrypoint.sh:/entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json",
+             "-d", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"iota_getLatestCheckpointSequenceNumber\",\"params\":[]}",
+             "http://localhost:9000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - test-network
+
+  clamav-test:
+    profiles: ["test"]
+    image: clamav/clamav:stable
+    platform: linux/amd64
+    container_name: athena_test_clamav
+    environment:
+      - CLAMAV_NO_FRESHCLAM=false
+      - CLAMD_STARTUP_TIMEOUT=300
+    volumes:
+      - clamav-test-signatures:/var/lib/clamav
+      - ./testdata/virus_scanner:/testdata:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+    mem_limit: 2g
+    networks:
+      - test-network
+
+  mock-atproto-pds-test:
+    profiles: ["test"]
+    build:
+      context: tests/mocks/atproto-pds
+      dockerfile: Dockerfile
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - test-network
+
+  app-test:
+    profiles: ["test"]
+    image: athena:latest
+    build: .
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      ipfs-test:
+        condition: service_started
+      clamav-test:
+        condition: service_healthy
+      mock-atproto-pds-test:
+        condition: service_healthy
+      iota-node-test:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://test_user:test_password@postgres-test:5432/athena_test?sslmode=disable
+      REDIS_URL: redis://redis-test:6379/0
+      JWT_SECRET: test-jwt-secret
+      ENABLE_IPFS_STREAMING: "true"
+      IPFS_API: http://ipfs-test:5001
+      IPFS_GATEWAY_URLS: http://ipfs-test:8080
+      REQUIRE_IPFS: "false"
+      PUBLIC_BASE_URL: http://app-test:8080
+      ENABLE_ACTIVITYPUB: "true"
+      ACTIVITYPUB_DOMAIN: app-test
+      ACTIVITYPUB_KEY_ENCRYPTION_KEY: test-activitypub-key-32-characters
+      ENABLE_ATPROTO: "true"
+      ATPROTO_PDS_URL: http://mock-atproto-pds-test:8080
+      ATPROTO_HANDLE: test.handle
+      ATPROTO_APP_PASSWORD: test-password
+      ENABLE_IOTA: "true"
+      IOTA_NODE_URL: http://iota-node-test:9000
+      PORT: 8080
+      VALIDATION_TEST_MODE: "true"
+      VALIDATION_TEST_ADMIN_USERNAME: admin
+      VALIDATION_TEST_ADMIN_EMAIL: admin@example.com
+      VALIDATION_TEST_ADMIN_PASSWORD: admin123
+      LOG_LEVEL: debug
+      STORAGE_DIR: /tmp/storage
+      CLAMAV_ADDRESS: clamav-test:3310
+      CLAMAV_TIMEOUT: "60"
+      CLAMAV_FALLBACK_MODE: strict
+      TEST_QUARANTINE_DIR: /tmp/quarantine
+    tmpfs:
+      - /tmp/storage:uid=1000,gid=1000
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+    networks:
+      - test-network
+
+  newman:
+    profiles: ["test"]
+    image: postman/newman:alpine
+    depends_on:
+      app-test:
+        condition: service_healthy
+    volumes:
+      - ./postman:/etc/newman
+    entrypoint:
+      [
+        "/bin/sh", "/etc/newman/run-all-tests.sh", "/etc/newman/athena.local.postman_environment.json"
+      ]
+    networks:
+      - test-network
+
+  # ---------------------------------------------------------------------------
+  # CI stack (profile: ci)
+  # ---------------------------------------------------------------------------
+  postgres-ci:
+    profiles: ["ci"]
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: athena_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d athena_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ci-network
+
+  redis-ci:
+    profiles: ["ci"]
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ci-network
+
+  ipfs-ci:
+    profiles: ["ci"]
+    image: ipfs/kubo:v0.32.1
+    environment:
+      - IPFS_PROFILE=server
+    ports:
+      - "5001:5001"
+    healthcheck:
+      test: ["CMD-SHELL", "ipfs version || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 45s
+    networks:
+      - ci-network
+
+  clamav-ci:
+    profiles: ["ci"]
+    image: clamav/clamav:stable
+    platform: linux/amd64
+    ports:
+      - "3310:3310"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+    networks:
+      - ci-network
+
+  # ---------------------------------------------------------------------------
+  # Integration test stack (profile: test-integration)
+  # These services are used for integration testing against real external services.
+  # Port range: 19xxx to avoid conflicts with all other profiles.
+  # ---------------------------------------------------------------------------
+  minio:
+    profiles: ["test-integration"]
+    image: minio/minio:latest
+    tmpfs:
+      - /data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "19100:9000"   # S3 API
+      - "19101:9001"   # Web console
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - test-integration-network
+
+  minio-init:
+    profiles: ["test-integration"]
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb --ignore-existing local/athena-test;
+      mc anonymous set public local/athena-test;
+      echo 'MinIO bucket athena-test created';
+      "
+    networks:
+      - test-integration-network
+
+  mock-atproto-pds:
+    profiles: ["test-integration"]
+    build:
+      context: tests/mocks/atproto-pds
+      dockerfile: Dockerfile
+    ports:
+      - "19200:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - test-integration-network
+
+  mock-activitypub:
+    profiles: ["test-integration"]
+    build:
+      context: tests/mocks/activitypub
+      dockerfile: Dockerfile
+    ports:
+      - "19300:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - test-integration-network
+
+  mock-iota-rpc:
+    profiles: ["test-integration"]
+    build:
+      context: tests/mocks/iota-rpc
+      dockerfile: Dockerfile
+    ports:
+      - "19500:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - test-integration-network
+
+  mailpit-integration:
+    profiles: ["test-integration"]
+    image: axllent/mailpit:latest
+    ports:
+      - "19400:8025"   # Web UI
+      - "19401:1025"   # SMTP
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8025/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-integration-network
+
+  postgres-integration:
+    profiles: ["test-integration"]
+    image: postgres:15-alpine
+    tmpfs:
+      - /var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: athena_integration
+      POSTGRES_USER: integration_user
+      POSTGRES_PASSWORD: integration_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U integration_user -d athena_integration"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    networks:
+      - test-integration-network
+
+  redis-integration:
+    profiles: ["test-integration"]
+    image: redis:7-alpine
+    tmpfs:
+      - /data
+    command: redis-server --save ""
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-integration-network
+
+  peertube-source-db:
+    profiles: ["test-integration"]
+    image: postgres:15-alpine
+    tmpfs:
+      - /var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: peertube_prod
+      POSTGRES_USER: peertube
+      POSTGRES_PASSWORD: peertube_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "15433:5432"
+    volumes:
+      - ./tests/migration/seed_peertube.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U peertube -d peertube_prod"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    networks:
+      - test-integration-network
+
+  ipfs-integration:
+    profiles: ["test-integration"]
+    image: ipfs/kubo:v0.32.1
+    tmpfs:
+      - /export
+      - /data/ipfs
+    environment:
+      - IPFS_PROFILE=server
+    ports:
+      - "15001:5001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q -T 3 http://127.0.0.1:5001/api/v0/version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+    networks:
+      - test-integration-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  storage:
+    driver: local
+  processed:
+    driver: local
+  ipfs_staging:
+    driver: local
+  ipfs_data:
+    driver: local
+  whisper_models:
+    driver: local
+  iota_data:
+    driver: local
+  clamav_signatures:
+    driver: local
+  clamav-test-signatures:
+    driver: local
+  nginx_conf:
+    driver: local
+  nginx_ssl:
+    driver: local
+  certbot_conf:
+    driver: local
+  certbot_www:
+    driver: local
+
+networks:
+  athena-network:
+    driver: bridge
+  test-network:
+    driver: bridge
+  ci-network:
+    driver: bridge
+  test-integration-network:
+    driver: bridge

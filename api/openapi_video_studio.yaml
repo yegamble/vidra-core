@@ -1,0 +1,215 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Video Studio
+  description: Endpoints for video studio editing (cut, add-intro, add-outro, add-watermark)
+  version: 1.0.0
+
+tags:
+  - name: Video Studio
+    description: Asynchronous video editing operations
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  /api/v1/videos/{id}/studio/edit:
+    post:
+      tags:
+        - Video Studio
+        - PeerTube-Compat
+      summary: Create a studio edit job
+      description: >
+        Submit an asynchronous video editing job. Accepts an array of tasks
+        (cut, add-intro, add-outro, add-watermark) that are processed
+        sequentially using FFmpeg. Only the video owner may create edit jobs.
+      operationId: studio_createEditJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Video ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StudioEditRequest'
+      responses:
+        '201':
+          description: Edit job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudioJobResponse'
+        '400':
+          description: Invalid request (bad task, missing parameters)
+        '401':
+          description: Authentication required
+        '403':
+          description: Not the video owner
+        '404':
+          description: Video not found
+        '409':
+          description: An editing job is already in progress for this video
+
+  /api/v1/videos/{id}/studio/jobs:
+    get:
+      tags:
+        - Video Studio
+        - PeerTube-Compat
+      summary: List studio edit jobs for a video
+      description: Returns all studio editing jobs for the specified video, ordered newest first.
+      operationId: studio_listJobs
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Video ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of studio jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudioJobListResponse'
+        '400':
+          description: Missing video ID
+
+  /api/v1/videos/{id}/studio/jobs/{jobId}:
+    get:
+      tags:
+        - Video Studio
+        - PeerTube-Compat
+      summary: Get a specific studio edit job
+      description: Returns details for a single studio editing job.
+      operationId: studio_getJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Video ID
+          schema:
+            type: string
+        - name: jobId
+          in: path
+          required: true
+          description: Studio job ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Studio job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudioJobResponse'
+        '400':
+          description: Missing job ID
+        '404':
+          description: Studio job not found
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    StudioTaskOptions:
+      type: object
+      properties:
+        start:
+          type: number
+          format: double
+          description: Start time in seconds (for cut task)
+        end:
+          type: number
+          format: double
+          description: End time in seconds (for cut task)
+        file:
+          type: string
+          description: Path to uploaded file (for add-intro, add-outro, add-watermark)
+
+    StudioTask:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          enum:
+            - cut
+            - add-intro
+            - add-outro
+            - add-watermark
+          description: Type of editing operation
+        options:
+          $ref: '#/components/schemas/StudioTaskOptions'
+
+    StudioEditRequest:
+      type: object
+      required:
+        - tasks
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/StudioTask'
+          minItems: 1
+          description: Array of editing tasks to apply sequentially
+
+    StudioJob:
+      type: object
+      properties:
+        id:
+          type: string
+        videoId:
+          type: string
+        userId:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - processing
+            - completed
+            - failed
+        tasks:
+          type: string
+          description: JSON-encoded array of studio tasks
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        errorMessage:
+          type: string
+
+    StudioJobResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/StudioJob'
+
+    StudioJobListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/StudioJob'

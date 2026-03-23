@@ -1,0 +1,72 @@
+{{define "content"}}
+<h2 style="margin-bottom: 20px;">Storage Configuration</h2>
+
+<p style="margin-bottom: 20px; color: #6b7280;">
+    Configure where video files and uploads are stored.
+</p>
+
+<form id="wizardForm" action="/setup/storage" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
+    <div class="form-group">
+        <label for="storage_path">Local Storage Path</label>
+        <input type="text" id="storage_path" name="STORAGE_PATH"
+               value="{{or .Config.StoragePath "./data/storage"}}"
+               placeholder="./data/storage">
+        <div class="help-text">
+            Directory where uploaded videos and files will be stored
+        </div>
+    </div>
+
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">Backup Configuration</h3>
+
+    <div class="form-group">
+        <label>
+            <input type="checkbox" name="BACKUP_ENABLED" value="true" {{if .Config.BackupEnabled}}checked{{end}}>
+            Enable automated backups
+        </label>
+    </div>
+
+    <div id="backup-config" style="{{if not .Config.BackupEnabled}}display:none{{end}}">
+        <div class="form-group">
+            <label for="backup_target">Backup Target</label>
+            <select id="backup_target" name="BACKUP_TARGET">
+                <option value="local" {{if eq .Config.BackupTarget "local"}}selected{{end}}>Local Filesystem</option>
+                <option value="s3" {{if eq .Config.BackupTarget "s3"}}selected{{end}}>S3-Compatible Storage</option>
+                <option value="sftp" {{if eq .Config.BackupTarget "sftp"}}selected{{end}}>SFTP</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="backup_schedule">Backup Schedule</label>
+            <select id="backup_schedule" name="BACKUP_SCHEDULE">
+                <option value="0 2 * * *" {{if eq .Config.BackupSchedule "0 2 * * *"}}selected{{end}}>Daily at 2:00 AM</option>
+                <option value="0 3 * * 0" {{if eq .Config.BackupSchedule "0 3 * * 0"}}selected{{end}}>Weekly (Sunday 3:00 AM)</option>
+                <option value="0 4 1 * *" {{if eq .Config.BackupSchedule "0 4 1 * *"}}selected{{end}}>Monthly (1st at 4:00 AM)</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="backup_retention">Retention (days)</label>
+            <input type="number" id="backup_retention" name="BACKUP_RETENTION"
+                   value="{{or .Config.BackupRetention "7"}}"
+                   min="1" max="365">
+            <div class="help-text">
+                Number of backups to keep (older backups are automatically deleted)
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="backup_local_path">Local Backup Path</label>
+            <input type="text" id="backup_local_path" name="BACKUP_LOCAL_PATH"
+                   value="{{or .Config.BackupLocalPath "./backups"}}"
+                   placeholder="./backups">
+        </div>
+    </div>
+</form>
+
+<script>
+document.querySelector('input[name="BACKUP_ENABLED"]').addEventListener('change', function(e) {
+    document.getElementById('backup-config').style.display = e.target.checked ? 'block' : 'none';
+});
+</script>
+{{end}}

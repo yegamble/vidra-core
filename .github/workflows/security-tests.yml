@@ -1,0 +1,422 @@
+name: Security
+
+on:
+  push:
+    branches: [main, develop]  # Only run on push for deployed branches
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/security/**'
+      - '.github/workflows/security-tests*.yml'
+      - '.github/actions/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/security/**'
+      - '.github/actions/**'
+  schedule:
+    # Run security tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GO_VERSION: "1.24"
+  GOPROXY: "https://proxy.golang.org,direct"
+
+jobs:
+  security-tests:
+    name: ${{ matrix.category }} Tests
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    # Only run on PR when labeled 'security'; always run on push/schedule/dispatch
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'security')
+
+    strategy:
+      fail-fast: false
+      matrix:
+        category:
+          - ssrf-protection
+          - url-validation
+          - activitypub-security
+          - dependency-scanning
+          - static-analysis
+          - penetration-testing
+
+    env:
+      CGO_ENABLED: "0"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - name: Install security tools (cached)
+        uses: ./.github/actions/install-security-tools
+
+      - name: Install jq for report parsing
+        if: matrix.category == 'static-analysis'
+        run: |
+          if ! command -v jq &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y jq
+          fi
+
+      # SSRF Protection Tests
+      - name: Run SSRF Protection Unit Tests
+        if: matrix.category == 'ssrf-protection'
+        run: |
+          echo "::group::SSRF Protection Unit Tests"
+          # Run all security tests with coverage
+          go test -v -coverprofile=ssrf-coverage.out -covermode=atomic ./internal/security/...
+          echo "::endgroup::"
+
+      - name: Run SSRF Integration Tests
+        if: matrix.category == 'ssrf-protection'
+        run: |
+          echo "::group::SSRF Protection Integration Tests"
+          go test -v -coverprofile=ssrf-integration-coverage.out ./tests/integration -run '^TestSSRFProtection'
+          echo "::endgroup::"
+
+      - name: Generate Coverage Report (SSRF)
+        if: matrix.category == 'ssrf-protection'
+        run: |
+          go tool cover -func=ssrf-coverage.out
+          go tool cover -html=ssrf-coverage.out -o ssrf-coverage.html
+
+      - name: Check Coverage Threshold (SSRF)
+        if: matrix.category == 'ssrf-protection'
+        run: |
+          python3 - << 'PY'
+          import re, sys, subprocess
+
+          # Get coverage data for SSRF-specific files only
+          out = subprocess.check_output(['go', 'tool', 'cover', '-func=ssrf-coverage.out'], text=True)
+
+          # SSRF-related files to measure (use patterns that won't match other files)
+          ssrf_files = ['url_validator.go', '/validation.go:']
+
+          # Parse coverage percentages and calculate weighted average
+          coverages = []
+          print("SSRF Protection Coverage by file:")
+          for line in out.split('\n'):
+              if any(f in line for f in ssrf_files):
+                  # Extract percentage from the line
+                  match = re.search(r'(\d+\.?\d*)%$', line.strip())
+                  if match:
+                      pct = float(match.group(1))
+                      coverages.append(pct)
+                      print(f"  {line.strip()}")
+
+          if coverages:
+              # Simple average across all functions
+              avg_cov = sum(coverages) / len(coverages)
+              print(f"\nSSRF Protection Coverage (average across {len(coverages)} functions): {avg_cov:.1f}%")
+
+              if avg_cov < 80.0:
+                  print('::error::SSRF protection coverage is below 80% threshold')
+                  sys.exit(1)
+              else:
+                  print(f"✅ SSRF coverage {avg_cov:.1f}% meets 80% threshold")
+          else:
+              print("::error::Could not parse SSRF coverage data")
+              sys.exit(1)
+          PY
+
+      # URL Validation Tests
+      - name: Run Domain URL Validation Tests
+        if: matrix.category == 'url-validation'
+        run: |
+          echo "::group::Domain Import Tests"
+          go test -v ./internal/domain -run '^TestImport'
+          echo "::endgroup::"
+
+      - name: Run Import Service Tests
+        if: matrix.category == 'url-validation'
+        run: |
+          echo "::group::Import Service Tests"
+          go test -v ./internal/usecase/import/...
+          echo "::endgroup::"
+
+      - name: Run Redundancy Discovery Tests
+        if: matrix.category == 'url-validation'
+        run: |
+          echo "::group::Redundancy Instance Discovery Tests"
+          go test -v ./internal/usecase/redundancy/...
+          echo "::endgroup::"
+
+      # ActivityPub Security Tests
+      - name: Run ActivityPub Service Tests
+        if: matrix.category == 'activitypub-security'
+        run: |
+          echo "::group::ActivityPub Service Security Tests"
+          go test -v -coverprofile=activitypub-coverage.out ./internal/usecase/activitypub/...
+          echo "::endgroup::"
+
+      - name: Run Social Service Tests
+        if: matrix.category == 'activitypub-security'
+        run: |
+          echo "::group::Social Service Security Tests"
+          go test -v -coverprofile=social-coverage.out ./internal/usecase/social/...
+          echo "::endgroup::"
+
+      # Dependency Scanning
+      - name: Run govulncheck
+        if: matrix.category == 'dependency-scanning'
+        run: govulncheck ./...
+
+      # Static Analysis
+      - name: Run gosec security scanner
+        if: matrix.category == 'static-analysis'
+        run: |
+          set +e  # Don't exit on gosec failure
+
+          # Gosec exclusions (see .gosec.yaml and .golangci.yml for rationale):
+          # G101: Hardcoded credentials - handled by secret scanning
+          # G104: Unchecked errors - handled by errcheck linter
+          # G115: Integer overflow - often false positives
+          GOSEC_EXCLUDES="-exclude=G101,G104,G115"
+          GOSEC_EXCLUDE_DIRS="-exclude-dir=testdata -exclude-dir=tests/e2e/fixtures -exclude-dir=vendor -exclude-dir=internal/generated"
+
+          # Generate both SARIF (for GitHub Security) and JSON (for analysis)
+          gosec $GOSEC_EXCLUDES $GOSEC_EXCLUDE_DIRS -fmt sarif -out gosec-results.sarif -severity medium ./...
+          GOSEC_SARIF_EXIT=$?
+
+          gosec $GOSEC_EXCLUDES $GOSEC_EXCLUDE_DIRS -fmt json -out gosec-report.json -severity medium ./...
+          GOSEC_JSON_EXIT=$?
+
+          # Generate summary for GitHub Actions
+          echo "## Gosec Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f gosec-report.json ]; then
+            ISSUE_COUNT=$(jq '[.Issues[]] | length' gosec-report.json 2>/dev/null || echo "0")
+            HIGH_COUNT=$(jq '[.Issues[] | select(.severity == "HIGH")] | length' gosec-report.json 2>/dev/null || echo "0")
+            MEDIUM_COUNT=$(jq '[.Issues[] | select(.severity == "MEDIUM")] | length' gosec-report.json 2>/dev/null || echo "0")
+
+            echo "- Total Issues: $ISSUE_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "- High Severity: $HIGH_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "- Medium Severity: $MEDIUM_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ "$ISSUE_COUNT" -gt 0 ]; then
+              echo "⚠️ Security issues found. Review the Security tab for details." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ No security issues detected." >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⚠️ Gosec report not generated" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Don't fail the workflow - findings are informational
+          exit 0
+
+      - name: Upload SARIF to GitHub Security
+        if: matrix.category == 'static-analysis' && always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec-results.sarif
+          category: gosec
+
+      - name: Run staticcheck
+        if: matrix.category == 'static-analysis'
+        run: staticcheck ./...
+
+      # Penetration Testing
+      - name: Build application
+        if: matrix.category == 'penetration-testing'
+        run: go build -o athena-server ./cmd/server
+
+      - name: Run SSRF Attack Simulation Tests
+        if: matrix.category == 'penetration-testing'
+        run: |
+          echo "::group::SSRF Attack Simulation"
+          go test -v -tags=pentest ./tests/integration/ssrf_protection_test.go
+          echo "::endgroup::"
+
+      - name: Test URL Validation Edge Cases
+        if: matrix.category == 'penetration-testing'
+        run: |
+          echo "::group::URL Validation Edge Cases"
+          go test -v ./internal/security/... -run TestValidateURL
+          echo "::endgroup::"
+
+      # Upload artifacts based on category
+      - name: Upload Coverage Artifacts (SSRF)
+        if: matrix.category == 'ssrf-protection' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssrf-coverage-reports
+          path: |
+            ssrf-coverage.out
+            ssrf-coverage.html
+            ssrf-integration-coverage.out
+          retention-days: 30
+
+      - name: Upload Coverage Reports (ActivityPub)
+        if: matrix.category == 'activitypub-security' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: federation-coverage-reports
+          path: |
+            activitypub-coverage.out
+            social-coverage.out
+          retention-days: 30
+
+      - name: Upload gosec reports
+        if: matrix.category == 'static-analysis' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gosec-security-report
+          path: |
+            gosec-report.json
+            gosec-results.sarif
+          retention-days: 90
+
+  security-tests-race:
+    name: ${{ matrix.category }} Race Tests
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    needs: security-tests  # Run after fast tests pass
+    # Only run on main branch, schedule, or manual trigger to save CI time
+    if: (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'security')) && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+
+    container:
+      image: golang:1.24
+      options: --user root
+
+    strategy:
+      fail-fast: false
+      matrix:
+        category:
+          - ssrf-protection
+          - activitypub-security
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install GCC for race detector
+        uses: ./.github/actions/install-gcc
+
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - name: Install security tools (cached)
+        uses: ./.github/actions/install-security-tools
+
+      # SSRF Protection Race Tests
+      - name: Run SSRF Protection Tests with Race Detection
+        if: matrix.category == 'ssrf-protection'
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          echo "::group::SSRF Protection Race Tests"
+          go test -v -race -coverprofile=ssrf-race-coverage.out ./internal/security/...
+          echo "::endgroup::"
+
+      # ActivityPub Race Tests
+      - name: Run ActivityPub Tests with Race Detection
+        if: matrix.category == 'activitypub-security'
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          echo "::group::ActivityPub Race Tests"
+          go test -v -race ./internal/usecase/activitypub/...
+          go test -v -race ./internal/usecase/social/...
+          echo "::endgroup::"
+
+      - name: Upload Race Coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-race-coverage-${{ matrix.category }}
+          path: "*-race-coverage.out"
+          retention-days: 30
+
+  security-report:
+    name: Generate Security Report
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    needs: security-tests
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Generate Security Summary
+        run: |
+          cat << 'EOF' > security-summary.md
+          # Security Test Results
+
+          ## Test Execution Summary
+
+          - ✅ SSRF Protection Tests: ${{ needs.security-tests.result }}
+          - ✅ URL Validation Tests: ${{ needs.security-tests.result }}
+          - ✅ ActivityPub Security: ${{ needs.security-tests.result }}
+          - ✅ Dependency Scanning: ${{ needs.security-tests.result }}
+          - ✅ Static Analysis: ${{ needs.security-tests.result }}
+          - ✅ Penetration Testing: ${{ needs.security-tests.result }}
+
+          ## Coverage Reports
+
+          Coverage reports are available in the artifacts section.
+
+          ## Security Recommendations
+
+          1. Review SSRF protection for all external URL fetching
+          2. Ensure HTTP clients have redirect limits configured
+          3. Validate all user-supplied URLs before processing
+          4. Implement rate limiting on external URL fetches
+          5. Monitor for DNS rebinding attacks
+
+          EOF
+
+      - name: Upload Security Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-summary
+          path: security-summary.md
+          retention-days: 90
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('security-summary.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

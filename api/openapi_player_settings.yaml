@@ -1,0 +1,165 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Player Settings
+  description: |
+    Endpoints for managing per-video and per-channel player settings.
+
+    ## Settings Scope
+
+    - Video-level: applies to a specific video
+    - Channel-level: applies to all videos in a channel
+
+    Video-level settings override channel-level settings.
+  version: 1.0.0
+
+paths:
+  /api/v1/player-settings/videos/{videoId}:
+    get:
+      summary: Get player settings for a video
+      operationId: getVideoPlayerSettings
+      tags: [Player Settings]
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Player settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlayerSettingsResponse'
+        '404':
+          description: Settings not found
+    put:
+      summary: Update player settings for a video
+      operationId: updateVideoPlayerSettings
+      tags: [Player Settings]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlayerSettingsInput'
+      responses:
+        '200':
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlayerSettingsResponse'
+
+  /api/v1/player-settings/video-channels/{handle}:
+    get:
+      summary: Get player settings for a channel
+      operationId: getChannelPlayerSettings
+      tags: [Player Settings]
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Player settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlayerSettingsResponse'
+        '404':
+          description: Settings not found
+    put:
+      summary: Update player settings for a channel
+      operationId: updateChannelPlayerSettings
+      tags: [Player Settings]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlayerSettingsInput'
+      responses:
+        '200':
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlayerSettingsResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    PlayerSettings:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        videoId:
+          type: string
+          nullable: true
+        channelHandle:
+          type: string
+          nullable: true
+        autoplay:
+          type: boolean
+        loop:
+          type: boolean
+        defaultQuality:
+          type: string
+        defaultSpeed:
+          type: number
+          format: double
+        subtitlesEnabled:
+          type: boolean
+        theatre:
+          type: boolean
+
+    PlayerSettingsInput:
+      type: object
+      properties:
+        autoplay:
+          type: boolean
+        loop:
+          type: boolean
+        defaultQuality:
+          type: string
+        defaultSpeed:
+          type: number
+          format: double
+        subtitlesEnabled:
+          type: boolean
+        theatre:
+          type: boolean
+
+    PlayerSettingsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/PlayerSettings'

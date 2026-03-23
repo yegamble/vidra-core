@@ -1,0 +1,125 @@
+{{define "content"}}
+<h2 style="margin-bottom: 20px;">Networking Configuration</h2>
+
+<p style="margin-bottom: 20px; color: #6b7280;">
+    Configure how the application is accessed over the network. You can change these settings later in your .env file.
+</p>
+
+<form id="wizardForm" action="/setup/networking" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
+    <!-- Domain/Hostname -->
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">Domain/Hostname</h3>
+    <div class="form-group">
+        <label for="nginx_domain">Domain or IP Address</label>
+        <input type="text" id="nginx_domain" name="NGINX_DOMAIN"
+               value="{{or .Config.NginxDomain "localhost"}}"
+               placeholder="localhost">
+        <div class="help-text">
+            Use "localhost" for local development, or your server's domain/IP for production.
+        </div>
+    </div>
+
+    <!-- Port -->
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">Port</h3>
+    <div class="form-group">
+        <label for="nginx_port">Port Number</label>
+        <input type="number" id="nginx_port" name="NGINX_PORT"
+               value="{{if .Config.NginxPort}}{{.Config.NginxPort}}{{else}}80{{end}}"
+               min="1" max="65535">
+        <div class="help-text">
+            Standard: 80 for HTTP, 443 for HTTPS. Use 8080+ for non-privileged ports.
+        </div>
+    </div>
+
+    <!-- Protocol -->
+    <h3 style="margin-top: 30px; margin-bottom: 15px;">Protocol</h3>
+    <div class="form-group">
+        <div class="toggle-group" data-service="protocol">
+            <div class="toggle-btn {{if or (eq .Config.NginxProtocol "http") (not .Config.NginxProtocol)}}active{{end}}" data-mode="http">
+                <strong>HTTP</strong>
+                <div style="font-size: 12px; margin-top: 5px;">For development or behind an existing reverse proxy</div>
+            </div>
+            <div class="toggle-btn {{if eq .Config.NginxProtocol "https"}}active{{end}}" data-mode="https">
+                <strong>HTTPS</strong>
+                <div style="font-size: 12px; margin-top: 5px;">Encrypted connections with TLS/SSL</div>
+            </div>
+        </div>
+        <input type="hidden" name="NGINX_PROTOCOL" value="{{or .Config.NginxProtocol "http"}}">
+    </div>
+
+    <!-- TLS Mode (shown only when HTTPS) -->
+    <div id="tls-config" style="{{if ne .Config.NginxProtocol "https"}}display:none{{end}}">
+        <h3 style="margin-top: 30px; margin-bottom: 15px;">TLS/SSL Certificate Source</h3>
+        <div class="form-group">
+            <div class="toggle-group" data-service="tls">
+                <div class="toggle-btn {{if or (eq .Config.NginxTLSMode "self-signed") (not .Config.NginxTLSMode)}}active{{end}}" data-mode="self-signed">
+                    <strong>Self-Signed</strong>
+                    <div style="font-size: 12px; margin-top: 5px;">Quick TLS for internal/dev use. Browsers will show a warning.</div>
+                </div>
+                <div class="toggle-btn {{if eq .Config.NginxTLSMode "letsencrypt"}}active{{end}}" data-mode="letsencrypt">
+                    <strong>Let's Encrypt</strong>
+                    <div style="font-size: 12px; margin-top: 5px;">Free, trusted certificates. Requires a real domain pointing to this server.</div>
+                </div>
+            </div>
+            <input type="hidden" name="NGINX_TLS_MODE" value="{{or .Config.NginxTLSMode "self-signed"}}">
+        </div>
+
+        <!-- Let's Encrypt Email (shown only when Let's Encrypt) -->
+        <div id="letsencrypt-config" style="{{if ne .Config.NginxTLSMode "letsencrypt"}}display:none{{end}}">
+            <div class="form-group">
+                <label for="letsencrypt_email">Email Address for Let's Encrypt</label>
+                <input type="email" id="letsencrypt_email" name="NGINX_LETSENCRYPT_EMAIL"
+                       value="{{.Config.NginxEmail}}"
+                       placeholder="admin@example.com">
+                <div class="help-text">
+                    Used for certificate expiry notifications and account recovery.
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+<script>
+// Protocol toggle (HTTP/HTTPS)
+const protocolToggles = document.querySelectorAll('[data-service="protocol"] .toggle-btn');
+const protocolInput = document.querySelector('input[name="NGINX_PROTOCOL"]');
+const tlsConfig = document.getElementById('tls-config');
+const portInput = document.getElementById('nginx_port');
+
+protocolToggles.forEach(btn => {
+    btn.addEventListener('click', function() {
+        const mode = this.dataset.mode;
+        protocolToggles.forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        protocolInput.value = mode;
+
+        // Show/hide TLS config
+        tlsConfig.style.display = mode === 'https' ? 'block' : 'none';
+
+        // Auto-update port
+        if (mode === 'http' && portInput.value === '443') {
+            portInput.value = '80';
+        } else if (mode === 'https' && portInput.value === '80') {
+            portInput.value = '443';
+        }
+    });
+});
+
+// TLS mode toggle (Self-Signed/Let's Encrypt)
+const tlsToggles = document.querySelectorAll('[data-service="tls"] .toggle-btn');
+const tlsInput = document.querySelector('input[name="NGINX_TLS_MODE"]');
+const letsencryptConfig = document.getElementById('letsencrypt-config');
+
+tlsToggles.forEach(btn => {
+    btn.addEventListener('click', function() {
+        const mode = this.dataset.mode;
+        tlsToggles.forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        tlsInput.value = mode;
+
+        // Show/hide Let's Encrypt email field
+        letsencryptConfig.style.display = mode === 'letsencrypt' ? 'block' : 'none';
+    });
+});
+</script>
+{{end}}

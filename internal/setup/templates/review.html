@@ -1,0 +1,98 @@
+{{define "content"}}
+<h2 style="margin-bottom: 20px;">Review Configuration</h2>
+
+<p style="margin-bottom: 20px; color: #6b7280;">
+    Review your configuration before completing setup. You can edit any section by clicking the Edit link.
+</p>
+
+<div class="alert alert-success">
+    All settings validated successfully!
+</div>
+
+<div style="border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 20px;">
+    <div style="padding: 20px; border-bottom: 1px solid #e5e7eb;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0;">Database</h3>
+            <a href="/setup/database" style="color: #667eea; text-decoration: none; font-size: 14px;">Edit</a>
+        </div>
+        <div style="margin-top: 10px; color: #6b7280; font-size: 14px;">
+            <p><strong>Mode:</strong> {{.Config.PostgresMode}}</p>
+            {{if eq .Config.PostgresMode "external"}}
+            <p><strong>Host:</strong> {{.Config.PostgresHost}}</p>
+            <p><strong>Port:</strong> {{.Config.PostgresPort}}</p>
+            <p><strong>User:</strong> {{.Config.PostgresUser}}</p>
+            <p><strong>Password:</strong> ••••••••••••••••</p>
+            <p><strong>Database:</strong> {{.Config.PostgresDB}}</p>
+            <p><strong>SSL Mode:</strong> {{.Config.PostgresSSLMode}}</p>
+            {{end}}
+        </div>
+    </div>
+
+    <div style="padding: 20px; border-bottom: 1px solid #e5e7eb;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0;">Services</h3>
+            <a href="/setup/services" style="color: #667eea; text-decoration: none; font-size: 14px;">Edit</a>
+        </div>
+        <div style="margin-top: 10px; color: #6b7280; font-size: 14px;">
+            <p><strong>Redis:</strong> {{.Config.RedisMode}}</p>
+            <p><strong>IPFS:</strong> {{if .Config.EnableIPFS}}Enabled ({{.Config.IPFSMode}}){{else}}Disabled{{end}}</p>
+            <p><strong>ClamAV:</strong> {{if .Config.EnableClamAV}}Enabled{{else}}Disabled{{end}}</p>
+            <p><strong>Whisper:</strong> {{if .Config.EnableWhisper}}Enabled{{else}}Disabled{{end}}</p>
+            <p><strong>IOTA Payments:</strong> {{if .Config.EnableIOTA}}Enabled ({{.Config.IOTAMode}}, {{.Config.IOTANetwork}}){{else}}Disabled{{end}}</p>
+            {{if .Config.EnableIOTA}}
+            {{if eq .Config.IOTAMode "external"}}
+            <p><strong>IOTA Node URL:</strong> {{.Config.IOTANodeURL}}</p>
+            {{end}}
+            <p><strong>IOTA Wallet Encryption Key:</strong> <em>(auto-generated, will be written to .env)</em></p>
+            {{end}}
+        </div>
+    </div>
+
+    <div style="padding: 20px; border-bottom: 1px solid #e5e7eb;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0;">Storage</h3>
+            <a href="/setup/storage" style="color: #667eea; text-decoration: none; font-size: 14px;">Edit</a>
+        </div>
+        <div style="margin-top: 10px; color: #6b7280; font-size: 14px;">
+            <p><strong>Storage Path:</strong> {{.Config.StoragePath}}</p>
+            <p><strong>Backups:</strong> {{if .Config.BackupEnabled}}Enabled ({{.Config.BackupTarget}}){{else}}Disabled{{end}}</p>
+            {{if .Config.BackupEnabled}}
+            <p><strong>Schedule:</strong> {{.Config.BackupSchedule}}</p>
+            <p><strong>Retention:</strong> {{.Config.BackupRetention}} days</p>
+            {{end}}
+        </div>
+    </div>
+
+    <div style="padding: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0;">Security</h3>
+            <a href="/setup/security" style="color: #667eea; text-decoration: none; font-size: 14px;">Edit</a>
+        </div>
+        <div style="margin-top: 10px; color: #6b7280; font-size: 14px;">
+            <p><strong>JWT Secret:</strong> ••••••••••••••••••••••••••••••••</p>
+            <p><strong>Admin User:</strong> {{.Config.AdminUsername}}</p>
+            <p><strong>Admin Email:</strong> {{.Config.AdminEmail}}</p>
+        </div>
+    </div>
+</div>
+
+<form id="wizardForm" action="/setup/review" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{.CSRFToken}}">
+    <div class="alert alert-info">
+        <strong>What happens next:</strong>
+        <ul style="margin-top: 10px; margin-left: 20px; line-height: 1.8;">
+            <li>Configuration will be written to .env file</li>
+            <li>Administrator account will be created</li>
+            <li>Database migrations will be applied</li>
+            <li>Server will restart automatically</li>
+        </ul>
+    </div>
+
+    <div class="form-group">
+        <label>
+            <input type="checkbox" name="confirm" value="true" required>
+            I confirm the configuration is correct and ready to proceed
+        </label>
+    </div>
+</form>
+{{end}}

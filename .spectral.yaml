@@ -1,0 +1,96 @@
+# Spectral OpenAPI Linting Rules for Athena
+# https://stoplight.io/open-source/spectral
+
+extends:
+  - spectral:oas
+
+rules:
+  # Ensure all paths are kebab-case
+  path-keys-no-trailing-slash: true
+
+  # Require operation IDs
+  operation-operationId: error
+
+  # Require descriptions
+  operation-description: warn
+  info-description: error
+
+  # Tag rules
+  operation-tags: warn
+  openapi-tags: warn
+
+  # Security rules
+  oas3-api-servers: warn
+
+  # Custom rules for Athena
+  athena-response-wrapper:
+    description: Responses should use SuccessResponse or ErrorResponse wrapper
+    severity: warn
+    given: $.paths[*][*].responses[*].content.application/json.schema
+    then:
+      - field: $ref
+        function: pattern
+        functionOptions:
+          match: '.*(SuccessResponse|ErrorResponse|Error).*'
+
+  athena-api-v1-prefix:
+    description: Most API paths should start with /api/v1
+    severity: warn
+    given: $.paths[*]~
+    then:
+      function: pattern
+      functionOptions:
+        notMatch: '^/(health|ready|oauth|auth|\.well-known|oembed|inbox|users|nodeinfo).*'
+        match: '^/api/v1/.*'
+
+  athena-bearer-auth:
+    description: OpenAPI file should define bearerAuth security scheme
+    severity: error
+    given: $.components.securitySchemes
+    then:
+      field: bearerAuth
+      function: truthy
+
+  athena-pagination-params:
+    description: List endpoints should have pagination parameters
+    severity: warn
+    given: $.paths[*].get
+    then:
+      - field: parameters
+        function: schema
+        functionOptions:
+          schema:
+            type: array
+            contains:
+              anyOf:
+                - properties:
+                    name:
+                      const: limit
+                - properties:
+                    name:
+                      const: offset
+                - properties:
+                    name:
+                      const: page
+
+  athena-error-responses:
+    description: Operations should define error responses
+    severity: warn
+    given: $.paths[*][*].responses
+    then:
+      - field: '4xx'
+        function: truthy
+      - field: '5xx'
+        function: truthy
+
+  athena-success-response-schema:
+    description: Success responses should have a schema
+    severity: error
+    given: $.paths[*][*].responses.2*.content.application/json
+    then:
+      field: schema
+      function: truthy
+
+  # Disable some overly strict rules
+  oas3-unused-component: warn
+  operation-tag-defined: warn

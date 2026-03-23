@@ -1,0 +1,65 @@
+name: 'Wait for Service Health'
+description: 'Waits for a service to become healthy with retry and restart capability'
+
+inputs:
+  service_type:
+    description: 'Type of service: http, docker, tcp'
+    required: true
+  check_command:
+    description: 'Command to check service health'
+    required: true
+  timeout:
+    description: 'Timeout in seconds'
+    required: false
+    default: '180'
+  docker_container:
+    description: 'Docker container ID or name to restart on failure (optional)'
+    required: false
+  max_restarts:
+    description: 'Maximum number of container restarts'
+    required: false
+    default: '3'
+  service_name:
+    description: 'Human-readable service name'
+    required: false
+    default: 'Service'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Wait for service
+      shell: bash
+      run: |
+        timeout=${{ inputs.timeout }}
+        elapsed=0
+        retry_count=0
+        max_retries=${{ inputs.max_restarts }}
+
+        echo "Waiting for ${{ inputs.service_name }} to be ready..."
+
+        while true; do
+          if ${{ inputs.check_command }}; then
+            echo "${{ inputs.service_name }} is ready!"
+            exit 0
+          fi
+
+          if [ $elapsed -ge $timeout ]; then
+            if [ -n "${{ inputs.docker_container }}" ] && [ $retry_count -lt $max_retries ]; then
+              retry_count=$((retry_count + 1))
+              echo "${{ inputs.service_name }} timeout, retry $retry_count/$max_retries - restarting container..."
+              docker restart ${{ inputs.docker_container }}
+              elapsed=0
+              sleep 30
+            else
+              echo "${{ inputs.service_name }} failed to start"
+              if [ -n "${{ inputs.docker_container }}" ]; then
+                docker logs ${{ inputs.docker_container }} || echo "Unable to retrieve logs"
+              fi
+              exit 1
+            fi
+          fi
+
+          echo "Waiting... ($elapsed/$timeout seconds)"
+          sleep 10
+          elapsed=$((elapsed + 10))
+        done

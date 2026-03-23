@@ -1,0 +1,13 @@
+package domain
+
+// VideoStoryboard describes a sprite-sheet storyboard generated for a video.
+type VideoStoryboard struct {
+	ID             int64   `json:"id" db:"id"`
+	VideoID        string  `json:"videoId" db:"video_id"`
+	Filename       string  `json:"filename" db:"filename"`
+	TotalHeight    int     `json:"totalHeight" db:"total_height"`
+	TotalWidth     int     `json:"totalWidth" db:"total_width"`
+	SpriteHeight   int     `json:"spriteHeight" db:"sprite_height"`
+	SpriteWidth    int     `json:"spriteWidth" db:"sprite_width"`
+	SpriteDuration float64 `json:"spriteDuration" db:"sprite_duration"`
+}

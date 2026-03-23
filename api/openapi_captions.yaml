@@ -1,0 +1,537 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Video Captions
+  description: Endpoints for managing video captions and subtitles
+  version: 1.0.0
+
+tags:
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  /api/v1/videos/{id}/captions:
+    get:
+      tags:
+        - Captions
+        - PeerTube-Compat
+      summary: Get all captions for a video
+      description: Retrieve all caption tracks available for a specific video
+      operationId: getCaptions
+      parameters:
+        - name: id
+          in: path
+          description: Video UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of captions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptionListResponse'
+              examples:
+                with_captions:
+                  summary: Video with multiple caption tracks
+                  value:
+                    captions:
+                      - id: "550e8400-e29b-41d4-a716-446655440000"
+                        video_id: "660e8400-e29b-41d4-a716-446655440001"
+                        language_code: "en"
+                        label: "English"
+                        file_format: "vtt"
+                        file_size_bytes: 12543
+                        is_auto_generated: false
+                        ipfs_cid: "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
+                        url: "/api/v1/videos/660e8400-e29b-41d4-a716-446655440001/captions/550e8400-e29b-41d4-a716-446655440000/content"
+                        created_at: "2024-01-15T10:30:00Z"
+                        updated_at: "2024-01-15T10:30:00Z"
+                      - id: "550e8400-e29b-41d4-a716-446655440002"
+                        video_id: "660e8400-e29b-41d4-a716-446655440001"
+                        language_code: "es"
+                        label: "Español"
+                        file_format: "srt"
+                        file_size_bytes: 13120
+                        is_auto_generated: true
+                        url: "/api/v1/videos/660e8400-e29b-41d4-a716-446655440001/captions/550e8400-e29b-41d4-a716-446655440002/content"
+                        created_at: "2024-01-15T11:00:00Z"
+                        updated_at: "2024-01-15T11:00:00Z"
+                    count: 2
+        '400':
+          description: Invalid video ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Video is private and user doesn't have access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {}  # Public endpoint for public videos
+        - bearerAuth: []  # Required for private videos
+
+    post:
+      tags:
+        - Captions
+        - PeerTube-Compat
+      summary: Upload a caption file for a video
+      description: Upload a new caption/subtitle track (VTT or SRT format) for a video. Only video owner can upload captions.
+      operationId: createCaption
+      parameters:
+        - name: id
+          in: path
+          description: Video UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - language_code
+                - label
+                - caption_file
+              properties:
+                language_code:
+                  type: string
+                  description: ISO 639-1 language code (e.g., 'en', 'es', 'en-US')
+                  minLength: 2
+                  maxLength: 10
+                  example: "en"
+                label:
+                  type: string
+                  description: Human-readable label for the caption track
+                  minLength: 1
+                  maxLength: 100
+                  example: "English"
+                file_format:
+                  type: string
+                  enum: [vtt, srt]
+                  description: Caption file format (auto-detected from filename if omitted)
+                  example: "vtt"
+                is_auto_generated:
+                  type: boolean
+                  description: Whether this caption was automatically generated
+                  default: false
+                caption_file:
+                  type: string
+                  format: binary
+                  description: Caption file (WebVTT or SubRip format, max 10MB)
+            encoding:
+              caption_file:
+                contentType: text/vtt, application/x-subrip
+      responses:
+        '201':
+          description: Caption uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Caption'
+              examples:
+                caption_created:
+                  summary: Successfully created caption
+                  value:
+                    id: "550e8400-e29b-41d4-a716-446655440000"
+                    video_id: "660e8400-e29b-41d4-a716-446655440001"
+                    language_code: "en"
+                    label: "English"
+                    file_format: "vtt"
+                    file_size_bytes: 12543
+                    is_auto_generated: false
+                    ipfs_cid: "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
+                    url: "/api/v1/videos/660e8400-e29b-41d4-a716-446655440001/captions/550e8400-e29b-41d4-a716-446655440000/content"
+                    created_at: "2024-01-15T10:30:00Z"
+                    updated_at: "2024-01-15T10:30:00Z"
+        '400':
+          description: Invalid request (missing fields, invalid format, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missing_fields:
+                  summary: Missing required fields
+                  value:
+                    error:
+                      code: "MISSING_FIELDS"
+                      message: "language_code and label are required"
+                      details: {}
+                unsupported_format:
+                  summary: Unsupported file format
+                  value:
+                    error:
+                      code: "INVALID_FORMAT"
+                      message: "unsupported file format, must be vtt or srt"
+                      details: {}
+        '401':
+          description: Unauthorized - authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - user doesn't own the video
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/videos/{id}/captions/{captionId}/content:
+    get:
+      tags:
+        - Captions
+        - PeerTube-Compat
+      summary: Download caption file content
+      description: Download the actual caption/subtitle file content (VTT or SRT format)
+      operationId: getCaptionContent
+      parameters:
+        - name: id
+          in: path
+          description: Video UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: captionId
+          in: path
+          description: Caption UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Caption file content
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: "public, max-age=3600"
+              description: Cache headers for performance
+          content:
+            text/vtt:
+              schema:
+                type: string
+                format: binary
+              example: |
+                WEBVTT
+
+                00:00:00.000 --> 00:00:02.500
+                Welcome to this video
+
+                00:00:02.500 --> 00:00:05.000
+                This is a sample caption
+            application/x-subrip:
+              schema:
+                type: string
+                format: binary
+              example: |
+                1
+                00:00:00,000 --> 00:00:02,500
+                Welcome to this video
+
+                2
+                00:00:02,500 --> 00:00:05,000
+                This is a sample caption
+        '400':
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Video is private and user doesn't have access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Caption or video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {}  # Public for public videos
+        - bearerAuth: []  # Required for private videos
+
+  /api/v1/videos/{id}/captions/{captionId}:
+    put:
+      tags:
+        - Captions
+        - PeerTube-Compat
+      summary: Update caption metadata
+      description: Update the label or language code of an existing caption. Only video owner can update.
+      operationId: captions_updateCaption
+      parameters:
+        - name: id
+          in: path
+          description: Video UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: captionId
+          in: path
+          description: Caption UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCaptionRequest'
+            examples:
+              update_label:
+                summary: Update caption label
+                value:
+                  label: "English (US)"
+              update_language:
+                summary: Update language code
+                value:
+                  language_code: "en-US"
+              update_both:
+                summary: Update both fields
+                value:
+                  label: "English (United States)"
+                  language_code: "en-US"
+      responses:
+        '200':
+          description: Caption updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Caption'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - user doesn't own the video
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Caption or video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+    delete:
+      tags:
+        - Captions
+        - PeerTube-Compat
+      summary: Delete a caption
+      description: Delete a caption track from a video. Only video owner can delete.
+      operationId: captions_deleteCaption
+      parameters:
+        - name: id
+          in: path
+          description: Video UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: captionId
+          in: path
+          description: Caption UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Caption deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "deleted"
+        '400':
+          description: Invalid ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - user doesn't own the video
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Caption or video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+components:
+  schemas:
+    Caption:
+      type: object
+      required:
+        - id
+        - video_id
+        - language_code
+        - label
+        - file_format
+        - is_auto_generated
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique caption identifier
+        video_id:
+          type: string
+          format: uuid
+          description: Video this caption belongs to
+        language_code:
+          type: string
+          minLength: 2
+          maxLength: 10
+          description: ISO 639-1 language code
+          example: "en"
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Human-readable caption label
+          example: "English"
+        file_format:
+          type: string
+          enum: [vtt, srt]
+          description: Caption file format
+        file_size_bytes:
+          type: integer
+          format: int64
+          description: File size in bytes
+          example: 12543
+        is_auto_generated:
+          type: boolean
+          description: Whether this caption was automatically generated
+          example: false
+        ipfs_cid:
+          type: string
+          description: IPFS Content Identifier if stored on IPFS
+          example: "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
+        url:
+          type: string
+          description: URL to download caption content
+          example: "/api/v1/videos/{videoId}/captions/{captionId}/content"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CaptionListResponse:
+      type: object
+      required:
+        - captions
+        - count
+      properties:
+        captions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Caption'
+        count:
+          type: integer
+          description: Total number of captions
+          example: 2
+
+    UpdateCaptionRequest:
+      type: object
+      minProperties: 1
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Updated caption label
+          example: "English (US)"
+        language_code:
+          type: string
+          minLength: 2
+          maxLength: 10
+          description: Updated language code
+          example: "en-US"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: "NOT_FOUND"
+            message:
+              type: string
+              example: "Caption not found"
+            details:
+              type: object
+              additionalProperties: true
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

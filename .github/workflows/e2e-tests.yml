@@ -1,0 +1,230 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  schedule:
+    # Run E2E tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual triggering
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: heavy-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    # Run on PRs, schedule and manual dispatch
+
+    # Note: Docker Compose is used instead of GH services for better control
+    # Services are defined in tests/e2e/docker-compose.yml
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Docker cleanup
+        uses: ./.github/actions/docker-cleanup
+
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: '1.24'
+          cache-dependency-path: go.sum
+
+      - name: Generate test fixtures (optional)
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            cd tests/e2e
+            make fixtures
+          else
+            echo "ffmpeg not installed; skipping fixtures"
+          fi
+
+      - name: Cleanup previous test environment
+        run: |
+          echo "Cleaning up previous test environments..."
+
+          # Clean up any E2E containers from previous runs (with any run ID)
+          docker ps -a --format '{{.Names}}' | grep -E 'athena-e2e-[0-9]+-' | xargs -r docker rm -f 2>/dev/null || true
+
+          # Clean up any E2E networks from previous runs
+          docker network ls --format '{{.Name}}' | grep -E 'athena-e2e-[0-9]+_' | xargs -r docker network rm 2>/dev/null || true
+
+          # Clean up E2E test environment (current directory)
+          docker compose -f tests/e2e/docker-compose.yml down -v 2>/dev/null || true
+
+          # Clean up any other test environments that may use conflicting ports
+          docker compose --profile test down -v 2>/dev/null || true
+
+          # Force cleanup any containers using our ports
+          docker stop $(docker ps -q --filter "publish=5433" --filter "publish=6380" --filter "publish=18080" --filter "publish=3311") 2>/dev/null || true
+          docker rm $(docker ps -aq --filter "publish=5433" --filter "publish=6380" --filter "publish=18080" --filter "publish=3311") 2>/dev/null || true
+
+          echo "Cleanup complete"
+
+      - name: Start test environment
+        run: |
+          echo "Starting E2E test environment..."
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml up -d --wait
+
+      - name: Verify database schema
+        run: |
+          echo "Verifying database schema is initialized..."
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e psql -U athena_test -d athena_e2e -c "\dt" | grep -q "users" || {
+            echo "❌ Database schema not initialized - 'users' table not found"
+            echo "Database tables:"
+            COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e psql -U athena_test -d athena_e2e -c "\dt"
+            exit 1
+          }
+          echo "✓ Database schema verified"
+
+      - name: Check service health
+        run: |
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml ps
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml logs --tail=50
+
+      - name: Run E2E tests
+        env:
+          E2E_BASE_URL: http://localhost:18080
+          E2E_TIMEOUT: 30m
+          E2E_TEST_VIDEO_PATH: ${{ github.workspace }}/postman/test-files/videos/test-video.mp4
+        run: |
+          go test -v -timeout 30m -count=1 ./tests/e2e/scenarios/... 2>&1 | tee tests/e2e/e2e_test_output.log
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: tests/e2e/e2e_test_output.log
+          retention-days: 7
+
+      - name: Collect service logs on failure
+        if: failure()
+        run: |
+          echo "=== API Logs ==="
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml logs athena-api-e2e
+          echo "=== PostgreSQL Logs ==="
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml logs postgres-e2e
+          echo "=== Redis Logs ==="
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml logs redis-e2e
+          echo "=== MinIO Logs ==="
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml logs minio-e2e
+          echo "=== ClamAV Logs ==="
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml logs clamav-e2e
+
+      - name: Upload service logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-logs
+          path: |
+            tests/e2e/e2e_test_output.log
+          retention-days: 7
+
+      - name: Cleanup test environment
+        if: always()
+        run: |
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml down -v
+
+      - name: Report test summary
+        if: always()
+        run: |
+          if [ -f tests/e2e/e2e_test_output.log ]; then
+            echo "### E2E Test Summary" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            grep -E "(PASS|FAIL|ok|FAIL)" tests/e2e/e2e_test_output.log | tail -20 >> $GITHUB_STEP_SUMMARY || echo "No test results found" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Optional: Run E2E tests with race detector (slower but catches concurrency issues)
+  e2e-tests-race:
+    name: E2E Tests (Race Detection)
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    # Only run on main branch or manual trigger to save CI time
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    # Run after main E2E tests to avoid port conflicts
+    needs: e2e-tests
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install GCC for race detector
+        uses: ./.github/actions/install-gcc
+
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
+        with:
+          go-version: '1.24'
+          cache-dependency-path: go.sum
+
+      - name: Generate test fixtures (optional)
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            cd tests/e2e
+            make fixtures
+          else
+            echo "ffmpeg not installed; skipping fixtures"
+          fi
+
+      - name: Cleanup previous test environment
+        run: |
+          echo "Cleaning up previous test environments..."
+
+          # Clean up any E2E containers from previous runs (with any run ID)
+          docker ps -a --format '{{.Names}}' | grep -E 'athena-e2e-[0-9]+-' | xargs -r docker rm -f 2>/dev/null || true
+
+          # Clean up any E2E networks from previous runs
+          docker network ls --format '{{.Name}}' | grep -E 'athena-e2e-[0-9]+_' | xargs -r docker network rm 2>/dev/null || true
+
+          # Clean up E2E test environment (current directory)
+          docker compose -f tests/e2e/docker-compose.yml down -v 2>/dev/null || true
+
+          # Clean up any other test environments that may use conflicting ports
+          docker compose --profile test down -v 2>/dev/null || true
+
+          # Force cleanup any containers using our ports
+          docker stop $(docker ps -q --filter "publish=5433" --filter "publish=6380" --filter "publish=18080" --filter "publish=3311") 2>/dev/null || true
+          docker rm $(docker ps -aq --filter "publish=5433" --filter "publish=6380" --filter "publish=18080" --filter "publish=3311") 2>/dev/null || true
+
+          echo "Cleanup complete"
+
+      - name: Start test environment
+        run: |
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-race docker compose -f tests/e2e/docker-compose.yml up -d --wait
+
+      - name: Run E2E tests with race detector
+        env:
+          CGO_ENABLED: "1"
+          E2E_BASE_URL: http://localhost:18080
+          E2E_TIMEOUT: 45m
+          E2E_TEST_VIDEO_PATH: ${{ github.workspace }}/postman/test-files/videos/test-video.mp4
+        run: |
+          go test -v -race -timeout 45m -count=1 ./tests/e2e/scenarios/...
+
+      - name: Cleanup
+        if: always()
+        run: |
+          COMPOSE_PROJECT_NAME=athena-e2e-${{ github.run_id }}-race docker compose -f tests/e2e/docker-compose.yml down -v

@@ -1,0 +1,410 @@
+name: 'Setup Go with Optimal Caching'
+description: 'Sets up Go with module and build caching optimized for self-hosted runners. Supports configurable GOPROXY fallback for environments with restricted network access.'
+
+inputs:
+  go-version:
+    description: 'Go version to use'
+    required: false
+    default: '1.24'
+  cache-dependency-path:
+    description: 'Path to go.sum for cache key'
+    required: false
+    default: 'go.sum'
+  goproxy-fallback:
+    description: 'Fallback GOPROXY to use if not already set (empty to skip)'
+    required: false
+    default: 'https://goproxy.io,direct'
+
+runs:
+  using: 'composite'
+  steps:
+    # Detect runtime environment and ensure HOME is set BEFORE actions/setup-go runs
+    # This is critical for self-hosted runners where HOME may not be set
+    - name: Detect runtime environment and ensure HOME
+      id: detect-env
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Check if running in container
+        if [ -f /.dockerenv ] || grep -q 'docker\|lxc' /proc/1/cgroup 2>/dev/null; then
+          echo "container=true" >> "$GITHUB_OUTPUT"
+          echo "⚠️  Running in container environment"
+        else
+          echo "container=false" >> "$GITHUB_OUTPUT"
+          echo "✓ Running on bare metal/VM"
+        fi
+
+        # CRITICAL: Ensure HOME is set before actions/setup-go runs
+        # actions/setup-go requires HOME or GOCACHE to be defined
+        if [[ -z "${HOME:-}" ]]; then
+          # Use RUNNER_TEMP as fallback for HOME
+          if [[ -n "${RUNNER_TEMP:-}" ]]; then
+            FALLBACK_HOME="${RUNNER_TEMP}/home"
+          else
+            FALLBACK_HOME="/tmp/runner-home"
+          fi
+          mkdir -p "${FALLBACK_HOME}"
+          echo "⚠️  HOME not set, using fallback: ${FALLBACK_HOME}"
+          echo "HOME=${FALLBACK_HOME}" >> "$GITHUB_ENV"
+          # Also export for immediate use in this step
+          export HOME="${FALLBACK_HOME}"
+        fi
+
+        # Pre-create directories that will be used by the setup-go step
+        # This ensures they exist before Go tries to use them
+        mkdir -p "${RUNNER_TEMP}/home"
+        mkdir -p "${RUNNER_TEMP}/go-build"
+        mkdir -p "${RUNNER_TEMP}/go/pkg/mod"
+
+        # CRITICAL: Pre-set GOCACHE before actions/setup-go runs
+        # This prevents the "build cache is required" error
+        if [[ -z "${GOCACHE:-}" || "${GOCACHE:-}" == "off" ]]; then
+          if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+            CHOSEN_CACHE="${XDG_CACHE_HOME}/go-build"
+          elif [[ -n "${HOME:-}" ]]; then
+            CHOSEN_CACHE="${HOME}/.cache/go-build"
+          elif [[ -n "${RUNNER_TEMP:-}" ]]; then
+            CHOSEN_CACHE="${RUNNER_TEMP}/go-build"
+          else
+            CHOSEN_CACHE="/tmp/go-build"
+          fi
+          mkdir -p "${CHOSEN_CACHE}"
+          echo "GOCACHE=${CHOSEN_CACHE}" >> "$GITHUB_ENV"
+          echo "Pre-set GOCACHE: ${CHOSEN_CACHE}"
+        fi
+
+        # Log critical environment variables for debugging
+        echo "Environment variables:"
+        echo "  HOME=${HOME:-UNSET}"
+        echo "  GOCACHE=${GOCACHE:-UNSET}"
+        echo "  RUNNER_TEMP=${RUNNER_TEMP:-UNSET}"
+        echo "  GITHUB_WORKSPACE=${GITHUB_WORKSPACE:-UNSET}"
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: ${{ env.ACT != 'true' }}
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+      env:
+        # CRITICAL: Ensure HOME, GOCACHE, and GOMODCACHE are available for this step
+        # On self-hosted runners, HOME may not be set, causing Go to fail
+        # We use runner.temp as a reliable fallback that's always available
+        HOME: ${{ env.HOME || format('{0}/home', runner.temp) }}
+        GOCACHE: ${{ env.GOCACHE || format('{0}/go-build', runner.temp) }}
+        GOMODCACHE: ${{ env.GOMODCACHE || format('{0}/go/pkg/mod', runner.temp) }}
+
+    # Ensure GOPATH is set (required for GOMODCACHE default location)
+    - name: Ensure Go path
+      shell: bash
+      run: |
+        set -euo pipefail
+        CURRENT_GOPATH="$(go env GOPATH || true)"
+
+        if [[ -z "${CURRENT_GOPATH}" || "${CURRENT_GOPATH}" == "off" ]]; then
+          if [[ -n "${HOME:-}" ]]; then
+            CHOSEN_GOPATH="${HOME}/go"
+          else
+            CHOSEN_GOPATH="${RUNNER_TEMP}/go"
+          fi
+          mkdir -p "${CHOSEN_GOPATH}"
+          echo "GOPATH path: ${CHOSEN_GOPATH}"
+          echo "GOPATH=${CHOSEN_GOPATH}" >> "$GITHUB_ENV"
+        else
+          echo "✓ GOPATH already set: ${CURRENT_GOPATH}"
+        fi
+
+    # Ensure Go build cache is enabled and consistent across steps
+    - name: Ensure Go build cache path
+      id: ensure-gocache
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Detect current GOCACHE value
+        CURRENT_CACHE="$(go env GOCACHE || true)"
+        CHOSEN_CACHE=""
+
+        if [[ -z "${CURRENT_CACHE}" || "${CURRENT_CACHE}" == "off" ]]; then
+          # Choose a sane default:
+          # - Prefer XDG_CACHE_HOME if set
+          # - Else use ~/.cache/go-build
+          # - Else fall back to RUNNER_TEMP
+          if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+            CHOSEN_CACHE="${XDG_CACHE_HOME}/go-build"
+          elif [[ -n "${HOME:-}" ]]; then
+            CHOSEN_CACHE="${HOME}/.cache/go-build"
+          else
+            CHOSEN_CACHE="${RUNNER_TEMP}/go-build"
+          fi
+        else
+          CHOSEN_CACHE="${CURRENT_CACHE}"
+        fi
+
+        mkdir -p "${CHOSEN_CACHE}"
+        echo "GOCACHE path: ${CHOSEN_CACHE}"
+
+        # Persist for subsequent steps in this job
+        echo "GOCACHE=${CHOSEN_CACHE}" >> "$GITHUB_ENV"
+        echo "gocache_path=${CHOSEN_CACHE}" >> "$GITHUB_OUTPUT"
+
+    # Ensure GOMODCACHE is set to avoid "module cache not found" errors
+    - name: Ensure Go module cache path
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Detect current GOMODCACHE value
+        CURRENT_MODCACHE="$(go env GOMODCACHE || true)"
+        CHOSEN_MODCACHE=""
+
+        if [[ -z "${CURRENT_MODCACHE}" || "${CURRENT_MODCACHE}" == "off" ]]; then
+          # Choose a sane default:
+          # - Use GOPATH/pkg/mod if GOPATH is set
+          # - Else use $HOME/go/pkg/mod (Go's default)
+          GOPATH_VAR="$(go env GOPATH || true)"
+          if [[ -n "${GOPATH_VAR}" && "${GOPATH_VAR}" != "off" ]]; then
+            CHOSEN_MODCACHE="${GOPATH_VAR}/pkg/mod"
+          elif [[ -n "${HOME:-}" ]]; then
+            CHOSEN_MODCACHE="${HOME}/go/pkg/mod"
+          else
+            CHOSEN_MODCACHE="${RUNNER_TEMP}/go/pkg/mod"
+          fi
+        else
+          CHOSEN_MODCACHE="${CURRENT_MODCACHE}"
+        fi
+
+        mkdir -p "${CHOSEN_MODCACHE}"
+        echo "GOMODCACHE path: ${CHOSEN_MODCACHE}"
+
+        # Persist for subsequent steps in this job
+        echo "GOMODCACHE=${CHOSEN_MODCACHE}" >> "$GITHUB_ENV"
+
+    # Validate Go environment is properly configured
+    - name: Validate Go environment
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        echo "=== Go Environment Validation ==="
+
+        # Check required variables are set
+        GOPATH_CHECK="$(go env GOPATH)"
+        GOMODCACHE_CHECK="$(go env GOMODCACHE)"
+        GOCACHE_CHECK="$(go env GOCACHE)"
+
+        VALIDATION_FAILED=0
+
+        if [[ -z "${GOPATH_CHECK}" ]]; then
+          echo "❌ ERROR: GOPATH is not set" >&2
+          VALIDATION_FAILED=1
+        else
+          echo "✓ GOPATH=${GOPATH_CHECK}"
+        fi
+
+        if [[ -z "${GOMODCACHE_CHECK}" ]]; then
+          echo "❌ ERROR: GOMODCACHE is not set" >&2
+          VALIDATION_FAILED=1
+        else
+          echo "✓ GOMODCACHE=${GOMODCACHE_CHECK}"
+        fi
+
+        if [[ -z "${GOCACHE_CHECK}" || "${GOCACHE_CHECK}" == "off" ]]; then
+          echo "❌ ERROR: GOCACHE is not set or disabled" >&2
+          VALIDATION_FAILED=1
+        else
+          echo "✓ GOCACHE=${GOCACHE_CHECK}"
+        fi
+
+        # Verify directories exist and are writable
+        for dir in "${GOPATH_CHECK}" "${GOMODCACHE_CHECK}" "${GOCACHE_CHECK}"; do
+          if [[ ! -d "${dir}" ]]; then
+            echo "❌ ERROR: Directory does not exist: ${dir}" >&2
+            VALIDATION_FAILED=1
+          elif [[ ! -w "${dir}" ]]; then
+            echo "❌ ERROR: Directory not writable: ${dir}" >&2
+            VALIDATION_FAILED=1
+          else
+            echo "✓ Directory OK: ${dir}"
+          fi
+        done
+
+        if [ $VALIDATION_FAILED -ne 0 ]; then
+          echo "❌ Go environment validation failed"
+          exit 1
+        fi
+
+        echo "✅ All Go environment checks passed"
+
+    # Clean potentially corrupted module cache to avoid ziphash errors
+    # Skipped under act — wiping the cache defeats local caching and forces full re-download
+    - name: Clean Go module cache
+      if: ${{ env.ACT != 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        MODCACHE="$(go env GOMODCACHE || true)"
+        echo "Cleaning Go module cache at: ${MODCACHE}"
+        if [[ -n "${MODCACHE}" && "${MODCACHE}" != "off" ]]; then
+          # Try go clean first, but don't fail if it has permission issues
+          go clean -modcache || {
+            echo "⚠️  go clean -modcache failed, trying manual cleanup"
+            # Manually remove cache directories if they exist
+            if [[ -d "${MODCACHE}/cache" ]]; then
+              rm -rf "${MODCACHE}/cache" || echo "Could not remove cache directory"
+            fi
+          }
+        else
+          echo "Skipping go clean -modcache (no module cache configured)"
+        fi
+
+    # Configure Go proxy as fallback to avoid storage.googleapis.com DNS issues
+    - name: Configure Go proxy (if not already set)
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Only set GOPROXY if not already configured by caller
+        if [[ -z "${GOPROXY:-}" ]]; then
+          FALLBACK_PROXY="${{ inputs.goproxy-fallback }}"
+          if [[ -n "$FALLBACK_PROXY" ]]; then
+            # Use proxy.golang.org (official Go proxy) as primary with direct fallback.
+            # Note: Go only falls through to the next proxy on 404/410, NOT on 5xx errors,
+            # so unreliable third-party proxies (e.g. goproxy.io returning 502) must not be first.
+            PROXY_CHAIN="https://proxy.golang.org,direct"
+            echo "ℹ️  No GOPROXY set, using: $PROXY_CHAIN"
+
+            # Set for current step and all subsequent steps in workflow
+            export GOPROXY="$PROXY_CHAIN"
+            echo "GOPROXY=$PROXY_CHAIN" >> "$GITHUB_ENV"
+
+            echo "✓ GOPROXY configured with multiple fallbacks"
+          else
+            echo "ℹ️  No GOPROXY set and no fallback configured, using Go defaults"
+          fi
+        else
+          echo "✓ Using existing GOPROXY: $GOPROXY"
+        fi
+
+    # Download modules (skip go mod tidy - developers should run it locally)
+    - name: Download modules
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Verify GOPROXY is set (should be set by previous step via $GITHUB_ENV)
+        echo "Active GOPROXY: $(go env GOPROXY)"
+
+        # Ensure we're in the right directory
+        if [[ ! -f "go.mod" ]]; then
+          echo "❌ ERROR: go.mod not found in $(pwd)" >&2
+          ls -la
+          exit 1
+        fi
+
+        # Download modules with retry logic and timeout per attempt
+        # Note: We skip 'go mod tidy' in CI as it's slow and can modify files
+        # Developers should run 'go mod tidy' locally before committing
+        echo "📦 Downloading modules..."
+
+        # Count total modules for progress tracking (skip under act — triggers full VCS resolution)
+        if [[ "${ACT:-}" == "true" ]]; then
+          TOTAL_MODULES="unknown"
+          echo "Skipping module count under act"
+        else
+          TOTAL_MODULES=$(go list -m -f '{{.Path}}' all 2>/dev/null | wc -l || echo "unknown")
+          echo "Total modules to download: $TOTAL_MODULES"
+        fi
+
+        # Calculate timeout based on module count (assume 2 seconds per module minimum)
+        # With 304 modules: 304 * 2 = 608 seconds = ~10 minutes
+        if [ "$TOTAL_MODULES" != "unknown" ] && [ "$TOTAL_MODULES" -gt 150 ]; then
+          TIMEOUT_MINUTES=10
+          echo "⚠️  Large module count detected, using ${TIMEOUT_MINUTES}m timeout"
+        else
+          TIMEOUT_MINUTES=5
+        fi
+
+        for i in {1..3}; do
+          echo "Attempt $i/3 (${TIMEOUT_MINUTES}m timeout)..."
+
+          # Download with progress - use plain output for better visibility
+          # stdbuf -oL disables buffering so we see output in real-time
+          if timeout ${TIMEOUT_MINUTES}m stdbuf -oL go mod download 2>&1 | tee /tmp/download-log.txt; then
+            echo "✅ Module download successful"
+
+            # Show summary
+            DOWNLOADED=$(grep -c "^go: downloading" /tmp/download-log.txt 2>/dev/null || echo "0")
+            echo "Downloaded $DOWNLOADED modules"
+            break
+          else
+            EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 124 ]; then
+              echo "⚠️  Attempt $i timed out after ${TIMEOUT_MINUTES} minutes"
+
+              # Show what was downloaded before timeout
+              if [ -f /tmp/download-log.txt ]; then
+                echo "Last 10 modules downloaded:"
+                grep "^go: downloading" /tmp/download-log.txt | tail -10 || true
+              fi
+            else
+              echo "⚠️  Attempt $i failed with exit code $EXIT_CODE"
+            fi
+
+            if [ $i -lt 3 ]; then
+              echo "Retrying in 10 seconds..."
+              sleep 10
+            else
+              echo "❌ ERROR: Failed to download modules after 3 attempts" >&2
+              echo "Last exit code: $EXIT_CODE"
+
+              if [ $EXIT_CODE -eq 124 ]; then
+                echo ""
+                echo "Download timed out. Possible solutions:"
+                echo "  1. Vendor dependencies: go mod vendor (eliminates download time)"
+                echo "  2. Use a faster GOPROXY"
+                echo "  3. Cache the GOMODCACHE between runs"
+                echo ""
+
+                if [ -f /tmp/download-log.txt ]; then
+                  echo "Modules successfully downloaded before timeout:"
+                  grep -c "^go: downloading" /tmp/download-log.txt || echo "0"
+                  echo ""
+                  echo "Last modules attempted:"
+                  tail -20 /tmp/download-log.txt
+                fi
+              fi
+              exit $EXIT_CODE
+            fi
+          fi
+        done
+
+        # Verify module integrity (fast check)
+        echo "🔍 Verifying module checksums..."
+        if go mod verify; then
+          echo "✓ All modules verified"
+        else
+          echo "⚠️  Module verification failed - go.sum may be out of sync"
+          echo "Run 'go mod tidy' locally and commit the changes"
+        fi
+
+    - name: Cache Go build cache
+      if: ${{ env.ACT != 'true' }}
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.ensure-gocache.outputs.gocache_path }}
+        key: go-build-${{ runner.os }}-go${{ inputs.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          go-build-${{ runner.os }}-
+
+    - name: Verify Go installation
+      shell: bash
+      run: |
+        echo "Go version: $(go version)"
+        echo "GOMODCACHE: $(go env GOMODCACHE)"
+        echo "GOCACHE: $(go env GOCACHE)"
+
+    - name: Verify modules
+      shell: bash
+      run: |
+        # Verify go.mod and go.sum are in sync
+        go mod verify

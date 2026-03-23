@@ -1,0 +1,47 @@
+# Per-package coverage thresholds for Athena
+# Format: package_path  minimum_coverage_percent
+#
+# These thresholds are ratcheted upward as coverage improves.
+# Sprint 17: all usecase packages now at 80%+.
+#
+# Thresholds ratcheted to current coverage (Feb 2026)
+
+# Domain layer
+internal/domain                          95.0
+
+# Usecase layer - root package
+internal/usecase                         80.0
+
+# Usecase subpackages
+internal/usecase/activitypub             80.0
+internal/usecase/analytics               97.0
+internal/usecase/caption                 93.0
+internal/usecase/captiongen              93.0
+internal/usecase/channel                 93.0
+internal/usecase/comment                 92.0
+internal/usecase/encoding                83.5
+internal/usecase/import                  85.0
+internal/usecase/ipfs_streaming          91.0
+internal/usecase/message                 100.0
+internal/usecase/migration               94.0
+internal/usecase/notification            100.0
+internal/usecase/payments                93.0
+internal/usecase/playlist                100.0
+internal/usecase/rating                  82.0
+internal/usecase/redundancy              89.0
+internal/usecase/social                  88.0
+internal/usecase/upload                  86.0
+internal/usecase/views                   94.7
+
+# Repository layer (Sprint 18)
+internal/repository                      90.0
+
+# HTTP API handlers (Sprint 18)
+internal/httpapi/shared                  95.0
+internal/httpapi/handlers/auth           79.0
+internal/httpapi/handlers/federation     72.0
+internal/httpapi/handlers/messaging      77.0
+internal/httpapi/handlers/moderation     90.1
+internal/httpapi/handlers/payments       82.0
+internal/httpapi/handlers/social         80.0
+internal/httpapi/handlers/video          79.0

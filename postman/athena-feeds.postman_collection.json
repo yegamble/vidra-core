@@ -1,0 +1,95 @@
+{
+  "info": {
+    "name": "Athena Feeds API",
+    "_postman_id": "c4a4c4a4-0004-4000-9000-c4a4c4a4c4a4",
+    "description": "Postman collection for RSS/Atom feed endpoints including video feeds and subscription feeds.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
+    {"key": "access_token", "value": "", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "Feeds - Happy Path",
+      "item": [
+        {
+          "name": "GET /feeds/videos.atom - Videos Atom feed",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Content-Type is XML or Atom', () => {",
+            "  const ct = pm.response.headers.get('Content-Type');",
+            "  pm.expect(ct).to.satisfy(c => c && (c.includes('xml') || c.includes('atom')));",
+            "});"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/feeds/videos.atom", "host": ["{{baseUrl}}"], "path": ["feeds", "videos.atom"]}
+          }
+        },
+        {
+          "name": "GET /feeds/videos.rss - Videos RSS feed",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Content-Type is RSS/XML', () => {",
+            "  const ct = pm.response.headers.get('Content-Type');",
+            "  pm.expect(ct).to.satisfy(c => c && (c.includes('xml') || c.includes('rss')));",
+            "});"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/feeds/videos.rss", "host": ["{{baseUrl}}"], "path": ["feeds", "videos.rss"]}
+          }
+        },
+        {
+          "name": "GET /feeds/subscriptions.atom - Subscription Atom feed (authenticated)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Content-Type is Atom', () => {",
+            "  const ct = pm.response.headers.get('Content-Type');",
+            "  pm.expect(ct).to.satisfy(c => c && (c.includes('xml') || c.includes('atom')));",
+            "});"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/feeds/subscriptions.atom", "host": ["{{baseUrl}}"], "path": ["feeds", "subscriptions.atom"]}
+          }
+        },
+        {
+          "name": "GET /feeds/subscriptions.rss - Subscription RSS feed (authenticated)",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Content-Type is RSS/XML', () => {",
+            "  const ct = pm.response.headers.get('Content-Type');",
+            "  pm.expect(ct).to.satisfy(c => c && (c.includes('xml') || c.includes('rss')));",
+            "});"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {"raw": "{{baseUrl}}/feeds/subscriptions.rss", "host": ["{{baseUrl}}"], "path": ["feeds", "subscriptions.rss"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Feeds - Error Path",
+      "item": [
+        {
+          "name": "GET /feeds/subscriptions.atom - Unauthenticated returns empty feed",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200 or 401', () => pm.expect([200, 401]).to.include(pm.response.code));"
+          ], "type": "text/javascript"}}],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {"raw": "{{baseUrl}}/feeds/subscriptions.atom", "host": ["{{baseUrl}}"], "path": ["feeds", "subscriptions.atom"]}
+          }
+        }
+      ]
+    }
+  ]
+}

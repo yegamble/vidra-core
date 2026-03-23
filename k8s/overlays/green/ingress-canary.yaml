@@ -1,0 +1,38 @@
+# Canary Ingress for gradual traffic shift to Green environment
+# This ingress uses NGINX canary annotations to split traffic between Blue and Green
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: athena-ingress-green-canary
+  labels:
+    app: athena
+    deployment-color: green
+  annotations:
+    # NGINX Ingress canary annotations
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "0"  # Start with 0%, increase gradually
+
+    # Standard Athena ingress settings
+    nginx.ingress.kubernetes.io/proxy-body-size: "5g"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/client-body-buffer-size: "32m"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Accept,Authorization,Content-Type,X-CSRF-Token,X-Requested-With,Idempotency-Key"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: athena.example.com  # Should match main ingress
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: athena-api-green
+            port:
+              number: 80

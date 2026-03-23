@@ -1,0 +1,6 @@
+This is a clean test file.
+It contains no malicious content.
+This file should pass all virus scans.
+
+This file is used for testing the virus scanner functionality
+to ensure that legitimate files are not incorrectly flagged as malware.

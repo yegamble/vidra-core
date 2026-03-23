@@ -1,0 +1,31 @@
+run:
+  timeout: 5m
+  tests: false
+
+linters:
+  enable:
+    # Core Go linters
+    - govet        # Built-in Go vet
+    - errcheck     # Check for unchecked errors
+    - ineffassign  # Detect ineffectual assignments
+    - unused       # Check for unused constants, variables, functions and types
+    - misspell     # Find commonly misspelled English words
+
+    # Security and best practices (important for a backend service)
+    - gosec        # Security-focused linter
+    - bodyclose    # Check HTTP response body is closed
+    - rowserrcheck # Check sql.Rows.Err is checked
+    - sqlclosecheck # Check sql.Rows and sql.Stmt are closed
+
+    # Code quality and maintainability
+    - gocyclo      # Cyclomatic complexity
+    - dupl         # Code clone detection
+    - unconvert    # Remove unnecessary type conversions
+    - whitespace   # Tool for detection of leading and trailing whitespace
+
+    # Go-specific best practices
+    - nolintlint   # Reports ill-formed or insufficient nolint directives
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 10

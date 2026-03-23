@@ -1,0 +1,145 @@
+# Production Environment Variables
+# Copy this file to terraform.tfvars and update with your values
+
+# Project Configuration
+project_name = "athena"
+environment  = "production"
+aws_region   = "us-east-1"
+owner_email  = "devops@example.com"
+cost_center  = "engineering"
+
+# Domain Configuration
+domain_name = "athena.example.com"
+
+# VPC Configuration
+vpc_cidr = "10.0.0.0/16"
+availability_zones = [
+  "us-east-1a",
+  "us-east-1b",
+  "us-east-1c"
+]
+
+# High Availability
+enable_multi_az            = true
+enable_deletion_protection = true
+enable_backup              = true
+backup_retention_days      = 30
+
+# EKS Configuration
+eks_cluster_version = "1.28"
+
+eks_node_groups = {
+  # API pods - on-demand for reliability
+  api = {
+    instance_types = ["t3.xlarge"]
+    capacity_type  = "ON_DEMAND"
+    min_size       = 3
+    max_size       = 20
+    desired_size   = 3
+    disk_size      = 100
+    labels = {
+      workload = "api"
+    }
+    taints = []
+  }
+
+  # Encoding workers - spot instances for cost savings
+  encoding = {
+    instance_types = ["c6i.4xlarge", "c5.4xlarge", "c5n.4xlarge"]
+    capacity_type  = "SPOT"
+    min_size       = 2
+    max_size       = 10
+    desired_size   = 2
+    disk_size      = 200
+    labels = {
+      workload = "encoding"
+    }
+    taints = [{
+      key    = "workload"
+      value  = "encoding"
+      effect = "NoSchedule"
+    }]
+  }
+
+  # System services (IPFS, ClamAV, monitoring)
+  system = {
+    instance_types = ["t3.large"]
+    capacity_type  = "ON_DEMAND"
+    min_size       = 2
+    max_size       = 4
+    desired_size   = 2
+    disk_size      = 100
+    labels = {
+      workload = "system"
+    }
+    taints = []
+  }
+}
+
+# RDS Configuration
+rds_instance_class        = "db.r6g.xlarge"
+rds_allocated_storage     = 100
+rds_max_allocated_storage = 1000
+rds_engine_version        = "15.4"
+
+# ElastiCache Configuration
+elasticache_node_type         = "cache.r6g.large"
+elasticache_num_cache_nodes   = 2
+elasticache_engine_version    = "7.0"
+
+# EFS Configuration
+efs_performance_mode   = "generalPurpose"
+efs_throughput_mode    = "bursting"
+
+# S3 Configuration
+s3_versioning_enabled = true
+
+s3_lifecycle_rules = [
+  {
+    id      = "archive-old-videos"
+    enabled = true
+    transitions = [
+      {
+        days          = 30
+        storage_class = "STANDARD_IA"
+      },
+      {
+        days          = 90
+        storage_class = "GLACIER_IR"
+      }
+    ]
+    expiration_days = 365
+  }
+]
+
+# CloudFront Configuration
+cloudfront_price_class = "PriceClass_100" # US, Canada, Europe
+cloudfront_min_ttl     = 0
+cloudfront_default_ttl = 86400     # 24 hours
+cloudfront_max_ttl     = 31536000  # 1 year
+
+# Configure these after setting up your domain and ACM certificate
+cloudfront_aliases = [
+  # "cdn.athena.example.com"
+]
+acm_certificate_arn = null # ARN of ACM certificate in us-east-1
+
+# Monitoring Configuration
+enable_prometheus_operator       = true
+enable_grafana                   = true
+cloudwatch_log_retention_days    = 30
+
+# Security Configuration
+allowed_cidr_blocks = [
+  "10.0.0.0/8" # Example: Internal network only. TODO: Restrict to your specific trusted IP ranges (e.g., Office VPN, CI/CD runners)
+]
+
+enable_waf            = true
+enable_kms_encryption = true
+
+# Additional Tags
+additional_tags = {
+  Terraform   = "true"
+  Repository  = "github.com/yegamble/athena"
+  Team        = "platform"
+}

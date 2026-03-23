@@ -1,0 +1,360 @@
+openapi: 3.0.3
+info:
+  title: Athena API - PeerTube Instance Migration
+  description: |
+    Admin endpoints for migrating data from a PeerTube instance into Athena.
+
+    ## Migration Pipeline
+
+    The ETL pipeline connects to the source PeerTube PostgreSQL database and
+    copies users, channels, videos, comments, playlists, and media files.
+
+    ## Workflow
+
+    1. POST /api/v1/admin/migrations/{id}/dry-run — Preview what will be migrated
+    2. POST /api/v1/admin/migrations/peertube — Start the actual migration
+    3. GET  /api/v1/admin/migrations/{id} — Poll for progress
+    4. DELETE /api/v1/admin/migrations/{id} — Cancel if needed
+
+    ## Access Control
+
+    All endpoints require admin role authentication.
+  version: 1.0.0
+
+paths:
+  /api/v1/admin/migrations/peertube:
+    post:
+      tags:
+        - Migration
+      summary: Start a PeerTube instance migration
+      description: |
+        Creates a new migration job that connects to a source PeerTube
+        PostgreSQL database and migrates all data into this Athena instance.
+        Only one migration may run at a time.
+      operationId: migration_startMigration
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationRequest'
+      responses:
+        '201':
+          description: Migration job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationJobResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+        '409':
+          description: A migration is already in progress
+
+  /api/v1/admin/migrations:
+    get:
+      tags:
+        - Migration
+      summary: List migration jobs
+      description: Returns a paginated list of all migration jobs ordered by creation date.
+      operationId: migration_listMigrations
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: count
+          in: query
+          description: Number of items to return (max 100)
+          schema:
+            type: integer
+            default: 20
+        - name: start
+          in: query
+          description: Offset for pagination
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Paginated list of migration jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationListResponse'
+        '401':
+          description: Unauthorized
+
+  /api/v1/admin/migrations/{id}:
+    get:
+      tags:
+        - Migration
+      summary: Get migration job status
+      description: Returns the full details and progress of a specific migration job.
+      operationId: migration_getMigration
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Migration job UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Migration job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationJobResponse'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Migration job not found
+
+    delete:
+      tags:
+        - Migration
+      summary: Cancel a migration job
+      description: |
+        Cancels a running or pending migration job. Jobs in terminal states
+        (completed, failed, cancelled) cannot be cancelled.
+      operationId: migration_cancelMigration
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Migration job UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Migration cancelled
+        '400':
+          description: Migration cannot be cancelled in current state
+        '401':
+          description: Unauthorized
+        '404':
+          description: Migration job not found
+
+  /api/v1/admin/migrations/{id}/dry-run:
+    post:
+      tags:
+        - Migration
+      summary: Dry-run a PeerTube migration
+      description: |
+        Creates a dry-run migration job that connects to the source database,
+        counts all entities, and reports what would be migrated — without
+        writing any data.
+      operationId: migration_dryRun
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Placeholder (ignored for dry-run creation)
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationRequest'
+      responses:
+        '201':
+          description: Dry-run job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationJobResponse'
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    MigrationRequest:
+      type: object
+      required:
+        - source_host
+        - source_db_host
+        - source_db_name
+        - source_db_user
+        - source_db_password
+      properties:
+        source_host:
+          type: string
+          description: Hostname of the source PeerTube instance
+          example: peertube.example.com
+        source_db_host:
+          type: string
+          description: PostgreSQL host of the source database
+          example: 10.0.0.5
+        source_db_port:
+          type: integer
+          description: PostgreSQL port (defaults to 5432)
+          default: 5432
+        source_db_name:
+          type: string
+          description: PostgreSQL database name
+          example: peertube_prod
+        source_db_user:
+          type: string
+          description: PostgreSQL username
+          example: peertube
+        source_db_password:
+          type: string
+          description: PostgreSQL password
+          format: password
+        source_media_path:
+          type: string
+          description: Path to PeerTube storage directory (for media file migration)
+          example: /var/www/peertube/storage
+
+    MigrationJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        admin_user_id:
+          type: string
+        source_host:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - running
+            - completed
+            - failed
+            - cancelled
+            - dry_run
+            - validating
+        dry_run:
+          type: boolean
+        error_message:
+          type: string
+          nullable: true
+        stats:
+          $ref: '#/components/schemas/MigrationStats'
+        source_db_host:
+          type: string
+          nullable: true
+        source_db_port:
+          type: integer
+          nullable: true
+        source_db_name:
+          type: string
+          nullable: true
+        source_media_path:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+
+    MigrationStats:
+      type: object
+      properties:
+        users:
+          $ref: '#/components/schemas/EntityStats'
+        channels:
+          $ref: '#/components/schemas/EntityStats'
+        videos:
+          $ref: '#/components/schemas/EntityStats'
+        comments:
+          $ref: '#/components/schemas/EntityStats'
+        playlists:
+          $ref: '#/components/schemas/EntityStats'
+        media:
+          $ref: '#/components/schemas/EntityStats'
+
+    EntityStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        migrated:
+          type: integer
+        skipped:
+          type: integer
+        failed:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+
+    MigrationJobResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/MigrationJob'
+
+    MigrationListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationJob'
+        meta:
+          type: object
+          properties:
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: string

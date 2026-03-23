@@ -1,0 +1,147 @@
+# E2E Test Environment
+# This docker-compose file sets up a complete test environment for end-to-end testing
+# Run with: docker-compose -f tests/e2e/docker-compose.yml up -d
+
+services:
+  # PostgreSQL Test Database
+  postgres-e2e:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: athena_test
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: athena_e2e
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U athena_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Test Cache
+  redis-e2e:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # MinIO for S3-compatible storage testing
+  minio-e2e:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # MinIO bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio-e2e:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set minio http://minio-e2e:9000 minioadmin minioadmin;
+      mc mb minio/athena-test --ignore-existing;
+      echo 'MinIO bucket initialized';
+      "
+
+  # ClamAV for virus scanning tests
+  clamav-e2e:
+    image: clamav/clamav:latest
+    ports:
+      - "3311:3310"
+    tmpfs:
+      - /var/lib/clamav
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # Athena API Server (test instance)
+  athena-api-e2e:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      postgres-e2e:
+        condition: service_healthy
+      redis-e2e:
+        condition: service_healthy
+      minio-e2e:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      clamav-e2e:
+        condition: service_healthy
+    environment:
+      # Database
+      DATABASE_URL: "postgres://athena_test:test_password@postgres-e2e:5432/athena_e2e?sslmode=disable"
+
+      # Redis
+      REDIS_URL: "redis://redis-e2e:6379/0"
+
+      # S3/MinIO
+      S3_ENDPOINT: "http://minio-e2e:9000"
+      S3_ACCESS_KEY: "minioadmin"
+      S3_SECRET_KEY: "minioadmin"
+      S3_BUCKET: "athena-test"
+      S3_REGION: "us-east-1"
+      S3_USE_SSL: "false"
+
+      # ClamAV
+      CLAMAV_ADDRESS: "clamav-e2e:3310"
+      CLAMAV_TIMEOUT: "300"
+
+      # Application
+      PORT: "8080"
+      JWT_SECRET: "test-jwt-secret-for-e2e-testing-only"
+      PUBLIC_BASE_URL: "http://localhost:18080"
+      ENVIRONMENT: "test"
+
+      # Validation
+      VALIDATION_TEST_MODE: "true"
+      VALIDATION_TEST_ADMIN_USERNAME: "admin"
+      VALIDATION_TEST_ADMIN_EMAIL: "admin@example.com"
+      VALIDATION_TEST_ADMIN_PASSWORD: "admin123"
+
+      # Storage
+      STORAGE_DIR: "/tmp/storage"
+
+      # Features
+      ENABLE_IPFS: "false"
+      REQUIRE_IPFS: "false"
+      ENABLE_IOTA: "false"
+      ENABLE_TORRENT: "false"
+
+      # Logging
+      LOG_LEVEL: "debug"
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  default:

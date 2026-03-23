@@ -1,0 +1,63 @@
+# Gosec Security Scanner Configuration
+# https://github.com/securego/gosec
+#
+# This configuration file defines exclusions and rules for gosec scanning.
+# It is used by both the CI workflow and local development.
+
+global:
+  # Scan go modules
+  modules: true
+
+# Rule severity levels: low, medium, high
+severity: medium
+
+# Confidence levels: low, medium, high
+confidence: medium
+
+# Rules configuration
+# See: https://github.com/securego/gosec#available-rules
+rules:
+  # G101: Look for hardcoded credentials
+  # Excluded in test files - test credentials are expected
+  G101:
+    # Patterns for variable names to check
+    # Default patterns will still be checked in production code
+
+  # G107: Potential HTTP request made with variable url
+  # Our code uses SSRF protection (internal/security/url_validator.go)
+  # See CLAUDE.md for SSRF protection details
+
+  # G304: File path provided as taint input
+  # Many legitimate file operations use validated paths
+  # Individual exclusions handled via #nosec annotations with justification
+
+  # G401: Use of weak cryptographic primitive (MD5/SHA1)
+  # SHA1 is required for BitTorrent protocol (piece hashing)
+  # MD5 is used in tests for non-security purposes (unique identifiers)
+
+# Exclude specific directories and files from scanning
+exclude-dir:
+  # Test data and fixtures
+  - testdata
+  - tests/e2e/fixtures
+
+  # Third-party code
+  - vendor
+
+  # Generated code (if any)
+  - internal/generated
+
+# Exclude specific files by pattern
+exclude:
+  # Test files often have hardcoded test credentials (G101)
+  # and use weak crypto for non-security purposes (G401)
+  - ".*_test\\.go$"
+  - ".*/testutil/.*\\.go$"
+  - ".*/tests/.*\\.go$"
+
+# Rules to skip entirely
+# Use sparingly - prefer #nosec annotations with justifications
+exclude-rules:
+  # G104: Errors unhandled - too noisy in test files
+  # Production code should handle all errors
+  # - G104

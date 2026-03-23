@@ -1,0 +1,939 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Live Streaming
+  description: |
+    Endpoints for managing live video streams with HLS delivery.
+
+    ## Live Streaming Workflow
+
+    1. **Create Stream**: POST /api/v1/streams/
+    2. **Get Stream Key**: Returned in create response or use GET /api/v1/streams/{id}
+    3. **Start Broadcasting**: Use RTMP ingest with stream key (e.g., `rtmp://server/live/{stream_key}`)
+    4. **View Stream**: Access HLS playlist at GET /api/v1/streams/{id}/hls/master.m3u8
+    5. **End Stream**: POST /api/v1/streams/{id}/end
+
+    ## HLS Transcoding
+
+    Live streams are transcoded to multiple HLS variants:
+    - 1080p (if source quality allows)
+    - 720p
+    - 480p
+    - 360p
+
+    ## Stream Privacy
+
+    - **Public**: Anyone can view
+    - **Unlisted**: Only users with link can view
+    - **Private**: Only authenticated users with permission
+
+    ## Security
+
+    - Stream keys must be kept secret
+    - Rotate stream keys if compromised: POST /api/v1/streams/{id}/rotate-key
+    - RTMP ingest requires valid stream key
+    - HLS playback respects video privacy settings
+  version: 1.0.0
+
+paths:
+  /api/v1/streams/:
+    post:
+      tags:
+        - Live Streams
+      summary: Create a new live stream
+      description: |
+        Create a new live stream and receive a stream key for RTMP ingest.
+        The stream must be associated with a channel.
+      operationId: createStream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStreamRequest'
+            examples:
+              basic_stream:
+                summary: Basic public stream
+                value:
+                  channel_id: "550e8400-e29b-41d4-a716-446655440000"
+                  title: "Live Gaming Session"
+                  description: "Playing my favorite game"
+                  privacy: "public"
+              scheduled_stream:
+                summary: Scheduled stream
+                value:
+                  channel_id: "550e8400-e29b-41d4-a716-446655440000"
+                  title: "Live Q&A Session"
+                  description: "Weekly Q&A"
+                  privacy: "public"
+                  scheduled_start: "2024-01-20T15:00:00Z"
+                  category: "talk"
+      responses:
+        '201':
+          description: Stream created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamResponse'
+              examples:
+                stream_created:
+                  value:
+                    data:
+                      id: "stream_660e8400-e29b-41d4-a716-446655440001"
+                      channel_id: "550e8400-e29b-41d4-a716-446655440000"
+                      title: "Live Gaming Session"
+                      description: "Playing my favorite game"
+                      status: "created"
+                      privacy: "public"
+                      stream_key: "sk_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+                      rtmp_url: "rtmp://streaming.athena.example/live"
+                      rtmp_ingest: "rtmp://streaming.athena.example/live/sk_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+                      hls_url: "/api/v1/streams/stream_660e8400-e29b-41d4-a716-446655440001/hls/master.m3u8"
+                      created_at: "2024-01-15T10:30:00Z"
+                    success: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not channel owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+    get:
+      tags:
+        - Live Streams
+      summary: Get active live streams
+      description: Get list of currently active (live) streams
+      operationId: getActiveStreams
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: category
+          in: query
+          description: Filter by category
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of active streams
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/streams/channels/{channelId}:
+    get:
+      tags:
+        - Live Streams
+      summary: List streams for a channel
+      description: Get all streams (past and present) for a specific channel
+      operationId: listChannelStreams
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Filter by stream status
+          schema:
+            type: string
+            enum: [created, live, ended, error]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: List of channel streams
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamListResponse'
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public
+        - bearerAuth: []
+
+  /api/v1/streams/{id}:
+    get:
+      tags:
+        - Live Streams
+      summary: Get stream details
+      description: Get details for a specific stream, including playback URLs
+      operationId: getStream
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Stream details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamResponse'
+        '404':
+          description: Stream not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public for public streams
+        - bearerAuth: []
+
+    put:
+      tags:
+        - Live Streams
+      summary: Update stream details
+      description: Update stream metadata (title, description, etc.). Only owner can update.
+      operationId: updateStream
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStreamRequest'
+      responses:
+        '200':
+          description: Stream updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not stream owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Stream not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/streams/{id}/end:
+    post:
+      tags:
+        - Live Streams
+      summary: End a live stream
+      description: Manually end a live stream. Only owner can end.
+      operationId: endStream
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Stream ended successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: "ended"
+                      ended_at:
+                        type: string
+                        format: date-time
+                      duration_seconds:
+                        type: integer
+                  success:
+                    type: boolean
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not stream owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Stream not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/streams/{id}/stats:
+    get:
+      tags:
+        - Live Streams
+      summary: Get stream statistics
+      description: Get current viewer count and stream statistics
+      operationId: getStreamStats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Stream statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamStatsResponse'
+              examples:
+                live_stream_stats:
+                  value:
+                    data:
+                      stream_id: "stream_660e8400-e29b-41d4-a716-446655440001"
+                      status: "live"
+                      current_viewers: 1523
+                      peak_viewers: 2341
+                      total_views: 3456
+                      start_time: "2024-01-15T14:00:00Z"
+                      duration_seconds: 3600
+                      bitrate_kbps: 4500
+                    success: true
+        '404':
+          description: Stream not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public
+        - bearerAuth: []
+
+  /api/v1/streams/{id}/rotate-key:
+    post:
+      tags:
+        - Live Streams
+      summary: Rotate stream key
+      description: |
+        Generate a new stream key for security purposes.
+        The old key will be immediately invalidated.
+      operationId: rotateStreamKey
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Stream key rotated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      stream_key:
+                        type: string
+                        description: New stream key
+                      rtmp_ingest:
+                        type: string
+                        description: Updated RTMP ingest URL
+                  success:
+                    type: boolean
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not stream owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Stream not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/streams/{id}/hls/master.m3u8:
+    get:
+      tags:
+        - HLS Playback
+      summary: Get HLS master playlist
+      description: |
+        Get the HLS master playlist containing all available variants.
+        This is the entry point for HLS video players.
+      operationId: getHLSMasterPlaylist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HLS master playlist
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: "no-cache"
+            Content-Type:
+              schema:
+                type: string
+                example: "application/vnd.apple.mpegurl"
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+                format: binary
+              example: |
+                #EXTM3U
+                #EXT-X-VERSION:3
+                #EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360
+                /api/v1/streams/{id}/hls/360p/index.m3u8
+                #EXT-X-STREAM-INF:BANDWIDTH=1400000,RESOLUTION=842x480
+                /api/v1/streams/{id}/hls/480p/index.m3u8
+                #EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720
+                /api/v1/streams/{id}/hls/720p/index.m3u8
+        '403':
+          description: Stream is private and user doesn't have access
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Stream not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public for public streams
+        - bearerAuth: []
+
+  /api/v1/streams/{id}/hls/{variant}/index.m3u8:
+    get:
+      tags:
+        - HLS Playback
+      summary: Get HLS variant playlist
+      description: Get the playlist for a specific quality variant (360p, 480p, 720p, 1080p)
+      operationId: getHLSVariantPlaylist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: variant
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [360p, 480p, 720p, 1080p]
+      responses:
+        '200':
+          description: HLS variant playlist
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: "max-age=1"
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+                format: binary
+              example: |
+                #EXTM3U
+                #EXT-X-VERSION:3
+                #EXT-X-TARGETDURATION:4
+                #EXTINF:4.0,
+                segment-0.ts
+                #EXTINF:4.0,
+                segment-1.ts
+                #EXTINF:4.0,
+                segment-2.ts
+        '403':
+          description: Access denied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Stream or variant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public for public streams
+        - bearerAuth: []
+
+  /api/v1/streams/{id}/hls/{variant}/{segment}:
+    get:
+      tags:
+        - HLS Playback
+      summary: Get HLS video segment
+      description: Get a specific video segment (.ts file)
+      operationId: getHLSSegment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: variant
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [360p, 480p, 720p, 1080p]
+        - name: segment
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^segment-[0-9]+\.ts$'
+      responses:
+        '200':
+          description: Video segment
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: "max-age=31536000, immutable"
+            Content-Type:
+              schema:
+                type: string
+                example: "video/mp2t"
+          content:
+            video/mp2t:
+              schema:
+                type: string
+                format: binary
+        '403':
+          description: Access denied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Segment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public for public streams
+        - bearerAuth: []
+
+  /api/v1/streams/{id}/hls-info:
+    get:
+      tags:
+        - HLS Playback
+      summary: Get HLS stream information
+      description: Get information about available HLS variants and stream health
+      operationId: getStreamHLSInfo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HLS stream information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HLSInfoResponse'
+              examples:
+                hls_info:
+                  value:
+                    data:
+                      stream_id: "stream_660e8400-e29b-41d4-a716-446655440001"
+                      master_playlist: "/api/v1/streams/stream_660e8400-e29b-41d4-a716-446655440001/hls/master.m3u8"
+                      variants:
+                        - quality: "360p"
+                          resolution: "640x360"
+                          bitrate_kbps: 800
+                          playlist_url: "/api/v1/streams/stream_660e8400-e29b-41d4-a716-446655440001/hls/360p/index.m3u8"
+                        - quality: "720p"
+                          resolution: "1280x720"
+                          bitrate_kbps: 2800
+                          playlist_url: "/api/v1/streams/stream_660e8400-e29b-41d4-a716-446655440001/hls/720p/index.m3u8"
+                      status: "active"
+                      segment_duration_seconds: 4
+                    success: true
+        '404':
+          description: Stream not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - {} # Public
+        - bearerAuth: []
+
+  /api/v1/streams/{id}/sessions:
+    get:
+      tags:
+        - LiveStreaming
+      summary: Get live stream session history
+      operationId: getLiveStreamSessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of past broadcast sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LiveStreamSession'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Stream not found
+
+components:
+  schemas:
+    LiveStreamSession:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        streamId:
+          type: string
+          format: uuid
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        peakViewers:
+          type: integer
+        totalSeconds:
+          type: integer
+        avgViewers:
+          type: integer
+
+    CreateStreamRequest:
+      type: object
+      required:
+        - channel_id
+        - title
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+          description: Channel ID this stream belongs to
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Stream title
+        description:
+          type: string
+          maxLength: 5000
+          description: Stream description
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+          default: public
+        category:
+          type: string
+          description: Stream category
+        scheduled_start:
+          type: string
+          format: date-time
+          description: Scheduled start time (optional)
+
+    UpdateStreamRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        category:
+          type: string
+
+    StreamResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Stream'
+        success:
+          type: boolean
+
+    Stream:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Stream identifier
+        channel_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [created, live, ended, error]
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        category:
+          type: string
+        stream_key:
+          type: string
+          description: RTMP stream key (only returned to owner)
+        rtmp_url:
+          type: string
+          description: RTMP server URL
+        rtmp_ingest:
+          type: string
+          description: Full RTMP ingest URL (rtmp_url + stream_key)
+        hls_url:
+          type: string
+          description: HLS master playlist URL
+        scheduled_start:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    StreamListResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            streams:
+              type: array
+              items:
+                $ref: '#/components/schemas/Stream'
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+        success:
+          type: boolean
+
+    StreamStatsResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            stream_id:
+              type: string
+            status:
+              type: string
+            current_viewers:
+              type: integer
+              description: Current live viewer count
+            peak_viewers:
+              type: integer
+              description: Peak viewer count during this stream
+            total_views:
+              type: integer
+              description: Total views (including past viewers)
+            start_time:
+              type: string
+              format: date-time
+            duration_seconds:
+              type: integer
+            bitrate_kbps:
+              type: integer
+              description: Current stream bitrate
+        success:
+          type: boolean
+
+    HLSInfoResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            stream_id:
+              type: string
+            master_playlist:
+              type: string
+              description: Master playlist URL
+            variants:
+              type: array
+              items:
+                type: object
+                properties:
+                  quality:
+                    type: string
+                    enum: [360p, 480p, 720p, 1080p]
+                  resolution:
+                    type: string
+                    example: "1280x720"
+                  bitrate_kbps:
+                    type: integer
+                  playlist_url:
+                    type: string
+            status:
+              type: string
+              enum: [active, inactive]
+            segment_duration_seconds:
+              type: integer
+              description: Target segment duration
+        success:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - success
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+        success:
+          type: boolean
+          example: false
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

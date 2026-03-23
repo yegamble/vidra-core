@@ -1,0 +1,104 @@
+name: Postman Smoke Tests
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  smoke-test:
+    name: API Smoke Tests (Newman)
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build app image
+        run: docker build -t athena:latest .
+
+      - name: Start test services
+        run: |
+          COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test \
+            up -d postgres-test redis-test app-test
+
+      - name: Wait for services to be healthy
+        run: |
+          echo "Waiting for postgres-test..."
+          for i in $(seq 1 60); do
+            if docker exec $(COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test ps -q postgres-test) \
+              pg_isready -U test_user -d athena_test >/dev/null 2>&1; then
+              echo "postgres-test is ready"
+              break
+            fi
+            sleep 1
+          done
+
+          echo "Waiting for redis-test..."
+          for i in $(seq 1 60); do
+            if docker exec $(COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test ps -q redis-test) \
+              redis-cli ping >/dev/null 2>&1; then
+              echo "redis-test is ready"
+              break
+            fi
+            sleep 1
+          done
+
+          echo "Waiting for app-test health..."
+          for i in $(seq 1 60); do
+            status=$(docker inspect --format='{{json .State.Health.Status}}' \
+              $(COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test ps -q app-test) 2>/dev/null | tr -d '"')
+            if [ "$status" = "healthy" ]; then
+              echo "app-test is healthy"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run Newman smoke tests
+        run: |
+          COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test \
+            run --rm newman
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-results
+          path: postman/newman-results.xml
+          retention-days: 7
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test logs app-test > postman-failure.log 2>&1
+          echo "--- Last 50 lines of app-test logs ---"
+          tail -50 postman-failure.log
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postman-failure-logs
+          path: postman-failure.log
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          COMPOSE_PROJECT_NAME=athena-smoke docker compose --profile test down -v --remove-orphans

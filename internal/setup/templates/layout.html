@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} - Athena Setup</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 800px;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .header {
+            background: #667eea;
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .breadcrumb {
+            background: #f5f7fa;
+            padding: 20px 30px;
+            border-bottom: 1px solid #e1e8ed;
+        }
+
+        .breadcrumb-list {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .breadcrumb-item {
+            display: flex;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .breadcrumb-item.completed {
+            color: #10b981;
+            font-weight: 500;
+        }
+
+        .breadcrumb-item.current {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .breadcrumb-item.pending {
+            color: #9ca3af;
+        }
+
+        .breadcrumb-item.completed::before {
+            content: "✓";
+            display: inline-block;
+            margin-right: 5px;
+            color: #10b981;
+        }
+
+        .breadcrumb-separator {
+            margin: 0 8px;
+            color: #d1d5db;
+        }
+
+        .content {
+            padding: 40px 30px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #374151;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group .help-text {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 5px;
+        }
+
+        .toggle-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .toggle-btn {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid #d1d5db;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .toggle-btn.active {
+            border-color: #667eea;
+            background: #ede9fe;
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .external-fields {
+            display: none;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f9fafb;
+            border-radius: 6px;
+        }
+
+        .external-fields.show {
+            display: block;
+        }
+
+        .actions {
+            display: flex;
+            justify-content: space-between;
+            padding: 20px 30px;
+            background: #f9fafb;
+            border-top: 1px solid #e1e8ed;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #5568d3;
+        }
+
+        .btn-primary:disabled {
+            background: #d1d5db;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: white;
+            color: #374151;
+            border: 1px solid #d1d5db;
+        }
+
+        .btn-secondary:hover {
+            background: #f9fafb;
+        }
+
+        .alert {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        .alert-success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+        }
+
+        .alert-info {
+            background: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #bfdbfe;
+        }
+
+        .checkmark {
+            color: #10b981;
+            font-size: 64px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Athena Setup Wizard</h1>
+            <p>Let's get your video platform configured</p>
+        </div>
+
+        {{if .ShowBreadcrumb}}
+        <div class="breadcrumb">
+            <ul class="breadcrumb-list">
+                <li class="breadcrumb-item {{if eq .CurrentStep "welcome"}}current{{else if .CompletedSteps.welcome}}completed{{else}}pending{{end}}">Welcome</li>
+                <li class="breadcrumb-separator">&gt;</li>
+                <li class="breadcrumb-item {{if eq .CurrentStep "database"}}current{{else if .CompletedSteps.database}}completed{{else}}pending{{end}}">Database</li>
+                <li class="breadcrumb-separator">&gt;</li>
+                <li class="breadcrumb-item {{if eq .CurrentStep "services"}}current{{else if .CompletedSteps.services}}completed{{else}}pending{{end}}">Services</li>
+                <li class="breadcrumb-separator">&gt;</li>
+                <li class="breadcrumb-item {{if eq .CurrentStep "email"}}current{{else if .CompletedSteps.email}}completed{{else}}pending{{end}}">Email</li>
+                <li class="breadcrumb-separator">&gt;</li>
+                <li class="breadcrumb-item {{if eq .CurrentStep "networking"}}current{{else if .CompletedSteps.networking}}completed{{else}}pending{{end}}">Networking</li>
+                <li class="breadcrumb-separator">&gt;</li>
+                <li class="breadcrumb-item {{if eq .CurrentStep "storage"}}current{{else if .CompletedSteps.storage}}completed{{else}}pending{{end}}">Storage</li>
+                <li class="breadcrumb-separator">&gt;</li>
+                <li class="breadcrumb-item {{if eq .CurrentStep "security"}}current{{else if .CompletedSteps.security}}completed{{else}}pending{{end}}">Security</li>
+                <li class="breadcrumb-separator">&gt;</li>
+                <li class="breadcrumb-item {{if eq .CurrentStep "review"}}current{{else if .CompletedSteps.review}}completed{{else}}pending{{end}}">Review</li>
+            </ul>
+        </div>
+        {{end}}
+
+        <div class="content">
+            {{template "content" .}}
+        </div>
+
+        {{if .ShowActions}}
+        <div class="actions">
+            {{if .ShowBack}}
+            <a href="{{.BackURL}}" class="btn btn-secondary">← Back</a>
+            {{else}}
+            <div></div>
+            {{end}}
+
+            {{if .ShowContinue}}
+            <button type="submit" form="wizardForm" class="btn btn-primary" {{if .DisableContinue}}disabled{{end}}>
+                Continue →
+            </button>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+
+    <script>
+        // Toggle between Local Docker and External Service
+        document.querySelectorAll('.toggle-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const group = this.closest('.toggle-group');
+                const serviceName = group.dataset.service;
+                const mode = this.dataset.mode;
+
+                // Update active state
+                group.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+
+                // Update hidden form field - FIX 1: uppercase serviceName
+                const modeInput = document.querySelector(`input[name="${serviceName.toUpperCase()}_MODE"]`);
+                if (modeInput) {
+                    modeInput.value = mode;
+
+                    // Show/hide external fields - FIX 2: robust sibling traversal
+                    // Guard this inside modeInput check to avoid double-toggle with email page
+                    const formGroup = group.closest('.form-group');
+                    let externalFields = null;
+
+                    // Walk siblings from form-group to find .external-fields
+                    let sibling = formGroup.nextElementSibling;
+                    while (sibling) {
+                        if (sibling.classList && sibling.classList.contains('external-fields')) {
+                            externalFields = sibling;
+                            break;
+                        }
+                        sibling = sibling.nextElementSibling;
+                    }
+
+                    if (externalFields) {
+                        if (mode === 'external') {
+                            externalFields.classList.add('show');
+                        } else {
+                            externalFields.classList.remove('show');
+                        }
+                    }
+                }
+            });
+        });
+
+        // AJAX form submission with inline error handling
+        const form = document.getElementById('wizardForm');
+        if (form) {
+            form.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+
+                // Remove only AJAX-created error alerts (preserve template-rendered ones)
+                const existingAlert = document.querySelector('.alert-error[data-ajax-error]');
+                if (existingAlert) {
+                    existingAlert.remove();
+                }
+
+                // Find submit button: layout Continue button is outside the form
+                const submitBtn = document.querySelector('button[type="submit"][form="wizardForm"]') || form.querySelector('button[type="submit"]');
+                const originalBtnText = submitBtn ? submitBtn.textContent : '';
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = 'Processing...';
+                }
+
+                try {
+                    // Submit form via fetch
+                    const formData = new FormData(form);
+                    const response = await fetch(form.action || window.location.pathname, {
+                        method: 'POST',
+                        body: formData,
+                    });
+
+                    // Success: redirect (303 or ok response)
+                    if (response.redirected) {
+                        window.location.href = response.url;
+                        return;
+                    }
+
+                    // Fallback for browsers without response.redirected support
+                    if (response.ok) {
+                        window.location.href = response.url;
+                        return;
+                    }
+
+                    // Error: 4xx/5xx status codes
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        showError(errorText || `Server error: ${response.status} ${response.statusText}`);
+                    }
+                } catch (error) {
+                    showError(`Network error: ${error.message}`);
+                } finally {
+                    // Re-enable submit button
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = originalBtnText;
+                    }
+                }
+            });
+        }
+
+        // Show inline error alert banner
+        function showError(message) {
+            const content = document.querySelector('.content');
+            if (!content) return;
+
+            const alert = document.createElement('div');
+            alert.className = 'alert alert-error';
+            alert.dataset.ajaxError = 'true';
+            alert.textContent = message;
+
+            // Insert at the top of content
+            content.insertBefore(alert, content.firstChild);
+
+            // Scroll to top to make error visible
+            content.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    </script>
+</body>
+</html>

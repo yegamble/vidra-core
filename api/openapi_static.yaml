@@ -1,0 +1,134 @@
+openapi: 3.0.3
+info:
+  title: Athena Static File Serving API
+  description: PeerTube-compatible static file serving for web-videos, HLS streaming playlists, and video downloads.
+  version: 1.0.0
+
+paths:
+  /static/web-videos/{filename}:
+    get:
+      summary: Serve a public web-video file
+      operationId: serveWebVideo
+      tags:
+        - Static Files
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The video filename (e.g., "video-uuid.mp4")
+      responses:
+        "200":
+          description: Video file content
+          content:
+            video/mp4: {}
+            video/webm: {}
+        "400":
+          description: Invalid filename
+        "404":
+          description: File not found
+
+  /static/web-videos/private/{filename}:
+    get:
+      summary: Serve a private web-video file
+      operationId: servePrivateWebVideo
+      tags:
+        - Static Files
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Video file content
+        "401":
+          description: Authentication required
+        "404":
+          description: File not found
+
+  /static/streaming-playlists/hls/{filename}:
+    get:
+      summary: Serve an HLS streaming playlist or segment
+      operationId: serveHLSFile
+      tags:
+        - Static Files
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+          description: HLS filename (e.g., "master.m3u8", "segment001.ts")
+      responses:
+        "200":
+          description: HLS file content
+          content:
+            application/vnd.apple.mpegurl: {}
+            video/mp2t: {}
+        "404":
+          description: File not found
+
+  /static/streaming-playlists/hls/private/{filename}:
+    get:
+      summary: Serve a private HLS streaming file
+      operationId: servePrivateHLSFile
+      tags:
+        - Static Files
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: HLS file content
+        "401":
+          description: Authentication required
+        "404":
+          description: File not found
+
+  /download/videos/generate/{videoId}:
+    get:
+      summary: Download a video file
+      operationId: downloadVideo
+      tags:
+        - Static Files
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The video UUID
+      responses:
+        "200":
+          description: Video file download
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: 'attachment; filename="title.mp4"'
+        "400":
+          description: Invalid video ID
+        "401":
+          description: Authentication required (private video)
+        "403":
+          description: Not authorized to download this video
+        "404":
+          description: Video or file not found
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
