@@ -1,4 +1,4 @@
-openapi: 3.0.0
+openapi: 3.0.3
 info:
   title: Comments API
   version: 1.0.0
@@ -12,6 +12,7 @@ paths:
   /api/v1/videos/{videoId}/comments:
     get:
       summary: Get comments for a video
+      operationId: getVideoComments
       tags:
         - Comments
         - PeerTube-Compat
@@ -70,6 +71,7 @@ paths:
 
     post:
       summary: Create a comment
+      operationId: createVideoComment
       tags:
         - Comments
         - PeerTube-Compat
@@ -118,6 +120,7 @@ paths:
   /api/v1/comments/{commentId}:
     get:
       summary: Get a specific comment
+      operationId: getComment
       tags:
         - Comments
         - PeerTube-Compat
@@ -141,6 +144,7 @@ paths:
 
     put:
       summary: Update a comment
+      operationId: updateComment
       tags:
         - Comments
         - PeerTube-Compat
@@ -182,6 +186,7 @@ paths:
 
     delete:
       summary: Delete a comment (soft delete)
+      operationId: deleteComment
       tags:
         - Comments
         - PeerTube-Compat
@@ -208,6 +213,7 @@ paths:
   /api/v1/comments/{commentId}/flag:
     post:
       summary: Flag a comment for moderation
+      operationId: flagComment
       tags:
         - Comments
         - PeerTube-Compat
@@ -263,6 +269,7 @@ paths:
 
     delete:
       summary: Remove flag from a comment
+      operationId: unflagComment
       tags:
         - Comments
         - PeerTube-Compat
@@ -287,6 +294,7 @@ paths:
   /api/v1/comments/{commentId}/moderate:
     post:
       summary: Moderate a comment (admin/owner only)
+      operationId: moderateComment
       tags:
         - Comments
         - PeerTube-Compat

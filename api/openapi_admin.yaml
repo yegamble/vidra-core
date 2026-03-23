@@ -1,0 +1,1324 @@
+openapi: 3.0.3
+info:
+  title: Athena Admin API
+  description: |
+    Admin-only endpoints for user management, video management, encoding jobs,
+    federation management, instance configuration, views management, and OAuth client administration.
+
+    All endpoints require admin or moderator role unless otherwise noted.
+  version: 1.0.0
+
+tags:
+  - name: Admin Users
+    description: Admin user management
+  - name: Admin Videos
+    description: Admin video management
+  - name: Admin Jobs
+    description: Encoding job management
+  - name: Admin Federation Jobs
+    description: Federation delivery job management
+  - name: Admin Federation Actors
+    description: Federation actor management
+  - name: Admin Views
+    description: View statistics management
+  - name: Admin Instance Config
+    description: Instance configuration management
+  - name: Admin OAuth
+    description: OAuth client management
+  - name: Admin Registrations
+    description: User registration moderation
+  - name: Instance
+    description: Public instance information
+  - name: Config
+    description: Instance configuration (public and admin)
+  - name: Custom Pages
+    description: Custom homepage management
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  # ===== Admin Users =====
+
+  /api/v1/admin/users:
+    get:
+      tags:
+        - Admin Users
+        - PeerTube-Compat
+      summary: List all users
+      description: List all users with admin/moderator access
+      operationId: adminListUsers
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Users retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdminUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/users/{id}:
+    put:
+      tags:
+        - Admin Users
+        - PeerTube-Compat
+      summary: Update a user
+      description: Admin updates user properties (role, quota, etc.)
+      operationId: adminUpdateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum: [admin, moderator, user]
+                video_quota:
+                  type: integer
+                video_quota_daily:
+                  type: integer
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Admin Users
+        - PeerTube-Compat
+      summary: Delete a user
+      description: Admin deletes a user account
+      operationId: adminDeleteUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: User deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/admin/users/{id}/block:
+    post:
+      tags:
+        - Admin Users
+        - PeerTube-Compat
+      summary: Block a user
+      description: Admin blocks a user account
+      operationId: adminBlockUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User blocked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/admin/users/{id}/unblock:
+    post:
+      tags:
+        - Admin Users
+        - PeerTube-Compat
+      summary: Unblock a user
+      description: Admin unblocks a previously blocked user account
+      operationId: adminUnblockUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User unblocked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ===== Admin Videos =====
+
+  /api/v1/admin/videos:
+    get:
+      tags:
+        - Admin Videos
+        - PeerTube-Compat
+      summary: List all videos (admin)
+      description: List all videos across all users. Admin/moderator only.
+      operationId: adminListVideos
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Videos retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ===== Admin Encoding Jobs =====
+
+  /api/v1/admin/jobs/{state}:
+    get:
+      tags:
+        - Admin Jobs
+        - PeerTube-Compat
+      summary: List encoding jobs by state
+      description: List encoding jobs filtered by state. Admin/moderator only.
+      operationId: adminListJobsByState
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: state
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [pending, processing, completed, failed]
+          description: Job state filter
+      responses:
+        '200':
+          description: Jobs retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/jobs/pause:
+    post:
+      tags:
+        - Admin Jobs
+        - PeerTube-Compat
+      summary: Pause encoding jobs
+      description: Pause the encoding job queue. Admin/moderator only.
+      operationId: adminPauseJobs
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Jobs paused
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/jobs/resume:
+    post:
+      tags:
+        - Admin Jobs
+        - PeerTube-Compat
+      summary: Resume encoding jobs
+      description: Resume the encoding job queue. Admin/moderator only.
+      operationId: adminResumeJobs
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Jobs resumed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ===== Admin Federation Jobs =====
+
+  /api/v1/admin/federation/jobs:
+    get:
+      tags:
+        - Admin Federation Jobs
+        - PeerTube-Compat
+      summary: List federation jobs
+      description: List ActivityPub delivery jobs. Admin/moderator only.
+      operationId: adminListFederationJobs
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Federation jobs retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/federation/jobs/{id}:
+    get:
+      tags:
+        - Admin Federation Jobs
+        - PeerTube-Compat
+      summary: Get a federation job
+      description: Get details of a specific federation delivery job
+      operationId: adminGetFederationJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Federation job retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Admin Federation Jobs
+        - PeerTube-Compat
+      summary: Delete a federation job
+      description: Delete a federation delivery job
+      operationId: adminDeleteFederationJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Job deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/admin/federation/jobs/{id}/retry:
+    post:
+      tags:
+        - Admin Federation Jobs
+        - PeerTube-Compat
+      summary: Retry a federation job
+      description: Retry a failed federation delivery job
+      operationId: adminRetryFederationJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job retry initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ===== Admin Federation Actors =====
+
+  /api/v1/admin/federation/actors:
+    get:
+      tags:
+        - Admin Federation Actors
+        - PeerTube-Compat
+      summary: List federation actors
+      description: List known ActivityPub actors
+      operationId: adminListFederationActors
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Actors retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags:
+        - Admin Federation Actors
+        - PeerTube-Compat
+      summary: Create or update a federation actor
+      description: Upsert an ActivityPub actor record
+      operationId: adminUpsertFederationActor
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Actor upserted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/federation/actors/{actor}:
+    put:
+      tags:
+        - Admin Federation Actors
+        - PeerTube-Compat
+      summary: Update a federation actor
+      description: Update an existing ActivityPub actor
+      operationId: adminUpdateFederationActor
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: actor
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Actor identifier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Actor updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Admin Federation Actors
+        - PeerTube-Compat
+      summary: Delete a federation actor
+      description: Delete an ActivityPub actor record
+      operationId: adminDeleteFederationActor
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: actor
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Actor identifier
+      responses:
+        '204':
+          description: Actor deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ===== Admin Views =====
+
+  /api/v1/admin/views/aggregate:
+    post:
+      tags:
+        - Admin Views
+      summary: Aggregate view statistics
+      description: Trigger aggregation of view statistics. Admin only.
+      operationId: adminAggregateViewStats
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Aggregation completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/views/cleanup:
+    post:
+      tags:
+        - Admin Views
+      summary: Cleanup old view data
+      description: Remove old view tracking data. Admin only.
+      operationId: adminCleanupViewData
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cleanup completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ===== Admin Instance Config =====
+
+  /api/v1/admin/instance/config:
+    get:
+      tags:
+        - Admin Instance Config
+      summary: List instance config keys
+      description: List all instance configuration keys and values. Admin only.
+      operationId: adminListInstanceConfigs
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Config keys retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/instance/config/{key}:
+    get:
+      tags:
+        - Admin Instance Config
+      summary: Get an instance config value
+      description: Get a specific instance configuration value by key. Admin only.
+      operationId: adminGetInstanceConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Configuration key
+      responses:
+        '200':
+          description: Config value retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Admin Instance Config
+      summary: Update an instance config value
+      description: Update a specific instance configuration value. Admin only.
+      operationId: adminUpdateInstanceConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Configuration key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Config value updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ===== Admin OAuth Clients =====
+
+  /api/v1/admin/oauth/clients:
+    get:
+      tags:
+        - Admin OAuth
+        - PeerTube-Compat
+      summary: List OAuth clients
+      description: List all registered OAuth clients. Admin only.
+      operationId: adminListOAuthClients
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OAuth clients retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags:
+        - Admin OAuth
+        - PeerTube-Compat
+      summary: Create an OAuth client
+      description: Create a new OAuth client application. Admin only.
+      operationId: adminCreateOAuthClient
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: OAuth client created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/oauth/clients/{clientId}/secret:
+    put:
+      tags:
+        - Admin OAuth
+        - PeerTube-Compat
+      summary: Rotate OAuth client secret
+      description: Generate a new client secret for an OAuth client. Admin only.
+      operationId: adminRotateOAuthClientSecret
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: OAuth client ID
+      responses:
+        '200':
+          description: Client secret rotated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/admin/oauth/clients/{clientId}:
+    delete:
+      tags:
+        - Admin OAuth
+        - PeerTube-Compat
+      summary: Delete an OAuth client
+      description: Delete an OAuth client. Admin only.
+      operationId: adminDeleteOAuthClient
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: OAuth client ID
+      responses:
+        '204':
+          description: Client deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ===== Admin Registrations =====
+
+  /api/v1/admin/registrations:
+    get:
+      tags:
+        - Admin Registrations
+        - PeerTube-Compat
+      summary: List user registrations
+      description: List pending user registration requests. Admin/moderator only.
+      operationId: adminListRegistrations
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Registrations retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/registrations/{id}/accept:
+    post:
+      tags:
+        - Admin Registrations
+        - PeerTube-Compat
+      summary: Accept a registration
+      description: Accept a pending user registration request
+      operationId: adminAcceptRegistration
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Registration accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/admin/registrations/{id}/reject:
+    post:
+      tags:
+        - Admin Registrations
+        - PeerTube-Compat
+      summary: Reject a registration
+      description: Reject a pending user registration request
+      operationId: adminRejectRegistration
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Registration rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/admin/registrations/{id}:
+    delete:
+      tags:
+        - Admin Registrations
+        - PeerTube-Compat
+      summary: Delete a registration
+      description: Delete a user registration request
+      operationId: adminDeleteRegistration
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Registration deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ===== Public Instance Info =====
+
+  /api/v1/instance/about:
+    get:
+      tags:
+        - Instance
+        - PeerTube-Compat
+      summary: Get instance about
+      description: Get public about information for this instance
+      operationId: getInstanceAbout
+      security: []
+      responses:
+        '200':
+          description: Instance about information
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/instance/stats:
+    get:
+      tags:
+        - Instance
+        - PeerTube-Compat
+      summary: Get instance statistics
+      description: Get public statistics for this instance (user count, video count, etc.)
+      operationId: getInstanceStats
+      security: []
+      responses:
+        '200':
+          description: Instance statistics
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ===== Config =====
+
+  /api/v1/config:
+    get:
+      tags:
+        - Config
+        - PeerTube-Compat
+      summary: Get public config
+      description: Get the public instance configuration
+      operationId: getPublicConfig
+      security: []
+      responses:
+        '200':
+          description: Public config
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/config/about:
+    get:
+      tags:
+        - Config
+        - PeerTube-Compat
+      summary: Get instance about (config)
+      description: Get public about information via the config endpoint
+      operationId: getConfigAbout
+      security: []
+      responses:
+        '200':
+          description: Instance about information
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/config/custom:
+    get:
+      tags:
+        - Config
+        - PeerTube-Compat
+      summary: Get custom config
+      description: Get the custom instance configuration. Admin only.
+      operationId: getCustomConfig
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Custom config retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    put:
+      tags:
+        - Config
+        - PeerTube-Compat
+      summary: Update custom config
+      description: Update the custom instance configuration. Admin only.
+      operationId: updateCustomConfig
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Custom config updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    delete:
+      tags:
+        - Config
+        - PeerTube-Compat
+      summary: Reset custom config
+      description: Delete/reset the custom instance configuration to defaults. Admin only.
+      operationId: deleteCustomConfig
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Custom config reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ===== Instance Media =====
+
+  /api/v1/config/instance-avatar/pick:
+    post:
+      tags:
+        - Config
+        - PeerTube-Compat
+      summary: Upload instance avatar
+      description: Upload a new instance avatar image. Admin only.
+      operationId: uploadInstanceAvatar
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                avatarfile:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Avatar uploaded
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    delete:
+      tags:
+        - Config
+        - PeerTube-Compat
+      summary: Delete instance avatar
+      description: Remove the instance avatar. Admin only.
+      operationId: deleteInstanceAvatar
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Avatar deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/config/instance-banner/pick:
+    post:
+      tags:
+        - Config
+        - PeerTube-Compat
+      summary: Upload instance banner
+      description: Upload a new instance banner image. Admin only.
+      operationId: uploadInstanceBanner
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                bannerfile:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Banner uploaded
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    delete:
+      tags:
+        - Config
+        - PeerTube-Compat
+      summary: Delete instance banner
+      description: Remove the instance banner. Admin only.
+      operationId: deleteInstanceBanner
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Banner deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ===== Custom Pages =====
+
+  /api/v1/custom-pages/homepage/instance:
+    get:
+      tags:
+        - Custom Pages
+        - PeerTube-Compat
+      summary: Get custom homepage
+      description: Get the custom instance homepage content
+      operationId: getCustomHomepage
+      security: []
+      responses:
+        '200':
+          description: Custom homepage content
+          content:
+            application/json:
+              schema:
+                type: object
+
+    put:
+      tags:
+        - Custom Pages
+        - PeerTube-Compat
+      summary: Update custom homepage
+      description: Update the custom instance homepage content. Admin only.
+      operationId: updateCustomHomepage
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Homepage updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    UserId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: User ID
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions (admin/moderator required)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    AdminUser:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [admin, moderator, user]
+        is_active:
+          type: boolean
+        is_blocked:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: string

@@ -1,4 +1,4 @@
-openapi: 3.0.0
+openapi: 3.0.3
 info:
   title: Ratings and Playlists API
   version: 1.0.0
@@ -12,6 +12,7 @@ paths:
   /api/v1/videos/{videoId}/rating:
     get:
       summary: Get rating statistics for a video
+      operationId: getVideoRatingStats
       tags:
         - Ratings
         - PeerTube-Compat
@@ -37,6 +38,7 @@ paths:
 
     put:
       summary: Set or update rating for a video
+      operationId: setVideoRating
       tags:
         - Ratings
         - PeerTube-Compat
@@ -77,6 +79,7 @@ paths:
 
     delete:
       summary: Remove rating from a video
+      operationId: removeVideoRating
       tags:
         - Ratings
         - PeerTube-Compat
@@ -101,6 +104,7 @@ paths:
   /api/v1/user/ratings:
     get:
       summary: Get current user's ratings
+      operationId: getUserRatings
       tags:
         - Ratings
         - PeerTube-Compat
@@ -142,6 +146,7 @@ paths:
   /api/v1/playlists:
     get:
       summary: List playlists
+      operationId: listPlaylists
       tags:
         - Playlists
         - PeerTube-Compat
@@ -191,6 +196,7 @@ paths:
 
     post:
       summary: Create a new playlist
+      operationId: createPlaylist
       tags:
         - Playlists
         - PeerTube-Compat
@@ -217,6 +223,7 @@ paths:
   /api/v1/playlists/{playlistId}:
     get:
       summary: Get a specific playlist
+      operationId: getPlaylist
       tags:
         - Playlists
         - PeerTube-Compat
@@ -245,6 +252,7 @@ paths:
 
     put:
       summary: Update a playlist
+      operationId: updatePlaylist
       tags:
         - Playlists
         - PeerTube-Compat
@@ -277,6 +285,7 @@ paths:
 
     delete:
       summary: Delete a playlist
+      operationId: deletePlaylist
       tags:
         - Playlists
         - PeerTube-Compat
@@ -302,6 +311,7 @@ paths:
   /api/v1/playlists/{playlistId}/items:
     get:
       summary: Get items in a playlist
+      operationId: getPlaylistItems
       tags:
         - Playlists
         - PeerTube-Compat
@@ -346,6 +356,7 @@ paths:
 
     post:
       summary: Add video to playlist
+      operationId: addVideoToPlaylist
       tags:
         - Playlists
         - PeerTube-Compat
@@ -383,6 +394,7 @@ paths:
   /api/v1/playlists/{playlistId}/items/{itemId}:
     delete:
       summary: Remove video from playlist
+      operationId: removeVideoFromPlaylist
       tags:
         - Playlists
         - PeerTube-Compat
@@ -414,6 +426,7 @@ paths:
   /api/v1/playlists/{playlistId}/items/{itemId}/reorder:
     put:
       summary: Reorder item in playlist
+      operationId: reorderPlaylistItem
       tags:
         - Playlists
         - PeerTube-Compat
@@ -460,6 +473,7 @@ paths:
   /api/v1/playlists/watch-later:
     get:
       summary: Get or create watch later playlist
+      operationId: getWatchLaterPlaylist
       tags:
         - Playlists
         - PeerTube-Compat
@@ -484,6 +498,7 @@ paths:
   /api/v1/users/me/watch-later:
     get:
       summary: Get my watch later playlist
+      operationId: getMyWatchLaterPlaylist
       description: Get the authenticated user's watch later playlist (alias for convenience)
       tags:
         - Playlists

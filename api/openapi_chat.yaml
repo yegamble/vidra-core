@@ -1,4 +1,4 @@
-openapi: 3.0.0
+openapi: 3.0.3
 info:
   title: Live Chat API
   version: 1.0.0
@@ -8,6 +8,7 @@ paths:
   /api/v1/streams/{streamId}/chat/ws:
     get:
       summary: WebSocket connection for live chat
+      operationId: connectChatWebSocket
       description: Upgrades HTTP connection to WebSocket for real-time chat communication
       tags:
         - Chat
@@ -36,6 +37,7 @@ paths:
   /api/v1/streams/{streamId}/chat/messages:
     get:
       summary: Get chat message history
+      operationId: getChatMessageHistory
       description: Retrieve historical chat messages for a stream (public streams or authenticated users)
       tags:
         - Chat
@@ -95,6 +97,7 @@ paths:
   /api/v1/streams/{streamId}/chat/messages/{messageId}:
     delete:
       summary: Delete a chat message
+      operationId: deleteChatMessage
       description: Delete a message (moderator or stream owner only)
       tags:
         - Chat Moderation
@@ -141,6 +144,7 @@ paths:
   /api/v1/streams/{streamId}/chat/moderators:
     get:
       summary: List chat moderators
+      operationId: listChatModerators
       description: Get all moderators for a stream chat
       tags:
         - Chat Moderation
@@ -175,6 +179,7 @@ paths:
 
     post:
       summary: Add a chat moderator
+      operationId: addChatModerator
       description: Grant moderator privileges to a user (stream owner only)
       tags:
         - Chat Moderation
@@ -223,6 +228,7 @@ paths:
   /api/v1/streams/{streamId}/chat/moderators/{userId}:
     delete:
       summary: Remove a chat moderator
+      operationId: removeChatModerator
       description: Revoke moderator privileges from a user (stream owner only)
       tags:
         - Chat Moderation
@@ -256,6 +262,7 @@ paths:
   /api/v1/streams/{streamId}/chat/bans:
     get:
       summary: List banned users
+      operationId: listBannedChatUsers
       description: Get all banned users for a stream chat (moderators only)
       tags:
         - Chat Moderation
@@ -292,6 +299,7 @@ paths:
 
     post:
       summary: Ban a user from chat
+      operationId: banChatUser
       description: Ban a user from participating in stream chat (moderators only)
       tags:
         - Chat Moderation
@@ -354,6 +362,7 @@ paths:
   /api/v1/streams/{streamId}/chat/bans/{userId}:
     delete:
       summary: Unban a user from chat
+      operationId: unbanChatUser
       description: Remove a ban from a user (moderators only)
       tags:
         - Chat Moderation
@@ -387,6 +396,7 @@ paths:
   /api/v1/streams/{streamId}/chat/stats:
     get:
       summary: Get chat statistics
+      operationId: getChatStats
       description: Get aggregate statistics for a stream's chat
       tags:
         - Chat
