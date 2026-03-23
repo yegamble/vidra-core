@@ -15,10 +15,10 @@ import (
 // ---------------------------------------------------------------------------
 
 type overrideResult struct {
-	disabledServices []string            // services with profiles: ["disabled"]
-	appDependsOn     map[string]string   // service -> condition
-	appNoDeps        bool                // true when depends_on: {}
-	raw              string              // full file content
+	disabledServices []string          // services with profiles: ["disabled"]
+	appDependsOn     map[string]string // service -> condition
+	appNoDeps        bool              // true when depends_on: {}
+	raw              string            // full file content
 }
 
 func parseOverride(t *testing.T, content string) overrideResult {
@@ -530,12 +530,12 @@ func TestWriteComposeOverride_AtomicWrite(t *testing.T) {
 
 func TestWriteComposeOverride_ServiceToggleMatrix(t *testing.T) {
 	tests := []struct {
-		name             string
-		config           *WizardConfig
-		wantDisabled     []string
-		wantNotDisabled  []string
-		wantAppDeps      int
-		wantAppNoDeps    bool
+		name            string
+		config          *WizardConfig
+		wantDisabled    []string
+		wantNotDisabled []string
+		wantAppDeps     int
+		wantAppNoDeps   bool
 	}{
 		{
 			name: "IPFS docker mode - not disabled",

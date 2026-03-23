@@ -1,0 +1,156 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Server Debug & Logs
+  description: |
+    Admin endpoints for server debugging, log management, and client log submission.
+
+    ## Debug Commands
+
+    - `gc` - Trigger garbage collection
+    - `goroutines` - Get goroutine count
+    - `memstats` - Get memory statistics
+
+    ## Log Levels (Client Logs)
+
+    - debug
+    - info
+    - warn
+    - error
+  version: 1.0.0
+
+paths:
+  /api/v1/server/debug:
+    get:
+      summary: Get server debug information
+      operationId: getServerDebugInfo
+      tags: [Server Debug]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Debug information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugInfoResponse'
+        '403':
+          description: Admin access required
+
+  /api/v1/server/debug/run-command:
+    post:
+      summary: Run a debug command
+      operationId: runDebugCommand
+      tags: [Server Debug]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command:
+                  type: string
+                  enum: [gc, goroutines, memstats]
+      responses:
+        '200':
+          description: Command result
+        '400':
+          description: Invalid or unknown command
+        '403':
+          description: Admin access required
+
+  /api/v1/server/logs:
+    get:
+      summary: Get recent server logs
+      operationId: getServerLogs
+      tags: [Server Logs]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Recent server logs
+        '403':
+          description: Admin access required
+
+  /api/v1/server/audit-logs:
+    get:
+      summary: Get audit logs
+      operationId: getAuditLogs
+      tags: [Server Logs]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Audit logs with pagination
+        '403':
+          description: Admin access required
+
+  /api/v1/server/logs/client:
+    post:
+      summary: Create a client log entry
+      operationId: createClientLog
+      tags: [Server Logs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                level:
+                  type: string
+                  enum: [debug, info, warn, error]
+                  default: info
+                message:
+                  type: string
+                meta:
+                  type: string
+      responses:
+        '204':
+          description: Log entry created
+        '400':
+          description: Invalid request
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    DebugInfoResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            goVersion:
+              type: string
+            numGoroutine:
+              type: integer
+            numCPU:
+              type: integer
+            memAlloc:
+              type: integer
+              format: int64
+            memTotalAlloc:
+              type: integer
+              format: int64
+            memSys:
+              type: integer
+              format: int64
+            memNumGC:
+              type: integer
+            uptime:
+              type: string
+            os:
+              type: string
+            arch:
+              type: string

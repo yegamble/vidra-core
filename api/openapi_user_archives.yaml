@@ -1,0 +1,258 @@
+openapi: 3.0.3
+info:
+  title: Athena API - User Data Archives
+  description: |
+    Endpoints for user data export and import.
+
+    ## Export Workflow
+
+    1. POST /api/v1/users/{userId}/exports/request - Request export
+    2. GET /api/v1/users/{userId}/exports - Poll export status
+    3. Download when state is 3 (completed)
+
+    ## Import Workflow (Resumable)
+
+    1. POST /api/v1/users/{userId}/imports/import-resumable - Initialize
+    2. PUT /api/v1/users/{userId}/imports/import-resumable - Upload chunks
+    3. GET /api/v1/users/{userId}/imports/latest - Check status
+
+    ## States
+
+    - 1: pending
+    - 2: processing
+    - 3: completed
+    - 4: failed
+  version: 1.0.0
+
+paths:
+  /api/v1/users/{userId}/exports/request:
+    post:
+      summary: Request user data export
+      operationId: requestUserExport
+      tags: [User Archives]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Export request created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserExportResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/users/{userId}/exports:
+    get:
+      summary: List user exports
+      operationId: listUserExports
+      tags: [User Archives]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of exports
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserExportListResponse'
+
+  /api/v1/users/{userId}/exports/{id}:
+    delete:
+      summary: Delete a user export
+      operationId: deleteUserExport
+      tags: [User Archives]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Export deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/users/{userId}/imports/import-resumable:
+    post:
+      summary: Initialize resumable user data import
+      operationId: initUserImportResumable
+      tags: [User Archives]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Import initialized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserImportResponse'
+    put:
+      summary: Upload import chunk
+      operationId: uploadUserImportChunk
+      tags: [User Archives]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Chunk uploaded
+    delete:
+      summary: Cancel resumable import
+      operationId: cancelUserImportResumable
+      tags: [User Archives]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Import cancelled
+
+  /api/v1/users/{userId}/imports/latest:
+    get:
+      summary: Get latest user import status
+      operationId: getLatestUserImport
+      tags: [User Archives]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Latest import status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserImportResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    UserExport:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: string
+        state:
+          type: integer
+          description: "1=pending, 2=processing, 3=completed, 4=failed"
+        fileSize:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    UserImport:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: string
+        state:
+          type: integer
+          description: "1=pending, 2=processing, 3=completed, 4=failed"
+        createdAt:
+          type: string
+          format: date-time
+
+    UserExportResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/UserExport'
+
+    UserExportListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserExport'
+
+    UserImportResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/UserImport'
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+    Forbidden:
+      description: Insufficient permissions
+    NotFound:
+      description: Resource not found
