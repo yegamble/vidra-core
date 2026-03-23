@@ -65,6 +65,9 @@ type HandlerDependencies struct {
 	OwnershipRepo         port.VideoOwnershipRepository
 	CollaboratorRepo      *repository.ChannelCollaboratorRepository
 	RunnerRepo            *repository.RunnerRepository
+	VideoPasswordRepo     port.VideoPasswordRepository
+	VideoStoryboardRepo   port.VideoStoryboardRepository
+	VideoEmbedRepo        port.VideoEmbedPrivacyRepository
 
 	UploadService            ucup.Service
 	EmailService             email.EmailService

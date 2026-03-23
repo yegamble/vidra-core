@@ -871,6 +871,59 @@ func registerModerationAPIRoutes(r chi.Router, deps *shared.HandlerDependencies,
 
 	r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/description", video.GetVideoDescriptionHandler(deps.VideoRepo))
 
+	// Video passwords
+	if deps.VideoPasswordRepo != nil {
+		passwordHandlers := video.NewPasswordHandlers(deps.VideoPasswordRepo, deps.VideoRepo)
+		r.Route("/videos/{id}/passwords", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Get("/", passwordHandlers.ListPasswords)
+			r.Put("/", passwordHandlers.ReplacePasswords)
+			r.Post("/", passwordHandlers.AddPassword)
+			r.Delete("/{passwordId}", passwordHandlers.DeletePassword)
+		})
+	}
+
+	// Video storyboards
+	if deps.VideoStoryboardRepo != nil {
+		storyboardHandlers := video.NewStoryboardHandlers(deps.VideoStoryboardRepo)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/storyboards", storyboardHandlers.ListStoryboards)
+	}
+
+	// Video embed privacy
+	if deps.VideoEmbedRepo != nil {
+		embedHandlers := video.NewEmbedPrivacyHandlers(deps.VideoEmbedRepo, deps.VideoRepo)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/embed-privacy", embedHandlers.GetEmbedPrivacy)
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/videos/{id}/embed-privacy", embedHandlers.UpdateEmbedPrivacy)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/embed-privacy/allowed", embedHandlers.CheckDomainAllowed)
+	}
+
+	// Video source replacement
+	{
+		sourceReplaceHandlers := video.NewSourceReplaceHandlers(deps.VideoRepo)
+		r.Route("/videos/{id}/source/replace-resumable", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Post("/", sourceReplaceHandlers.InitiateReplace)
+			r.Put("/", sourceReplaceHandlers.UploadReplaceChunk)
+			r.Delete("/", sourceReplaceHandlers.CancelReplace)
+		})
+	}
+
+	// Video file management
+	{
+		fileMgmtHandlers := video.NewFileManagementHandlers(deps.VideoRepo)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/metadata/{videoFileId}", fileMgmtHandlers.GetFileMetadata)
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/videos/{id}/hls", fileMgmtHandlers.DeleteAllHLS)
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/videos/{id}/hls/{videoFileId}", fileMgmtHandlers.DeleteHLSFile)
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/videos/{id}/web-videos", fileMgmtHandlers.DeleteAllWebVideos)
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/videos/{id}/web-videos/{videoFileId}", fileMgmtHandlers.DeleteWebVideoFile)
+	}
+
+	// Video overviews
+	{
+		overviewHandlers := video.NewOverviewHandlers(deps.VideoRepo)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/overviews/videos", overviewHandlers.GetOverview)
+	}
+
 	if deps.BlacklistRepo != nil {
 		blacklistHandlers := moderation.NewBlacklistHandlers(deps.BlacklistRepo)
 		r.Route("/videos/{id}/blacklist", func(r chi.Router) {

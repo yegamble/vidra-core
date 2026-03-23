@@ -1,0 +1,70 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Video Storyboards
+  description: Endpoints for retrieving video storyboard sprite sheets
+  version: 1.0.0
+
+tags:
+  - name: Video Storyboards
+    description: Storyboard sprite sheets for video scrubbing
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  /api/v1/videos/{id}/storyboards:
+    get:
+      tags:
+        - Video Storyboards
+        - PeerTube-Compat
+      summary: List video storyboards
+      description: List all storyboard sprite sheets for a video.
+      operationId: listVideoStoryboards
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Video ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of storyboards
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoryboardListResponse'
+        '400':
+          description: Missing video ID
+
+components:
+  schemas:
+    VideoStoryboard:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        videoId:
+          type: string
+        filename:
+          type: string
+        totalHeight:
+          type: integer
+        totalWidth:
+          type: integer
+        spriteHeight:
+          type: integer
+        spriteWidth:
+          type: integer
+        spriteDuration:
+          type: number
+          format: double
+    StoryboardListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/VideoStoryboard'
