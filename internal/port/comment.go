@@ -22,4 +22,10 @@ type CommentRepository interface {
 	GetFlags(ctx context.Context, commentID uuid.UUID) ([]*domain.CommentFlag, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status domain.CommentStatus) error
 	IsOwner(ctx context.Context, commentID, userID uuid.UUID) (bool, error)
+	// Admin listing with filtering for instance-wide comment management.
+	ListAll(ctx context.Context, opts domain.AdminCommentListOptions) ([]*domain.CommentWithUser, int64, error)
+	// Approve sets a comment's approved flag and clears held_for_review.
+	Approve(ctx context.Context, id uuid.UUID) error
+	// BulkRemoveByAccount soft-deletes all comments by an account name.
+	BulkRemoveByAccount(ctx context.Context, accountName string) (int64, error)
 }

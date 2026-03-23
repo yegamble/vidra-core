@@ -1,0 +1,378 @@
+openapi: 3.0.3
+info:
+  title: Athena Auto Tags API
+  description: Automatic tag policies for content moderation
+  version: 1.0.0
+
+paths:
+  /api/v1/auto-tags/accounts/{accountName}/policies:
+    get:
+      summary: Get account auto-tag policies
+      operationId: getAccountAutoTagPolicies
+      tags: [Auto Tags]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: accountName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Auto-tag policies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoTagPoliciesResponse'
+
+    put:
+      summary: Update account auto-tag policies
+      operationId: updateAccountAutoTagPolicies
+      tags: [Auto Tags]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: accountName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAutoTagPoliciesRequest'
+      responses:
+        '200':
+          description: Updated policies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoTagPoliciesResponse'
+
+  /api/v1/auto-tags/accounts/{accountName}/available:
+    get:
+      summary: Get available auto-tag types for account
+      operationId: getAccountAvailableTags
+      tags: [Auto Tags]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: accountName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Available tag types
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableTagsResponse'
+
+  /api/v1/auto-tags/server/policies:
+    get:
+      summary: Get server auto-tag policies
+      operationId: getServerAutoTagPolicies
+      tags: [Auto Tags]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Server auto-tag policies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoTagPoliciesResponse'
+
+    put:
+      summary: Update server auto-tag policies
+      operationId: updateServerAutoTagPolicies
+      tags: [Auto Tags]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAutoTagPoliciesRequest'
+      responses:
+        '200':
+          description: Updated server policies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoTagPoliciesResponse'
+
+  /api/v1/auto-tags/server/available:
+    get:
+      summary: Get available auto-tag types for server
+      operationId: getServerAvailableTags
+      tags: [Auto Tags]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Available server tag types
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableTagsResponse'
+
+  /api/v1/comments/{commentId}/approve:
+    post:
+      summary: Approve a held-for-review comment
+      operationId: approveComment
+      tags: [Comment Moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Comment approved
+        '404':
+          description: Comment not found
+
+  /api/v1/admin/comments:
+    get:
+      summary: List all comments (admin)
+      operationId: listAllComments
+      tags: [Comment Moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: videoId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: accountName
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, deleted, flagged, hidden]
+        - name: heldForReview
+          in: query
+          schema:
+            type: string
+            enum: ['true', 'false']
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: orderBy
+          in: query
+          schema:
+            type: string
+            enum: [newest, oldest]
+            default: newest
+      responses:
+        '200':
+          description: Paginated list of comments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminCommentsResponse'
+
+  /api/v1/bulk/comments/remove:
+    post:
+      summary: Bulk remove comments by account
+      operationId: bulkRemoveComments
+      tags: [Comment Moderation]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkRemoveCommentsRequest'
+      responses:
+        '200':
+          description: Number of comments removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      removed:
+                        type: integer
+                        format: int64
+
+  /api/v1/users/me/abuses:
+    get:
+      summary: List my abuse reports
+      operationId: listMyAbuses
+      tags: [Moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: User's abuse reports
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    AutoTagPolicy:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        accountName:
+          type: string
+          nullable: true
+        type:
+          type: string
+          enum: [external-link, watched-words]
+        review:
+          type: string
+          enum: [review-comments, block-comments]
+        listId:
+          type: integer
+          format: int64
+          nullable: true
+
+    AutoTag:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [external-link, watched-words]
+        enabled:
+          type: boolean
+
+    UpdateAutoTagPoliciesRequest:
+      type: object
+      required: [policies]
+      properties:
+        policies:
+          type: array
+          items:
+            type: object
+            required: [type, review]
+            properties:
+              type:
+                type: string
+                enum: [external-link, watched-words]
+              review:
+                type: string
+                enum: [review-comments, block-comments]
+              listId:
+                type: integer
+                format: int64
+
+    BulkRemoveCommentsRequest:
+      type: object
+      required: [accountName, scope]
+      properties:
+        accountName:
+          type: string
+          minLength: 1
+        scope:
+          type: string
+          enum: [instance, my-videos]
+
+    Meta:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    AutoTagPoliciesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutoTagPolicy'
+
+    AvailableTagsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutoTag'
+
+    AdminCommentsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            type: object
+        meta:
+          $ref: '#/components/schemas/Meta'

@@ -52,14 +52,14 @@ func newStubPlugin(name string) *stubPlugin {
 	return &stubPlugin{name: name, version: "1.0.0", author: "test", description: "stub"}
 }
 
-func (p *stubPlugin) Name() string                                     { return p.name }
-func (p *stubPlugin) Version() string                                  { return p.version }
-func (p *stubPlugin) Author() string                                   { return p.author }
-func (p *stubPlugin) Description() string                              { return p.description }
-func (p *stubPlugin) Enabled() bool                                    { return p.enabled }
-func (p *stubPlugin) SetEnabled(enabled bool)                          { p.enabled = enabled }
+func (p *stubPlugin) Name() string                                         { return p.name }
+func (p *stubPlugin) Version() string                                      { return p.version }
+func (p *stubPlugin) Author() string                                       { return p.author }
+func (p *stubPlugin) Description() string                                  { return p.description }
+func (p *stubPlugin) Enabled() bool                                        { return p.enabled }
+func (p *stubPlugin) SetEnabled(enabled bool)                              { p.enabled = enabled }
 func (p *stubPlugin) Initialize(_ context.Context, _ map[string]any) error { return nil }
-func (p *stubPlugin) Shutdown(_ context.Context) error                 { return nil }
+func (p *stubPlugin) Shutdown(_ context.Context) error                     { return nil }
 
 // newLifecycleHandler creates a handler with both SQL mock repo and a plugin manager
 // that has a named plugin registered (needed for Enable/Disable handlers).

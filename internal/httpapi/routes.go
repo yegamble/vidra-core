@@ -4,6 +4,7 @@ import (
 	"athena/internal/httpapi/handlers/account"
 	"athena/internal/httpapi/handlers/admin"
 	"athena/internal/httpapi/handlers/auth"
+	"athena/internal/httpapi/handlers/autotags"
 	backuphandlers "athena/internal/httpapi/handlers/backup"
 	"athena/internal/httpapi/handlers/channel"
 	compat "athena/internal/httpapi/handlers/compat"
@@ -17,6 +18,7 @@ import (
 	runnerhandlers "athena/internal/httpapi/handlers/runner"
 	"athena/internal/httpapi/handlers/social"
 	"athena/internal/httpapi/handlers/video"
+	"athena/internal/httpapi/handlers/watchedwords"
 	"athena/internal/httpapi/shared"
 	"athena/internal/repository"
 	"context"
@@ -883,6 +885,62 @@ func registerModerationAPIRoutes(r chi.Router, deps *shared.HandlerDependencies,
 			r.Delete("/{host}", userBlockHandlers.UnblockServer)
 		})
 	}
+
+	// Watched words routes
+	if deps.WatchedWordsService != nil {
+		wwHandlers := watchedwords.NewHandlers(deps.WatchedWordsService)
+		r.Route("/watched-words", func(r chi.Router) {
+			r.Route("/accounts/{accountName}/lists", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Get("/", wwHandlers.ListAccountWatchedWords)
+				r.Post("/", wwHandlers.CreateAccountWatchedWordList)
+				r.Put("/{listId}", wwHandlers.UpdateAccountWatchedWordList)
+				r.Delete("/{listId}", wwHandlers.DeleteAccountWatchedWordList)
+			})
+			r.Route("/server/lists", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+				r.Get("/", wwHandlers.ListServerWatchedWords)
+				r.Post("/", wwHandlers.CreateServerWatchedWordList)
+				r.Put("/{listId}", wwHandlers.UpdateServerWatchedWordList)
+				r.Delete("/{listId}", wwHandlers.DeleteServerWatchedWordList)
+			})
+		})
+	}
+
+	// Auto-tag routes
+	if deps.AutoTagsService != nil {
+		atHandlers := autotags.NewHandlers(deps.AutoTagsService)
+		r.Route("/auto-tags", func(r chi.Router) {
+			r.Route("/accounts/{accountName}", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Get("/policies", atHandlers.GetAccountAutoTagPolicies)
+				r.Put("/policies", atHandlers.UpdateAccountAutoTagPolicies)
+				r.Get("/available", atHandlers.GetAccountAvailableTags)
+			})
+			r.Route("/server", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+				r.Get("/policies", atHandlers.GetServerAutoTagPolicies)
+				r.Put("/policies", atHandlers.UpdateServerAutoTagPolicies)
+				r.Get("/available", atHandlers.GetServerAvailableTags)
+			})
+		})
+	}
+
+	// Comment approval and bulk operations
+	commentModHandlers := moderation.NewCommentModerationHandlers(deps.CommentRepo)
+	r.With(middleware.Auth(cfg.JWTSecret)).Post("/comments/{commentId}/approve", commentModHandlers.ApproveComment)
+	r.Route("/bulk", func(r chi.Router) {
+		r.Use(middleware.Auth(cfg.JWTSecret))
+		r.Use(middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod)))
+		r.Post("/comments/remove", commentModHandlers.BulkRemoveComments)
+	})
+
+	// User-facing abuse reports
+	if deps.ModerationRepo != nil {
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/users/me/abuses", moderationHandlers.ListMyAbuses)
+	}
 }
 
 // registerAdminAPIRoutes registers /admin/* routes. Extracted to keep
@@ -917,6 +975,10 @@ func registerAdminAPIRoutes(
 
 		adminVideoHandlers := admin.NewAdminVideoHandlers(deps.VideoRepo)
 		r.Get("/videos", adminVideoHandlers.ListVideos)
+
+		// Admin comment listing
+		adminCommentHandlers := moderation.NewCommentModerationHandlers(deps.CommentRepo)
+		r.Get("/comments", adminCommentHandlers.ListAllComments)
 
 		jobHandlers := admin.NewJobHandlers(deps.EncodingRepo, deps.EncodingScheduler)
 		r.Get("/jobs/{state}", jobHandlers.ListJobs)

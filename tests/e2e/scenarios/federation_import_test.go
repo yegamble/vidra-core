@@ -269,4 +269,3 @@ func extractNestedString(m map[string]interface{}, keys ...string) string {
 	s, _ := current.(string)
 	return s
 }
-

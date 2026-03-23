@@ -992,6 +992,20 @@ func (m *MockCommentRepository) IsOwner(ctx context.Context, commentID, userID u
 	args := m.Called(ctx, commentID, userID)
 	return args.Bool(0), args.Error(1)
 }
+func (m *MockCommentRepository) ListAll(ctx context.Context, opts domain.AdminCommentListOptions) ([]*domain.CommentWithUser, int64, error) {
+	args := m.Called(ctx, opts)
+	if args.Get(0) == nil {
+		return nil, 0, args.Error(2)
+	}
+	return args.Get(0).([]*domain.CommentWithUser), args.Get(1).(int64), args.Error(2)
+}
+func (m *MockCommentRepository) Approve(ctx context.Context, id uuid.UUID) error {
+	return m.Called(ctx, id).Error(0)
+}
+func (m *MockCommentRepository) BulkRemoveByAccount(ctx context.Context, accountName string) (int64, error) {
+	args := m.Called(ctx, accountName)
+	return args.Get(0).(int64), args.Error(1)
+}
 
 func TestServicePublishVideo(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)

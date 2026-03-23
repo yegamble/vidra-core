@@ -14,6 +14,7 @@ import (
 	"athena/internal/repository"
 	"athena/internal/scheduler"
 	"athena/internal/usecase"
+	ucat "athena/internal/usecase/auto_tags"
 	ucbackup "athena/internal/usecase/backup"
 	"athena/internal/usecase/captiongen"
 	ucchannel "athena/internal/usecase/channel"
@@ -24,6 +25,7 @@ import (
 	ucrt "athena/internal/usecase/rating"
 	ucup "athena/internal/usecase/upload"
 	ucviews "athena/internal/usecase/views"
+	ucww "athena/internal/usecase/watched_words"
 )
 
 type HandlerDependencies struct {
@@ -97,6 +99,9 @@ type HandlerDependencies struct {
 	RegistrationRepo *repository.RegistrationRepository
 	PluginRepo       *repository.PluginRepository
 	PluginManager    *plugin.Manager
+
+	WatchedWordsService *ucww.Service
+	AutoTagsService     *ucat.Service
 
 	RedundancyService any
 	InstanceDiscovery any
