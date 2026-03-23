@@ -15,7 +15,7 @@ func writeMockExecutable(t *testing.T, body string) string {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), "yt-dlp-mock.sh")
-	content := "#!/bin/sh\nset -eu\n" + body + "\n"
+	content := "#!/bin/bash\nset -eu\nexport PATH=\"/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"\n" + body + "\n"
 	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)
 	}
@@ -203,7 +203,7 @@ if [ -z "$out" ]; then
   echo "missing output template" 1>&2
   exit 1
 fi
-out_file=$(echo "$out" | sed 's/%(ext)s/mp4/')
+out_file="${out//%(ext)s/mp4}"
 mkdir -p "$(dirname "$out_file")"
 echo "video-data" > "$out_file"
 echo "[download] 50.0% 10.0MiB of 20.0MiB"
