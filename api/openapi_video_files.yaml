@@ -1,0 +1,269 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Video Files & Source Management
+  description: Endpoints for video file management, source replacement, and overviews
+  version: 1.0.0
+
+tags:
+  - name: Video Files
+    description: Video file management (HLS, web-videos, metadata)
+  - name: Video Source
+    description: Resumable video source replacement
+  - name: Video Overviews
+    description: Trending video overviews
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  /api/v1/videos/{id}/metadata/{videoFileId}:
+    get:
+      tags:
+        - Video Files
+        - PeerTube-Compat
+      summary: Get video file metadata
+      description: Retrieve metadata for a specific video file.
+      operationId: getVideoFileMetadata
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+        - $ref: '#/components/parameters/VideoFileId'
+      responses:
+        '200':
+          description: File metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      videoId:
+                        type: string
+                      videoFileId:
+                        type: string
+                      metadata:
+                        type: object
+
+  /api/v1/videos/{id}/hls:
+    delete:
+      tags:
+        - Video Files
+        - PeerTube-Compat
+      summary: Delete all HLS files
+      description: Delete all HLS streaming files for a video.
+      operationId: deleteAllHLS
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '204':
+          description: HLS files deleted
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+
+  /api/v1/videos/{id}/hls/{videoFileId}:
+    delete:
+      tags:
+        - Video Files
+        - PeerTube-Compat
+      summary: Delete a specific HLS file
+      description: Delete a specific HLS streaming file.
+      operationId: deleteHLSFile
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+        - $ref: '#/components/parameters/VideoFileId'
+      responses:
+        '204':
+          description: HLS file deleted
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+
+  /api/v1/videos/{id}/web-videos:
+    delete:
+      tags:
+        - Video Files
+        - PeerTube-Compat
+      summary: Delete all web video files
+      description: Delete all web video files for a video.
+      operationId: deleteAllWebVideos
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '204':
+          description: Web video files deleted
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+
+  /api/v1/videos/{id}/web-videos/{videoFileId}:
+    delete:
+      tags:
+        - Video Files
+        - PeerTube-Compat
+      summary: Delete a specific web video file
+      description: Delete a specific web video file.
+      operationId: deleteWebVideoFile
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+        - $ref: '#/components/parameters/VideoFileId'
+      responses:
+        '204':
+          description: Web video file deleted
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+
+  /api/v1/videos/{id}/source/replace-resumable:
+    post:
+      tags:
+        - Video Source
+        - PeerTube-Compat
+      summary: Initiate video source replacement
+      description: Start a resumable upload to replace the video source file.
+      operationId: initiateSourceReplace
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - filename
+              properties:
+                filename:
+                  type: string
+                fileSize:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: Replacement initiated
+        '400':
+          description: Missing filename
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+    put:
+      tags:
+        - Video Source
+        - PeerTube-Compat
+      summary: Upload replacement chunk
+      description: Upload a chunk for the video source replacement.
+      operationId: uploadReplaceChunk
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '200':
+          description: Chunk received
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+    delete:
+      tags:
+        - Video Source
+        - PeerTube-Compat
+      summary: Cancel source replacement
+      description: Cancel an in-progress video source replacement.
+      operationId: cancelSourceReplace
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '204':
+          description: Replacement cancelled
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+
+  /api/v1/overviews/videos:
+    get:
+      tags:
+        - Video Overviews
+        - PeerTube-Compat
+      summary: Get video overviews
+      description: Return trending videos grouped by categories, channels, and tags.
+      operationId: getVideoOverviews
+      responses:
+        '200':
+          description: Video overviews
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/VideoOverview'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    VideoId:
+      name: id
+      in: path
+      required: true
+      description: Video ID
+      schema:
+        type: string
+    VideoFileId:
+      name: videoFileId
+      in: path
+      required: true
+      description: Video file ID
+      schema:
+        type: string
+  schemas:
+    VideoOverview:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategoryOverview'
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategoryOverview'
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategoryOverview'
+    CategoryOverview:
+      type: object
+      properties:
+        category:
+          type: string
+        videos:
+          type: array
+          items:
+            type: object

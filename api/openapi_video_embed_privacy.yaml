@@ -1,0 +1,142 @@
+openapi: 3.0.3
+info:
+  title: Athena API - Video Embed Privacy
+  description: Endpoints for managing video embed privacy and domain whitelisting
+  version: 1.0.0
+
+tags:
+  - name: Video Embed Privacy
+    description: Control where videos can be embedded
+  - name: PeerTube-Compat
+    description: Endpoints intended to match PeerTube-style resource contracts.
+
+paths:
+  /api/v1/videos/{id}/embed-privacy:
+    get:
+      tags:
+        - Video Embed Privacy
+        - PeerTube-Compat
+      summary: Get embed privacy settings
+      description: Retrieve the embed privacy settings for a video.
+      operationId: getVideoEmbedPrivacy
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      responses:
+        '200':
+          description: Embed privacy settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbedPrivacyResponse'
+    put:
+      tags:
+        - Video Embed Privacy
+        - PeerTube-Compat
+      summary: Update embed privacy settings
+      description: Update embed privacy settings for a video. Only the video owner can update.
+      operationId: updateVideoEmbedPrivacy
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: integer
+                  enum: [1, 2, 3]
+                  description: "1=enabled, 2=disabled, 3=whitelist"
+                allowedDomains:
+                  type: array
+                  items:
+                    type: string
+                  description: Domains allowed to embed (only used when status=3)
+      responses:
+        '200':
+          description: Updated embed privacy settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbedPrivacyResponse'
+        '400':
+          description: Invalid status
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+
+  /api/v1/videos/{id}/embed-privacy/allowed:
+    get:
+      tags:
+        - Video Embed Privacy
+        - PeerTube-Compat
+      summary: Check if domain is allowed to embed
+      description: Check whether a specific domain is allowed to embed this video.
+      operationId: checkVideoEmbedDomain
+      parameters:
+        - $ref: '#/components/parameters/VideoId'
+        - name: domain
+          in: query
+          required: true
+          description: Domain to check
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Domain check result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      allowed:
+                        type: boolean
+        '400':
+          description: Missing domain parameter
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    VideoId:
+      name: id
+      in: path
+      required: true
+      description: Video ID
+      schema:
+        type: string
+  schemas:
+    VideoEmbedPrivacy:
+      type: object
+      properties:
+        videoId:
+          type: string
+        status:
+          type: integer
+          enum: [1, 2, 3]
+          description: "1=enabled, 2=disabled, 3=whitelist"
+        allowedDomains:
+          type: array
+          items:
+            type: string
+    EmbedPrivacyResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/VideoEmbedPrivacy'
