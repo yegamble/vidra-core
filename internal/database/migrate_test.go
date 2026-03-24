@@ -2,11 +2,15 @@ package database
 
 import (
 	"context"
+	"math"
 	"os"
 	"testing"
 
+	migrationfs "vidra-core"
+
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,6 +35,17 @@ func openMigrationTestDB(t *testing.T) *sqlx.DB {
 	}
 
 	return db
+}
+
+func TestEmbeddedMigrationsAvailable(t *testing.T) {
+	goose.SetBaseFS(migrationfs.FS)
+	t.Cleanup(func() {
+		goose.SetBaseFS(nil)
+	})
+
+	migrations, err := goose.CollectMigrations(embeddedMigrationsDir, 0, math.MaxInt64)
+	require.NoError(t, err)
+	require.NotEmpty(t, migrations, "embedded migration directory should contain SQL migrations")
 }
 
 func TestRunMigrations(t *testing.T) {

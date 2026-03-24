@@ -15,6 +15,8 @@ import (
 
 var setBaseFSOnce sync.Once
 
+const embeddedMigrationsDir = "migrations"
+
 func RunMigrations(ctx context.Context, db *sqlx.DB) error {
 	setBaseFSOnce.Do(func() {
 		goose.SetBaseFS(migrationfs.FS)
@@ -22,7 +24,7 @@ func RunMigrations(ctx context.Context, db *sqlx.DB) error {
 
 	sqlDB := db.DB
 
-	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
+	if err := goose.UpContext(ctx, sqlDB, embeddedMigrationsDir); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
@@ -44,7 +46,7 @@ func RunMigrationsWithDB(ctx context.Context, db *sql.DB) error {
 		goose.SetBaseFS(migrationfs.FS)
 	})
 
-	if err := goose.UpContext(ctx, db, "."); err != nil {
+	if err := goose.UpContext(ctx, db, embeddedMigrationsDir); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
