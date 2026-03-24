@@ -4,7 +4,7 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -58,7 +58,7 @@ func didForHandle(handle string) string {
 		return "did:plc:testhandle"
 	}
 
-	sum := sha1.Sum([]byte(normalized))
+	sum := sha256.Sum256([]byte(normalized))
 	return "did:plc:" + hex.EncodeToString(sum[:8])
 }
 
@@ -113,10 +113,19 @@ func newRouter() http.Handler {
 	s := newState()
 	mux := http.NewServeMux()
 
+	registerCoreRoutes(mux, s)
+	registerRepoRoutes(mux, s)
+	registerProfileRoutes(mux, s)
+	registerDebugRoutes(mux, s)
+
+	return mux
+}
+
+func registerCoreRoutes(mux *http.ServeMux, s *state) {
 	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
 	// Create session — accepts any identifier/password
@@ -169,7 +178,9 @@ func newRouter() http.Handler {
 			"did":        did,
 		})
 	})
+}
 
+func registerRepoRoutes(mux *http.ServeMux, s *state) {
 	// Create record — requires valid Bearer access token
 	mux.HandleFunc("/xrpc/com.atproto.repo.createRecord", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -264,14 +275,6 @@ func newRouter() http.Handler {
 		})
 	})
 
-	// Get author feed — returns empty feed (no auth required for reads)
-	mux.HandleFunc("/xrpc/app.bsky.feed.getAuthorFeed", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"feed":   []interface{}{},
-			"cursor": "",
-		})
-	})
-
 	// Get record — returns a record by repo/collection/rkey
 	mux.HandleFunc("/xrpc/com.atproto.repo.getRecord", func(w http.ResponseWriter, r *http.Request) {
 		repo := r.URL.Query().Get("repo")
@@ -303,6 +306,49 @@ func newRouter() http.Handler {
 			"uri":   found.URI,
 			"cid":   found.CID,
 			"value": found.Record,
+		})
+	})
+
+	// Delete record — requires valid Bearer access token
+	mux.HandleFunc("/xrpc/com.atproto.repo.deleteRecord", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		token := extractBearer(r)
+		_, ok := s.validateAccess(token)
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		var req struct {
+			Repo       string `json:"repo"`
+			Collection string `json:"collection"`
+			Rkey       string `json:"rkey"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		targetURI := fmt.Sprintf("at://%s/%s/%s", req.Repo, req.Collection, req.Rkey)
+		s.mu.Lock()
+		for i := range s.records {
+			if s.records[i].URI == targetURI {
+				s.records = append(s.records[:i], s.records[i+1:]...)
+				break
+			}
+		}
+		s.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+func registerProfileRoutes(mux *http.ServeMux, s *state) {
+	// Get author feed — returns empty feed (no auth required for reads)
+	mux.HandleFunc("/xrpc/app.bsky.feed.getAuthorFeed", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"feed":   []interface{}{},
+			"cursor": "",
 		})
 	})
 
@@ -385,40 +431,9 @@ func newRouter() http.Handler {
 			},
 		})
 	})
+}
 
-	// Delete record — requires valid Bearer access token
-	mux.HandleFunc("/xrpc/com.atproto.repo.deleteRecord", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		token := extractBearer(r)
-		_, ok := s.validateAccess(token)
-		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-			return
-		}
-		var req struct {
-			Repo       string `json:"repo"`
-			Collection string `json:"collection"`
-			Rkey       string `json:"rkey"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
-			return
-		}
-		targetURI := fmt.Sprintf("at://%s/%s/%s", req.Repo, req.Collection, req.Rkey)
-		s.mu.Lock()
-		for i := range s.records {
-			if s.records[i].URI == targetURI {
-				s.records = append(s.records[:i], s.records[i+1:]...)
-				break
-			}
-		}
-		s.mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	})
-
+func registerDebugRoutes(mux *http.ServeMux, s *state) {
 	// Debug endpoint: list all created records
 	mux.HandleFunc("/test/records", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
@@ -436,8 +451,6 @@ func newRouter() http.Handler {
 		s.mu.Unlock()
 		writeJSON(w, http.StatusOK, blobs)
 	})
-
-	return mux
 }
 
 func main() {

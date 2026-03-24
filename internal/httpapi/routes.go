@@ -1,6 +1,11 @@
 package httpapi
 
 import (
+	"context"
+	"log"
+	"net/http"
+	"strings"
+	"time"
 	"vidra-core/internal/httpapi/handlers/account"
 	"vidra-core/internal/httpapi/handlers/admin"
 	"vidra-core/internal/httpapi/handlers/auth"
@@ -27,11 +32,6 @@ import (
 	"vidra-core/internal/httpapi/handlers/watchedwords"
 	"vidra-core/internal/httpapi/shared"
 	"vidra-core/internal/repository"
-	"context"
-	"log"
-	"net/http"
-	"strings"
-	"time"
 
 	chi "github.com/go-chi/chi/v5"
 	govalidator "github.com/go-playground/validator/v10"
@@ -701,17 +701,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 		r.Route("/playlists", func(r chi.Router) {
 			playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
-
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", playlistHandlers.ListPlaylists)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", playlistHandlers.GetPlaylist)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/items", playlistHandlers.GetPlaylistItems)
-
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", playlistHandlers.CreatePlaylist)
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", playlistHandlers.UpdatePlaylist)
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", playlistHandlers.DeletePlaylist)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/items", playlistHandlers.AddVideoToPlaylist)
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/items/{itemId}", playlistHandlers.RemoveVideoFromPlaylist)
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}/items/{itemId}/reorder", playlistHandlers.ReorderPlaylistItem)
+			registerPlaylistRoutes(r, cfg.JWTSecret, "", playlistHandlers)
 		})
 
 		moderationHandlers := moderation.NewModerationHandlers(deps.ModerationRepo)
@@ -1314,15 +1304,7 @@ func registerPeerTubeAliasRoutes(r chi.Router, deps *shared.HandlerDependencies,
 	// Use individual route registrations to avoid shadowing that subrouter.
 	if deps.PlaylistService != nil {
 		playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
-		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/video-playlists", playlistHandlers.ListPlaylists)
-		r.With(middleware.Auth(cfg.JWTSecret)).Post("/video-playlists", playlistHandlers.CreatePlaylist)
-		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/video-playlists/{id}", playlistHandlers.GetPlaylist)
-		r.With(middleware.Auth(cfg.JWTSecret)).Put("/video-playlists/{id}", playlistHandlers.UpdatePlaylist)
-		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/video-playlists/{id}", playlistHandlers.DeletePlaylist)
-		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/video-playlists/{id}/items", playlistHandlers.GetPlaylistItems)
-		r.With(middleware.Auth(cfg.JWTSecret)).Post("/video-playlists/{id}/items", playlistHandlers.AddVideoToPlaylist)
-		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/video-playlists/{id}/items/{itemId}", playlistHandlers.RemoveVideoFromPlaylist)
-		r.With(middleware.Auth(cfg.JWTSecret)).Put("/video-playlists/{id}/items/{itemId}/reorder", playlistHandlers.ReorderPlaylistItem)
+		registerPlaylistRoutes(r, cfg.JWTSecret, "/video-playlists", playlistHandlers)
 	}
 
 	// --- Channel handle aliases ---
@@ -1342,4 +1324,26 @@ func registerPeerTubeAliasRoutes(r chi.Router, deps *shared.HandlerDependencies,
 	// --- Playback metrics ---
 	playbackHandler := metricshandlers.NewPlaybackHandler()
 	r.Post("/metrics/playback", playbackHandler.ReportPlaybackMetrics)
+}
+
+func registerPlaylistRoutes(r chi.Router, jwtSecret, basePath string, playlistHandlers *social.PlaylistHandlers) {
+	path := func(suffix string) string {
+		if basePath == "" {
+			return suffix
+		}
+		if suffix == "/" {
+			return basePath
+		}
+		return basePath + suffix
+	}
+
+	r.With(middleware.OptionalAuth(jwtSecret)).Get(path("/"), playlistHandlers.ListPlaylists)
+	r.With(middleware.Auth(jwtSecret)).Post(path("/"), playlistHandlers.CreatePlaylist)
+	r.With(middleware.OptionalAuth(jwtSecret)).Get(path("/{id}"), playlistHandlers.GetPlaylist)
+	r.With(middleware.Auth(jwtSecret)).Put(path("/{id}"), playlistHandlers.UpdatePlaylist)
+	r.With(middleware.Auth(jwtSecret)).Delete(path("/{id}"), playlistHandlers.DeletePlaylist)
+	r.With(middleware.OptionalAuth(jwtSecret)).Get(path("/{id}/items"), playlistHandlers.GetPlaylistItems)
+	r.With(middleware.Auth(jwtSecret)).Post(path("/{id}/items"), playlistHandlers.AddVideoToPlaylist)
+	r.With(middleware.Auth(jwtSecret)).Delete(path("/{id}/items/{itemId}"), playlistHandlers.RemoveVideoFromPlaylist)
+	r.With(middleware.Auth(jwtSecret)).Put(path("/{id}/items/{itemId}/reorder"), playlistHandlers.ReorderPlaylistItem)
 }

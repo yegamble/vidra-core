@@ -20,6 +20,10 @@ type Handlers struct {
 	service *ucww.Service
 }
 
+func parseListID(r *http.Request) (int64, error) {
+	return strconv.ParseInt(chi.URLParam(r, "listId"), 10, 64)
+}
+
 // NewHandlers creates a new Handlers instance.
 func NewHandlers(service *ucww.Service) *Handlers {
 	return &Handlers{service: service}
@@ -77,35 +81,7 @@ func (h *Handlers) CreateAccountWatchedWordList(w http.ResponseWriter, r *http.R
 
 // UpdateAccountWatchedWordList handles PUT /api/v1/watched-words/accounts/{accountName}/lists/{listId}
 func (h *Handlers) UpdateAccountWatchedWordList(w http.ResponseWriter, r *http.Request) {
-	listID, err := strconv.ParseInt(chi.URLParam(r, "listId"), 10, 64)
-	if err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid list ID"))
-		return
-	}
-
-	_, ok := middleware.GetUserIDFromContext(r.Context())
-	if !ok {
-		shared.WriteError(w, http.StatusUnauthorized, fmt.Errorf("authentication required"))
-		return
-	}
-
-	var req domain.UpdateWatchedWordListRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
-		return
-	}
-
-	list, err := h.service.Update(r.Context(), listID, &req)
-	if err != nil {
-		if errors.Is(err, domain.ErrWatchedWordListNotFound) {
-			shared.WriteError(w, http.StatusNotFound, err)
-			return
-		}
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update watched word list"))
-		return
-	}
-
-	shared.WriteJSON(w, http.StatusOK, list)
+	h.updateWatchedWordList(w, r, "failed to update watched word list")
 }
 
 // DeleteAccountWatchedWordList handles DELETE /api/v1/watched-words/accounts/{accountName}/lists/{listId}
@@ -174,7 +150,11 @@ func (h *Handlers) CreateServerWatchedWordList(w http.ResponseWriter, r *http.Re
 
 // UpdateServerWatchedWordList handles PUT /api/v1/watched-words/server/lists/{listId}
 func (h *Handlers) UpdateServerWatchedWordList(w http.ResponseWriter, r *http.Request) {
-	listID, err := strconv.ParseInt(chi.URLParam(r, "listId"), 10, 64)
+	h.updateWatchedWordList(w, r, "failed to update server watched word list")
+}
+
+func (h *Handlers) updateWatchedWordList(w http.ResponseWriter, r *http.Request, updateFailureMessage string) {
+	listID, err := parseListID(r)
 	if err != nil {
 		shared.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid list ID"))
 		return
@@ -198,7 +178,7 @@ func (h *Handlers) UpdateServerWatchedWordList(w http.ResponseWriter, r *http.Re
 			shared.WriteError(w, http.StatusNotFound, err)
 			return
 		}
-		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to update server watched word list"))
+		shared.WriteError(w, http.StatusInternalServerError, errors.New(updateFailureMessage))
 		return
 	}
 
