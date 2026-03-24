@@ -1,11 +1,11 @@
 package federation
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
+	"vidra-core/internal/httpapi/shared"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"

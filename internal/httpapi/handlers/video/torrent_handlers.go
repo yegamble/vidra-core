@@ -1,11 +1,11 @@
 package video
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"vidra-core/internal/httpapi/shared"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

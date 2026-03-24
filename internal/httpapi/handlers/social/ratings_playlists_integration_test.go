@@ -1,14 +1,14 @@
 package social
 
 import (
-	"vidra-core/internal/domain"
-	"vidra-core/internal/repository"
-	"vidra-core/internal/testutil"
-	"vidra-core/internal/usecase"
 	"context"
 	"fmt"
 	"testing"
 	"time"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"

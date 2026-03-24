@@ -1,13 +1,13 @@
 package torrent
 
 import (
-	"vidra-core/internal/config"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"sync"
 	"time"
+	"vidra-core/internal/config"
 
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"

@@ -1,9 +1,9 @@
 package port
 
 import (
-	"vidra-core/internal/domain"
 	"context"
 	"database/sql"
+	"vidra-core/internal/domain"
 )
 
 type UserRepository interface {

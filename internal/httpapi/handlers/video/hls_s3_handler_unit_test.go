@@ -1,11 +1,6 @@
 package video
 
 import (
-	"vidra-core/internal/config"
-	"vidra-core/internal/domain"
-	"vidra-core/internal/middleware"
-	"vidra-core/internal/storage"
-	"vidra-core/internal/usecase"
 	"context"
 	"errors"
 	"io"
@@ -14,6 +9,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/storage"
+	"vidra-core/internal/usecase"
 
 	"github.com/stretchr/testify/assert"
 )

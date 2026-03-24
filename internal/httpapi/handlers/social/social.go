@@ -1,13 +1,13 @@
 package social
 
 import (
-	"vidra-core/internal/httpapi/shared"
-	"vidra-core/internal/middleware"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"time"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
 
 	"vidra-core/internal/usecase"
 

@@ -1,9 +1,9 @@
 package port
 
 import (
-	"vidra-core/internal/domain"
 	"context"
 	"time"
+	"vidra-core/internal/domain"
 )
 
 type ActivityPubRepository interface {

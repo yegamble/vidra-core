@@ -1,7 +1,6 @@
 package whisper
 
 import (
-	"vidra-core/internal/domain"
 	"bufio"
 	"context"
 	"encoding/json"
@@ -12,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"vidra-core/internal/domain"
 )
 
 type localClient struct {

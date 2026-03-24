@@ -1,8 +1,6 @@
 package video
 
 import (
-	"vidra-core/internal/repository"
-	"vidra-core/internal/usecase"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -12,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/usecase"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"

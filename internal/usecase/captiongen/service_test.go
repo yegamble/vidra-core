@@ -1,8 +1,6 @@
 package captiongen
 
 import (
-	"vidra-core/internal/domain"
-	"vidra-core/internal/whisper"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/whisper"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

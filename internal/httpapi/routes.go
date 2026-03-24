@@ -1,6 +1,11 @@
 package httpapi
 
 import (
+	"context"
+	"log"
+	"net/http"
+	"strings"
+	"time"
 	"vidra-core/internal/httpapi/handlers/account"
 	"vidra-core/internal/httpapi/handlers/admin"
 	"vidra-core/internal/httpapi/handlers/auth"
@@ -27,11 +32,6 @@ import (
 	"vidra-core/internal/httpapi/handlers/watchedwords"
 	"vidra-core/internal/httpapi/shared"
 	"vidra-core/internal/repository"
-	"context"
-	"log"
-	"net/http"
-	"strings"
-	"time"
 
 	chi "github.com/go-chi/chi/v5"
 	govalidator "github.com/go-playground/validator/v10"

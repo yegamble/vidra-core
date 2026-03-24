@@ -1,12 +1,12 @@
 package repository
 
 import (
-	"vidra-core/internal/domain"
-	"vidra-core/internal/usecase"
 	"context"
 	"database/sql"
 	"fmt"
 	"time"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/usecase"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"

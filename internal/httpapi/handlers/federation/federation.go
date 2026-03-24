@@ -1,9 +1,9 @@
 package federation
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"net/http"
 	"strconv"
+	"vidra-core/internal/httpapi/shared"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/repository"

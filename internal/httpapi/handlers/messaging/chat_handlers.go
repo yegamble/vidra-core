@@ -1,13 +1,13 @@
 package messaging
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"time"
+	"vidra-core/internal/httpapi/shared"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

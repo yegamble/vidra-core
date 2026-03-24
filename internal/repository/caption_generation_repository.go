@@ -1,12 +1,12 @@
 package repository
 
 import (
-	"vidra-core/internal/domain"
-	"vidra-core/internal/port"
 	"context"
 	"database/sql"
 	"fmt"
 	"time"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"

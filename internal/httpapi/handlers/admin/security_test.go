@@ -1,14 +1,14 @@
 package admin
 
 import (
-	"vidra-core/internal/domain"
-	"vidra-core/internal/repository"
 	"context"
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
 )
 
 type MockVideoRepo struct {

@@ -1,7 +1,6 @@
 package whisper
 
 import (
-	"vidra-core/internal/domain"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -14,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"vidra-core/internal/domain"
 )
 
 // httpClient implements the Client interface using an HTTP Whisper service

@@ -1,9 +1,6 @@
 package social
 
 import (
-	"vidra-core/internal/domain"
-	"vidra-core/internal/httpapi/shared"
-	"vidra-core/internal/middleware"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

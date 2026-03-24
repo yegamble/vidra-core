@@ -1,8 +1,8 @@
 package port
 
 import (
-	"vidra-core/internal/domain"
 	"context"
+	"vidra-core/internal/domain"
 )
 
 // EmailVerificationRepository defines the interface for email verification operations

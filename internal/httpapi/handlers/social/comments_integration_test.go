@@ -1,11 +1,6 @@
 package social
 
 import (
-	"vidra-core/internal/domain"
-	"vidra-core/internal/middleware"
-	"vidra-core/internal/repository"
-	"vidra-core/internal/testutil"
-	"vidra-core/internal/usecase"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -14,6 +9,11 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
+	"vidra-core/internal/testutil"
+	"vidra-core/internal/usecase"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"

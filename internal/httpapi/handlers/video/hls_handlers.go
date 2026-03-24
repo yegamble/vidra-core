@@ -1,12 +1,12 @@
 package video
 
 import (
-	"vidra-core/internal/middleware"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"vidra-core/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

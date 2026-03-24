@@ -1,7 +1,6 @@
 package federation
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -9,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"vidra-core/internal/httpapi/shared"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/usecase"

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -9,6 +8,7 @@ import (
 	"net/mail"
 	"time"
 	"unicode"
+	"vidra-core/internal/httpapi/shared"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"

@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"vidra-core/internal/httpapi/shared"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"

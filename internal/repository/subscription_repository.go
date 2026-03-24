@@ -1,12 +1,12 @@
 package repository
 
 import (
-	"vidra-core/internal/domain"
-	"vidra-core/internal/usecase"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/usecase"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"

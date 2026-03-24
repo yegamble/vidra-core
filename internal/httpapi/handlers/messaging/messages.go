@@ -1,12 +1,12 @@
 package messaging
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
+	"vidra-core/internal/httpapi/shared"
 
 	chi "github.com/go-chi/chi/v5"
 	validator "github.com/go-playground/validator/v10"

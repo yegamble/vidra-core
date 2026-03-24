@@ -1,15 +1,15 @@
 package social
 
 import (
-	"vidra-core/internal/domain"
-	"vidra-core/internal/httpapi/shared"
-	"vidra-core/internal/middleware"
-	uccmt "vidra-core/internal/usecase/comment"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	uccmt "vidra-core/internal/usecase/comment"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

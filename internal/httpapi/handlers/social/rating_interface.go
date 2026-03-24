@@ -1,8 +1,8 @@
 package social
 
 import (
-	"vidra-core/internal/domain"
 	"context"
+	"vidra-core/internal/domain"
 
 	"github.com/google/uuid"
 )

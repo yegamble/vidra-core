@@ -1,11 +1,11 @@
 package httpapi
 
 import (
-	"vidra-core/internal/health"
-	"vidra-core/internal/httpapi/shared"
 	"log"
 	"net/http"
 	"time"
+	"vidra-core/internal/health"
+	"vidra-core/internal/httpapi/shared"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"

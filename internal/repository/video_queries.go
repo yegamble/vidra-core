@@ -1,12 +1,12 @@
 package repository
 
 import (
-	"vidra-core/internal/domain"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"vidra-core/internal/domain"
 
 	"github.com/lib/pq"
 )

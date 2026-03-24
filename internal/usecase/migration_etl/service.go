@@ -586,13 +586,13 @@ func (s *ETLService) extractVideos(ctx context.Context, sourceDB *sqlx.DB, job *
 
 // ptComment represents a row from PeerTube's videoComment table.
 type ptComment struct {
-	ID              int            `db:"id"`
-	Text            string         `db:"text"`
-	VideoID         int            `db:"video_id"`
-	AccountID       int            `db:"account_id"`
-	InReplyToID     sql.NullInt64  `db:"in_reply_to_id"`
-	CreatedAt       time.Time      `db:"created_at"`
-	AccountUserID   sql.NullInt64  `db:"account_user_id"`
+	ID            int           `db:"id"`
+	Text          string        `db:"text"`
+	VideoID       int           `db:"video_id"`
+	AccountID     int           `db:"account_id"`
+	InReplyToID   sql.NullInt64 `db:"in_reply_to_id"`
+	CreatedAt     time.Time     `db:"created_at"`
+	AccountUserID sql.NullInt64 `db:"account_user_id"`
 }
 
 func (s *ETLService) extractComments(ctx context.Context, sourceDB *sqlx.DB, job *domain.MigrationJob, stats *domain.MigrationStats, ids *idMap) {

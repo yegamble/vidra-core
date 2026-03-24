@@ -1,11 +1,11 @@
 package channel
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"vidra-core/internal/httpapi/shared"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"

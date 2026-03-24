@@ -1,9 +1,9 @@
 package repository
 
 import (
-	"vidra-core/internal/domain"
 	"context"
 	"encoding/json"
+	"vidra-core/internal/domain"
 
 	"github.com/lib/pq"
 )

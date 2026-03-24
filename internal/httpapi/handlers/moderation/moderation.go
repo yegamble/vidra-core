@@ -1,7 +1,6 @@
 package moderation
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"database/sql"
 	"encoding/json"
 	"net"
@@ -10,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"vidra-core/internal/httpapi/shared"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"

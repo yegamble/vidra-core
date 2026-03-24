@@ -1,8 +1,8 @@
 package port
 
 import (
-	"vidra-core/internal/domain"
 	"context"
+	"vidra-core/internal/domain"
 )
 
 // WatchedWordsRepository defines data operations for watched word lists.

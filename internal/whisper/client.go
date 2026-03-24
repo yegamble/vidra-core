@@ -1,11 +1,11 @@
 package whisper
 
 import (
-	"vidra-core/internal/domain"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"vidra-core/internal/domain"
 )
 
 // TranscriptionResult represents the result of a Whisper transcription

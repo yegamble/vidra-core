@@ -1,9 +1,6 @@
 package admin
 
 import (
-	"vidra-core/internal/domain"
-	"vidra-core/internal/middleware"
-	"vidra-core/internal/repository"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -11,6 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"

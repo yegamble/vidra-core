@@ -1,8 +1,8 @@
 package port
 
 import (
-	"vidra-core/internal/domain"
 	"context"
+	"vidra-core/internal/domain"
 )
 
 // VideoEmbedPrivacyRepository defines data operations for video embed privacy.

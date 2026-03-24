@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"bufio"
 	"bytes"
 	"context"
@@ -22,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"vidra-core/internal/httpapi/shared"
 
 	_ "github.com/HugoSmits86/nativewebp"
 	"github.com/google/uuid"

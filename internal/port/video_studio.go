@@ -1,8 +1,8 @@
 package port
 
 import (
-	"vidra-core/internal/domain"
 	"context"
+	"vidra-core/internal/domain"
 )
 
 // StudioJobRepository defines data operations for video studio editing jobs.

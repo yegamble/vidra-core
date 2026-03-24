@@ -1,18 +1,18 @@
 package video
 
 import (
-	"vidra-core/internal/config"
-	"vidra-core/internal/domain"
-	"vidra-core/internal/httpapi/shared"
-	"vidra-core/internal/middleware"
-	"vidra-core/internal/storage"
-	"vidra-core/internal/usecase"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"vidra-core/internal/config"
+	"vidra-core/internal/domain"
+	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/storage"
+	"vidra-core/internal/usecase"
 )
 
 func HLSHandlerWithS3(videoRepo usecase.VideoRepository, cfg *config.Config, s3Backend storage.StorageBackend) http.HandlerFunc {

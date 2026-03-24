@@ -1,11 +1,11 @@
 package auth
 
 import (
-	"vidra-core/internal/httpapi/shared"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
+	"vidra-core/internal/httpapi/shared"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"

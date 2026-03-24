@@ -1,9 +1,9 @@
 package port
 
 import (
-	"vidra-core/internal/domain"
 	"context"
 	"net/http"
+	"vidra-core/internal/domain"
 )
 
 type ActivityPubService interface {

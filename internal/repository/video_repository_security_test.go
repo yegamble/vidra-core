@@ -1,10 +1,10 @@
 package repository
 
 import (
-	"vidra-core/internal/domain"
 	"context"
 	"testing"
 	"time"
+	"vidra-core/internal/domain"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
