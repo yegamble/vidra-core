@@ -46,7 +46,7 @@ while IFS= read -r line; do
   # Extract all function lines for this package (prefix "vidra-core/<PKG>/")
   # and compute the average coverage.
   PKG_COVERAGE="$(echo "${FUNC_OUTPUT}" \
-    | grep "^vidra/${PKG}/" \
+    | grep "^vidra-core/${PKG}/" \
     | grep -v '^total:' \
     | awk '
       {
@@ -58,7 +58,7 @@ while IFS= read -r line; do
         if (count > 0) printf "%.1f", sum / count;
         else print "";
       }
-    ')"
+    ' || true)"
 
   # If no coverage data found, the package might have 0% or no test files
   if [[ -z "${PKG_COVERAGE}" ]]; then

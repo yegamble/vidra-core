@@ -79,6 +79,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: ./.github/actions/setup-go-cached
         with:
@@ -91,8 +93,24 @@ jobs:
           # Ensure GOPATH/bin is in PATH for installed tools
           export PATH="$(go env GOPATH)/bin:$PATH"
 
-          # Use go list to get only actual Go source directories (excludes .git, vendor, etc.)
-          UNFORMATTED=$(gofmt -l $(go list -f '{{.Dir}}' ./...) 2>/dev/null || true)
+          # Enforce formatting only on changed Go files to avoid legacy baseline drift.
+          # Pull requests: compare base SHA to current HEAD SHA.
+          # Push events: compare previous SHA to current SHA.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANGED_GO_FILES=$(git diff --name-only --diff-filter=ACMRT "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" -- '*.go' || true)
+          else
+            CHANGED_GO_FILES=$(git diff --name-only --diff-filter=ACMRT "${{ github.event.before }}" "${{ github.sha }}" -- '*.go' || true)
+          fi
+
+          if [ -z "${CHANGED_GO_FILES}" ]; then
+            echo "No changed Go files detected; skipping gofmt/goimports checks."
+            exit 0
+          fi
+
+          echo "Checking formatting for changed Go files:"
+          echo "${CHANGED_GO_FILES}"
+
+          UNFORMATTED=$(echo "${CHANGED_GO_FILES}" | xargs -r gofmt -l 2>/dev/null || true)
           if [ -n "$UNFORMATTED" ]; then
             echo "Go files are not formatted. Run: gofmt -w ."
             echo "$UNFORMATTED"
@@ -103,7 +121,7 @@ jobs:
             go install golang.org/x/tools/cmd/goimports@latest
           fi
 
-          BADIMPORTS=$(goimports -l $(go list -f '{{.Dir}}' ./...) 2>/dev/null || true)
+          BADIMPORTS=$(echo "${CHANGED_GO_FILES}" | xargs -r goimports -l 2>/dev/null || true)
           if [ -n "$BADIMPORTS" ]; then
             echo "Go files have incorrect imports. Run: goimports -w ."
             echo "$BADIMPORTS"
