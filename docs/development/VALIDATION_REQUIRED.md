@@ -332,9 +332,9 @@ This validation requirement is enforced through:
 
 If you're unsure about any validation requirement, ask the user or refer to:
 
-- `/Users/yosefgamble/github/vidra/docs/architecture/CLAUDE.md` - AI assistant requirements
-- `/Users/yosefgamble/github/vidra/Makefile` - Available validation targets
-- `/Users/yosefgamble/github/vidra/scripts/validate-all.sh` - Validation script
+- `docs/architecture/CLAUDE.md` - AI assistant requirements
+- `Makefile` - Available validation targets
+- `scripts/validate-all.sh` - Validation script
 - This file - Validation requirements
 
 ---

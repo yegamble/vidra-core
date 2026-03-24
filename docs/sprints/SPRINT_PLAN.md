@@ -1765,6 +1765,6 @@ With feature parity complete, the project is in the **Quality Programme** phase:
 
 **See:** [QUALITY_PROGRAMME.md](./QUALITY_PROGRAMME.md) for the full quality programme roadmap.
 
-**Current Sprint Backlog:** [sprint_backlog.md](../../sprint_backlog.md)
+**Current Sprint Backlog:** [quality-programme/SPRINT16_BACKLOG.md](./quality-programme/SPRINT16_BACKLOG.md)
 
 The plan is designed to be iterative and allows for adjustment based on feedback and changing priorities. Each sprint delivers working, tested features that can be demoed to stakeholders.

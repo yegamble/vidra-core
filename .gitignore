@@ -51,10 +51,18 @@ temp/
 *.tmp
 *.temp
 *.log
+/make_test_log.txt
+/postman-results.txt
+/test_out.txt
+/test-results.txt
+/postman-e2e-failure.log
 
 # Build artifacts
 vidra-server
 vidra
+/cli
+/manual
+/test_encoding_simple
 
 # Documentation build
 docs/_build/

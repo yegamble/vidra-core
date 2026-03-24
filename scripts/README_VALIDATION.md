@@ -447,7 +447,7 @@ Typical validation times:
 
 ## For Claude Instances
 
-See `/Users/yosefgamble/github/vidra/VALIDATION_REQUIRED.md` for requirements specific to Claude AI assistants.
+See `VALIDATION_REQUIRED.md` for requirements specific to Claude AI assistants.
 
 **Key Points**:
 
@@ -460,8 +460,8 @@ See `/Users/yosefgamble/github/vidra/VALIDATION_REQUIRED.md` for requirements sp
 For issues or questions:
 
 1. Check this README
-2. Review `/Users/yosefgamble/github/vidra/VALIDATION_REQUIRED.md`
-3. Check `/Users/yosefgamble/github/vidra/docs/architecture/CLAUDE.md`
+2. Review `VALIDATION_REQUIRED.md`
+3. Check `docs/architecture/CLAUDE.md`
 4. Open an issue in the repository
 
 ## License

@@ -15,6 +15,7 @@ This index links the core Vidra Core documentation by area.
 - [Test Baseline Report](development/TEST_BASELINE_REPORT.md)
 - [CI/CD Configuration](development/CI_CD_CONFIGURATION.md)
 - [Validation Requirements](development/VALIDATION_REQUIRED.md)
+- [Validation Quick Reference](development/VALIDATION_QUICK_REFERENCE.md)
 
 ## API and Compatibility
 
@@ -41,6 +42,7 @@ This index links the core Vidra Core documentation by area.
 - [Security Advisory](security/SECURITY_ADVISORY.md)
 - [E2EE Security](security/SECURITY_E2EE.md)
 - [Credential Rotation Guide](security/CREDENTIAL_ROTATION_GUIDE.md)
+- [Messaging Security Review](security/MESSAGING_SECURITY_REVIEW.md)
 
 ## Federation
 
@@ -53,6 +55,11 @@ This index links the core Vidra Core documentation by area.
 - [PeerTube Parity Gap Report](reports/peertube-parity-gap-report.md) — 100% parity achieved (44 categories, 88 test packages)
 - [Postman E2E Test Scenarios](reports/e2e/POSTMAN_E2E_TEST_SCENARIOS.md)
 - [Security Audit Summary](reports/security/SECURITY_AUDIT_SUMMARY.md)
+
+## Planning and Delivery
+
+- [Sprint Documentation](sprints/README.md)
+- [Quality Programme Working Docs](sprints/quality-programme/README.md)
 
 ## Governance
 

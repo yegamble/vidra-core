@@ -35,7 +35,7 @@ A comprehensive, portable validation system has been implemented for the Vidra C
 - `VALIDATION_REQUIRED.md` - Main requirements (Claude-focused)
 - `docs/architecture/CLAUDE.md` - Updated with strict requirements
 - `docs/development/PORTABLE_VALIDATION_SYSTEM.md` - Complete technical documentation
-- `.validation-quickref.md` - Quick reference card
+- `docs/development/VALIDATION_QUICK_REFERENCE.md` - Quick reference card
 
 ### 5. Dependency Checking
 
@@ -94,7 +94,7 @@ A comprehensive, portable validation system has been implemented for the Vidra C
    - Runs validations before commit
    - Can be bypassed with --no-verify
 
-6. **.validation-quickref.md**
+6. **docs/development/VALIDATION_QUICK_REFERENCE.md**
    - Quick reference card
    - Common commands
    - Common fixes
@@ -198,7 +198,7 @@ Do NOT claim work is complete
 - User-facing: `VALIDATION_REQUIRED.md`
 - Developer-facing: `scripts/README_VALIDATION.md`
 - Technical: `docs/development/PORTABLE_VALIDATION_SYSTEM.md`
-- Quick reference: `.validation-quickref.md`
+- Quick reference: `docs/development/VALIDATION_QUICK_REFERENCE.md`
 
 ### 5. CI/CD Ready
 
@@ -377,7 +377,7 @@ Keep these files in sync:
 - `VALIDATION_REQUIRED.md` - User-facing
 - `scripts/README_VALIDATION.md` - Developer reference
 - `docs/development/PORTABLE_VALIDATION_SYSTEM.md` - Technical details
-- `.validation-quickref.md` - Quick reference
+- `docs/development/VALIDATION_QUICK_REFERENCE.md` - Quick reference
 
 ## Conclusion
 

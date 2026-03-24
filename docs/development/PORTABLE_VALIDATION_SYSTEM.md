@@ -83,22 +83,22 @@ The system includes special documentation and requirements for Claude AI instanc
 - Must provide exact commands
 - Must not claim work is complete without user confirmation
 
-See `/Users/yosefgamble/github/vidra/VALIDATION_REQUIRED.md` for full requirements.
+See `../../VALIDATION_REQUIRED.md` for full requirements.
 
 ## Architecture
 
 ### File Structure
 
 ```
-vidra/
+vidra-core/
 ├── VALIDATION_REQUIRED.md          # Main requirements document (Claude-focused)
-├── .validation-quickref.md         # Quick reference card
 ├── README.md                       # Updated with validation info
 ├── Makefile                        # New validate-all and validate-quick targets
 ├── docs/
 │   ├── architecture/
 │   │   └── CLAUDE.md              # Updated with validation requirements
 │   └── development/
+│       ├── VALIDATION_QUICK_REFERENCE.md  # Quick reference card
 │       └── PORTABLE_VALIDATION_SYSTEM.md  # This file
 ├── scripts/
 │   ├── validate-all.sh            # Main validation script (portable)

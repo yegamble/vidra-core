@@ -94,6 +94,7 @@ See [peertube_compatibility.md](./peertube_compatibility.md) for:
 - **[SPRINT19_COMPLETE.md](./SPRINT19_COMPLETE.md)** - Documentation accuracy (zero broken links, runbook validation, source-of-truth map)
 - **[SPRINT20_COMPLETE.md](./SPRINT20_COMPLETE.md)** - Release hardening (full regression, coverage sign-off, CHANGELOG.md, maintenance plan, release checklist)
 - **[QUALITY_PROGRAMME.md](./QUALITY_PROGRAMME.md)** - Full Quality Programme roadmap (100% complete)
+- **[quality-programme/README.md](./quality-programme/README.md)** - Archived Sprint 15-16 working docs (plan, backlog, coordination, update)
 
 ## Project Metrics
 

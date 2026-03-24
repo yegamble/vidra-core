@@ -567,7 +567,8 @@ flowchart TD
 
 - [SPRINT_PLAN.md](./SPRINT_PLAN.md) - Original feature parity roadmap (Sprints 1-14)
 - [PROJECT_COMPLETE.md](./PROJECT_COMPLETE.md) - Feature parity completion summary
-- [sprint_backlog.md](../../sprint_backlog.md) - Current active backlog
+- [quality-programme/README.md](./quality-programme/README.md) - Working notes for the quality programme rollout
+- [quality-programme/SPRINT16_BACKLOG.md](./quality-programme/SPRINT16_BACKLOG.md) - Sprint 16 backlog snapshot
 - [docs/development/VALIDATION_REQUIRED.md](../development/VALIDATION_REQUIRED.md) - Pre-commit validation requirements
 
 ---

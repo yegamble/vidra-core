@@ -60,7 +60,7 @@ postgres-test:
   ports:
     - "5433:5432"
   volumes:
-    - ./init-test-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro  # ✅ Schema initialization
+    - ./docker/postgres/init/init-test-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro  # ✅ Schema initialization
 ```
 
 ### 2. Application Does Not Auto-Migrate
@@ -69,13 +69,13 @@ postgres-test:
 
 **Files Checked:**
 
-- `/Users/yosefgamble/github/vidra/cmd/server/main.go` - No migration logic
-- `/Users/yosefgamble/github/vidra/internal/app/app.go` - No migration runner in `initializeDatabase()`
-- `/Users/yosefgamble/github/vidra/Dockerfile` - No migration step in CMD
+- `/Users/yosefgamble/github/vidra-core/cmd/server/main.go` - No migration logic
+- `/Users/yosefgamble/github/vidra-core/internal/app/app.go` - No migration runner in `initializeDatabase()`
+- `/Users/yosefgamble/github/vidra-core/Dockerfile` - No migration step in CMD
 
 **Migration System:** The project uses **Goose** for database migrations:
 
-- Migrations are in `/Users/yosefgamble/github/vidra/migrations/*.sql` (63 migration files)
+- Migrations are in `/Users/yosefgamble/github/vidra-core/migrations/*.sql` (63 migration files)
 - Migrations must be run manually via `make migrate-*` commands or initialization scripts
 - No automatic migration on application startup
 
@@ -83,7 +83,7 @@ postgres-test:
 
 When developers run tests locally, they typically:
 
-1. Use `docker-compose.test.yml` which includes `init-test-db.sql`
+1. Use `docker-compose.test.yml` or equivalent test profile wiring that includes `docker/postgres/init/init-test-db.sql`
 2. Or manually run migrations via `make migrate-test`
 3. Or use persistent volumes that retain schema from previous runs
 
@@ -133,7 +133,7 @@ Wait, this is interesting - even the **database itself** doesn't exist initially
 | Aspect | Postman E2E (Working) | Go E2E Tests (Failing) |
 |--------|----------------------|------------------------|
 | **Compose File** | `docker-compose.test.yml` | `tests/e2e/docker-compose.yml` |
-| **Database Init** | ✅ `init-test-db.sql` mounted | ❌ No initialization |
+| **Database Init** | ✅ `docker/postgres/init/init-test-db.sql` mounted | ❌ No initialization |
 | **Schema Creation** | ✅ Automatic on startup | ❌ Empty database |
 | **Storage** | tmpfs | tmpfs |
 | **Migrations** | ✅ Included in init script | ❌ Not run |
@@ -235,7 +235,7 @@ concurrency:
 ### Scenario 1: Using docker-compose.test.yml
 
 ```bash
-make postman-e2e  # Uses docker-compose.test.yml with init-test-db.sql
+make postman-e2e  # Uses docker-compose.test.yml with docker/postgres/init/init-test-db.sql
 ```
 
 ✅ Schema initialized automatically

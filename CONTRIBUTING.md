@@ -26,6 +26,13 @@ make migrate-up
 3. Run validation locally.
 4. Open a pull request with a clear description.
 
+## Repository Hygiene
+
+- Keep the repository root limited to project entrypoint files like `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, and tool configuration.
+- Place new technical or operational documentation under the matching `docs/` topic folder instead of adding standalone root markdown files.
+- Keep Docker bootstrap assets with the service they belong to, for example under `docker/`.
+- Do not commit generated binaries, ad hoc logs, or test output snapshots to the repository root. Use ignored paths like `tmp/` or tool-specific output directories instead.
+
 Recommended branch naming:
 
 - `feature/<short-topic>`

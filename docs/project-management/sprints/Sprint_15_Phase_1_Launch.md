@@ -1,6 +1,6 @@
 # Sprint 15: Phase 1 Launch Readiness
 
-⚠️ **Active Plan Updated**: This sprint plan has been consolidated into the root `SPRINT_PLAN.md`. Please refer to that file for the current execution status and priorities.
+⚠️ **Active Plan Updated**: This sprint plan has been consolidated into [docs/sprints/quality-programme/SPRINT16_PLAN.md](../../sprints/quality-programme/SPRINT16_PLAN.md). Please refer to that file for the latest execution snapshot from the quality programme rollout.
 
 **Sprint Goal:** Secure the platform, formalize the deployment process, and prepare for initial production launch (Phase 1).
 

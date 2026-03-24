@@ -55,7 +55,7 @@ services:
       - db_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./docker/postgres/init/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vidra_app"]
       interval: 10s
@@ -245,7 +245,7 @@ PROCESSING_TIMEOUT=3600s
 
 ### 3. Initialize Database
 
-Create `init-db.sql`:
+Create `docker/postgres/init/init-db.sql`:
 
 ```sql
 -- Create extensions

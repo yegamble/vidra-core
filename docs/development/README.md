@@ -7,6 +7,7 @@ This directory contains development guides, code quality reports, and testing do
 - **[TEST_INFRASTRUCTURE.md](TEST_INFRASTRUCTURE.md)** - Test infrastructure, patterns, and CI configuration
 - **[TEST_EXECUTION_GUIDE.md](TEST_EXECUTION_GUIDE.md)** - Comprehensive testing guide
 - **[TEST_BASELINE_REPORT.md](TEST_BASELINE_REPORT.md)** - Test coverage baseline and metrics
+- **[VALIDATION_QUICK_REFERENCE.md](VALIDATION_QUICK_REFERENCE.md)** - Fast validation command reference
 - **[VIRUS_SCANNER_TEST_REPORT.md](VIRUS_SCANNER_TEST_REPORT.md)** - Virus scanner test report
 - **[VIRUS_SCANNER_TEST_SUMMARY.md](VIRUS_SCANNER_TEST_SUMMARY.md)** - Virus scanner test summary
 - **[QUICK_REFERENCE_VIRUS_SCANNER_TESTS.md](QUICK_REFERENCE_VIRUS_SCANNER_TESTS.md)** - Quick reference for virus scanner tests

@@ -1,0 +1,141 @@
+# Vidra Core - PeerTube Backend in Go
+
+## Quick Reference
+
+**Stack**: Go (Chi router), PostgreSQL (SQLX), Redis, IPFS, FFmpeg, IOTA payments (Phase 2)
+**Architecture**: Clean architecture with domain/usecase/repository layers
+
+## Mandatory Validation
+
+**Before claiming ANY code change is complete, run:**
+
+```bash
+make validate-all   # or ./scripts/validate-all.sh
+```
+
+This runs: `gofmt`, `goimports`, `golangci-lint` (with gosec), unit tests, and build verification.
+
+**Codex Web users**: Cannot run validations directly. Tell user to run `make validate-all` before merging.
+
+## Project Layout
+
+```
+/cmd/server         → main entry point
+/internal/
+  activitypub/      → Federation (see internal/activitypub/AGENTS.md)
+  app/              → application wiring and lifecycle
+  backup/           → backup/restore system
+  chat/             → live stream chat (WebSocket)
+  config/           → environment, flags, validation
+  crypto/           → Cryptographic utilities
+  database/         → Database connection and pooling
+  domain/           → core models, no infra dependencies
+  email/            → Email sending and verification
+  generated/        → Auto-generated code (OpenAPI types)
+  health/           → Health check endpoints
+  httpapi/          → Chi routes, handlers (see internal/httpapi/AGENTS.md)
+  importer/         → Video import from external platforms
+  ipfs/             → IPFS client and pinning
+  livestream/       → Live streaming (RTMP/HLS)
+  metrics/          → Prometheus metrics
+  middleware/       → auth, rate-limit, cors, tracing
+  obs/              → Observability (logging, tracing)
+  payments/         → IOTA payment integration
+  plugin/           → plugin system with hooks
+  port/             → Interface definitions (ports)
+  repository/       → SQLX repos for Postgres
+  scheduler/        → Cron and scheduled jobs
+  security/         → SSRF, virus scanning, crypto (see internal/security/AGENTS.md)
+  setup/            → setup wizard (first-run config)
+  storage/          → hybrid local/IPFS/S3
+  sysinfo/          → System information reporting
+  testutil/         → Test helpers and utilities
+  torrent/          → WebTorrent tracker and P2P
+  usecase/          → business logic with interfaces
+  validation/       → Input validation utilities
+  whisper/          → Audio transcription (Whisper)
+  worker/           → async jobs (ffmpeg, GC, pins)
+/migrations/        → Goose SQL migrations (see migrations/AGENTS.md)
+/scripts/           → build, validation, install scripts
+/terraform/         → infrastructure as code
+```
+
+## Key Principles
+
+1. **DI via constructors** - No global state
+2. **Context-first APIs** - `context.Context` as first parameter
+3. **Error wrapping** - `fmt.Errorf("operation: %w", err)`
+4. **Small interfaces** - Repository interfaces in `internal/port/`, service interfaces in `usecase/`
+5. **Table-driven tests** - Standard pattern for all unit tests
+
+## Common Commands
+
+```bash
+make build          # Build binary
+make test           # Run tests
+make lint           # Run linter
+make fmt            # Format code
+make migrate-up     # Apply migrations
+make docker         # Build Docker image
+```
+
+## Domain-Specific Documentation
+
+For detailed guidance in specific areas, see:
+
+- **Security**: `internal/security/AGENTS.md` (SSRF, virus scanning, encryption)
+- **API/HTTP**: `internal/httpapi/AGENTS.md` (routes, handlers, validation)
+- **Federation**: `internal/activitypub/AGENTS.md` (ActivityPub, WebFinger)
+- **Migrations**: `migrations/AGENTS.md` (Goose patterns, schema changes)
+- **Architecture**: `docs/architecture/AGENTS.md` (deep-dive on all systems)
+- **Validation**: `docs/development/VALIDATION_REQUIRED.md` (pre-commit requirements)
+
+## Best Practices
+
+### Go Patterns
+
+- Use `defer` for cleanup
+- Recover panics in goroutines
+- Set timeouts on all network/DB calls
+- Use context for cancellation
+
+### Security (Critical)
+
+- Validate all user inputs
+- Use parameterized queries (no string concatenation)
+- No secrets in logs or code
+- See `internal/security/AGENTS.md` for SSRF, virus scanning
+
+### Testing
+
+- Unit tests per package
+- Use `sqlmock` for DB mocking
+- Integration tests with `docker-compose.yml` (`--profile test`)
+
+## Additional Context
+
+**Sprint Status:** Quality Programme + PeerTube Parity Complete (20/20 sprints + 3 parity sprints done)
+
+- Feature parity: 100% complete (44 PeerTube categories, all gap endpoints + Video Studio + Migration ETL implemented)
+- Full test suite: ~4,879 test functions (456 test files)
+- Coverage: 69.9% overall unit test coverage (90%+ for core packages)
+- Newman: 44 Postman collections in CI runner, all validated
+- ATProto (BlueSky) `PublishVideo` fully implemented and verified
+- IOTA Rebased payments: Ed25519 transaction signing + submission implemented
+
+**Key Features:**
+
+- PeerTube API compatibility
+- Live streaming (RTMP/HLS)
+- Video transcoding with FFmpeg
+- P2P distribution (WebTorrent + IPFS)
+- ActivityPub federation
+- OAuth2 + 2FA authentication
+- Plugin system with hooks
+- Setup wizard (first-run web configuration)
+- Backup/restore system with CLI
+- Video import from external platforms
+- Audio transcription (Whisper)
+- Kubernetes and Terraform deployment
+- Video Studio Editing: server-side FFmpeg pipeline (cut, intro, outro, watermark)
+- Migration ETL: PeerTube dump → Vidra Core import pipeline with dry-run and cancel support

@@ -15,6 +15,7 @@ This directory contains all security-related documentation for the Vidra Core pr
 
 - **[SECURITY_PENTEST_REPORT.md](SECURITY_PENTEST_REPORT.md)** - Penetration testing report
 - **[SECURITY_ADVISORY.md](SECURITY_ADVISORY.md)** - Security advisories and credential exposure mitigation
+- **[MESSAGING_SECURITY_REVIEW.md](MESSAGING_SECURITY_REVIEW.md)** - Messaging and secure messaging review
 
 ## Virus Scanner Security
 

@@ -64,9 +64,9 @@ I've identified and prepared fixes for the E2E test failures. The fixes are read
 ### Option 1: Apply Patch File
 
 ```bash
-# The patch file is saved at: e2e-helpers-fix.patch
-cd /Users/yosefgamble/github/vidra
-git apply e2e-helpers-fix.patch
+# The patch file is saved at: docs/reports/e2e/assets/e2e-helpers-fix.patch
+cd /Users/yosefgamble/github/vidra-core
+git apply docs/reports/e2e/assets/e2e-helpers-fix.patch
 
 # Verify the changes
 git diff tests/e2e/helpers.go
@@ -199,7 +199,7 @@ act workflow-validation -W .github/workflows/blue-green-deploy.yml
 
 Once the pre-existing failures are fixed:
 
-1. Apply the patch: `git apply e2e-helpers-fix.patch`
+1. Apply the patch: `git apply docs/reports/e2e/assets/e2e-helpers-fix.patch`
 2. Test locally to verify video upload works
 3. Commit and push
 4. Review CI logs for login diagnostic output
@@ -277,7 +277,7 @@ Comprehensive analysis documents have been created:
 
 1. **`E2E_FAILURE_ANALYSIS.md`** - Deep technical analysis of both issues
 2. **`E2E_FIX_SUMMARY.md`** - Complete implementation guide
-3. **`e2e-helpers-fix.patch`** - Ready-to-apply patch file
+3. **`docs/reports/e2e/assets/e2e-helpers-fix.patch`** - Ready-to-apply patch file
 4. **This file** - Quick reference for applying fixes
 
 ---
@@ -438,7 +438,7 @@ require.Equal(t, http.StatusOK, resp.StatusCode, "Token from registration should
 
 **Created:**
 
-- `e2e-helpers-fix.patch` - Patch file with all changes
+- `docs/reports/e2e/assets/e2e-helpers-fix.patch` - Patch file with all changes
 - `E2E_FAILURE_ANALYSIS.md` - Technical analysis
 - `E2E_FIX_SUMMARY.md` - Implementation guide
 - `E2E_FIX_READY_TO_APPLY.md` - This file
