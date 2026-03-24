@@ -3,6 +3,7 @@ package migration_etl
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 // mockMigrationRepo is a test double for port.MigrationJobRepository
 type mockMigrationRepo struct {
+	mu      sync.RWMutex
 	jobs    map[string]*domain.MigrationJob
 	nextID  int
 	running *domain.MigrationJob
@@ -26,26 +28,35 @@ func newMockRepo() *mockMigrationRepo {
 }
 
 func (m *mockMigrationRepo) Create(ctx context.Context, job *domain.MigrationJob) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.nextID++
 	job.ID = "test-job-" + time.Now().Format("150405") + "-" + string(rune('0'+m.nextID))
 	job.CreatedAt = time.Now()
 	job.UpdatedAt = time.Now()
-	m.jobs[job.ID] = job
+	m.jobs[job.ID] = cloneMigrationJob(job)
 	return nil
 }
 
 func (m *mockMigrationRepo) GetByID(ctx context.Context, id string) (*domain.MigrationJob, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	job, ok := m.jobs[id]
 	if !ok {
 		return nil, domain.ErrMigrationNotFound
 	}
-	return job, nil
+	return cloneMigrationJob(job), nil
 }
 
 func (m *mockMigrationRepo) List(ctx context.Context, limit, offset int) ([]*domain.MigrationJob, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	var result []*domain.MigrationJob
 	for _, j := range m.jobs {
-		result = append(result, j)
+		result = append(result, cloneMigrationJob(j))
 	}
 	total := int64(len(result))
 
@@ -60,14 +71,20 @@ func (m *mockMigrationRepo) List(ctx context.Context, limit, offset int) ([]*dom
 }
 
 func (m *mockMigrationRepo) Update(ctx context.Context, job *domain.MigrationJob) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if _, ok := m.jobs[job.ID]; !ok {
 		return domain.ErrMigrationNotFound
 	}
-	m.jobs[job.ID] = job
+	m.jobs[job.ID] = cloneMigrationJob(job)
 	return nil
 }
 
 func (m *mockMigrationRepo) Delete(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if _, ok := m.jobs[id]; !ok {
 		return domain.ErrMigrationNotFound
 	}
@@ -76,7 +93,52 @@ func (m *mockMigrationRepo) Delete(ctx context.Context, id string) error {
 }
 
 func (m *mockMigrationRepo) GetRunning(ctx context.Context) (*domain.MigrationJob, error) {
-	return m.running, nil
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return cloneMigrationJob(m.running), nil
+}
+
+func cloneMigrationJob(job *domain.MigrationJob) *domain.MigrationJob {
+	if job == nil {
+		return nil
+	}
+
+	cloned := *job
+	cloned.StatsJSON = append([]byte(nil), job.StatsJSON...)
+	cloned.ErrorMessage = cloneStringPtr(job.ErrorMessage)
+	cloned.SourceDBHost = cloneStringPtr(job.SourceDBHost)
+	cloned.SourceDBName = cloneStringPtr(job.SourceDBName)
+	cloned.SourceDBUser = cloneStringPtr(job.SourceDBUser)
+	cloned.SourceDBPassword = cloneStringPtr(job.SourceDBPassword)
+	cloned.SourceMediaPath = cloneStringPtr(job.SourceMediaPath)
+	cloned.SourceDBPort = cloneIntPtr(job.SourceDBPort)
+	cloned.StartedAt = cloneTimePtr(job.StartedAt)
+	cloned.CompletedAt = cloneTimePtr(job.CompletedAt)
+	return &cloned
+}
+
+func cloneStringPtr(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func cloneIntPtr(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func cloneTimePtr(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func validRequest() *domain.MigrationRequest {

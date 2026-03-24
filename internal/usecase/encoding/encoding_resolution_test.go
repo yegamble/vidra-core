@@ -3,7 +3,6 @@ package encoding
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,16 +21,14 @@ func TestEncodingService_ProcessMultipleResolutions(t *testing.T) {
 		t.Skip("Skipping resolution encoding tests in short mode")
 	}
 
-	if _, err := os.Stat("/opt/homebrew/bin/ffmpeg"); os.IsNotExist(err) {
-		t.Skip("FFmpeg not available, skipping encoding tests")
-	}
+	ffmpegPath := requireTestFFmpegEncoder(t, "libwebp")
 
 	encodingRepo := NewMockEncodingRepository()
 	videoRepo := NewMockVideoRepository()
 
 	tempDir := t.TempDir()
 	cfg := &config.Config{
-		FFMPEGPath:         "/opt/homebrew/bin/ffmpeg",
+		FFMPEGPath:         ffmpegPath,
 		HLSSegmentDuration: 4,
 	}
 

@@ -107,17 +107,14 @@ func TestService_DeleteBackup(t *testing.T) {
 }
 
 func TestService_ListBackups(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	target := backup.NewLocalBackend("./test-backups")
+	targetDir := t.TempDir()
+	target := backup.NewLocalBackend(targetDir)
 	manager := &backup.BackupManager{
 		Target:        target,
 		AppVersion:    "test",
 		SchemaVersion: 1,
 	}
-	svc := NewService(target, "./temp", manager)
+	svc := NewService(target, t.TempDir(), manager)
 
 	ctx := context.Background()
 	backups, err := svc.ListBackups(ctx)

@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -10,13 +11,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRunMigrations(t *testing.T) {
+const defaultMigrationTestDBURL = "postgres://vidra:password@localhost:5432/vidra_test?sslmode=disable"
+
+func openMigrationTestDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+
 	if testing.Short() {
 		t.Skip("Skipping database tests in short mode")
 	}
 
-	dbURL := "postgres://vidra:password@localhost:5432/vidra_test?sslmode=disable"
+	dbURL := os.Getenv("VIDRA_TEST_DATABASE_URL")
+	if dbURL == "" {
+		dbURL = defaultMigrationTestDBURL
+	}
 
+	db, err := sqlx.Connect("postgres", dbURL)
+	if err != nil {
+		t.Skipf("Skipping database migration integration test: %v", err)
+	}
+
+	return db
+}
+
+func TestRunMigrations(t *testing.T) {
 	tests := []struct {
 		name    string
 		wantErr bool
@@ -29,11 +46,10 @@ func TestRunMigrations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			db, err := sqlx.Connect("postgres", dbURL)
-			require.NoError(t, err)
+			db := openMigrationTestDB(t)
 			defer db.Close()
 
-			_, err = db.Exec(`
+			_, err := db.Exec(`
 				DROP SCHEMA public CASCADE;
 				CREATE SCHEMA public;
 				GRANT ALL ON SCHEMA public TO vidra;
@@ -61,17 +77,10 @@ func TestRunMigrations(t *testing.T) {
 }
 
 func TestCurrentVersion(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping database tests in short mode")
-	}
-
-	dbURL := "postgres://vidra:password@localhost:5432/vidra_test?sslmode=disable"
-
-	db, err := sqlx.Connect("postgres", dbURL)
-	require.NoError(t, err)
+	db := openMigrationTestDB(t)
 	defer db.Close()
 
-	err = RunMigrations(context.Background(), db)
+	err := RunMigrations(context.Background(), db)
 	require.NoError(t, err)
 
 	version, err := CurrentVersion(db)
@@ -80,17 +89,10 @@ func TestCurrentVersion(t *testing.T) {
 }
 
 func TestRunMigrations_AlreadyMigrated(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping database tests in short mode")
-	}
-
-	dbURL := "postgres://vidra:password@localhost:5432/vidra_test?sslmode=disable"
-
-	db, err := sqlx.Connect("postgres", dbURL)
-	require.NoError(t, err)
+	db := openMigrationTestDB(t)
 	defer db.Close()
 
-	err = RunMigrations(context.Background(), db)
+	err := RunMigrations(context.Background(), db)
 	require.NoError(t, err)
 
 	version1, err := CurrentVersion(db)

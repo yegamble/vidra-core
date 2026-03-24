@@ -3,6 +3,7 @@ package studio
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 // --- mocks ---
 
 type mockJobRepo struct {
+	mu        sync.RWMutex
 	jobs      []*domain.StudioJob
 	createErr error
 	getIDErr  error
@@ -23,39 +25,51 @@ type mockJobRepo struct {
 }
 
 func (m *mockJobRepo) Create(_ context.Context, job *domain.StudioJob) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.createErr != nil {
 		return m.createErr
 	}
-	m.jobs = append(m.jobs, job)
+	m.jobs = append(m.jobs, cloneStudioJob(job))
 	return nil
 }
 
 func (m *mockJobRepo) GetByID(_ context.Context, id string) (*domain.StudioJob, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if m.getIDErr != nil {
 		return nil, m.getIDErr
 	}
 	for _, j := range m.jobs {
 		if j.ID == id {
-			return j, nil
+			return cloneStudioJob(j), nil
 		}
 	}
 	return nil, domain.ErrStudioJobNotFound
 }
 
 func (m *mockJobRepo) GetByVideoID(_ context.Context, videoID string) ([]*domain.StudioJob, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if m.getVIDErr != nil {
 		return nil, m.getVIDErr
 	}
 	var result []*domain.StudioJob
 	for _, j := range m.jobs {
 		if j.VideoID == videoID {
-			result = append(result, j)
+			result = append(result, cloneStudioJob(j))
 		}
 	}
 	return result, nil
 }
 
 func (m *mockJobRepo) UpdateStatus(_ context.Context, id string, status domain.StudioJobStatus, errMsg string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.updateErr != nil {
 		return m.updateErr
 	}
@@ -74,6 +88,9 @@ func (m *mockJobRepo) UpdateStatus(_ context.Context, id string, status domain.S
 }
 
 func (m *mockJobRepo) List(_ context.Context, limit, offset int) ([]*domain.StudioJob, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	total := int64(len(m.jobs))
 	end := offset + limit
 	if end > len(m.jobs) {
@@ -82,7 +99,11 @@ func (m *mockJobRepo) List(_ context.Context, limit, offset int) ([]*domain.Stud
 	if offset > len(m.jobs) {
 		return nil, total, nil
 	}
-	return m.jobs[offset:end], total, nil
+	result := make([]*domain.StudioJob, 0, end-offset)
+	for _, job := range m.jobs[offset:end] {
+		result = append(result, cloneStudioJob(job))
+	}
+	return result, total, nil
 }
 
 type mockVideoRepo struct {
@@ -106,6 +127,19 @@ type mockRunner struct {
 func (m *mockRunner) RunCommand(_ context.Context, name string, args ...string) ([]byte, error) {
 	m.calls = append(m.calls, append([]string{name}, args...))
 	return m.output, m.err
+}
+
+func cloneStudioJob(job *domain.StudioJob) *domain.StudioJob {
+	if job == nil {
+		return nil
+	}
+
+	cloned := *job
+	if job.CompletedAt != nil {
+		completedAt := *job.CompletedAt
+		cloned.CompletedAt = &completedAt
+	}
+	return &cloned
 }
 
 // --- helpers ---

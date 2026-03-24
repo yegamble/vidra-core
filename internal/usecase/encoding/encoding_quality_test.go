@@ -24,17 +24,14 @@ func TestEncodingQuality_VerifyOutputFormats(t *testing.T) {
 		t.Skip("Skipping quality tests in short mode")
 	}
 
-	// Check if ffmpeg/ffprobe is available
-	if _, err := os.Stat("/opt/homebrew/bin/ffmpeg"); os.IsNotExist(err) {
-		t.Skip("FFmpeg not available, skipping encoding tests")
-	}
+	ffmpegPath := requireTestFFmpegEncoder(t, "libwebp")
 
 	encodingRepo := NewMockEncodingRepository()
 	videoRepo := NewMockVideoRepository()
 
 	tempDir := t.TempDir()
 	cfg := &config.Config{
-		FFMPEGPath:         "/opt/homebrew/bin/ffmpeg",
+		FFMPEGPath:         ffmpegPath,
 		HLSSegmentDuration: 4,
 	}
 
@@ -199,10 +196,7 @@ func TestEncodingPerformance_SegmentDuration(t *testing.T) {
 
 	for _, duration := range durations {
 		t.Run(fmt.Sprintf("Duration_%ds", duration), func(t *testing.T) {
-			// Check if ffmpeg is available
-			if _, err := os.Stat("/opt/homebrew/bin/ffmpeg"); os.IsNotExist(err) {
-				t.Skip("FFmpeg not available, skipping encoding tests")
-			}
+			ffmpegPath := requireTestFFmpegEncoder(t, "libwebp")
 
 			testVideo := testutil.TestVideos[5] // 480p video for speed
 			videoPath, err := testutil.EnsureTestVideoExists(testVideo)
@@ -212,7 +206,7 @@ func TestEncodingPerformance_SegmentDuration(t *testing.T) {
 
 			tempDir := t.TempDir()
 			cfg := &config.Config{
-				FFMPEGPath:         "/opt/homebrew/bin/ffmpeg",
+				FFMPEGPath:         ffmpegPath,
 				HLSSegmentDuration: duration,
 			}
 
@@ -304,19 +298,16 @@ func TestEncodingEdgeCases(t *testing.T) {
 	})
 
 	t.Run("EmptyTargetResolutions", func(t *testing.T) {
+		ffmpegPath := requireTestFFmpegEncoder(t, "libwebp")
+
 		// Create a minimal test video
 		testVideoPath := filepath.Join(tempDir, "test_minimal.mp4")
-
-		// Skip if ffmpeg not available
-		if _, err := os.Stat("/opt/homebrew/bin/ffmpeg"); os.IsNotExist(err) {
-			t.Skip("FFmpeg not available")
-		}
 
 		// Create minimal test video
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		cmd := exec.CommandContext(ctx, "/opt/homebrew/bin/ffmpeg",
+		cmd := exec.CommandContext(ctx, ffmpegPath,
 			"-f", "lavfi",
 			"-i", "testsrc2=duration=2:size=320x240:rate=15",
 			"-c:v", "libx264",
