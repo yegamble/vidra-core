@@ -178,7 +178,7 @@ func (h *Handlers) updateWatchedWordList(w http.ResponseWriter, r *http.Request,
 			shared.WriteError(w, http.StatusNotFound, err)
 			return
 		}
-		shared.WriteError(w, http.StatusInternalServerError, errors.New(updateFailureMessage))
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("%s", updateFailureMessage))
 		return
 	}
 
