@@ -96,10 +96,24 @@ jobs:
           # Enforce formatting only on changed Go files to avoid legacy baseline drift.
           # Pull requests: compare base SHA to current HEAD SHA.
           # Push events: compare previous SHA to current SHA.
+          NULL_SHA="0000000000000000000000000000000000000000"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            CHANGED_GO_FILES=$(git diff --name-only --diff-filter=ACMRT "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" -- '*.go' || true)
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}" || true
+              BASE_SHA="$(git merge-base "origin/${{ github.base_ref }}" "${{ github.sha }}" 2>/dev/null || true)"
+            fi
           else
-            CHANGED_GO_FILES=$(git diff --name-only --diff-filter=ACMRT "${{ github.event.before }}" "${{ github.sha }}" -- '*.go' || true)
+            BASE_SHA="${{ github.event.before }}"
+            if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "${NULL_SHA}" ] || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+              BASE_SHA="$(git rev-parse HEAD~1 2>/dev/null || true)"
+            fi
+          fi
+
+          if [ -n "${BASE_SHA}" ]; then
+            CHANGED_GO_FILES=$(git diff --name-only --diff-filter=ACMRT "${BASE_SHA}" "${{ github.sha }}" -- '*.go' || true)
+          else
+            CHANGED_GO_FILES=$(git diff-tree --no-commit-id --name-only -r "${{ github.sha }}" -- '*.go' || true)
           fi
 
           if [ -z "${CHANGED_GO_FILES}" ]; then
@@ -110,10 +124,19 @@ jobs:
           echo "Checking formatting for changed Go files:"
           echo "${CHANGED_GO_FILES}"
 
-          UNFORMATTED=$(echo "${CHANGED_GO_FILES}" | xargs -r gofmt -l 2>/dev/null || true)
-          if [ -n "$UNFORMATTED" ]; then
+          UNFORMATTED_LIST="$(mktemp)"
+          BADIMPORTS_LIST="$(mktemp)"
+          trap 'rm -f "${UNFORMATTED_LIST}" "${BADIMPORTS_LIST}"' EXIT
+
+          while IFS= read -r file; do
+            [ -z "${file}" ] && continue
+            OUT=$(gofmt -l "${file}" 2>/dev/null || true)
+            [ -n "${OUT}" ] && printf "%s\n" "${OUT}" >> "${UNFORMATTED_LIST}"
+          done <<< "${CHANGED_GO_FILES}"
+
+          if [ -s "${UNFORMATTED_LIST}" ]; then
             echo "Go files are not formatted. Run: gofmt -w ."
-            echo "$UNFORMATTED"
+            cat "${UNFORMATTED_LIST}"
             exit 1
           fi
 
@@ -121,10 +144,15 @@ jobs:
             go install golang.org/x/tools/cmd/goimports@latest
           fi
 
-          BADIMPORTS=$(echo "${CHANGED_GO_FILES}" | xargs -r goimports -l 2>/dev/null || true)
-          if [ -n "$BADIMPORTS" ]; then
+          while IFS= read -r file; do
+            [ -z "${file}" ] && continue
+            OUT=$(goimports -l "${file}" 2>/dev/null || true)
+            [ -n "${OUT}" ] && printf "%s\n" "${OUT}" >> "${BADIMPORTS_LIST}"
+          done <<< "${CHANGED_GO_FILES}"
+
+          if [ -s "${BADIMPORTS_LIST}" ]; then
             echo "Go files have incorrect imports. Run: goimports -w ."
-            echo "$BADIMPORTS"
+            cat "${BADIMPORTS_LIST}"
             exit 1
           fi
 
