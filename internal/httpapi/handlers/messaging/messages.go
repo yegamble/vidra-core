@@ -20,6 +20,10 @@ import (
 
 var validate = validator.New()
 
+type legacyUserIDContextKey string
+
+const legacyUserIDKey legacyUserIDContextKey = "userID"
+
 func getUserID(ctx context.Context) string {
 	if raw := ctx.Value(middleware.UserIDKey); raw != nil {
 		switch v := raw.(type) {
@@ -32,6 +36,10 @@ func getUserID(ctx context.Context) string {
 				return v.String()
 			}
 		}
+	}
+
+	if v, ok := ctx.Value(legacyUserIDKey).(string); ok && v != "" {
+		return v
 	}
 
 	if v, ok := ctx.Value("userID").(string); ok && v != "" {

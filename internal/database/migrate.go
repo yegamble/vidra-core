@@ -7,7 +7,7 @@ import (
 	"log"
 	"sync"
 
-	"vidra-core/migrations"
+	migrationfs "vidra-core"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/pressly/goose/v3"
@@ -17,7 +17,7 @@ var setBaseFSOnce sync.Once
 
 func RunMigrations(ctx context.Context, db *sqlx.DB) error {
 	setBaseFSOnce.Do(func() {
-		goose.SetBaseFS(migrations.FS)
+		goose.SetBaseFS(migrationfs.FS)
 	})
 
 	sqlDB := db.DB
@@ -41,7 +41,7 @@ func CurrentVersion(db *sqlx.DB) (int64, error) {
 
 func RunMigrationsWithDB(ctx context.Context, db *sql.DB) error {
 	setBaseFSOnce.Do(func() {
-		goose.SetBaseFS(migrations.FS)
+		goose.SetBaseFS(migrationfs.FS)
 	})
 
 	if err := goose.UpContext(ctx, db, "."); err != nil {

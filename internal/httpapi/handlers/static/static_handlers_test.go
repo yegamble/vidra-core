@@ -2,7 +2,6 @@ package static
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +15,6 @@ import (
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
-	"vidra-core/internal/httpapi/shared"
 	"vidra-core/internal/middleware"
 )
 
@@ -439,14 +437,4 @@ func TestContentTypeForExt(t *testing.T) {
 			assert.Equal(t, tt.expected, contentTypeForExt(tt.ext))
 		})
 	}
-}
-
-// --- Response envelope helper ---
-
-func parseErrorResponse(t *testing.T, rec *httptest.ResponseRecorder) *shared.Response {
-	t.Helper()
-	var resp shared.Response
-	err := json.NewDecoder(rec.Body).Decode(&resp)
-	require.NoError(t, err)
-	return &resp
 }

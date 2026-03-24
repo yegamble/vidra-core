@@ -33,11 +33,6 @@ func withRole(r *http.Request, role string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), middleware.UserRoleKey, role))
 }
 
-// withUserID adds middleware.UserIDKey to the request context.
-func withUserID(r *http.Request, id string) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), middleware.UserIDKey, id))
-}
-
 // newHandlers creates InstanceHandlers with the given mock repos.
 // moderationRepo is nil-db (panics if actually called), so only use for paths
 // that do NOT touch the moderation repository.

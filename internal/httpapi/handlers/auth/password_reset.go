@@ -13,7 +13,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/httpapi/shared"
@@ -184,9 +183,9 @@ func hashResetToken(token string) string {
 
 // hashPassword hashes a plaintext password using bcrypt.
 func hashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := generatePasswordHash(password)
 	if err != nil {
 		return "", fmt.Errorf("hashing password: %w", err)
 	}
-	return string(hash), nil
+	return hash, nil
 }

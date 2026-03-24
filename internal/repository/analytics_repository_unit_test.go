@@ -134,17 +134,6 @@ func analyticsColumns() []string {
 	}
 }
 
-func addAnalyticsRow(rows *sqlmock.Rows, a *domain.StreamAnalytics) *sqlmock.Rows {
-	return rows.AddRow(
-		a.ID, a.StreamID, a.CollectedAt,
-		a.ViewerCount, a.PeakViewerCount, a.UniqueViewers, a.AverageWatchTime,
-		a.ChatMessagesCount, a.ChatParticipants, a.LikesCount, a.SharesCount,
-		a.Bitrate, a.Framerate, a.Resolution, a.BufferingRatio, a.AvgLatency,
-		a.ViewerCountries, a.ViewerDevices, a.ViewerBrowsers,
-		a.CreatedAt, a.UpdatedAt,
-	)
-}
-
 func viewerSessionColumns() []string {
 	return []string{
 		"id", "stream_id", "user_id", "session_id",
@@ -154,17 +143,6 @@ func viewerSessionColumns() []string {
 		"messages_sent", "liked", "shared",
 		"created_at", "updated_at",
 	}
-}
-
-func addViewerSessionRow(rows *sqlmock.Rows, s *domain.AnalyticsViewerSession) *sqlmock.Rows {
-	return rows.AddRow(
-		s.ID, s.StreamID, s.UserID, s.SessionID,
-		s.JoinedAt, s.LeftAt, s.WatchDuration,
-		s.IPAddress, s.CountryCode, s.City,
-		s.DeviceType, s.Browser, s.OperatingSystem,
-		s.MessagesSent, s.Liked, s.Shared,
-		s.CreatedAt, s.UpdatedAt,
-	)
 }
 
 func summaryColumns() []string {
@@ -180,21 +158,6 @@ func summaryColumns() []string {
 		"top_devices", "top_browsers",
 		"created_at", "updated_at",
 	}
-}
-
-func addSummaryRow(rows *sqlmock.Rows, s *domain.StreamStatsSummary) *sqlmock.Rows {
-	return rows.AddRow(
-		s.ID, s.StreamID,
-		s.TotalViewers, s.PeakConcurrentViewers, s.AverageViewers,
-		s.TotalWatchTime, s.AverageWatchDuration,
-		s.TotalChatMessages, s.TotalUniqueChatters,
-		s.TotalLikes, s.TotalShares, s.EngagementRate,
-		s.AverageBitrate, s.AverageFramerate, s.QualityScore,
-		s.StreamDuration, s.FirstViewerJoinedAt, s.PeakTime,
-		s.TopCountries, s.CountriesCount,
-		s.TopDevices, s.TopBrowsers,
-		s.CreatedAt, s.UpdatedAt,
-	)
 }
 
 func analyticsRow(a *domain.StreamAnalytics) []driver.Value {

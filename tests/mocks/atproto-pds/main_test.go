@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -401,7 +400,7 @@ func TestDebugRecords(t *testing.T) {
 	sessionResp.Body.Close()
 	accessToken := session["accessJwt"].(string)
 
-	recordBody := fmt.Sprintf(`{"repo":"did:plc:test123","collection":"app.bsky.feed.post","record":{"text":"hello world"}}`)
+	recordBody := `{"repo":"did:plc:test123","collection":"app.bsky.feed.post","record":{"text":"hello world"}}`
 	req, _ := http.NewRequest("POST", ts.URL+"/xrpc/com.atproto.repo.createRecord", strings.NewReader(recordBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)

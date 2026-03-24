@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -25,6 +26,15 @@ type ErrorInfo = shared.ErrorInfo
 
 // Meta is an alias for shared.Meta for tests
 type Meta = shared.Meta
+
+func TestMain(m *testing.M) {
+	passwordHashCost = bcrypt.MinCost
+	os.Exit(m.Run())
+}
+
+func newTestTwoFAService(userRepo usecase.UserRepository, backupCodeRepo usecase.TwoFABackupCodeRepository, issuer string) *usecase.TwoFAService {
+	return usecase.NewTwoFAServiceWithBackupCodeHashCost(userRepo, backupCodeRepo, issuer, bcrypt.MinCost)
+}
 
 // NewServer creates an AuthHandlers instance for tests (backwards compatibility)
 func NewServer(
@@ -206,13 +216,13 @@ func (h *AuthHandlers) Register(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:   now,
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := generatePasswordHash(req.Password)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to process password"))
 		return
 	}
 
-	if err := h.userRepo.Create(r.Context(), user, string(hash)); err != nil {
+	if err := h.userRepo.Create(r.Context(), user, hash); err != nil {
 		shared.WriteError(w, http.StatusConflict, domain.NewDomainError("CREATE_FAILED", "Failed to create user"))
 		return
 	}

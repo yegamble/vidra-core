@@ -61,8 +61,7 @@ func (m *mockOwnershipRepo) UpdateStatus(_ context.Context, id uuid.UUID, status
 
 // mockVideoRepoOwnership is a minimal VideoRepository for ownership handler tests.
 type mockVideoRepoOwnership struct {
-	usecase interface{}
-	videos  map[string]*domain.Video
+	videos map[string]*domain.Video
 }
 
 func (m *mockVideoRepoOwnership) GetByID(_ context.Context, id string) (*domain.Video, error) {

@@ -282,8 +282,8 @@ func TestFileTypeBlocker_ZIPNestingDepth(t *testing.T) {
 func TestFileTypeBlocker_ZIPFileCountLimit(t *testing.T) {
 	blocker := NewFileTypeBlocker()
 
-	// Create ZIP with too many files
-	largeZIP := createZIPWithManyFiles(t, 15000) // Over 10,000 limit
+	// Create ZIP with just enough files to exceed the limit.
+	largeZIP := createZIPWithManyFiles(t, 10001)
 
 	allowed, reason := blocker.ValidateArchive("archive.zip", largeZIP)
 	assert.False(t, allowed, "ZIP with too many files should be blocked")
@@ -518,15 +518,13 @@ func createZIPBomb(t *testing.T) []byte {
 	buf := new(bytes.Buffer)
 	zw := zip.NewWriter(buf)
 
-	// Create highly compressible content (1GB of zeros)
+	// Create highly compressible content that still exceeds the 100x ratio check.
 	fw, err := zw.Create("bomb.txt")
 	require.NoError(t, err)
 
-	zeros := make([]byte, 1024*1024) // 1MB of zeros
-	for i := 0; i < 1024; i++ {      // Write 1GB
-		_, err = fw.Write(zeros)
-		require.NoError(t, err)
-	}
+	zeros := make([]byte, 2*1024*1024) // 2MB of zeros
+	_, err = fw.Write(zeros)
+	require.NoError(t, err)
 
 	err = zw.Close()
 	require.NoError(t, err)

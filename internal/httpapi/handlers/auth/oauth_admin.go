@@ -10,7 +10,6 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type createOAuthClientRequest struct {
@@ -94,13 +93,12 @@ func (h *AuthHandlers) AdminCreateOAuthClient(w http.ResponseWriter, r *http.Req
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "client_secret required for confidential clients"))
 			return
 		}
-		h, err := bcrypt.GenerateFromPassword([]byte(req.ClientSecret), bcrypt.DefaultCost)
+		h, err := generatePasswordHash(req.ClientSecret)
 		if err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "failed to hash secret"))
 			return
 		}
-		s := string(h)
-		hashPtr = &s
+		hashPtr = &h
 	}
 	if len(req.GrantTypes) == 0 {
 		req.GrantTypes = []string{"password", "refresh_token"}
@@ -167,13 +165,12 @@ func (h *AuthHandlers) AdminRotateOAuthClientSecret(w http.ResponseWriter, r *ht
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("BAD_REQUEST", "client_secret required for confidential client"))
 			return
 		}
-		h, err := bcrypt.GenerateFromPassword([]byte(req.ClientSecret), bcrypt.DefaultCost)
+		h, err := generatePasswordHash(req.ClientSecret)
 		if err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "failed to hash secret"))
 			return
 		}
-		s := string(h)
-		hashPtr = &s
+		hashPtr = &h
 	} else {
 		// public client: clear secret
 		hashPtr = nil

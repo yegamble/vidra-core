@@ -2,7 +2,7 @@ module vidra-core
 
 go 1.24.0
 
-toolchain go1.24.6
+toolchain go1.25.8
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2

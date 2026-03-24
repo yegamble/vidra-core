@@ -48,7 +48,7 @@ jobs:
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
         with:
-          go-version: '1.24'
+          go-version: '1.25.8'
           cache-dependency-path: go.sum
 
       - name: Generate test fixtures (optional)
@@ -90,12 +90,13 @@ jobs:
       - name: Verify database schema
         run: |
           echo "Verifying database schema is initialized..."
-          COMPOSE_PROJECT_NAME=vidra-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e psql -U vidra_test -d vidra_e2e -c "\dt" | grep -q "users" || {
+          HAS_USERS_TABLE=$(COMPOSE_PROJECT_NAME=vidra-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e psql -U vidra_test -d vidra_e2e -tA -c "SELECT to_regclass('public.users') IS NOT NULL;")
+          if [ "$(echo "$HAS_USERS_TABLE" | tr -d '[:space:]')" != "t" ]; then
             echo "❌ Database schema not initialized - 'users' table not found"
             echo "Database tables:"
             COMPOSE_PROJECT_NAME=vidra-e2e-${{ github.run_id }}-main docker compose -f tests/e2e/docker-compose.yml exec -T postgres-e2e psql -U vidra_test -d vidra_e2e -c "\dt"
             exit 1
-          }
+          fi
           echo "✓ Database schema verified"
 
       - name: Check service health
@@ -177,7 +178,7 @@ jobs:
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
         with:
-          go-version: '1.24'
+          go-version: '1.25.8'
           cache-dependency-path: go.sum
 
       - name: Generate test fixtures (optional)

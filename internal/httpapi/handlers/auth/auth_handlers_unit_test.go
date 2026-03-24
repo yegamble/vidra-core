@@ -247,29 +247,6 @@ func (m *mockOAuthRepo) ListUserTokens(_ context.Context, userID string) ([]*use
 
 func (m *mockOAuthRepo) DeleteExpiredTokens(_ context.Context) error { return nil }
 
-// ---------------------------------------------------------------------------
-// Mock: TwoFAService (wrapping a mockable interface)
-// ---------------------------------------------------------------------------
-
-type mockTwoFAUserRepo struct {
-	mockUserRepo
-	passwords map[string]string // userID -> bcrypt hash
-}
-
-func newMockTwoFAUserRepo() *mockTwoFAUserRepo {
-	return &mockTwoFAUserRepo{
-		mockUserRepo: mockUserRepo{users: make(map[string]*domain.User)},
-		passwords:    make(map[string]string),
-	}
-}
-
-func (m *mockTwoFAUserRepo) GetPasswordHash(_ context.Context, userID string) (string, error) {
-	if h, ok := m.passwords[userID]; ok {
-		return h, nil
-	}
-	return "", errors.New("no hash")
-}
-
 // mockBackupCodeRepo implements usecase.TwoFABackupCodeRepository
 type mockBackupCodeRepo struct {
 	codes map[string][]*domain.TwoFABackupCode // userID -> backup codes
@@ -2215,7 +2192,7 @@ func TestUnit_AdminDeleteOAuthClient_Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUnit_SetupTwoFA_Unauthorized(t *testing.T) {
-	svc := usecase.NewTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/setup", nil)
 	rr := httptest.NewRecorder()
@@ -2235,7 +2212,7 @@ func TestUnit_SetupTwoFA_AlreadyEnabled(t *testing.T) {
 	}
 	userRepo.users[user.ID] = user
 
-	svc := usecase.NewTwoFAService(userRepo, newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(userRepo, newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/setup", nil)
 	req = req.WithContext(withUserID(req.Context(), user.ID))
@@ -2256,7 +2233,7 @@ func TestUnit_SetupTwoFA_Success(t *testing.T) {
 	}
 	userRepo.users[user.ID] = user
 
-	svc := usecase.NewTwoFAService(userRepo, newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(userRepo, newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/setup", nil)
 	req = req.WithContext(withUserID(req.Context(), user.ID))
@@ -2268,7 +2245,7 @@ func TestUnit_SetupTwoFA_Success(t *testing.T) {
 }
 
 func TestUnit_VerifyTwoFASetup_Unauthorized(t *testing.T) {
-	svc := usecase.NewTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	body, _ := json.Marshal(map[string]string{"code": "123456"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/verify-setup", bytes.NewReader(body))
@@ -2280,7 +2257,7 @@ func TestUnit_VerifyTwoFASetup_Unauthorized(t *testing.T) {
 }
 
 func TestUnit_VerifyTwoFASetup_InvalidJSON(t *testing.T) {
-	svc := usecase.NewTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/verify-setup", strings.NewReader("bad"))
 	req = req.WithContext(withUserID(req.Context(), "u1"))
@@ -2292,7 +2269,7 @@ func TestUnit_VerifyTwoFASetup_InvalidJSON(t *testing.T) {
 }
 
 func TestUnit_VerifyTwoFASetup_MissingCode(t *testing.T) {
-	svc := usecase.NewTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	body, _ := json.Marshal(map[string]string{"code": ""})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/verify-setup", bytes.NewReader(body))
@@ -2305,7 +2282,7 @@ func TestUnit_VerifyTwoFASetup_MissingCode(t *testing.T) {
 }
 
 func TestUnit_DisableTwoFA_Unauthorized(t *testing.T) {
-	svc := usecase.NewTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	body, _ := json.Marshal(map[string]string{"password": "pw", "code": "123456"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/disable", bytes.NewReader(body))
@@ -2317,7 +2294,7 @@ func TestUnit_DisableTwoFA_Unauthorized(t *testing.T) {
 }
 
 func TestUnit_DisableTwoFA_InvalidJSON(t *testing.T) {
-	svc := usecase.NewTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/disable", strings.NewReader("bad"))
 	req = req.WithContext(withUserID(req.Context(), "u1"))
@@ -2329,7 +2306,7 @@ func TestUnit_DisableTwoFA_InvalidJSON(t *testing.T) {
 }
 
 func TestUnit_DisableTwoFA_MissingFields(t *testing.T) {
-	svc := usecase.NewTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	body, _ := json.Marshal(map[string]string{"password": ""}) // missing code too
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/disable", bytes.NewReader(body))
@@ -2342,7 +2319,7 @@ func TestUnit_DisableTwoFA_MissingFields(t *testing.T) {
 }
 
 func TestUnit_RegenerateBackupCodes_Unauthorized(t *testing.T) {
-	svc := usecase.NewTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	body, _ := json.Marshal(map[string]string{"code": "123456"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/regenerate-backup-codes", bytes.NewReader(body))
@@ -2354,7 +2331,7 @@ func TestUnit_RegenerateBackupCodes_Unauthorized(t *testing.T) {
 }
 
 func TestUnit_RegenerateBackupCodes_InvalidJSON(t *testing.T) {
-	svc := usecase.NewTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/regenerate-backup-codes", strings.NewReader("bad"))
 	req = req.WithContext(withUserID(req.Context(), "u1"))
@@ -2366,7 +2343,7 @@ func TestUnit_RegenerateBackupCodes_InvalidJSON(t *testing.T) {
 }
 
 func TestUnit_RegenerateBackupCodes_MissingCode(t *testing.T) {
-	svc := usecase.NewTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(newMockUserRepo(), newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	body, _ := json.Marshal(map[string]string{"code": ""})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/2fa/regenerate-backup-codes", bytes.NewReader(body))
@@ -2398,7 +2375,7 @@ func TestUnit_GetTwoFAStatus_Success(t *testing.T) {
 	}
 	userRepo.users[user.ID] = user
 
-	svc := usecase.NewTwoFAService(userRepo, newMockBackupCodeRepo(), "Vidra Core")
+	svc := newTestTwoFAService(userRepo, newMockBackupCodeRepo(), "Vidra Core")
 	h := NewTwoFAHandlers(svc)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/2fa/status", nil)
 	req = req.WithContext(withUserID(req.Context(), user.ID))

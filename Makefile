@@ -60,22 +60,29 @@ lint: ## Run golangci-lint (auto-fixes incl. import sorting)
 	fi
 
 fmt: ## Format Go files (incl. import sorting)
-	@# Sort and group imports, then run gofmt simplify
-	@if command -v goimports >/dev/null 2>&1; then \
-		goimports -w $(shell git ls-files "*.go"); \
+	@# Sort and group imports, then run gofmt simplify.
+	@set -e; \
+	GO_FILES=$$(git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do [ -f "$$file" ] && printf '%s\n' "$$file"; done); \
+	if [ -z "$$GO_FILES" ]; then \
+		echo "No Go files found."; \
+		exit 0; \
+	fi; \
+	if command -v goimports >/dev/null 2>&1; then \
+		goimports -w $$GO_FILES; \
 	else \
 		echo "goimports not installed. Installing (requires internet)..."; \
 		$(GO_ENV) go install golang.org/x/tools/cmd/goimports@latest || echo "Install goimports manually to enable import sorting"; \
-		command -v goimports >/dev/null 2>&1 && goimports -w $(shell git ls-files "*.go") || true; \
-	fi
-	@gofmt -s -w $(shell git ls-files "*.go")
+		command -v goimports >/dev/null 2>&1 && goimports -w $$GO_FILES || true; \
+	fi; \
+	gofmt -s -w $$GO_FILES
 
 fmt-check: ## Verify Go files are formatted and imports sorted
 	@set -e; \
+	GO_FILES=$$(git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do [ -f "$$file" ] && printf '%s\n' "$$file"; done); \
 	unformatted=$$(go fmt ./...); \
 	unsorted=""; \
-	if command -v goimports >/dev/null 2>&1; then \
-		unsorted=$$(goimports -l $(shell git ls-files "*.go")); \
+	if [ -n "$$GO_FILES" ] && command -v goimports >/dev/null 2>&1; then \
+		unsorted=$$(goimports -l $$GO_FILES); \
 	else \
 		echo "Note: goimports not found; skipping import sort check. Run 'make install-tools' to install."; \
 	fi; \

@@ -347,12 +347,6 @@ func (s *Service) UpdateTrendingMetrics(ctx context.Context, videoIDs []string) 
 	return nil
 }
 
-func (s *Service) getViewsInPeriod(ctx context.Context, videoID string, period time.Duration) (int64, error) {
-	endTime := time.Now()
-	startTime := endTime.Add(-period)
-	return s.viewsRepo.GetUniqueViews(ctx, videoID, startTime, endTime)
-}
-
 func calculateVelocityScore(hourlyViews, dailyViews, weeklyViews int64) float64 {
 	if weeklyViews == 0 {
 		return 0.0

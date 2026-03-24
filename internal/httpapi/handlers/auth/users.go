@@ -8,7 +8,6 @@ import (
 	"vidra-core/internal/httpapi/shared"
 
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
@@ -233,13 +232,13 @@ func CreateUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 		}
 
 		// Hash password
-		pwHashBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		passwordHash, err := generatePasswordHash(req.Password)
 		if err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to process password"))
 			return
 		}
 
-		if err := repo.Create(r.Context(), user, string(pwHashBytes)); err != nil {
+		if err := repo.Create(r.Context(), user, passwordHash); err != nil {
 			// Fallback conflict mapping if repo enforces uniqueness at DB level
 			shared.WriteError(w, shared.MapDomainErrorToHTTP(domain.ErrConflict), domain.NewDomainError("CREATE_FAILED", "Failed to create user"))
 			return

@@ -1356,7 +1356,7 @@ func TestGetUserID_NilUUID(t *testing.T) {
 }
 
 func TestGetUserID_BackwardCompatibleFallback(t *testing.T) {
-	ctx := context.WithValue(context.Background(), "userID", "legacy-user-id")
+	ctx := context.WithValue(context.Background(), legacyUserIDKey, "legacy-user-id")
 	result := getUserID(ctx)
 	assert.Equal(t, "legacy-user-id", result)
 }

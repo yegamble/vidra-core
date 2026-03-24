@@ -20,17 +20,27 @@ type TwoFAService struct {
 	userRepo       UserRepository
 	backupCodeRepo TwoFABackupCodeRepository
 	issuer         string // Application name for TOTP (e.g., "Vidra Core")
+	backupCodeCost int
 }
 
 // NewTwoFAService creates a new 2FA service
 func NewTwoFAService(userRepo UserRepository, backupCodeRepo TwoFABackupCodeRepository, issuer string) *TwoFAService {
+	return NewTwoFAServiceWithBackupCodeHashCost(userRepo, backupCodeRepo, issuer, bcrypt.DefaultCost)
+}
+
+// NewTwoFAServiceWithBackupCodeHashCost creates a new 2FA service with a configurable backup-code hash cost.
+func NewTwoFAServiceWithBackupCodeHashCost(userRepo UserRepository, backupCodeRepo TwoFABackupCodeRepository, issuer string, backupCodeCost int) *TwoFAService {
 	if issuer == "" {
 		issuer = "Vidra Core"
+	}
+	if backupCodeCost < bcrypt.MinCost || backupCodeCost > bcrypt.MaxCost {
+		backupCodeCost = bcrypt.DefaultCost
 	}
 	return &TwoFAService{
 		userRepo:       userRepo,
 		backupCodeRepo: backupCodeRepo,
 		issuer:         issuer,
+		backupCodeCost: backupCodeCost,
 	}
 }
 
@@ -262,7 +272,7 @@ func (s *TwoFAService) generateBackupCodes(ctx context.Context, userID string) (
 		codes[i] = code
 
 		// Hash and store the code
-		hash, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
+		hash, err := bcrypt.GenerateFromPassword([]byte(code), s.backupCodeHashCost())
 		if err != nil {
 			return nil, fmt.Errorf("failed to hash backup code: %w", err)
 		}
@@ -301,6 +311,13 @@ func (s *TwoFAService) verifyBackupCode(ctx context.Context, userID, code string
 	}
 
 	return domain.ErrTwoFAInvalidCode
+}
+
+func (s *TwoFAService) backupCodeHashCost() int {
+	if s.backupCodeCost < bcrypt.MinCost || s.backupCodeCost > bcrypt.MaxCost {
+		return bcrypt.DefaultCost
+	}
+	return s.backupCodeCost
 }
 
 // generateRandomCode generates a random alphanumeric code

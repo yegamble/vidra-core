@@ -171,17 +171,6 @@ func (m *mockRedundancyService) GetVideoHealth(ctx context.Context, videoID stri
 	return 0, nil
 }
 
-type mockInstanceDiscovery struct {
-	DiscoverInstanceFunc func(ctx context.Context, instanceURL string) (*domain.InstancePeer, error)
-}
-
-func (m *mockInstanceDiscovery) DiscoverInstance(ctx context.Context, instanceURL string) (*domain.InstancePeer, error) {
-	if m.DiscoverInstanceFunc != nil {
-		return m.DiscoverInstanceFunc(ctx, instanceURL)
-	}
-	return nil, nil
-}
-
 func TestListInstancePeers_Success(t *testing.T) {
 	mockService := &mockRedundancyService{
 		ListInstancePeersFunc: func(ctx context.Context, limit, offset int, activeOnly bool) ([]*domain.InstancePeer, error) {

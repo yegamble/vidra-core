@@ -4,7 +4,7 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -58,7 +58,7 @@ func didForHandle(handle string) string {
 		return "did:plc:testhandle"
 	}
 
-	sum := sha1.Sum([]byte(normalized))
+	sum := sha256.Sum256([]byte(normalized))
 	return "did:plc:" + hex.EncodeToString(sum[:8])
 }
 
@@ -109,6 +109,8 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 }
 
 // newRouter creates the HTTP mux for the mock PDS.
+//
+//nolint:gocyclo // Keeping the mock route wiring in one place makes this test server easier to follow.
 func newRouter() http.Handler {
 	s := newState()
 	mux := http.NewServeMux()

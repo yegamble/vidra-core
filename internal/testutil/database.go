@@ -236,6 +236,7 @@ func pqQuoteIdent(id string) string {
 	return `"` + strings.ReplaceAll(id, `"`, `""`) + `"`
 }
 
+//lint:ignore U1000 retained for legacy test helpers that still bootstrap a minimal schema directly
 func ensureTestSchema(db *sqlx.DB) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

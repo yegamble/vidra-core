@@ -840,7 +840,7 @@ func TestParseDateRange_Defaults(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, startDate.Before(endDate))
-	assert.True(t, endDate.Sub(time.Now()) < time.Hour)
+	assert.True(t, time.Until(endDate) < time.Hour)
 }
 
 func TestParseDateRange_ValidDates(t *testing.T) {
@@ -882,7 +882,7 @@ func TestParseDateRange_OnlyStartDate(t *testing.T) {
 	assert.Equal(t, 2024, startDate.Year())
 	assert.Equal(t, time.Month(1), startDate.Month())
 	assert.Equal(t, 1, startDate.Day())
-	assert.True(t, endDate.Sub(time.Now()) < time.Hour)
+	assert.True(t, time.Until(endDate) < time.Hour)
 }
 
 func TestParseDateRange_OnlyEndDate(t *testing.T) {
