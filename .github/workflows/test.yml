@@ -149,8 +149,29 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci clamav-ci
+          # Start all CI services; wait only for critical ones (postgres, redis, ipfs).
+          # ClamAV is started but not --wait'ed because it needs time to download
+          # virus definitions on first run (no persistent volume in CI).
+          docker compose --profile ci up -d postgres-ci redis-ci ipfs-ci clamav-ci
+          echo "=== Waiting for postgres, redis, ipfs ==="
+          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci
+          echo "=== Service status ==="
           docker compose --profile ci ps
+
+      - name: Wait for ClamAV (best-effort)
+        run: |
+          echo "Waiting up to 120s for ClamAV..."
+          for i in $(seq 1 60); do
+            if docker compose --profile ci exec -T clamav-ci clamdscan --version >/dev/null 2>&1; then
+              echo "ClamAV is ready"
+              exit 0
+            fi
+            [ $((i % 15)) -eq 0 ] && echo "ClamAV not ready yet (attempt $i/60)..."
+            sleep 2
+          done
+          echo "WARNING: ClamAV not ready after 120s, proceeding anyway"
+          docker compose --profile ci logs --tail=30 clamav-ci
+        continue-on-error: true
 
       - name: Run integration tests
         env:
@@ -159,7 +180,19 @@ jobs:
           IPFS_API: http://localhost:5001
           CLAMAV_HOST: localhost:3310
           JWT_SECRET: test-jwt-secret
-        run: make test-integration-ci
+        run: |
+          echo "=== Service status before tests ==="
+          docker compose --profile ci ps
+          echo "=== Running tests ==="
+          make test-integration-ci 2>&1 | tee /tmp/integration-test-output.log || {
+            echo "=== FAILED: Last 100 lines ==="
+            tail -100 /tmp/integration-test-output.log
+            echo "=== Service status after failure ==="
+            docker compose --profile ci ps
+            echo "=== Service logs ==="
+            docker compose --profile ci logs --tail=30
+            exit 1
+          }
 
       - name: Cleanup services
         if: always()
@@ -239,8 +272,26 @@ jobs:
 
       - name: Start services with docker compose
         run: |
-          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci clamav-ci
+          docker compose --profile ci up -d postgres-ci redis-ci ipfs-ci clamav-ci
+          echo "=== Waiting for postgres, redis, ipfs ==="
+          docker compose --profile ci up -d --wait postgres-ci redis-ci ipfs-ci
+          echo "=== Service status ==="
           docker compose --profile ci ps
+
+      - name: Wait for ClamAV (best-effort)
+        run: |
+          echo "Waiting up to 120s for ClamAV..."
+          for i in $(seq 1 60); do
+            if docker compose --profile ci exec -T clamav-ci clamdscan --version >/dev/null 2>&1; then
+              echo "ClamAV is ready"
+              exit 0
+            fi
+            [ $((i % 15)) -eq 0 ] && echo "ClamAV not ready yet (attempt $i/60)..."
+            sleep 2
+          done
+          echo "WARNING: ClamAV not ready after 120s, proceeding anyway"
+          docker compose --profile ci logs --tail=30 clamav-ci
+        continue-on-error: true
 
       - name: Run integration tests with race detector
         env:
@@ -250,7 +301,20 @@ jobs:
           IPFS_API: http://localhost:5001
           CLAMAV_HOST: localhost:3310
           JWT_SECRET: test-jwt-secret
-        run: make test-integration-ci-race
+        run: |
+          echo "=== Service status before tests ==="
+          docker compose --profile ci ps
+          echo "=== Running race tests ==="
+          make test-integration-ci-race 2>&1 | tee /tmp/integration-race-output.log || {
+            echo "=== FAILED: Last 100 lines ==="
+            tail -100 /tmp/integration-race-output.log
+            echo "=== Failing tests ==="
+            grep -E "^--- FAIL:" /tmp/integration-race-output.log || true
+            grep -E "DATA RACE" /tmp/integration-race-output.log || true
+            echo "=== Service status after failure ==="
+            docker compose --profile ci ps
+            exit 1
+          }
 
       - name: Cleanup services
         if: always()

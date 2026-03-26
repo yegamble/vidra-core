@@ -75,6 +75,27 @@
       "key": "runner_token",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "admin_username",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "admin_password",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          "['access_token','admin_username','admin_password'].forEach(function(k){var v=pm.environment.get(k);if(v){pm.collectionVariables.set(k,v);}});"
+        ],
+        "type": "text/javascript"
+      }
     }
   ],
   "item": [
@@ -139,7 +160,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"email\":\"admin@example.com\",\"password\":\"admin123\"}"
+              "raw": "{\"username\":\"{{admin_username}}\",\"password\":\"{{admin_password}}\"}"
             },
             "url": "{{baseUrl}}/auth/login"
           }

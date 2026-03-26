@@ -119,15 +119,17 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 	r.Post("/auth/refresh", server.RefreshToken)
 	r.With(middleware.Auth(cfg.JWTSecret)).Post("/auth/logout", server.Logout)
 
-	r.Route("/auth/2fa", func(r chi.Router) {
-		r.Use(middleware.Auth(cfg.JWTSecret))
-		twoFAHandlers := auth.NewTwoFAHandlers(deps.TwoFAService)
-		r.Post("/setup", twoFAHandlers.SetupTwoFA)
-		r.Post("/verify-setup", twoFAHandlers.VerifyTwoFASetup)
-		r.Post("/disable", twoFAHandlers.DisableTwoFA)
-		r.Post("/regenerate-backup-codes", twoFAHandlers.RegenerateBackupCodes)
-		r.Get("/status", twoFAHandlers.GetTwoFAStatus)
-	})
+	if deps.TwoFAService != nil {
+		r.Route("/auth/2fa", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			twoFAHandlers := auth.NewTwoFAHandlers(deps.TwoFAService)
+			r.Post("/setup", twoFAHandlers.SetupTwoFA)
+			r.Post("/verify-setup", twoFAHandlers.VerifyTwoFASetup)
+			r.Post("/disable", twoFAHandlers.DisableTwoFA)
+			r.Post("/regenerate-backup-codes", twoFAHandlers.RegenerateBackupCodes)
+			r.Get("/status", twoFAHandlers.GetTwoFAStatus)
+		})
+	}
 
 	if deps.EmailVerificationService != nil {
 		emailVerificationHandlers := auth.NewEmailVerificationHandlers(deps.EmailVerificationService)

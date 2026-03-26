@@ -1,0 +1,9 @@
+version: 2
+
+secret:
+  # Ignore Postman test collections and environment files.
+  # These contain only test-fixture credentials for CI smoke tests
+  # against Docker Compose services — not real production secrets.
+  ignored-paths:
+    - "postman/"
+    - "postman/**"

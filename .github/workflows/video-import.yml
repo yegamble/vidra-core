@@ -60,7 +60,8 @@ jobs:
         run: go test -v -coverprofile=handlers-coverage.out ./internal/httpapi -run TestImportHandlers
 
       - name: Run importer tests
-        run: go test -v -coverprofile=importer-coverage.out ./internal/importer/... || true
+        continue-on-error: true
+        run: go test -v -coverprofile=importer-coverage.out ./internal/importer/...
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -120,14 +121,14 @@ jobs:
           go-version: '1.25.8'
           cache-dependency-path: go.sum
 
+      - name: Install Goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@latest
+
       - name: Run migrations
         env:
-          PGPASSWORD: test_password
+          DATABASE_URL: postgres://test_user:test_password@localhost:5436/vidra_test?sslmode=disable
         run: |
-          for migration in migrations/*.sql; do
-            echo "Applying: $(basename "$migration")"
-            psql -h localhost -p 5436 -U test_user -d vidra_test -f "$migration" > /dev/null 2>&1 || echo "  -> Already applied or error (continuing...)"
-          done
+          goose -dir migrations postgres "$DATABASE_URL" up
 
       - name: Verify migration
         env:

@@ -321,7 +321,7 @@ jobs:
 
           # Restart ClamAV for subsequent tests
           docker compose --profile ci start clamav-ci
-          timeout 300 bash -c 'until docker exec $(docker compose --profile ci ps -q clamav-ci) /usr/local/bin/clamdcheck.sh; do sleep 5; done'
+          timeout 300 bash -c 'until docker exec $(docker compose --profile ci ps -q clamav-ci) clamdscan --version; do sleep 5; done'
 
           # Verify upload was rejected
           if [ ${UPLOAD_EXIT_CODE:-0} -eq 0 ]; then

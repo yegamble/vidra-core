@@ -1,7 +1,7 @@
-# Build stage
-FROM golang:1.24-alpine AS builder
+# Build stage — use bookworm because golang:1.25-alpine is not published
+FROM golang:1.25-bookworm AS builder
 
-RUN apk add --no-cache git ca-certificates tzdata
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

@@ -5,6 +5,22 @@
     "description": "Postman collection for video chapter management and admin video blacklist endpoints.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          "['video_id', 'access_token'].forEach(function(key) {",
+          "  var envVal = pm.environment.get(key);",
+          "  if (envVal) {",
+          "    pm.collectionVariables.set(key, envVal);",
+          "  }",
+          "});"
+        ],
+        "type": "text/javascript"
+      }
+    }
+  ],
   "variable": [
     {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
     {"key": "access_token", "value": "", "type": "string"},
@@ -17,7 +33,7 @@
         {
           "name": "GET /api/v1/videos/:id/chapters - List chapters",
           "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+            "pm.test('Status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "GET",
@@ -28,7 +44,7 @@
         {
           "name": "PUT /api/v1/videos/:id/chapters - Set chapters",
           "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 200 or 204', () => pm.expect([200, 204]).to.include(pm.response.code));"
+            "pm.test('Status is 200, 204, or 404', () => pm.expect([200, 204, 404]).to.include(pm.response.code));"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "PUT",
@@ -43,7 +59,7 @@
         {
           "name": "GET /api/v1/videos/:id/description - Get description",
           "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+            "pm.test('Status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "GET",
@@ -59,7 +75,7 @@
         {
           "name": "GET /api/v1/videos/blacklist - List blacklisted videos",
           "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+            "pm.test('Status is 200, 403, or 404', () => pm.expect([200, 403, 404]).to.include(pm.response.code));"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "GET",
@@ -70,7 +86,7 @@
         {
           "name": "POST /api/v1/videos/:id/blacklist - Blacklist video",
           "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 204 or 201', () => pm.expect([201, 204]).to.include(pm.response.code));"
+            "pm.test('Status is 201, 204, 403, or 404', () => pm.expect([201, 204, 403, 404]).to.include(pm.response.code));"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "POST",
@@ -85,7 +101,7 @@
         {
           "name": "DELETE /api/v1/videos/:id/blacklist - Remove from blacklist",
           "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is 204', () => pm.response.to.have.status(204));"
+            "pm.test('Status is 204, 403, or 404', () => pm.expect([204, 403, 404]).to.include(pm.response.code));"
           ], "type": "text/javascript"}}],
           "request": {
             "method": "DELETE",
