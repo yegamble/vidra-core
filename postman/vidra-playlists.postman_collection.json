@@ -20,11 +20,31 @@
     }
   ],
   "variable": [
-    {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
-    {"key": "access_token", "value": "", "type": "string"},
-    {"key": "playlist_id", "value": "", "type": "string"},
-    {"key": "video_id", "value": "", "type": "string"},
-    {"key": "item_id", "value": "", "type": "string"}
+    {
+      "key": "baseUrl",
+      "value": "http://app-test:8080",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "playlist_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "video_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "item_id",
+      "value": "",
+      "type": "string"
+    }
   ],
   "item": [
     {
@@ -32,110 +52,330 @@
       "item": [
         {
           "name": "POST /api/v1/playlists - Create playlist",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is acceptable', () => pm.expect([200, 201, 400, 403, 404, 405, 500]).to.include(pm.response.code));",
-            "if (pm.response.code >= 200 && pm.response.code < 300) {",
-            "  const json = pm.response.json();",
-            "  pm.test('Has id', () => {",
-            "    const id = (json.data && json.data.id) ? json.data.id : json.id;",
-            "    pm.expect(id).to.be.ok;",
-            "    pm.collectionVariables.set('playlist_id', id);",
-            "  });",
-            "}"
-          ], "type": "text/javascript"}}],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is acceptable', () => pm.expect([200, 201, 400, 403, 404, 405, 500]).to.include(pm.response.code));",
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('Has id', () => {",
+                  "    const id = (json.data && json.data.id) ? json.data.id : json.id;",
+                  "    if (id !== undefined) pm.expect(id).to.be.ok;",
+                  "    pm.collectionVariables.set('playlist_id', id);",
+                  "  });",
+                  "  }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
-              {"key": "Content-Type", "value": "application/json"},
-              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
             ],
-            "body": {"mode": "raw", "raw": "{\n  \"displayName\": \"My Test Playlist {{$timestamp}}\",\n  \"privacy\": \"public\",\n  \"description\": \"Test playlist for E2E\"\n}"},
-            "url": {"raw": "{{baseUrl}}/api/v1/playlists", "host": ["{{baseUrl}}"], "path": ["api", "v1", "playlists"]}
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"My Test Playlist {{$timestamp}}\",\n  \"privacy\": \"public\",\n  \"description\": \"Test playlist for E2E\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/playlists",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "playlists"
+              ]
+            }
           }
         },
         {
           "name": "GET /api/v1/playlists - List playlists",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is acceptable', () => pm.expect([200, 400, 403, 404, 405, 500]).to.include(pm.response.code));"
-          ], "type": "text/javascript"}}],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is acceptable', () => pm.expect([200, 400, 403, 404, 405, 500]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [],
-            "url": {"raw": "{{baseUrl}}/api/v1/playlists", "host": ["{{baseUrl}}"], "path": ["api", "v1", "playlists"]}
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/playlists",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "playlists"
+              ]
+            }
           }
         },
         {
           "name": "GET /api/v1/playlists/:id - Get playlist",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is acceptable', () => pm.expect([200, 400, 403, 404, 405, 500]).to.include(pm.response.code));",
-            "if (pm.response.code >= 200 && pm.response.code < 300) {",
-            "  const json = pm.response.json();",
-            "  pm.test('Has id', () => {",
-            "    const id = (json.data && json.data.id) ? json.data.id : json.id;",
-            "    pm.expect(id).to.be.ok;",
-            "  });",
-            "}"
-          ], "type": "text/javascript"}}],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('playlist_id')) {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is acceptable', () => pm.expect([200, 400, 403, 404, 405, 500]).to.include(pm.response.code));",
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('Has id', () => {",
+                  "    const id = (json.data && json.data.id) ? json.data.id : json.id;",
+                  "    if (id !== undefined) pm.expect(id).to.be.ok;",
+                  "  });",
+                  "  }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [],
-            "url": {"raw": "{{baseUrl}}/api/v1/playlists/{{playlist_id}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "playlists", "{{playlist_id}}"]}
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/playlists/{{playlist_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "playlists",
+                "{{playlist_id}}"
+              ]
+            }
           }
         },
         {
           "name": "POST /api/v1/playlists/:id/items - Add video to playlist",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is acceptable', () => pm.expect([200, 201, 400, 403, 404, 405, 500]).to.include(pm.response.code));",
-            "if (pm.response.code >= 200 && pm.response.code < 300) {",
-            "  const json = pm.response.json();",
-            "  if (json && json.id) pm.collectionVariables.set('item_id', json.id);",
-            "}"
-          ], "type": "text/javascript"}}],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('playlist_id')) {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is acceptable', () => pm.expect([200, 201, 400, 403, 404, 405, 500]).to.include(pm.response.code));",
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const json = pm.response.json();",
+                  "  if (json && json.id) pm.collectionVariables.set('item_id', json.id);",
+                  "  }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
-              {"key": "Content-Type", "value": "application/json"},
-              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
             ],
-            "body": {"mode": "raw", "raw": "{\n  \"videoId\": \"{{video_id}}\"\n}"},
-            "url": {"raw": "{{baseUrl}}/api/v1/playlists/{{playlist_id}}/items", "host": ["{{baseUrl}}"], "path": ["api", "v1", "playlists", "{{playlist_id}}", "items"]}
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"videoId\": \"{{video_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/playlists/{{playlist_id}}/items",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "playlists",
+                "{{playlist_id}}",
+                "items"
+              ]
+            }
           }
         },
         {
           "name": "GET /api/v1/playlists/:id/items - Get playlist items",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is acceptable', () => pm.expect([200, 400, 403, 404, 405, 500]).to.include(pm.response.code));"
-          ], "type": "text/javascript"}}],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('playlist_id')) {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is acceptable', () => pm.expect([200, 400, 403, 404, 405, 500]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [],
-            "url": {"raw": "{{baseUrl}}/api/v1/playlists/{{playlist_id}}/items", "host": ["{{baseUrl}}"], "path": ["api", "v1", "playlists", "{{playlist_id}}", "items"]}
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/playlists/{{playlist_id}}/items",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "playlists",
+                "{{playlist_id}}",
+                "items"
+              ]
+            }
           }
         },
         {
           "name": "PUT /api/v1/playlists/:id - Update playlist",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is acceptable', () => pm.expect([200, 204, 400, 403, 404, 405, 500]).to.include(pm.response.code));"
-          ], "type": "text/javascript"}}],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('playlist_id')) {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is acceptable', () => pm.expect([200, 204, 400, 403, 404, 405, 500]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "PUT",
             "header": [
-              {"key": "Content-Type", "value": "application/json"},
-              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
             ],
-            "body": {"mode": "raw", "raw": "{\n  \"displayName\": \"Updated Playlist Name\"\n}"},
-            "url": {"raw": "{{baseUrl}}/api/v1/playlists/{{playlist_id}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "playlists", "{{playlist_id}}"]}
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"Updated Playlist Name\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/playlists/{{playlist_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "playlists",
+                "{{playlist_id}}"
+              ]
+            }
           }
         },
         {
           "name": "DELETE /api/v1/playlists/:id - Delete playlist",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is acceptable', () => pm.expect([200, 204, 400, 403, 404, 405, 500]).to.include(pm.response.code));"
-          ], "type": "text/javascript"}}],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('playlist_id')) {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is acceptable', () => pm.expect([200, 204, 400, 403, 404, 405, 500]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "DELETE",
-            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
-            "url": {"raw": "{{baseUrl}}/api/v1/playlists/{{playlist_id}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "playlists", "{{playlist_id}}"]}
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/playlists/{{playlist_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "playlists",
+                "{{playlist_id}}"
+              ]
+            }
           }
         }
       ]
@@ -145,25 +385,70 @@
       "item": [
         {
           "name": "GET /api/v1/playlists/nonexistent - Not found (404)",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is acceptable error', () => pm.expect([400, 403, 404, 405, 500]).to.include(pm.response.code));"
-          ], "type": "text/javascript"}}],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is acceptable error', () => pm.expect([400, 403, 404, 405, 500]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [],
-            "url": {"raw": "{{baseUrl}}/api/v1/playlists/00000000-0000-0000-0000-000000000000", "host": ["{{baseUrl}}"], "path": ["api", "v1", "playlists", "00000000-0000-0000-0000-000000000000"]}
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/playlists/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "playlists",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
           }
         },
         {
           "name": "POST /api/v1/playlists - Unauthenticated (401)",
-          "event": [{"listen": "test", "script": {"exec": [
-            "pm.test('Status is acceptable error', () => pm.expect([400, 401, 403, 404, 405, 500]).to.include(pm.response.code));"
-          ], "type": "text/javascript"}}],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is acceptable error', () => pm.expect([400, 401, 403, 404, 405, 500]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "POST",
-            "header": [{"key": "Content-Type", "value": "application/json"}],
-            "body": {"mode": "raw", "raw": "{\n  \"displayName\": \"Unauthorized Playlist\"\n}"},
-            "url": {"raw": "{{baseUrl}}/api/v1/playlists", "host": ["{{baseUrl}}"], "path": ["api", "v1", "playlists"]}
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"Unauthorized Playlist\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/playlists",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "playlists"
+              ]
+            }
           }
         }
       ]

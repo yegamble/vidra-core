@@ -46,7 +46,7 @@
                   "  pm.test('Response has correct structure', () => {",
                   "    pm.expect(response).to.have.property('data');",
                   "  });",
-                  "}"
+                  "  }"
                 ],
                 "type": "text/javascript"
               }
@@ -55,12 +55,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/encoding/jobs/{{test_job_id}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "encoding", "jobs", "{{test_job_id}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "encoding",
+                "jobs",
+                "{{test_job_id}}"
+              ]
             }
           },
           "response": []
@@ -83,12 +95,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer invalid_token", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer invalid_token",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/encoding/jobs/{{test_job_id}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "encoding", "jobs", "{{test_job_id}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "encoding",
+                "jobs",
+                "{{test_job_id}}"
+              ]
             }
           },
           "response": []
@@ -111,12 +135,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/encoding/jobs/non-existent-job-id",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "encoding", "jobs", "non-existent-job-id"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "encoding",
+                "jobs",
+                "non-existent-job-id"
+              ]
             }
           },
           "response": []
@@ -142,7 +178,7 @@
                   "  pm.test('Response has correct structure', () => {",
                   "    pm.expect(response).to.have.property('data');",
                   "  });",
-                  "}"
+                  "  }"
                 ],
                 "type": "text/javascript"
               }
@@ -151,12 +187,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/videos/{{test_video_id}}/encoding-jobs",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "videos", "{{test_video_id}}", "encoding-jobs"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "{{test_video_id}}",
+                "encoding-jobs"
+              ]
             }
           },
           "response": []
@@ -179,12 +227,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/videos/invalid-uuid-format/encoding-jobs",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "videos", "invalid-uuid-format", "encoding-jobs"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "videos",
+                "invalid-uuid-format",
+                "encoding-jobs"
+              ]
             }
           },
           "response": []
@@ -193,6 +253,10 @@
     }
   ],
   "variable": [
-    { "key": "baseUrl", "value": "http://app-test:8080", "type": "string" }
+    {
+      "key": "baseUrl",
+      "value": "http://app-test:8080",
+      "type": "string"
+    }
   ]
 }

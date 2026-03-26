@@ -16,11 +16,31 @@
     }
   ],
   "variable": [
-    { "key": "baseUrl", "value": "http://app-test:8080", "type": "string" },
-    { "key": "access_token", "value": "", "type": "string" },
-    { "key": "admin_access_token", "value": "", "type": "string" },
-    { "key": "chat_stream_id", "value": "", "type": "string" },
-    { "key": "chat_message_id", "value": "", "type": "string" }
+    {
+      "key": "baseUrl",
+      "value": "http://app-test:8080",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "admin_access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "chat_stream_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "chat_message_id",
+      "value": "",
+      "type": "string"
+    }
   ],
   "item": [
     {
@@ -44,7 +64,7 @@
                   "  });",
                   "  pm.environment.set('chat_stream_id', body.data.id);",
                   "  console.log('Stream ID:', body.data.id);",
-                  "}"
+                  "  }"
                 ],
                 "type": "text/javascript"
               }
@@ -53,8 +73,16 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -62,8 +90,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/streams",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "streams"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "streams"
+              ]
             }
           },
           "response": []
@@ -88,7 +122,7 @@
                   "  pm.test('Empty messages list', () => {",
                   "    pm.expect(body).to.have.property('success', true);",
                   "  });",
-                  "}"
+                  "  }"
                 ],
                 "type": "text/javascript"
               }
@@ -99,8 +133,17 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/streams/{{chat_stream_id}}/chat/messages",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "streams", "{{chat_stream_id}}", "chat", "messages"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "streams",
+                "{{chat_stream_id}}",
+                "chat",
+                "messages"
+              ]
             }
           },
           "response": []
@@ -123,7 +166,7 @@
                   "      pm.environment.set('chat_message_id', body.data.id);",
                   "    }",
                   "  });",
-                  "}"
+                  "  }"
                 ],
                 "type": "text/javascript"
               }
@@ -132,8 +175,16 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -141,8 +192,17 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/streams/{{chat_stream_id}}/chat/messages",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "streams", "{{chat_stream_id}}", "chat", "messages"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "streams",
+                "{{chat_stream_id}}",
+                "chat",
+                "messages"
+              ]
             }
           },
           "response": []
@@ -162,7 +222,7 @@
                   "  pm.test('Messages returned', () => {",
                   "    pm.expect(body).to.have.property('success', true);",
                   "  });",
-                  "}"
+                  "  }"
                 ],
                 "type": "text/javascript"
               }
@@ -173,8 +233,17 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/streams/{{chat_stream_id}}/chat/messages",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "streams", "{{chat_stream_id}}", "chat", "messages"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "streams",
+                "{{chat_stream_id}}",
+                "chat",
+                "messages"
+              ]
             }
           },
           "response": []
@@ -199,7 +268,7 @@
                   "  pm.test('Moderators list returned', () => {",
                   "    pm.expect(body).to.have.property('success', true);",
                   "  });",
-                  "}"
+                  "  }"
                 ],
                 "type": "text/javascript"
               }
@@ -208,12 +277,25 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/streams/{{chat_stream_id}}/chat/moderators",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "streams", "{{chat_stream_id}}", "chat", "moderators"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "streams",
+                "{{chat_stream_id}}",
+                "chat",
+                "moderators"
+              ]
             }
           },
           "response": []
@@ -238,7 +320,7 @@
                   "  pm.test('Banned users list returned', () => {",
                   "    pm.expect(body).to.have.property('success', true);",
                   "  });",
-                  "}"
+                  "  }"
                 ],
                 "type": "text/javascript"
               }
@@ -247,12 +329,25 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/streams/{{chat_stream_id}}/chat/bans",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "streams", "{{chat_stream_id}}", "chat", "bans"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "streams",
+                "{{chat_stream_id}}",
+                "chat",
+                "bans"
+              ]
             }
           },
           "response": []
@@ -277,7 +372,7 @@
                   "  pm.test('Stats returned', () => {",
                   "    pm.expect(body).to.have.property('success', true);",
                   "  });",
-                  "}"
+                  "  }"
                 ],
                 "type": "text/javascript"
               }
@@ -286,12 +381,25 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}",
+                "type": "text"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/streams/{{chat_stream_id}}/chat/stats",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "streams", "{{chat_stream_id}}", "chat", "stats"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "streams",
+                "{{chat_stream_id}}",
+                "chat",
+                "stats"
+              ]
             }
           },
           "response": []
