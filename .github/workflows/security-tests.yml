@@ -362,7 +362,7 @@ jobs:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     needs: security-tests
-    if: always()
+    if: always() && needs.security-tests.result != 'skipped'
 
     steps:
       - name: Checkout code
@@ -373,17 +373,23 @@ jobs:
 
       - name: Generate Security Summary
         run: |
-          cat << 'EOF' > security-summary.md
+          RESULT="${{ needs.security-tests.result }}"
+          if [ "$RESULT" = "success" ]; then
+            ICON="✅"
+          elif [ "$RESULT" = "failure" ]; then
+            ICON="❌"
+          else
+            ICON="⚠️"
+          fi
+
+          cat << EOF > security-summary.md
           # Security Test Results
 
           ## Test Execution Summary
 
-          - ✅ SSRF Protection Tests: ${{ needs.security-tests.result }}
-          - ✅ URL Validation Tests: ${{ needs.security-tests.result }}
-          - ✅ ActivityPub Security: ${{ needs.security-tests.result }}
-          - ✅ Dependency Scanning: ${{ needs.security-tests.result }}
-          - ✅ Static Analysis: ${{ needs.security-tests.result }}
-          - ✅ Penetration Testing: ${{ needs.security-tests.result }}
+          Overall matrix result: ${ICON} ${RESULT}
+
+          Categories tested: ssrf-protection, url-validation, activitypub-security, dependency-scanning, static-analysis, penetration-testing
 
           ## Coverage Reports
 

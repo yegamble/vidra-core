@@ -229,7 +229,7 @@
               "script": {
                 "exec": [
                   "// Use the user_id from auth flow or default to video owner",
-                  "if (!pm.collectionVariables.get('user_id')) {",
+                  "if (pm.environment.get('user_id')) {",
                   "  pm.collectionVariables.set('user_id', pm.environment.get('user_id') || 'me');",
                   "}"
                 ],

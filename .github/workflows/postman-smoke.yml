@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -19,61 +20,178 @@ defaults:
   run:
     shell: bash
 
+env:
+  COMPOSE_PROJECT_NAME: vidra-smoke
+
 jobs:
   smoke-test:
     name: API Smoke Tests (Newman)
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Show Docker info
+        run: |
+          docker --version
+          docker compose version
+
       - name: Build app image
-        run: docker build -t vidra:latest .
-
-      - name: Start test services
         run: |
-          COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test \
-            up -d postgres-test redis-test app-test
+          echo "::group::Docker build output"
+          docker build -t vidra:latest . 2>&1 || {
+            echo "::error::Docker build failed"
+            exit 1
+          }
+          echo "::endgroup::"
+          echo "Build successful"
+          docker images vidra:latest
 
-      - name: Wait for services to be healthy
+      - name: Start all services
         run: |
-          echo "Waiting for postgres-test..."
-          for i in $(seq 1 60); do
-            if docker exec $(COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test ps -q postgres-test) \
-              pg_isready -U test_user -d vidra_test >/dev/null 2>&1; then
-              echo "postgres-test is ready"
+          # Let compose handle building mock services and pulling images
+          docker compose --profile test up -d app-test 2>&1 || {
+            echo "::error::docker compose up failed"
+            docker compose --profile test ps -a
+            docker compose --profile test logs 2>&1 | tail -50
+            exit 1
+          }
+          echo "=== Service status ==="
+          docker compose --profile test ps -a
+          # Check for any immediately exited containers
+          EXITED=$(docker compose --profile test ps -a --format json 2>/dev/null | grep -c '"exited"' || true)
+          if [ "$EXITED" -gt 0 ]; then
+            echo "::warning::$EXITED container(s) have exited"
+            docker compose --profile test ps -a
+          fi
+
+      - name: Wait for core services
+        run: |
+          echo "--- Checking for crashed containers ---"
+          docker compose --profile test ps -a
+
+          echo "--- Waiting for postgres-test (90s) ---"
+          for i in $(seq 1 90); do
+            CID=$(docker compose --profile test ps -q postgres-test 2>/dev/null || true)
+            if [ -n "$CID" ] && docker exec "$CID" pg_isready -U test_user -d vidra_test >/dev/null 2>&1; then
+              echo "postgres-test ready at attempt $i"
               break
             fi
+            [ "$i" -eq 90 ] && { echo "::error::postgres-test not ready after 90s"; docker compose --profile test logs postgres-test | tail -20; exit 1; }
             sleep 1
           done
 
-          echo "Waiting for redis-test..."
+          echo "--- Waiting for redis-test (60s) ---"
           for i in $(seq 1 60); do
-            if docker exec $(COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test ps -q redis-test) \
-              redis-cli ping >/dev/null 2>&1; then
-              echo "redis-test is ready"
+            CID=$(docker compose --profile test ps -q redis-test 2>/dev/null || true)
+            if [ -n "$CID" ] && docker exec "$CID" redis-cli ping >/dev/null 2>&1; then
+              echo "redis-test ready at attempt $i"
               break
             fi
+            [ "$i" -eq 60 ] && { echo "::error::redis-test not ready after 60s"; docker compose --profile test logs redis-test | tail -20; exit 1; }
             sleep 1
           done
 
-          echo "Waiting for app-test health..."
-          for i in $(seq 1 60); do
-            status=$(docker inspect --format='{{json .State.Health.Status}}' \
-              $(COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test ps -q app-test) 2>/dev/null | tr -d '"')
-            if [ "$status" = "healthy" ]; then
-              echo "app-test is healthy"
-              break
+          echo "--- Waiting for app-test (6 min) ---"
+          for i in $(seq 1 180); do
+            CID=$(docker compose --profile test ps -q app-test 2>/dev/null || true)
+            if [ -z "$CID" ]; then
+              [ $((i % 30)) -eq 0 ] && echo "  app-test container not found (attempt $i)"
+              sleep 2; continue
             fi
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CID" 2>/dev/null || echo "unknown")
+            RUNNING=$(docker inspect --format='{{.State.Running}}' "$CID" 2>/dev/null || echo "false")
+            if [ "$STATUS" = "healthy" ]; then
+              echo "app-test healthy at attempt $i"; break
+            fi
+            if [ "$RUNNING" = "false" ]; then
+              echo "::error::app-test container exited"; docker compose --profile test logs app-test | tail -100; exit 1
+            fi
+            [ $((i % 30)) -eq 0 ] && echo "  app-test: $STATUS (attempt $i/180)"
+            [ "$i" -eq 180 ] && { echo "::error::app-test timeout after 6 min (status: $STATUS)"; docker compose --profile test logs app-test | tail -100; exit 1; }
             sleep 2
           done
 
+      - name: Wait for ClamAV (best-effort)
+        run: |
+          echo "--- Waiting for ClamAV (up to 8 min for virus def download) ---"
+          for i in $(seq 1 240); do
+            CID=$(docker compose --profile test ps -q clamav-test 2>/dev/null || true)
+            [ -z "$CID" ] && { sleep 2; continue; }
+            RUNNING=$(docker inspect --format='{{.State.Running}}' "$CID" 2>/dev/null || echo "false")
+            [ "$RUNNING" = "false" ] && { echo "  ClamAV exited, restarting..."; docker compose --profile test up -d clamav-test; sleep 5; continue; }
+            if docker exec "$CID" clamdscan --version >/dev/null 2>&1; then
+              echo "ClamAV ready at attempt $i"; break
+            fi
+            [ $((i % 60)) -eq 0 ] && echo "  ClamAV loading definitions (attempt $i/240)..."
+            [ "$i" -eq 240 ] && { echo "WARNING: ClamAV not ready after 8 min"; docker compose --profile test logs clamav-test | tail -20; }
+            sleep 2
+          done
+        continue-on-error: true
+
+      - name: Verify services
+        run: |
+          docker compose --profile test ps -a
+          docker compose --profile test exec -T app-test curl -sf http://localhost:8080/health
+          echo "All services verified"
+
       - name: Run Newman smoke tests
         run: |
-          COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test \
-            run --rm newman
+          docker compose --profile test run --rm newman 2>&1 | tee /tmp/newman-output.log || {
+            echo ""
+            echo "::error::Newman smoke tests failed — see PR comment for details"
+
+            # Extract summary for the PR comment
+            SUMMARY=$(grep -E "(Running |.*failed$|.*completed successfully$|Failed collections:|  - |Collections run:|Successful:|Failed:)" /tmp/newman-output.log || echo "Could not extract summary")
+            FULL_SUMMARY=$(grep -A10 "Test Execution Summary" /tmp/newman-output.log || echo "No summary found")
+
+            # Also extract first Newman error details
+            FIRST_ERRORS=$(grep -B2 -A5 "AssertionError\|ECONNREFUSED\|socket hang up\|getaddrinfo\|ETIMEDOUT\|status code" /tmp/newman-output.log | head -60 || echo "No detailed errors found")
+
+            # Write summary to file for artifact upload
+            {
+              echo "## Newman Smoke Test Failure"
+              echo ""
+              echo "### Summary"
+              echo '```'
+              echo "$FULL_SUMMARY"
+              echo '```'
+              echo ""
+              echo "### Failed Collections"
+              echo '```'
+              echo "$SUMMARY"
+              echo '```'
+              echo ""
+              echo "### First Error Details"
+              echo '```'
+              echo "$FIRST_ERRORS"
+              echo '```'
+            } > /tmp/newman-failure-summary.md
+
+            cat /tmp/newman-failure-summary.md
+            exit 1
+          }
+
+      - name: Comment failure on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '## Newman Smoke Tests Failed\n\nSee workflow artifacts for full logs.';
+            try {
+              body = fs.readFileSync('/tmp/newman-failure-summary.md', 'utf8');
+            } catch (e) {
+              // File might not exist if failure was before Newman step
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
 
       - name: Upload test results
         if: always()
@@ -83,12 +201,21 @@ jobs:
           path: postman/newman-results.xml
           retention-days: 7
 
-      - name: Collect logs on failure
+      - name: Collect failure diagnostics
         if: failure()
         run: |
-          COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test logs app-test > postman-failure.log 2>&1
-          echo "--- Last 50 lines of app-test logs ---"
-          tail -50 postman-failure.log
+          echo "::group::Container Status"
+          docker compose --profile test ps -a
+          echo "::endgroup::"
+          echo "::group::App Logs"
+          docker compose --profile test logs --tail=200 app-test 2>&1 || true
+          echo "::endgroup::"
+          echo "::group::ClamAV Logs"
+          docker compose --profile test logs --tail=50 clamav-test 2>&1 || true
+          echo "::endgroup::"
+          echo "::group::All Logs"
+          docker compose --profile test logs --tail=50 2>&1 | tee postman-failure.log || true
+          echo "::endgroup::"
 
       - name: Upload failure logs
         if: failure()
@@ -100,5 +227,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: |
-          COMPOSE_PROJECT_NAME=vidra-smoke docker compose --profile test down -v --remove-orphans
+        run: docker compose --profile test down -v --remove-orphans

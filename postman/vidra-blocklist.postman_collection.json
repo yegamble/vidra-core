@@ -5,6 +5,22 @@
     "description": "Postman collection for per-user blocklist: block/unblock accounts and servers.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          "['access_token'].forEach(function(key) {",
+          "  var envVal = pm.environment.get(key);",
+          "  if (envVal) {",
+          "    pm.collectionVariables.set(key, envVal);",
+          "  }",
+          "});"
+        ],
+        "type": "text/javascript"
+      }
+    }
+  ],
   "variable": [
     {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
     {"key": "access_token", "value": "", "type": "string"},

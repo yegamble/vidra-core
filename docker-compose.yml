@@ -72,7 +72,7 @@ services:
     volumes:
       - clamav_signatures:/var/lib/clamav
     healthcheck:
-      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      test: ["CMD", "clamdscan", "--version"]
       interval: 30s
       timeout: 10s
       retries: 10
@@ -368,19 +368,17 @@ services:
     profiles: ["test"]
     image: clamav/clamav:stable
     platform: linux/amd64
-    container_name: vidra_test_clamav
     environment:
-      - CLAMAV_NO_FRESHCLAM=false
       - CLAMD_STARTUP_TIMEOUT=300
     volumes:
       - clamav-test-signatures:/var/lib/clamav
       - ./testdata/virus_scanner:/testdata:ro
     healthcheck:
-      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 180s
+      test: ["CMD", "clamdscan", "--version"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
     mem_limit: 2g
     networks:
       - test-network
@@ -411,7 +409,7 @@ services:
       ipfs-test:
         condition: service_started
       clamav-test:
-        condition: service_healthy
+        condition: service_started
       mock-atproto-pds-test:
         condition: service_healthy
       iota-node-test:
@@ -529,11 +527,11 @@ services:
     ports:
       - "3310:3310"
     healthcheck:
-      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
-      interval: 30s
+      test: ["CMD", "clamdscan", "--version"]
+      interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 180s
+      retries: 20
+      start_period: 60s
     networks:
       - ci-network
 

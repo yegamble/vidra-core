@@ -123,9 +123,9 @@ jobs:
       - name: Deploy to staging
         run: |
           kubectl set image deployment/vidra-api vidra=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }} \
-            -n vidra-staging
+            -n ${{ env.NAMESPACE }}-staging
 
-          kubectl rollout status deployment/vidra-api -n vidra-staging --timeout=5m
+          kubectl rollout status deployment/vidra-api -n ${{ env.NAMESPACE }}-staging --timeout=5m
 
       - name: Run staging smoke tests
         run: |
@@ -134,7 +134,7 @@ jobs:
             --restart=Never \
             --rm \
             -i \
-            -n vidra-staging \
+            -n ${{ env.NAMESPACE }}-staging \
             -- sh -c "curl -f http://vidra-api/health && curl -f http://vidra-api/ready"
 
       - name: Run E2E tests against staging
@@ -255,7 +255,7 @@ jobs:
 
           # Update kustomization with new image
           cd k8s/overlays/${TARGET_COLOR}
-          kustomize edit set image ghcr.io/yegamble/vidra-core=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+          kustomize edit set image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
 
       - name: Deploy target environment
         run: |

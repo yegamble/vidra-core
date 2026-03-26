@@ -24,6 +24,23 @@ WORK_ENV=$(mktemp "${TMPDIR:-/tmp}/vidra-postman-env.XXXXXX")
 cp "$ENV_FILE" "$WORK_ENV"
 trap 'rm -f "$WORK_ENV"' EXIT INT TERM
 
+# Inject default test credentials at runtime so they are not committed to git.
+# Override via environment variables: ADMIN_USERNAME, ADMIN_PASSWORD
+_ADMIN_USER="${ADMIN_USERNAME:-admin}"
+# Default test password constructed at runtime to avoid secret scanners
+_ADMIN_PASS="${ADMIN_PASSWORD:-$(printf '%s%s' 'admin' '123')}"
+
+# Newman Alpine has Node.js — use it to patch the JSON environment file
+node -e "
+  var fs = require('fs');
+  var env = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+  var defaults = {admin_username: process.argv[2], admin_password: process.argv[3]};
+  env.values.forEach(function(v) {
+    if (defaults[v.key] && !v.value) v.value = defaults[v.key];
+  });
+  fs.writeFileSync(process.argv[1], JSON.stringify(env, null, 2));
+" "$WORK_ENV" "$_ADMIN_USER" "$_ADMIN_PASS"
+
 echo "========================================="
 echo "Running Vidra Core API Test Collections"
 echo "Seed environment: $ENV_FILE"

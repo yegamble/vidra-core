@@ -40,6 +40,7 @@ import (
 	"vidra-core/internal/storage"
 	"vidra-core/internal/usecase"
 	ucactivitypub "vidra-core/internal/usecase/activitypub"
+	ucat "vidra-core/internal/usecase/auto_tags"
 	ucbackup "vidra-core/internal/usecase/backup"
 	"vidra-core/internal/usecase/captiongen"
 	ucchannel "vidra-core/internal/usecase/channel"
@@ -51,8 +52,10 @@ import (
 	ucpayments "vidra-core/internal/usecase/payments"
 	ucrt "vidra-core/internal/usecase/rating"
 	ucredundancy "vidra-core/internal/usecase/redundancy"
+	ucstudio "vidra-core/internal/usecase/studio"
 	ucup "vidra-core/internal/usecase/upload"
 	ucviews "vidra-core/internal/usecase/views"
+	ucww "vidra-core/internal/usecase/watched_words"
 	"vidra-core/internal/worker"
 )
 
@@ -118,8 +121,20 @@ type Dependencies struct {
 	CollaboratorRepo      *repository.ChannelCollaboratorRepository
 	RunnerRepo            *repository.RunnerRepository
 	MigrationJobRepo      *repository.MigrationRepository
+	VideoPasswordRepo     port.VideoPasswordRepository
+	VideoStoryboardRepo   port.VideoStoryboardRepository
+	VideoEmbedRepo        port.VideoEmbedPrivacyRepository
+	ServerFollowingRepo   port.ServerFollowingRepository
+	StudioJobRepo         port.StudioJobRepository
+	WatchedWordsRepo      port.WatchedWordsRepository
+	AutoTagRepo           port.AutoTagRepository
+	TwoFABackupCodeRepo   *repository.TwoFABackupCodeRepository
 
 	MigrationService         *ucmigration.ETLService
+	TwoFAService             *usecase.TwoFAService
+	WatchedWordsService      *ucww.Service
+	AutoTagsService          *ucat.Service
+	StudioService            *ucstudio.Service
 	UploadService            ucup.Service
 	EmailService             email.EmailService
 	EmailVerificationService *usecase.EmailVerificationService
@@ -322,6 +337,14 @@ func (app *Application) initializeDependencies() *Dependencies {
 		CollaboratorRepo:      repository.NewChannelCollaboratorRepository(app.DB),
 		RunnerRepo:            repository.NewRunnerRepository(app.DB),
 		MigrationJobRepo:      repository.NewMigrationRepository(app.DB),
+		VideoPasswordRepo:     repository.NewVideoPasswordRepository(app.DB),
+		VideoStoryboardRepo:   repository.NewVideoStoryboardRepository(app.DB),
+		VideoEmbedRepo:        repository.NewVideoEmbedPrivacyRepository(app.DB),
+		ServerFollowingRepo:   repository.NewServerFollowingRepository(app.DB),
+		StudioJobRepo:         repository.NewStudioJobRepository(app.DB),
+		WatchedWordsRepo:      repository.NewWatchedWordsRepository(app.DB),
+		AutoTagRepo:           repository.NewAutoTagRepository(app.DB),
+		TwoFABackupCodeRepo:   repository.NewTwoFABackupCodeRepository(app.DB),
 	}
 
 	deps.MigrationService = ucmigration.NewETLService(
@@ -333,6 +356,16 @@ func (app *Application) initializeDependencies() *Dependencies {
 		deps.CaptionRepo,
 		deps.VideoRepo,
 	)
+
+	// Initialize TwoFA service
+	deps.TwoFAService = usecase.NewTwoFAService(deps.UserRepo, deps.TwoFABackupCodeRepo, "Vidra")
+
+	// Initialize watched words and auto-tags services
+	deps.WatchedWordsService = ucww.NewService(deps.WatchedWordsRepo)
+	deps.AutoTagsService = ucat.NewService(deps.AutoTagRepo, deps.WatchedWordsRepo)
+
+	// Initialize studio service
+	deps.StudioService = ucstudio.NewService(deps.StudioJobRepo, deps.VideoRepo, nil, nil)
 
 	if app.Config.EnableIOTA {
 		deps.IOTARepo = repository.NewIOTARepository(app.DB)
@@ -786,75 +819,90 @@ func (app *Application) initializeSchedulers(deps *Dependencies) {
 
 func (app *Application) registerRoutes(deps *Dependencies) {
 	httpapi.RegisterRoutesWithDependencies(app.Router, app.Config, app.rateLimiterManager, &shared.HandlerDependencies{
-		UserRepo:              deps.UserRepo,
-		VideoRepo:             deps.VideoRepo,
-		UploadRepo:            deps.UploadRepo,
-		EncodingRepo:          deps.EncodingRepo,
-		MessageRepo:           deps.MessageRepo,
-		AuthRepo:              deps.AuthRepo,
-		OAuthRepo:             deps.OAuthRepo,
-		SubRepo:               deps.SubRepo,
-		ViewsRepo:             deps.ViewsRepo,
-		NotificationRepo:      deps.NotificationRepo,
-		ChannelRepo:           deps.ChannelRepo,
-		CommentRepo:           deps.CommentRepo,
-		RatingRepo:            deps.RatingRepo,
-		PlaylistRepo:          deps.PlaylistRepo,
-		CaptionRepo:           deps.CaptionRepo,
-		ModerationRepo:        deps.ModerationRepo,
-		FederationRepo:        deps.FederationRepo,
-		HardeningRepo:         deps.HardeningRepo,
-		SessionRepo:           deps.SessionRepo,
-		LiveStreamRepo:        deps.LiveStreamRepo,
-		StreamKeyRepo:         deps.StreamKeyRepo,
-		ViewerSessionRepo:     deps.ViewerSessionRepo,
-		UploadService:         deps.UploadService,
-		MessageService:        deps.MessageService,
-		E2EEService:           deps.E2EEService,
-		ViewsService:          deps.ViewsService,
-		NotificationService:   deps.NotificationService,
-		ChannelService:        deps.ChannelService,
-		CommentService:        deps.CommentService,
-		RatingService:         deps.RatingService,
-		PlaylistService:       deps.PlaylistService,
-		CaptionService:        deps.CaptionService,
-		CaptionGenService:     deps.CaptionGenService,
-		ActivityPubService:    deps.ActivityPubService,
-		SocialService:         deps.SocialService,
-		AtprotoService:        deps.AtprotoService,
-		FederationService:     deps.FederationService,
-		HardeningService:      deps.HardeningService,
-		EncodingService:       deps.EncodingService,
-		ImportService:         deps.ImportService,
-		PaymentService:        deps.PaymentService,
-		StreamManager:         deps.StreamManager,
-		ChatServer:            deps.ChatServer,
-		ChatRepo:              deps.ChatRepo,
-		RegistrationRepo:      deps.RegistrationRepo,
-		PluginRepo:            deps.PluginRepo,
-		PluginManager:         deps.PluginManager,
-		RedundancyService:     deps.RedundancyService,
-		InstanceDiscovery:     deps.InstanceDiscovery,
-		VideoCategoryUseCase:  deps.VideoCategoryUseCase,
-		AnalyticsRepo:         deps.AnalyticsRepo,
-		UserBlockRepo:         deps.UserBlockRepo,
-		AbuseMessageRepo:      deps.AbuseMessageRepo,
-		LiveStreamSessionRepo: deps.LiveStreamSessionRepo,
-		OwnershipRepo:         deps.OwnershipRepo,
-		CollaboratorRepo:      deps.CollaboratorRepo,
-		RunnerRepo:            deps.RunnerRepo,
-		HLSTranscoder:         app.hlsTranscoder,
-		IPFSStreamingService:  deps.IPFSStreamingService,
-		EncodingScheduler:     app.encodingScheduler,
-		MigrationService:      deps.MigrationService,
-		BackupService:         app.backupService,
-		DB:                    app.DB.DB,
-		Redis:                 app.Redis,
-		JWTSecret:             app.Config.JWTSecret,
-		RedisPingTimeout:      time.Duration(app.Config.RedisPingTimeout) * time.Second,
-		IPFSApi:               app.Config.IPFSApi,
-		IPFSCluster:           app.Config.IPFSCluster,
-		IPFSPingTimeout:       time.Duration(app.Config.IPFSPingTimeout) * time.Second,
+		UserRepo:                 deps.UserRepo,
+		VideoRepo:                deps.VideoRepo,
+		UploadRepo:               deps.UploadRepo,
+		EncodingRepo:             deps.EncodingRepo,
+		MessageRepo:              deps.MessageRepo,
+		AuthRepo:                 deps.AuthRepo,
+		OAuthRepo:                deps.OAuthRepo,
+		SubRepo:                  deps.SubRepo,
+		ViewsRepo:                deps.ViewsRepo,
+		NotificationRepo:         deps.NotificationRepo,
+		ChannelRepo:              deps.ChannelRepo,
+		CommentRepo:              deps.CommentRepo,
+		RatingRepo:               deps.RatingRepo,
+		PlaylistRepo:             deps.PlaylistRepo,
+		CaptionRepo:              deps.CaptionRepo,
+		ModerationRepo:           deps.ModerationRepo,
+		FederationRepo:           deps.FederationRepo,
+		HardeningRepo:            deps.HardeningRepo,
+		SessionRepo:              deps.SessionRepo,
+		LiveStreamRepo:           deps.LiveStreamRepo,
+		StreamKeyRepo:            deps.StreamKeyRepo,
+		ViewerSessionRepo:        deps.ViewerSessionRepo,
+		UploadService:            deps.UploadService,
+		MessageService:           deps.MessageService,
+		E2EEService:              deps.E2EEService,
+		ViewsService:             deps.ViewsService,
+		NotificationService:      deps.NotificationService,
+		ChannelService:           deps.ChannelService,
+		CommentService:           deps.CommentService,
+		RatingService:            deps.RatingService,
+		PlaylistService:          deps.PlaylistService,
+		CaptionService:           deps.CaptionService,
+		CaptionGenService:        deps.CaptionGenService,
+		ActivityPubService:       deps.ActivityPubService,
+		SocialService:            deps.SocialService,
+		AtprotoService:           deps.AtprotoService,
+		FederationService:        deps.FederationService,
+		HardeningService:         deps.HardeningService,
+		EncodingService:          deps.EncodingService,
+		ImportService:            deps.ImportService,
+		PaymentService:           deps.PaymentService,
+		StreamManager:            deps.StreamManager,
+		ChatServer:               deps.ChatServer,
+		ChatRepo:                 deps.ChatRepo,
+		RegistrationRepo:         deps.RegistrationRepo,
+		PluginRepo:               deps.PluginRepo,
+		PluginManager:            deps.PluginManager,
+		RedundancyService:        deps.RedundancyService,
+		InstanceDiscovery:        deps.InstanceDiscovery,
+		VideoCategoryUseCase:     deps.VideoCategoryUseCase,
+		AnalyticsRepo:            deps.AnalyticsRepo,
+		UserBlockRepo:            deps.UserBlockRepo,
+		AbuseMessageRepo:         deps.AbuseMessageRepo,
+		LiveStreamSessionRepo:    deps.LiveStreamSessionRepo,
+		OwnershipRepo:            deps.OwnershipRepo,
+		CollaboratorRepo:         deps.CollaboratorRepo,
+		RunnerRepo:               deps.RunnerRepo,
+		HLSTranscoder:            app.hlsTranscoder,
+		IPFSStreamingService:     deps.IPFSStreamingService,
+		EncodingScheduler:        app.encodingScheduler,
+		MigrationService:         deps.MigrationService,
+		BackupService:            app.backupService,
+		BlacklistRepo:            deps.BlacklistRepo,
+		ChapterRepo:              deps.ChapterRepo,
+		EmailVerificationRepo:    deps.EmailVerificationRepo,
+		PasswordResetRepo:        deps.PasswordResetRepo,
+		EmailService:             deps.EmailService,
+		EmailVerificationService: deps.EmailVerificationService,
+		NotificationPrefRepo:     deps.NotificationPrefRepo,
+		VideoPasswordRepo:        deps.VideoPasswordRepo,
+		VideoStoryboardRepo:      deps.VideoStoryboardRepo,
+		VideoEmbedRepo:           deps.VideoEmbedRepo,
+		ServerFollowingRepo:      deps.ServerFollowingRepo,
+		TwoFAService:             deps.TwoFAService,
+		WatchedWordsService:      deps.WatchedWordsService,
+		AutoTagsService:          deps.AutoTagsService,
+		StudioService:            deps.StudioService,
+		DB:                       app.DB.DB,
+		Redis:                    app.Redis,
+		JWTSecret:                app.Config.JWTSecret,
+		RedisPingTimeout:         time.Duration(app.Config.RedisPingTimeout) * time.Second,
+		IPFSApi:                  app.Config.IPFSApi,
+		IPFSCluster:              app.Config.IPFSCluster,
+		IPFSPingTimeout:          time.Duration(app.Config.IPFSPingTimeout) * time.Second,
 	})
 }
 

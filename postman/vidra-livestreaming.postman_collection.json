@@ -5,6 +5,7 @@
     "description": "Postman collection for live streaming: create/manage streams, session history, HLS.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "event": [{"listen": "prerequest", "script": {"exec": ["['access_token','channel_id'].forEach(function(k){var v=pm.environment.get(k);if(v){pm.collectionVariables.set(k,v);}});"], "type": "text/javascript"}}],
   "variable": [
     {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"},
     {"key": "access_token", "value": "", "type": "string"},

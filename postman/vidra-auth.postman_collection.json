@@ -3969,6 +3969,50 @@
           ]
         }
       ]
+    },
+    {
+      "name": "Admin Auth Setup",
+      "item": [
+        {
+          "name": "Login as Admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const wrap = pm.response.json();",
+                  "  const json = wrap.data || wrap;",
+                  "  if (json.access_token) {",
+                  "    pm.environment.set('admin_access_token', json.access_token);",
+                  "    console.log('Admin access token set');",
+                  "  }",
+                  "}",
+                  "pm.test('Admin login succeeded or admin not available', () => {",
+                  "  pm.expect([200, 401, 404]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{admin_username}}\",\n  \"password\": \"{{admin_password}}\"\n}"
+            }
+          }
+        }
+      ]
     }
   ]
 }
