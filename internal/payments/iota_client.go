@@ -37,11 +37,20 @@ type IOTANodeClient interface {
 	SubmitTransaction(ctx context.Context, tx *SignedTransaction) (string, error)
 }
 
+// PayIotaRequest represents the parameters for the unsafe_payIota JSON-RPC method.
+type PayIotaRequest struct {
+	Signer     string   `json:"signer"`
+	InputCoins []string `json:"input_coins"`
+	Recipients []string `json:"recipients"`
+	Amounts    []string `json:"amounts"`
+	GasBudget  string   `json:"gas_budget"`
+}
+
 // TransactionBuilder extends IOTANodeClient with IOTA Rebased transaction building
 // capabilities. The jsonRPCClient implements this interface; mock clients typically don't.
 type TransactionBuilder interface {
 	GetCoins(ctx context.Context, owner string) ([]CoinObject, error)
-	PayIota(ctx context.Context, signer string, inputCoins []string, recipients []string, amounts []string, gasBudget string) ([]byte, error)
+	PayIota(ctx context.Context, req *PayIotaRequest) ([]byte, error)
 	ExecuteTransactionBlock(ctx context.Context, txBytes string, signatures []string) (string, error)
 }
 
@@ -195,7 +204,15 @@ func (c *IOTAClient) BuildTransaction(ctx context.Context, fromAddress, toAddres
 	amountStr := strconv.FormatInt(amount, 10)
 	gasBudgetStr := strconv.FormatInt(DefaultGasBudget, 10)
 
-	txBytes, err := builder.PayIota(ctx, fromAddress, coinIDs, []string{toAddress}, []string{amountStr}, gasBudgetStr)
+	req := &PayIotaRequest{
+		Signer:     fromAddress,
+		InputCoins: coinIDs,
+		Recipients: []string{toAddress},
+		Amounts:    []string{amountStr},
+		GasBudget:  gasBudgetStr,
+	}
+
+	txBytes, err := builder.PayIota(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("BuildTransaction: building payment: %w", err)
 	}
@@ -454,8 +471,12 @@ func (c *jsonRPCClient) GetCoins(ctx context.Context, owner string) ([]CoinObjec
 
 // PayIota builds a transaction via unsafe_payIota JSON-RPC. The node handles coin
 // merging, splitting, and gas deduction. Returns the BCS-serialized transaction bytes.
-func (c *jsonRPCClient) PayIota(ctx context.Context, signer string, inputCoins []string, recipients []string, amounts []string, gasBudget string) ([]byte, error) {
-	params := []interface{}{signer, inputCoins, recipients, amounts, gasBudget}
+func (c *jsonRPCClient) PayIota(ctx context.Context, req *PayIotaRequest) ([]byte, error) {
+	if len(req.Recipients) != len(req.Amounts) {
+		return nil, fmt.Errorf("recipients and amounts must have the same length")
+	}
+
+	params := []interface{}{req.Signer, req.InputCoins, req.Recipients, req.Amounts, req.GasBudget}
 	var result payIotaResponse
 	if err := c.callRPC(ctx, "unsafe_payIota", params, &result); err != nil {
 		return nil, fmt.Errorf("building payIota transaction: %w", err)

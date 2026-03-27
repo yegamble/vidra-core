@@ -335,8 +335,8 @@ func (m *MockFullNodeClient) GetCoins(ctx context.Context, owner string) ([]Coin
 	return args.Get(0).([]CoinObject), args.Error(1)
 }
 
-func (m *MockFullNodeClient) PayIota(ctx context.Context, signer string, inputCoins []string, recipients []string, amounts []string, gasBudget string) ([]byte, error) {
-	args := m.Called(ctx, signer, inputCoins, recipients, amounts, gasBudget)
+func (m *MockFullNodeClient) PayIota(ctx context.Context, req *PayIotaRequest) ([]byte, error) {
+	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -363,7 +363,13 @@ func TestIOTAClient_BuildTransaction_Success(t *testing.T) {
 	fakeTxBytes := []byte("fake-bcs-tx-data")
 
 	mockClient.On("GetCoins", ctx, fromAddr).Return(coins, nil)
-	mockClient.On("PayIota", ctx, fromAddr, []string{"0xcoin1"}, []string{toAddr}, []string{"1000000"}, "10000000").Return(fakeTxBytes, nil)
+	mockClient.On("PayIota", ctx, &PayIotaRequest{
+		Signer:     fromAddr,
+		InputCoins: []string{"0xcoin1"},
+		Recipients: []string{toAddr},
+		Amounts:    []string{"1000000"},
+		GasBudget:  "10000000",
+	}).Return(fakeTxBytes, nil)
 
 	tx, err := client.BuildTransaction(ctx, fromAddr, toAddr, amount)
 
@@ -625,7 +631,13 @@ func TestIOTAClient_FullTransactionFlow_EndToEnd(t *testing.T) {
 	// Mock Build step
 	coins := []CoinObject{{CoinObjectID: "0xcoin1", Balance: "1000000"}}
 	mockClient.On("GetCoins", ctx, fromAddr).Return(coins, nil)
-	mockClient.On("PayIota", ctx, fromAddr, []string{"0xcoin1"}, []string{toAddr}, []string{"500000"}, "10000000").Return(fakeTxBytes, nil)
+	mockClient.On("PayIota", ctx, &PayIotaRequest{
+		Signer:     fromAddr,
+		InputCoins: []string{"0xcoin1"},
+		Recipients: []string{toAddr},
+		Amounts:    []string{"500000"},
+		GasBudget:  "10000000",
+	}).Return(fakeTxBytes, nil)
 
 	// Build
 	unsignedTx, err := client.BuildTransaction(ctx, fromAddr, toAddr, amount)
@@ -980,7 +992,13 @@ func TestIOTAClient_JSONRPC_PayIota_CallsServer(t *testing.T) {
 		maxRetries: 0,
 	}
 
-	txBytes, err := rpcClient.PayIota(context.Background(), "0xsigner", []string{"0xcoin1"}, []string{"0xrecipient"}, []string{"1000"}, "10000000")
+	txBytes, err := rpcClient.PayIota(context.Background(), &PayIotaRequest{
+		Signer:     "0xsigner",
+		InputCoins: []string{"0xcoin1"},
+		Recipients: []string{"0xrecipient"},
+		Amounts:    []string{"1000"},
+		GasBudget:  "10000000",
+	})
 	require.NoError(t, err)
 	assert.True(t, called)
 	assert.Equal(t, []byte("mock-bcs-data"), txBytes)
