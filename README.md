@@ -2,7 +2,6 @@
 
 [![Test](https://github.com/yegamble/vidra-core/actions/workflows/test.yml/badge.svg)](https://github.com/yegamble/vidra-core/actions/workflows/test.yml)
 [![OpenAPI CI](https://github.com/yegamble/vidra-core/actions/workflows/openapi-ci.yml/badge.svg)](https://github.com/yegamble/vidra-core/actions/workflows/openapi-ci.yml)
-[![Database Migrations](https://github.com/yegamble/vidra-core/actions/workflows/goose-migrate.yml/badge.svg)](https://github.com/yegamble/vidra-core/actions/workflows/goose-migrate.yml)
 
 A high-performance, PeerTube-compatible backend implementation in Go with P2P distribution, live streaming, plugin system, and multi-protocol federation (ActivityPub + ATProto).
 
