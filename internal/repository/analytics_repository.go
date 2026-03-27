@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // AnalyticsRepository handles analytics data operations
@@ -461,23 +462,11 @@ func (r *analyticsRepository) BatchUpdateStreamSummaries(ctx context.Context, st
 		return nil
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	query := `SELECT update_stream_stats_summary(id) FROM unnest($1::uuid[]) AS id`
+	_, err := r.db.ExecContext(ctx, query, pq.Array(streamIDs))
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, `SELECT update_stream_stats_summary($1)`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, id := range streamIDs {
-		if _, err := stmt.ExecContext(ctx, id); err != nil {
-			return fmt.Errorf("failed to update summary for stream %s: %w", id, err)
-		}
+		return fmt.Errorf("failed to batch update stream summaries: %w", err)
 	}
 
-	return tx.Commit()
+	return nil
 }
