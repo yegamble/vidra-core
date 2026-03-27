@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"github.com/lib/pq"
 	"context"
 	"database/sql"
 	"database/sql/driver"
