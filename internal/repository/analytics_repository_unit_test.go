@@ -1287,64 +1287,28 @@ func TestAnalyticsRepository_Unit_BatchUpdateStreamSummaries(t *testing.T) {
 		id1 := uuid.New()
 		id2 := uuid.New()
 
-		mock.ExpectBegin()
-		mock.ExpectPrepare(regexp.QuoteMeta(`SELECT update_stream_stats_summary($1)`))
-		mock.ExpectExec(regexp.QuoteMeta(`SELECT update_stream_stats_summary($1)`)).
-			WithArgs(id1).
-			WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec(regexp.QuoteMeta(`SELECT update_stream_stats_summary($1)`)).
-			WithArgs(id2).
-			WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectCommit()
+		mock.ExpectExec(regexp.QuoteMeta(`SELECT update_stream_stats_summary(id) FROM unnest($1::uuid[]) AS id`)).
+			WithArgs(pq.Array([]uuid.UUID{id1, id2})).
+			WillReturnResult(sqlmock.NewResult(0, 2))
 
 		err := repo.BatchUpdateStreamSummaries(ctx, []uuid.UUID{id1, id2})
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("begin transaction failure", func(t *testing.T) {
-		repo, mock, cleanup := newAnalyticsRepo(t)
-		defer cleanup()
-
-		mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
-
-		err := repo.BatchUpdateStreamSummaries(ctx, []uuid.UUID{uuid.New()})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to begin transaction")
-		require.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("prepare statement failure", func(t *testing.T) {
-		repo, mock, cleanup := newAnalyticsRepo(t)
-		defer cleanup()
-
-		mock.ExpectBegin()
-		mock.ExpectPrepare(regexp.QuoteMeta(`SELECT update_stream_stats_summary($1)`)).
-			WillReturnError(errors.New("prepare failed"))
-		mock.ExpectRollback()
-
-		err := repo.BatchUpdateStreamSummaries(ctx, []uuid.UUID{uuid.New()})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to prepare statement")
-		require.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("exec failure for one stream", func(t *testing.T) {
+	t.Run("exec failure", func(t *testing.T) {
 		repo, mock, cleanup := newAnalyticsRepo(t)
 		defer cleanup()
 
 		id1 := uuid.New()
 
-		mock.ExpectBegin()
-		mock.ExpectPrepare(regexp.QuoteMeta(`SELECT update_stream_stats_summary($1)`))
-		mock.ExpectExec(regexp.QuoteMeta(`SELECT update_stream_stats_summary($1)`)).
-			WithArgs(id1).
+		mock.ExpectExec(regexp.QuoteMeta(`SELECT update_stream_stats_summary(id) FROM unnest($1::uuid[]) AS id`)).
+			WithArgs(pq.Array([]uuid.UUID{id1})).
 			WillReturnError(errors.New("exec failed"))
-		mock.ExpectRollback()
 
 		err := repo.BatchUpdateStreamSummaries(ctx, []uuid.UUID{id1})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to update summary for stream")
+		assert.Contains(t, err.Error(), "failed to batch update stream summaries")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
