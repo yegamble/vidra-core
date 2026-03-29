@@ -33,11 +33,11 @@ func BenchmarkBuildAnalyticsQuery(b *testing.B) {
 func BenchmarkGetViewsByDateRange(b *testing.B) {
 	now := time.Now()
 	filter := &domain.ViewAnalyticsFilter{
-		VideoID:     "video-123",
-		StartDate:   &now,
-		EndDate:     &now,
-		Limit:       10,
-		Offset:      20,
+		VideoID:   "video-123",
+		StartDate: &now,
+		EndDate:   &now,
+		Limit:     10,
+		Offset:    20,
 	}
 
 	b.ResetTimer()

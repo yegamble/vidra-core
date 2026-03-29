@@ -8,7 +8,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
-
 )
 
 func BenchmarkReplaceAllVideoPasswords(b *testing.B) {
