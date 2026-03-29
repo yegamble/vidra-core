@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -123,43 +125,61 @@ func (r *ViewsRepository) GetUserViewBySessionAndVideo(ctx context.Context, sess
 }
 
 func (r *ViewsRepository) buildAnalyticsQuery(filter *domain.ViewAnalyticsFilter) (string, []interface{}) {
-	baseQuery := `SELECT * FROM user_views WHERE 1=1`
-	args := []interface{}{}
+	var builder strings.Builder
+	builder.WriteString(`SELECT * FROM user_views WHERE 1=1`)
+
+	args := make([]interface{}, 0, 7) // Preallocate for up to 7 parameters
 	argIndex := 1
 
-	filterMap := map[string]interface{}{
-		"video_id":     filter.VideoID,
-		"user_id":      filter.UserID,
-		"country_code": filter.CountryCode,
-		"device_type":  filter.DeviceType,
+	if filter.VideoID != "" {
+		builder.WriteString(" AND video_id = $")
+		builder.WriteString(strconv.Itoa(argIndex))
+		args = append(args, filter.VideoID)
+		argIndex++
 	}
 
-	for field, value := range filterMap {
-		if str, ok := value.(string); ok && str != "" {
-			baseQuery += fmt.Sprintf(" AND %s = $%d", field, argIndex)
-			args = append(args, str)
-			argIndex++
-		}
+	if filter.UserID != "" {
+		builder.WriteString(" AND user_id = $")
+		builder.WriteString(strconv.Itoa(argIndex))
+		args = append(args, filter.UserID)
+		argIndex++
+	}
+
+	if filter.CountryCode != "" {
+		builder.WriteString(" AND country_code = $")
+		builder.WriteString(strconv.Itoa(argIndex))
+		args = append(args, filter.CountryCode)
+		argIndex++
+	}
+
+	if filter.DeviceType != "" {
+		builder.WriteString(" AND device_type = $")
+		builder.WriteString(strconv.Itoa(argIndex))
+		args = append(args, filter.DeviceType)
+		argIndex++
 	}
 
 	if filter.StartDate != nil {
-		baseQuery += fmt.Sprintf(" AND created_at >= $%d", argIndex)
+		builder.WriteString(" AND created_at >= $")
+		builder.WriteString(strconv.Itoa(argIndex))
 		args = append(args, *filter.StartDate)
 		argIndex++
 	}
 
 	if filter.EndDate != nil {
-		baseQuery += fmt.Sprintf(" AND created_at <= $%d", argIndex)
+		builder.WriteString(" AND created_at <= $")
+		builder.WriteString(strconv.Itoa(argIndex))
 		args = append(args, *filter.EndDate)
 		argIndex++
 	}
 
 	if filter.IsAnonymous != nil {
-		baseQuery += fmt.Sprintf(" AND is_anonymous = $%d", argIndex)
+		builder.WriteString(" AND is_anonymous = $")
+		builder.WriteString(strconv.Itoa(argIndex))
 		args = append(args, *filter.IsAnonymous)
 	}
 
-	return baseQuery, args
+	return builder.String(), args
 }
 
 func (r *ViewsRepository) GetVideoAnalytics(ctx context.Context, filter *domain.ViewAnalyticsFilter) (*domain.ViewAnalyticsResponse, error) {
@@ -533,43 +553,50 @@ func (r *ViewsRepository) CleanupOldViews(ctx context.Context, daysToKeep int) e
 }
 
 func (r *ViewsRepository) GetViewsByDateRange(ctx context.Context, filter *domain.ViewAnalyticsFilter) ([]domain.UserView, error) {
-	baseQuery := `SELECT * FROM user_views WHERE 1=1`
-	args := []interface{}{}
+	var builder strings.Builder
+	builder.WriteString(`SELECT * FROM user_views WHERE 1=1`)
+
+	args := make([]interface{}, 0, 5) // Preallocate for up to 5 parameters
 	argIndex := 1
 
 	if filter.VideoID != "" {
-		baseQuery += fmt.Sprintf(" AND video_id = $%d", argIndex)
+		builder.WriteString(" AND video_id = $")
+		builder.WriteString(strconv.Itoa(argIndex))
 		args = append(args, filter.VideoID)
 		argIndex++
 	}
 
 	if filter.StartDate != nil {
-		baseQuery += fmt.Sprintf(" AND created_at >= $%d", argIndex)
+		builder.WriteString(" AND created_at >= $")
+		builder.WriteString(strconv.Itoa(argIndex))
 		args = append(args, *filter.StartDate)
 		argIndex++
 	}
 
 	if filter.EndDate != nil {
-		baseQuery += fmt.Sprintf(" AND created_at <= $%d", argIndex)
+		builder.WriteString(" AND created_at <= $")
+		builder.WriteString(strconv.Itoa(argIndex))
 		args = append(args, *filter.EndDate)
 		argIndex++
 	}
 
-	baseQuery += " ORDER BY created_at DESC"
+	builder.WriteString(" ORDER BY created_at DESC")
 
 	if filter.Limit > 0 {
-		baseQuery += fmt.Sprintf(" LIMIT $%d", argIndex)
+		builder.WriteString(" LIMIT $")
+		builder.WriteString(strconv.Itoa(argIndex))
 		args = append(args, filter.Limit)
 		argIndex++
 	}
 
 	if filter.Offset > 0 {
-		baseQuery += fmt.Sprintf(" OFFSET $%d", argIndex)
+		builder.WriteString(" OFFSET $")
+		builder.WriteString(strconv.Itoa(argIndex))
 		args = append(args, filter.Offset)
 	}
 
 	var views []domain.UserView
-	err := r.db.SelectContext(ctx, &views, baseQuery, args...)
+	err := r.db.SelectContext(ctx, &views, builder.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get views by date range: %w", err)
 	}
