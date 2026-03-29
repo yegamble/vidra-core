@@ -215,6 +215,21 @@ func TestUserBlockRepository_Unit_BlockServer(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("on conflict do nothing", func(t *testing.T) {
+		repo, mock, cleanup := newUserBlockRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO user_blocks")).
+			WillReturnRows(sqlmock.NewRows(userBlockColumns()))
+
+		block, err := repo.BlockServer(ctx, userID, host)
+		require.NoError(t, err)
+		require.NotNil(t, block)
+		// block is returned with original values if no row returned from DB
+		assert.Equal(t, userID, block.UserID)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("db error", func(t *testing.T) {
 		repo, mock, cleanup := newUserBlockRepo(t)
 		defer cleanup()
@@ -259,6 +274,19 @@ func TestUserBlockRepository_Unit_UnblockServer(t *testing.T) {
 		require.ErrorIs(t, err, domain.ErrNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
+
+	t.Run("db error", func(t *testing.T) {
+		repo, mock, cleanup := newUserBlockRepo(t)
+		defer cleanup()
+
+		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM user_blocks")).
+			WithArgs(userID, host).
+			WillReturnError(errors.New("db error"))
+
+		err := repo.UnblockServer(ctx, userID, host)
+		require.Error(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
 }
 
 func TestUserBlockRepository_Unit_ListServerBlocks(t *testing.T) {
@@ -283,6 +311,37 @@ func TestUserBlockRepository_Unit_ListServerBlocks(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), total)
 		assert.Len(t, blocks, 1)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("count error", func(t *testing.T) {
+		repo, mock, cleanup := newUserBlockRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*)")).
+			WillReturnError(errors.New("count error"))
+
+		blocks, total, err := repo.ListServerBlocks(ctx, userID, 10, 0)
+		require.Error(t, err)
+		assert.Equal(t, int64(0), total)
+		assert.Nil(t, blocks)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("select error", func(t *testing.T) {
+		repo, mock, cleanup := newUserBlockRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*)")).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, user_id, block_type")).
+			WillReturnError(errors.New("select error"))
+
+		blocks, total, err := repo.ListServerBlocks(ctx, userID, 10, 0)
+		require.Error(t, err)
+		assert.Equal(t, int64(0), total)
+		assert.Nil(t, blocks)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
