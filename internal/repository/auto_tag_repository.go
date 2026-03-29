@@ -2,9 +2,11 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/port"
@@ -64,13 +66,29 @@ func (r *autoTagRepository) ReplaceByAccount(ctx context.Context, accountName *s
 	}
 
 	// Insert new policies
-	for _, p := range policies {
-		_, err = tx.ExecContext(ctx,
-			`INSERT INTO auto_tag_policies (account_name, tag_type, review_type, list_id)
-			 VALUES ($1, $2, $3, $4)`,
-			accountName, p.TagType, p.ReviewType, p.ListID)
+	if len(policies) > 0 {
+		tagTypes := make([]string, len(policies))
+		reviewTypes := make([]string, len(policies))
+		listIDs := make([]sql.NullInt64, len(policies))
+
+		for i, p := range policies {
+			tagTypes[i] = p.TagType
+			reviewTypes[i] = p.ReviewType
+			if p.ListID != nil {
+				listIDs[i] = sql.NullInt64{Int64: *p.ListID, Valid: true}
+			} else {
+				listIDs[i] = sql.NullInt64{Valid: false}
+			}
+		}
+
+		query := `
+			INSERT INTO auto_tag_policies (account_name, tag_type, review_type, list_id)
+			SELECT $1, t.tag_type, t.review_type, t.list_id
+			FROM UNNEST($2::text[], $3::text[], $4::bigint[]) AS t(tag_type, review_type, list_id)`
+
+		_, err = tx.ExecContext(ctx, query, accountName, pq.Array(tagTypes), pq.Array(reviewTypes), pq.Array(listIDs))
 		if err != nil {
-			return fmt.Errorf("insert auto tag policy: %w", err)
+			return fmt.Errorf("insert auto tag policies: %w", err)
 		}
 	}
 
