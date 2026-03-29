@@ -4,6 +4,7 @@ SHELL := /bin/bash
 .PHONY: migrate-dev migrate-test migrate-custom migrate-dev-docker migrate-test-docker migrate-up db-ensure-dev-user
 .PHONY: test-mock-services-up test-mock-services-down test-external-integration
 .PHONY: validate-all validate-quick
+.PHONY: verify-federation verify-atproto verify-activitypub
 .PHONY: coverage-check coverage-report coverage-per-package
 .PHONY: update-readme-metrics check-readme-metrics
 
@@ -360,6 +361,14 @@ build: ## Build the server binary
 
 build-cli: ## Build the CLI tool
 	go build -o bin/vidra-cli ./cmd/cli
+
+verify-atproto: ## Verify ATProto (BlueSky) federation against real network
+	go run ./cmd/verify-federation atproto
+
+verify-activitypub: ## Verify ActivityPub endpoints on running instance
+	go run ./cmd/verify-federation activitypub
+
+verify-federation: verify-atproto verify-activitypub ## Run all federation verification checks
 
 docker: ## Build Docker image
 	docker build -t vidra-server:latest .
