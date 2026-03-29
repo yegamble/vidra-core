@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/port"
@@ -71,11 +72,12 @@ func (r *videoEmbedPrivacyRepository) Upsert(ctx context.Context, privacy *domai
 		`DELETE FROM video_embed_allowed_domains WHERE video_id = $1`, privacy.VideoID); err != nil {
 		return fmt.Errorf("delete embed allowed domains: %w", err)
 	}
-	for _, d := range privacy.AllowedDomains {
+
+	if len(privacy.AllowedDomains) > 0 {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO video_embed_allowed_domains (video_id, domain) VALUES ($1, $2)`,
-			privacy.VideoID, d); err != nil {
-			return fmt.Errorf("insert embed allowed domain: %w", err)
+			`INSERT INTO video_embed_allowed_domains (video_id, domain) SELECT $1, unnest($2::text[])`,
+			privacy.VideoID, pq.Array(privacy.AllowedDomains)); err != nil {
+			return fmt.Errorf("insert embed allowed domains: %w", err)
 		}
 	}
 
