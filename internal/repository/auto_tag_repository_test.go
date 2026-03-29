@@ -2,11 +2,13 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"regexp"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -71,9 +73,8 @@ func TestAutoTagRepository_ReplaceByAccount_ServerLevel(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM auto_tag_policies WHERE account_name IS NULL`)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO auto_tag_policies (account_name, tag_type, review_type, list_id)
-			 VALUES ($1, $2, $3, $4)`)).
-		WithArgs(nil, "external-link", "review-comments", nil).
+	mock.ExpectExec("(?s)INSERT INTO auto_tag_policies .* SELECT .* FROM UNNEST.*").
+		WithArgs(nil, pq.Array([]string{"external-link"}), pq.Array([]string{"review-comments"}), pq.Array([]sql.NullInt64{{Valid: false}})).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -96,9 +97,8 @@ func TestAutoTagRepository_ReplaceByAccount_AccountLevel(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM auto_tag_policies WHERE account_name = $1`)).
 		WithArgs(&acct).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO auto_tag_policies (account_name, tag_type, review_type, list_id)
-			 VALUES ($1, $2, $3, $4)`)).
-		WithArgs(&acct, "watched-words", "block-comments", &listID).
+	mock.ExpectExec("(?s)INSERT INTO auto_tag_policies .* SELECT .* FROM UNNEST.*").
+		WithArgs(&acct, pq.Array([]string{"watched-words"}), pq.Array([]string{"block-comments"}), pq.Array([]sql.NullInt64{{Int64: 42, Valid: true}})).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
