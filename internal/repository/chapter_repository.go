@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 
 	"vidra-core/internal/domain"
 )
@@ -51,12 +52,24 @@ func (r *chapterRepository) ReplaceAll(ctx context.Context, videoID string, chap
 	}
 
 	// Insert new chapters
-	for _, c := range chapters {
-		_, err := tx.ExecContext(ctx,
-			`INSERT INTO video_chapters (video_id, timecode, title, position) VALUES ($1, $2, $3, $4)`,
-			videoID, c.Timecode, c.Title, c.Position)
-		if err != nil {
-			return fmt.Errorf("insert chapter: %w", err)
+	if len(chapters) > 0 {
+		timecodes := make([]int, len(chapters))
+		titles := make([]string, len(chapters))
+		positions := make([]int, len(chapters))
+
+		for i, c := range chapters {
+			timecodes[i] = c.Timecode
+			titles[i] = c.Title
+			positions[i] = c.Position
+		}
+
+		query := `
+			INSERT INTO video_chapters (video_id, timecode, title, position)
+			SELECT $1, t.timecode, t.title, t.position
+			FROM UNNEST($2::int[], $3::text[], $4::int[]) AS t(timecode, title, position)
+		`
+		if _, err := tx.ExecContext(ctx, query, videoID, pq.Array(timecodes), pq.Array(titles), pq.Array(positions)); err != nil {
+			return fmt.Errorf("insert chapters: %w", err)
 		}
 	}
 
