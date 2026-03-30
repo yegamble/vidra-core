@@ -105,12 +105,18 @@ func ListSubscriptionVideosHandler(subRepo usecase.SubscriptionRepository) http.
 			return
 		}
 
-		videos, total, err := subRepo.ListSubscriptionVideos(r.Context(), me, limit, offset)
+		meUUID, err := uuid.Parse(me)
+		if err != nil {
+			shared.WriteError(w, http.StatusUnauthorized, domain.NewDomainError("INVALID_USER_ID", "Invalid user ID"))
+			return
+		}
+
+		videos, total, err := subRepo.GetSubscriptionVideos(r.Context(), meUUID, limit, offset)
 		if err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("LIST_FAILED", "Failed to list subscription videos"))
 			return
 		}
-		meta := &shared.Meta{Total: total, Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
+		meta := &shared.Meta{Total: int64(total), Limit: limit, Offset: offset, Page: page, PageSize: pageSize}
 		shared.WriteJSONWithMeta(w, http.StatusOK, videos, meta)
 	}
 }

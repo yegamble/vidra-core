@@ -388,26 +388,6 @@ func (r *subscriptionRepository) ListSubscriptions(ctx context.Context, subscrib
 	return users, int64(response.Total), nil
 }
 
-// ListSubscriptionVideos returns public videos from subscribed channels (DEPRECATED)
-func (r *subscriptionRepository) ListSubscriptionVideos(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.Video, int64, error) {
-	subID, err := uuid.Parse(subscriberID)
-	if err != nil {
-		return nil, 0, fmt.Errorf("invalid subscriber ID: %w", err)
-	}
-
-	videos, total, err := r.GetSubscriptionVideos(ctx, subID, limit, offset)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	// Convert to pointer slice for backward compatibility
-	videoPointers := make([]*domain.Video, len(videos))
-	for i := range videos {
-		videoPointers[i] = &videos[i]
-	}
-
-	return videoPointers, int64(total), nil
-}
 
 // CountSubscribers returns the subscriber count for a channel (DEPRECATED)
 func (r *subscriptionRepository) CountSubscribers(ctx context.Context, channelID string) (int64, error) {

@@ -21,7 +21,6 @@ type SubscriptionRepository interface {
 	Subscribe(ctx context.Context, subscriberID, channelID string) error
 	Unsubscribe(ctx context.Context, subscriberID, channelID string) error
 	ListSubscriptions(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.User, int64, error)
-	ListSubscriptionVideos(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.Video, int64, error)
 	CountSubscribers(ctx context.Context, channelID string) (int64, error)
 	GetSubscribers(ctx context.Context, channelID string) ([]*domain.Subscription, error)
 }
