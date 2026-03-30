@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/HugoSmits86/nativewebp v1.2.0
+	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/anacrolix/torrent v1.58.1
 	github.com/aws/aws-sdk-go-v2 v1.39.6
 	github.com/aws/aws-sdk-go-v2/config v1.31.17
@@ -146,6 +147,7 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/tidwall/btree v1.6.0 // indirect
 	github.com/wlynxg/anet v0.0.3 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.etcd.io/bbolt v1.3.6 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/metric v1.40.0 // indirect
