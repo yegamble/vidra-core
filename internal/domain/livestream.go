@@ -83,6 +83,16 @@ type ViewerSession struct {
 	LastHeartbeatAt time.Time  `json:"last_heartbeat_at" db:"last_heartbeat_at"`
 }
 
+// ViewerJoinRequest encapsulates the parameters needed when a viewer joins a stream
+type ViewerJoinRequest struct {
+	StreamID    uuid.UUID
+	SessionID   string
+	UserID      *uuid.UUID
+	IPAddress   string
+	UserAgent   string
+	CountryCode string
+}
+
 // Domain errors for live streaming
 var (
 	ErrStreamNotFound        = errors.New("live stream not found")
