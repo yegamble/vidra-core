@@ -15,6 +15,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"vidra-core/internal/repository"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -104,7 +106,7 @@ func (m *MockLiveStreamRepository) GetChannelByStreamID(_ context.Context, _ uui
 func (m *MockLiveStreamRepository) UpdateWaitingRoom(_ context.Context, _ uuid.UUID, _ bool, _ string) error {
 	return nil
 }
-func (m *MockLiveStreamRepository) ScheduleStream(_ context.Context, _ uuid.UUID, _ *time.Time, _ *time.Time, _ bool, _ string) error {
+func (m *MockLiveStreamRepository) ScheduleStream(_ context.Context, _ uuid.UUID, _ repository.ScheduleStreamParams) error {
 	return nil
 }
 func (m *MockLiveStreamRepository) CancelSchedule(_ context.Context, _ uuid.UUID) error {

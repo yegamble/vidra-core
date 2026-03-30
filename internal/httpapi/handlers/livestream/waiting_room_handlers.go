@@ -14,6 +14,7 @@ import (
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/repository"
 )
 
 type WaitingRoomHandler struct {
@@ -228,8 +229,12 @@ func (h *WaitingRoomHandler) ScheduleStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	err = h.streamRepo.ScheduleStream(r.Context(), streamID, &req.ScheduledStart, req.ScheduledEnd,
-		req.WaitingRoomEnabled, req.WaitingRoomMessage)
+	err = h.streamRepo.ScheduleStream(r.Context(), streamID, repository.ScheduleStreamParams{
+		ScheduledStart:     &req.ScheduledStart,
+		ScheduledEnd:       req.ScheduledEnd,
+		WaitingRoomEnabled: req.WaitingRoomEnabled,
+		WaitingRoomMessage: req.WaitingRoomMessage,
+	})
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to schedule stream"))
 		return
@@ -317,7 +322,7 @@ type StreamRepository interface {
 	GetByID(ctx context.Context, id string) (*domain.LiveStream, error)
 	GetChannelByID(ctx context.Context, id uuid.UUID) (*domain.Channel, error)
 	UpdateWaitingRoom(ctx context.Context, streamID uuid.UUID, enabled bool, message string) error
-	ScheduleStream(ctx context.Context, streamID uuid.UUID, scheduledStart *time.Time, scheduledEnd *time.Time, waitingRoomEnabled bool, waitingRoomMessage string) error
+	ScheduleStream(ctx context.Context, streamID uuid.UUID, params repository.ScheduleStreamParams) error
 	CancelSchedule(ctx context.Context, streamID uuid.UUID) error
 	GetScheduledStreams(ctx context.Context, limit, offset int) ([]*domain.LiveStream, error)
 	GetUpcomingStreams(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.LiveStream, error)

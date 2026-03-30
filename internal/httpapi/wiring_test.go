@@ -296,7 +296,7 @@ func (s *stubLiveStreamRepo) GetChannelByStreamID(ctx context.Context, streamID 
 func (s *stubLiveStreamRepo) UpdateWaitingRoom(ctx context.Context, streamID uuid.UUID, enabled bool, message string) error {
 	return nil
 }
-func (s *stubLiveStreamRepo) ScheduleStream(ctx context.Context, streamID uuid.UUID, scheduledStart *time.Time, scheduledEnd *time.Time, waitingRoomEnabled bool, waitingRoomMessage string) error {
+func (s *stubLiveStreamRepo) ScheduleStream(_ context.Context, _ uuid.UUID, _ repository.ScheduleStreamParams) error {
 	return nil
 }
 func (s *stubLiveStreamRepo) CancelSchedule(ctx context.Context, streamID uuid.UUID) error {

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"vidra-core/internal/repository"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -210,7 +212,7 @@ func (m *MockStreamRepository) GetChannelByStreamID(_ context.Context, _ uuid.UU
 func (m *MockStreamRepository) UpdateWaitingRoom(_ context.Context, _ uuid.UUID, _ bool, _ string) error {
 	return nil
 }
-func (m *MockStreamRepository) ScheduleStream(_ context.Context, _ uuid.UUID, _ *time.Time, _ *time.Time, _ bool, _ string) error {
+func (m *MockStreamRepository) ScheduleStream(_ context.Context, _ uuid.UUID, _ repository.ScheduleStreamParams) error {
 	return nil
 }
 func (m *MockStreamRepository) CancelSchedule(_ context.Context, _ uuid.UUID) error { return nil }

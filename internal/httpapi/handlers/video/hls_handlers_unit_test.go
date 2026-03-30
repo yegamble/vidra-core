@@ -7,10 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"vidra-core/internal/repository"
 	"github.com/stretchr/testify/assert"
 
 	"vidra-core/internal/config"
@@ -69,7 +70,7 @@ func (m *mockStreamRepoForHLS) GetChannelByStreamID(_ context.Context, _ uuid.UU
 func (m *mockStreamRepoForHLS) UpdateWaitingRoom(_ context.Context, _ uuid.UUID, _ bool, _ string) error {
 	return nil
 }
-func (m *mockStreamRepoForHLS) ScheduleStream(_ context.Context, _ uuid.UUID, _ *time.Time, _ *time.Time, _ bool, _ string) error {
+func (m *mockStreamRepoForHLS) ScheduleStream(_ context.Context, _ uuid.UUID, _ repository.ScheduleStreamParams) error {
 	return nil
 }
 func (m *mockStreamRepoForHLS) CancelSchedule(_ context.Context, _ uuid.UUID) error {

@@ -868,8 +868,8 @@ func (a *waitingRoomAdapter) UpdateWaitingRoom(ctx context.Context, streamID uui
 	return a.ls.UpdateWaitingRoom(ctx, streamID, enabled, message)
 }
 
-func (a *waitingRoomAdapter) ScheduleStream(ctx context.Context, streamID uuid.UUID, scheduledStart *time.Time, scheduledEnd *time.Time, waitingRoomEnabled bool, waitingRoomMessage string) error {
-	return a.ls.ScheduleStream(ctx, streamID, scheduledStart, scheduledEnd, waitingRoomEnabled, waitingRoomMessage)
+func (a *waitingRoomAdapter) ScheduleStream(ctx context.Context, streamID uuid.UUID, params repository.ScheduleStreamParams) error {
+	return a.ls.ScheduleStream(ctx, streamID, params)
 }
 
 func (a *waitingRoomAdapter) CancelSchedule(ctx context.Context, streamID uuid.UUID) error {
