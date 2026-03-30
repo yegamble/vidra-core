@@ -118,3 +118,4 @@ s3test
 
 # Mock ATProto PDS binary (built by go test)
 atproto-pds
+.worktrees/
