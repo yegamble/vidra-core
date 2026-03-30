@@ -41,8 +41,8 @@ func StreamVideo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			_, _ = w.Write(data)
+		if _, err := os.Stat(path); err == nil {
+			http.ServeFile(w, r, path)
 			return
 		}
 	}
@@ -148,17 +148,16 @@ func tryServeFromOutputPaths(w http.ResponseWriter, r *http.Request, ctx *stream
 		return true
 	}
 
-	data, err := os.ReadFile(outputPath)
-	if err != nil {
-		return false
-	}
-
 	if rel, ok := hlsRelPath(outputPath); ok {
 		http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
 		return true
 	}
 
-	_, _ = w.Write(data)
+	if _, err := os.Stat(outputPath); err != nil {
+		return false
+	}
+
+	http.ServeFile(w, r, outputPath)
 	return true
 }
 
@@ -182,21 +181,16 @@ func tryServeFromLocalDirectory(w http.ResponseWriter, r *http.Request, ctx *str
 		return false
 	}
 
-	if _, err := os.Stat(path); err != nil {
-		return false
-	}
-
 	if rel, ok := hlsRelPath(path); ok {
 		http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
 		return true
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return false
 	}
 
-	_, _ = w.Write(data)
+	http.ServeFile(w, r, path)
 	return true
 }
 
