@@ -211,6 +211,11 @@ func (m *MockViewerSessionRepository) UpdateHeartbeat(ctx context.Context, sessi
 	return args.Error(0)
 }
 
+func (m *MockViewerSessionRepository) BatchUpdateHeartbeats(ctx context.Context, sessionIDs []string) error {
+	args := m.Called(ctx, sessionIDs)
+	return args.Error(0)
+}
+
 func (m *MockViewerSessionRepository) EndSession(ctx context.Context, sessionID string) error {
 	args := m.Called(ctx, sessionID)
 	return args.Error(0)

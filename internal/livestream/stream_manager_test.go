@@ -109,6 +109,9 @@ func (m *mockViewerSessionRepo) CountActiveViewers(ctx context.Context, streamID
 func (m *mockViewerSessionRepo) UpdateHeartbeat(ctx context.Context, sessionID string) error {
 	return nil
 }
+func (m *mockViewerSessionRepo) BatchUpdateHeartbeats(ctx context.Context, sessionIDs []string) error {
+	return nil
+}
 func (m *mockViewerSessionRepo) EndSession(ctx context.Context, sessionID string) error {
 	return m.err
 }

@@ -283,11 +283,16 @@ func (sm *StreamManager) flushRemainingHeartbeats(batch map[string]time.Time) {
 }
 
 func (sm *StreamManager) flushHeartbeatBatch(ctx context.Context, batch map[string]time.Time) {
+	if len(batch) == 0 {
+		return
+	}
+	sessionIDs := make([]string, 0, len(batch))
 	for sessionID := range batch {
-		if err := sm.viewerRepo.UpdateHeartbeat(ctx, sessionID); err != nil {
-			sm.logger.WithError(err).WithField("session_id", sessionID).
-				Debug("Failed to update heartbeat")
-		}
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	if err := sm.viewerRepo.BatchUpdateHeartbeats(ctx, sessionIDs); err != nil {
+		sm.logger.WithError(err).WithField("count", len(sessionIDs)).
+			Debug("Failed to batch update heartbeats")
 	}
 }
 

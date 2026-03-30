@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -596,6 +597,7 @@ type ViewerSessionRepository interface {
 	GetActiveByStream(ctx context.Context, streamID uuid.UUID, limit, offset int) ([]*domain.ViewerSession, error)
 	CountActiveViewers(ctx context.Context, streamID uuid.UUID) (int, error)
 	UpdateHeartbeat(ctx context.Context, sessionID string) error
+	BatchUpdateHeartbeats(ctx context.Context, sessionIDs []string) error
 	EndSession(ctx context.Context, sessionID string) error
 	CleanupStale(ctx context.Context) (int, error)
 }
@@ -713,6 +715,21 @@ func (r *viewerSessionRepository) UpdateHeartbeat(ctx context.Context, sessionID
 		return domain.ErrViewerSessionNotFound
 	}
 
+	return nil
+}
+
+func (r *viewerSessionRepository) BatchUpdateHeartbeats(ctx context.Context, sessionIDs []string) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE viewer_sessions
+		SET last_heartbeat_at = NOW()
+		WHERE session_id = ANY($1) AND left_at IS NULL
+	`, pq.Array(sessionIDs))
+	if err != nil {
+		return fmt.Errorf("failed to batch update heartbeats: %w", err)
+	}
 	return nil
 }
 
