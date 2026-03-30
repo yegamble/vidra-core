@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/port"
@@ -57,17 +58,29 @@ func (r *videoPasswordRepository) ReplaceAll(ctx context.Context, videoID string
 	}
 
 	passwords := make([]domain.VideoPassword, 0, len(passwordHashes))
-	for _, hash := range passwordHashes {
-		var pw domain.VideoPassword
-		err := tx.QueryRowxContext(ctx,
-			`INSERT INTO video_passwords (video_id, password_hash)
-			 VALUES ($1, $2)
-			 RETURNING id, video_id, password_hash, created_at`,
-			videoID, hash).StructScan(&pw)
+	if len(passwordHashes) > 0 {
+		query := `
+			INSERT INTO video_passwords (video_id, password_hash)
+			SELECT $1, t.password_hash
+			FROM UNNEST($2::text[]) AS t(password_hash)
+			RETURNING id, video_id, password_hash, created_at
+		`
+		rows, err := tx.QueryxContext(ctx, query, videoID, pq.Array(passwordHashes))
 		if err != nil {
-			return nil, fmt.Errorf("insert video password: %w", err)
+			return nil, fmt.Errorf("insert video passwords: %w", err)
 		}
-		passwords = append(passwords, pw)
+		defer rows.Close()
+
+		for rows.Next() {
+			var pw domain.VideoPassword
+			if err := rows.StructScan(&pw); err != nil {
+				return nil, fmt.Errorf("scan video password: %w", err)
+			}
+			passwords = append(passwords, pw)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("rows error: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
