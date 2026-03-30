@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/livestream"
 	"vidra-core/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
@@ -122,14 +123,14 @@ func (m *mockAnalyticsRepo) GetCurrentViewerCounts(ctx context.Context, streamID
 }
 
 type mockAnalyticsCollector struct {
-	trackViewerJoinFunc  func(ctx context.Context, streamID uuid.UUID, userID *uuid.UUID, sessionID string, ipAddress string, userAgent string) error
+	trackViewerJoinFunc  func(ctx context.Context, req livestream.ViewerJoinRequest) error
 	trackViewerLeaveFunc func(ctx context.Context, sessionID string) error
 	trackEngagementFunc  func(ctx context.Context, sessionID string, messagesSent int, liked bool, shared bool) error
 }
 
-func (m *mockAnalyticsCollector) TrackViewerJoin(ctx context.Context, streamID uuid.UUID, userID *uuid.UUID, sessionID string, ipAddress string, userAgent string) error {
+func (m *mockAnalyticsCollector) TrackViewerJoin(ctx context.Context, req livestream.ViewerJoinRequest) error {
 	if m.trackViewerJoinFunc != nil {
-		return m.trackViewerJoinFunc(ctx, streamID, userID, sessionID, ipAddress, userAgent)
+		return m.trackViewerJoinFunc(ctx, req)
 	}
 	return nil
 }
@@ -763,12 +764,12 @@ func TestTrackViewerJoin(t *testing.T) {
 		var capturedUA string
 
 		collector := &mockAnalyticsCollector{
-			trackViewerJoinFunc: func(ctx context.Context, sid uuid.UUID, uid *uuid.UUID, sessID string, ip string, ua string) error {
-				capturedStreamID = sid
-				capturedUserID = uid
-				capturedSessionID = sessID
-				capturedIP = ip
-				capturedUA = ua
+			trackViewerJoinFunc: func(ctx context.Context, joinReq livestream.ViewerJoinRequest) error {
+				capturedStreamID = joinReq.StreamID
+				capturedUserID = joinReq.UserID
+				capturedSessionID = joinReq.SessionID
+				capturedIP = joinReq.IPAddress
+				capturedUA = joinReq.UserAgent
 				return nil
 			},
 		}
@@ -811,8 +812,8 @@ func TestTrackViewerJoin(t *testing.T) {
 
 	t.Run("success without user ID", func(t *testing.T) {
 		collector := &mockAnalyticsCollector{
-			trackViewerJoinFunc: func(ctx context.Context, sid uuid.UUID, uid *uuid.UUID, sessID string, ip string, ua string) error {
-				assert.Nil(t, uid)
+			trackViewerJoinFunc: func(ctx context.Context, joinReq livestream.ViewerJoinRequest) error {
+				assert.Nil(t, joinReq.UserID)
 				return nil
 			},
 		}
@@ -878,7 +879,7 @@ func TestTrackViewerJoin(t *testing.T) {
 
 	t.Run("collector error", func(t *testing.T) {
 		collector := &mockAnalyticsCollector{
-			trackViewerJoinFunc: func(ctx context.Context, sid uuid.UUID, uid *uuid.UUID, sessID string, ip string, ua string) error {
+			trackViewerJoinFunc: func(ctx context.Context, joinReq livestream.ViewerJoinRequest) error {
 				return errors.New("collector error")
 			},
 		}
