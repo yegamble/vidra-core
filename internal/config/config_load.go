@@ -15,6 +15,30 @@ func prodDefault(setupMode, prodVal, setupVal bool) bool {
 }
 
 func loadCommonFields(cfg *Config, setupMode bool) {
+	loadIPFSConfig(cfg, setupMode)
+	loadIOTAConfig(cfg)
+	loadStorageConfig(cfg)
+	loadBackupConfig(cfg)
+	loadServerConfig(cfg)
+	loadVideoConfig(cfg)
+	loadPinningConfig(cfg)
+	loadAuthConfig(cfg)
+	loadValidationConfig(cfg)
+	loadEncodingConfig(cfg)
+	loadCaptionConfig(cfg)
+	loadSocialConfig(cfg, setupMode)
+	loadLiveStreamingConfig(cfg)
+	loadReplayConfig(cfg, setupMode)
+	loadTorrentConfig(cfg, setupMode)
+	loadEmailConfig(cfg)
+	loadSecurityConfig(cfg, setupMode)
+
+	cfg.ObjectStorageConfig = loadObjectStorageConfig()
+	cfg.CSPConfig = loadCSPConfig()
+	cfg.StaticFilesPrivateAuth = GetBoolEnv("STATIC_FILES_PRIVATE_AUTH", true)
+}
+
+func loadIPFSConfig(cfg *Config, setupMode bool) {
 	cfg.RequireIPFS = GetBoolEnv("REQUIRE_IPFS", prodDefault(setupMode, true, false))
 	cfg.IPFSApi = GetEnvOrDefault("IPFS_API", "")
 	cfg.IPFSCluster = GetEnvOrDefault("IPFS_CLUSTER_API", "")
@@ -36,16 +60,18 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.IPFSStreamingMaxRetries = GetIntEnv("IPFS_STREAMING_MAX_RETRIES", 3)
 	cfg.IPFSStreamingFallbackToLocal = GetBoolEnv("IPFS_STREAMING_FALLBACK_TO_LOCAL", true)
 	cfg.IPFSStreamingBufferSize = GetIntEnv("IPFS_STREAMING_BUFFER_SIZE", 32768)
+	cfg.EnableIPFS = GetBoolEnv("ENABLE_IPFS_CLUSTER", prodDefault(setupMode, true, false))
+}
 
+func loadIOTAConfig(cfg *Config) {
 	cfg.IOTANodeURL = GetEnvOrDefault("IOTA_NODE_URL", "")
 	cfg.IOTAMode = GetEnvOrDefault("IOTA_MODE", "docker")
 	cfg.IOTANetwork = GetEnvOrDefault("IOTA_NETWORK", "testnet")
 	cfg.IOTAWalletEncryptionKey = GetEnvOrDefault("IOTA_WALLET_ENCRYPTION_KEY", "")
-	cfg.FFMPEGPath = GetEnvOrDefault("FFMPEG_PATH", "ffmpeg")
-	cfg.JWTSecret = GetEnvOrDefault("JWT_SECRET", "")
-
 	cfg.EnableIOTA = GetBoolEnv("ENABLE_IOTA", false)
-	cfg.EnableIPFS = GetBoolEnv("ENABLE_IPFS_CLUSTER", prodDefault(setupMode, true, false))
+}
+
+func loadStorageConfig(cfg *Config) {
 	cfg.EnableS3 = GetBoolEnv("ENABLE_S3", false)
 	cfg.StorageDir = GetEnvOrDefault("STORAGE_DIR", "./storage")
 
@@ -55,6 +81,12 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.S3SecretKey = GetEnvOrDefault("S3_SECRET_KEY", "")
 	cfg.S3Region = GetEnvOrDefault("S3_REGION", "us-east-1")
 
+	cfg.HotStorageLimit = GetEnvOrDefault("HOT_STORAGE_LIMIT", "100GB")
+	cfg.WarmStorageLimit = GetEnvOrDefault("WARM_STORAGE_LIMIT", "1TB")
+	cfg.ColdStorageEnabled = GetBoolEnv("COLD_STORAGE_ENABLED", true)
+}
+
+func loadBackupConfig(cfg *Config) {
 	cfg.BackupS3Bucket = GetEnvOrDefault("BACKUP_S3_BUCKET", "")
 	cfg.BackupS3Prefix = GetEnvOrDefault("BACKUP_S3_PREFIX", "backups/")
 	cfg.BackupS3Endpoint = GetEnvOrDefault("BACKUP_S3_ENDPOINT", "")
@@ -83,7 +115,9 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 			cfg.BackupExcludeDirs[i] = strings.TrimSpace(cfg.BackupExcludeDirs[i])
 		}
 	}
+}
 
+func loadServerConfig(cfg *Config) {
 	cfg.MaxUploadSize = GetInt64Env("MAX_UPLOAD_SIZE", 5*1024*1024*1024)
 	cfg.ChunkSize = GetInt64Env("CHUNK_SIZE", 32*1024*1024)
 	cfg.MaxConcurrentUploads = GetIntEnv("MAX_CONCURRENT_UPLOADS", 10)
@@ -106,6 +140,23 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.RedisPingTimeout = GetIntEnv("REDIS_PING_TIMEOUT", 3)
 	cfg.IPFSPingTimeout = GetIntEnv("IPFS_PING_TIMEOUT", 10)
 
+	cfg.APITimeout = GetIntEnv("API_TIMEOUT", 60)
+	cfg.APIMaxRequestSize = GetEnvOrDefault("API_MAX_REQUEST_SIZE", "10MB")
+	cfg.APIPaginationDefaultLimit = GetIntEnv("API_PAGINATION_DEFAULT_LIMIT", 20)
+	cfg.APIPaginationMaxLimit = GetIntEnv("API_PAGINATION_MAX_LIMIT", 100)
+
+	cfg.NginxEnabled = GetBoolEnv("NGINX_ENABLED", false)
+	cfg.NginxDomain = GetEnvOrDefault("NGINX_DOMAIN", "localhost")
+	cfg.NginxPort = GetIntEnv("NGINX_PORT", 80)
+	cfg.NginxProtocol = GetEnvOrDefault("NGINX_PROTOCOL", "http")
+	cfg.NginxTLSMode = GetEnvOrDefault("NGINX_TLS_MODE", "")
+	cfg.NginxLetsEncryptEmail = GetEnvOrDefault("NGINX_LETSENCRYPT_EMAIL", "")
+
+	cfg.PublicBaseURL = GetEnvOrDefault("PUBLIC_BASE_URL", "")
+}
+
+func loadVideoConfig(cfg *Config) {
+	cfg.FFMPEGPath = GetEnvOrDefault("FFMPEG_PATH", "ffmpeg")
 	cfg.VideoQualities = GetStringSliceEnv("VIDEO_QUALITIES", []string{"360p", "480p", "720p", "1080p"})
 	cfg.HLSSegmentDuration = GetIntEnv("HLS_SEGMENT_DURATION", 4)
 	cfg.ThumbnailCount = GetIntEnv("THUMBNAIL_COUNT", 3)
@@ -121,28 +172,33 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.HLSSecret = GetEnvOrDefault("HLS_SIGNING_SECRET", "")
 	cfg.HLSTokenTTL = GetIntEnv("HLS_TOKEN_TTL", 600)
 
-	cfg.HotStorageLimit = GetEnvOrDefault("HOT_STORAGE_LIMIT", "100GB")
-	cfg.WarmStorageLimit = GetEnvOrDefault("WARM_STORAGE_LIMIT", "1TB")
-	cfg.ColdStorageEnabled = GetBoolEnv("COLD_STORAGE_ENABLED", true)
+	cfg.FFmpegPath = GetEnvOrDefault("FFMPEG_PATH", "ffmpeg") // Duplicate logic preserved
+	cfg.FFmpegPreset = GetEnvOrDefault("FFMPEG_PRESET", "veryfast")
+	cfg.FFmpegTune = GetEnvOrDefault("FFMPEG_TUNE", "zerolatency")
+	cfg.MaxConcurrentTranscodes = GetIntEnv("MAX_CONCURRENT_TRANSCODES", 10)
+}
 
+func loadPinningConfig(cfg *Config) {
 	cfg.PinningReplicationFactor = GetIntEnv("PINNING_REPLICATION_FACTOR", 3)
 	cfg.PinningScoreThreshold = GetFloat64Env("PINNING_SCORE_THRESHOLD", 0.3)
 	cfg.PinningBackupEnabled = GetBoolEnv("PINNING_BACKUP_ENABLED", true)
+}
 
+func loadAuthConfig(cfg *Config) {
+	cfg.JWTSecret = GetEnvOrDefault("JWT_SECRET", "")
 	cfg.SessionTimeout = GetIntEnv("SESSION_TIMEOUT", 24*60*60)
 	cfg.RefreshTokenTimeout = GetIntEnv("REFRESH_TOKEN_TIMEOUT", 7*24*60*60)
+}
 
-	cfg.APITimeout = GetIntEnv("API_TIMEOUT", 60)
-	cfg.APIMaxRequestSize = GetEnvOrDefault("API_MAX_REQUEST_SIZE", "10MB")
-	cfg.APIPaginationDefaultLimit = GetIntEnv("API_PAGINATION_DEFAULT_LIMIT", 20)
-	cfg.APIPaginationMaxLimit = GetIntEnv("API_PAGINATION_MAX_LIMIT", 100)
-
+func loadValidationConfig(cfg *Config) {
 	cfg.ValidationStrictMode = GetBoolEnv("VALIDATION_STRICT_MODE", false)
 	cfg.ValidationAllowedAlgorithms = GetStringSliceEnv("VALIDATION_ALLOWED_ALGORITHMS", []string{"sha256"})
 	cfg.ValidationTestMode = GetBoolEnv("VALIDATION_TEST_MODE", false)
 	cfg.ValidationEnableIntegrityJobs = GetBoolEnv("VALIDATION_ENABLE_INTEGRITY_JOBS", true)
 	cfg.ValidationLogEvents = GetBoolEnv("VALIDATION_LOG_EVENTS", true)
+}
 
+func loadEncodingConfig(cfg *Config) {
 	cfg.EnableEncodingScheduler = GetBoolEnv("ENABLE_ENCODING_SCHEDULER", true)
 	cfg.EncodingSchedulerIntervalSeconds = GetIntEnv("ENCODING_SCHEDULER_INTERVAL_SECONDS", 5)
 	cfg.EncodingSchedulerBurst = GetIntEnv("ENCODING_SCHEDULER_BURST", 3)
@@ -150,7 +206,9 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.EnableEncoding = GetBoolEnv("ENABLE_ENCODING", false)
 	cfg.EncodingWorkers = GetIntEnv("ENCODING_WORKERS", 2)
 	cfg.MetricsAddr = GetEnvOrDefault("METRICS_ADDR", ":9090")
+}
 
+func loadCaptionConfig(cfg *Config) {
 	cfg.EnableCaptionGeneration = GetBoolEnv("ENABLE_CAPTION_GENERATION", false)
 	cfg.WhisperProvider = GetEnvOrDefault("WHISPER_PROVIDER", "local")
 	cfg.WhisperModelSize = GetEnvOrDefault("WHISPER_MODEL_SIZE", "base")
@@ -162,7 +220,9 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.CaptionGenerationWorkers = GetIntEnv("CAPTION_GENERATION_WORKERS", 2)
 	cfg.AutoCaptionFormat = GetEnvOrDefault("AUTO_CAPTION_FORMAT", "vtt")
 	cfg.AutoCaptionLanguage = GetEnvOrDefault("AUTO_CAPTION_LANGUAGE", "")
+}
 
+func loadSocialConfig(cfg *Config, setupMode bool) {
 	cfg.EnableATProto = GetBoolEnv("ENABLE_ATPROTO", false)
 	cfg.ATProtoPDSURL = GetEnvOrDefault("ATPROTO_PDS_URL", "")
 	cfg.ATProtoAuthToken = GetEnvOrDefault("ATPROTO_AUTH_TOKEN", "")
@@ -177,15 +237,6 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.ATProtoMaxRetries = GetIntEnv("ATPROTO_MAX_RETRIES", 3)
 	retryMs := GetIntEnv("ATPROTO_RETRY_BASE_DELAY_MS", 500)
 	cfg.ATProtoRetryBaseDelay = time.Duration(retryMs) * time.Millisecond
-
-	cfg.NginxEnabled = GetBoolEnv("NGINX_ENABLED", false)
-	cfg.NginxDomain = GetEnvOrDefault("NGINX_DOMAIN", "localhost")
-	cfg.NginxPort = GetIntEnv("NGINX_PORT", 80)
-	cfg.NginxProtocol = GetEnvOrDefault("NGINX_PROTOCOL", "http")
-	cfg.NginxTLSMode = GetEnvOrDefault("NGINX_TLS_MODE", "")
-	cfg.NginxLetsEncryptEmail = GetEnvOrDefault("NGINX_LETSENCRYPT_EMAIL", "")
-
-	cfg.PublicBaseURL = GetEnvOrDefault("PUBLIC_BASE_URL", "")
 
 	cfg.EnableFederationScheduler = GetBoolEnv("ENABLE_FEDERATION_SCHEDULER", prodDefault(setupMode, true, false))
 	cfg.FederationSchedulerIntervalSeconds = GetIntEnv("FEDERATION_SCHEDULER_INTERVAL_SECONDS", 15)
@@ -207,7 +258,9 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.ActivityPubInstanceContactEmail = GetEnvOrDefault("ACTIVITYPUB_INSTANCE_CONTACT_EMAIL", "")
 	cfg.ActivityPubMaxActivitiesPerPage = GetIntEnv("ACTIVITYPUB_MAX_ACTIVITIES_PER_PAGE", 20)
 	cfg.ActivityPubKeyEncryptionKey = GetEnvOrDefault("ACTIVITYPUB_KEY_ENCRYPTION_KEY", "")
+}
 
+func loadLiveStreamingConfig(cfg *Config) {
 	cfg.EnableLiveStreaming = GetBoolEnv("ENABLE_LIVE_STREAMING", false)
 	cfg.RTMPHost = GetEnvOrDefault("RTMP_HOST", "0.0.0.0")
 	cfg.RTMPPort = GetIntEnv("RTMP_PORT", 1935)
@@ -221,17 +274,16 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.LiveHLSWindowSize = GetIntEnv("LIVE_HLS_WINDOW_SIZE", 10)
 	cfg.HLSCleanupInterval = time.Duration(GetIntEnv("HLS_CLEANUP_INTERVAL", 10)) * time.Second
 	cfg.HLSVariants = GetEnvOrDefault("HLS_VARIANTS", "1080p,720p,480p,360p")
+}
 
-	cfg.FFmpegPath = GetEnvOrDefault("FFMPEG_PATH", "ffmpeg")
-	cfg.FFmpegPreset = GetEnvOrDefault("FFMPEG_PRESET", "veryfast")
-	cfg.FFmpegTune = GetEnvOrDefault("FFMPEG_TUNE", "zerolatency")
-	cfg.MaxConcurrentTranscodes = GetIntEnv("MAX_CONCURRENT_TRANSCODES", 10)
-
+func loadReplayConfig(cfg *Config, setupMode bool) {
 	cfg.EnableReplayConversion = GetBoolEnv("ENABLE_REPLAY_CONVERSION", true)
 	cfg.ReplayStorageDir = GetEnvOrDefault("REPLAY_STORAGE_DIR", "./storage/replays")
 	cfg.ReplayUploadToIPFS = GetBoolEnv("REPLAY_UPLOAD_TO_IPFS", prodDefault(setupMode, true, false))
 	cfg.ReplayRetentionDays = GetIntEnv("REPLAY_RETENTION_DAYS", 30)
+}
 
+func loadTorrentConfig(cfg *Config, setupMode bool) {
 	cfg.EnableTorrents = GetBoolEnv("ENABLE_TORRENTS", prodDefault(setupMode, true, false))
 	cfg.TorrentListenPort = GetIntEnv("TORRENT_LISTEN_PORT", 6881)
 	cfg.TorrentMaxConnections = GetIntEnv("TORRENT_MAX_CONNECTIONS", 200)
@@ -264,7 +316,9 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.HybridDistributionEnabled = GetBoolEnv("HYBRID_DISTRIBUTION_ENABLED", prodDefault(setupMode, true, false))
 	cfg.HybridPreferIPFS = GetBoolEnv("HYBRID_PREFER_IPFS", false)
 	cfg.HybridFallbackTimeout = time.Duration(GetIntEnv("HYBRID_FALLBACK_TIMEOUT", 10)) * time.Second
+}
 
+func loadEmailConfig(cfg *Config) {
 	cfg.EnableEmail = GetBoolEnv("ENABLE_EMAIL", false)
 	cfg.SMTPTransport = GetEnvOrDefault("SMTP_TRANSPORT", "smtp")
 	cfg.SMTPSendmailPath = GetEnvOrDefault("SMTP_SENDMAIL_PATH", "/usr/sbin/sendmail")
@@ -277,7 +331,9 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.SMTPCAFile = GetEnvOrDefault("SMTP_CA_FILE", "")
 	cfg.SMTPFromAddress = GetEnvOrDefault("SMTP_FROM", "noreply@localhost")
 	cfg.SMTPFromName = GetEnvOrDefault("SMTP_FROM_NAME", "Vidra Core")
+}
 
+func loadSecurityConfig(cfg *Config, setupMode bool) {
 	cfg.VirusScanEnabled = GetBoolEnv("VIRUS_SCAN_ENABLED", prodDefault(setupMode, true, false))
 	cfg.ClamAVAddress = GetEnvOrDefault("CLAMAV_ADDRESS", "localhost:3310")
 	cfg.VirusScanTimeout = GetIntEnv("VIRUS_SCAN_TIMEOUT", 300)
@@ -286,8 +342,4 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.VirusScanMaxRetries = GetIntEnv("CLAMAV_MAX_RETRIES", 3)
 	cfg.VirusScanRetryDelay = GetIntEnv("CLAMAV_RETRY_DELAY", 1)
 	cfg.FileTypeBlockingEnabled = GetBoolEnv("FILE_TYPE_BLOCKING_ENABLED", prodDefault(setupMode, true, false))
-
-	cfg.ObjectStorageConfig = loadObjectStorageConfig()
-	cfg.CSPConfig = loadCSPConfig()
-	cfg.StaticFilesPrivateAuth = GetBoolEnv("STATIC_FILES_PRIVATE_AUTH", true)
 }
