@@ -602,7 +602,7 @@ func registerVideoAPIRoutes(
 		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/{id}/views", viewsHandler.TrackView)
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/analytics", viewsHandler.GetVideoAnalytics)
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/daily", viewsHandler.GetDailyStats)
-		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/overall", video.GetVideoStatsOverallHandler())
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/overall", video.GetVideoStatsOverallHandler(deps.VideoRepo))
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/retention", video.GetVideoStatsRetentionHandler())
 
 		commentHandlers := social.NewCommentHandlers(deps.CommentService)

@@ -175,16 +175,11 @@ func TestListAccounts_ReturnsAllAccounts(t *testing.T) {
 		t.Fatalf("expected success=true")
 	}
 
-	var got map[string]interface{}
-	if err := json.Unmarshal(resp.Data, &got); err != nil {
-		t.Fatalf("failed to unmarshal data: %v", err)
+	if resp.Meta == nil {
+		t.Fatal("expected meta field in response")
 	}
-	total, ok := got["total"]
-	if !ok {
-		t.Fatal("expected 'total' field in response")
-	}
-	if total.(float64) < 2 {
-		t.Errorf("expected total >= 2, got %v", total)
+	if resp.Meta.Total < 2 {
+		t.Errorf("expected total >= 2, got %v", resp.Meta.Total)
 	}
 }
 
@@ -203,12 +198,11 @@ func TestListAccounts_EmptyRepo(t *testing.T) {
 	}
 
 	resp := decodeResponse(t, rr)
-	var got map[string]interface{}
-	if err := json.Unmarshal(resp.Data, &got); err != nil {
-		t.Fatalf("failed to unmarshal data: %v", err)
+	if resp.Meta == nil {
+		t.Fatal("expected meta field in response")
 	}
-	if got["total"].(float64) != 0 {
-		t.Errorf("expected total=0, got %v", got["total"])
+	if resp.Meta.Total != 0 {
+		t.Errorf("expected total=0, got %v", resp.Meta.Total)
 	}
 }
 
@@ -518,12 +512,8 @@ func TestGetAccountFollowers_ResponseShape(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	resp := decodeResponse(t, rr)
-	var got map[string]interface{}
-	if err := json.Unmarshal(resp.Data, &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if _, ok := got["total"]; !ok {
-		t.Error("expected 'total' field in followers response")
+	if resp.Meta == nil {
+		t.Error("expected 'meta' field with 'total' in followers response")
 	}
 }
 
@@ -539,14 +529,11 @@ func TestListAccounts_ResponseHasTotal(t *testing.T) {
 	r.ServeHTTP(rr, req)
 
 	resp := decodeResponse(t, rr)
-	var got map[string]interface{}
-	if err := json.Unmarshal(resp.Data, &got); err != nil {
-		t.Fatalf("decode data: %v", err)
+	if resp.Meta == nil {
+		t.Error("expected 'meta' key in list response with 'total'")
 	}
-	if _, ok := got["total"]; !ok {
-		t.Error("expected 'total' key in list response")
-	}
-	if _, ok := got["data"]; !ok {
+	// data should be an array (not a nested object with 'data' key)
+	if resp.Data == nil {
 		t.Error("expected 'data' key in list response")
 	}
 }

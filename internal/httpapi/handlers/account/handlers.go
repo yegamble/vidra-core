@@ -112,10 +112,7 @@ func (h *AccountHandlers) ListAccounts(w http.ResponseWriter, r *http.Request) {
 	for i, u := range users {
 		data[i] = toAccountResponse(u)
 	}
-	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"total": total,
-		"data":  data,
-	})
+	shared.WriteJSONWithMeta(w, http.StatusOK, data, &shared.Meta{Total: total})
 }
 
 // GetAccount handles GET /api/v1/accounts/{name}
@@ -137,7 +134,7 @@ func (h *AccountHandlers) GetAccountVideos(w http.ResponseWriter, r *http.Reques
 	}
 
 	if h.videoRepo == nil {
-		shared.WriteJSON(w, http.StatusOK, map[string]interface{}{"total": 0, "data": []interface{}{}})
+		shared.WriteJSONWithMeta(w, http.StatusOK, []interface{}{}, &shared.Meta{Total: 0})
 		return
 	}
 
@@ -150,10 +147,7 @@ func (h *AccountHandlers) GetAccountVideos(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"total": total,
-		"data":  videos,
-	})
+	shared.WriteJSONWithMeta(w, http.StatusOK, videos, &shared.Meta{Total: total, Limit: pageSize, Offset: offset})
 }
 
 // GetAccountVideoChannels handles GET /api/v1/accounts/{name}/video-channels
@@ -165,7 +159,7 @@ func (h *AccountHandlers) GetAccountVideoChannels(w http.ResponseWriter, r *http
 	}
 
 	if h.channelService == nil {
-		shared.WriteJSON(w, http.StatusOK, map[string]interface{}{"total": 0, "data": []interface{}{}})
+		shared.WriteJSONWithMeta(w, http.StatusOK, []interface{}{}, &shared.Meta{Total: 0})
 		return
 	}
 
@@ -181,10 +175,7 @@ func (h *AccountHandlers) GetAccountVideoChannels(w http.ResponseWriter, r *http
 		return
 	}
 
-	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"total": len(channels),
-		"data":  channels,
-	})
+	shared.WriteJSONWithMeta(w, http.StatusOK, channels, &shared.Meta{Total: int64(len(channels))})
 }
 
 // GetAccountRatings handles GET /api/v1/accounts/{name}/ratings
@@ -195,7 +186,7 @@ func (h *AccountHandlers) GetAccountRatings(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	// Ratings are not publicly exposed per-account in this implementation.
-	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{"total": 0, "data": []interface{}{}})
+	shared.WriteJSONWithMeta(w, http.StatusOK, []interface{}{}, &shared.Meta{Total: 0})
 }
 
 // GetAccountFollowers handles GET /api/v1/accounts/{name}/followers
@@ -206,7 +197,7 @@ func (h *AccountHandlers) GetAccountFollowers(w http.ResponseWriter, r *http.Req
 		return
 	}
 	// Follower lists are managed through ActivityPub and not publicly exposed here.
-	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{"total": 0, "data": []interface{}{}})
+	shared.WriteJSONWithMeta(w, http.StatusOK, []interface{}{}, &shared.Meta{Total: 0})
 }
 
 // parsePagination returns page and pageSize from PeerTube-style query params

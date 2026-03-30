@@ -53,6 +53,7 @@ type service struct {
 	uploadsDir      string
 	cfg             *config.Config
 	atproto         Publisher
+	activitypub     Publisher
 	fedEnq          JobEnqueuer
 	ipfsClient      *ipfs.Client
 	captionGen      CaptionGenerator
@@ -61,6 +62,11 @@ type service struct {
 
 func NewService(repo port.EncodingRepository, videoRepo port.VideoRepository, notificationSvc ucn.Service, uploadsDir string, cfg *config.Config, atproto Publisher, enq JobEnqueuer, ipfsClient *ipfs.Client) Service {
 	return &service{repo: repo, videoRepo: videoRepo, notificationSvc: notificationSvc, uploadsDir: uploadsDir, cfg: cfg, atproto: atproto, fedEnq: enq, ipfsClient: ipfsClient}
+}
+
+func (s *service) WithActivityPubPublisher(pub Publisher) Service {
+	s.activitypub = pub
+	return s
 }
 
 func (s *service) WithFederationEnqueuer(enq JobEnqueuer) *service {
@@ -339,10 +345,17 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 		}
 	}
 
-	if s.atproto != nil {
+	if s.atproto != nil || s.activitypub != nil {
 		if v, err := s.videoRepo.GetByID(ctx, job.VideoID); err == nil && v != nil {
-			if err := s.atproto.PublishVideo(ctx, v); err != nil && s.fedEnq != nil {
-				_ = s.enqueuePublishRetry(ctx, v.ID, 30*time.Second)
+			if s.atproto != nil {
+				if err := s.atproto.PublishVideo(ctx, v); err != nil && s.fedEnq != nil {
+					_ = s.enqueuePublishRetry(ctx, v.ID, 30*time.Second)
+				}
+			}
+			if s.activitypub != nil {
+				if err := s.activitypub.PublishVideo(ctx, v); err != nil {
+					slog.Warn("failed to publish video via ActivityPub", "video_id", v.ID, "error", err)
+				}
 			}
 		}
 	}

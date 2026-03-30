@@ -39,8 +39,10 @@ func TestGetVideoQuotaUsed_ReturnsQuota(t *testing.T) {
 
 	var resp map[string]interface{}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Contains(t, resp, "videoQuotaUsed")
-	assert.Contains(t, resp, "videoQuotaUsedDaily")
+	assert.True(t, resp["success"].(bool))
+	data := resp["data"].(map[string]interface{})
+	assert.Contains(t, data, "videoQuotaUsed")
+	assert.Contains(t, data, "videoQuotaUsedDaily")
 }
 
 func TestGetVideoQuotaUsed_ZeroWhenNoVideos(t *testing.T) {
@@ -58,6 +60,8 @@ func TestGetVideoQuotaUsed_ZeroWhenNoVideos(t *testing.T) {
 
 	var resp map[string]interface{}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.True(t, resp["success"].(bool))
+	data := resp["data"].(map[string]interface{})
 	// Should be numeric zero, not absent
-	assert.Equal(t, float64(0), resp["videoQuotaUsed"])
+	assert.Equal(t, float64(0), data["videoQuotaUsed"])
 }

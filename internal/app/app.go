@@ -510,6 +510,15 @@ func (app *Application) initializeDependencies() *Dependencies {
 			deps.CommentRepo,
 			app.Config,
 		)
+
+		// Wire ActivityPub publisher into encoding service
+		apAdapter := &activityPubPublisherAdapter{svc: deps.ActivityPubService}
+		type apWireable interface {
+			WithActivityPubPublisher(pub ucenc.Publisher) ucenc.Service
+		}
+		if aw, ok := deps.EncodingService.(apWireable); ok {
+			deps.EncodingService = aw.WithActivityPubPublisher(apAdapter)
+		}
 	}
 
 	deps.IPFSStreamingService = ucipfs.NewService(app.Config)
@@ -1040,4 +1049,14 @@ func (app *Application) GetRouter() chi.Router {
 
 func (app *Application) GetEncodingScheduler() *scheduler.EncodingScheduler {
 	return app.encodingScheduler
+}
+
+// activityPubPublisherAdapter adapts the ActivityPub service's PublishVideo(ctx, videoID)
+// to the encoding.Publisher interface that takes *domain.Video.
+type activityPubPublisherAdapter struct {
+	svc *ucactivitypub.Service
+}
+
+func (a *activityPubPublisherAdapter) PublishVideo(ctx context.Context, v *domain.Video) error {
+	return a.svc.PublishVideo(ctx, v.ID)
 }

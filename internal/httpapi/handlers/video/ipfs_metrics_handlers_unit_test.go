@@ -46,19 +46,23 @@ func TestIPFSMetricsHandlers_UnitBranches(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var metricsPayload map[string]any
-		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &metricsPayload))
-		require.Contains(t, metricsPayload, "ipfs")
-		require.Contains(t, metricsPayload, "local")
-		require.Contains(t, metricsPayload, "cache")
+		var metricsResp map[string]any
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &metricsResp))
+		require.True(t, metricsResp["success"].(bool))
+		metricsData := metricsResp["data"].(map[string]any)
+		require.Contains(t, metricsData, "ipfs")
+		require.Contains(t, metricsData, "local")
+		require.Contains(t, metricsData, "cache")
 
 		rr = httptest.NewRecorder()
 		handler.GetGatewayHealth(rr, req)
 		require.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var gatewaysPayload map[string]any
-		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &gatewaysPayload))
-		require.Contains(t, gatewaysPayload, "gateways")
+		var gatewaysResp map[string]any
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &gatewaysResp))
+		require.True(t, gatewaysResp["success"].(bool))
+		gatewaysData := gatewaysResp["data"].(map[string]any)
+		require.Contains(t, gatewaysData, "gateways")
 	})
 }

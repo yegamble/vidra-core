@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"vidra-core/internal/domain"
@@ -36,9 +35,7 @@ func GetVideoQuotaUsedHandler(repo QuotaVideoRepository) http.HandlerFunc {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(videoQuotaResponse{
+		shared.WriteJSON(w, http.StatusOK, videoQuotaResponse{
 			VideoQuotaUsed:      total,
 			VideoQuotaUsedDaily: 0, // daily tracking not yet implemented
 		})

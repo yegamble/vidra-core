@@ -421,6 +421,39 @@ func (c *Client) UpdateAuthToken(newToken string) {
 	}
 }
 
+// Provide announces a CID to the DHT so remote peers can discover and retrieve the content.
+// Without this call, pinned content may remain invisible to the network for up to 22 hours
+// (default Kubo reprovider interval).
+func (c *Client) Provide(ctx context.Context, cid string) error {
+	if !c.enabled {
+		return fmt.Errorf("IPFS not enabled")
+	}
+
+	if err := ValidateCID(cid); err != nil {
+		return fmt.Errorf("invalid CID: %w", err)
+	}
+
+	reqURL := c.apiURL + "/api/v0/routing/provide?arg=" + url.QueryEscape(cid) + "&recursive=true"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create provide request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to provide CID to DHT: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	// Drain body to allow connection reuse.
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("IPFS provide failed with status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 func (c *Client) AddAndPin(ctx context.Context, filePath string) (string, error) {
 	cid, err := c.AddFile(ctx, filePath)
 	if err != nil {
@@ -435,6 +468,11 @@ func (c *Client) AddAndPin(ctx context.Context, filePath string) (string, error)
 	if err := c.ClusterPin(ctx, cid); err != nil {
 		slog.Warn("IPFS cluster pin failed after successful add", "cid", cid, "error", err)
 		return cid, fmt.Errorf("cluster pin after add: %w", err)
+	}
+
+	// Announce to DHT so peers can discover this content immediately.
+	if err := c.Provide(ctx, cid); err != nil {
+		slog.Warn("IPFS DHT provide failed after pin", "cid", cid, "error", err)
 	}
 
 	return cid, nil
@@ -454,6 +492,11 @@ func (c *Client) AddDirectoryAndPin(ctx context.Context, dirPath string) (string
 	if err := c.ClusterPin(ctx, cid); err != nil {
 		slog.Warn("IPFS cluster pin failed after successful directory add", "cid", cid, "error", err)
 		return cid, fmt.Errorf("cluster pin after directory add: %w", err)
+	}
+
+	// Announce to DHT so peers can discover this content immediately.
+	if err := c.Provide(ctx, cid); err != nil {
+		slog.Warn("IPFS DHT provide failed after directory pin", "cid", cid, "error", err)
 	}
 
 	return cid, nil

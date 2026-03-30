@@ -181,13 +181,14 @@ func tryServeFromLocalDirectory(w http.ResponseWriter, r *http.Request, ctx *str
 		return false
 	}
 
+	// Check file exists before redirecting or serving.
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+
 	if rel, ok := hlsRelPath(path); ok {
 		http.Redirect(w, r, "/api/v1/hls/"+rel, http.StatusTemporaryRedirect)
 		return true
-	}
-
-	if _, err := os.Stat(path); err != nil {
-		return false
 	}
 
 	http.ServeFile(w, r, path)

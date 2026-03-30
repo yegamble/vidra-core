@@ -6,6 +6,8 @@
 
 High-performance PeerTube-compatible backend in Go with P2P distribution, live streaming, plugin system, and multi-protocol federation (ActivityPub + ATProto).
 
+**Upstream Reference:** https://github.com/Chocobozzz/PeerTube — Vidra Core maintains full API compatibility while extending with IOTA payments, ATProto, IPFS-native storage, and secure messaging.
+
 ## Technology Stack
 
 - **Language:** Go 1.24
@@ -204,6 +206,21 @@ See subdirectory CLAUDE.md files for detailed guidance:
 - **Migrations:** `migrations/CLAUDE.md`
 - **Architecture:** `docs/architecture/CLAUDE.md`
 - **Validation:** `docs/development/VALIDATION_REQUIRED.md`
+
+## Autonomous Mode Guardrails
+
+See `.claude/rules/` for guardrail enforcement:
+
+- **Stop Hooks:** `stop-hooks.md` — 8 stop conditions that halt work until fixed
+- **Feature Registry:** `feature-parity-registry.md` — canonical feature list, PeerTube parity tracking
+- **Autonomous Mode:** `autonomous-mode.md` — documentation, Postman, and completeness requirements
+
+**Mandatory in autonomous mode:**
+- Update README and docs for every user-visible change
+- Update Postman/Newman collections for every API change
+- Update OpenAPI specs for every endpoint change
+- Update feature registry for every feature change
+- Never remove existing features without explicit user approval
 
 ## Additional Context
 

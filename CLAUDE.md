@@ -1,9 +1,14 @@
 # Vidra Core - PeerTube Backend in Go
 
+## Vision
+
+Vidra Core is a high-performance, PeerTube-compatible video platform backend in Go. It maintains full API compatibility with [PeerTube](https://github.com/Chocobozzz/PeerTube) while extending beyond it with IOTA payments, ATProto/BlueSky federation, IPFS-native storage, and secure messaging. Every change must preserve PeerTube parity and Vidra-specific extensions.
+
 ## Quick Reference
 
 **Stack**: Go (Chi router), PostgreSQL (SQLX), Redis, IPFS, FFmpeg, IOTA payments (Phase 2)
 **Architecture**: Clean architecture with domain/usecase/repository layers
+**Upstream Reference**: https://github.com/Chocobozzz/PeerTube
 
 ## Mandatory Validation
 
@@ -111,6 +116,38 @@ For detailed guidance in specific areas, see:
 - Unit tests per package
 - Use `sqlmock` for DB mocking
 - Integration tests with `docker-compose.yml` (`--profile test`)
+
+## Stop Hooks (Autonomous Mode Guardrails)
+
+Hard constraints enforced during all autonomous operations. See `.claude/rules/stop-hooks.md` for full details.
+
+**8 Stop Conditions — violations halt work until fixed:**
+
+1. **Feature Removal** — never remove/disable existing features (see `.claude/rules/feature-parity-registry.md`)
+2. **Test Coverage** — no production code without tests (TDD mandatory)
+3. **API Contract** — no breaking changes to response shapes
+4. **Architecture Violation** — respect clean architecture layers
+5. **Security Regression** — no SQL injection, missing auth, SSRF, or secrets in code
+6. **Federation Compatibility** — WebFinger, NodeInfo, ActivityPub must stay functional
+7. **Build/Lint/Test** — `make validate-all` must pass
+8. **Migration Safety** — reversible migrations only, no destructive DDL without data migration
+
+**Autonomous mode also requires (see `.claude/rules/autonomous-mode.md`):**
+
+- Update README and documentation for every user-visible change
+- Update Postman/Newman collections for every API change
+- Update OpenAPI specs for every endpoint change
+- Update feature parity registry for every feature change
+- Run `make verify-openapi` after API modifications
+
+## Guardrail Rules Files
+
+| File | Purpose |
+|------|---------|
+| `.claude/rules/stop-hooks.md` | 8 stop conditions, pre/post change checklists |
+| `.claude/rules/feature-parity-registry.md` | Canonical feature list, PeerTube parity tracking |
+| `.claude/rules/autonomous-mode.md` | Documentation, Postman, and completeness requirements |
+| `.claude/settings.json` | Claude Code hooks (generated file protection, auto-format, commit safety) |
 
 ## Additional Context
 

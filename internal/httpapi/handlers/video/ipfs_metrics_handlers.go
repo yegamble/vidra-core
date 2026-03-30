@@ -1,9 +1,9 @@
 package video
 
 import (
-	"encoding/json"
 	"net/http"
 
+	"vidra-core/internal/httpapi/shared"
 	ucipfs "vidra-core/internal/usecase/ipfs_streaming"
 )
 
@@ -28,8 +28,7 @@ func (h *IPFSMetricsHandlers) GetMetrics(w http.ResponseWriter, r *http.Request)
 
 	metrics := h.ipfsService.GetMetrics()
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"ipfs": map[string]interface{}{
 			"requests":  metrics.IPFSRequests,
 			"successes": metrics.IPFSSuccesses,
@@ -56,8 +55,7 @@ func (h *IPFSMetricsHandlers) GetGatewayHealth(w http.ResponseWriter, r *http.Re
 
 	gateways := h.ipfsService.GetGatewayHealth()
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"gateways": gateways,
 	})
 }

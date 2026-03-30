@@ -1,6 +1,7 @@
 package federation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -60,6 +61,14 @@ func (h *ActivityPubHandlers) WebFinger(w http.ResponseWriter, r *http.Request) 
 	} else {
 		http.Error(w, "unsupported resource format", http.StatusBadRequest)
 		return
+	}
+
+	// Validate user exists (RFC 7033: return 404 for unknown resources)
+	if h.userRepo != nil {
+		if _, err := h.userRepo.GetByUsername(r.Context(), username); err != nil {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
 	}
 
 	actorURL := fmt.Sprintf("%s/users/%s", h.cfg.PublicBaseURL, username)
@@ -123,7 +132,7 @@ func (h *ActivityPubHandlers) NodeInfo20(w http.ResponseWriter, r *http.Request)
 		Software: domain.NodeInfoSoftware{
 			Name:       "vidra",
 			Version:    "1.0.0",
-			Repository: "https://github.com/yourusername/vidra",
+			Repository: "https://github.com/yegamble/vidra-core",
 		},
 		Protocols:         []string{"activitypub"},
 		Services:          domain.NodeInfoServices{Inbound: []string{}, Outbound: []string{}},
@@ -243,7 +252,9 @@ func (h *ActivityPubHandlers) PostInbox(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
-	defer func() { _ = r.Body.Close() }()
+	_ = r.Body.Close()
+	// Restore the body so HandleInboxActivity can re-read it for signature verification.
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	var activity map[string]interface{}
 	if err := json.Unmarshal(body, &activity); err != nil {
@@ -265,7 +276,9 @@ func (h *ActivityPubHandlers) PostSharedInbox(w http.ResponseWriter, r *http.Req
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
-	defer func() { _ = r.Body.Close() }()
+	_ = r.Body.Close()
+	// Restore the body so HandleInboxActivity can re-read it for signature verification.
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	var activity map[string]interface{}
 	if err := json.Unmarshal(body, &activity); err != nil {
