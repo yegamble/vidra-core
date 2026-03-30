@@ -208,7 +208,22 @@ func TestStreamManager_EndStream_RemovesFromActiveStreams(t *testing.T) {
 func TestStreamManager_RecordViewerJoin_Success(t *testing.T) {
 	sm := newTestStreamManager()
 	streamID := uuid.New()
-	err := sm.RecordViewerJoin(context.Background(), streamID, "sess-1", nil, "1.2.3.4", "Go-test/1.0", "US")
+
+	sm.activeStreamsMu.Lock()
+	sm.activeStreams[streamID] = &StreamState{
+		StreamID: streamID,
+		Status:   domain.StreamStatusLive,
+	}
+	sm.activeStreamsMu.Unlock()
+
+	err := sm.RecordViewerJoin(context.Background(), domain.ViewerJoinRequest{
+		StreamID:    streamID,
+		SessionID:   "sess-1",
+		UserID:      nil,
+		IPAddress:   "1.2.3.4",
+		UserAgent:   "Go-test/1.0",
+		CountryCode: "US",
+	})
 	require.NoError(t, err)
 }
 

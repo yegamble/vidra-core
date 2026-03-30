@@ -194,16 +194,31 @@ func (sm *StreamManager) GetStreamState(streamID uuid.UUID) (*StreamState, bool)
 	return state, exists
 }
 
-// RecordViewerJoin records a new viewer joining a stream
-func (sm *StreamManager) RecordViewerJoin(ctx context.Context, streamID uuid.UUID, sessionID string, userID *uuid.UUID, ipAddress, userAgent, countryCode string) error {
+// RecordViewerJoin records a new viewer joining a stream and updates metrics
+func (sm *StreamManager) RecordViewerJoin(ctx context.Context, req domain.ViewerJoinRequest) error {
+	sm.activeStreamsMu.RLock()
+	state, exists := sm.activeStreams[req.StreamID]
+
+	if !exists {
+		sm.activeStreamsMu.RUnlock()
+		return fmt.Errorf("stream not found: %s", req.StreamID)
+	}
+
+	// Check if stream is active before allowing joins
+	if state.Status != domain.StreamStatusLive {
+		sm.activeStreamsMu.RUnlock()
+		return fmt.Errorf("stream is not live: %s", req.StreamID)
+	}
+	sm.activeStreamsMu.RUnlock()
+
 	session := &domain.ViewerSession{
 		ID:           uuid.New(),
-		LiveStreamID: streamID,
-		SessionID:    sessionID,
-		UserID:       userID,
-		IPAddress:    ipAddress,
-		UserAgent:    userAgent,
-		CountryCode:  countryCode,
+		LiveStreamID: req.StreamID,
+		SessionID:    req.SessionID,
+		UserID:       req.UserID,
+		IPAddress:    req.IPAddress,
+		UserAgent:    req.UserAgent,
+		CountryCode:  req.CountryCode,
 	}
 
 	if err := sm.viewerRepo.Create(ctx, session); err != nil {
@@ -211,8 +226,8 @@ func (sm *StreamManager) RecordViewerJoin(ctx context.Context, streamID uuid.UUI
 	}
 
 	sm.logger.WithFields(logrus.Fields{
-		"stream_id":  streamID,
-		"session_id": sessionID,
+		"stream_id":  req.StreamID,
+		"session_id": req.SessionID,
 	}).Debug("Viewer joined stream")
 
 	return nil

@@ -332,7 +332,14 @@ func testViewerTracking(t *testing.T, td *testutil.TestDB, streamRepo repository
 		err := viewerRepo.Create(ctx, viewerSession)
 		require.NoError(t, err)
 
-		err = streamManager.RecordViewerJoin(ctx, stream.ID, viewerSession.SessionID, nil, viewerSession.IPAddress, viewerSession.UserAgent, viewerSession.CountryCode)
+		err = streamManager.RecordViewerJoin(ctx, domain.ViewerJoinRequest{
+			StreamID:    stream.ID,
+			SessionID:   viewerSession.SessionID,
+			UserID:      nil,
+			IPAddress:   viewerSession.IPAddress,
+			UserAgent:   viewerSession.UserAgent,
+			CountryCode: viewerSession.CountryCode,
+		})
 		require.NoError(t, err)
 
 		streamManager.SendHeartbeat(stream.ID, viewerSession.SessionID)
