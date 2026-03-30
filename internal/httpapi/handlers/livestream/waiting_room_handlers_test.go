@@ -13,6 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"vidra-core/internal/repository"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
@@ -46,9 +48,8 @@ func (m *MockStreamRepository) UpdateWaitingRoom(ctx context.Context, streamID u
 	return args.Error(0)
 }
 
-func (m *MockStreamRepository) ScheduleStream(ctx context.Context, streamID uuid.UUID, scheduledStart *time.Time, scheduledEnd *time.Time, waitingRoomEnabled bool, waitingRoomMessage string) error {
-	args := m.Called(ctx, streamID, scheduledStart, scheduledEnd, waitingRoomEnabled, waitingRoomMessage)
-	return args.Error(0)
+func (m *MockStreamRepository) ScheduleStream(ctx context.Context, streamID uuid.UUID, params repository.ScheduleStreamParams) error {
+	return m.Called(ctx, streamID, params).Error(0)
 }
 
 func (m *MockStreamRepository) CancelSchedule(ctx context.Context, streamID uuid.UUID) error {
@@ -357,10 +358,7 @@ func TestWaitingRoomHandler_ScheduleStream(t *testing.T) {
 				}, nil)
 
 				m.On("ScheduleStream", mock.Anything, streamID,
-					mock.AnythingOfType("*time.Time"),
-					(*time.Time)(nil),
-					true,
-					"Starting at scheduled time").Return(nil)
+					mock.AnythingOfType("repository.ScheduleStreamParams")).Return(nil)
 			},
 			expectedStatus: http.StatusOK,
 		},
@@ -388,10 +386,7 @@ func TestWaitingRoomHandler_ScheduleStream(t *testing.T) {
 				}, nil)
 
 				m.On("ScheduleStream", mock.Anything, streamID,
-					mock.AnythingOfType("*time.Time"),
-					mock.AnythingOfType("*time.Time"),
-					false,
-					"").Return(nil)
+					mock.AnythingOfType("repository.ScheduleStreamParams")).Return(nil)
 			},
 			expectedStatus: http.StatusOK,
 		},

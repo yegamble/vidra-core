@@ -54,80 +54,90 @@ func NewS3MigrationService(cfg Config) *S3MigrationService {
 	}
 }
 
-// MigrateVideo migrates a single video from local storage to S3
+// MigrateVideo migrates a single video from local storage to S3.
 func (s *S3MigrationService) MigrateVideo(ctx context.Context, videoID string) error {
 	s.logger.WithField("video_id", videoID).Info("Starting S3 migration for video")
 
-	// Get video from database
 	video, err := s.videoRepo.GetByID(ctx, videoID)
 	if err != nil {
 		return fmt.Errorf("failed to get video: %w", err)
 	}
 
-	// Check if already migrated
 	if video.StorageTier == "cold" && video.S3MigratedAt != nil {
 		s.logger.WithField("video_id", videoID).Info("Video already migrated to S3")
 		return nil
 	}
 
+	s3URLs, filesToDelete, err := s.migrateVideoVariants(ctx, videoID, video.OutputPaths)
+	if err != nil {
+		return err
+	}
+
+	mediaFiles, err := s.migrateVideoMediaFiles(ctx, videoID, video)
+	if err != nil {
+		return err
+	}
+	filesToDelete = append(filesToDelete, mediaFiles...)
+
+	if err := s.finalizeVideoMigration(ctx, video, s3URLs, filesToDelete); err != nil {
+		return err
+	}
+
+	s.logger.WithField("video_id", videoID).Info("Successfully completed S3 migration")
+	return nil
+}
+
+// migrateVideoVariants uploads each output variant to S3 and returns the s3URL
+// map and the list of local paths marked for deletion (when deleteLocal is set).
+func (s *S3MigrationService) migrateVideoVariants(ctx context.Context, videoID string, outputPaths map[string]string) (map[string]string, []string, error) {
 	s3URLs := make(map[string]string)
 	var filesToDelete []string
 
-	// Migrate video variants (output files)
-	for variant, localPath := range video.OutputPaths {
+	for variant, localPath := range outputPaths {
 		if localPath == "" {
 			continue
 		}
-
-		// Check if file exists
 		if _, err := os.Stat(localPath); os.IsNotExist(err) {
 			s.logger.WithFields(logrus.Fields{
-				"video_id": videoID,
-				"variant":  variant,
-				"path":     localPath,
+				"video_id": videoID, "variant": variant, "path": localPath,
 			}).Warn("Local file not found, skipping")
 			continue
 		}
 
-		// Generate S3 key
 		s3Key := s.generateS3Key(videoID, variant, localPath)
-
-		// Upload to S3
-		contentType := s.getContentType(localPath)
-		if err := s.s3Backend.UploadFile(ctx, s3Key, localPath, contentType); err != nil {
-			return fmt.Errorf("failed to upload variant %s to S3: %w", variant, err)
+		if err := s.s3Backend.UploadFile(ctx, s3Key, localPath, s.getContentType(localPath)); err != nil {
+			return nil, nil, fmt.Errorf("failed to upload variant %s to S3: %w", variant, err)
 		}
 
-		// Get S3 URL
 		s3URL := s.s3Backend.GetURL(s3Key)
 		s3URLs[variant] = s3URL
-
-		// Mark for deletion if configured
 		if s.deleteLocal {
 			filesToDelete = append(filesToDelete, localPath)
 		}
-
 		s.logger.WithFields(logrus.Fields{
-			"video_id": videoID,
-			"variant":  variant,
-			"s3_url":   s3URL,
+			"video_id": videoID, "variant": variant, "s3_url": s3URL,
 		}).Info("Successfully uploaded variant to S3")
 	}
 
-	// Migrate HLS playlists and segments
+	return s3URLs, filesToDelete, nil
+}
+
+// migrateVideoMediaFiles migrates HLS segments, thumbnails, and preview images
+// for a video. Returns paths of uploaded local files for later deletion.
+func (s *S3MigrationService) migrateVideoMediaFiles(ctx context.Context, videoID string, video *domain.Video) ([]string, error) {
+	var filesToDelete []string
+
 	hlsDir := s.storagePath.HLSVideoDir(videoID)
 	if _, err := os.Stat(hlsDir); err == nil {
 		hlsFiles, err := s.migrateHLSFiles(ctx, videoID, hlsDir)
 		if err != nil {
-			return fmt.Errorf("failed to migrate HLS files: %w", err)
+			return nil, fmt.Errorf("failed to migrate HLS files: %w", err)
 		}
-
 		if s.deleteLocal {
 			filesToDelete = append(filesToDelete, hlsFiles...)
 		}
 	}
 
-	// Migrate thumbnails and previews
 	if video.ThumbnailPath != "" {
 		if err := s.migrateThumbnail(ctx, videoID, video.ThumbnailPath); err != nil {
 			s.logger.WithError(err).Warn("Failed to migrate thumbnail")
@@ -144,24 +154,25 @@ func (s *S3MigrationService) MigrateVideo(ctx context.Context, videoID string) e
 		}
 	}
 
-	// Update video record in database
+	return filesToDelete, nil
+}
+
+// finalizeVideoMigration updates the video DB record and optionally removes local files.
+func (s *S3MigrationService) finalizeVideoMigration(ctx context.Context, video *domain.Video, s3URLs map[string]string, filesToDelete []string) error {
 	video.S3URLs = s3URLs
 	video.StorageTier = "cold"
 	now := time.Now()
 	video.S3MigratedAt = &now
-	video.LocalDeleted = false // Will be set to true after deletion
+	video.LocalDeleted = false
 
 	if err := s.videoRepo.Update(ctx, video); err != nil {
 		return fmt.Errorf("failed to update video record: %w", err)
 	}
 
-	// Delete local files if configured
 	if s.deleteLocal && len(filesToDelete) > 0 {
 		if err := s.deleteLocalFiles(filesToDelete); err != nil {
 			s.logger.WithError(err).Error("Failed to delete local files after migration")
-			// Don't return error, migration was successful
 		} else {
-			// Update local_deleted flag
 			video.LocalDeleted = true
 			if err := s.videoRepo.Update(ctx, video); err != nil {
 				s.logger.WithError(err).Error("Failed to update local_deleted flag")
@@ -169,7 +180,6 @@ func (s *S3MigrationService) MigrateVideo(ctx context.Context, videoID string) e
 		}
 	}
 
-	s.logger.WithField("video_id", videoID).Info("Successfully completed S3 migration")
 	return nil
 }
 

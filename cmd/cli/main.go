@@ -131,16 +131,9 @@ func handleBackup(args []string) {
 }
 
 func createBackup(ctx context.Context, cfg *config.Config, components backup.BackupComponents, jsonOutput bool) {
-	backupPath := os.Getenv("BACKUP_LOCAL_PATH")
-	if backupPath == "" {
-		backupPath = defaultBackupPath
-	}
-	target := backup.NewLocalBackend(backupPath)
+	target := newLocalBackend()
 
-	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
-	}
+	db := mustConnectDB(cfg.DatabaseURL)
 	defer db.Close()
 
 	version, _ := database.CurrentVersion(db)
@@ -165,12 +158,8 @@ func createBackup(ctx context.Context, cfg *config.Config, components backup.Bac
 	}
 }
 
-func listBackups(ctx context.Context, cfg *config.Config, jsonOutput bool) {
-	backupPath := os.Getenv("BACKUP_LOCAL_PATH")
-	if backupPath == "" {
-		backupPath = defaultBackupPath
-	}
-	target := backup.NewLocalBackend(backupPath)
+func listBackups(ctx context.Context, _ *config.Config, jsonOutput bool) {
+	target := newLocalBackend()
 
 	backups, err := target.List(ctx, "")
 	if err != nil {
@@ -222,27 +211,10 @@ func handleRestore(args []string) {
 	cfg := loadConfig()
 	ctx := context.Background()
 
-	backupPath := os.Getenv("BACKUP_LOCAL_PATH")
-	if backupPath == "" {
-		backupPath = defaultBackupPath
-	}
-	target := backup.NewLocalBackend(backupPath)
+	target := newLocalBackend()
+	*backupID = resolveRestoreBackupPath(ctx, target, *backupID, *latest)
 
-	if *latest {
-		backups, err := target.List(ctx, "")
-		if err != nil {
-			log.Fatalf("Failed to list backups: %v", err)
-		}
-		if len(backups) == 0 {
-			log.Fatal("No backups found")
-		}
-		*backupID = backups[0].Path
-	}
-
-	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
-	}
+	db := mustConnectDB(cfg.DatabaseURL)
 	defer db.Close()
 
 	version, _ := database.CurrentVersion(db)
@@ -322,10 +294,7 @@ func handleStatus(args []string) {
 
 	cfg := loadConfig()
 
-	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("Database connection failed: %v", err)
-	}
+	db := mustConnectDB(cfg.DatabaseURL)
 	defer db.Close()
 
 	version, _ := database.CurrentVersion(db)
@@ -353,10 +322,7 @@ func handleMigrate(args []string) {
 
 	cfg := loadConfig()
 
-	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("Database connection failed: %v", err)
-	}
+	db := mustConnectDB(cfg.DatabaseURL)
 	defer db.Close()
 
 	fmt.Println("Running database migrations...")
@@ -420,4 +386,38 @@ func loadConfig() *config.Config {
 	}
 
 	return cfg
+}
+
+// newLocalBackend returns a LocalBackend using BACKUP_LOCAL_PATH or defaultBackupPath.
+func newLocalBackend() *backup.LocalBackend {
+	backupPath := os.Getenv("BACKUP_LOCAL_PATH")
+	if backupPath == "" {
+		backupPath = defaultBackupPath
+	}
+	return backup.NewLocalBackend(backupPath)
+}
+
+// mustConnectDB connects to PostgreSQL using the provided URL or fatals.
+func mustConnectDB(databaseURL string) *sqlx.DB {
+	db, err := sqlx.Connect("postgres", databaseURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	return db
+}
+
+// resolveRestoreBackupPath returns the concrete backup path to restore from.
+// If useLatest is true it lists the backend and returns the most recent entry.
+func resolveRestoreBackupPath(ctx context.Context, target *backup.LocalBackend, backupID string, useLatest bool) string {
+	if !useLatest {
+		return backupID
+	}
+	backups, err := target.List(ctx, "")
+	if err != nil {
+		log.Fatalf("Failed to list backups: %v", err)
+	}
+	if len(backups) == 0 {
+		log.Fatal("No backups found")
+	}
+	return backups[0].Path
 }

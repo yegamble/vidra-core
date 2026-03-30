@@ -508,46 +508,56 @@ func (c *Client) monitorDownload(download *Download) {
 	for {
 		select {
 		case <-ticker.C:
-			download.mu.Lock()
-
-			// Update progress
-			if download.Size > 0 {
-				download.Progress = float64(download.Torrent.BytesCompleted()) / float64(download.Size) * 100
-			}
-
-			// Check if complete
-			if download.Torrent.BytesCompleted() == download.Size && download.Status == DownloadStatusDownloading {
-				now := time.Now()
-				download.CompletedAt = &now
-
-				if c.config.Seed {
-					download.Status = DownloadStatusSeeding
-				} else {
-					download.Status = DownloadStatusCompleted
-				}
-
-				c.logger.WithFields(logrus.Fields{
-					"info_hash": download.InfoHash,
-					"name":      download.Name,
-					"duration":  now.Sub(download.StartedAt),
-				}).Info("Download completed")
-			}
-
-			download.mu.Unlock()
-
-			// Stop monitoring if removed
-			c.mu.RLock()
-			_, exists := c.downloads[download.InfoHash]
-			c.mu.RUnlock()
-
-			if !exists {
+			c.tickDownload(download)
+			if !c.downloadExists(download.InfoHash) {
 				return
 			}
-
 		case <-c.ctx.Done():
 			return
 		}
 	}
+}
+
+// tickDownload updates progress and completion state for one monitor tick.
+func (c *Client) tickDownload(download *Download) {
+	download.mu.Lock()
+	defer download.mu.Unlock()
+
+	if download.Size > 0 {
+		download.Progress = float64(download.Torrent.BytesCompleted()) / float64(download.Size) * 100
+	}
+
+	if download.Torrent.BytesCompleted() == download.Size && download.Status == DownloadStatusDownloading {
+		c.markDownloadComplete(download)
+	}
+}
+
+// markDownloadComplete transitions a finished download to seeding or completed
+// and logs the event. Must be called with download.mu held.
+func (c *Client) markDownloadComplete(download *Download) {
+	now := time.Now()
+	download.CompletedAt = &now
+
+	if c.config.Seed {
+		download.Status = DownloadStatusSeeding
+	} else {
+		download.Status = DownloadStatusCompleted
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"info_hash": download.InfoHash,
+		"name":      download.Name,
+		"duration":  now.Sub(download.StartedAt),
+	}).Info("Download completed")
+}
+
+// downloadExists reports whether the download with the given info hash is
+// still present in the client's download map.
+func (c *Client) downloadExists(infoHash string) bool {
+	c.mu.RLock()
+	_, exists := c.downloads[infoHash]
+	c.mu.RUnlock()
+	return exists
 }
 
 // GetStats returns client statistics

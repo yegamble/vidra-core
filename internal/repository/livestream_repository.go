@@ -10,8 +10,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// ScheduleStreamParams groups the scheduling fields for ScheduleStream,
+// replacing the previous 4-parameter flat signature.
+type ScheduleStreamParams struct {
+	ScheduledStart     *time.Time
+	ScheduledEnd       *time.Time
+	WaitingRoomEnabled bool
+	WaitingRoomMessage string
+}
 
 type LiveStreamRepository interface {
 	Create(ctx context.Context, stream *domain.LiveStream) error
@@ -28,7 +38,7 @@ type LiveStreamRepository interface {
 	EndStream(ctx context.Context, id uuid.UUID) error
 	GetChannelByStreamID(ctx context.Context, streamID uuid.UUID) (*domain.Channel, error)
 	UpdateWaitingRoom(ctx context.Context, streamID uuid.UUID, enabled bool, message string) error
-	ScheduleStream(ctx context.Context, streamID uuid.UUID, scheduledStart *time.Time, scheduledEnd *time.Time, waitingRoomEnabled bool, waitingRoomMessage string) error
+	ScheduleStream(ctx context.Context, streamID uuid.UUID, params ScheduleStreamParams) error
 	CancelSchedule(ctx context.Context, streamID uuid.UUID) error
 	GetScheduledStreams(ctx context.Context, limit, offset int) ([]*domain.LiveStream, error)
 	GetUpcomingStreams(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.LiveStream, error)
@@ -346,7 +356,7 @@ func (r *liveStreamRepository) UpdateWaitingRoom(ctx context.Context, streamID u
 	return nil
 }
 
-func (r *liveStreamRepository) ScheduleStream(ctx context.Context, streamID uuid.UUID, scheduledStart *time.Time, scheduledEnd *time.Time, waitingRoomEnabled bool, waitingRoomMessage string) error {
+func (r *liveStreamRepository) ScheduleStream(ctx context.Context, streamID uuid.UUID, params ScheduleStreamParams) error {
 	query := `
 		UPDATE live_streams
 		SET scheduled_start = $2, scheduled_end = $3,
@@ -354,7 +364,7 @@ func (r *liveStreamRepository) ScheduleStream(ctx context.Context, streamID uuid
 		    status = 'scheduled'
 		WHERE id = $1
 	`
-	result, err := r.db.ExecContext(ctx, query, streamID, scheduledStart, scheduledEnd, waitingRoomEnabled, waitingRoomMessage)
+	result, err := r.db.ExecContext(ctx, query, streamID, params.ScheduledStart, params.ScheduledEnd, params.WaitingRoomEnabled, params.WaitingRoomMessage)
 	if err != nil {
 		return fmt.Errorf("failed to schedule stream: %w", err)
 	}
@@ -596,6 +606,7 @@ type ViewerSessionRepository interface {
 	GetActiveByStream(ctx context.Context, streamID uuid.UUID, limit, offset int) ([]*domain.ViewerSession, error)
 	CountActiveViewers(ctx context.Context, streamID uuid.UUID) (int, error)
 	UpdateHeartbeat(ctx context.Context, sessionID string) error
+	BatchUpdateHeartbeats(ctx context.Context, sessionIDs []string) error
 	EndSession(ctx context.Context, sessionID string) error
 	CleanupStale(ctx context.Context) (int, error)
 }
@@ -713,6 +724,21 @@ func (r *viewerSessionRepository) UpdateHeartbeat(ctx context.Context, sessionID
 		return domain.ErrViewerSessionNotFound
 	}
 
+	return nil
+}
+
+func (r *viewerSessionRepository) BatchUpdateHeartbeats(ctx context.Context, sessionIDs []string) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE viewer_sessions
+		SET last_heartbeat_at = NOW()
+		WHERE session_id = ANY($1) AND left_at IS NULL
+	`, pq.Array(sessionIDs))
+	if err != nil {
+		return fmt.Errorf("failed to batch update heartbeats: %w", err)
+	}
 	return nil
 }
 

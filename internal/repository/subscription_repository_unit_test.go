@@ -49,7 +49,6 @@ type usecase_SubscriptionRepository interface {
 	Subscribe(ctx context.Context, subscriberID, channelID string) error
 	Unsubscribe(ctx context.Context, subscriberID, channelID string) error
 	ListSubscriptions(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.User, int64, error)
-	ListSubscriptionVideos(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.Video, int64, error)
 	CountSubscribers(ctx context.Context, channelID string) (int64, error)
 	GetSubscribers(ctx context.Context, channelID string) ([]*domain.Subscription, error)
 }
@@ -783,68 +782,6 @@ func TestSubscriptionRepository_CountSubscribers(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ListSubscriptionVideos (deprecated)
-// ---------------------------------------------------------------------------
-
-func TestSubscriptionRepository_ListSubscriptionVideos(t *testing.T) {
-	ctx := context.Background()
-	subscriberID := uuid.New()
-	now := time.Now()
-
-	t.Run("success", func(t *testing.T) {
-		repo, _, mock, cleanup := newSubscriptionRepo(t)
-		defer cleanup()
-
-		videoID := "video-456"
-		channelIDVideo := uuid.New()
-		processedCIDs, _ := json.Marshal(map[string]string{})
-		metadata, _ := json.Marshal(domain.VideoMetadata{})
-		outputPaths, _ := json.Marshal(map[string]string{})
-
-		mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM videos v.*JOIN channels c.*JOIN subscriptions s`).
-			WithArgs(subscriberID).
-			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-
-		rows := sqlmock.NewRows([]string{
-			"id", "title", "description", "duration", "views",
-			"privacy", "status", "upload_date", "user_id", "channel_id",
-			"original_cid", "processed_cids", "thumbnail_cid",
-			"tags", "category_id", "language", "file_size",
-			"mime_type", "metadata", "created_at", "updated_at",
-			"output_paths", "thumbnail_path", "preview_path",
-		}).AddRow(
-			videoID, "Video", "desc", 60, int64(100),
-			domain.PrivacyPublic, domain.StatusCompleted, now, "user-2", channelIDVideo,
-			"cid", processedCIDs, "thumb",
-			pq.StringArray{}, nil, "en", int64(512000),
-			"video/mp4", metadata, now, now,
-			outputPaths, "/thumb.jpg", "/preview.jpg",
-		)
-
-		mock.ExpectQuery(`(?s)SELECT.*FROM videos v.*JOIN channels c.*JOIN subscriptions s`).
-			WithArgs(subscriberID, 10, 0).
-			WillReturnRows(rows)
-
-		videos, total, err := repo.ListSubscriptionVideos(ctx, subscriberID.String(), 10, 0)
-		require.NoError(t, err)
-		assert.Equal(t, int64(1), total)
-		require.Len(t, videos, 1)
-		assert.Equal(t, videoID, videos[0].ID)
-		require.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("invalid subscriber ID", func(t *testing.T) {
-		repo, _, _, cleanup := newSubscriptionRepo(t)
-		defer cleanup()
-
-		videos, total, err := repo.ListSubscriptionVideos(ctx, "bad-uuid", 10, 0)
-		require.Error(t, err)
-		assert.Nil(t, videos)
-		assert.Equal(t, int64(0), total)
-		assert.Contains(t, err.Error(), "invalid subscriber ID")
-	})
-}
-
 // ---------------------------------------------------------------------------
 // GetSubscribers (deprecated)
 // ---------------------------------------------------------------------------

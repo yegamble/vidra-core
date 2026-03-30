@@ -17,7 +17,7 @@ import (
 
 // subscriptionFeedRepo is the narrow interface needed for subscription feeds.
 type subscriptionFeedRepo interface {
-	ListSubscriptionVideos(ctx context.Context, userID string, limit, offset int) ([]*domain.Video, int64, error)
+	GetSubscriptionVideos(ctx context.Context, subscriberID uuid.UUID, limit, offset int) ([]domain.Video, int, error)
 }
 
 // FeedHandlers provides RSS/Atom feed endpoints.
@@ -211,7 +211,12 @@ func (h *FeedHandlers) SubscriptionFeedAtom(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	videos, _, err := h.subRepo.ListSubscriptionVideos(r.Context(), userID, 20, 0)
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	videos, _, err := h.subRepo.GetSubscriptionVideos(r.Context(), uid, 20, 0)
 	if err != nil {
 		http.Error(w, "Failed to load subscription feed", http.StatusInternalServerError)
 		return
@@ -245,7 +250,12 @@ func (h *FeedHandlers) SubscriptionFeedRSS(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	videos, _, err := h.subRepo.ListSubscriptionVideos(r.Context(), userID, 20, 0)
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	videos, _, err := h.subRepo.GetSubscriptionVideos(r.Context(), uid, 20, 0)
 	if err != nil {
 		http.Error(w, "Failed to load subscription feed", http.StatusInternalServerError)
 		return

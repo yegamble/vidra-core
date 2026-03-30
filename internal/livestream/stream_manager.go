@@ -194,16 +194,25 @@ func (sm *StreamManager) GetStreamState(streamID uuid.UUID) (*StreamState, bool)
 	return state, exists
 }
 
+// ViewerJoinParams groups the viewer identity fields for RecordViewerJoin.
+type ViewerJoinParams struct {
+	SessionID   string
+	UserID      *uuid.UUID
+	IPAddress   string
+	UserAgent   string
+	CountryCode string
+}
+
 // RecordViewerJoin records a new viewer joining a stream
-func (sm *StreamManager) RecordViewerJoin(ctx context.Context, streamID uuid.UUID, sessionID string, userID *uuid.UUID, ipAddress, userAgent, countryCode string) error {
+func (sm *StreamManager) RecordViewerJoin(ctx context.Context, streamID uuid.UUID, params ViewerJoinParams) error {
 	session := &domain.ViewerSession{
 		ID:           uuid.New(),
 		LiveStreamID: streamID,
-		SessionID:    sessionID,
-		UserID:       userID,
-		IPAddress:    ipAddress,
-		UserAgent:    userAgent,
-		CountryCode:  countryCode,
+		SessionID:    params.SessionID,
+		UserID:       params.UserID,
+		IPAddress:    params.IPAddress,
+		UserAgent:    params.UserAgent,
+		CountryCode:  params.CountryCode,
 	}
 
 	if err := sm.viewerRepo.Create(ctx, session); err != nil {
@@ -212,7 +221,7 @@ func (sm *StreamManager) RecordViewerJoin(ctx context.Context, streamID uuid.UUI
 
 	sm.logger.WithFields(logrus.Fields{
 		"stream_id":  streamID,
-		"session_id": sessionID,
+		"session_id": params.SessionID,
 	}).Debug("Viewer joined stream")
 
 	return nil
@@ -283,11 +292,16 @@ func (sm *StreamManager) flushRemainingHeartbeats(batch map[string]time.Time) {
 }
 
 func (sm *StreamManager) flushHeartbeatBatch(ctx context.Context, batch map[string]time.Time) {
+	if len(batch) == 0 {
+		return
+	}
+	sessionIDs := make([]string, 0, len(batch))
 	for sessionID := range batch {
-		if err := sm.viewerRepo.UpdateHeartbeat(ctx, sessionID); err != nil {
-			sm.logger.WithError(err).WithField("session_id", sessionID).
-				Debug("Failed to update heartbeat")
-		}
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	if err := sm.viewerRepo.BatchUpdateHeartbeats(ctx, sessionIDs); err != nil {
+		sm.logger.WithError(err).WithField("count", len(sessionIDs)).
+			Debug("Failed to batch update heartbeats")
 	}
 }
 

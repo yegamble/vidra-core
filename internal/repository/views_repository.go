@@ -694,54 +694,77 @@ func (r *ViewsRepository) GetRecentViews(ctx context.Context, userID string, lim
 	return views, nil
 }
 
-func (r *ViewsRepository) BatchCreateUserViews(ctx context.Context, views []*domain.UserView) error {
-	if len(views) == 0 {
-		return nil
+// viewBatchParams holds the column slices for a batch INSERT of user_views rows.
+type viewBatchParams struct {
+	ids, videoIDs, sessionIDs, fingerprintHashes   []string
+	userIDs                                         []*string
+	watchDurations, videoDurations                  []int
+	completionPercentages                           []float64
+	isCompleteds                                    []bool
+	seekCounts, pauseCounts, replayCounts           []int
+	qualityChanges, bufferEvents                    []int
+	initialLoadTimes                                []*int
+	connectionTypes, videoQualities                 []*string
+	referrerURLs, referrerTypes                     []string
+	utmSources, utmMediums, utmCampaigns            []string
+	deviceTypes, osNames, browserNames              []string
+	screenResolutions                               []string
+	isMobiles                                       []bool
+	countryCodes, regionCodes, cityNames, timezones []string
+	isAnonymouss, trackingConsents                  []bool
+	gdprConsents                                    []*bool
+	viewDates                                       []time.Time
+	viewHours, weekdays                             []int
+	createdAts, updatedAts                          []time.Time
+}
+
+// buildViewBatchParams stamps timestamps onto each view and extracts all fields
+// into column slices for a UNNEST-based batch INSERT.
+func buildViewBatchParams(views []*domain.UserView) *viewBatchParams {
+	n := len(views)
+	p := &viewBatchParams{
+		ids:                   make([]string, n),
+		videoIDs:              make([]string, n),
+		userIDs:               make([]*string, n),
+		sessionIDs:            make([]string, n),
+		fingerprintHashes:     make([]string, n),
+		watchDurations:        make([]int, n),
+		videoDurations:        make([]int, n),
+		completionPercentages: make([]float64, n),
+		isCompleteds:          make([]bool, n),
+		seekCounts:            make([]int, n),
+		pauseCounts:           make([]int, n),
+		replayCounts:          make([]int, n),
+		qualityChanges:        make([]int, n),
+		initialLoadTimes:      make([]*int, n),
+		bufferEvents:          make([]int, n),
+		connectionTypes:       make([]*string, n),
+		videoQualities:        make([]*string, n),
+		referrerURLs:          make([]string, n),
+		referrerTypes:         make([]string, n),
+		utmSources:            make([]string, n),
+		utmMediums:            make([]string, n),
+		utmCampaigns:          make([]string, n),
+		deviceTypes:           make([]string, n),
+		osNames:               make([]string, n),
+		browserNames:          make([]string, n),
+		screenResolutions:     make([]string, n),
+		isMobiles:             make([]bool, n),
+		countryCodes:          make([]string, n),
+		regionCodes:           make([]string, n),
+		cityNames:             make([]string, n),
+		timezones:             make([]string, n),
+		isAnonymouss:          make([]bool, n),
+		trackingConsents:      make([]bool, n),
+		gdprConsents:          make([]*bool, n),
+		viewDates:             make([]time.Time, n),
+		viewHours:             make([]int, n),
+		weekdays:              make([]int, n),
+		createdAts:            make([]time.Time, n),
+		updatedAts:            make([]time.Time, n),
 	}
 
-	count := len(views)
-	ids := make([]string, count)
-	videoIDs := make([]string, count)
-	userIDs := make([]*string, count)
-	sessionIDs := make([]string, count)
-	fingerprintHashes := make([]string, count)
-	watchDurations := make([]int, count)
-	videoDurations := make([]int, count)
-	completionPercentages := make([]float64, count)
-	isCompleteds := make([]bool, count)
-	seekCounts := make([]int, count)
-	pauseCounts := make([]int, count)
-	replayCounts := make([]int, count)
-	qualityChanges := make([]int, count)
-	initialLoadTimes := make([]*int, count)
-	bufferEvents := make([]int, count)
-	connectionTypes := make([]*string, count)
-	videoQualities := make([]*string, count)
-	referrerURLs := make([]string, count)
-	referrerTypes := make([]string, count)
-	utmSources := make([]string, count)
-	utmMediums := make([]string, count)
-	utmCampaigns := make([]string, count)
-	deviceTypes := make([]string, count)
-	osNames := make([]string, count)
-	browserNames := make([]string, count)
-	screenResolutions := make([]string, count)
-	isMobiles := make([]bool, count)
-	countryCodes := make([]string, count)
-	regionCodes := make([]string, count)
-	cityNames := make([]string, count)
-	timezones := make([]string, count)
-	isAnonymouss := make([]bool, count)
-	trackingConsents := make([]bool, count)
-	gdprConsents := make([]*bool, count)
-	viewDates := make([]time.Time, count)
-	viewHours := make([]int, count)
-	weekdays := make([]int, count)
-	createdAts := make([]time.Time, count)
-	updatedAts := make([]time.Time, count)
-
 	now := time.Now()
-
 	for i, view := range views {
 		if view.ID == "" {
 			view.ID = generateUUID()
@@ -750,46 +773,55 @@ func (r *ViewsRepository) BatchCreateUserViews(ctx context.Context, views []*dom
 		view.UpdatedAt = now
 		view.SetViewDate(now)
 
-		ids[i] = view.ID
-		videoIDs[i] = view.VideoID
-		userIDs[i] = view.UserID
-		sessionIDs[i] = view.SessionID
-		fingerprintHashes[i] = view.FingerprintHash
-		watchDurations[i] = view.WatchDuration
-		videoDurations[i] = view.VideoDuration
-		completionPercentages[i] = view.CompletionPercentage
-		isCompleteds[i] = view.IsCompleted
-		seekCounts[i] = view.SeekCount
-		pauseCounts[i] = view.PauseCount
-		replayCounts[i] = view.ReplayCount
-		qualityChanges[i] = view.QualityChanges
-		initialLoadTimes[i] = view.InitialLoadTime
-		bufferEvents[i] = view.BufferEvents
-		connectionTypes[i] = view.ConnectionType
-		videoQualities[i] = view.VideoQuality
-		referrerURLs[i] = view.ReferrerURL
-		referrerTypes[i] = view.ReferrerType
-		utmSources[i] = view.UTMSource
-		utmMediums[i] = view.UTMMedium
-		utmCampaigns[i] = view.UTMCampaign
-		deviceTypes[i] = view.DeviceType
-		osNames[i] = view.OSName
-		browserNames[i] = view.BrowserName
-		screenResolutions[i] = view.ScreenResolution
-		isMobiles[i] = view.IsMobile
-		countryCodes[i] = view.CountryCode
-		regionCodes[i] = view.RegionCode
-		cityNames[i] = view.CityName
-		timezones[i] = view.Timezone
-		isAnonymouss[i] = view.IsAnonymous
-		trackingConsents[i] = view.TrackingConsent
-		gdprConsents[i] = view.GDPRConsent
-		viewDates[i] = view.ViewDate
-		viewHours[i] = view.ViewHour
-		weekdays[i] = view.Weekday
-		createdAts[i] = view.CreatedAt
-		updatedAts[i] = view.UpdatedAt
+		p.ids[i] = view.ID
+		p.videoIDs[i] = view.VideoID
+		p.userIDs[i] = view.UserID
+		p.sessionIDs[i] = view.SessionID
+		p.fingerprintHashes[i] = view.FingerprintHash
+		p.watchDurations[i] = view.WatchDuration
+		p.videoDurations[i] = view.VideoDuration
+		p.completionPercentages[i] = view.CompletionPercentage
+		p.isCompleteds[i] = view.IsCompleted
+		p.seekCounts[i] = view.SeekCount
+		p.pauseCounts[i] = view.PauseCount
+		p.replayCounts[i] = view.ReplayCount
+		p.qualityChanges[i] = view.QualityChanges
+		p.initialLoadTimes[i] = view.InitialLoadTime
+		p.bufferEvents[i] = view.BufferEvents
+		p.connectionTypes[i] = view.ConnectionType
+		p.videoQualities[i] = view.VideoQuality
+		p.referrerURLs[i] = view.ReferrerURL
+		p.referrerTypes[i] = view.ReferrerType
+		p.utmSources[i] = view.UTMSource
+		p.utmMediums[i] = view.UTMMedium
+		p.utmCampaigns[i] = view.UTMCampaign
+		p.deviceTypes[i] = view.DeviceType
+		p.osNames[i] = view.OSName
+		p.browserNames[i] = view.BrowserName
+		p.screenResolutions[i] = view.ScreenResolution
+		p.isMobiles[i] = view.IsMobile
+		p.countryCodes[i] = view.CountryCode
+		p.regionCodes[i] = view.RegionCode
+		p.cityNames[i] = view.CityName
+		p.timezones[i] = view.Timezone
+		p.isAnonymouss[i] = view.IsAnonymous
+		p.trackingConsents[i] = view.TrackingConsent
+		p.gdprConsents[i] = view.GDPRConsent
+		p.viewDates[i] = view.ViewDate
+		p.viewHours[i] = view.ViewHour
+		p.weekdays[i] = view.Weekday
+		p.createdAts[i] = view.CreatedAt
+		p.updatedAts[i] = view.UpdatedAt
 	}
+	return p
+}
+
+func (r *ViewsRepository) BatchCreateUserViews(ctx context.Context, views []*domain.UserView) error {
+	if len(views) == 0 {
+		return nil
+	}
+
+	p := buildViewBatchParams(views)
 
 	query := `
 		INSERT INTO user_views (
@@ -840,16 +872,16 @@ func (r *ViewsRepository) BatchCreateUserViews(ctx context.Context, views []*dom
 		)`
 
 	_, err := r.db.ExecContext(ctx, query,
-		pq.Array(ids), pq.Array(videoIDs), pq.Array(userIDs), pq.Array(sessionIDs), pq.Array(fingerprintHashes),
-		pq.Array(watchDurations), pq.Array(videoDurations), pq.Array(completionPercentages), pq.Array(isCompleteds),
-		pq.Array(seekCounts), pq.Array(pauseCounts), pq.Array(replayCounts), pq.Array(qualityChanges),
-		pq.Array(initialLoadTimes), pq.Array(bufferEvents), pq.Array(connectionTypes), pq.Array(videoQualities),
-		pq.Array(referrerURLs), pq.Array(referrerTypes), pq.Array(utmSources), pq.Array(utmMediums), pq.Array(utmCampaigns),
-		pq.Array(deviceTypes), pq.Array(osNames), pq.Array(browserNames), pq.Array(screenResolutions), pq.Array(isMobiles),
-		pq.Array(countryCodes), pq.Array(regionCodes), pq.Array(cityNames), pq.Array(timezones),
-		pq.Array(isAnonymouss), pq.Array(trackingConsents), pq.Array(gdprConsents),
-		pq.Array(viewDates), pq.Array(viewHours), pq.Array(weekdays),
-		pq.Array(createdAts), pq.Array(updatedAts),
+		pq.Array(p.ids), pq.Array(p.videoIDs), pq.Array(p.userIDs), pq.Array(p.sessionIDs), pq.Array(p.fingerprintHashes),
+		pq.Array(p.watchDurations), pq.Array(p.videoDurations), pq.Array(p.completionPercentages), pq.Array(p.isCompleteds),
+		pq.Array(p.seekCounts), pq.Array(p.pauseCounts), pq.Array(p.replayCounts), pq.Array(p.qualityChanges),
+		pq.Array(p.initialLoadTimes), pq.Array(p.bufferEvents), pq.Array(p.connectionTypes), pq.Array(p.videoQualities),
+		pq.Array(p.referrerURLs), pq.Array(p.referrerTypes), pq.Array(p.utmSources), pq.Array(p.utmMediums), pq.Array(p.utmCampaigns),
+		pq.Array(p.deviceTypes), pq.Array(p.osNames), pq.Array(p.browserNames), pq.Array(p.screenResolutions), pq.Array(p.isMobiles),
+		pq.Array(p.countryCodes), pq.Array(p.regionCodes), pq.Array(p.cityNames), pq.Array(p.timezones),
+		pq.Array(p.isAnonymouss), pq.Array(p.trackingConsents), pq.Array(p.gdprConsents),
+		pq.Array(p.viewDates), pq.Array(p.viewHours), pq.Array(p.weekdays),
+		pq.Array(p.createdAts), pq.Array(p.updatedAts),
 	)
 	return err
 }

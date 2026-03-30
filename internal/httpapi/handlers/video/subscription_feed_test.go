@@ -16,11 +16,11 @@ import (
 )
 
 type mockSubRepoForFeed struct {
-	videos []*domain.Video
+	videos []domain.Video
 }
 
-func (m *mockSubRepoForFeed) ListSubscriptionVideos(_ context.Context, _ string, limit, offset int) ([]*domain.Video, int64, error) {
-	return m.videos, int64(len(m.videos)), nil
+func (m *mockSubRepoForFeed) GetSubscriptionVideos(_ context.Context, _ uuid.UUID, _, _ int) ([]domain.Video, int, error) {
+	return m.videos, len(m.videos), nil
 }
 
 func makeAuthReq(url, userID string) *http.Request {
@@ -40,14 +40,15 @@ func newFeedHandlersWithSub(subRepo subscriptionFeedRepo) *FeedHandlers {
 func TestSubscriptionFeedAtom_ReturnsAtomXML(t *testing.T) {
 	published := time.Now()
 	id := uuid.New().String()
+	userID := uuid.New().String()
 	sub := &mockSubRepoForFeed{
-		videos: []*domain.Video{
+		videos: []domain.Video{
 			{ID: id, Title: "Sub Video", CreatedAt: published},
 		},
 	}
 	h := newFeedHandlersWithSub(sub)
 
-	req := makeAuthReq("/feeds/subscriptions.atom", "user-1")
+	req := makeAuthReq("/feeds/subscriptions.atom", userID)
 	w := httptest.NewRecorder()
 	h.SubscriptionFeedAtom(w, req)
 
@@ -58,14 +59,15 @@ func TestSubscriptionFeedAtom_ReturnsAtomXML(t *testing.T) {
 }
 
 func TestSubscriptionFeedRSS_ReturnsRSSXML(t *testing.T) {
+	userID := uuid.New().String()
 	sub := &mockSubRepoForFeed{
-		videos: []*domain.Video{
+		videos: []domain.Video{
 			{ID: uuid.New().String(), Title: "Sub Video RSS", CreatedAt: time.Now()},
 		},
 	}
 	h := newFeedHandlersWithSub(sub)
 
-	req := makeAuthReq("/feeds/subscriptions.rss", "user-1")
+	req := makeAuthReq("/feeds/subscriptions.rss", userID)
 	w := httptest.NewRecorder()
 	h.SubscriptionFeedRSS(w, req)
 

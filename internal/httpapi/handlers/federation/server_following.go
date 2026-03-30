@@ -1,24 +1,38 @@
 package federation
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 
 	chi "github.com/go-chi/chi/v5"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
 	"vidra-core/internal/port"
 )
 
 // ServerFollowingHandlers handles instance following/followers endpoints.
 type ServerFollowingHandlers struct {
-	repo port.ServerFollowingRepository
+	repo        port.ServerFollowingRepository
+	apService   port.ActivityPubService
+	instanceURL string
 }
 
 // NewServerFollowingHandlers returns a new ServerFollowingHandlers.
 func NewServerFollowingHandlers(repo port.ServerFollowingRepository) *ServerFollowingHandlers {
 	return &ServerFollowingHandlers{repo: repo}
+}
+
+// SetActivityPubService injects an ActivityPub service for emitting Follow activities.
+// When set, FollowInstance will asynchronously deliver an ActivityPub Follow activity
+// to the target instance after the database record is created.
+func (h *ServerFollowingHandlers) SetActivityPubService(svc port.ActivityPubService, instanceURL string) {
+	h.apService = svc
+	h.instanceURL = instanceURL
 }
 
 // ListFollowers handles GET /server/followers
@@ -50,12 +64,44 @@ func (h *ServerFollowingHandlers) FollowInstance(w http.ResponseWriter, r *http.
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_REQUEST", "host is required"))
 		return
 	}
-	// TODO: emit ActivityPub Follow activity once federation wiring is verified end-to-end
 	if err := h.repo.Follow(r.Context(), req.Host); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to follow instance"))
 		return
 	}
+	// Emit ActivityPub Follow activity asynchronously (best-effort).
+	// Uses the authenticated admin's actor ID as the sending actor.
+	if h.apService != nil {
+		actorUID, ok := middleware.GetUserIDFromContext(r.Context())
+		if ok {
+			go h.emitFollowActivity(context.Background(), req.Host, actorUID.String())
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// emitFollowActivity delivers an ActivityPub Follow activity to the target instance.
+// Errors are logged but do not affect the caller — delivery is best-effort.
+func (h *ServerFollowingHandlers) emitFollowActivity(ctx context.Context, host, actorID string) {
+	// PeerTube-compatible server actor URI on the target instance.
+	targetActorURI := "https://" + host + "/accounts/peertube"
+
+	remoteActor, err := h.apService.FetchRemoteActor(ctx, targetActorURI)
+	if err != nil {
+		log.Printf("federation: failed to fetch remote actor for %s: %v", host, err)
+		return
+	}
+
+	followActivity := map[string]interface{}{
+		"@context": domain.ActivityStreamsContext,
+		"type":     domain.ActivityTypeFollow,
+		"id":       fmt.Sprintf("%s/activities/follow/%s", h.instanceURL, host),
+		"actor":    fmt.Sprintf("%s/users/%s", h.instanceURL, actorID),
+		"object":   targetActorURI,
+	}
+
+	if err := h.apService.DeliverActivity(ctx, actorID, remoteActor.InboxURL, followActivity); err != nil {
+		log.Printf("federation: failed to deliver Follow activity to %s: %v", host, err)
+	}
 }
 
 // UnfollowInstance handles DELETE /server/following/{host}

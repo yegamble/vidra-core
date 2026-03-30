@@ -10,6 +10,8 @@ import (
 	"vidra-core/internal/domain"
 
 	"github.com/google/uuid"
+
+	"vidra-core/internal/repository"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,7 +70,7 @@ func (m *mockLiveStreamRepo) GetChannelByStreamID(ctx context.Context, streamID 
 func (m *mockLiveStreamRepo) UpdateWaitingRoom(ctx context.Context, streamID uuid.UUID, enabled bool, message string) error {
 	return nil
 }
-func (m *mockLiveStreamRepo) ScheduleStream(ctx context.Context, streamID uuid.UUID, scheduledStart *time.Time, scheduledEnd *time.Time, waitingRoomEnabled bool, waitingRoomMessage string) error {
+func (m *mockLiveStreamRepo) ScheduleStream(_ context.Context, _ uuid.UUID, _ repository.ScheduleStreamParams) error {
 	return nil
 }
 func (m *mockLiveStreamRepo) CancelSchedule(ctx context.Context, streamID uuid.UUID) error {
@@ -107,6 +109,9 @@ func (m *mockViewerSessionRepo) CountActiveViewers(ctx context.Context, streamID
 	return 0, nil
 }
 func (m *mockViewerSessionRepo) UpdateHeartbeat(ctx context.Context, sessionID string) error {
+	return nil
+}
+func (m *mockViewerSessionRepo) BatchUpdateHeartbeats(ctx context.Context, sessionIDs []string) error {
 	return nil
 }
 func (m *mockViewerSessionRepo) EndSession(ctx context.Context, sessionID string) error {
@@ -208,7 +213,13 @@ func TestStreamManager_EndStream_RemovesFromActiveStreams(t *testing.T) {
 func TestStreamManager_RecordViewerJoin_Success(t *testing.T) {
 	sm := newTestStreamManager()
 	streamID := uuid.New()
-	err := sm.RecordViewerJoin(context.Background(), streamID, "sess-1", nil, "1.2.3.4", "Go-test/1.0", "US")
+	err := sm.RecordViewerJoin(context.Background(), streamID, ViewerJoinParams{
+		SessionID:   "sess-1",
+		UserID:      nil,
+		IPAddress:   "1.2.3.4",
+		UserAgent:   "Go-test/1.0",
+		CountryCode: "US",
+	})
 	require.NoError(t, err)
 }
 

@@ -9,6 +9,8 @@ import (
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/usecase"
+
+	"github.com/google/uuid"
 )
 
 type mockSubRepo struct {
@@ -23,9 +25,9 @@ func (m *mockSubRepo) ListSubscriptions(_ context.Context, _ string, limit, offs
 	m.gotLimit, m.gotOffset = limit, offset
 	return []*domain.User{}, 0, nil
 }
-func (m *mockSubRepo) ListSubscriptionVideos(_ context.Context, _ string, limit, offset int) ([]*domain.Video, int64, error) {
+func (m *mockSubRepo) GetSubscriptionVideos(_ context.Context, _ uuid.UUID, limit, offset int) ([]domain.Video, int, error) {
 	m.gotLimit, m.gotOffset = limit, offset
-	return []*domain.Video{}, 0, nil
+	return []domain.Video{}, 0, nil
 }
 
 func TestListMySubscriptions_Pagination_PageParams(t *testing.T) {
@@ -55,7 +57,7 @@ func TestListSubscriptionVideos_Pagination_PageParams(t *testing.T) {
 	repo := &mockSubRepo{}
 	h := ListSubscriptionVideosHandler(repo)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/subscriptions?page=3&pageSize=5", nil)
-	req = req.WithContext(withUserID(req.Context(), "user-1"))
+	req = req.WithContext(withUserID(req.Context(), uuid.New().String()))
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
