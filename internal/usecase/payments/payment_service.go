@@ -38,6 +38,7 @@ type IOTAClient interface {
 	ValidateAddress(address string) bool
 	GetBalance(ctx context.Context, address string) (int64, error)
 	GetNodeStatus(ctx context.Context) error
+	QueryTransactionBlocks(ctx context.Context, toAddress string, limit int) ([]domain.ReceivedTransaction, error)
 }
 
 type PaymentService struct {
@@ -229,29 +230,32 @@ func (s *PaymentService) DetectPayment(ctx context.Context, intentID string) err
 		return domain.ErrPaymentIntentExpired
 	}
 
-	wallet, walletErr := s.repo.GetWalletByUserID(ctx, intent.UserID)
-	if walletErr != nil {
-		log.Printf("WARNING: failed to find wallet for payment intent %s: %v", intent.ID, walletErr)
-	}
-	var previousBalance int64
-	if wallet != nil {
-		previousBalance = wallet.BalanceIOTA
-	}
-
-	balance, err := s.client.GetBalance(ctx, intent.PaymentAddress)
+	txs, err := s.client.QueryTransactionBlocks(ctx, intent.PaymentAddress, 50)
 	if err != nil {
-		return fmt.Errorf("failed to get balance: %w", err)
+		return fmt.Errorf("failed to query transaction blocks: %w", err)
 	}
 
-	// TODO(phase2): Switch to transaction-based detection via iota_getTransactionBlock
-	delta := balance - previousBalance
-	if delta >= intent.AmountIOTA {
-		if wallet != nil {
-			_ = s.repo.UpdateWalletBalance(ctx, wallet.ID, balance)
+	// Filter transactions by timestamp: only count those after intent creation (with 5s clock-skew buffer).
+	thresholdMs := intent.CreatedAt.UnixMilli() - 5000
+	var totalAmount int64
+	var txDigest string
+	for _, tx := range txs {
+		if tx.TimestampMs < thresholdMs {
+			continue
+		}
+		if txDigest == "" {
+			txDigest = tx.Digest
+		}
+		totalAmount += tx.AmountIOTA
+	}
+
+	if totalAmount >= intent.AmountIOTA {
+		wallet, walletErr := s.repo.GetWalletByUserID(ctx, intent.UserID)
+		if walletErr != nil {
+			log.Printf("WARNING: failed to find wallet for payment intent %s: %v", intent.ID, walletErr)
 		}
 
-		txDigest := fmt.Sprintf("iota-payment-%s-%d", intent.ID, time.Now().Unix())
-		tx := &domain.IOTATransaction{
+		iotaTx := &domain.IOTATransaction{
 			ID:                uuid.New().String(),
 			TransactionDigest: txDigest,
 			AmountIOTA:        intent.AmountIOTA,
@@ -263,10 +267,10 @@ func (s *PaymentService) DetectPayment(ctx context.Context, intentID string) err
 		}
 
 		if wallet != nil {
-			tx.WalletID = sql.NullString{String: wallet.ID, Valid: true}
+			iotaTx.WalletID = sql.NullString{String: wallet.ID, Valid: true}
 		}
 
-		if err := s.repo.CreateTransaction(ctx, tx); err != nil {
+		if err := s.repo.CreateTransaction(ctx, iotaTx); err != nil {
 			return fmt.Errorf("failed to create transaction: %w", err)
 		}
 

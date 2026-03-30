@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"github.com/lib/pq"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -10,6 +9,8 @@ import (
 	"regexp"
 	"testing"
 	"time"
+
+	"github.com/lib/pq"
 
 	"vidra-core/internal/domain"
 

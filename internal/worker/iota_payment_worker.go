@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"vidra-core/internal/domain"
 )
 
@@ -26,6 +27,7 @@ type IOTARepository interface {
 // IOTAClient defines the interface for IOTA network operations
 type IOTAClient interface {
 	GetBalance(ctx context.Context, address string) (int64, error)
+	QueryTransactionBlocks(ctx context.Context, toAddress string, limit int) ([]domain.ReceivedTransaction, error)
 }
 
 // IOTAPaymentWorker monitors and processes IOTA payments
@@ -100,21 +102,33 @@ func (w *IOTAPaymentWorker) processPayments(ctx context.Context) error {
 	return nil
 }
 
-// checkPaymentIntent checks if a payment has been received for an intent
+// checkPaymentIntent checks if a payment has been received for an intent.
+// It queries transaction blocks for the payment address and sums transactions
+// received after the intent was created (with a 5s clock-skew buffer).
 func (w *IOTAPaymentWorker) checkPaymentIntent(ctx context.Context, intent *domain.IOTAPaymentIntent) error {
-	// Check the balance of the payment address
-	balance, err := w.client.GetBalance(ctx, intent.PaymentAddress)
+	txs, err := w.client.QueryTransactionBlocks(ctx, intent.PaymentAddress, 50)
 	if err != nil {
-		return fmt.Errorf("failed to get balance: %w", err)
+		return fmt.Errorf("failed to query transactions: %w", err)
 	}
 
-	// If balance is greater than or equal to the expected amount, mark as paid
-	if balance >= intent.AmountIOTA {
-		// Create a transaction record
-		txHash := fmt.Sprintf("iota-payment-%s", intent.ID)
-		tx := &domain.IOTATransaction{
-			ID:                fmt.Sprintf("tx-%s", intent.ID),
-			TransactionDigest: txHash,
+	// Filter by timestamp: only count transactions after intent creation (with 5s clock-skew buffer).
+	thresholdMs := intent.CreatedAt.UnixMilli() - 5000
+	var totalAmount int64
+	var txDigest string
+	for _, tx := range txs {
+		if tx.TimestampMs < thresholdMs {
+			continue
+		}
+		if txDigest == "" {
+			txDigest = tx.Digest
+		}
+		totalAmount += tx.AmountIOTA
+	}
+
+	if totalAmount >= intent.AmountIOTA {
+		iotaTx := &domain.IOTATransaction{
+			ID:                uuid.New().String(),
+			TransactionDigest: txDigest,
 			AmountIOTA:        intent.AmountIOTA,
 			TxType:            domain.TransactionTypePayment,
 			Status:            domain.TransactionStatusConfirmed,
@@ -124,20 +138,17 @@ func (w *IOTAPaymentWorker) checkPaymentIntent(ctx context.Context, intent *doma
 		}
 
 		if intent.UserID != "" {
-			// Get user's wallet
-			wallet, err := w.repo.GetWalletByUserID(ctx, intent.UserID)
-			if err == nil {
-				tx.WalletID = sql.NullString{String: wallet.ID, Valid: true}
+			wallet, walletErr := w.repo.GetWalletByUserID(ctx, intent.UserID)
+			if walletErr == nil {
+				iotaTx.WalletID = sql.NullString{String: wallet.ID, Valid: true}
 			}
 		}
 
-		// Create transaction
-		if err := w.repo.CreateTransaction(ctx, tx); err != nil {
+		if err := w.repo.CreateTransaction(ctx, iotaTx); err != nil {
 			return fmt.Errorf("failed to create transaction: %w", err)
 		}
 
-		// Update payment intent status
-		if err := w.repo.UpdatePaymentIntentStatus(ctx, intent.ID, domain.PaymentIntentStatusPaid, &txHash); err != nil {
+		if err := w.repo.UpdatePaymentIntentStatus(ctx, intent.ID, domain.PaymentIntentStatusPaid, &txDigest); err != nil {
 			return fmt.Errorf("failed to update payment intent: %w", err)
 		}
 

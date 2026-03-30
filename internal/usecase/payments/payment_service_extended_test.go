@@ -209,7 +209,7 @@ func TestPaymentService_DetectPayment_IntentNotFound(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrPaymentIntentNotFound)
 }
 
-func TestPaymentService_DetectPayment_BalanceCheckError(t *testing.T) {
+func TestPaymentService_DetectPayment_QueryError(t *testing.T) {
 	repo := new(MockIOTARepository)
 	client := new(MockIOTAClient)
 	svc := NewPaymentService(repo, client, testEncryptionKey)
@@ -225,13 +225,12 @@ func TestPaymentService_DetectPayment_BalanceCheckError(t *testing.T) {
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
 	repo.On("GetPaymentIntentByID", ctx, intentID).Return(intent, nil)
-	repo.On("GetWalletByUserID", ctx, intent.UserID).Return(nil, domain.ErrWalletNotFound)
-	client.On("GetBalance", ctx, "iota1qpay").Return(int64(0), errors.New("network down"))
+	client.On("QueryTransactionBlocks", ctx, "iota1qpay", 50).Return(nil, errors.New("network down"))
 
 	err := svc.DetectPayment(ctx, intentID)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get balance")
+	assert.Contains(t, err.Error(), "failed to query transaction blocks")
 }
 
 func TestPaymentService_DetectPayment_CreateTransactionError(t *testing.T) {
@@ -242,6 +241,7 @@ func TestPaymentService_DetectPayment_CreateTransactionError(t *testing.T) {
 	intentID := uuid.New().String()
 	userID := uuid.New().String()
 
+	createdAt := time.Now().Add(-5 * time.Minute)
 	intent := &domain.IOTAPaymentIntent{
 		ID:             intentID,
 		UserID:         userID,
@@ -249,9 +249,13 @@ func TestPaymentService_DetectPayment_CreateTransactionError(t *testing.T) {
 		PaymentAddress: "iota1qpay",
 		Status:         domain.PaymentIntentStatusPending,
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
+		CreatedAt:      createdAt,
+	}
+	txs := []domain.ReceivedTransaction{
+		{Digest: "tx-digest-err", TimestampMs: time.Now().UnixMilli(), AmountIOTA: 1000},
 	}
 	repo.On("GetPaymentIntentByID", ctx, intentID).Return(intent, nil)
-	client.On("GetBalance", ctx, "iota1qpay").Return(int64(1000), nil)
+	client.On("QueryTransactionBlocks", ctx, "iota1qpay", 50).Return(txs, nil)
 	repo.On("GetWalletByUserID", ctx, userID).Return(nil, domain.ErrWalletNotFound)
 	repo.On("CreateTransaction", ctx, mock.AnythingOfType("*domain.IOTATransaction")).
 		Return(errors.New("db error"))
@@ -271,6 +275,7 @@ func TestPaymentService_DetectPayment_UpdateStatusError(t *testing.T) {
 	userID := uuid.New().String()
 	walletID := uuid.New().String()
 
+	createdAt := time.Now().Add(-5 * time.Minute)
 	intent := &domain.IOTAPaymentIntent{
 		ID:             intentID,
 		UserID:         userID,
@@ -278,15 +283,18 @@ func TestPaymentService_DetectPayment_UpdateStatusError(t *testing.T) {
 		PaymentAddress: "iota1qpay",
 		Status:         domain.PaymentIntentStatusPending,
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
+		CreatedAt:      createdAt,
 	}
 	wallet := &domain.IOTAWallet{
 		ID:     walletID,
 		UserID: userID,
 	}
+	txs := []domain.ReceivedTransaction{
+		{Digest: "tx-digest-update-err", TimestampMs: time.Now().UnixMilli(), AmountIOTA: 2000},
+	}
 	repo.On("GetPaymentIntentByID", ctx, intentID).Return(intent, nil)
+	client.On("QueryTransactionBlocks", ctx, "iota1qpay", 50).Return(txs, nil)
 	repo.On("GetWalletByUserID", ctx, userID).Return(wallet, nil)
-	client.On("GetBalance", ctx, "iota1qpay").Return(int64(2000), nil)
-	repo.On("UpdateWalletBalance", ctx, walletID, int64(2000)).Return(nil)
 	repo.On("CreateTransaction", ctx, mock.AnythingOfType("*domain.IOTATransaction")).Return(nil)
 	repo.On("UpdatePaymentIntentStatus", ctx, intentID, domain.PaymentIntentStatusPaid, mock.Anything).
 		Return(errors.New("update err"))
@@ -376,6 +384,40 @@ func TestPaymentService_CreateWallet_CheckExistingError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to check existing wallet")
+}
+
+func TestPaymentService_DetectPayment_NoMatchingTransactions(t *testing.T) {
+	repo := new(MockIOTARepository)
+	client := new(MockIOTAClient)
+	svc := NewPaymentService(repo, client, testEncryptionKey)
+	ctx := context.Background()
+	intentID := uuid.New().String()
+
+	// Intent created just now; transaction happened 30 seconds ago (before intent + outside 5s buffer)
+	createdAt := time.Now()
+	intent := &domain.IOTAPaymentIntent{
+		ID:             intentID,
+		UserID:         uuid.New().String(),
+		AmountIOTA:     1000,
+		PaymentAddress: "iota1qpay-old",
+		Status:         domain.PaymentIntentStatusPending,
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
+		CreatedAt:      createdAt,
+	}
+	// Transaction timestamp is 30s before intent creation — outside the 5s buffer, should be filtered
+	oldTxMs := createdAt.Add(-30 * time.Second).UnixMilli()
+	txs := []domain.ReceivedTransaction{
+		{Digest: "old-tx-digest", TimestampMs: oldTxMs, AmountIOTA: 5000},
+	}
+	repo.On("GetPaymentIntentByID", ctx, intentID).Return(intent, nil)
+	client.On("QueryTransactionBlocks", ctx, "iota1qpay-old", 50).Return(txs, nil)
+
+	err := svc.DetectPayment(ctx, intentID)
+
+	require.NoError(t, err) // no error, just not paid yet
+	// Verify no payment was recorded
+	repo.AssertNotCalled(t, "CreateTransaction")
+	repo.AssertNotCalled(t, "UpdatePaymentIntentStatus")
 }
 
 func TestPaymentService_DecryptPrivateKey_WrongNonce(t *testing.T) {

@@ -35,6 +35,7 @@ type IOTANodeClient interface {
 	GetAddressBalance(ctx context.Context, address string) (int64, error)
 	GetTransactionStatus(ctx context.Context, txHash string) (*TransactionStatus, error)
 	SubmitTransaction(ctx context.Context, tx *SignedTransaction) (string, error)
+	QueryTransactionBlocks(ctx context.Context, toAddress string, limit int) ([]domain.ReceivedTransaction, error)
 }
 
 // PayIotaRequest represents the parameters for the unsafe_payIota JSON-RPC method.
@@ -147,6 +148,15 @@ func (c *IOTAClient) GetNodeStatus(ctx context.Context) error {
 		return fmt.Errorf("IOTA node is not healthy")
 	}
 	return nil
+}
+
+// QueryTransactionBlocks returns transactions received at toAddress after querying the IOTA indexer.
+func (c *IOTAClient) QueryTransactionBlocks(ctx context.Context, toAddress string, limit int) ([]domain.ReceivedTransaction, error) {
+	txs, err := c.nodeClient.QueryTransactionBlocks(ctx, toAddress, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying transaction blocks: %w", err)
+	}
+	return txs, nil
 }
 
 func (c *IOTAClient) WaitForConfirmation(ctx context.Context, txDigest string, requiredConfirms int, pollInterval time.Duration) (int, error) {
@@ -423,6 +433,54 @@ func (c *jsonRPCClient) GetAddressBalance(ctx context.Context, address string) (
 	return balance, nil
 }
 
+// QueryTransactionBlocks queries for transaction blocks received at toAddress via iotax_queryTransactionBlocks.
+// It returns transactions where toAddress appears as a recipient with a positive IOTA balance change.
+func (c *jsonRPCClient) QueryTransactionBlocks(ctx context.Context, toAddress string, limit int) ([]domain.ReceivedTransaction, error) {
+	params := []interface{}{
+		map[string]interface{}{
+			"filter":  map[string]string{"ToAddress": toAddress},
+			"options": map[string]bool{"showBalanceChanges": true},
+		},
+		nil, // cursor: start from the beginning (most recent when descending)
+		limit,
+		true, // descending_order: newest first
+	}
+	var result queryTxBlocksResponse
+	if err := c.callRPC(ctx, "iotax_queryTransactionBlocks", params, &result); err != nil {
+		return nil, fmt.Errorf("querying transaction blocks for %s: %w", toAddress, err)
+	}
+
+	txs := make([]domain.ReceivedTransaction, 0, len(result.Data))
+	for _, entry := range result.Data {
+		tsMs, err := strconv.ParseInt(entry.TimestampMs, 10, 64)
+		if err != nil {
+			// Skip entries with unparseable timestamps rather than failing the whole query.
+			continue
+		}
+
+		var totalAmount int64
+		for _, bc := range entry.BalanceChanges {
+			if bc.Owner.AddressOwner != toAddress || bc.CoinType != "0x2::iota::IOTA" {
+				continue
+			}
+			amt, err := strconv.ParseInt(bc.Amount, 10, 64)
+			if err != nil || amt <= 0 {
+				continue
+			}
+			totalAmount += amt
+		}
+
+		if totalAmount > 0 {
+			txs = append(txs, domain.ReceivedTransaction{
+				Digest:      entry.Digest,
+				TimestampMs: tsMs,
+				AmountIOTA:  totalAmount,
+			})
+		}
+	}
+	return txs, nil
+}
+
 type txBlockResult struct {
 	Digest     string `json:"digest"`
 	Checkpoint string `json:"checkpoint,omitempty"`
@@ -553,4 +611,27 @@ type NodeInfo struct {
 	NetworkID string
 	Version   string
 	IsHealthy bool
+}
+
+// Internal response types for iotax_queryTransactionBlocks JSON unmarshaling.
+type queryTxBlocksResponse struct {
+	Data        []queryTxBlockEntry `json:"data"`
+	NextCursor  *string             `json:"nextCursor"`
+	HasNextPage bool                `json:"hasNextPage"`
+}
+
+type queryTxBlockEntry struct {
+	Digest         string               `json:"digest"`
+	TimestampMs    string               `json:"timestampMs"`
+	BalanceChanges []balanceChangeEntry `json:"balanceChanges"`
+}
+
+type balanceChangeEntry struct {
+	Owner    balanceChangeOwner `json:"owner"`
+	CoinType string             `json:"coinType"`
+	Amount   string             `json:"amount"`
+}
+
+type balanceChangeOwner struct {
+	AddressOwner string `json:"AddressOwner"`
 }

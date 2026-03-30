@@ -86,6 +86,14 @@ func (m *MockIOTAPaymentClient) GetBalance(ctx context.Context, address string) 
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockIOTAPaymentClient) QueryTransactionBlocks(ctx context.Context, toAddress string, limit int) ([]domain.ReceivedTransaction, error) {
+	args := m.Called(ctx, toAddress, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]domain.ReceivedTransaction), args.Error(1)
+}
+
 func (m *MockIOTAPaymentClient) GetTransactionStatus(ctx context.Context, txHash string) (*TransactionStatus, error) {
 	args := m.Called(ctx, txHash)
 	if args.Get(0) == nil {
@@ -126,9 +134,13 @@ func TestIOTAPaymentWorker_CheckPaymentIntent(t *testing.T) {
 				PaymentAddress: "iota1qpayment111",
 				Status:         domain.PaymentIntentStatusPending,
 				ExpiresAt:      time.Now().Add(1 * time.Hour),
+				CreatedAt:      time.Now().Add(-5 * time.Minute),
 			},
 			setupMocks: func(repo *MockIOTAPaymentRepository, client *MockIOTAPaymentClient) {
-				client.On("GetBalance", mock.Anything, "iota1qpayment111").Return(int64(1000000), nil)
+				txs := []domain.ReceivedTransaction{
+					{Digest: "worker-tx-1", TimestampMs: time.Now().UnixMilli(), AmountIOTA: 1000000},
+				}
+				client.On("QueryTransactionBlocks", mock.Anything, "iota1qpayment111", 50).Return(txs, nil)
 				repo.On("GetWalletByUserID", mock.Anything, mock.Anything).Return(&domain.IOTAWallet{ID: "wallet-1"}, nil)
 				repo.On("CreateTransaction", mock.Anything, mock.MatchedBy(func(tx *domain.IOTATransaction) bool {
 					assert.Equal(t, int64(1000000), tx.AmountIOTA)
@@ -149,9 +161,13 @@ func TestIOTAPaymentWorker_CheckPaymentIntent(t *testing.T) {
 				PaymentAddress: "iota1qpayment222",
 				Status:         domain.PaymentIntentStatusPending,
 				ExpiresAt:      time.Now().Add(1 * time.Hour),
+				CreatedAt:      time.Now().Add(-5 * time.Minute),
 			},
 			setupMocks: func(repo *MockIOTAPaymentRepository, client *MockIOTAPaymentClient) {
-				client.On("GetBalance", mock.Anything, "iota1qpayment222").Return(int64(1500000), nil)
+				txs := []domain.ReceivedTransaction{
+					{Digest: "worker-tx-2", TimestampMs: time.Now().UnixMilli(), AmountIOTA: 1500000},
+				}
+				client.On("QueryTransactionBlocks", mock.Anything, "iota1qpayment222", 50).Return(txs, nil)
 				repo.On("GetWalletByUserID", mock.Anything, mock.Anything).Return(&domain.IOTAWallet{ID: "wallet-1"}, nil)
 				repo.On("CreateTransaction", mock.Anything, mock.Anything).Return(nil)
 				repo.On("UpdatePaymentIntentStatus", mock.Anything, mock.Anything,
@@ -168,14 +184,18 @@ func TestIOTAPaymentWorker_CheckPaymentIntent(t *testing.T) {
 				PaymentAddress: "iota1qpayment333",
 				Status:         domain.PaymentIntentStatusPending,
 				ExpiresAt:      time.Now().Add(1 * time.Hour),
+				CreatedAt:      time.Now().Add(-5 * time.Minute),
 			},
 			setupMocks: func(repo *MockIOTAPaymentRepository, client *MockIOTAPaymentClient) {
-				client.On("GetBalance", mock.Anything, "iota1qpayment333").Return(int64(500000), nil)
+				txs := []domain.ReceivedTransaction{
+					{Digest: "worker-tx-3", TimestampMs: time.Now().UnixMilli(), AmountIOTA: 500000},
+				}
+				client.On("QueryTransactionBlocks", mock.Anything, "iota1qpayment333", 50).Return(txs, nil)
 			},
 			wantErr: false,
 		},
 		{
-			name: "network error checking balance",
+			name: "network error querying transactions",
 			intent: &domain.IOTAPaymentIntent{
 				ID:             uuid.New().String(),
 				UserID:         uuid.New().String(),
@@ -183,10 +203,11 @@ func TestIOTAPaymentWorker_CheckPaymentIntent(t *testing.T) {
 				PaymentAddress: "iota1qpayment444",
 				Status:         domain.PaymentIntentStatusPending,
 				ExpiresAt:      time.Now().Add(1 * time.Hour),
+				CreatedAt:      time.Now().Add(-5 * time.Minute),
 			},
 			setupMocks: func(repo *MockIOTAPaymentRepository, client *MockIOTAPaymentClient) {
-				client.On("GetBalance", mock.Anything, "iota1qpayment444").
-					Return(int64(0), errors.New("connection timeout"))
+				client.On("QueryTransactionBlocks", mock.Anything, "iota1qpayment444", 50).
+					Return(nil, errors.New("connection timeout"))
 			},
 			wantErr: true,
 		},
@@ -218,6 +239,47 @@ func TestIOTAPaymentWorker_CheckPaymentIntent(t *testing.T) {
 	}
 }
 
+func TestIOTAPaymentWorker_CheckPaymentIntent_NoMatchingTransactions(t *testing.T) {
+	// Verify that transactions whose timestamps predate (intent.CreatedAt - 5s) are not counted.
+	// If only old transactions exist, totalAmount stays 0 and no payment is recorded.
+	mockRepo := new(MockIOTAPaymentRepository)
+	mockClient := new(MockIOTAPaymentClient)
+
+	createdAt := time.Now()
+	intent := &domain.IOTAPaymentIntent{
+		ID:             uuid.New().String(),
+		UserID:         uuid.New().String(),
+		AmountIOTA:     1000000,
+		PaymentAddress: "iota1qpayment_old",
+		Status:         domain.PaymentIntentStatusPending,
+		ExpiresAt:      createdAt.Add(1 * time.Hour),
+		CreatedAt:      createdAt,
+	}
+
+	// Transaction timestamp is 30 seconds before intent creation — outside the 5s buffer window.
+	oldTimestampMs := createdAt.Add(-30 * time.Second).UnixMilli()
+	txs := []domain.ReceivedTransaction{
+		{Digest: "old-tx-1", TimestampMs: oldTimestampMs, AmountIOTA: 9999999},
+	}
+	mockClient.On("QueryTransactionBlocks", mock.Anything, intent.PaymentAddress, 50).Return(txs, nil)
+
+	w := &IOTAPaymentWorker{
+		repo:   mockRepo,
+		client: mockClient,
+		done:   make(chan bool),
+	}
+	ctx := context.Background()
+
+	err := w.checkPaymentIntent(ctx, intent)
+	assert.NoError(t, err)
+
+	// CreateTransaction and UpdatePaymentIntentStatus must NOT be called.
+	mockRepo.AssertNotCalled(t, "CreateTransaction")
+	mockRepo.AssertNotCalled(t, "UpdatePaymentIntentStatus")
+	mockRepo.AssertExpectations(t)
+	mockClient.AssertExpectations(t)
+}
+
 func TestIOTAPaymentWorker_ProcessPayments(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -227,6 +289,7 @@ func TestIOTAPaymentWorker_ProcessPayments(t *testing.T) {
 		{
 			name: "process multiple intents",
 			setupMocks: func(repo *MockIOTAPaymentRepository, client *MockIOTAPaymentClient) {
+				createdAt := time.Now().Add(-5 * time.Minute)
 				intents := []*domain.IOTAPaymentIntent{
 					{
 						ID:             uuid.New().String(),
@@ -235,6 +298,7 @@ func TestIOTAPaymentWorker_ProcessPayments(t *testing.T) {
 						PaymentAddress: "iota1qpayment111",
 						Status:         domain.PaymentIntentStatusPending,
 						ExpiresAt:      time.Now().Add(1 * time.Hour),
+						CreatedAt:      createdAt,
 					},
 					{
 						ID:             uuid.New().String(),
@@ -243,18 +307,23 @@ func TestIOTAPaymentWorker_ProcessPayments(t *testing.T) {
 						PaymentAddress: "iota1qpayment222",
 						Status:         domain.PaymentIntentStatusPending,
 						ExpiresAt:      time.Now().Add(1 * time.Hour),
+						CreatedAt:      createdAt,
 					},
 				}
 
 				repo.On("GetActivePaymentIntents", mock.Anything).Return(intents, nil)
 
-				client.On("GetBalance", mock.Anything, "iota1qpayment111").Return(int64(1000000), nil)
+				txs1 := []domain.ReceivedTransaction{
+					{Digest: "proc-tx-1", TimestampMs: time.Now().UnixMilli(), AmountIOTA: 1000000},
+				}
+				client.On("QueryTransactionBlocks", mock.Anything, "iota1qpayment111", 50).Return(txs1, nil)
 				repo.On("GetWalletByUserID", mock.Anything, mock.Anything).Return(&domain.IOTAWallet{ID: "wallet-1"}, nil).Once()
 				repo.On("CreateTransaction", mock.Anything, mock.Anything).Return(nil).Once()
 				repo.On("UpdatePaymentIntentStatus", mock.Anything, intents[0].ID,
 					domain.PaymentIntentStatusPaid, mock.Anything).Return(nil)
 
-				client.On("GetBalance", mock.Anything, "iota1qpayment222").Return(int64(0), nil)
+				client.On("QueryTransactionBlocks", mock.Anything, "iota1qpayment222", 50).
+					Return([]domain.ReceivedTransaction{}, nil)
 
 				repo.On("GetExpiredPaymentIntents", mock.Anything).Return([]*domain.IOTAPaymentIntent{}, nil)
 			},
@@ -391,8 +460,8 @@ func TestIOTAPaymentWorker_ErrorHandling(t *testing.T) {
 
 				repo.On("GetActivePaymentIntents", mock.Anything).Return([]*domain.IOTAPaymentIntent{intent}, nil)
 
-				client.On("GetBalance", mock.Anything, intent.PaymentAddress).
-					Return(int64(0), errors.New("network timeout")).Once()
+				client.On("QueryTransactionBlocks", mock.Anything, intent.PaymentAddress, 50).
+					Return(nil, errors.New("network timeout")).Once()
 
 				repo.On("GetExpiredPaymentIntents", mock.Anything).Return([]*domain.IOTAPaymentIntent{}, nil)
 			},

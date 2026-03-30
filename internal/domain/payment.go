@@ -74,6 +74,14 @@ type IOTATransaction struct {
 	CreatedAt         time.Time         `json:"created_at" db:"created_at"`
 }
 
+// ReceivedTransaction represents an on-chain transaction received at a specific address.
+// It is used for transaction-based payment detection.
+type ReceivedTransaction struct {
+	Digest      string
+	TimestampMs int64
+	AmountIOTA  int64
+}
+
 var (
 	ErrWalletNotFound        = NewDomainError("WALLET_NOT_FOUND", "Wallet not found")
 	ErrWalletAlreadyExists   = NewDomainError("WALLET_ALREADY_EXISTS", "Wallet already exists for this user")

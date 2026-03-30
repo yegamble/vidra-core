@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -98,6 +99,36 @@ func handleRPC(req rpcRequest) rpcResponse {
 					"status": "success",
 				},
 			},
+		}
+
+	case "iotax_queryTransactionBlocks":
+		// Extract ToAddress from the request filter so balance change owner matches
+		addr := "0x1234"
+		if len(req.Params) > 0 {
+			if p, ok := req.Params[0].(map[string]interface{}); ok {
+				if f, ok := p["filter"].(map[string]interface{}); ok {
+					if a, ok := f["ToAddress"].(string); ok {
+						addr = a
+					}
+				}
+			}
+		}
+		resp.Result = map[string]interface{}{
+			"data": []map[string]interface{}{
+				{
+					"digest":      "MOCK_TX_DIGEST_001",
+					"timestampMs": fmt.Sprintf("%d", time.Now().UnixMilli()),
+					"balanceChanges": []map[string]interface{}{
+						{
+							"owner":    map[string]string{"AddressOwner": addr},
+							"coinType": "0x2::iota::IOTA",
+							"amount":   "1000000000",
+						},
+					},
+				},
+			},
+			"nextCursor":  nil,
+			"hasNextPage": false,
 		}
 
 	default:

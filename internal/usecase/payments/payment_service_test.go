@@ -138,6 +138,14 @@ func (m *MockIOTAClient) GetNodeStatus(ctx context.Context) error {
 	return args.Error(0)
 }
 
+func (m *MockIOTAClient) QueryTransactionBlocks(ctx context.Context, toAddress string, limit int) ([]domain.ReceivedTransaction, error) {
+	args := m.Called(ctx, toAddress, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]domain.ReceivedTransaction), args.Error(1)
+}
+
 func TestPaymentService_CreateWallet(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -440,6 +448,7 @@ func TestPaymentService_DetectPayment(t *testing.T) {
 		{
 			name: "detect exact payment",
 			setupMocks: func(repo *MockIOTARepository, client *MockIOTAClient) {
+				createdAt := time.Now().Add(-5 * time.Minute)
 				intent := &domain.IOTAPaymentIntent{
 					ID:             uuid.New().String(),
 					UserID:         uuid.New().String(),
@@ -447,16 +456,19 @@ func TestPaymentService_DetectPayment(t *testing.T) {
 					PaymentAddress: "iota1qpayment111",
 					Status:         domain.PaymentIntentStatusPending,
 					ExpiresAt:      time.Now().Add(1 * time.Hour),
+					CreatedAt:      createdAt,
 				}
 				wallet := &domain.IOTAWallet{
 					ID:      uuid.New().String(),
 					UserID:  intent.UserID,
 					Address: "iota1qwallet",
 				}
+				txs := []domain.ReceivedTransaction{
+					{Digest: "real-tx-digest-1", TimestampMs: time.Now().UnixMilli(), AmountIOTA: 1000000},
+				}
 				repo.On("GetPaymentIntentByID", mock.Anything, mock.Anything).Return(intent, nil)
+				client.On("QueryTransactionBlocks", mock.Anything, intent.PaymentAddress, 50).Return(txs, nil)
 				repo.On("GetWalletByUserID", mock.Anything, intent.UserID).Return(wallet, nil)
-				client.On("GetBalance", mock.Anything, intent.PaymentAddress).Return(int64(1000000), nil)
-				repo.On("UpdateWalletBalance", mock.Anything, wallet.ID, int64(1000000)).Return(nil)
 				repo.On("CreateTransaction", mock.Anything, mock.Anything).Return(nil)
 				repo.On("UpdatePaymentIntentStatus", mock.Anything, mock.Anything,
 					domain.PaymentIntentStatusPaid, mock.Anything).Return(nil)
@@ -466,6 +478,7 @@ func TestPaymentService_DetectPayment(t *testing.T) {
 		{
 			name: "overpayment accepted",
 			setupMocks: func(repo *MockIOTARepository, client *MockIOTAClient) {
+				createdAt := time.Now().Add(-5 * time.Minute)
 				intent := &domain.IOTAPaymentIntent{
 					ID:             uuid.New().String(),
 					UserID:         uuid.New().String(),
@@ -473,16 +486,19 @@ func TestPaymentService_DetectPayment(t *testing.T) {
 					PaymentAddress: "iota1qpayment222",
 					Status:         domain.PaymentIntentStatusPending,
 					ExpiresAt:      time.Now().Add(1 * time.Hour),
+					CreatedAt:      createdAt,
 				}
 				wallet := &domain.IOTAWallet{
 					ID:      uuid.New().String(),
 					UserID:  intent.UserID,
 					Address: "iota1qwallet",
 				}
+				txs := []domain.ReceivedTransaction{
+					{Digest: "real-tx-digest-2", TimestampMs: time.Now().UnixMilli(), AmountIOTA: 1500000},
+				}
 				repo.On("GetPaymentIntentByID", mock.Anything, mock.Anything).Return(intent, nil)
+				client.On("QueryTransactionBlocks", mock.Anything, intent.PaymentAddress, 50).Return(txs, nil)
 				repo.On("GetWalletByUserID", mock.Anything, intent.UserID).Return(wallet, nil)
-				client.On("GetBalance", mock.Anything, intent.PaymentAddress).Return(int64(1500000), nil)
-				repo.On("UpdateWalletBalance", mock.Anything, wallet.ID, int64(1500000)).Return(nil)
 				repo.On("CreateTransaction", mock.Anything, mock.Anything).Return(nil)
 				repo.On("UpdatePaymentIntentStatus", mock.Anything, mock.Anything,
 					domain.PaymentIntentStatusPaid, mock.Anything).Return(nil)
@@ -492,6 +508,7 @@ func TestPaymentService_DetectPayment(t *testing.T) {
 		{
 			name: "partial payment - not enough",
 			setupMocks: func(repo *MockIOTARepository, client *MockIOTAClient) {
+				createdAt := time.Now().Add(-5 * time.Minute)
 				intent := &domain.IOTAPaymentIntent{
 					ID:             uuid.New().String(),
 					UserID:         uuid.New().String(),
@@ -499,10 +516,13 @@ func TestPaymentService_DetectPayment(t *testing.T) {
 					PaymentAddress: "iota1qpayment333",
 					Status:         domain.PaymentIntentStatusPending,
 					ExpiresAt:      time.Now().Add(1 * time.Hour),
+					CreatedAt:      createdAt,
+				}
+				txs := []domain.ReceivedTransaction{
+					{Digest: "real-tx-digest-3", TimestampMs: time.Now().UnixMilli(), AmountIOTA: 500000},
 				}
 				repo.On("GetPaymentIntentByID", mock.Anything, mock.Anything).Return(intent, nil)
-				repo.On("GetWalletByUserID", mock.Anything, intent.UserID).Return(nil, domain.ErrWalletNotFound)
-				client.On("GetBalance", mock.Anything, intent.PaymentAddress).Return(int64(500000), nil)
+				client.On("QueryTransactionBlocks", mock.Anything, intent.PaymentAddress, 50).Return(txs, nil)
 			},
 			wantErr: false,
 		},

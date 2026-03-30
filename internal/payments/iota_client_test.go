@@ -52,6 +52,14 @@ func (m *MockIOTANodeClient) SubmitTransaction(ctx context.Context, tx *SignedTr
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockIOTANodeClient) QueryTransactionBlocks(ctx context.Context, toAddress string, limit int) ([]domain.ReceivedTransaction, error) {
+	args := m.Called(ctx, toAddress, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]domain.ReceivedTransaction), args.Error(1)
+}
+
 func TestIOTAClient_GenerateKeypair(t *testing.T) {
 	client := NewIOTAClient("https://api.testnet.iota.org")
 
@@ -1098,6 +1106,184 @@ func TestIOTAClient_JSONRPC_BuildSignSubmit_FullFlow(t *testing.T) {
 
 	// Verify RPC call order
 	assert.Equal(t, []string{"iotax_getCoins", "unsafe_payIota", "iota_executeTransactionBlock"}, callLog)
+}
+
+func TestIOTAClient_QueryTransactionBlocks_Success(t *testing.T) {
+	mockNodeClient := new(MockIOTANodeClient)
+	client := NewIOTAClientWithMock(mockNodeClient)
+	ctx := context.Background()
+
+	addr := "0x" + repeatString("a", 64)
+	expected := []domain.ReceivedTransaction{
+		{Digest: "tx-digest-1", TimestampMs: 1700000000000, AmountIOTA: 1000000},
+	}
+	mockNodeClient.On("QueryTransactionBlocks", ctx, addr, 50).Return(expected, nil)
+
+	result, err := client.QueryTransactionBlocks(ctx, addr, 50)
+
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	assert.Equal(t, "tx-digest-1", result[0].Digest)
+	assert.Equal(t, int64(1700000000000), result[0].TimestampMs)
+	assert.Equal(t, int64(1000000), result[0].AmountIOTA)
+	mockNodeClient.AssertExpectations(t)
+}
+
+func TestIOTAClient_QueryTransactionBlocks_Empty(t *testing.T) {
+	mockNodeClient := new(MockIOTANodeClient)
+	client := NewIOTAClientWithMock(mockNodeClient)
+	ctx := context.Background()
+
+	addr := "0x" + repeatString("b", 64)
+	mockNodeClient.On("QueryTransactionBlocks", ctx, addr, 50).Return([]domain.ReceivedTransaction{}, nil)
+
+	result, err := client.QueryTransactionBlocks(ctx, addr, 50)
+
+	require.NoError(t, err)
+	assert.Empty(t, result)
+	mockNodeClient.AssertExpectations(t)
+}
+
+func TestIOTAClient_QueryTransactionBlocks_Error(t *testing.T) {
+	mockNodeClient := new(MockIOTANodeClient)
+	client := NewIOTAClientWithMock(mockNodeClient)
+	ctx := context.Background()
+
+	addr := "0x" + repeatString("c", 64)
+	mockNodeClient.On("QueryTransactionBlocks", ctx, addr, 50).
+		Return(nil, errors.New("network timeout"))
+
+	result, err := client.QueryTransactionBlocks(ctx, addr, 50)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "network timeout")
+	mockNodeClient.AssertExpectations(t)
+}
+
+func TestIOTAClient_JSONRPC_QueryTransactionBlocks_CallsServer(t *testing.T) {
+	addr := "0x" + repeatString("a", 64)
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		var req map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		assert.Equal(t, "iotax_queryTransactionBlocks", req["method"])
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]interface{}{
+				"data": []map[string]interface{}{
+					{
+						"digest":      "REAL_TX_DIGEST_001",
+						"timestampMs": "1700000000000",
+						"balanceChanges": []map[string]interface{}{
+							{
+								"owner":    map[string]string{"AddressOwner": addr},
+								"coinType": "0x2::iota::IOTA",
+								"amount":   "2000000",
+							},
+						},
+					},
+				},
+				"nextCursor":  nil,
+				"hasNextPage": false,
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewIOTAClient(server.URL)
+	result, err := client.QueryTransactionBlocks(context.Background(), addr, 50)
+
+	require.NoError(t, err)
+	assert.True(t, called, "Expected HTTP call to server")
+	require.Len(t, result, 1)
+	assert.Equal(t, "REAL_TX_DIGEST_001", result[0].Digest)
+	assert.Equal(t, int64(1700000000000), result[0].TimestampMs)
+	assert.Equal(t, int64(2000000), result[0].AmountIOTA)
+}
+
+func TestIOTAClient_JSONRPC_QueryTransactionBlocks_FiltersNonIOTA(t *testing.T) {
+	addr := "0x" + repeatString("a", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]interface{}{
+				"data": []map[string]interface{}{
+					{
+						"digest":      "TX_WITH_MIXED_COINS",
+						"timestampMs": "1700000000000",
+						"balanceChanges": []map[string]interface{}{
+							// non-IOTA coin — should be ignored
+							{
+								"owner":    map[string]string{"AddressOwner": addr},
+								"coinType": "0x2::some::OTHER_TOKEN",
+								"amount":   "999999",
+							},
+							// IOTA coin for the address — should be included
+							{
+								"owner":    map[string]string{"AddressOwner": addr},
+								"coinType": "0x2::iota::IOTA",
+								"amount":   "500000",
+							},
+						},
+					},
+				},
+				"nextCursor":  nil,
+				"hasNextPage": false,
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewIOTAClient(server.URL)
+	result, err := client.QueryTransactionBlocks(context.Background(), addr, 50)
+
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	assert.Equal(t, int64(500000), result[0].AmountIOTA, "Only IOTA coin amounts should be counted")
+}
+
+func TestIOTAClient_JSONRPC_QueryTransactionBlocks_NegativeAmountIgnored(t *testing.T) {
+	addr := "0x" + repeatString("a", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]interface{}{
+				"data": []map[string]interface{}{
+					{
+						"digest":      "TX_OUTGOING",
+						"timestampMs": "1700000000000",
+						"balanceChanges": []map[string]interface{}{
+							// Negative amount = outgoing — should be skipped
+							{
+								"owner":    map[string]string{"AddressOwner": addr},
+								"coinType": "0x2::iota::IOTA",
+								"amount":   "-1000000",
+							},
+						},
+					},
+				},
+				"nextCursor":  nil,
+				"hasNextPage": false,
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewIOTAClient(server.URL)
+	result, err := client.QueryTransactionBlocks(context.Background(), addr, 50)
+
+	require.NoError(t, err)
+	// Transaction with only negative amounts should not appear
+	assert.Empty(t, result)
 }
 
 func TestIOTAClient_JSONRPC_NoRetryOnRPCError(t *testing.T) {
