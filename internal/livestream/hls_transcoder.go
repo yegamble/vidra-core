@@ -74,24 +74,29 @@ func GetQualityVariants() []QualityVariant {
 	}
 }
 
+// parseEnabledVariantNames converts a comma-separated HLSVariants config string
+// into a set of variant name strings for fast lookup.
+func parseEnabledVariantNames(hlsVariants string) map[string]bool {
+	enabled := make(map[string]bool)
+	for _, v := range strings.Split(hlsVariants, ",") {
+		enabled[strings.TrimSpace(v)] = true
+	}
+	return enabled
+}
+
 func FilterVariantsByConfig(cfg *config.Config) []QualityVariant {
 	allVariants := GetQualityVariants()
 	if cfg.HLSVariants == "" || cfg.HLSVariants == "all" {
 		return allVariants
 	}
 
-	enabled := make(map[string]bool)
-	for _, v := range strings.Split(cfg.HLSVariants, ",") {
-		enabled[strings.TrimSpace(v)] = true
-	}
-
-	filtered := []QualityVariant{}
+	enabled := parseEnabledVariantNames(cfg.HLSVariants)
+	filtered := make([]QualityVariant, 0, len(enabled))
 	for _, v := range allVariants {
 		if enabled[v.Name] {
 			filtered = append(filtered, v)
 		}
 	}
-
 	return filtered
 }
 
