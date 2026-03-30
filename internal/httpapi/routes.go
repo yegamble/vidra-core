@@ -190,130 +190,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		// Avatar proxy — unauthenticated, avatars are content-addressed and public
 		r.Get("/avatars/{cid}", authHandlers.ServeAvatarFromIPFS)
 
-		r.Route("/videos", func(r chi.Router) {
-			log.Printf("Registering video routes...")
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", video.ListVideosHandler(deps.VideoRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", video.SearchVideosHandler(deps.VideoRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", video.GetSupportedQualities)
-			r.Get("/licences", video.GetVideoLicences)
-			r.Get("/languages", video.GetVideoLanguages)
-			r.Get("/privacies", video.GetVideoPrivacies)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/top", viewsHandler.GetTopVideos)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", video.UploadVideoFileHandler(deps.VideoRepo, cfg))
+		registerVideoAPIRoutes(r, deps, cfg, viewsHandler, strictImportLimiter)
 
-			// PeerTube-compatible resumable upload alias
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload-resumable", video.InitiateUploadHandler(deps.UploadService, deps.VideoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/upload-resumable", compat.PeerTubeNotImplemented("Resumable upload chunk via PUT"))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/upload-resumable", compat.PeerTubeNotImplemented("Resumable upload cancel"))
-
-			// PeerTube-compatible category alias: GET /videos/categories → /categories
-			if deps.VideoCategoryUseCase != nil {
-				catHandler := video.NewVideoCategoryHandler(deps.VideoCategoryUseCase)
-				r.Get("/categories", catHandler.ListCategories)
-			}
-
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", video.GetVideoHandler(deps.VideoRepo, deps.CaptionService))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", video.StreamVideoHandler(deps.VideoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/source", video.GetVideoSourceHandler(deps.VideoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", channel.ListSubscriptionVideosHandler(deps.SubRepo))
-
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", video.CreateVideoHandler(deps.VideoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", video.UpdateVideoHandler(deps.VideoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", video.DeleteVideoHandler(deps.VideoRepo))
-			if deps.OwnershipRepo != nil {
-				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/give-ownership", video.GiveOwnershipHandler(deps.OwnershipRepo, deps.VideoRepo))
-			}
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/source", video.DeleteVideoSourceHandler(deps.VideoRepo))
-			if deps.Redis != nil {
-				tokenStore := repository.NewRedisVideoTokenStore(deps.Redis)
-				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/token", video.CreateVideoTokenHandler(deps.VideoRepo, tokenStore))
-			}
-
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", video.VideoUploadChunkHandler(deps.UploadService, cfg))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", video.VideoCompleteUploadHandler(deps.UploadService))
-
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/{id}/views", viewsHandler.TrackView)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/analytics", viewsHandler.GetVideoAnalytics)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/daily", viewsHandler.GetDailyStats)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/overall", video.GetVideoStatsOverallHandler())
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/retention", video.GetVideoStatsRetentionHandler())
-
-			commentHandlers := social.NewCommentHandlers(deps.CommentService)
-			r.Route("/{videoId}/comments", func(r chi.Router) {
-				r.Get("/", commentHandlers.GetComments)
-				r.With(middleware.Auth(cfg.JWTSecret)).Post("/", commentHandlers.CreateComment)
-			})
-
-			ratingHandlers := social.NewRatingHandlers(deps.RatingService)
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}/rating", ratingHandlers.SetRating)
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/rating", ratingHandlers.GetRating)
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/rating", ratingHandlers.RemoveRating)
-
-			playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/watch-later", playlistHandlers.AddToWatchLater)
-
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/encoding-jobs", video.GetEncodingJobsByVideoHandler(deps.EncodingRepo, deps.VideoRepo))
-
-			captionHandlers := social.NewCaptionHandlers(deps.CaptionService, deps.VideoRepo)
-			r.Route("/{id}/captions", func(r chi.Router) {
-				r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", captionHandlers.GetCaptions)
-				r.With(middleware.Auth(cfg.JWTSecret)).Post("/", captionHandlers.CreateCaption)
-				r.Route("/{captionId}", func(r chi.Router) {
-					r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/content", captionHandlers.GetCaptionContent)
-					r.With(middleware.Auth(cfg.JWTSecret)).Put("/", captionHandlers.UpdateCaption)
-					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/", captionHandlers.DeleteCaption)
-				})
-
-				if deps.CaptionGenService != nil {
-					captionGenHandlers := social.NewCaptionGenerationHandlers(deps.CaptionGenService, deps.VideoRepo)
-					r.With(middleware.Auth(cfg.JWTSecret)).Post("/generate", captionGenHandlers.GenerateCaptions)
-					r.With(middleware.Auth(cfg.JWTSecret)).Get("/jobs", captionGenHandlers.ListCaptionGenerationJobs)
-				}
-			})
-		})
-
-		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls/*", video.HLSHandler(deps.VideoRepo))
-
-		if deps.ImportService != nil {
-			log.Printf("Registering video import routes...")
-			importService, ok := deps.ImportService.(importuc.Service)
-			if ok {
-				importHandlers := video.NewImportHandlers(importService)
-				r.Route("/videos/imports", func(r chi.Router) {
-					r.Use(middleware.Auth(cfg.JWTSecret))
-					r.With(strictImportLimiter.Limit).Post("/", importHandlers.CreateImport)
-					r.Get("/", importHandlers.ListImports)
-					r.Get("/{id}", importHandlers.GetImport)
-					r.Post("/{id}/cancel", importHandlers.CancelImportCanonical)
-					r.Post("/{id}/retry", importHandlers.RetryImport)
-					r.Delete("/{id}", importHandlers.CancelImport)
-				})
-				// PeerTube alias: /users/me/videos/imports → same handler
-				r.With(middleware.Auth(cfg.JWTSecret)).Get("/users/me/videos/imports", importHandlers.ListImports)
-			}
-		}
-
-		r.Route("/uploads", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Post("/initiate", video.InitiateUploadHandler(deps.UploadService, deps.VideoRepo))
-			r.Route("/{sessionId}", func(r chi.Router) {
-				r.Post("/chunks", video.UploadChunkHandler(deps.UploadService, cfg))
-				r.Post("/complete", video.CompleteUploadHandler(deps.UploadService, deps.EncodingRepo))
-				r.Get("/status", video.GetUploadStatusHandler(deps.UploadService))
-				r.Get("/resume", video.ResumeUploadHandler(deps.UploadService))
-			})
-		})
-
-		r.Route("/encoding", func(r chi.Router) {
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", video.EncodingStatusHandlerEnhanced(deps.EncodingRepo, cfg, deps.EncodingScheduler))
-
-			r.Route("/jobs", func(r chi.Router) {
-				r.Use(middleware.Auth(cfg.JWTSecret))
-				r.Get("/{jobID}", video.GetEncodingJobHandler(deps.EncodingRepo, deps.VideoRepo))
-			})
-
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/my-jobs", video.GetMyEncodingJobsHandler(deps.EncodingRepo, deps.VideoRepo))
-		})
 
 		jobHandlers := admin.NewJobHandlers(deps.EncodingRepo, deps.EncodingScheduler)
 		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/jobs/pause", jobHandlers.PauseJobs)
@@ -321,81 +199,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/jobs", jobHandlers.ListJobs)
 		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/jobs/{state}", jobHandlers.ListJobs)
 
-		r.Route("/users", func(r chi.Router) {
-			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole("admin")).Post("/", auth.CreateUserHandler(deps.UserRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", auth.GetCurrentUserHandler(deps.UserRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", auth.UpdateCurrentUserHandler(deps.UserRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me", auth.DeleteAccountHandler(deps.UserRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", authHandlers.UploadAvatar)
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me/avatar", authHandlers.DeleteAvatar)
-			if deps.RegistrationRepo != nil {
-				regHandlers := admin.NewRegistrationHandlers(deps.RegistrationRepo, deps.UserRepo)
-				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/registrations", regHandlers.ListRegistrations)
-				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/accept", regHandlers.AcceptRegistration)
-				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/reject", regHandlers.RejectRegistration)
-				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Delete("/registrations/{registrationId}", regHandlers.DeleteRegistration)
-			} else {
-				registrationsNotImplemented := compat.PeerTubeNotImplemented("PeerTube user registrations moderation")
-				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/registrations", registrationsNotImplemented)
-				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/accept", registrationsNotImplemented)
-				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/reject", registrationsNotImplemented)
-				r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Delete("/registrations/{registrationId}", registrationsNotImplemented)
-			}
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", auth.GetPublicUserHandler(deps.UserRepo))
-			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", video.GetUserVideosHandler(deps.VideoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", channel.SubscribeToUserHandler(deps.SubRepo, deps.UserRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/subscribe", channel.UnsubscribeFromUserHandler(deps.SubRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions", channel.ListMySubscriptionsHandler(deps.SubRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions/exist", channel.CheckSubscriptionsExistHandler(deps.SubRepo, deps.ChannelService))
-			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/subscriptions", channel.SubscribeByHandleHandler(deps.SubRepo, deps.ChannelService))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions/{subscriptionHandle}", channel.GetSubscriptionByHandleHandler(deps.SubRepo, deps.ChannelService))
-			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me/subscriptions/{subscriptionHandle}", channel.UnsubscribeByHandleHandler(deps.SubRepo, deps.ChannelService))
+		registerUserAPIRoutes(r, deps, cfg, authHandlers)
 
-			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/channels", channelHandlers.GetMyChannels)
-
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/videos", video.GetMyVideosHandler(deps.VideoRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/comments", video.GetMyCommentsHandler())
-			if deps.OwnershipRepo != nil {
-				r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/videos/ownership", video.ListOwnershipChangesHandler(deps.OwnershipRepo))
-				r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/videos/ownership/{id}/accept", video.AcceptOwnershipHandler(deps.OwnershipRepo, deps.VideoRepo))
-				r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/videos/ownership/{id}/refuse", video.RefuseOwnershipHandler(deps.OwnershipRepo))
-			}
-
-			ratingHandlers := social.NewRatingHandlers(deps.RatingService)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/ratings", ratingHandlers.GetUserRatings)
-
-			playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/watch-later", playlistHandlers.GetWatchLater)
-
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/notification-preferences", auth.GetNotificationPreferencesHandler(deps.NotificationPrefRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Put("/me/notification-preferences", auth.UpdateNotificationPreferencesHandler(deps.NotificationPrefRepo))
-			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/video-quota-used", auth.GetVideoQuotaUsedHandler(deps.VideoRepo))
-
-			if deps.TokenSessionRepo != nil {
-				tokenSessionHandlers := auth.NewTokenSessionHandlers(deps.TokenSessionRepo)
-				r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/token-sessions", tokenSessionHandlers.ListTokenSessions)
-				r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/token-sessions/{tokenSessionId}/revoke", tokenSessionHandlers.RevokeTokenSession)
-			}
-
-			// User data import/export (archive) routes
-			if archiveRepo, ok := deps.ArchiveRepo.(userhandlers.ArchiveRepository); ok {
-				archiveHandlers := userhandlers.NewArchiveHandlers(archiveRepo)
-				r.Route("/{userId}/exports", func(r chi.Router) {
-					r.Use(middleware.Auth(cfg.JWTSecret))
-					r.Post("/request", archiveHandlers.RequestExport)
-					r.Get("/", archiveHandlers.ListExports)
-					r.Delete("/{id}", archiveHandlers.DeleteExport)
-				})
-				r.Route("/{userId}/imports", func(r chi.Router) {
-					r.Use(middleware.Auth(cfg.JWTSecret))
-					r.Post("/import-resumable", archiveHandlers.InitImportResumable)
-					r.Put("/import-resumable", archiveHandlers.UploadImportChunk)
-					r.Delete("/import-resumable", archiveHandlers.CancelImportResumable)
-					r.Get("/latest", archiveHandlers.GetLatestImport)
-				})
-			}
-		})
 
 		// PeerTube-compatible /video-channels/{channelHandle} routes
 		r.Route("/video-channels", func(r chi.Router) {
@@ -541,34 +346,8 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			}
 		})
 
-		r.Route("/messages", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Post("/", messaging.SendMessageHandler(deps.MessageService))
-			r.Get("/", messaging.GetMessagesHandler(deps.MessageService))
-			r.Put("/{messageId}/read", messaging.MarkMessageReadHandler(deps.MessageService))
-			r.Delete("/{messageId}", messaging.DeleteMessageHandler(deps.MessageService))
-		})
+		registerCommunicationsAPIRoutes(r, deps, cfg)
 
-		r.Route("/conversations", func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTSecret))
-			r.Get("/", messaging.GetConversationsHandler(deps.MessageService))
-			r.Get("/unread-count", messaging.GetUnreadCountHandler(deps.MessageService))
-		})
-
-		if deps.E2EEService != nil {
-			e2eeHandler := messaging.NewSecureMessagesHandler(deps.E2EEService, govalidator.New())
-			r.Route("/e2ee", func(r chi.Router) {
-				r.Use(middleware.Auth(cfg.JWTSecret))
-				r.Post("/keys", e2eeHandler.RegisterIdentityKey)
-				r.Get("/keys/{userId}", e2eeHandler.GetPublicKeys)
-				r.Get("/status", e2eeHandler.GetE2EEStatus)
-				r.Post("/key-exchange", e2eeHandler.InitiateKeyExchange)
-				r.Post("/key-exchange/accept", e2eeHandler.AcceptKeyExchange)
-				r.Get("/key-exchange/pending", e2eeHandler.GetPendingKeyExchanges)
-				r.Post("/messages", e2eeHandler.StoreEncryptedMessage)
-				r.Get("/messages/{conversationId}", e2eeHandler.GetEncryptedMessages)
-			})
-		}
 
 		r.Get("/trending", viewsHandler.GetTrendingVideos)
 
@@ -764,6 +543,265 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 	}
 }
 
+
+// registerVideoAPIRoutes registers /videos, /hls, /uploads, /encoding, and
+// import routes. Extracted to reduce cyclomatic complexity of
+// RegisterRoutesWithDependencies.
+func registerVideoAPIRoutes(
+	r chi.Router,
+	deps *shared.HandlerDependencies,
+	cfg *config.Config,
+	viewsHandler *video.ViewsHandler,
+	strictImportLimiter *middleware.RateLimiter,
+) {
+	r.Route("/videos", func(r chi.Router) {
+		log.Printf("Registering video routes...")
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", video.ListVideosHandler(deps.VideoRepo))
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", video.SearchVideosHandler(deps.VideoRepo))
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", video.GetSupportedQualities)
+		r.Get("/licences", video.GetVideoLicences)
+		r.Get("/languages", video.GetVideoLanguages)
+		r.Get("/privacies", video.GetVideoPrivacies)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/top", viewsHandler.GetTopVideos)
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", video.UploadVideoFileHandler(deps.VideoRepo, cfg))
+
+		// PeerTube-compatible resumable upload alias
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload-resumable", video.InitiateUploadHandler(deps.UploadService, deps.VideoRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/upload-resumable", compat.PeerTubeNotImplemented("Resumable upload chunk via PUT"))
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/upload-resumable", compat.PeerTubeNotImplemented("Resumable upload cancel"))
+
+		// PeerTube-compatible category alias: GET /videos/categories → /categories
+		if deps.VideoCategoryUseCase != nil {
+			catHandler := video.NewVideoCategoryHandler(deps.VideoCategoryUseCase)
+			r.Get("/categories", catHandler.ListCategories)
+		}
+
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", video.GetVideoHandler(deps.VideoRepo, deps.CaptionService))
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/stream", video.StreamVideoHandler(deps.VideoRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/source", video.GetVideoSourceHandler(deps.VideoRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", channel.ListSubscriptionVideosHandler(deps.SubRepo))
+
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/", video.CreateVideoHandler(deps.VideoRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", video.UpdateVideoHandler(deps.VideoRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", video.DeleteVideoHandler(deps.VideoRepo))
+		if deps.OwnershipRepo != nil {
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/give-ownership", video.GiveOwnershipHandler(deps.OwnershipRepo, deps.VideoRepo))
+		}
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/source", video.DeleteVideoSourceHandler(deps.VideoRepo))
+		if deps.Redis != nil {
+			tokenStore := repository.NewRedisVideoTokenStore(deps.Redis)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/token", video.CreateVideoTokenHandler(deps.VideoRepo, tokenStore))
+		}
+
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/upload", video.VideoUploadChunkHandler(deps.UploadService, cfg))
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/complete", video.VideoCompleteUploadHandler(deps.UploadService))
+
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Post("/{id}/views", viewsHandler.TrackView)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/analytics", viewsHandler.GetVideoAnalytics)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/daily", viewsHandler.GetDailyStats)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/overall", video.GetVideoStatsOverallHandler())
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/retention", video.GetVideoStatsRetentionHandler())
+
+		commentHandlers := social.NewCommentHandlers(deps.CommentService)
+		r.Route("/{videoId}/comments", func(r chi.Router) {
+			r.Get("/", commentHandlers.GetComments)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", commentHandlers.CreateComment)
+		})
+
+		ratingHandlers := social.NewRatingHandlers(deps.RatingService)
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}/rating", ratingHandlers.SetRating)
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/rating", ratingHandlers.GetRating)
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/rating", ratingHandlers.RemoveRating)
+
+		playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/watch-later", playlistHandlers.AddToWatchLater)
+
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/encoding-jobs", video.GetEncodingJobsByVideoHandler(deps.EncodingRepo, deps.VideoRepo))
+
+		captionHandlers := social.NewCaptionHandlers(deps.CaptionService, deps.VideoRepo)
+		r.Route("/{id}/captions", func(r chi.Router) {
+			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", captionHandlers.GetCaptions)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", captionHandlers.CreateCaption)
+			r.Route("/{captionId}", func(r chi.Router) {
+				r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/content", captionHandlers.GetCaptionContent)
+				r.With(middleware.Auth(cfg.JWTSecret)).Put("/", captionHandlers.UpdateCaption)
+				r.With(middleware.Auth(cfg.JWTSecret)).Delete("/", captionHandlers.DeleteCaption)
+			})
+
+			if deps.CaptionGenService != nil {
+				captionGenHandlers := social.NewCaptionGenerationHandlers(deps.CaptionGenService, deps.VideoRepo)
+				r.With(middleware.Auth(cfg.JWTSecret)).Post("/generate", captionGenHandlers.GenerateCaptions)
+				r.With(middleware.Auth(cfg.JWTSecret)).Get("/jobs", captionGenHandlers.ListCaptionGenerationJobs)
+			}
+		})
+	})
+
+	r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls/*", video.HLSHandler(deps.VideoRepo))
+
+	if deps.ImportService != nil {
+		log.Printf("Registering video import routes...")
+		importService, ok := deps.ImportService.(importuc.Service)
+		if ok {
+			importHandlers := video.NewImportHandlers(importService)
+			r.Route("/videos/imports", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.With(strictImportLimiter.Limit).Post("/", importHandlers.CreateImport)
+				r.Get("/", importHandlers.ListImports)
+				r.Get("/{id}", importHandlers.GetImport)
+				r.Post("/{id}/cancel", importHandlers.CancelImportCanonical)
+				r.Post("/{id}/retry", importHandlers.RetryImport)
+				r.Delete("/{id}", importHandlers.CancelImport)
+			})
+			// PeerTube alias: /users/me/videos/imports → same handler
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/users/me/videos/imports", importHandlers.ListImports)
+		}
+	}
+
+	r.Route("/uploads", func(r chi.Router) {
+		r.Use(middleware.Auth(cfg.JWTSecret))
+		r.Post("/initiate", video.InitiateUploadHandler(deps.UploadService, deps.VideoRepo))
+		r.Route("/{sessionId}", func(r chi.Router) {
+			r.Post("/chunks", video.UploadChunkHandler(deps.UploadService, cfg))
+			r.Post("/complete", video.CompleteUploadHandler(deps.UploadService, deps.EncodingRepo))
+			r.Get("/status", video.GetUploadStatusHandler(deps.UploadService))
+			r.Get("/resume", video.ResumeUploadHandler(deps.UploadService))
+		})
+	})
+
+	r.Route("/encoding", func(r chi.Router) {
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/status", video.EncodingStatusHandlerEnhanced(deps.EncodingRepo, cfg, deps.EncodingScheduler))
+
+		r.Route("/jobs", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Get("/{jobID}", video.GetEncodingJobHandler(deps.EncodingRepo, deps.VideoRepo))
+		})
+
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/my-jobs", video.GetMyEncodingJobsHandler(deps.EncodingRepo, deps.VideoRepo))
+	})
+}
+
+// registerUserAPIRoutes registers /users/* routes. Extracted to reduce
+// cyclomatic complexity of RegisterRoutesWithDependencies.
+func registerUserAPIRoutes(
+	r chi.Router,
+	deps *shared.HandlerDependencies,
+	cfg *config.Config,
+	authHandlers *auth.AuthHandlers,
+) {
+	r.Route("/users", func(r chi.Router) {
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole("admin")).Post("/", auth.CreateUserHandler(deps.UserRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", auth.GetCurrentUserHandler(deps.UserRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", auth.UpdateCurrentUserHandler(deps.UserRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me", auth.DeleteAccountHandler(deps.UserRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/avatar", authHandlers.UploadAvatar)
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me/avatar", authHandlers.DeleteAvatar)
+		if deps.RegistrationRepo != nil {
+			regHandlers := admin.NewRegistrationHandlers(deps.RegistrationRepo, deps.UserRepo)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/registrations", regHandlers.ListRegistrations)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/accept", regHandlers.AcceptRegistration)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/reject", regHandlers.RejectRegistration)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Delete("/registrations/{registrationId}", regHandlers.DeleteRegistration)
+		} else {
+			registrationsNotImplemented := compat.PeerTubeNotImplemented("PeerTube user registrations moderation")
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/registrations", registrationsNotImplemented)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/accept", registrationsNotImplemented)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/registrations/{registrationId}/reject", registrationsNotImplemented)
+			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Delete("/registrations/{registrationId}", registrationsNotImplemented)
+		}
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}", auth.GetPublicUserHandler(deps.UserRepo))
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{id}/videos", video.GetUserVideosHandler(deps.VideoRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/subscribe", channel.SubscribeToUserHandler(deps.SubRepo, deps.UserRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/subscribe", channel.UnsubscribeFromUserHandler(deps.SubRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions", channel.ListMySubscriptionsHandler(deps.SubRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions/exist", channel.CheckSubscriptionsExistHandler(deps.SubRepo, deps.ChannelService))
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/subscriptions", channel.SubscribeByHandleHandler(deps.SubRepo, deps.ChannelService))
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions/{subscriptionHandle}", channel.GetSubscriptionByHandleHandler(deps.SubRepo, deps.ChannelService))
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me/subscriptions/{subscriptionHandle}", channel.UnsubscribeByHandleHandler(deps.SubRepo, deps.ChannelService))
+
+		channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/channels", channelHandlers.GetMyChannels)
+
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/videos", video.GetMyVideosHandler(deps.VideoRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/comments", video.GetMyCommentsHandler())
+		if deps.OwnershipRepo != nil {
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/videos/ownership", video.ListOwnershipChangesHandler(deps.OwnershipRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/videos/ownership/{id}/accept", video.AcceptOwnershipHandler(deps.OwnershipRepo, deps.VideoRepo))
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/me/videos/ownership/{id}/refuse", video.RefuseOwnershipHandler(deps.OwnershipRepo))
+		}
+
+		ratingHandlers := social.NewRatingHandlers(deps.RatingService)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/ratings", ratingHandlers.GetUserRatings)
+
+		playlistHandlers := social.NewPlaylistHandlers(deps.PlaylistService)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/watch-later", playlistHandlers.GetWatchLater)
+
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/notification-preferences", auth.GetNotificationPreferencesHandler(deps.NotificationPrefRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/me/notification-preferences", auth.UpdateNotificationPreferencesHandler(deps.NotificationPrefRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/video-quota-used", auth.GetVideoQuotaUsedHandler(deps.VideoRepo))
+
+		if deps.TokenSessionRepo != nil {
+			tokenSessionHandlers := auth.NewTokenSessionHandlers(deps.TokenSessionRepo)
+			r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/token-sessions", tokenSessionHandlers.ListTokenSessions)
+			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/token-sessions/{tokenSessionId}/revoke", tokenSessionHandlers.RevokeTokenSession)
+		}
+
+		// User data import/export (archive) routes
+		if archiveRepo, ok := deps.ArchiveRepo.(userhandlers.ArchiveRepository); ok {
+			archiveHandlers := userhandlers.NewArchiveHandlers(archiveRepo)
+			r.Route("/{userId}/exports", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Post("/request", archiveHandlers.RequestExport)
+				r.Get("/", archiveHandlers.ListExports)
+				r.Delete("/{id}", archiveHandlers.DeleteExport)
+			})
+			r.Route("/{userId}/imports", func(r chi.Router) {
+				r.Use(middleware.Auth(cfg.JWTSecret))
+				r.Post("/import-resumable", archiveHandlers.InitImportResumable)
+				r.Put("/import-resumable", archiveHandlers.UploadImportChunk)
+				r.Delete("/import-resumable", archiveHandlers.CancelImportResumable)
+				r.Get("/latest", archiveHandlers.GetLatestImport)
+			})
+		}
+	})
+}
+
+// registerCommunicationsAPIRoutes registers /messages, /conversations, and
+// /e2ee routes. Extracted to reduce cyclomatic complexity of
+// RegisterRoutesWithDependencies.
+func registerCommunicationsAPIRoutes(
+	r chi.Router,
+	deps *shared.HandlerDependencies,
+	cfg *config.Config,
+) {
+	r.Route("/messages", func(r chi.Router) {
+		r.Use(middleware.Auth(cfg.JWTSecret))
+		r.Post("/", messaging.SendMessageHandler(deps.MessageService))
+		r.Get("/", messaging.GetMessagesHandler(deps.MessageService))
+		r.Put("/{messageId}/read", messaging.MarkMessageReadHandler(deps.MessageService))
+		r.Delete("/{messageId}", messaging.DeleteMessageHandler(deps.MessageService))
+	})
+
+	r.Route("/conversations", func(r chi.Router) {
+		r.Use(middleware.Auth(cfg.JWTSecret))
+		r.Get("/", messaging.GetConversationsHandler(deps.MessageService))
+		r.Get("/unread-count", messaging.GetUnreadCountHandler(deps.MessageService))
+	})
+
+	if deps.E2EEService != nil {
+		e2eeHandler := messaging.NewSecureMessagesHandler(deps.E2EEService, govalidator.New())
+		r.Route("/e2ee", func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Post("/keys", e2eeHandler.RegisterIdentityKey)
+			r.Get("/keys/{userId}", e2eeHandler.GetPublicKeys)
+			r.Get("/status", e2eeHandler.GetE2EEStatus)
+			r.Post("/key-exchange", e2eeHandler.InitiateKeyExchange)
+			r.Post("/key-exchange/accept", e2eeHandler.AcceptKeyExchange)
+			r.Get("/key-exchange/pending", e2eeHandler.GetPendingKeyExchanges)
+			r.Post("/messages", e2eeHandler.StoreEncryptedMessage)
+			r.Get("/messages/{conversationId}", e2eeHandler.GetEncryptedMessages)
+		})
+	}
+}
 func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencies, jwtSecret string) {
 	if deps.LiveStreamRepo != nil {
 		log.Printf("Registering waiting room routes...")
