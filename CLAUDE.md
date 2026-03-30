@@ -121,7 +121,9 @@ For detailed guidance in specific areas, see:
 
 Hard constraints enforced during all autonomous operations. See `.claude/rules/stop-hooks.md` for full details.
 
-**8 Stop Conditions — violations halt work until fixed:**
+These guardrails are enforced by `.claude/settings.json`, `.githooks/pre-commit`, and `scripts/verify-autonomous-stop-hooks.sh`.
+
+**10 Stop Conditions — violations halt work until fixed:**
 
 1. **Feature Removal** — never remove/disable existing features (see `.claude/rules/feature-parity-registry.md`)
 2. **Test Coverage** — no production code without tests (TDD mandatory)
@@ -131,23 +133,29 @@ Hard constraints enforced during all autonomous operations. See `.claude/rules/s
 6. **Federation Compatibility** — WebFinger, NodeInfo, ActivityPub must stay functional
 7. **Build/Lint/Test** — `make validate-all` must pass
 8. **Migration Safety** — reversible migrations only, no destructive DDL without data migration
+9. **PeerTube Parity Drift** — upstream-compatible behavior must be preserved or explicitly documented
+10. **Requested Feature Completion** — user-requested features must be tracked, implemented end-to-end, and fully tested before completion
 
 **Autonomous mode also requires (see `.claude/rules/autonomous-mode.md`):**
 
+- Record every requested feature in the feature parity registry before coding
 - Update README and documentation for every user-visible change
 - Update Postman/Newman collections for every API change
 - Update OpenAPI specs for every endpoint change
 - Update feature parity registry for every feature change
+- Do not mark a feature `Done` until Go tests, API tests, docs, and registry updates land together
 - Run `make verify-openapi` after API modifications
 
 ## Guardrail Rules Files
 
 | File | Purpose |
 |------|---------|
-| `.claude/rules/stop-hooks.md` | 8 stop conditions, pre/post change checklists |
+| `.claude/rules/stop-hooks.md` | 10 stop conditions, pre/post change checklists |
 | `.claude/rules/feature-parity-registry.md` | Canonical feature list, PeerTube parity tracking |
 | `.claude/rules/autonomous-mode.md` | Documentation, Postman, and completeness requirements |
 | `.claude/settings.json` | Claude Code hooks (generated file protection, auto-format, commit safety) |
+| `.githooks/pre-commit` | Git-side validation entrypoint for autonomous stop hooks |
+| `scripts/verify-autonomous-stop-hooks.sh` | Shared parity/test/docs drift enforcement used by Claude + Git hooks |
 
 ## Additional Context
 

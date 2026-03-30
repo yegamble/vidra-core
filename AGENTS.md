@@ -4,6 +4,7 @@
 
 **Stack**: Go (Chi router), PostgreSQL (SQLX), Redis, IPFS, FFmpeg, IOTA payments (Phase 2)
 **Architecture**: Clean architecture with domain/usecase/repository layers
+**Upstream Reference**: https://github.com/Chocobozzz/PeerTube
 
 ## Mandatory Validation
 
@@ -22,7 +23,7 @@ This runs: `gofmt`, `goimports`, `golangci-lint` (with gosec), unit tests, and b
 ```
 /cmd/server         → main entry point
 /internal/
-  activitypub/      → Federation (see internal/activitypub/AGENTS.md)
+  activitypub/      → Federation (see internal/activitypub/CLAUDE.md)
   app/              → application wiring and lifecycle
   backup/           → backup/restore system
   chat/             → live stream chat (WebSocket)
@@ -33,7 +34,7 @@ This runs: `gofmt`, `goimports`, `golangci-lint` (with gosec), unit tests, and b
   email/            → Email sending and verification
   generated/        → Auto-generated code (OpenAPI types)
   health/           → Health check endpoints
-  httpapi/          → Chi routes, handlers (see internal/httpapi/AGENTS.md)
+  httpapi/          → Chi routes, handlers (see internal/httpapi/CLAUDE.md)
   importer/         → Video import from external platforms
   ipfs/             → IPFS client and pinning
   livestream/       → Live streaming (RTMP/HLS)
@@ -45,7 +46,7 @@ This runs: `gofmt`, `goimports`, `golangci-lint` (with gosec), unit tests, and b
   port/             → Interface definitions (ports)
   repository/       → SQLX repos for Postgres
   scheduler/        → Cron and scheduled jobs
-  security/         → SSRF, virus scanning, crypto (see internal/security/AGENTS.md)
+  security/         → SSRF, virus scanning, crypto (see internal/security/CLAUDE.md)
   setup/            → setup wizard (first-run config)
   storage/          → hybrid local/IPFS/S3
   sysinfo/          → System information reporting
@@ -55,7 +56,7 @@ This runs: `gofmt`, `goimports`, `golangci-lint` (with gosec), unit tests, and b
   validation/       → Input validation utilities
   whisper/          → Audio transcription (Whisper)
   worker/           → async jobs (ffmpeg, GC, pins)
-/migrations/        → Goose SQL migrations (see migrations/AGENTS.md)
+/migrations/        → Goose SQL migrations (see migrations/CLAUDE.md)
 /scripts/           → build, validation, install scripts
 /terraform/         → infrastructure as code
 ```
@@ -83,11 +84,11 @@ make docker         # Build Docker image
 
 For detailed guidance in specific areas, see:
 
-- **Security**: `internal/security/AGENTS.md` (SSRF, virus scanning, encryption)
-- **API/HTTP**: `internal/httpapi/AGENTS.md` (routes, handlers, validation)
-- **Federation**: `internal/activitypub/AGENTS.md` (ActivityPub, WebFinger)
-- **Migrations**: `migrations/AGENTS.md` (Goose patterns, schema changes)
-- **Architecture**: `docs/architecture/AGENTS.md` (deep-dive on all systems)
+- **Security**: `internal/security/CLAUDE.md` (SSRF, virus scanning, encryption)
+- **API/HTTP**: `internal/httpapi/CLAUDE.md` (routes, handlers, validation)
+- **Federation**: `internal/activitypub/CLAUDE.md` (ActivityPub, WebFinger)
+- **Migrations**: `migrations/CLAUDE.md` (Goose patterns, schema changes)
+- **Architecture**: `docs/architecture/CLAUDE.md` (deep-dive on all systems)
 - **Validation**: `docs/development/VALIDATION_REQUIRED.md` (pre-commit requirements)
 
 ## Best Practices
@@ -104,13 +105,39 @@ For detailed guidance in specific areas, see:
 - Validate all user inputs
 - Use parameterized queries (no string concatenation)
 - No secrets in logs or code
-- See `internal/security/AGENTS.md` for SSRF, virus scanning
+- See `internal/security/CLAUDE.md` for SSRF, virus scanning
 
 ### Testing
 
 - Unit tests per package
 - Use `sqlmock` for DB mocking
 - Integration tests with `docker-compose.yml` (`--profile test`)
+
+## Stop Hooks (Autonomous Mode Guardrails)
+
+Hard constraints enforced during autonomous work. See `.claude/rules/stop-hooks.md` for the full rule set.
+
+These guardrails are enforced by `.claude/settings.json`, `.githooks/pre-commit`, and `scripts/verify-autonomous-stop-hooks.sh`.
+
+**10 Stop Conditions — violations halt work until fixed:**
+
+1. **Feature Removal** — never remove or silently disable a PeerTube or Vidra feature already in the registry
+2. **Test Coverage** — no production Go changes without updated `_test.go` coverage
+3. **API Contract** — no breaking response or route changes without OpenAPI and migration strategy
+4. **Architecture Violation** — keep clean architecture boundaries intact
+5. **Security Regression** — no auth gaps, SSRF regressions, SQL injection, path traversal, or leaked secrets
+6. **Federation Compatibility** — WebFinger, NodeInfo, ActivityPub, and PeerTube-compatible aliases must keep working
+7. **Build/Lint/Test** — `make validate-all` must pass before claiming completion
+8. **Migration Safety** — reversible migrations only
+9. **PeerTube Parity Drift** — upstream-compatible behavior must stay aligned or be explicitly documented
+10. **Requested Feature Completion** — new requested features must be entered in the registry, wired end-to-end, and fully tested
+
+**Autonomous mode also requires:**
+
+- Update `.claude/rules/feature-parity-registry.md` before and after feature work
+- Update OpenAPI + Postman/Newman collections for API surface changes
+- Update README, `CLAUDE.md`, and any domain docs touched by the change
+- Keep generated files and Newman result artifacts out of manual edits
 
 ## Additional Context
 

@@ -1,6 +1,6 @@
 # Project: Vidra Core
 
-**Last Updated:** 2026-03-21
+**Last Updated:** 2026-03-30
 
 ## Overview
 
@@ -77,7 +77,7 @@ High-performance PeerTube-compatible backend in Go with P2P distribution, live s
 - **Configuration:** `.env.example` (template), `internal/config/`
 - **Entry Point:** `cmd/server/main.go`
 - **Migrations:** `migrations/*.sql` (Goose)
-- **Tests:** `**/*_test.go` (428 test files, ~4,641 test functions)
+- **Tests:** `**/*_test.go` (456 test files, ~4,879 test functions)
 - **Build:** `Makefile`
 
 ## Development Commands
@@ -211,15 +211,18 @@ See subdirectory CLAUDE.md files for detailed guidance:
 
 See `.claude/rules/` for guardrail enforcement:
 
-- **Stop Hooks:** `stop-hooks.md` — 8 stop conditions that halt work until fixed
+- **Stop Hooks:** `stop-hooks.md` — 10 stop conditions that halt work until fixed
 - **Feature Registry:** `feature-parity-registry.md` — canonical feature list, PeerTube parity tracking
 - **Autonomous Mode:** `autonomous-mode.md` — documentation, Postman, and completeness requirements
+- **Shared Enforcement Script:** `scripts/verify-autonomous-stop-hooks.sh` — blocks parity/test/docs drift in Claude + git hooks
 
 **Mandatory in autonomous mode:**
+- Track requested features in the registry before coding
 - Update README and docs for every user-visible change
 - Update Postman/Newman collections for every API change
 - Update OpenAPI specs for every endpoint change
 - Update feature registry for every feature change
+- Do not mark a feature `Done` until tests, docs, and contract artifacts land together
 - Never remove existing features without explicit user approval
 
 ## Additional Context

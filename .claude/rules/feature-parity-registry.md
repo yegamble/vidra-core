@@ -169,23 +169,34 @@ These are acknowledged gaps. They do NOT trigger stop hooks but should be implem
 
 ## How to Use This Registry
 
+### Status lifecycle in autonomous mode
+
+- `Requested` — the user asked for the feature, but implementation has not started
+- `In Progress` — code, tests, or docs are actively changing
+- `Done` — implementation, tests, docs, OpenAPI/Postman artifacts, and validation are all complete
+- `Deferred` — acknowledged, tracked, but intentionally not in the current slice
+
+Autonomous work should move through these statuses explicitly instead of landing "hidden" feature work outside the registry.
+
 ### When adding a feature:
-1. Add entry to appropriate table above
-2. Set status to `In Progress` during development
-3. Set to `Done` after tests pass and `make validate-all` succeeds
-4. Include test file path
+1. Add entry to appropriate table above before coding starts
+2. Set status to `Requested` or `In Progress` during development
+3. Include the planned test file path and upstream PeerTube endpoint when applicable
+4. Set to `Done` only after tests pass, docs are updated, OpenAPI/Postman changes land, and `make validate-all` succeeds
 
 ### When modifying a feature:
 1. Find the entry in this registry
 2. Run its existing tests BEFORE making changes
 3. Verify tests still pass AFTER changes
-4. If test file path changed, update registry
+4. If the behavior is PeerTube-facing, confirm the upstream behavior still matches
+5. If test file path changed, update registry
 
 ### When a stop hook fires:
 1. Check which feature was affected
 2. Verify the feature still works (run its tests)
-3. If broken, revert and fix
-4. If intentional change, update this registry with user approval
+3. Verify the registry status is still accurate (`Requested`, `In Progress`, `Done`, or `Deferred`)
+4. If broken, revert and fix
+5. If intentional change, update this registry with user approval
 
 ### Periodic audit (monthly):
 1. Run `make test` and verify all features in registry still pass

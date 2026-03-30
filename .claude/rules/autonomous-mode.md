@@ -2,6 +2,15 @@
 
 **Purpose:** Rules that apply whenever Claude operates autonomously (without user interaction). These ensure completeness, documentation, and testing parity.
 
+## Request Intake And Traceability (MANDATORY)
+
+Before writing code in autonomous mode:
+
+1. Map the request to an existing feature in `.claude/rules/feature-parity-registry.md`, or add a new row with status `Requested` or `In Progress`
+2. Decide whether the work is PeerTube parity, a Vidra extension, or an intentional divergence
+3. Identify the completion artifacts up front: Go tests, OpenAPI, Postman/Newman, docs, and registry updates
+4. Do not mark the work complete until those artifacts land together
+
 ## Documentation Updates (MANDATORY)
 
 **Every code change MUST include corresponding documentation updates.** Documentation is not optional — it is part of the definition of done.
@@ -19,6 +28,9 @@
 - New commands: add to common commands
 - Test count changes: update test statistics after significant additions
 
+### AGENTS.md updates
+- Keep `AGENTS.md` aligned with root autonomous guardrails used by Codex and other agents
+
 ### Domain-specific docs
 - API changes: update `internal/httpapi/CLAUDE.md`
 - Security changes: update `internal/security/CLAUDE.md`
@@ -28,6 +40,7 @@
 
 ### Feature registry
 - Any feature added/modified: update `.claude/rules/feature-parity-registry.md`
+- Requested features should enter the registry before implementation and only move to `Done` after validation
 
 ### OpenAPI specs
 - New endpoints: add to appropriate `api/openapi_*.yaml` spec file
@@ -59,11 +72,14 @@
 
 ### Newman CI validation:
 ```bash
-# Run all collections
-make test-newman
+# Run end-to-end Newman coverage
+make postman-e2e
 
-# Run specific collection
-newman run postman/collection.json -e postman/env.json
+# Run the default local Newman collection
+make postman-newman
+
+# Run a specific collection directly
+newman run postman/collection.json -e postman/vidra.local.postman_environment.json
 ```
 
 ## PeerTube Upstream Awareness
@@ -86,6 +102,16 @@ When implementing features, always check PeerTube's implementation for:
 ### Response shape alignment:
 PeerTube returns `{ total, data }` for lists. Vidra Core uses `{ success, data, error, meta }`. The `meta.total` field serves the same purpose. Maintain this mapping.
 
+## Completion Evidence (MANDATORY)
+
+Every autonomous feature must ship with evidence proportional to its surface area:
+
+- **Production Go changes:** update `_test.go` coverage in the affected package
+- **New API or route behavior:** update OpenAPI plus the relevant Postman collection
+- **New feature work:** update `.claude/rules/feature-parity-registry.md`
+- **User-visible behavior:** update README and the relevant `CLAUDE.md` or docs page
+- **Claimed PeerTube parity:** cite the upstream behavior in code comments, docs, or commit/PR notes as appropriate
+
 ## Autonomous Execution Checklist
 
 Before marking ANY task complete in autonomous mode, verify ALL of these:
@@ -94,12 +120,15 @@ Before marking ANY task complete in autonomous mode, verify ALL of these:
 - [ ] Code formatted: `make fmt`
 - [ ] Linter passes: `make lint`
 - [ ] Unit tests pass: `make test`
+- [ ] Requested feature is tracked in `.claude/rules/feature-parity-registry.md`
 - [ ] OpenAPI specs updated (if API change): `make verify-openapi`
 - [ ] Postman collection updated (if API change)
 - [ ] README updated (if user-visible change)
 - [ ] CLAUDE.md updated (if architecture/structure change)
+- [ ] AGENTS.md updated (if shared agent guardrails changed)
 - [ ] Feature registry updated (if feature added/modified)
 - [ ] Domain-specific docs updated (if relevant)
+- [ ] PeerTube parity was checked for PeerTube-facing behavior
 - [ ] No TODO/FIXME/XXX comments left in new code
 - [ ] No secrets or credentials in code
 - [ ] All new functions have tests
@@ -116,6 +145,8 @@ These autonomous mode rules integrate with the stop hooks in `stop-hooks.md`:
 | API Contract Stop | Also update OpenAPI specs |
 | Build/Lint/Test Stop | Full `make validate-all` required |
 | Architecture Violation Stop | Also update architecture docs |
+| PeerTube Parity Drift Stop | Also update the registry and upstream parity notes |
+| Requested Feature Completion Stop | Also update docs, tests, and API artifacts in the same change |
 
 ## Error Recovery in Autonomous Mode
 

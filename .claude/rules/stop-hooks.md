@@ -2,6 +2,8 @@
 
 **Purpose:** Prevent code drift from project vision during autonomous operation. These are hard constraints — violations block completion.
 
+**Enforcement:** These rules are wired into `.claude/settings.json`, `.githooks/pre-commit`, and `scripts/verify-autonomous-stop-hooks.sh` so autonomous work is blocked before commit when parity, tests, docs, or feature tracking drift.
+
 ## Stop Conditions (MUST halt and fix before proceeding)
 
 ### 1. Feature Removal Stop
@@ -94,6 +96,26 @@ httpapi/ → imports usecase/, domain/
 
 **Action:** STOP. Migrations must be reversible. See `migrations/CLAUDE.md` for patterns.
 
+### 9. PeerTube Parity Drift Stop
+
+**Trigger:** Any change that claims PeerTube parity while one of the following is true:
+- Response or route behavior no longer matches the intended PeerTube contract
+- PeerTube-compatible aliases are removed or changed without replacement
+- `.claude/rules/feature-parity-registry.md` is not updated to reflect the parity status
+- Upstream behavior was not checked for new parity work
+
+**Action:** STOP. Compare the change against PeerTube's docs or implementation, update the parity registry, and document any intentional divergence before proceeding.
+
+### 10. Requested Feature Completion Stop
+
+**Trigger:** A user-requested feature is only partially landed. Examples:
+- Implementation exists, but the feature is missing from the parity registry
+- Production code changed, but Go tests were not added or updated
+- API behavior changed, but OpenAPI and Postman/Newman coverage were not updated
+- User-visible behavior changed, but README/CLAUDE/docs were not updated
+
+**Action:** STOP. Requested features must ship as an end-to-end slice: implementation, tests, docs, contract artifacts, and registry tracking together.
+
 ## Pre-Change Checklist (Run Before Every Significant Change)
 
 Before modifying any package, verify:
@@ -104,25 +126,27 @@ Before modifying any package, verify:
 4. **Migration impact:** Does this require a schema change?
 5. **Federation impact:** Does this affect ActivityPub/WebFinger/NodeInfo?
 6. **Feature registry:** Is the feature being modified in the registry? If so, ensure it stays functional
+7. **Upstream parity:** For PeerTube-facing work, what is the expected upstream behavior?
+8. **Request traceability:** Has the requested feature been added or updated in the registry before coding?
+9. **Completeness artifacts:** Which tests, docs, OpenAPI files, and Postman collections must move with this change?
 
 ## Post-Change Verification (Run After Every Significant Change)
 
 ```bash
-# 1. Format and lint
-make fmt && make lint
+# 1. Run the mandatory full validation suite
+make validate-all
 
-# 2. Run affected package tests
+# 2. Run affected package tests while iterating
 go test -short ./internal/package/... -count=1
 
-# 3. Run full suite (before marking complete)
-make test
-
-# 4. Build verification
-make build
-
-# 5. OpenAPI verification (if API changes)
+# 3. Verify OpenAPI drift when routes/contracts change
 make verify-openapi
 ```
+
+Also confirm:
+- `.claude/rules/feature-parity-registry.md` reflects the final status
+- Postman/Newman collections were updated for API surface changes
+- README, `CLAUDE.md`, and domain docs match the shipped behavior
 
 ## Vision Drift Detection
 
@@ -131,6 +155,7 @@ make verify-openapi
 - Adding a dependency that duplicates existing functionality
 - Creating a new package that overlaps with an existing one
 - Implementing a feature that contradicts PeerTube compatibility
+- Shipping a requested feature without registry, doc, or test updates
 - Changing error handling patterns away from `domain.ErrX` sentinels
 - Introducing REST endpoint patterns that don't match existing conventions
 - Adding configuration that lacks validation or sensible defaults
@@ -151,3 +176,5 @@ When running without user interaction:
 8. **Always verify federation endpoints** — after any routing change
 9. **Always run affected tests** — after any code change
 10. **Always update OpenAPI specs** — when adding/modifying endpoints
+11. **Always update Postman/Newman coverage** — for API surface changes
+12. **Always update docs and registry together** — if the behavior is new or user-visible

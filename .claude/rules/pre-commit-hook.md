@@ -24,8 +24,19 @@ LINT_TIMEOUT_SECONDS=0 git commit -m "..."
 ### What the Hook Runs
 
 1. `gofmt` — formats staged Go files and re-stages them
-2. Linting via golangci-lint (skippable via `PRECOMMIT_SKIP_HOOKS`)
-3. Optional hooks (go-unit-tests, test-coverage) — skipped by default
+2. `scripts/verify-autonomous-stop-hooks.sh` — blocks parity, registry, OpenAPI, Postman, and test drift
+3. Linting via golangci-lint (skippable via `PRECOMMIT_SKIP_HOOKS`)
+4. Optional hooks (go-unit-tests, test-coverage) — skipped by default
+
+### Autonomous stop-hook checks
+
+The shared stop-hook script fails the commit when it detects:
+
+- Production Go changes without `_test.go` updates
+- Route or OpenAPI changes without matching OpenAPI or Postman updates
+- New production artifacts without `.claude/rules/feature-parity-registry.md` updates
+- Manual edits to generated OpenAPI code or Newman result artifacts
+- Potential secrets staged for commit
 
 ### Setup
 

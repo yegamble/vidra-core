@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; if [ -z \"$FILE\" ]; then exit 0; fi; case \"$FILE\" in internal/generated/*) echo \"STOP: Do not edit generated files in internal/generated/. Edit api/*.yaml and run make generate-openapi instead.\" >&2; exit 2;; esac; exit 0'"
+            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; if [ -z \"$FILE\" ]; then exit 0; fi; case \"$FILE\" in internal/generated/*) echo \"STOP: Do not edit generated files in internal/generated/. Edit api/*.yaml and run make generate-openapi instead.\" >&2; exit 2;; postman/results-*|postman/test-results.json) echo \"STOP: Do not edit generated Newman/Postman result artifacts. Update postman/*.postman_collection.json instead.\" >&2; exit 2;; esac; exit 0'"
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'cd /Users/yosefgamble/github/vidra-core && STAGED=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null); if [ -z \"$STAGED\" ]; then exit 0; fi; HAS_SECRETS=false; for f in $STAGED; do case \"$f\" in .env|.env.*|*credentials*|*secret*) echo \"STOP: Refusing to commit potential secrets file: $f\" >&2; HAS_SECRETS=true;; esac; done; if $HAS_SECRETS; then exit 2; fi; HAS_GO=false; for f in $STAGED; do case \"$f\" in *.go) HAS_GO=true; break;; esac; done; if $HAS_GO; then HAS_TEST=false; for f in $STAGED; do case \"$f\" in *_test.go) HAS_TEST=true; break;; esac; done; HAS_PROD=false; for f in $STAGED; do case \"$f\" in *_test.go) ;; *.go) HAS_PROD=true; break;; esac; done; if $HAS_PROD && ! $HAS_TEST; then echo \"WARNING: Committing production Go code without test changes. Ensure tests exist for all changes.\" >&2; fi; fi; exit 0'"
+            "command": "bash -c 'cd /Users/yosefgamble/github/vidra-core && ./scripts/verify-autonomous-stop-hooks.sh'"
           }
         ]
       }

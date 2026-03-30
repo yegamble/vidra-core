@@ -28,6 +28,14 @@ If you are Claude and you have made ANY code changes, you **MUST**:
 3. **Fix any failures before claiming success**
 4. **Include validation results in your response to the user**
 
+For autonomous or agent-driven work, you must also honor the stop hooks in `.claude/rules/stop-hooks.md` and the shared guardrail script:
+
+```bash
+./scripts/verify-autonomous-stop-hooks.sh
+```
+
+This blocks commits that drift from the feature registry, skip tests, or change API surface without matching OpenAPI/Postman updates.
+
 ### If Validations Are Not Available
 
 If you cannot run validations (e.g., in Claude web interface without shell access):
@@ -46,6 +54,9 @@ If you cannot run validations (e.g., in Claude web interface without shell acces
 ```bash
 # Run all validations at once
 make validate-all
+
+# Run autonomous stop hooks against staged changes
+./scripts/verify-autonomous-stop-hooks.sh
 ```
 
 ### Individual Validations
