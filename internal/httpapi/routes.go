@@ -455,6 +455,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 		if deps.ServerFollowingRepo != nil {
 			sfHandlers := federation.NewServerFollowingHandlers(deps.ServerFollowingRepo)
+			if cfg.EnableActivityPub && deps.ActivityPubService != nil {
+				sfHandlers.SetActivityPubService(deps.ActivityPubService, cfg.PublicBaseURL)
+			}
 			r.Get("/server/followers", sfHandlers.ListFollowers)
 			r.Get("/server/following", sfHandlers.ListFollowing)
 			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Post("/server/following", sfHandlers.FollowInstance)

@@ -7,11 +7,66 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	chi "github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/middleware"
 )
+
+// mockActivityPubService is a minimal ActivityPubService mock for testing
+// Follow activity emission in FollowInstance.
+type mockActivityPubService struct {
+	fetchCh    chan string
+	deliverCh  chan string
+	fetchErr   error
+	deliverErr error
+}
+
+func newMockAPService() *mockActivityPubService {
+	return &mockActivityPubService{
+		fetchCh:   make(chan string, 1),
+		deliverCh: make(chan string, 1),
+	}
+}
+
+func (m *mockActivityPubService) FetchRemoteActor(_ context.Context, uri string) (*domain.APRemoteActor, error) {
+	m.fetchCh <- uri
+	if m.fetchErr != nil {
+		return nil, m.fetchErr
+	}
+	return &domain.APRemoteActor{
+		ActorURI: uri,
+		InboxURL: "https://peer.example.com/inbox",
+	}, nil
+}
+
+func (m *mockActivityPubService) DeliverActivity(_ context.Context, _, inboxURL string, _ interface{}) error {
+	m.deliverCh <- inboxURL
+	return m.deliverErr
+}
+
+// Stub implementations for unused methods.
+func (m *mockActivityPubService) GetLocalActor(_ context.Context, _ string) (*domain.Actor, error) {
+	return nil, nil
+}
+func (m *mockActivityPubService) HandleInboxActivity(_ context.Context, _ map[string]interface{}, _ *http.Request) error {
+	return nil
+}
+func (m *mockActivityPubService) GetOutbox(_ context.Context, _ string, _, _ int) (*domain.OrderedCollectionPage, error) {
+	return nil, nil
+}
+func (m *mockActivityPubService) GetFollowers(_ context.Context, _ string, _, _ int) (*domain.OrderedCollectionPage, error) {
+	return nil, nil
+}
+func (m *mockActivityPubService) GetFollowing(_ context.Context, _ string, _, _ int) (*domain.OrderedCollectionPage, error) {
+	return nil, nil
+}
+func (m *mockActivityPubService) GetOutboxCount(_ context.Context, _ string) (int, error)     { return 0, nil }
+func (m *mockActivityPubService) GetFollowersCount(_ context.Context, _ string) (int, error)  { return 0, nil }
+func (m *mockActivityPubService) GetFollowingCount(_ context.Context, _ string) (int, error)  { return 0, nil }
 
 type mockServerFollowingRepo struct {
 	followers []*domain.ServerFollowing
@@ -176,5 +231,95 @@ func TestDeleteFollower_OK(t *testing.T) {
 	}
 	if repo.lastHost != "peer.example.com" {
 		t.Fatalf("expected host=peer.example.com, got %q", repo.lastHost)
+	}
+}
+
+// TestFollowInstance_WithAPService_EmitsFollowActivity verifies that when an
+// ActivityPub service is configured, FollowInstance asynchronously delivers
+// a Follow activity to the target instance's service actor inbox.
+func TestFollowInstance_WithAPService_EmitsFollowActivity(t *testing.T) {
+	repo := &mockServerFollowingRepo{}
+	apSvc := newMockAPService()
+	h := NewServerFollowingHandlers(repo)
+	h.SetActivityPubService(apSvc, "https://my.instance.com")
+
+	actorID := uuid.New().String()
+	ctx := context.WithValue(context.Background(), middleware.UserIDKey, actorID)
+	body := `{"host":"peer.example.com"}`
+	req := httptest.NewRequest(http.MethodPost, "/server/following", strings.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.FollowInstance(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if repo.lastHost != "peer.example.com" {
+		t.Fatalf("expected host=peer.example.com, got %q", repo.lastHost)
+	}
+
+	// Verify FetchRemoteActor called with PeerTube-compatible server actor URI.
+	select {
+	case fetched := <-apSvc.fetchCh:
+		if fetched != "https://peer.example.com/accounts/peertube" {
+			t.Fatalf("expected fetch for peertube server actor, got %q", fetched)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("AP service FetchRemoteActor was not called within 100ms")
+	}
+
+	// Verify DeliverActivity called with the resolved inbox URL.
+	select {
+	case delivered := <-apSvc.deliverCh:
+		if delivered != "https://peer.example.com/inbox" {
+			t.Fatalf("expected delivery to peer inbox, got %q", delivered)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("AP service DeliverActivity was not called within 100ms")
+	}
+}
+
+// TestFollowInstance_WithAPService_FetchError verifies that a FetchRemoteActor
+// failure is logged and does not prevent the 204 response.
+func TestFollowInstance_WithAPService_FetchError(t *testing.T) {
+	repo := &mockServerFollowingRepo{}
+	apSvc := newMockAPService()
+	apSvc.fetchErr = context.DeadlineExceeded
+	h := NewServerFollowingHandlers(repo)
+	h.SetActivityPubService(apSvc, "https://my.instance.com")
+
+	actorID := uuid.New().String()
+	ctx := context.WithValue(context.Background(), middleware.UserIDKey, actorID)
+	body := `{"host":"slow.example.com"}`
+	req := httptest.NewRequest(http.MethodPost, "/server/following", strings.NewReader(body)).WithContext(ctx)
+	rr := httptest.NewRecorder()
+	h.FollowInstance(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 even on AP error, got %d", rr.Code)
+	}
+
+	// FetchRemoteActor should still have been attempted.
+	select {
+	case <-apSvc.fetchCh:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("AP service FetchRemoteActor was not called within 100ms")
+	}
+}
+
+// TestFollowInstance_NoAPService_StillReturns204 verifies that when no AP
+// service is configured (nil), FollowInstance still works correctly.
+func TestFollowInstance_NoAPService_StillReturns204(t *testing.T) {
+	repo := &mockServerFollowingRepo{}
+	h := NewServerFollowingHandlers(repo) // no AP service
+
+	body := `{"host":"new.example.com"}`
+	req := httptest.NewRequest(http.MethodPost, "/server/following", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.FollowInstance(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
