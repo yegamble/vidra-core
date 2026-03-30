@@ -358,29 +358,38 @@ func (c *AnalyticsCollector) buildAnalyticsRecord(
 	}
 }
 
+// ViewerJoinRequest holds the parameters for tracking a viewer joining a stream
+type ViewerJoinRequest struct {
+	StreamID  uuid.UUID
+	UserID    *uuid.UUID
+	SessionID string
+	IPAddress string
+	UserAgent string
+}
+
 // TrackViewerJoin tracks when a viewer joins a stream
-func (c *AnalyticsCollector) TrackViewerJoin(ctx context.Context, streamID uuid.UUID, userID *uuid.UUID, sessionID, ipAddress, userAgent string) error {
+func (c *AnalyticsCollector) TrackViewerJoin(ctx context.Context, req ViewerJoinRequest) error {
 	// Parse user agent to extract device info (simplified)
 	deviceType := "desktop"
 	browser := "unknown"
 	os := "unknown"
 
 	// This would normally use a proper user agent parser
-	if userAgent != "" {
+	if req.UserAgent != "" {
 		// Simplified detection
 		switch {
-		case contains(userAgent, "Mobile"):
+		case contains(req.UserAgent, "Mobile"):
 			deviceType = "mobile"
-		case contains(userAgent, "Tablet"):
+		case contains(req.UserAgent, "Tablet"):
 			deviceType = "tablet"
 		}
 
 		switch {
-		case contains(userAgent, "Chrome"):
+		case contains(req.UserAgent, "Chrome"):
 			browser = "chrome"
-		case contains(userAgent, "Firefox"):
+		case contains(req.UserAgent, "Firefox"):
 			browser = "firefox"
-		case contains(userAgent, "Safari"):
+		case contains(req.UserAgent, "Safari"):
 			browser = "safari"
 		}
 	}
@@ -388,11 +397,11 @@ func (c *AnalyticsCollector) TrackViewerJoin(ctx context.Context, streamID uuid.
 	// Create viewer session
 	session := &domain.AnalyticsViewerSession{
 		ID:              uuid.New(),
-		StreamID:        streamID,
-		UserID:          userID,
-		SessionID:       sessionID,
+		StreamID:        req.StreamID,
+		UserID:          req.UserID,
+		SessionID:       req.SessionID,
 		JoinedAt:        time.Now(),
-		IPAddress:       ipAddress,
+		IPAddress:       req.IPAddress,
 		DeviceType:      deviceType,
 		Browser:         browser,
 		OperatingSystem: os,

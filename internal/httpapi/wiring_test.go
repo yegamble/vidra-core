@@ -16,6 +16,7 @@ import (
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
 	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/livestream"
 	"vidra-core/internal/middleware"
 	"vidra-core/internal/plugin"
 	"vidra-core/internal/repository"
@@ -224,7 +225,7 @@ func (s *stubAnalyticsRepo) BatchUpdateStreamSummaries(_ context.Context, _ []uu
 
 type stubAnalyticsCollector struct{}
 
-func (s *stubAnalyticsCollector) TrackViewerJoin(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _, _, _ string) error {
+func (s *stubAnalyticsCollector) TrackViewerJoin(_ context.Context, _ livestream.ViewerJoinRequest) error {
 	return nil
 }
 func (s *stubAnalyticsCollector) TrackViewerLeave(_ context.Context, _ string) error { return nil }

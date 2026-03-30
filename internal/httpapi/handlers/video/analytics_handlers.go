@@ -10,6 +10,7 @@ import (
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/livestream"
 	"vidra-core/internal/middleware"
 	"vidra-core/internal/repository"
 
@@ -23,7 +24,7 @@ type StreamRepositoryForAnalytics interface {
 }
 
 type AnalyticsCollectorInterface interface {
-	TrackViewerJoin(ctx context.Context, streamID uuid.UUID, userID *uuid.UUID, sessionID string, ipAddress string, userAgent string) error
+	TrackViewerJoin(ctx context.Context, req livestream.ViewerJoinRequest) error
 	TrackViewerLeave(ctx context.Context, sessionID string) error
 	TrackEngagement(ctx context.Context, sessionID string, messagesSent int, liked bool, shared bool) error
 }
@@ -319,7 +320,15 @@ func (h *AnalyticsHandler) TrackViewerJoin(w http.ResponseWriter, r *http.Reques
 
 	userAgent := r.UserAgent()
 
-	err := h.collector.TrackViewerJoin(r.Context(), req.StreamID, req.UserID, req.SessionID, ipAddress, userAgent)
+	joinReq := livestream.ViewerJoinRequest{
+		StreamID:  req.StreamID,
+		UserID:    req.UserID,
+		SessionID: req.SessionID,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+	}
+
+	err := h.collector.TrackViewerJoin(r.Context(), joinReq)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("failed to track viewer join"))
 		return
