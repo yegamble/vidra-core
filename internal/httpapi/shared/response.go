@@ -3,6 +3,7 @@ package shared
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"vidra-core/internal/domain"
@@ -40,7 +41,7 @@ func WriteJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		// Log error but don't return as headers are already sent
-		_ = err
+		slog.Error("failed to encode JSON response", "error", err)
 	}
 }
 
@@ -64,7 +65,7 @@ func WriteError(w http.ResponseWriter, statusCode int, err error) {
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		// Log error but don't return as headers are already sent
-		_ = err
+		slog.Error("failed to encode JSON response", "error", err)
 	}
 }
 
@@ -80,7 +81,7 @@ func WriteJSONWithMeta(w http.ResponseWriter, statusCode int, data interface{}, 
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		// Log error but don't return as headers are already sent
-		_ = err
+		slog.Error("failed to encode JSON response", "error", err)
 	}
 }
 
