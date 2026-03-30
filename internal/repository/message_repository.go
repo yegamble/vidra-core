@@ -42,7 +42,12 @@ func (r *messageRepository) CreateMessage(ctx context.Context, message *domain.M
 		return fmt.Errorf("failed to create message: %w", err)
 	}
 
-	err = r.upsertConversation(ctx, tx, message.SenderID, message.RecipientID, message.ID, message.CreatedAt)
+	err = r.upsertConversation(ctx, tx, upsertConversationParams{
+		userID1:       message.SenderID,
+		userID2:       message.RecipientID,
+		lastMessageID: message.ID,
+		lastMessageAt: message.CreatedAt,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to upsert conversation: %w", err)
 	}
@@ -306,12 +311,20 @@ func (r *messageRepository) GetUnreadCount(ctx context.Context, userID string) (
 	return count, nil
 }
 
-func (r *messageRepository) upsertConversation(ctx context.Context, tx *sqlx.Tx, userID1, userID2, lastMessageID string, lastMessageAt time.Time) error {
-	participantOne := userID1
-	participantTwo := userID2
-	if userID1 > userID2 {
-		participantOne = userID2
-		participantTwo = userID1
+// upsertConversationParams groups the data fields for upsertConversation.
+type upsertConversationParams struct {
+	userID1       string
+	userID2       string
+	lastMessageID string
+	lastMessageAt time.Time
+}
+
+func (r *messageRepository) upsertConversation(ctx context.Context, tx *sqlx.Tx, p upsertConversationParams) error {
+	participantOne := p.userID1
+	participantTwo := p.userID2
+	if p.userID1 > p.userID2 {
+		participantOne = p.userID2
+		participantTwo = p.userID1
 	}
 
 	query := `
@@ -323,7 +336,7 @@ func (r *messageRepository) upsertConversation(ctx context.Context, tx *sqlx.Tx,
 			last_message_at = $4,
 			updated_at = NOW()`
 
-	_, err := tx.ExecContext(ctx, query, participantOne, participantTwo, lastMessageID, lastMessageAt)
+	_, err := tx.ExecContext(ctx, query, participantOne, participantTwo, p.lastMessageID, p.lastMessageAt)
 	if err != nil {
 		return fmt.Errorf("failed to upsert conversation: %w", err)
 	}
