@@ -1,5 +1,5 @@
-# Build stage — use bookworm because golang:1.25-alpine is not published
-FROM golang:1.25-bookworm AS builder
+# Build stage — use bookworm (golang:1.24-bookworm, 1.25 not yet on Docker Hub)
+FROM golang:1.24-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 
