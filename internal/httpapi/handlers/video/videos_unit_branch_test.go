@@ -150,6 +150,12 @@ func (s *unitUploadServiceStub) AssembleChunks(context.Context, *domain.UploadSe
 	return nil
 }
 func (s *unitUploadServiceStub) CleanupTempFiles(context.Context, string) error { return nil }
+func (s *unitUploadServiceStub) InitiateBatchUpload(context.Context, string, *domain.BatchUploadRequest) (*domain.BatchUploadResponse, error) {
+	return nil, nil
+}
+func (s *unitUploadServiceStub) GetBatchStatus(context.Context, string, string) (*domain.BatchUploadStatus, error) {
+	return nil, nil
+}
 
 func (s *unitEncodingRepoStub) CreateJob(context.Context, *domain.EncodingJob) error { return nil }
 func (s *unitEncodingRepoStub) GetJob(context.Context, string) (*domain.EncodingJob, error) {

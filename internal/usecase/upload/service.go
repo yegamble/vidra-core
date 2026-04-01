@@ -30,6 +30,8 @@ type Service interface {
 	GetUploadStatus(ctx context.Context, sessionID string) (*domain.UploadSession, error)
 	AssembleChunks(ctx context.Context, session *domain.UploadSession) error
 	CleanupTempFiles(ctx context.Context, sessionID string) error
+	InitiateBatchUpload(ctx context.Context, userID string, req *domain.BatchUploadRequest) (*domain.BatchUploadResponse, error)
+	GetBatchStatus(ctx context.Context, batchID string, userID string) (*domain.BatchUploadStatus, error)
 }
 
 type service struct {
@@ -402,4 +404,211 @@ func (s *service) logResolutionEstimation(video *domain.Video, arInfo aspectRati
 	} else {
 		log.Printf("estimating source resolution using width=%d, AR=%q -> estHeight=%d -> %s", video.Metadata.Width, video.Metadata.AspectRatio, estHeight, resolution)
 	}
+}
+
+const (
+	defaultBatchChunkSize = 10 * 1024 * 1024  // 10MB default chunk size
+	maxSingleFileSize     = 10 * 1024 * 1024 * 1024 // 10GB per file
+)
+
+func (s *service) InitiateBatchUpload(ctx context.Context, userID string, req *domain.BatchUploadRequest) (*domain.BatchUploadResponse, error) {
+	if len(req.Videos) == 0 {
+		return nil, domain.NewDomainError("EMPTY_BATCH", "Batch must contain at least one video")
+	}
+	if s.cfg.MaxBatchUploadSize > 0 && len(req.Videos) > s.cfg.MaxBatchUploadSize {
+		return nil, domain.NewDomainError("BATCH_TOO_LARGE",
+			fmt.Sprintf("Batch size %d exceeds maximum of %d", len(req.Videos), s.cfg.MaxBatchUploadSize))
+	}
+
+	// Validate each video and compute aggregate size
+	var aggregateSize int64
+	for i := range req.Videos {
+		v := &req.Videos[i]
+		ext := filepath.Ext(v.FileName)
+		if !validUploadExt(ext) {
+			return nil, domain.NewDomainError("INVALID_FILE_EXTENSION",
+				fmt.Sprintf("Video %d: invalid file extension %q", i+1, ext))
+		}
+		if v.FileSize <= 0 || v.FileSize > maxSingleFileSize {
+			return nil, domain.NewDomainError("INVALID_FILE_SIZE",
+				fmt.Sprintf("Video %d: file size must be between 1 byte and 10GB", i+1))
+		}
+		if v.ChunkSize == 0 {
+			v.ChunkSize = defaultBatchChunkSize
+		}
+		if v.ChunkSize < 0 || v.ChunkSize > MaxChunkSize {
+			return nil, domain.NewDomainError("INVALID_CHUNK_SIZE",
+				fmt.Sprintf("Video %d: chunk size must be between 1 and %d bytes", i+1, MaxChunkSize))
+		}
+		if strings.TrimSpace(v.Title) == "" {
+			return nil, domain.NewDomainError("MISSING_TITLE",
+				fmt.Sprintf("Video %d: title is required", i+1))
+		}
+		if v.Privacy != "" && v.Privacy != string(domain.PrivacyPublic) && v.Privacy != string(domain.PrivacyUnlisted) && v.Privacy != string(domain.PrivacyPrivate) {
+			return nil, domain.NewDomainError("INVALID_PRIVACY",
+				fmt.Sprintf("Video %d: privacy must be public, unlisted, or private", i+1))
+		}
+		aggregateSize += v.FileSize
+	}
+
+	// Check aggregate quota
+	if s.cfg.MaxUserVideoQuota > 0 {
+		currentUsage, err := s.videoRepo.GetVideoQuotaUsed(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check video quota: %w", err)
+		}
+		if currentUsage+aggregateSize > s.cfg.MaxUserVideoQuota {
+			return nil, domain.NewDomainError("QUOTA_EXCEEDED",
+				fmt.Sprintf("Batch total size %d bytes would exceed your quota (used: %d, limit: %d)",
+					aggregateSize, currentUsage, s.cfg.MaxUserVideoQuota))
+		}
+	}
+
+	now := time.Now()
+	batchID := uuid.NewString()
+	batch := &domain.BatchUpload{
+		ID:          batchID,
+		UserID:      userID,
+		TotalVideos: len(req.Videos),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	var responses []domain.InitiateUploadResponse
+	var createdTempDirs []string
+
+	err := s.uploadRepo.WithTransaction(ctx, func(txCtx context.Context) error {
+		if err := s.uploadRepo.CreateBatch(txCtx, batch); err != nil {
+			return fmt.Errorf("failed to create batch record: %w", err)
+		}
+
+		for _, v := range req.Videos {
+			chunkSize := v.ChunkSize // already defaulted in pre-validation
+			totalChunks := int((v.FileSize + chunkSize - 1) / chunkSize)
+
+			safeTitle := security.SanitizeStrictText(v.Title)
+			if safeTitle == "" {
+				safeTitle = "Untitled Upload"
+			}
+
+			privacy := domain.Privacy(v.Privacy)
+			if privacy == "" {
+				privacy = domain.PrivacyPrivate
+			}
+
+			video := &domain.Video{
+				ID:            uuid.NewString(),
+				ThumbnailID:   uuid.NewString(),
+				Title:         safeTitle,
+				Description:   v.Description,
+				Privacy:       privacy,
+				Status:        domain.StatusUploading,
+				UploadDate:    now,
+				UserID:        userID,
+				FileSize:      v.FileSize,
+				ProcessedCIDs: make(map[string]string),
+				Tags:          []string{},
+				Metadata:      domain.VideoMetadata{},
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}
+
+			if err := s.videoRepo.Create(txCtx, video); err != nil {
+				return fmt.Errorf("failed to create video record: %w", err)
+			}
+
+			sessionID := uuid.NewString()
+			tempDir := s.paths.UploadTempDir(sessionID)
+			if err := os.MkdirAll(tempDir, 0750); err != nil {
+				return fmt.Errorf("failed to create temp directory: %w", err)
+			}
+			createdTempDirs = append(createdTempDirs, tempDir)
+
+			session := &domain.UploadSession{
+				ID:             sessionID,
+				VideoID:        video.ID,
+				UserID:         userID,
+				BatchID:        &batchID,
+				FileName:       v.FileName,
+				FileSize:       v.FileSize,
+				ChunkSize:      chunkSize,
+				TotalChunks:    totalChunks,
+				UploadedChunks: []int{},
+				Status:         domain.UploadStatusActive,
+				TempFilePath:   s.paths.UploadTempChunksDir(sessionID),
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				ExpiresAt:      now.Add(24 * time.Hour),
+			}
+
+			if err := s.uploadRepo.CreateSession(txCtx, session); err != nil {
+				return fmt.Errorf("failed to create upload session: %w", err)
+			}
+
+			responses = append(responses, domain.InitiateUploadResponse{
+				SessionID:   sessionID,
+				ChunkSize:   chunkSize,
+				TotalChunks: totalChunks,
+				UploadURL:   fmt.Sprintf("/api/v1/uploads/%s/chunks", sessionID),
+			})
+		}
+		return nil
+	})
+
+	if err != nil {
+		// Clean up any temp dirs created before the transaction failed
+		for _, dir := range createdTempDirs {
+			_ = os.RemoveAll(dir)
+		}
+		return nil, err
+	}
+
+	return &domain.BatchUploadResponse{
+		BatchID:  batchID,
+		Sessions: responses,
+	}, nil
+}
+
+func (s *service) GetBatchStatus(ctx context.Context, batchID string, userID string) (*domain.BatchUploadStatus, error) {
+	batch, err := s.uploadRepo.GetBatch(ctx, batchID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ownership check — return same error as not found to avoid info leak
+	if batch.UserID != userID {
+		return nil, domain.NewDomainError("BATCH_NOT_FOUND", "Batch upload not found")
+	}
+
+	sessions, err := s.uploadRepo.GetSessionsByBatchID(ctx, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get batch sessions: %w", err)
+	}
+
+	var completed, active, failed int
+	for _, s := range sessions {
+		switch s.Status {
+		case domain.UploadStatusCompleted:
+			completed++
+		case domain.UploadStatusActive:
+			active++
+		default: // expired, failed
+			failed++
+		}
+	}
+
+	// Dereference sessions from pointers
+	sessionList := make([]domain.UploadSession, len(sessions))
+	for i, s := range sessions {
+		sessionList[i] = *s
+	}
+
+	return &domain.BatchUploadStatus{
+		BatchID:          batchID,
+		TotalVideos:      batch.TotalVideos,
+		CompletedUploads: completed,
+		ActiveUploads:    active,
+		FailedUploads:    failed,
+		Sessions:         sessionList,
+	}, nil
 }

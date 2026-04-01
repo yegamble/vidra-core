@@ -24,13 +24,8 @@
     ],
     "PreCommit": [
       {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'cd /Users/yosefgamble/github/vidra-core && ./scripts/verify-autonomous-stop-hooks.sh'"
-          }
-        ]
+        "type": "command",
+        "command": "bash -c 'cd /Users/yosefgamble/github/vidra-core && ./scripts/verify-autonomous-stop-hooks.sh'"
       }
     ]
   }

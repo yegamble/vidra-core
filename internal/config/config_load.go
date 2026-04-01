@@ -87,6 +87,8 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.MaxUploadSize = GetInt64Env("MAX_UPLOAD_SIZE", 5*1024*1024*1024)
 	cfg.ChunkSize = GetInt64Env("CHUNK_SIZE", 32*1024*1024)
 	cfg.MaxConcurrentUploads = GetIntEnv("MAX_CONCURRENT_UPLOADS", 10)
+	cfg.MaxBatchUploadSize = GetIntEnv("MAX_BATCH_UPLOAD_SIZE", 10)
+	cfg.MaxUserVideoQuota = GetInt64Env("MAX_USER_VIDEO_QUOTA", 50*1024*1024*1024)
 	cfg.MaxProcessingWorkers = GetIntEnv("MAX_PROCESSING_WORKERS", 4)
 	cfg.ProcessingTimeout = GetIntEnv("PROCESSING_TIMEOUT", 3600)
 

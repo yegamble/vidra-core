@@ -147,6 +147,7 @@ type UploadSession struct {
 	ID               string       `json:"id" db:"id"`
 	VideoID          string       `json:"video_id" db:"video_id"`
 	UserID           string       `json:"user_id" db:"user_id"`
+	BatchID          *string      `json:"batch_id,omitempty" db:"batch_id"`
 	FileName         string       `json:"filename" db:"filename"`
 	FileSize         int64        `json:"file_size" db:"file_size"`
 	ChunkSize        int64        `json:"chunk_size" db:"chunk_size"`
@@ -302,6 +303,48 @@ type ChunkUploadResponse struct {
 	ChunkIndex      int   `json:"chunk_index"`
 	Uploaded        bool  `json:"uploaded"`
 	RemainingChunks []int `json:"remaining_chunks"`
+}
+
+// Batch upload models
+
+// BatchUpload tracks a group of upload sessions initiated together.
+type BatchUpload struct {
+	ID          string    `json:"id" db:"id"`
+	UserID      string    `json:"user_id" db:"user_id"`
+	TotalVideos int       `json:"total_videos" db:"total_videos"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// BatchUploadVideoItem describes a single video in a batch upload request.
+type BatchUploadVideoItem struct {
+	FileName    string `json:"filename" validate:"required"`
+	FileSize    int64  `json:"file_size" validate:"required,min=1"`
+	ChunkSize   int64  `json:"chunk_size"`
+	Title       string `json:"title" validate:"required"`
+	Description string `json:"description"`
+	Privacy     string `json:"privacy"`
+}
+
+// BatchUploadRequest is the request body for initiating a batch upload.
+type BatchUploadRequest struct {
+	Videos []BatchUploadVideoItem `json:"videos" validate:"required,min=1"`
+}
+
+// BatchUploadResponse is returned after successfully initiating a batch upload.
+type BatchUploadResponse struct {
+	BatchID  string                   `json:"batch_id"`
+	Sessions []InitiateUploadResponse `json:"sessions"`
+}
+
+// BatchUploadStatus reports the progress of a batch upload.
+type BatchUploadStatus struct {
+	BatchID          string          `json:"batch_id"`
+	TotalVideos      int             `json:"total_videos"`
+	CompletedUploads int             `json:"completed_uploads"`
+	ActiveUploads    int             `json:"active_uploads"`
+	FailedUploads    int             `json:"failed_uploads"`
+	Sessions         []UploadSession `json:"sessions"`
 }
 
 // VideoChapter represents a chapter marker within a video (timestamp + title).

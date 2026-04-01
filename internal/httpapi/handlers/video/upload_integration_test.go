@@ -39,7 +39,7 @@ func TestFullUploadWorkflow_Integration(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -272,7 +272,7 @@ func TestResumeUploadWorkflow_Integration(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 
@@ -411,7 +411,7 @@ func TestConcurrentUpload_Integration(t *testing.T) {
 	userRepo := repository.NewUserRepository(testDB.DB)
 
 	tempDir := t.TempDir()
-	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir)
+	uploadService := usecase.NewUploadService(uploadRepo, encodingRepo, videoRepo, tempDir, createTestConfig())
 
 	ctx := context.Background()
 

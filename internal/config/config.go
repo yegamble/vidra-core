@@ -73,6 +73,8 @@ type Config struct {
 	MaxUploadSize        int64
 	ChunkSize            int64
 	MaxConcurrentUploads int
+	MaxBatchUploadSize   int
+	MaxUserVideoQuota    int64
 
 	MaxProcessingWorkers int
 	ProcessingTimeout    int

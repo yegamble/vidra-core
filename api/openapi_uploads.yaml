@@ -415,6 +415,113 @@ paths:
       security:
         - bearerAuth: []
 
+  /api/v1/uploads/batch:
+    post:
+      tags:
+        - Uploads
+      summary: Initiate batch upload
+      description: |
+        Create upload sessions for multiple videos in a single request.
+        Validates all files upfront (extensions, sizes, aggregate quota).
+        Returns a batch ID and individual session IDs for each video.
+
+        **Vidra Core extension** — PeerTube does not have a batch upload API.
+
+        After initiation, upload files to each session using the standard
+        chunked upload endpoints (POST /uploads/{sessionId}/chunks).
+
+        Batch size limit is admin-configurable via MAX_BATCH_UPLOAD_SIZE (default: 10).
+      operationId: uploads_initiateBatchUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchUploadRequest'
+            examples:
+              two_videos:
+                summary: Batch of two videos
+                value:
+                  videos:
+                    - filename: "video1.mp4"
+                      file_size: 104857600
+                      chunk_size: 10485760
+                      title: "My First Video"
+                      description: "Description for video 1"
+                      privacy: "public"
+                    - filename: "video2.mkv"
+                      file_size: 52428800
+                      title: "My Second Video"
+                      privacy: "private"
+      responses:
+        '201':
+          description: Batch upload initiated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchUploadResponse'
+        '400':
+          description: Validation error (empty batch, exceeds limit, invalid file, quota exceeded)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/uploads/batch/{batchId}:
+    get:
+      tags:
+        - Uploads
+      summary: Get batch upload status
+      description: |
+        Check the progress of a batch upload. Returns per-session status
+        with counts of completed, active, and failed uploads.
+
+        Only the batch owner can access this endpoint. Non-owners receive 404.
+      operationId: uploads_getBatchStatus
+      parameters:
+        - name: batchId
+          in: path
+          description: Batch upload UUID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Batch upload status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchUploadStatusResponse'
+        '400':
+          description: Invalid batch ID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Batch not found or not owned by requesting user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
   /api/v1/videos/upload:
     post:
       tags:
@@ -945,6 +1052,124 @@ components:
         duration_seconds:
           type: integer
           description: Processing duration in seconds
+
+    BatchUploadRequest:
+      type: object
+      required:
+        - videos
+      properties:
+        videos:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/BatchUploadVideoItem'
+
+    BatchUploadVideoItem:
+      type: object
+      required:
+        - filename
+        - file_size
+        - title
+      properties:
+        filename:
+          type: string
+          description: Video filename with extension
+          example: "my-video.mp4"
+        file_size:
+          type: integer
+          format: int64
+          description: File size in bytes
+          minimum: 1
+          maximum: 10737418240
+          example: 104857600
+        chunk_size:
+          type: integer
+          format: int64
+          description: Chunk size in bytes (default 10MB if omitted)
+          example: 10485760
+        title:
+          type: string
+          description: Video title
+          minLength: 1
+          maxLength: 255
+          example: "My Video"
+        description:
+          type: string
+          description: Video description
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+          default: private
+          description: Video privacy setting
+
+    BatchUploadResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            batch_id:
+              type: string
+              format: uuid
+              description: Batch upload identifier
+            sessions:
+              type: array
+              items:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                    description: Upload session ID
+                  chunk_size:
+                    type: integer
+                    format: int64
+                  total_chunks:
+                    type: integer
+                  upload_url:
+                    type: string
+                    description: URL for uploading chunks
+        success:
+          type: boolean
+
+    BatchUploadStatusResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            batch_id:
+              type: string
+              format: uuid
+            total_videos:
+              type: integer
+            completed_uploads:
+              type: integer
+            active_uploads:
+              type: integer
+            failed_uploads:
+              type: integer
+            sessions:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  video_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [active, completed, expired, failed]
+                  total_chunks:
+                    type: integer
+                  uploaded_chunks:
+                    type: array
+                    items:
+                      type: integer
+        success:
+          type: boolean
 
     ErrorResponse:
       type: object

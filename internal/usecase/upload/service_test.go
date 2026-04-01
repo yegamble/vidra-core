@@ -56,6 +56,27 @@ func (m *mockUploadRepo) GetExpiredSessions(ctx context.Context) ([]*domain.Uplo
 	}
 	return args.Get(0).([]*domain.UploadSession), args.Error(1)
 }
+func (m *mockUploadRepo) CreateBatch(ctx context.Context, batch *domain.BatchUpload) error {
+	return m.Called(ctx, batch).Error(0)
+}
+func (m *mockUploadRepo) GetBatch(ctx context.Context, batchID string) (*domain.BatchUpload, error) {
+	args := m.Called(ctx, batchID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.BatchUpload), args.Error(1)
+}
+func (m *mockUploadRepo) GetSessionsByBatchID(ctx context.Context, batchID string) ([]*domain.UploadSession, error) {
+	args := m.Called(ctx, batchID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.UploadSession), args.Error(1)
+}
+func (m *mockUploadRepo) WithTransaction(ctx context.Context, fn func(txCtx context.Context) error) error {
+	// In tests, just execute the function with the same context (no real transaction)
+	return fn(ctx)
+}
 
 type mockEncodingRepo struct{ mock.Mock }
 
@@ -214,8 +235,9 @@ func (m *mockVideoRepo) CreateRemoteVideo(ctx context.Context, video *domain.Vid
 func (m *mockVideoRepo) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
-func (m *mockVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
-	return 0, nil
+func (m *mockVideoRepo) GetVideoQuotaUsed(ctx context.Context, userID string) (int64, error) {
+	args := m.Called(ctx, userID)
+	return args.Get(0).(int64), args.Error(1)
 }
 
 func newTestService(t *testing.T) (Service, *mockUploadRepo, *mockEncodingRepo, *mockVideoRepo, string) {
@@ -868,4 +890,344 @@ func TestUploadChunk_NegativeChunkIndex(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "INVALID_CHUNK_INDEX")
+}
+
+// Regression tests: verify single-upload flow is unchanged after batch code changes.
+
+func TestRegressionSingleUploadInitiate_NoBatchID(t *testing.T) {
+	svc, uploadRepo, _, videoRepo, _ := newTestService(t)
+
+	videoRepo.On("Create", mock.Anything, mock.Anything).Return(nil)
+	uploadRepo.On("CreateSession", mock.Anything, mock.MatchedBy(func(s *domain.UploadSession) bool {
+		return s.BatchID == nil // Must be nil, not empty string
+	})).Return(nil)
+
+	req := &domain.InitiateUploadRequest{
+		FileName:  "test.mp4",
+		FileSize:  1048576,
+		ChunkSize: 1048576,
+	}
+
+	resp, err := svc.InitiateUpload(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.NotEmpty(t, resp.SessionID)
+	assert.Equal(t, 1, resp.TotalChunks)
+
+	videoRepo.AssertCalled(t, "Create", mock.Anything, mock.Anything)
+	uploadRepo.AssertCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+func TestRegressionChunkUpload_NonBatchSession(t *testing.T) {
+	svc, uploadRepo, _, _, _ := newTestService(t)
+
+	session := &domain.UploadSession{
+		ID:          "sess-reg",
+		VideoID:     "vid-1",
+		UserID:      "user-1",
+		BatchID:     nil,
+		TotalChunks: 2,
+		Status:      domain.UploadStatusActive,
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+		TempFilePath: t.TempDir(),
+	}
+
+	uploadRepo.On("GetSession", mock.Anything, "sess-reg").Return(session, nil)
+	uploadRepo.On("IsChunkUploaded", mock.Anything, "sess-reg", 0).Return(false, nil)
+	uploadRepo.On("RecordChunk", mock.Anything, "sess-reg", 0).Return(nil)
+	uploadRepo.On("GetUploadedChunks", mock.Anything, "sess-reg").Return([]int{0}, nil)
+
+	chunk := &domain.ChunkUpload{
+		SessionID:  "sess-reg",
+		ChunkIndex: 0,
+		Data:       []byte("test chunk data"),
+	}
+
+	resp, err := svc.UploadChunk(context.Background(), "sess-reg", chunk)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.True(t, resp.Uploaded)
+	assert.Equal(t, 0, resp.ChunkIndex)
+}
+
+func TestRegressionCompleteUpload_NonBatchSession(t *testing.T) {
+	svc, uploadRepo, encodingRepo, videoRepo, tmpDir := newTestService(t)
+
+	session := &domain.UploadSession{
+		ID:           "sess-complete",
+		VideoID:      "vid-complete",
+		UserID:       "user-1",
+		BatchID:      nil,
+		FileName:     "test.mp4",
+		FileSize:     100,
+		TotalChunks:  1,
+		Status:       domain.UploadStatusActive,
+		TempFilePath: filepath.Join(tmpDir, "uploads", "sess-complete", "chunks"),
+	}
+
+	chunkDir := session.TempFilePath
+	_ = os.MkdirAll(chunkDir, 0750)
+	_ = os.WriteFile(filepath.Join(chunkDir, "chunk_0"), []byte("test"), 0600)
+	_ = os.MkdirAll(filepath.Join(tmpDir, "web-videos"), 0750)
+
+	uploadRepo.On("GetSession", mock.Anything, "sess-complete").Return(session, nil)
+	uploadRepo.On("GetUploadedChunks", mock.Anything, "sess-complete").Return([]int{0}, nil)
+	uploadRepo.On("UpdateSession", mock.Anything, mock.Anything).Return(nil)
+
+	video := &domain.Video{
+		ID:     "vid-complete",
+		Status: domain.StatusUploading,
+	}
+	videoRepo.On("GetByID", mock.Anything, "vid-complete").Return(video, nil)
+	videoRepo.On("Update", mock.Anything, mock.Anything).Return(nil)
+	encodingRepo.On("GetJobByVideoID", mock.Anything, "vid-complete").Return(nil, nil)
+	encodingRepo.On("CreateJob", mock.Anything, mock.Anything).Return(nil)
+
+	err := svc.CompleteUpload(context.Background(), "sess-complete")
+	assert.NoError(t, err)
+
+	encodingRepo.AssertCalled(t, "CreateJob", mock.Anything, mock.Anything)
+}
+
+func TestRegressionGetUploadStatus_NonBatchSession(t *testing.T) {
+	svc, uploadRepo, _, _, _ := newTestService(t)
+
+	session := &domain.UploadSession{
+		ID:          "sess-status",
+		VideoID:     "vid-1",
+		UserID:      "user-1",
+		BatchID:     nil,
+		TotalChunks: 5,
+		Status:      domain.UploadStatusActive,
+	}
+
+	uploadRepo.On("GetSession", mock.Anything, "sess-status").Return(session, nil)
+	uploadRepo.On("GetUploadedChunks", mock.Anything, "sess-status").Return([]int{0, 1, 2}, nil)
+
+	result, err := svc.GetUploadStatus(context.Background(), "sess-status")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, 3, len(result.UploadedChunks))
+	assert.Nil(t, result.BatchID)
+}
+
+// Batch upload tests
+
+func newBatchTestService(t *testing.T) (Service, *mockUploadRepo, *mockEncodingRepo, *mockVideoRepo, string) {
+	t.Helper()
+	uploadRepo := new(mockUploadRepo)
+	encodingRepo := new(mockEncodingRepo)
+	videoRepo := new(mockVideoRepo)
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		ValidationTestMode: true,
+		LogLevel:           "info",
+		MaxBatchUploadSize: 5,
+		MaxUserVideoQuota:  50 * 1024 * 1024 * 1024, // 50GB
+	}
+	svc := NewService(uploadRepo, encodingRepo, videoRepo, tmpDir, cfg)
+	return svc, uploadRepo, encodingRepo, videoRepo, tmpDir
+}
+
+func TestInitiateBatchUpload_HappyPath(t *testing.T) {
+	svc, uploadRepo, _, videoRepo, _ := newBatchTestService(t)
+
+	videoRepo.On("GetVideoQuotaUsed", mock.Anything, "user-1").Return(int64(0), nil)
+	videoRepo.On("Create", mock.Anything, mock.Anything).Return(nil)
+	uploadRepo.On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
+	uploadRepo.On("CreateSession", mock.Anything, mock.Anything).Return(nil)
+
+	req := &domain.BatchUploadRequest{
+		Videos: []domain.BatchUploadVideoItem{
+			{FileName: "video1.mp4", FileSize: 1048576, Title: "Video 1"},
+			{FileName: "video2.mkv", FileSize: 2097152, Title: "Video 2"},
+			{FileName: "video3.webm", FileSize: 524288, Title: "Video 3"},
+		},
+	}
+
+	resp, err := svc.InitiateBatchUpload(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.NotEmpty(t, resp.BatchID)
+	assert.Equal(t, 3, len(resp.Sessions))
+
+	for _, s := range resp.Sessions {
+		assert.NotEmpty(t, s.SessionID)
+		assert.NotEmpty(t, s.UploadURL)
+		assert.Contains(t, s.UploadURL, s.SessionID)
+	}
+
+	uploadRepo.AssertCalled(t, "CreateBatch", mock.Anything, mock.Anything)
+	videoRepo.AssertNumberOfCalls(t, "Create", 3)
+	uploadRepo.AssertNumberOfCalls(t, "CreateSession", 3)
+}
+
+func TestInitiateBatchUpload_EmptyBatch(t *testing.T) {
+	svc, _, _, _, _ := newBatchTestService(t)
+
+	req := &domain.BatchUploadRequest{Videos: []domain.BatchUploadVideoItem{}}
+	resp, err := svc.InitiateBatchUpload(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "EMPTY_BATCH")
+}
+
+func TestInitiateBatchUpload_ExceedsBatchLimit(t *testing.T) {
+	svc, _, _, _, _ := newBatchTestService(t)
+
+	videos := make([]domain.BatchUploadVideoItem, 6)
+	for i := range videos {
+		videos[i] = domain.BatchUploadVideoItem{FileName: "v.mp4", FileSize: 1024, Title: "V"}
+	}
+	req := &domain.BatchUploadRequest{Videos: videos}
+	resp, err := svc.InitiateBatchUpload(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "BATCH_TOO_LARGE")
+}
+
+func TestInitiateBatchUpload_InvalidExtension(t *testing.T) {
+	svc, _, _, _, _ := newBatchTestService(t)
+
+	req := &domain.BatchUploadRequest{
+		Videos: []domain.BatchUploadVideoItem{
+			{FileName: "video.mp4", FileSize: 1024, Title: "Good"},
+			{FileName: "script.exe", FileSize: 1024, Title: "Bad"},
+		},
+	}
+	resp, err := svc.InitiateBatchUpload(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "INVALID_FILE_EXTENSION")
+	assert.Contains(t, err.Error(), "Video 2")
+}
+
+func TestInitiateBatchUpload_QuotaExceeded(t *testing.T) {
+	svc, _, _, videoRepo, _ := newBatchTestService(t)
+
+	// User has already used 49GB of 50GB quota
+	videoRepo.On("GetVideoQuotaUsed", mock.Anything, "user-1").Return(int64(49*1024*1024*1024), nil)
+
+	req := &domain.BatchUploadRequest{
+		Videos: []domain.BatchUploadVideoItem{
+			{FileName: "big.mp4", FileSize: 2 * 1024 * 1024 * 1024, Title: "Big Video"}, // 2GB would exceed
+		},
+	}
+	resp, err := svc.InitiateBatchUpload(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "QUOTA_EXCEEDED")
+}
+
+func TestInitiateBatchUpload_DefaultChunkSize(t *testing.T) {
+	svc, uploadRepo, _, videoRepo, _ := newBatchTestService(t)
+
+	videoRepo.On("GetVideoQuotaUsed", mock.Anything, "user-1").Return(int64(0), nil)
+	videoRepo.On("Create", mock.Anything, mock.Anything).Return(nil)
+	uploadRepo.On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
+	uploadRepo.On("CreateSession", mock.Anything, mock.MatchedBy(func(s *domain.UploadSession) bool {
+		return s.ChunkSize == 10*1024*1024 // default 10MB
+	})).Return(nil)
+
+	req := &domain.BatchUploadRequest{
+		Videos: []domain.BatchUploadVideoItem{
+			{FileName: "v.mp4", FileSize: 30 * 1024 * 1024, ChunkSize: 0, Title: "No chunk size"},
+		},
+	}
+
+	resp, err := svc.InitiateBatchUpload(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Equal(t, int64(10*1024*1024), resp.Sessions[0].ChunkSize)
+}
+
+func TestInitiateBatchUpload_MissingTitle(t *testing.T) {
+	svc, _, _, _, _ := newBatchTestService(t)
+
+	req := &domain.BatchUploadRequest{
+		Videos: []domain.BatchUploadVideoItem{
+			{FileName: "v.mp4", FileSize: 1024, Title: ""},
+		},
+	}
+	resp, err := svc.InitiateBatchUpload(context.Background(), "user-1", req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "MISSING_TITLE")
+}
+
+func TestGetBatchStatus_HappyPath(t *testing.T) {
+	svc, uploadRepo, _, _, _ := newBatchTestService(t)
+
+	batch := &domain.BatchUpload{
+		ID:          "batch-1",
+		UserID:      "user-1",
+		TotalVideos: 3,
+	}
+	batchID := "batch-1"
+	sessions := []*domain.UploadSession{
+		{ID: "s1", Status: domain.UploadStatusCompleted, BatchID: &batchID},
+		{ID: "s2", Status: domain.UploadStatusActive, BatchID: &batchID},
+		{ID: "s3", Status: domain.UploadStatusExpired, BatchID: &batchID},
+	}
+
+	uploadRepo.On("GetBatch", mock.Anything, "batch-1").Return(batch, nil)
+	uploadRepo.On("GetSessionsByBatchID", mock.Anything, "batch-1").Return(sessions, nil)
+
+	status, err := svc.GetBatchStatus(context.Background(), "batch-1", "user-1")
+	assert.NoError(t, err)
+	assert.NotNil(t, status)
+	assert.Equal(t, 3, status.TotalVideos)
+	assert.Equal(t, 1, status.CompletedUploads)
+	assert.Equal(t, 1, status.ActiveUploads)
+	assert.Equal(t, 1, status.FailedUploads)
+	assert.Equal(t, 3, len(status.Sessions))
+}
+
+func TestGetBatchStatus_NotFound(t *testing.T) {
+	svc, uploadRepo, _, _, _ := newBatchTestService(t)
+
+	uploadRepo.On("GetBatch", mock.Anything, "nonexistent").Return(nil,
+		domain.NewDomainError("BATCH_NOT_FOUND", "Batch upload not found"))
+
+	status, err := svc.GetBatchStatus(context.Background(), "nonexistent", "user-1")
+	assert.Error(t, err)
+	assert.Nil(t, status)
+	assert.Contains(t, err.Error(), "BATCH_NOT_FOUND")
+}
+
+func TestGetBatchStatus_WrongOwner(t *testing.T) {
+	svc, uploadRepo, _, _, _ := newBatchTestService(t)
+
+	batch := &domain.BatchUpload{
+		ID:          "batch-1",
+		UserID:      "user-1",
+		TotalVideos: 1,
+	}
+	uploadRepo.On("GetBatch", mock.Anything, "batch-1").Return(batch, nil)
+
+	// Different user tries to access
+	status, err := svc.GetBatchStatus(context.Background(), "batch-1", "user-other")
+	assert.Error(t, err)
+	assert.Nil(t, status)
+	assert.Contains(t, err.Error(), "BATCH_NOT_FOUND")
+}
+
+func TestInitiateBatchUpload_SingleVideo(t *testing.T) {
+	svc, uploadRepo, _, videoRepo, _ := newBatchTestService(t)
+
+	videoRepo.On("GetVideoQuotaUsed", mock.Anything, "user-1").Return(int64(0), nil)
+	videoRepo.On("Create", mock.Anything, mock.Anything).Return(nil)
+	uploadRepo.On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
+	uploadRepo.On("CreateSession", mock.Anything, mock.Anything).Return(nil)
+
+	req := &domain.BatchUploadRequest{
+		Videos: []domain.BatchUploadVideoItem{
+			{FileName: "solo.mp4", FileSize: 1048576, Title: "Solo Video"},
+		},
+	}
+
+	resp, err := svc.InitiateBatchUpload(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Equal(t, 1, len(resp.Sessions))
 }

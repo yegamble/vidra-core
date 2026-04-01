@@ -147,6 +147,7 @@
 | IPFS streaming | Done | `ipfs` | `*_test.go` |
 | Whisper transcription | Done | `whisper` | `*_test.go` |
 | Migration ETL | Done | `importer` | `migration_test.go` |
+| Batch video uploads | Done | `httpapi/handlers/video`, `usecase/upload` | `batch_upload_handlers_test.go`, `service_test.go` |
 
 ## Deferred Features (Tracked, not blocking)
 

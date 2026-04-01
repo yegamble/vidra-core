@@ -28,16 +28,17 @@ func (r *uploadRepository) CreateSession(ctx context.Context, session *domain.Up
 		INSERT INTO upload_sessions (
 			id, video_id, user_id, filename, file_size, chunk_size,
 			total_chunks, uploaded_chunks, status, temp_file_path,
-			created_at, updated_at, expires_at
+			created_at, updated_at, expires_at, batch_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)`
 
-	_, err := r.db.ExecContext(ctx, query,
+	exec := GetExecutor(ctx, r.db)
+	_, err := exec.ExecContext(ctx, query,
 		session.ID, session.VideoID, session.UserID, session.FileName,
 		session.FileSize, session.ChunkSize, session.TotalChunks,
 		pq.Array(session.UploadedChunks), session.Status, session.TempFilePath,
-		session.CreatedAt, session.UpdatedAt, session.ExpiresAt,
+		session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.BatchID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create upload session: %w", err)
@@ -49,7 +50,7 @@ func (r *uploadRepository) GetSession(ctx context.Context, sessionID string) (*d
 	query := `
 		SELECT id, video_id, user_id, filename, file_size, chunk_size,
 		       total_chunks, uploaded_chunks, status, temp_file_path,
-		       created_at, updated_at, expires_at
+		       created_at, updated_at, expires_at, batch_id
 		FROM upload_sessions WHERE id = $1`
 
 	var session domain.UploadSession
@@ -59,7 +60,7 @@ func (r *uploadRepository) GetSession(ctx context.Context, sessionID string) (*d
 		&session.ID, &session.VideoID, &session.UserID, &session.FileName,
 		&session.FileSize, &session.ChunkSize, &session.TotalChunks,
 		&uploadedChunks, &session.Status, &session.TempFilePath,
-		&session.CreatedAt, &session.UpdatedAt, &session.ExpiresAt,
+		&session.CreatedAt, &session.UpdatedAt, &session.ExpiresAt, &session.BatchID,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -218,7 +219,7 @@ func (r *uploadRepository) GetExpiredSessions(ctx context.Context) ([]*domain.Up
 	query := `
 		SELECT id, video_id, user_id, filename, file_size, chunk_size,
 		       total_chunks, uploaded_chunks, status, temp_file_path,
-		       created_at, updated_at, expires_at
+		       created_at, updated_at, expires_at, batch_id
 		FROM upload_sessions
 		WHERE status = 'expired' OR (expires_at < NOW() AND status != 'completed')`
 
@@ -237,7 +238,7 @@ func (r *uploadRepository) GetExpiredSessions(ctx context.Context) ([]*domain.Up
 			&session.ID, &session.VideoID, &session.UserID, &session.FileName,
 			&session.FileSize, &session.ChunkSize, &session.TotalChunks,
 			&uploadedChunks, &session.Status, &session.TempFilePath,
-			&session.CreatedAt, &session.UpdatedAt, &session.ExpiresAt,
+			&session.CreatedAt, &session.UpdatedAt, &session.ExpiresAt, &session.BatchID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan expired session: %w", err)
@@ -254,6 +255,89 @@ func (r *uploadRepository) GetExpiredSessions(ctx context.Context) ([]*domain.Up
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating over rows: %w", err)
+	}
+
+	return sessions, nil
+}
+
+func (r *uploadRepository) WithTransaction(ctx context.Context, fn func(txCtx context.Context) error) error {
+	return r.tm.WithTransaction(ctx, nil, func(tx *sqlx.Tx) error {
+		txCtx := WithTx(ctx, tx)
+		return fn(txCtx)
+	})
+}
+
+func (r *uploadRepository) CreateBatch(ctx context.Context, batch *domain.BatchUpload) error {
+	query := `
+		INSERT INTO batch_uploads (id, user_id, total_videos, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5)`
+
+	exec := GetExecutor(ctx, r.db)
+	_, err := exec.ExecContext(ctx, query,
+		batch.ID, batch.UserID, batch.TotalVideos,
+		batch.CreatedAt, batch.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create batch upload: %w", err)
+	}
+	return nil
+}
+
+func (r *uploadRepository) GetBatch(ctx context.Context, batchID string) (*domain.BatchUpload, error) {
+	query := `SELECT id, user_id, total_videos, created_at, updated_at FROM batch_uploads WHERE id = $1`
+
+	var batch domain.BatchUpload
+	err := r.db.QueryRowContext(ctx, query, batchID).Scan(
+		&batch.ID, &batch.UserID, &batch.TotalVideos,
+		&batch.CreatedAt, &batch.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, domain.NewDomainError("BATCH_NOT_FOUND", "Batch upload not found")
+		}
+		return nil, fmt.Errorf("failed to get batch upload: %w", err)
+	}
+	return &batch, nil
+}
+
+func (r *uploadRepository) GetSessionsByBatchID(ctx context.Context, batchID string) ([]*domain.UploadSession, error) {
+	query := `
+		SELECT id, video_id, user_id, filename, file_size, chunk_size,
+		       total_chunks, uploaded_chunks, status, temp_file_path,
+		       created_at, updated_at, expires_at, batch_id
+		FROM upload_sessions WHERE batch_id = $1`
+
+	rows, err := r.db.QueryContext(ctx, query, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sessions by batch ID: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var sessions []*domain.UploadSession
+	for rows.Next() {
+		var session domain.UploadSession
+		var uploadedChunks pq.Int32Array
+
+		err := rows.Scan(
+			&session.ID, &session.VideoID, &session.UserID, &session.FileName,
+			&session.FileSize, &session.ChunkSize, &session.TotalChunks,
+			&uploadedChunks, &session.Status, &session.TempFilePath,
+			&session.CreatedAt, &session.UpdatedAt, &session.ExpiresAt, &session.BatchID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan batch session: %w", err)
+		}
+
+		session.UploadedChunks = make([]int, len(uploadedChunks))
+		for i, chunk := range uploadedChunks {
+			session.UploadedChunks[i] = int(chunk)
+		}
+
+		sessions = append(sessions, &session)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating batch sessions: %w", err)
 	}
 
 	return sessions, nil

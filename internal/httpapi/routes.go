@@ -663,6 +663,8 @@ func registerVideoAPIRoutes(
 	r.Route("/uploads", func(r chi.Router) {
 		r.Use(middleware.Auth(cfg.JWTSecret))
 		r.Post("/initiate", video.InitiateUploadHandler(deps.UploadService, deps.VideoRepo))
+		r.Post("/batch", video.BatchInitiateUploadHandler(deps.UploadService, cfg))
+		r.Get("/batch/{batchId}", video.GetBatchStatusHandler(deps.UploadService))
 		r.Route("/{sessionId}", func(r chi.Router) {
 			r.Post("/chunks", video.UploadChunkHandler(deps.UploadService, cfg))
 			r.Post("/complete", video.CompleteUploadHandler(deps.UploadService, deps.EncodingRepo))

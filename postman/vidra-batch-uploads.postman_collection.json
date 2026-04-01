@@ -1,0 +1,197 @@
+{
+  "info": {
+    "name": "Vidra Batch Uploads",
+    "description": "Tests for batch video upload endpoints (Vidra Core extension).\n\nEndpoints:\n- POST /api/v1/uploads/batch - Initiate batch upload\n- GET /api/v1/uploads/batch/{batchId} - Get batch status",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{auth_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Batch Upload - Happy Path",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 201', function() {",
+              "  pm.response.to.have.status(201);",
+              "});",
+              "pm.test('Response has batch_id and sessions', function() {",
+              "  var json = pm.response.json();",
+              "  pm.expect(json.success).to.be.true;",
+              "  pm.expect(json.data.batch_id).to.be.a('string');",
+              "  pm.expect(json.data.sessions).to.be.an('array');",
+              "  pm.expect(json.data.sessions.length).to.equal(2);",
+              "  pm.collectionVariables.set('batch_id', json.data.batch_id);",
+              "  pm.collectionVariables.set('session_id_1', json.data.sessions[0].session_id);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"videos\":[{\"filename\":\"test1.mp4\",\"file_size\":1048576,\"title\":\"Test Video 1\"},{\"filename\":\"test2.mp4\",\"file_size\":2097152,\"title\":\"Test Video 2\",\"privacy\":\"private\"}]}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/uploads/batch",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "uploads", "batch"]
+        }
+      }
+    },
+    {
+      "name": "Batch Upload - Get Status",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 200', function() {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Response has batch status fields', function() {",
+              "  var json = pm.response.json();",
+              "  pm.expect(json.success).to.be.true;",
+              "  pm.expect(json.data.batch_id).to.be.a('string');",
+              "  pm.expect(json.data.total_videos).to.be.a('number');",
+              "  pm.expect(json.data.completed_uploads).to.be.a('number');",
+              "  pm.expect(json.data.active_uploads).to.be.a('number');",
+              "  pm.expect(json.data.sessions).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/api/v1/uploads/batch/{{batch_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "uploads", "batch", "{{batch_id}}"]
+        }
+      }
+    },
+    {
+      "name": "Batch Upload - Empty Batch (400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 400', function() {",
+              "  pm.response.to.have.status(400);",
+              "});",
+              "pm.test('Error code is EMPTY_BATCH', function() {",
+              "  var json = pm.response.json();",
+              "  pm.expect(json.success).to.be.false;",
+              "  pm.expect(json.error.code).to.equal('EMPTY_BATCH');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"videos\":[]}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/uploads/batch",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "uploads", "batch"]
+        }
+      }
+    },
+    {
+      "name": "Batch Upload - Unauthorized (401)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 401', function() {",
+              "  pm.response.to.have.status(401);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"videos\":[{\"filename\":\"test.mp4\",\"file_size\":1024,\"title\":\"Test\"}]}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/uploads/batch",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "uploads", "batch"]
+        }
+      }
+    },
+    {
+      "name": "Batch Status - Not Found (404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status is 404', function() {",
+              "  pm.response.to.have.status(404);",
+              "});",
+              "pm.test('Error code is BATCH_NOT_FOUND', function() {",
+              "  var json = pm.response.json();",
+              "  pm.expect(json.error.code).to.equal('BATCH_NOT_FOUND');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/api/v1/uploads/batch/00000000-0000-0000-0000-000000000000",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "uploads", "batch", "00000000-0000-0000-0000-000000000000"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "batch_id",
+      "value": ""
+    },
+    {
+      "key": "session_id_1",
+      "value": ""
+    }
+  ]
+}

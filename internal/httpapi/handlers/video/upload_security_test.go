@@ -70,6 +70,18 @@ func (m *MockUploadRepository) GetExpiredSessions(ctx context.Context) ([]*domai
 	}
 	return args.Get(0).([]*domain.UploadSession), args.Error(1)
 }
+func (m *MockUploadRepository) CreateBatch(_ context.Context, _ *domain.BatchUpload) error {
+	return nil
+}
+func (m *MockUploadRepository) GetBatch(_ context.Context, _ string) (*domain.BatchUpload, error) {
+	return nil, nil
+}
+func (m *MockUploadRepository) GetSessionsByBatchID(_ context.Context, _ string) ([]*domain.UploadSession, error) {
+	return nil, nil
+}
+func (m *MockUploadRepository) WithTransaction(_ context.Context, fn func(context.Context) error) error {
+	return fn(context.Background())
+}
 
 type MockVideoRepository struct {
 	mock.Mock
