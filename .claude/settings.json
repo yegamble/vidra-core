@@ -6,7 +6,52 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; if [ -z \"$FILE\" ]; then exit 0; fi; case \"$FILE\" in internal/generated/*) echo \"STOP: Do not edit generated files in internal/generated/. Edit api/*.yaml and run make generate-openapi instead.\" >&2; exit 2;; postman/results-*|postman/test-results.json) echo \"STOP: Do not edit generated Newman/Postman result artifacts. Update postman/*.postman_collection.json instead.\" >&2; exit 2;; esac; exit 0'"
+            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; if [ -z \"$FILE\" ]; then exit 0; fi; case \"$FILE\" in internal/generated/*) echo \"BLOCK: Do not edit generated files in internal/generated/. Edit api/*.yaml and run make generate-openapi instead.\" >&2; exit 2;; postman/results-*|postman/test-results.json) echo \"BLOCK: Do not edit generated Newman/Postman result artifacts.\" >&2; exit 2;; esac; exit 0'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; CONTENT=\"${TOOL_INPUT_NEW_STRING:-${TOOL_INPUT_new_string:-${TOOL_INPUT_CONTENT:-${TOOL_INPUT_content:-}}}}\"; if [ -z \"$FILE\" ] || [ -z \"$CONTENT\" ]; then exit 0; fi; case \"$FILE\" in *.go) ;; *) exit 0;; esac; if echo \"$CONTENT\" | grep -qE \"\\\"math/rand\\\"\" && ! echo \"$FILE\" | grep -qE \"_test\\.go$\"; then echo \"WARN: Using math/rand in production code. Use crypto/rand for security-sensitive operations.\" >&2; fi; if echo \"$CONTENT\" | grep -qiE \"(password|secret|apikey|api_key|token)\\s*[:=]\\s*\\\"[^\\\"]+\\\"\" && ! echo \"$CONTENT\" | grep -qE \"(os\\.Getenv|GetEnv|_test\\.go|example|Example)\"; then echo \"WARN: Possible hardcoded secret detected. Use environment variables instead.\" >&2; fi; exit 0'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; CONTENT=\"${TOOL_INPUT_NEW_STRING:-${TOOL_INPUT_new_string:-${TOOL_INPUT_CONTENT:-${TOOL_INPUT_content:-}}}}\"; if [ -z \"$FILE\" ] || [ -z \"$CONTENT\" ]; then exit 0; fi; case \"$FILE\" in internal/repository/*.go) ;; *) exit 0;; esac; if echo \"$CONTENT\" | grep -qE \"fmt\\.Sprintf\\(.*(%s|%v).*((SELECT|INSERT|UPDATE|DELETE|WHERE|FROM|JOIN|SET))\"; then echo \"BLOCK: SQL injection risk — do not interpolate user values with fmt.Sprintf in SQL queries. Use parameterized queries ($1, $2, etc.) instead.\" >&2; exit 2; fi; exit 0'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; CONTENT=\"${TOOL_INPUT_NEW_STRING:-${TOOL_INPUT_new_string:-${TOOL_INPUT_CONTENT:-${TOOL_INPUT_content:-}}}}\"; if [ -z \"$FILE\" ] || [ -z \"$CONTENT\" ]; then exit 0; fi; case \"$FILE\" in internal/payments/*.go|internal/crypto/*.go|internal/security/*.go) ;; *) exit 0;; esac; if echo \"$CONTENT\" | grep -qE \"fmt\\.Print|log\\.Print\" && echo \"$CONTENT\" | grep -qiE \"(privat|secret|seed|mnemonic|key[^w])\"; then echo \"WARN: Potential secret logging in sensitive package. Never log private keys, seeds, or mnemonics.\" >&2; fi; exit 0'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; CONTENT=\"${TOOL_INPUT_NEW_STRING:-${TOOL_INPUT_new_string:-${TOOL_INPUT_CONTENT:-${TOOL_INPUT_content:-}}}}\"; if [ -z \"$FILE\" ] || [ -z \"$CONTENT\" ]; then exit 0; fi; case \"$FILE\" in internal/ipfs/*.go) ;; *) exit 0;; esac; if echo \"$CONTENT\" | grep -qE \"Unpin|RemovePin|unpin\" && ! echo \"$CONTENT\" | grep -qE \"reference.*check|refcount|isReferenced\"; then echo \"WARN: IPFS unpin without reference check. Verify content is not referenced by any video before unpinning.\" >&2; fi; exit 0'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; CONTENT=\"${TOOL_INPUT_NEW_STRING:-${TOOL_INPUT_new_string:-${TOOL_INPUT_CONTENT:-${TOOL_INPUT_content:-}}}}\"; if [ -z \"$FILE\" ] || [ -z \"$CONTENT\" ]; then exit 0; fi; case \"$FILE\" in internal/activitypub/*.go) ;; *) exit 0;; esac; if echo \"$CONTENT\" | grep -qE \"http://\" && echo \"$CONTENT\" | grep -qE \"(Inbox|Outbox|webfinger|nodeinfo|actor)\" && ! echo \"$CONTENT\" | grep -qE \"(test|Test|localhost|127\\.0\\.0\\.1)\"; then echo \"WARN: HTTP (not HTTPS) URL in ActivityPub code. Federation requires HTTPS for security.\" >&2; fi; exit 0'"
           }
         ]
       }
@@ -17,15 +62,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; if [ -z \"$FILE\" ]; then exit 0; fi; case \"$FILE\" in *.go) if command -v gofmt >/dev/null 2>&1; then gofmt -s -w \"$FILE\" 2>/dev/null; fi;; esac; exit 0'"
+            "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; if [ -z \"$FILE\" ]; then exit 0; fi; case \"$FILE\" in *.go) if command -v gofmt >/dev/null 2>&1; then gofmt -s -w \"$FILE\" 2>/dev/null; fi; if command -v goimports >/dev/null 2>&1; then goimports -w \"$FILE\" 2>/dev/null; fi;; esac; exit 0'"
           }
         ]
-      }
-    ],
-    "PreCommit": [
-      {
-        "type": "command",
-        "command": "bash -c 'cd /Users/yosefgamble/github/vidra-core && ./scripts/verify-autonomous-stop-hooks.sh'"
       }
     ]
   }
