@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
@@ -423,7 +424,9 @@ func TestActivityPubRepository_Unit_UpdateDeliveryStatus(t *testing.T) {
 			repo := NewActivityPubRepository(db, nil)
 			tt.setup(mock)
 
-			err := repo.UpdateDeliveryStatus(ctx, "delivery-1", "failed", 3, &lastErr, now)
+			err := repo.UpdateDeliveryStatus(ctx, port.DeliveryStatusParams{
+				DeliveryID: "delivery-1", Status: "failed", Attempts: 3, LastError: &lastErr, NextAttempt: now,
+			})
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {

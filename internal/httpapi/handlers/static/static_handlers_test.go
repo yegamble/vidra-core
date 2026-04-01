@@ -16,6 +16,7 @@ import (
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
 )
 
 // mockVideoRepo implements port.VideoRepository for testing.
@@ -49,10 +50,10 @@ func (m *mockVideoRepo) GetByUserID(_ context.Context, _ string, _, _ int) ([]*d
 func (m *mockVideoRepo) GetByChannelID(_ context.Context, _ string, _, _ int) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
-func (m *mockVideoRepo) UpdateProcessingInfo(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _, _ string) error {
+func (m *mockVideoRepo) UpdateProcessingInfo(_ context.Context, _ port.VideoProcessingParams) error {
 	return nil
 }
-func (m *mockVideoRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _, _ string, _ map[string]string, _, _ string) error {
+func (m *mockVideoRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ port.VideoProcessingWithCIDsParams) error {
 	return nil
 }
 func (m *mockVideoRepo) Count(_ context.Context) (int64, error) { return 0, nil }

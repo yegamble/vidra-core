@@ -9,12 +9,21 @@ import (
 	"github.com/google/uuid"
 )
 
+// EventQueryFilter groups the parameters for querying analytics events.
+type EventQueryFilter struct {
+	VideoID   uuid.UUID
+	StartDate time.Time
+	EndDate   time.Time
+	Limit     int
+	Offset    int
+}
+
 // VideoAnalyticsRepository defines the interface for video analytics data persistence.
 type VideoAnalyticsRepository interface {
 	// Event operations
 	CreateEvent(ctx context.Context, event *domain.AnalyticsEvent) error
 	CreateEventsBatch(ctx context.Context, events []*domain.AnalyticsEvent) error
-	GetEventsByVideoID(ctx context.Context, videoID uuid.UUID, startDate, endDate time.Time, limit, offset int) ([]*domain.AnalyticsEvent, error)
+	GetEventsByVideoID(ctx context.Context, filter EventQueryFilter) ([]*domain.AnalyticsEvent, error)
 	GetEventsBySessionID(ctx context.Context, sessionID string) ([]*domain.AnalyticsEvent, error)
 	DeleteOldEvents(ctx context.Context, retentionDays int) (int64, error)
 

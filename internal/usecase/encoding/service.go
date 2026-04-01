@@ -495,7 +495,18 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 		}
 	}
 
-	return s.videoRepo.UpdateProcessingInfoWithCIDs(ctx, job.VideoID, domain.StatusCompleted, outputs, filepath.ToSlash(thumb), filepath.ToSlash(preview), processedCIDs, thumbCID, previewCID)
+	return s.videoRepo.UpdateProcessingInfoWithCIDs(ctx, port.VideoProcessingWithCIDsParams{
+		VideoProcessingParams: port.VideoProcessingParams{
+			VideoID:       job.VideoID,
+			Status:        domain.StatusCompleted,
+			OutputPaths:   outputs,
+			ThumbnailPath: filepath.ToSlash(thumb),
+			PreviewPath:   filepath.ToSlash(preview),
+		},
+		ProcessedCIDs: processedCIDs,
+		ThumbnailCID:  thumbCID,
+		PreviewCID:    previewCID,
+	})
 }
 
 // uploadHLSToS3 walks outBaseDir, uploads every HLS file, the source video,

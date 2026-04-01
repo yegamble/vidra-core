@@ -388,7 +388,6 @@ func (r *subscriptionRepository) ListSubscriptions(ctx context.Context, subscrib
 	return users, int64(response.Total), nil
 }
 
-
 // CountSubscribers returns the subscriber count for a channel (DEPRECATED)
 func (r *subscriptionRepository) CountSubscribers(ctx context.Context, channelID string) (int64, error) {
 	var count int64

@@ -23,6 +23,7 @@ import (
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
 )
 
 type unitVideoRepoStub struct {
@@ -80,11 +81,11 @@ func (s *unitVideoRepoStub) Search(context.Context, *domain.VideoSearchRequest) 
 	return nil, 0, nil
 }
 
-func (s *unitVideoRepoStub) UpdateProcessingInfo(context.Context, string, domain.ProcessingStatus, map[string]string, string, string) error {
+func (s *unitVideoRepoStub) UpdateProcessingInfo(_ context.Context, _ port.VideoProcessingParams) error {
 	return nil
 }
 
-func (s *unitVideoRepoStub) UpdateProcessingInfoWithCIDs(context.Context, string, domain.ProcessingStatus, map[string]string, string, string, map[string]string, string, string) error {
+func (s *unitVideoRepoStub) UpdateProcessingInfoWithCIDs(_ context.Context, _ port.VideoProcessingWithCIDsParams) error {
 	return nil
 }
 

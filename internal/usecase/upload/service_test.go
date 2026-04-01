@@ -9,6 +9,7 @@ import (
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -204,11 +205,11 @@ func (m *mockVideoRepo) Search(ctx context.Context, req *domain.VideoSearchReque
 	}
 	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
 }
-func (m *mockVideoRepo) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
-	return m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath).Error(0)
+func (m *mockVideoRepo) UpdateProcessingInfo(ctx context.Context, params port.VideoProcessingParams) error {
+	return m.Called(ctx, params).Error(0)
 }
-func (m *mockVideoRepo) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
-	return m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath, processedCIDs, thumbnailCID, previewCID).Error(0)
+func (m *mockVideoRepo) UpdateProcessingInfoWithCIDs(ctx context.Context, params port.VideoProcessingWithCIDsParams) error {
+	return m.Called(ctx, params).Error(0)
 }
 func (m *mockVideoRepo) Count(ctx context.Context) (int64, error) {
 	args := m.Called(ctx)
@@ -922,13 +923,13 @@ func TestRegressionChunkUpload_NonBatchSession(t *testing.T) {
 	svc, uploadRepo, _, _, _ := newTestService(t)
 
 	session := &domain.UploadSession{
-		ID:          "sess-reg",
-		VideoID:     "vid-1",
-		UserID:      "user-1",
-		BatchID:     nil,
-		TotalChunks: 2,
-		Status:      domain.UploadStatusActive,
-		ExpiresAt:   time.Now().Add(1 * time.Hour),
+		ID:           "sess-reg",
+		VideoID:      "vid-1",
+		UserID:       "user-1",
+		BatchID:      nil,
+		TotalChunks:  2,
+		Status:       domain.UploadStatusActive,
+		ExpiresAt:    time.Now().Add(1 * time.Hour),
 		TempFilePath: t.TempDir(),
 	}
 

@@ -35,10 +35,20 @@ func NewServiceWithSender(config *Config, sender EmailSender) *Service {
 	return &Service{config: config, sender: sender}
 }
 
+// EmailSendParams groups the parameters for SendTLS and SendSTARTTLS.
+type EmailSendParams struct {
+	Addr string
+	Auth smtp.Auth
+	From string
+	To   []string
+	Msg  []byte
+	Host string
+}
+
 type EmailSender interface {
 	SendPlain(addr string, auth smtp.Auth, from string, to []string, msg []byte) error
-	SendTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error
-	SendSTARTTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error
+	SendTLS(params EmailSendParams) error
+	SendSTARTTLS(params EmailSendParams) error
 }
 
 type smtpSender struct{}
@@ -47,9 +57,9 @@ func (s *smtpSender) SendPlain(addr string, auth smtp.Auth, from string, to []st
 	return smtp.SendMail(addr, auth, from, to, msg)
 }
 
-func (s *smtpSender) SendTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error {
-	conn, err := tls.Dial("tcp", addr, &tls.Config{
-		ServerName:         host,
+func (s *smtpSender) SendTLS(params EmailSendParams) error {
+	conn, err := tls.Dial("tcp", params.Addr, &tls.Config{
+		ServerName:         params.Host,
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: false,
 	})
@@ -58,17 +68,17 @@ func (s *smtpSender) SendTLS(addr string, auth smtp.Auth, from string, to []stri
 	}
 	defer func() { _ = conn.Close() }()
 
-	client, err := smtp.NewClient(conn, host)
+	client, err := smtp.NewClient(conn, params.Host)
 	if err != nil {
 		return fmt.Errorf("failed to create SMTP client: %w", err)
 	}
 	defer func() { _ = client.Close() }()
 
-	return sendViaClient(client, auth, from, to, msg)
+	return sendViaClient(client, params.Auth, params.From, params.To, params.Msg)
 }
 
-func (s *smtpSender) SendSTARTTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error {
-	c, err := smtp.Dial(addr)
+func (s *smtpSender) SendSTARTTLS(params EmailSendParams) error {
+	c, err := smtp.Dial(params.Addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
@@ -80,7 +90,7 @@ func (s *smtpSender) SendSTARTTLS(addr string, auth smtp.Auth, from string, to [
 
 	if ok, _ := c.Extension("STARTTLS"); ok {
 		config := &tls.Config{
-			ServerName:         host,
+			ServerName:         params.Host,
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: false,
 		}
@@ -91,7 +101,7 @@ func (s *smtpSender) SendSTARTTLS(addr string, auth smtp.Auth, from string, to [
 		return fmt.Errorf("STARTTLS not supported by server on port 587 - refusing to send over insecure connection")
 	}
 
-	return sendViaClient(c, auth, from, to, msg)
+	return sendViaClient(c, params.Auth, params.From, params.To, params.Msg)
 }
 
 // sendViaClient performs the shared SMTP envelope sequence: Auth, Mail, Rcpt, Data, Quit.
@@ -149,8 +159,10 @@ func (s *Service) sendEmail(to, subject, plainBody, htmlBody string) error {
 
 	addr := fmt.Sprintf("%s:%d", s.config.SMTPHost, s.config.SMTPPort)
 
+	p := EmailSendParams{Addr: addr, Auth: auth, From: s.config.FromAddress, To: []string{to}, Msg: msg, Host: s.config.SMTPHost}
+
 	if s.config.TLS {
-		return s.sender.SendTLS(addr, auth, s.config.FromAddress, []string{to}, msg, s.config.SMTPHost)
+		return s.sender.SendTLS(p)
 	}
 
 	if s.config.DisableSTARTTLS {
@@ -158,11 +170,11 @@ func (s *Service) sendEmail(to, subject, plainBody, htmlBody string) error {
 	}
 
 	if s.config.SMTPPort == 465 {
-		return s.sender.SendTLS(addr, auth, s.config.FromAddress, []string{to}, msg, s.config.SMTPHost)
+		return s.sender.SendTLS(p)
 	}
 
 	if s.config.SMTPPort == 587 {
-		return s.sender.SendSTARTTLS(addr, auth, s.config.FromAddress, []string{to}, msg, s.config.SMTPHost)
+		return s.sender.SendSTARTTLS(p)
 	}
 
 	return s.sender.SendPlain(addr, auth, s.config.FromAddress, []string{to}, msg)

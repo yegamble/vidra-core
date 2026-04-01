@@ -9,6 +9,7 @@ import (
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 	"vidra-core/internal/testutil"
 	ucenc "vidra-core/internal/usecase/encoding"
 
@@ -303,25 +304,25 @@ func (r *mockVideoRepository) GetByUserID(ctx context.Context, userID string, li
 	return nil, 0, nil
 }
 
-func (r *mockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
-	if video, exists := r.videos[videoID]; exists {
-		video.Status = status
-		video.OutputPaths = outputPaths
-		video.ThumbnailPath = thumbnailPath
-		video.PreviewPath = previewPath
+func (r *mockVideoRepository) UpdateProcessingInfo(ctx context.Context, params port.VideoProcessingParams) error {
+	if video, exists := r.videos[params.VideoID]; exists {
+		video.Status = params.Status
+		video.OutputPaths = params.OutputPaths
+		video.ThumbnailPath = params.ThumbnailPath
+		video.PreviewPath = params.PreviewPath
 		video.UpdatedAt = time.Now()
 	}
 	return nil
 }
 
-func (r *mockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
-	if video, exists := r.videos[videoID]; exists {
-		video.Status = status
-		video.OutputPaths = outputPaths
-		video.ThumbnailPath = thumbnailPath
-		video.PreviewPath = previewPath
-		video.ProcessedCIDs = processedCIDs
-		video.ThumbnailCID = thumbnailCID
+func (r *mockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, params port.VideoProcessingWithCIDsParams) error {
+	if video, exists := r.videos[params.VideoID]; exists {
+		video.Status = params.Status
+		video.OutputPaths = params.OutputPaths
+		video.ThumbnailPath = params.ThumbnailPath
+		video.PreviewPath = params.PreviewPath
+		video.ProcessedCIDs = params.ProcessedCIDs
+		video.ThumbnailCID = params.ThumbnailCID
 		video.UpdatedAt = time.Now()
 	}
 	return nil

@@ -26,15 +26,15 @@ func (f *fakeSender) SendPlain(addr string, auth smtp.Auth, from string, to []st
 	return nil
 }
 
-func (f *fakeSender) SendTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error {
+func (f *fakeSender) SendTLS(params EmailSendParams) error {
 	f.tlsCalled = true
-	f.addr, f.host, f.from, f.to, f.msg = addr, host, from, to, append([]byte(nil), msg...)
+	f.addr, f.host, f.from, f.to, f.msg = params.Addr, params.Host, params.From, params.To, append([]byte(nil), params.Msg...)
 	return nil
 }
 
-func (f *fakeSender) SendSTARTTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte, host string) error {
+func (f *fakeSender) SendSTARTTLS(params EmailSendParams) error {
 	f.starttlsCalled = true
-	f.addr, f.host, f.from, f.to, f.msg = addr, host, from, to, append([]byte(nil), msg...)
+	f.addr, f.host, f.from, f.to, f.msg = params.Addr, params.Host, params.From, params.To, append([]byte(nil), params.Msg...)
 	return nil
 }
 

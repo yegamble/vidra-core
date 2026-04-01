@@ -12,6 +12,7 @@ import (
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
 )
 
 type mockStreamRepo struct {
@@ -37,10 +38,10 @@ func (m *mockStreamRepo) List(_ context.Context, _ *domain.VideoSearchRequest) (
 func (m *mockStreamRepo) Search(_ context.Context, _ *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
-func (m *mockStreamRepo) UpdateProcessingInfo(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _ string, _ string) error {
+func (m *mockStreamRepo) UpdateProcessingInfo(_ context.Context, _ port.VideoProcessingParams) error {
 	return nil
 }
-func (m *mockStreamRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _ string, _ string, _ map[string]string, _ string, _ string) error {
+func (m *mockStreamRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ port.VideoProcessingWithCIDsParams) error {
 	return nil
 }
 func (m *mockStreamRepo) Count(_ context.Context) (int64, error) {

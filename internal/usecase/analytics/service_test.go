@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -28,8 +29,8 @@ func (m *MockVideoAnalyticsRepository) CreateEventsBatch(ctx context.Context, ev
 	return args.Error(0)
 }
 
-func (m *MockVideoAnalyticsRepository) GetEventsByVideoID(ctx context.Context, videoID uuid.UUID, startDate, endDate time.Time, limit, offset int) ([]*domain.AnalyticsEvent, error) {
-	args := m.Called(ctx, videoID, startDate, endDate, limit, offset)
+func (m *MockVideoAnalyticsRepository) GetEventsByVideoID(ctx context.Context, filter port.EventQueryFilter) ([]*domain.AnalyticsEvent, error) {
+	args := m.Called(ctx, filter)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -1295,7 +1296,7 @@ func TestGetEventsByVideo(t *testing.T) {
 			limit:  10,
 			offset: 0,
 			setupMock: func(m *MockVideoAnalyticsRepository) {
-				m.On("GetEventsByVideoID", mock.Anything, videoID, startDate, endDate, 10, 0).Return(events, nil)
+				m.On("GetEventsByVideoID", mock.Anything, mock.MatchedBy(func(f port.EventQueryFilter) bool { return f.VideoID == videoID && f.Limit == 10 && f.Offset == 0 })).Return(events, nil)
 			},
 			want:    events,
 			wantErr: false,
@@ -1305,7 +1306,7 @@ func TestGetEventsByVideo(t *testing.T) {
 			limit:  5,
 			offset: 10,
 			setupMock: func(m *MockVideoAnalyticsRepository) {
-				m.On("GetEventsByVideoID", mock.Anything, videoID, startDate, endDate, 5, 10).Return(events, nil)
+				m.On("GetEventsByVideoID", mock.Anything, mock.MatchedBy(func(f port.EventQueryFilter) bool { return f.VideoID == videoID && f.Limit == 5 && f.Offset == 10 })).Return(events, nil)
 			},
 			want:    events,
 			wantErr: false,
@@ -1315,7 +1316,7 @@ func TestGetEventsByVideo(t *testing.T) {
 			limit:  10,
 			offset: 0,
 			setupMock: func(m *MockVideoAnalyticsRepository) {
-				m.On("GetEventsByVideoID", mock.Anything, videoID, startDate, endDate, 10, 0).Return(nil, errors.New("video error"))
+				m.On("GetEventsByVideoID", mock.Anything, mock.MatchedBy(func(f port.EventQueryFilter) bool { return f.VideoID == videoID })).Return(nil, errors.New("video error"))
 			},
 			want:        nil,
 			wantErr:     true,
@@ -1328,7 +1329,7 @@ func TestGetEventsByVideo(t *testing.T) {
 			svc, mockRepo := newTestService()
 			tc.setupMock(mockRepo)
 
-			result, err := svc.GetEventsByVideo(context.Background(), videoID, startDate, endDate, tc.limit, tc.offset)
+			result, err := svc.GetEventsByVideo(context.Background(), port.EventQueryFilter{VideoID: videoID, StartDate: startDate, EndDate: endDate, Limit: tc.limit, Offset: tc.offset})
 
 			if tc.wantErr {
 				require.Error(t, err)
@@ -1392,11 +1393,11 @@ func (m *MockVideoRepository) Search(ctx context.Context, req *domain.VideoSearc
 	}
 	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
 }
-func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
-	return m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath).Error(0)
+func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, params port.VideoProcessingParams) error {
+	return m.Called(ctx, params).Error(0)
 }
-func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
-	return m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath, processedCIDs, thumbnailCID, previewCID).Error(0)
+func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, params port.VideoProcessingWithCIDsParams) error {
+	return m.Called(ctx, params).Error(0)
 }
 func (m *MockVideoRepository) Count(ctx context.Context) (int64, error) {
 	args := m.Called(ctx)

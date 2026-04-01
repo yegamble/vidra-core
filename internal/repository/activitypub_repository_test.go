@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 )
 
 // Helper function to create test database (mock for now)
@@ -490,7 +491,9 @@ func TestDeliveryQueue(t *testing.T) {
 
 		nextAttempt := time.Now().Add(1 * time.Hour)
 		errMsg := "Connection timeout"
-		err = repo.UpdateDeliveryStatus(ctx, delivery.ID, "failed", 1, &errMsg, nextAttempt)
+		err = repo.UpdateDeliveryStatus(ctx, port.DeliveryStatusParams{
+			DeliveryID: delivery.ID, Status: "failed", Attempts: 1, LastError: &errMsg, NextAttempt: nextAttempt,
+		})
 		require.NoError(t, err)
 	})
 }

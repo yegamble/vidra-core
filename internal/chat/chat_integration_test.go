@@ -365,7 +365,7 @@ func TestChatIntegration_ModerationActions(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("BanUser", func(t *testing.T) {
-		err := chatServer.BanUser(ctx, streamID, regularUserID, modID, "spam", 10*time.Minute)
+		err := chatServer.BanUser(ctx, BanRequest{StreamID: streamID, UserID: regularUserID, ModeratorID: modID, Reason: "spam", Duration: 10 * time.Minute})
 		assert.NoError(t, err)
 
 		banned, err := chatRepo.IsUserBanned(ctx, streamID, regularUserID)

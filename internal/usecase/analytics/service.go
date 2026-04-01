@@ -275,8 +275,8 @@ func (s *Service) GetEventsBySession(ctx context.Context, sessionID string) ([]*
 	return events, nil
 }
 
-func (s *Service) GetEventsByVideo(ctx context.Context, videoID uuid.UUID, startDate, endDate time.Time, limit, offset int) ([]*domain.AnalyticsEvent, error) {
-	events, err := s.repo.GetEventsByVideoID(ctx, videoID, startDate, endDate, limit, offset)
+func (s *Service) GetEventsByVideo(ctx context.Context, filter port.EventQueryFilter) ([]*domain.AnalyticsEvent, error) {
+	events, err := s.repo.GetEventsByVideoID(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events by video: %w", err)
 	}

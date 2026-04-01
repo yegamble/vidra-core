@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -105,17 +106,22 @@ func OptionalAuth(jwtSecret string) func(http.Handler) http.Handler {
 			}
 
 			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			if tokenString != authHeader {
-				if userID, role, err := validateJWT(tokenString, jwtSecret); err == nil {
-					ctx := context.WithValue(r.Context(), UserIDKey, userID)
-					if role != "" {
-						ctx = context.WithValue(ctx, UserRoleKey, role)
-					}
-					r = r.WithContext(ctx)
-				}
+			if tokenString == authHeader {
+				next.ServeHTTP(w, r)
+				return
 			}
 
-			next.ServeHTTP(w, r)
+			userID, role, err := validateJWT(tokenString, jwtSecret)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), UserIDKey, userID)
+			if role != "" {
+				ctx = context.WithValue(ctx, UserRoleKey, role)
+			}
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
@@ -214,18 +220,9 @@ func RequireRole(roles ...string) func(http.Handler) http.Handler {
 				return
 			}
 
-			if len(roles) > 0 {
-				authorized := false
-				for _, role := range roles {
-					if userRole == role {
-						authorized = true
-						break
-					}
-				}
-				if !authorized {
-					writeError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
-					return
-				}
+			if len(roles) > 0 && !slices.Contains(roles, userRole) {
+				writeError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Insufficient permissions"))
+				return
 			}
 
 			next.ServeHTTP(w, r)

@@ -3,12 +3,14 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/lib/pq"
 )
 
-func (r *videoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+func (r *videoRepository) UpdateProcessingInfo(ctx context.Context, params port.VideoProcessingParams) error {
 	query := `
         UPDATE videos SET
             status = $2,
@@ -18,8 +20,8 @@ func (r *videoRepository) UpdateProcessingInfo(ctx context.Context, videoID stri
             updated_at = NOW()
         WHERE id = $1`
 
-	outJSON, _ := json.Marshal(outputPaths)
-	result, err := r.db.ExecContext(ctx, query, videoID, status, outJSON, thumbnailPath, previewPath)
+	outJSON, _ := json.Marshal(params.OutputPaths)
+	result, err := r.db.ExecContext(ctx, query, params.VideoID, params.Status, outJSON, params.ThumbnailPath, params.PreviewPath)
 	if err != nil {
 		return domain.NewDomainError("UPDATE_PROCESSING_FAILED", "Failed to update processing info")
 	}
@@ -29,7 +31,7 @@ func (r *videoRepository) UpdateProcessingInfo(ctx context.Context, videoID stri
 	return nil
 }
 
-func (r *videoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+func (r *videoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, params port.VideoProcessingWithCIDsParams) error {
 	query := `
         UPDATE videos SET
             status = $2,
@@ -41,10 +43,10 @@ func (r *videoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, vide
             updated_at = NOW()
         WHERE id = $1`
 
-	outJSON, _ := json.Marshal(outputPaths)
-	cidsJSON, _ := json.Marshal(processedCIDs)
+	outJSON, _ := json.Marshal(params.OutputPaths)
+	cidsJSON, _ := json.Marshal(params.ProcessedCIDs)
 
-	result, err := r.db.ExecContext(ctx, query, videoID, status, outJSON, thumbnailPath, previewPath, cidsJSON, thumbnailCID)
+	result, err := r.db.ExecContext(ctx, query, params.VideoID, params.Status, outJSON, params.ThumbnailPath, params.PreviewPath, cidsJSON, params.ThumbnailCID)
 	if err != nil {
 		return domain.NewDomainError("UPDATE_PROCESSING_FAILED", "Failed to update processing info with CIDs")
 	}
@@ -85,4 +87,31 @@ func (r *videoRepository) CreateRemoteVideo(ctx context.Context, video *domain.V
 	)
 
 	return err
+}
+
+// CreateBatch inserts multiple videos. If a transaction already exists in ctx,
+// it is reused; otherwise a new transaction is started and committed.
+func (r *videoRepository) CreateBatch(ctx context.Context, videos []*domain.Video) error {
+	if tx := GetTxFromContext(ctx); tx != nil {
+		for _, v := range videos {
+			if err := r.Create(ctx, v); err != nil {
+				return fmt.Errorf("batch create video %s: %w", v.ID, err)
+			}
+		}
+		return nil
+	}
+
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin batch transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	txCtx := WithTx(ctx, tx)
+	for _, v := range videos {
+		if err := r.Create(txCtx, v); err != nil {
+			return fmt.Errorf("batch create video %s: %w", v.ID, err)
+		}
+	}
+	return tx.Commit()
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 	"vidra-core/internal/usecase"
 )
 
@@ -39,10 +40,10 @@ func (m *mockVideoRepo) Search(_ context.Context, req *domain.VideoSearchRequest
 	m.capturedSearch = req
 	return m.videos, m.total, nil
 }
-func (m *mockVideoRepo) UpdateProcessingInfo(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _ string, _ string) error {
+func (m *mockVideoRepo) UpdateProcessingInfo(_ context.Context, _ port.VideoProcessingParams) error {
 	return nil
 }
-func (m *mockVideoRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _ string, _ string, _ map[string]string, _ string, _ string) error {
+func (m *mockVideoRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ port.VideoProcessingWithCIDsParams) error {
 	return nil
 }
 

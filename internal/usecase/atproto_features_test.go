@@ -495,7 +495,7 @@ func TestCreateRecord_RetriesOnServerError(t *testing.T) {
 	svc := newTestATProtoService(t, server.URL)
 	svc.retry = retryConfig{maxRetries: 3, baseDelay: time.Millisecond}
 
-	ref, err := svc.createRecord(context.Background(), "token", "did:plc:test123", "test", nil, nil)
+	ref, err := svc.createRecord(context.Background(), createRecordParams{AccessJwt: "token", RepoDID: "did:plc:test123", Text: "test"})
 	require.NoError(t, err)
 	require.NotNil(t, ref)
 	assert.Equal(t, 2, calls, "should have retried once")

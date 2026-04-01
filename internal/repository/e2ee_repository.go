@@ -47,7 +47,12 @@ func (r *e2eeMessageRepository) CreateEncryptedMessage(ctx context.Context, mess
 		return fmt.Errorf("insert encrypted message: %w", err)
 	}
 
-	if err := r.upsertConversation(ctx, tx, message.SenderID, message.RecipientID, message.ID, message.CreatedAt); err != nil {
+	if err := r.upsertConversation(ctx, tx, e2eeConversationParams{
+		UserID1:       message.SenderID,
+		UserID2:       message.RecipientID,
+		LastMessageID: message.ID,
+		LastMessageAt: message.CreatedAt,
+	}); err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
 	}
 
@@ -129,10 +134,18 @@ func (r *e2eeMessageRepository) GetMessage(ctx context.Context, messageID string
 	return &m, nil
 }
 
-func (r *e2eeMessageRepository) upsertConversation(ctx context.Context, tx *sqlx.Tx, userID1, userID2, lastMessageID string, lastMessageAt time.Time) error {
-	p1, p2 := userID1, userID2
-	if userID1 > userID2 {
-		p1, p2 = userID2, userID1
+// e2eeConversationParams groups the data fields for upsertConversation.
+type e2eeConversationParams struct {
+	UserID1       string
+	UserID2       string
+	LastMessageID string
+	LastMessageAt time.Time
+}
+
+func (r *e2eeMessageRepository) upsertConversation(ctx context.Context, tx *sqlx.Tx, p e2eeConversationParams) error {
+	p1, p2 := p.UserID1, p.UserID2
+	if p.UserID1 > p.UserID2 {
+		p1, p2 = p.UserID2, p.UserID1
 	}
 	const query = `
 		INSERT INTO conversations (participant_one_id, participant_two_id, last_message_id, last_message_at, created_at, updated_at)
@@ -140,7 +153,7 @@ func (r *e2eeMessageRepository) upsertConversation(ctx context.Context, tx *sqlx
 		ON CONFLICT (participant_one_id, participant_two_id)
 		DO UPDATE SET last_message_id = $3, last_message_at = $4, updated_at = NOW()`
 
-	_, err := tx.ExecContext(ctx, query, p1, p2, lastMessageID, lastMessageAt)
+	_, err := tx.ExecContext(ctx, query, p1, p2, p.LastMessageID, p.LastMessageAt)
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
 	}

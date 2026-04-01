@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -154,10 +155,10 @@ func (m *MockVideoRepository) List(ctx context.Context, req *domain.VideoSearchR
 func (m *MockVideoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
-func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, params port.VideoProcessingParams) error {
 	return nil
 }
-func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, params port.VideoProcessingWithCIDsParams) error {
 	return nil
 }
 func (m *MockVideoRepository) Count(ctx context.Context) (int64, error) { return 0, nil }

@@ -407,7 +407,7 @@ func (s *service) logResolutionEstimation(video *domain.Video, arInfo aspectRati
 }
 
 const (
-	defaultBatchChunkSize = 10 * 1024 * 1024  // 10MB default chunk size
+	defaultBatchChunkSize = 10 * 1024 * 1024        // 10MB default chunk size
 	maxSingleFileSize     = 10 * 1024 * 1024 * 1024 // 10GB per file
 )
 
@@ -482,21 +482,18 @@ func (s *service) InitiateBatchUpload(ctx context.Context, userID string, req *d
 			return fmt.Errorf("failed to create batch record: %w", err)
 		}
 
+		// Pass 1: build all video objects and batch-insert them.
+		videos := make([]*domain.Video, 0, len(req.Videos))
 		for _, v := range req.Videos {
-			chunkSize := v.ChunkSize // already defaulted in pre-validation
-			totalChunks := int((v.FileSize + chunkSize - 1) / chunkSize)
-
 			safeTitle := security.SanitizeStrictText(v.Title)
 			if safeTitle == "" {
 				safeTitle = "Untitled Upload"
 			}
-
 			privacy := domain.Privacy(v.Privacy)
 			if privacy == "" {
 				privacy = domain.PrivacyPrivate
 			}
-
-			video := &domain.Video{
+			videos = append(videos, &domain.Video{
 				ID:            uuid.NewString(),
 				ThumbnailID:   uuid.NewString(),
 				Title:         safeTitle,
@@ -511,11 +508,25 @@ func (s *service) InitiateBatchUpload(ctx context.Context, userID string, req *d
 				Metadata:      domain.VideoMetadata{},
 				CreatedAt:     now,
 				UpdatedAt:     now,
+			})
+		}
+		if batcher, ok := s.videoRepo.(port.VideoBatchCreator); ok {
+			if err := batcher.CreateBatch(txCtx, videos); err != nil {
+				return fmt.Errorf("failed to batch create video records: %w", err)
 			}
+		} else {
+			for _, video := range videos {
+				if err := s.videoRepo.Create(txCtx, video); err != nil {
+					return fmt.Errorf("failed to create video record: %w", err)
+				}
+			}
+		}
 
-			if err := s.videoRepo.Create(txCtx, video); err != nil {
-				return fmt.Errorf("failed to create video record: %w", err)
-			}
+		// Pass 2: per-video side effects (temp dirs, sessions, responses).
+		for i, v := range req.Videos {
+			video := videos[i]
+			chunkSize := v.ChunkSize
+			totalChunks := int((v.FileSize + chunkSize - 1) / chunkSize)
 
 			sessionID := uuid.NewString()
 			tempDir := s.paths.UploadTempDir(sessionID)

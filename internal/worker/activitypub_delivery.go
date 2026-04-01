@@ -91,7 +91,9 @@ func (w *ActivityPubDeliveryWorker) processDeliveries(ctx context.Context, worke
 
 	for _, delivery := range deliveries {
 		// Mark as processing
-		err := w.apRepo.UpdateDeliveryStatus(ctx, delivery.ID, "processing", delivery.Attempts, nil, delivery.NextAttempt)
+		err := w.apRepo.UpdateDeliveryStatus(ctx, port.DeliveryStatusParams{
+			DeliveryID: delivery.ID, Status: "processing", Attempts: delivery.Attempts, NextAttempt: delivery.NextAttempt,
+		})
 		if err != nil {
 			log.Printf("Worker %d: failed to update delivery status: %v", workerID, err)
 			continue
@@ -110,18 +112,24 @@ func (w *ActivityPubDeliveryWorker) processDeliveries(ctx context.Context, worke
 
 			if delivery.Attempts >= delivery.MaxAttempts {
 				// Mark as permanently failed
-				_ = w.apRepo.UpdateDeliveryStatus(ctx, delivery.ID, "failed", delivery.Attempts, delivery.LastError, delivery.NextAttempt)
+				_ = w.apRepo.UpdateDeliveryStatus(ctx, port.DeliveryStatusParams{
+					DeliveryID: delivery.ID, Status: "failed", Attempts: delivery.Attempts, LastError: delivery.LastError, NextAttempt: delivery.NextAttempt,
+				})
 				log.Printf("Worker %d: delivery %s permanently failed after %d attempts", workerID, delivery.ID, delivery.Attempts)
 			} else {
 				// Schedule retry with exponential backoff
 				nextAttempt := w.calculateNextAttempt(delivery.Attempts)
-				_ = w.apRepo.UpdateDeliveryStatus(ctx, delivery.ID, "pending", delivery.Attempts, delivery.LastError, nextAttempt)
+				_ = w.apRepo.UpdateDeliveryStatus(ctx, port.DeliveryStatusParams{
+					DeliveryID: delivery.ID, Status: "pending", Attempts: delivery.Attempts, LastError: delivery.LastError, NextAttempt: nextAttempt,
+				})
 				log.Printf("Worker %d: delivery %s scheduled for retry at %s", workerID, delivery.ID, nextAttempt)
 			}
 		} else {
 			// Mark as completed
 			log.Printf("Worker %d: delivery %s completed successfully", workerID, delivery.ID)
-			_ = w.apRepo.UpdateDeliveryStatus(ctx, delivery.ID, "completed", delivery.Attempts+1, nil, delivery.NextAttempt)
+			_ = w.apRepo.UpdateDeliveryStatus(ctx, port.DeliveryStatusParams{
+				DeliveryID: delivery.ID, Status: "completed", Attempts: delivery.Attempts + 1, NextAttempt: delivery.NextAttempt,
+			})
 		}
 	}
 }

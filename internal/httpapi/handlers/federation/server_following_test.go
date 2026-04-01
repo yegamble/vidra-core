@@ -64,9 +64,15 @@ func (m *mockActivityPubService) GetFollowers(_ context.Context, _ string, _, _ 
 func (m *mockActivityPubService) GetFollowing(_ context.Context, _ string, _, _ int) (*domain.OrderedCollectionPage, error) {
 	return nil, nil
 }
-func (m *mockActivityPubService) GetOutboxCount(_ context.Context, _ string) (int, error)     { return 0, nil }
-func (m *mockActivityPubService) GetFollowersCount(_ context.Context, _ string) (int, error)  { return 0, nil }
-func (m *mockActivityPubService) GetFollowingCount(_ context.Context, _ string) (int, error)  { return 0, nil }
+func (m *mockActivityPubService) GetOutboxCount(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+func (m *mockActivityPubService) GetFollowersCount(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+func (m *mockActivityPubService) GetFollowingCount(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
 
 type mockServerFollowingRepo struct {
 	followers []*domain.ServerFollowing

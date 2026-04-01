@@ -105,8 +105,8 @@ func (r *VideoAnalyticsRepository) CreateEventsBatch(ctx context.Context, events
 	return tx.Commit()
 }
 
-// GetEventsByVideoID retrieves analytics events for a video within a date range
-func (r *VideoAnalyticsRepository) GetEventsByVideoID(ctx context.Context, videoID uuid.UUID, startDate, endDate time.Time, limit, offset int) ([]*domain.AnalyticsEvent, error) {
+// GetEventsByVideoID retrieves analytics events for a video within a date range.
+func (r *VideoAnalyticsRepository) GetEventsByVideoID(ctx context.Context, filter port.EventQueryFilter) ([]*domain.AnalyticsEvent, error) {
 	query := `
 		SELECT id, video_id, event_type, user_id, session_id, timestamp_seconds,
 			   watch_duration_seconds, ip_address, user_agent, country_code, region,
@@ -117,7 +117,7 @@ func (r *VideoAnalyticsRepository) GetEventsByVideoID(ctx context.Context, video
 		LIMIT $4 OFFSET $5`
 
 	var events []*domain.AnalyticsEvent
-	err := r.db.SelectContext(ctx, &events, query, videoID, startDate, endDate, limit, offset)
+	err := r.db.SelectContext(ctx, &events, query, filter.VideoID, filter.StartDate, filter.EndDate, filter.Limit, filter.Offset)
 	if err != nil {
 		return nil, err
 	}

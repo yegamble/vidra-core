@@ -9,6 +9,7 @@ import (
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
 )
 
 // minimalVideoRepo is a VideoRepository stub for me_handlers tests.
@@ -42,10 +43,10 @@ func (m *minimalVideoRepo) List(_ context.Context, _ *domain.VideoSearchRequest)
 func (m *minimalVideoRepo) Search(_ context.Context, _ *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	panic("not implemented")
 }
-func (m *minimalVideoRepo) UpdateProcessingInfo(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _, _ string) error {
+func (m *minimalVideoRepo) UpdateProcessingInfo(_ context.Context, _ port.VideoProcessingParams) error {
 	panic("not implemented")
 }
-func (m *minimalVideoRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _, _ string, _ map[string]string, _, _ string) error {
+func (m *minimalVideoRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ port.VideoProcessingWithCIDsParams) error {
 	panic("not implemented")
 }
 func (m *minimalVideoRepo) Count(_ context.Context) (int64, error) { panic("not implemented") }

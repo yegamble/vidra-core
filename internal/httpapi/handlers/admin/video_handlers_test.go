@@ -10,6 +10,7 @@ import (
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/port"
 	"vidra-core/internal/usecase"
 )
 
@@ -62,10 +63,10 @@ func (m *mockAdminVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int
 func (m *mockAdminVideoRepo) Create(_ context.Context, _ *domain.Video) error    { return m.err }
 func (m *mockAdminVideoRepo) Update(_ context.Context, _ *domain.Video) error    { return m.err }
 func (m *mockAdminVideoRepo) Delete(_ context.Context, _ string, _ string) error { return m.err }
-func (m *mockAdminVideoRepo) UpdateProcessingInfo(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _, _ string) error {
+func (m *mockAdminVideoRepo) UpdateProcessingInfo(_ context.Context, _ port.VideoProcessingParams) error {
 	return nil
 }
-func (m *mockAdminVideoRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ string, _ domain.ProcessingStatus, _ map[string]string, _, _ string, _ map[string]string, _, _ string) error {
+func (m *mockAdminVideoRepo) UpdateProcessingInfoWithCIDs(_ context.Context, _ port.VideoProcessingWithCIDsParams) error {
 	return nil
 }
 func (m *mockAdminVideoRepo) Count(_ context.Context) (int64, error) {

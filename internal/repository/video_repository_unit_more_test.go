@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
@@ -435,16 +436,18 @@ func TestVideoRepository_Unit_ProcessingUpdates(t *testing.T) {
 		videoID := uuid.New().String()
 		output := map[string]string{"hls": "/hls/master.m3u8"}
 
+		params := port.VideoProcessingParams{VideoID: videoID, Status: domain.StatusCompleted, OutputPaths: output, ThumbnailPath: "/thumb.jpg", PreviewPath: "/preview.jpg"}
+
 		mock.ExpectExec(updateVideoQueryRegex).WillReturnResult(sqlmock.NewResult(0, 1))
-		require.NoError(t, repo.UpdateProcessingInfo(context.Background(), videoID, domain.StatusCompleted, output, "/thumb.jpg", "/preview.jpg"))
+		require.NoError(t, repo.UpdateProcessingInfo(context.Background(), params))
 
 		mock.ExpectExec(updateVideoQueryRegex).WillReturnResult(sqlmock.NewResult(0, 0))
-		err := repo.UpdateProcessingInfo(context.Background(), videoID, domain.StatusCompleted, output, "/thumb.jpg", "/preview.jpg")
+		err := repo.UpdateProcessingInfo(context.Background(), params)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "VIDEO_NOT_FOUND")
 
 		mock.ExpectExec(updateVideoQueryRegex).WillReturnError(errors.New("update failed"))
-		err = repo.UpdateProcessingInfo(context.Background(), videoID, domain.StatusCompleted, output, "/thumb.jpg", "/preview.jpg")
+		err = repo.UpdateProcessingInfo(context.Background(), params)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "UPDATE_PROCESSING_FAILED")
 
@@ -459,16 +462,21 @@ func TestVideoRepository_Unit_ProcessingUpdates(t *testing.T) {
 		output := map[string]string{"hls": "/hls/master.m3u8"}
 		cids := map[string]string{"720p": "cid-720"}
 
+		cidParams := port.VideoProcessingWithCIDsParams{
+			VideoProcessingParams: port.VideoProcessingParams{VideoID: videoID, Status: domain.StatusCompleted, OutputPaths: output, ThumbnailPath: "/thumb.jpg", PreviewPath: "/preview.jpg"},
+			ProcessedCIDs:         cids, ThumbnailCID: "thumb-cid", PreviewCID: "preview-cid",
+		}
+
 		mock.ExpectExec(updateVideoQueryRegex).WillReturnResult(sqlmock.NewResult(0, 1))
-		require.NoError(t, repo.UpdateProcessingInfoWithCIDs(context.Background(), videoID, domain.StatusCompleted, output, "/thumb.jpg", "/preview.jpg", cids, "thumb-cid", "preview-cid"))
+		require.NoError(t, repo.UpdateProcessingInfoWithCIDs(context.Background(), cidParams))
 
 		mock.ExpectExec(updateVideoQueryRegex).WillReturnResult(sqlmock.NewResult(0, 0))
-		err := repo.UpdateProcessingInfoWithCIDs(context.Background(), videoID, domain.StatusCompleted, output, "/thumb.jpg", "/preview.jpg", cids, "thumb-cid", "preview-cid")
+		err := repo.UpdateProcessingInfoWithCIDs(context.Background(), cidParams)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "VIDEO_NOT_FOUND")
 
 		mock.ExpectExec(updateVideoQueryRegex).WillReturnError(errors.New("update failed"))
-		err = repo.UpdateProcessingInfoWithCIDs(context.Background(), videoID, domain.StatusCompleted, output, "/thumb.jpg", "/preview.jpg", cids, "thumb-cid", "preview-cid")
+		err = repo.UpdateProcessingInfoWithCIDs(context.Background(), cidParams)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "UPDATE_PROCESSING_FAILED")
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 	"vidra-core/internal/repository"
 )
 
@@ -34,10 +35,10 @@ func (m *MockVideoRepo) List(ctx context.Context, req *domain.VideoSearchRequest
 func (m *MockVideoRepo) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
-func (m *MockVideoRepo) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+func (m *MockVideoRepo) UpdateProcessingInfo(ctx context.Context, params port.VideoProcessingParams) error {
 	return nil
 }
-func (m *MockVideoRepo) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+func (m *MockVideoRepo) UpdateProcessingInfoWithCIDs(ctx context.Context, params port.VideoProcessingWithCIDsParams) error {
 	return nil
 }
 func (m *MockVideoRepo) Count(ctx context.Context) (int64, error) { return 0, nil }

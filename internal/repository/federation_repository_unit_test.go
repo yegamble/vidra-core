@@ -349,7 +349,10 @@ func TestFederationRepository_Unit_Actors(t *testing.T) {
 			WithArgs(enabled, rateLimitSeconds, cursor, nextAt, attempts, actor).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
-		err := repo.UpdateActor(ctx, actor, &enabled, &rateLimitSeconds, &cursor, &nextAt, &attempts)
+		err := repo.UpdateActor(ctx, UpdateActorParams{
+			Actor: actor, Enabled: &enabled, RateLimitSeconds: &rateLimitSeconds,
+			Cursor: &cursor, NextAt: &nextAt, Attempts: &attempts,
+		})
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})

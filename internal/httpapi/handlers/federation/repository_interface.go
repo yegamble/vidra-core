@@ -16,6 +16,6 @@ type FederationRepositoryInterface interface {
 
 	ListActors(ctx context.Context, limit, offset int) ([]repository.FederationActor, int, error)
 	UpsertActor(ctx context.Context, actor string, enabled bool, rateLimitSeconds int) error
-	UpdateActor(ctx context.Context, actor string, enabled *bool, rateLimitSeconds *int, cursor *string, nextAt *time.Time, attempts *int) error
+	UpdateActor(ctx context.Context, params repository.UpdateActorParams) error
 	DeleteActor(ctx context.Context, actor string) error
 }

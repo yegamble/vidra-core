@@ -11,6 +11,7 @@ import (
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -170,13 +171,13 @@ func (m *MockVideoRepository) Search(ctx context.Context, req *domain.VideoSearc
 	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
 }
 
-func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
-	args := m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath)
+func (m *MockVideoRepository) UpdateProcessingInfo(ctx context.Context, params port.VideoProcessingParams) error {
+	args := m.Called(ctx, params)
 	return args.Error(0)
 }
 
-func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
-	args := m.Called(ctx, videoID, status, outputPaths, thumbnailPath, previewPath, processedCIDs, thumbnailCID, previewCID)
+func (m *MockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, params port.VideoProcessingWithCIDsParams) error {
+	args := m.Called(ctx, params)
 	return args.Error(0)
 }
 

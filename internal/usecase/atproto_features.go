@@ -59,7 +59,7 @@ func (s *atprotoService) PublishComment(ctx context.Context, comment *domain.Com
 	// Truncate comment body to Bluesky's 300-grapheme limit.
 	text := truncateText(comment.Body, 300)
 
-	return s.createRecord(ctx, access, repoDID, text, nil, reply)
+	return s.createRecord(ctx, createRecordParams{AccessJwt: access, RepoDID: repoDID, Text: text, Reply: reply})
 }
 
 // PublishVideoBatch publishes multiple videos in sequence, collecting results.
@@ -96,7 +96,7 @@ func (s *atprotoService) PublishVideoBatch(ctx context.Context, videos []*domain
 		if text == "" {
 			text = "New video"
 		}
-		ref, err := s.publishVideoWithRef(ctx, v, access, repoDID, thumb, text)
+		ref, err := s.publishVideoWithRef(ctx, publishVideoParams{Video: v, AccessJwt: access, RepoDID: repoDID, Thumb: thumb, Text: text})
 		if err != nil {
 			results = append(results, AtprotoBatchResult{VideoID: v.ID, Err: err})
 			continue

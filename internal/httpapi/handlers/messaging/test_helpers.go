@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"vidra-core/internal/repository"
 	"github.com/stretchr/testify/mock"
+	"vidra-core/internal/repository"
 )
 
 type Response = shared.Response

@@ -192,7 +192,6 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 		registerVideoAPIRoutes(r, deps, cfg, viewsHandler, strictImportLimiter)
 
-
 		jobHandlers := admin.NewJobHandlers(deps.EncodingRepo, deps.EncodingScheduler)
 		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/jobs/pause", jobHandlers.PauseJobs)
 		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Post("/jobs/resume", jobHandlers.ResumeJobs)
@@ -200,7 +199,6 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin), string(domain.RoleMod))).Get("/jobs/{state}", jobHandlers.ListJobs)
 
 		registerUserAPIRoutes(r, deps, cfg, authHandlers)
-
 
 		// PeerTube-compatible /video-channels/{channelHandle} routes
 		r.Route("/video-channels", func(r chi.Router) {
@@ -347,7 +345,6 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		})
 
 		registerCommunicationsAPIRoutes(r, deps, cfg)
-
 
 		r.Get("/trending", viewsHandler.GetTrendingVideos)
 
@@ -545,7 +542,6 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		})
 	}
 }
-
 
 // registerVideoAPIRoutes registers /videos, /hls, /uploads, /encoding, and
 // import routes. Extracted to reduce cyclomatic complexity of

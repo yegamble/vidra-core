@@ -183,6 +183,12 @@ type VideoFile struct {
 	Size int64
 }
 
+// flushPiece SHA1-hashes a completed piece and returns the 20-byte hash.
+func flushPiece(piece []byte) []byte {
+	hash := sha1.Sum(piece)
+	return hash[:]
+}
+
 // generatePieces generates SHA1 hashes for all pieces
 func (g *Generator) generatePieces(ctx context.Context, files []VideoFile) ([]byte, error) {
 	var pieces []byte
@@ -232,8 +238,7 @@ func (g *Generator) generatePieces(ctx context.Context, files []VideoFile) ([]by
 
 					// If piece is complete, hash it and start new piece
 					if currentPieceSize == g.config.PieceLength {
-						hash := sha1.Sum(currentPiece)
-						pieces = append(pieces, hash[:]...)
+						pieces = append(pieces, flushPiece(currentPiece)...)
 						currentPiece = currentPiece[:0]
 						currentPieceSize = 0
 					}
@@ -254,8 +259,7 @@ func (g *Generator) generatePieces(ctx context.Context, files []VideoFile) ([]by
 
 	// Hash final partial piece if exists
 	if currentPieceSize > 0 {
-		hash := sha1.Sum(currentPiece)
-		pieces = append(pieces, hash[:]...)
+		pieces = append(pieces, flushPiece(currentPiece)...)
 	}
 
 	return pieces, nil

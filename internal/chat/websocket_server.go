@@ -516,17 +516,26 @@ func (s *ChatServer) DeleteMessage(ctx context.Context, streamID, messageID uuid
 	return nil
 }
 
-func (s *ChatServer) BanUser(ctx context.Context, streamID, userID, moderatorID uuid.UUID, reason string, duration time.Duration) error {
-	isMod, err := s.chatRepo.IsModerator(ctx, streamID, moderatorID)
+// BanRequest groups the parameters for BanUser.
+type BanRequest struct {
+	StreamID    uuid.UUID
+	UserID      uuid.UUID
+	ModeratorID uuid.UUID
+	Reason      string
+	Duration    time.Duration
+}
+
+func (s *ChatServer) BanUser(ctx context.Context, req BanRequest) error {
+	isMod, err := s.chatRepo.IsModerator(ctx, req.StreamID, req.ModeratorID)
 	if err != nil {
 		return fmt.Errorf("failed to check moderator status: %w", err)
 	}
 
 	isOwner := false
 	if s.streamRepo != nil {
-		stream, err := s.streamRepo.GetByID(ctx, streamID)
+		stream, err := s.streamRepo.GetByID(ctx, req.StreamID)
 		if err == nil && stream != nil {
-			isOwner = stream.UserID == moderatorID
+			isOwner = stream.UserID == req.ModeratorID
 		}
 	}
 
@@ -534,36 +543,36 @@ func (s *ChatServer) BanUser(ctx context.Context, streamID, userID, moderatorID 
 		return domain.ErrNotModerator
 	}
 
-	ban := domain.NewChatBan(streamID, userID, moderatorID, reason, duration)
+	ban := domain.NewChatBan(req.StreamID, req.UserID, req.ModeratorID, req.Reason, req.Duration)
 	if err := s.chatRepo.BanUser(ctx, ban); err != nil {
 		return fmt.Errorf("failed to ban user: %w", err)
 	}
 
-	s.disconnectUser(streamID, userID)
+	s.disconnectUser(req.StreamID, req.UserID)
 
 	banType := "timeout"
-	if duration == 0 {
+	if req.Duration == 0 {
 		banType = "ban"
 	}
 
 	wsMsg := &ChatMessage{
 		Type:      banType,
-		StreamID:  streamID,
-		UserID:    userID,
-		Message:   reason,
+		StreamID:  req.StreamID,
+		UserID:    req.UserID,
+		Message:   req.Reason,
 		Timestamp: time.Now(),
 		Metadata: map[string]interface{}{
-			"duration": duration.Seconds(),
+			"duration": req.Duration.Seconds(),
 		},
 	}
-	s.broadcast(streamID, wsMsg)
+	s.broadcast(req.StreamID, wsMsg)
 
 	s.logger.WithFields(logrus.Fields{
-		"stream_id":    streamID,
-		"user_id":      userID,
-		"moderator_id": moderatorID,
-		"duration":     duration,
-		"reason":       reason,
+		"stream_id":    req.StreamID,
+		"user_id":      req.UserID,
+		"moderator_id": req.ModeratorID,
+		"duration":     req.Duration,
+		"reason":       req.Reason,
 	}).Info("User banned from chat")
 
 	return nil

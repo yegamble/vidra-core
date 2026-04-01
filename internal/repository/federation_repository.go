@@ -285,40 +285,50 @@ func (r *FederationRepository) GetActor(ctx context.Context, actor string) (*Fed
 	return &a, err
 }
 
-func (r *FederationRepository) UpdateActor(ctx context.Context, actor string, enabled *bool, rateLimitSeconds *int, cursor *string, nextAt *time.Time, attempts *int) error {
+// UpdateActorParams groups the parameters for UpdateActor.
+type UpdateActorParams struct {
+	Actor            string
+	Enabled          *bool
+	RateLimitSeconds *int
+	Cursor           *string
+	NextAt           *time.Time
+	Attempts         *int
+}
+
+func (r *FederationRepository) UpdateActor(ctx context.Context, params UpdateActorParams) error {
 	set := []string{}
 	args := []any{}
 	idx := 1
-	if enabled != nil {
+	if params.Enabled != nil {
 		set = append(set, fmt.Sprintf("enabled=$%d", idx))
-		args = append(args, *enabled)
+		args = append(args, *params.Enabled)
 		idx++
 	}
-	if rateLimitSeconds != nil {
+	if params.RateLimitSeconds != nil {
 		set = append(set, fmt.Sprintf("rate_limit_seconds=$%d", idx))
-		args = append(args, *rateLimitSeconds)
+		args = append(args, *params.RateLimitSeconds)
 		idx++
 	}
-	if cursor != nil {
+	if params.Cursor != nil {
 		set = append(set, fmt.Sprintf("cursor=$%d", idx))
-		args = append(args, sql.NullString{String: *cursor, Valid: *cursor != ""})
+		args = append(args, sql.NullString{String: *params.Cursor, Valid: *params.Cursor != ""})
 		idx++
 	}
-	if nextAt != nil {
+	if params.NextAt != nil {
 		set = append(set, fmt.Sprintf("next_at=$%d", idx))
-		args = append(args, sql.NullTime{Time: *nextAt, Valid: true})
+		args = append(args, sql.NullTime{Time: *params.NextAt, Valid: true})
 		idx++
 	}
-	if attempts != nil {
+	if params.Attempts != nil {
 		set = append(set, fmt.Sprintf("attempts=$%d", idx))
-		args = append(args, *attempts)
+		args = append(args, *params.Attempts)
 		idx++
 	}
 	if len(set) == 0 {
 		return nil
 	}
 	q := fmt.Sprintf("UPDATE federation_actors SET %s WHERE actor=$%d", strings.Join(set, ","), idx)
-	args = append(args, actor)
+	args = append(args, params.Actor)
 	_, err := r.db.ExecContext(ctx, q, args...)
 	return err
 }

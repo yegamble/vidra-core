@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 	"vidra-core/internal/usecase"
 )
 
@@ -71,10 +72,10 @@ func (m *MockVideoRepoForFeed) Search(ctx context.Context, req *domain.VideoSear
 	}
 	return args.Get(0).([]*domain.Video), args.Get(1).(int64), args.Error(2)
 }
-func (m *MockVideoRepoForFeed) UpdateProcessingInfo(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string) error {
+func (m *MockVideoRepoForFeed) UpdateProcessingInfo(ctx context.Context, params port.VideoProcessingParams) error {
 	return nil
 }
-func (m *MockVideoRepoForFeed) UpdateProcessingInfoWithCIDs(ctx context.Context, videoID string, status domain.ProcessingStatus, outputPaths map[string]string, thumbnailPath, previewPath string, processedCIDs map[string]string, thumbnailCID, previewCID string) error {
+func (m *MockVideoRepoForFeed) UpdateProcessingInfoWithCIDs(ctx context.Context, params port.VideoProcessingWithCIDsParams) error {
 	return nil
 }
 func (m *MockVideoRepoForFeed) Count(ctx context.Context) (int64, error) { return 0, nil }

@@ -11,6 +11,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 	"vidra-core/internal/security"
 )
 
@@ -409,14 +410,14 @@ func (r *ActivityPubRepository) GetPendingDeliveries(ctx context.Context, limit 
 	return deliveries, nil
 }
 
-// UpdateDeliveryStatus updates the status of a delivery
-func (r *ActivityPubRepository) UpdateDeliveryStatus(ctx context.Context, deliveryID string, status string, attempts int, lastError *string, nextAttempt time.Time) error {
+// UpdateDeliveryStatus updates the status of a delivery.
+func (r *ActivityPubRepository) UpdateDeliveryStatus(ctx context.Context, params port.DeliveryStatusParams) error {
 	query := `
 		UPDATE ap_delivery_queue
 		SET status = $1, attempts = $2, last_error = $3, next_attempt = $4, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $5
 	`
-	_, err := r.db.ExecContext(ctx, query, status, attempts, lastError, nextAttempt, deliveryID)
+	_, err := r.db.ExecContext(ctx, query, params.Status, params.Attempts, params.LastError, params.NextAttempt, params.DeliveryID)
 	if err != nil {
 		return fmt.Errorf("failed to update delivery status: %w", err)
 	}

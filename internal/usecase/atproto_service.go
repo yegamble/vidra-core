@@ -175,46 +175,54 @@ func (s *atprotoService) PublishVideo(ctx context.Context, v *domain.Video) erro
 	if text == "" {
 		text = "New video"
 	}
-	ref, err := s.publishVideoWithRef(ctx, v, access, repoDID, thumb, text)
+	ref, err := s.publishVideoWithRef(ctx, publishVideoParams{Video: v, AccessJwt: access, RepoDID: repoDID, Thumb: thumb, Text: text})
 	_ = ref // PublishVideo discards the ref; use publishVideoWithRef to capture it
 	return err
 }
 
+type publishVideoParams struct {
+	Video     *domain.Video
+	AccessJwt string
+	RepoDID   string
+	Thumb     any
+	Text      string
+}
+
 // publishVideoWithRef is the internal implementation of PublishVideo that returns the post reference.
-func (s *atprotoService) publishVideoWithRef(ctx context.Context, v *domain.Video, access, repoDID string, thumb any, text string) (*AtprotoPostRef, error) {
-	if s.cfg.ATProtoUseImageEmbed && thumb != nil {
+func (s *atprotoService) publishVideoWithRef(ctx context.Context, p publishVideoParams) (*AtprotoPostRef, error) {
+	if s.cfg.ATProtoUseImageEmbed && p.Thumb != nil {
 		// app.bsky.embed.images with alt text
-		alt := v.Description
+		alt := p.Video.Description
 		if s.cfg.ATProtoImageAltField == "title" || (alt == "" && s.cfg.ATProtoImageAltField != "description") {
-			alt = v.Title
+			alt = p.Video.Title
 		}
 		if alt == "" {
 			alt = "Video thumbnail"
 		}
 		embed := map[string]any{
 			"$type":  "app.bsky.embed.images",
-			"images": []any{map[string]any{"image": thumb, "alt": alt}},
+			"images": []any{map[string]any{"image": p.Thumb, "alt": alt}},
 		}
-		return s.createPost(ctx, access, repoDID, text, embed)
+		return s.createPost(ctx, p.AccessJwt, p.RepoDID, p.Text, embed)
 	}
 	// Default: external embed
-	url := s.publicVideoURL(v)
-	desc := v.Description
+	url := s.publicVideoURL(p.Video)
+	desc := p.Video.Description
 	if desc == "" {
-		desc = v.Title
+		desc = p.Video.Title
 	}
 	embed := map[string]any{
 		"$type": "app.bsky.embed.external",
 		"external": map[string]any{
 			"uri":         url,
-			"title":       v.Title,
+			"title":       p.Video.Title,
 			"description": desc,
 		},
 	}
-	if thumb != nil {
-		embed["external"].(map[string]any)["thumb"] = thumb
+	if p.Thumb != nil {
+		embed["external"].(map[string]any)["thumb"] = p.Thumb
 	}
-	return s.createPost(ctx, access, repoDID, text, embed)
+	return s.createPost(ctx, p.AccessJwt, p.RepoDID, p.Text, embed)
 }
 
 // publicVideoURL constructs a public link for the video for external embed.
@@ -363,30 +371,38 @@ func swapExt(path, newExt string) string {
 	return path[:i] + newExt
 }
 
+type createRecordParams struct {
+	AccessJwt string
+	RepoDID   string
+	Text      string
+	Embed     map[string]any
+	Reply     map[string]any
+}
+
 func (s *atprotoService) createPost(ctx context.Context, accessJwt string, repoDID string, text string, embed map[string]any) (*AtprotoPostRef, error) {
-	return s.createRecord(ctx, accessJwt, repoDID, text, embed, nil)
+	return s.createRecord(ctx, createRecordParams{AccessJwt: accessJwt, RepoDID: repoDID, Text: text, Embed: embed})
 }
 
 // createRecord creates a post record and returns the AtprotoPostRef. It wraps
 // HTTP errors in *retryableError so doWithRetry can apply exponential backoff.
-func (s *atprotoService) createRecord(ctx context.Context, accessJwt string, repoDID string, text string, embed map[string]any, reply map[string]any) (*AtprotoPostRef, error) {
+func (s *atprotoService) createRecord(ctx context.Context, p createRecordParams) (*AtprotoPostRef, error) {
 	pds := strings.TrimRight(s.resolvePDSURL(ctx), "/")
 	if pds == "" {
 		return nil, fmt.Errorf("atproto: missing PDS URL")
 	}
 	record := map[string]any{
 		"$type":     "app.bsky.feed.post",
-		"text":      text,
+		"text":      p.Text,
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
 	}
-	if embed != nil {
-		record["embed"] = embed
+	if p.Embed != nil {
+		record["embed"] = p.Embed
 	}
-	if reply != nil {
-		record["reply"] = reply
+	if p.Reply != nil {
+		record["reply"] = p.Reply
 	}
 	body := map[string]any{
-		"repo":       repoDID,
+		"repo":       p.RepoDID,
 		"collection": "app.bsky.feed.post",
 		"record":     record,
 		"validate":   true,
@@ -400,7 +416,7 @@ func (s *atprotoService) createRecord(ctx context.Context, accessJwt string, rep
 			return err
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+accessJwt)
+		req.Header.Set("Authorization", "Bearer "+p.AccessJwt)
 		resp, err := s.client.Do(req)
 		if err != nil {
 			return err

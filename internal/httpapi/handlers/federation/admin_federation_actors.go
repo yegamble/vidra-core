@@ -8,6 +8,7 @@ import (
 	"vidra-core/internal/httpapi/shared"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/repository"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -85,7 +86,14 @@ func (h *AdminFederationActorsHandlers) UpdateActor(w http.ResponseWriter, r *ht
 			nextAtPtr = &t
 		}
 	}
-	if err := h.repo.UpdateActor(r.Context(), actor, body.Enabled, body.RateLimitSeconds, body.Cursor, nextAtPtr, body.Attempts); err != nil {
+	if err := h.repo.UpdateActor(r.Context(), repository.UpdateActorParams{
+		Actor:            actor,
+		Enabled:          body.Enabled,
+		RateLimitSeconds: body.RateLimitSeconds,
+		Cursor:           body.Cursor,
+		NextAt:           nextAtPtr,
+		Attempts:         body.Attempts,
+	}); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to update actor"))
 		return
 	}

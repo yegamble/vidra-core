@@ -397,7 +397,9 @@ func (h *ChatHandlers) BanUser(w http.ResponseWriter, r *http.Request) {
 		duration = time.Duration(req.Duration) * time.Second
 	}
 
-	if err := h.chatServer.BanUser(ctx, streamID, userID, moderatorID, req.Reason, duration); err != nil {
+	if err := h.chatServer.BanUser(ctx, chat.BanRequest{
+		StreamID: streamID, UserID: userID, ModeratorID: moderatorID, Reason: req.Reason, Duration: duration,
+	}); err != nil {
 		if err == domain.ErrNotModerator {
 			shared.WriteError(w, http.StatusForbidden, errors.New("moderator privileges required"))
 			return

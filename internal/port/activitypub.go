@@ -6,6 +6,15 @@ import (
 	"vidra-core/internal/domain"
 )
 
+// DeliveryStatusParams groups the parameters for UpdateDeliveryStatus.
+type DeliveryStatusParams struct {
+	DeliveryID  string
+	Status      string
+	Attempts    int
+	LastError   *string
+	NextAttempt time.Time
+}
+
 type ActivityPubRepository interface {
 	// Actor keys
 	GetActorKeys(ctx context.Context, actorID string) (publicKey, privateKey string, err error)
@@ -44,5 +53,5 @@ type ActivityPubRepository interface {
 	EnqueueDelivery(ctx context.Context, delivery *domain.APDeliveryQueue) error
 	BulkEnqueueDelivery(ctx context.Context, deliveries []*domain.APDeliveryQueue) error
 	GetPendingDeliveries(ctx context.Context, limit int) ([]*domain.APDeliveryQueue, error)
-	UpdateDeliveryStatus(ctx context.Context, deliveryID string, status string, attempts int, lastError *string, nextAttempt time.Time) error
+	UpdateDeliveryStatus(ctx context.Context, params DeliveryStatusParams) error
 }

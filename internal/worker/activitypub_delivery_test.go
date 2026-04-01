@@ -14,6 +14,7 @@ import (
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 )
 
 // MockAPRepository mocks the ActivityPub repository
@@ -37,8 +38,8 @@ func (m *MockAPRepository) GetActivity(ctx context.Context, activityID string) (
 	return args.Get(0).(*domain.APActivity), args.Error(1)
 }
 
-func (m *MockAPRepository) UpdateDeliveryStatus(ctx context.Context, deliveryID, status string, attempts int, lastError *string, nextAttempt time.Time) error {
-	args := m.Called(ctx, deliveryID, status, attempts, lastError, nextAttempt)
+func (m *MockAPRepository) UpdateDeliveryStatus(ctx context.Context, params port.DeliveryStatusParams) error {
+	args := m.Called(ctx, params)
 	return args.Error(0)
 }
 
@@ -194,10 +195,10 @@ func TestProcessDeliveriesSuccess(t *testing.T) {
 
 	t.Run("Successful delivery", func(t *testing.T) {
 		mockRepo.On("GetPendingDeliveries", ctx, 10).Return(deliveries, nil).Once()
-		mockRepo.On("UpdateDeliveryStatus", ctx, delivery.ID, "processing", 0, (*string)(nil), mock.Anything).Return(nil).Once()
+		mockRepo.On("UpdateDeliveryStatus", ctx, mock.MatchedBy(func(p port.DeliveryStatusParams) bool { return p.DeliveryID == delivery.ID && p.Status == "processing" })).Return(nil).Once()
 		mockRepo.On("GetActivity", ctx, delivery.ActivityID).Return(activity, nil).Once()
 		mockService.On("DeliverActivity", ctx, delivery.ActorID, delivery.InboxURL, mock.Anything).Return(nil).Once()
-		mockRepo.On("UpdateDeliveryStatus", ctx, delivery.ID, "completed", 1, (*string)(nil), mock.Anything).Return(nil).Once()
+		mockRepo.On("UpdateDeliveryStatus", ctx, mock.MatchedBy(func(p port.DeliveryStatusParams) bool { return p.DeliveryID == delivery.ID && p.Status == "completed" })).Return(nil).Once()
 
 		worker.processDeliveries(ctx, 0)
 
@@ -242,15 +243,13 @@ func TestProcessDeliveriesRetry(t *testing.T) {
 		deliveryError := errors.New("connection timeout")
 
 		mockRepo.On("GetPendingDeliveries", ctx, 10).Return(deliveries, nil).Once()
-		mockRepo.On("UpdateDeliveryStatus", ctx, delivery.ID, "processing", 0, (*string)(nil), mock.Anything).Return(nil).Once()
+		mockRepo.On("UpdateDeliveryStatus", ctx, mock.MatchedBy(func(p port.DeliveryStatusParams) bool { return p.DeliveryID == delivery.ID && p.Status == "processing" })).Return(nil).Once()
 		mockRepo.On("GetActivity", ctx, delivery.ActivityID).Return(activity, nil).Once()
 		mockService.On("DeliverActivity", ctx, delivery.ActorID, delivery.InboxURL, mock.Anything).Return(deliveryError).Once()
 
 		// Should be rescheduled with error message
-		mockRepo.On("UpdateDeliveryStatus", ctx, delivery.ID, "pending", 1, mock.MatchedBy(func(err *string) bool {
-			return err != nil && *err == deliveryError.Error()
-		}), mock.MatchedBy(func(t time.Time) bool {
-			return t.After(time.Now())
+		mockRepo.On("UpdateDeliveryStatus", ctx, mock.MatchedBy(func(p port.DeliveryStatusParams) bool {
+			return p.DeliveryID == delivery.ID && p.Status == "pending" && p.Attempts == 1 && p.LastError != nil && *p.LastError == deliveryError.Error()
 		})).Return(nil).Once()
 
 		worker.processDeliveries(ctx, 0)
@@ -296,14 +295,14 @@ func TestProcessDeliveriesPermanentFailure(t *testing.T) {
 		deliveryError := errors.New("recipient not found")
 
 		mockRepo.On("GetPendingDeliveries", ctx, 10).Return(deliveries, nil).Once()
-		mockRepo.On("UpdateDeliveryStatus", ctx, delivery.ID, "processing", 2, (*string)(nil), mock.Anything).Return(nil).Once()
+		mockRepo.On("UpdateDeliveryStatus", ctx, mock.MatchedBy(func(p port.DeliveryStatusParams) bool { return p.DeliveryID == delivery.ID && p.Status == "processing" })).Return(nil).Once()
 		mockRepo.On("GetActivity", ctx, delivery.ActivityID).Return(activity, nil).Once()
 		mockService.On("DeliverActivity", ctx, delivery.ActorID, delivery.InboxURL, mock.Anything).Return(deliveryError).Once()
 
 		// Should be marked as permanently failed
-		mockRepo.On("UpdateDeliveryStatus", ctx, delivery.ID, "failed", 3, mock.MatchedBy(func(err *string) bool {
-			return err != nil && *err == deliveryError.Error()
-		}), mock.Anything).Return(nil).Once()
+		mockRepo.On("UpdateDeliveryStatus", ctx, mock.MatchedBy(func(p port.DeliveryStatusParams) bool {
+			return p.DeliveryID == delivery.ID && p.Status == "failed" && p.Attempts == 3 && p.LastError != nil && *p.LastError == deliveryError.Error()
+		})).Return(nil).Once()
 
 		worker.processDeliveries(ctx, 0)
 
@@ -446,10 +445,10 @@ func TestProcessDeliveriesMultiple(t *testing.T) {
 
 		// Each delivery should be processed
 		for _, delivery := range deliveries {
-			mockRepo.On("UpdateDeliveryStatus", ctx, delivery.ID, "processing", 0, (*string)(nil), mock.Anything).Return(nil).Once()
+			mockRepo.On("UpdateDeliveryStatus", ctx, mock.MatchedBy(func(p port.DeliveryStatusParams) bool { return p.DeliveryID == delivery.ID && p.Status == "processing" })).Return(nil).Once()
 			mockRepo.On("GetActivity", ctx, delivery.ActivityID).Return(activity, nil).Once()
 			mockService.On("DeliverActivity", ctx, delivery.ActorID, delivery.InboxURL, mock.Anything).Return(nil).Once()
-			mockRepo.On("UpdateDeliveryStatus", ctx, delivery.ID, "completed", 1, (*string)(nil), mock.Anything).Return(nil).Once()
+			mockRepo.On("UpdateDeliveryStatus", ctx, mock.MatchedBy(func(p port.DeliveryStatusParams) bool { return p.DeliveryID == delivery.ID && p.Status == "completed" })).Return(nil).Once()
 		}
 
 		worker.processDeliveries(ctx, 0)

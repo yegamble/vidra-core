@@ -7,11 +7,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"vidra-core/internal/repository"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"vidra-core/internal/repository"
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
@@ -527,7 +527,7 @@ func TestChatServer_BanUser(t *testing.T) {
 			ban.Reason == reason
 	})).Return(nil)
 
-	err := server.BanUser(ctx, streamID, userID, ownerID, reason, duration)
+	err := server.BanUser(ctx, BanRequest{StreamID: streamID, UserID: userID, ModeratorID: ownerID, Reason: reason, Duration: duration})
 	assert.NoError(t, err)
 
 	mockChatRepo.AssertExpectations(t)
@@ -552,7 +552,7 @@ func TestChatServer_BanUser_AsModerator(t *testing.T) {
 
 	mockChatRepo.On("BanUser", ctx, mock.AnythingOfType("*domain.ChatBan")).Return(nil)
 
-	err := server.BanUser(ctx, streamID, userID, moderatorID, "spam", 10*time.Minute)
+	err := server.BanUser(ctx, BanRequest{StreamID: streamID, UserID: userID, ModeratorID: moderatorID, Reason: "spam", Duration: 10 * time.Minute})
 	assert.NoError(t, err)
 
 	mockChatRepo.AssertExpectations(t)
@@ -575,7 +575,7 @@ func TestChatServer_BanUser_Unauthorized(t *testing.T) {
 
 	mockChatRepo.On("IsModerator", ctx, streamID, moderatorID).Return(false, nil)
 
-	err := server.BanUser(ctx, streamID, userID, moderatorID, "spam", 10*time.Minute)
+	err := server.BanUser(ctx, BanRequest{StreamID: streamID, UserID: userID, ModeratorID: moderatorID, Reason: "spam", Duration: 10 * time.Minute})
 	assert.ErrorIs(t, err, domain.ErrNotModerator)
 
 	mockChatRepo.AssertExpectations(t)

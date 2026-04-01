@@ -696,7 +696,7 @@ func (r *ViewsRepository) GetRecentViews(ctx context.Context, userID string, lim
 
 // viewBatchParams holds the column slices for a batch INSERT of user_views rows.
 type viewBatchParams struct {
-	ids, videoIDs, sessionIDs, fingerprintHashes   []string
+	ids, videoIDs, sessionIDs, fingerprintHashes    []string
 	userIDs                                         []*string
 	watchDurations, videoDurations                  []int
 	completionPercentages                           []float64

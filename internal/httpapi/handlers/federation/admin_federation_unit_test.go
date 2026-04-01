@@ -25,7 +25,7 @@ type mockFederationRepository struct {
 	DeleteJobFunc   func(ctx context.Context, id string) error
 	ListActorsFunc  func(ctx context.Context, limit, offset int) ([]repository.FederationActor, int, error)
 	UpsertActorFunc func(ctx context.Context, actor string, enabled bool, rateLimitSeconds int) error
-	UpdateActorFunc func(ctx context.Context, actor string, enabled *bool, rateLimitSeconds *int, cursor *string, nextAt *time.Time, attempts *int) error
+	UpdateActorFunc func(ctx context.Context, params repository.UpdateActorParams) error
 	DeleteActorFunc func(ctx context.Context, actor string) error
 }
 
@@ -71,9 +71,9 @@ func (m *mockFederationRepository) UpsertActor(ctx context.Context, actor string
 	return nil
 }
 
-func (m *mockFederationRepository) UpdateActor(ctx context.Context, actor string, enabled *bool, rateLimitSeconds *int, cursor *string, nextAt *time.Time, attempts *int) error {
+func (m *mockFederationRepository) UpdateActor(ctx context.Context, params repository.UpdateActorParams) error {
 	if m.UpdateActorFunc != nil {
-		return m.UpdateActorFunc(ctx, actor, enabled, rateLimitSeconds, cursor, nextAt, attempts)
+		return m.UpdateActorFunc(ctx, params)
 	}
 	return nil
 }
@@ -434,15 +434,11 @@ func TestUpdateActor_Success(t *testing.T) {
 	enabled := true
 	rateLimit := 90
 
-	var capturedActor string
-	var capturedEnabled *bool
-	var capturedRateLimit *int
+	var capturedParams repository.UpdateActorParams
 
 	mockRepo := &mockFederationRepository{
-		UpdateActorFunc: func(ctx context.Context, actor string, enabled *bool, rateLimitSeconds *int, cursor *string, nextAt *time.Time, attempts *int) error {
-			capturedActor = actor
-			capturedEnabled = enabled
-			capturedRateLimit = rateLimitSeconds
+		UpdateActorFunc: func(ctx context.Context, params repository.UpdateActorParams) error {
+			capturedParams = params
 			return nil
 		},
 	}
@@ -459,19 +455,19 @@ func TestUpdateActor_Success(t *testing.T) {
 	handler.UpdateActor(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "test@example.com", capturedActor)
-	require.NotNil(t, capturedEnabled)
-	assert.Equal(t, enabled, *capturedEnabled)
-	require.NotNil(t, capturedRateLimit)
-	assert.Equal(t, rateLimit, *capturedRateLimit)
+	assert.Equal(t, "test@example.com", capturedParams.Actor)
+	require.NotNil(t, capturedParams.Enabled)
+	assert.Equal(t, enabled, *capturedParams.Enabled)
+	require.NotNil(t, capturedParams.RateLimitSeconds)
+	assert.Equal(t, rateLimit, *capturedParams.RateLimitSeconds)
 }
 
 func TestUpdateActor_WithNextAt(t *testing.T) {
-	var capturedNextAt *time.Time
+	var capturedParams repository.UpdateActorParams
 
 	mockRepo := &mockFederationRepository{
-		UpdateActorFunc: func(ctx context.Context, actor string, enabled *bool, rateLimitSeconds *int, cursor *string, nextAt *time.Time, attempts *int) error {
-			capturedNextAt = nextAt
+		UpdateActorFunc: func(ctx context.Context, params repository.UpdateActorParams) error {
+			capturedParams = params
 			return nil
 		},
 	}
@@ -488,9 +484,9 @@ func TestUpdateActor_WithNextAt(t *testing.T) {
 	handler.UpdateActor(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	require.NotNil(t, capturedNextAt)
+	require.NotNil(t, capturedParams.NextAt)
 	expected, _ := time.Parse(time.RFC3339, "2024-01-01T12:00:00Z")
-	assert.Equal(t, expected.UTC(), capturedNextAt.UTC())
+	assert.Equal(t, expected.UTC(), capturedParams.NextAt.UTC())
 }
 
 func TestDeleteActor_Success(t *testing.T) {

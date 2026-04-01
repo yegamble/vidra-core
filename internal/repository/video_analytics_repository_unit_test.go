@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"vidra-core/internal/domain"
+	"vidra-core/internal/port"
 	"vidra-core/internal/repository"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -861,7 +862,8 @@ func TestVideoAnalyticsRepository_GetEventsByVideoID(t *testing.T) {
 			WithArgs(videoID, sqlmock.AnyArg(), sqlmock.AnyArg(), 10, 0).
 			WillReturnRows(rows)
 
-		events, err := repo.GetEventsByVideoID(ctx, videoID, startDate, endDate, 10, 0)
+		filter := port.EventQueryFilter{VideoID: videoID, StartDate: startDate, EndDate: endDate, Limit: 10, Offset: 0}
+		events, err := repo.GetEventsByVideoID(ctx, filter)
 		assert.NoError(t, err)
 		assert.Len(t, events, 1)
 		assert.NoError(t, mock.ExpectationsWereMet())
@@ -873,7 +875,8 @@ func TestVideoAnalyticsRepository_GetEventsByVideoID(t *testing.T) {
 		mock.ExpectQuery(`SELECT .* FROM video_analytics_events WHERE video_id`).
 			WillReturnError(assert.AnError)
 
-		events, err := repo.GetEventsByVideoID(ctx, videoID, startDate, endDate, 10, 0)
+		filter := port.EventQueryFilter{VideoID: videoID, StartDate: startDate, EndDate: endDate, Limit: 10, Offset: 0}
+		events, err := repo.GetEventsByVideoID(ctx, filter)
 		assert.Error(t, err)
 		assert.Nil(t, events)
 		assert.NoError(t, mock.ExpectationsWereMet())

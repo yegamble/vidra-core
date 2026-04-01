@@ -20,7 +20,7 @@ import (
 // batchUploadServiceStub implements upload.Service for handler tests.
 type batchUploadServiceStub struct {
 	unitUploadServiceStub
-	initiateBatchFn func(ctx context.Context, userID string, req *domain.BatchUploadRequest) (*domain.BatchUploadResponse, error)
+	initiateBatchFn  func(ctx context.Context, userID string, req *domain.BatchUploadRequest) (*domain.BatchUploadResponse, error)
 	getBatchStatusFn func(ctx context.Context, batchID, userID string) (*domain.BatchUploadStatus, error)
 }
 

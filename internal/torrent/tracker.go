@@ -169,6 +169,22 @@ type ErrorResponse struct {
 	InfoHash      string `json:"info_hash,omitempty"`
 }
 
+// checkOrigin returns a CheckOrigin function for the WebSocket upgrader.
+func checkOrigin(allowedOrigins []string) func(*http.Request) bool {
+	return func(r *http.Request) bool {
+		if len(allowedOrigins) == 1 && allowedOrigins[0] == "*" {
+			return true
+		}
+		origin := r.Header.Get("Origin")
+		for _, allowed := range allowedOrigins {
+			if origin == allowed {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 func NewTracker(db *sqlx.DB, config *TrackerConfig, logger *logrus.Logger) *Tracker {
 	if config == nil {
 		config = DefaultTrackerConfig()
@@ -184,18 +200,7 @@ func NewTracker(db *sqlx.DB, config *TrackerConfig, logger *logrus.Logger) *Trac
 		config: config,
 		peers:  make(map[string]*PeerSwarm),
 		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool {
-				if len(config.AllowedOrigins) == 1 && config.AllowedOrigins[0] == "*" {
-					return true
-				}
-				origin := r.Header.Get("Origin")
-				for _, allowed := range config.AllowedOrigins {
-					if origin == allowed {
-						return true
-					}
-				}
-				return false
-			},
+			CheckOrigin:     checkOrigin(config.AllowedOrigins),
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 		},

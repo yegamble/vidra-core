@@ -16,6 +16,7 @@ import (
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/port"
 	"vidra-core/internal/usecase"
 
 	chi "github.com/go-chi/chi/v5"
@@ -272,10 +273,10 @@ func (m *mockVideoRepo) List(context.Context, *domain.VideoSearchRequest) ([]*do
 func (m *mockVideoRepo) Search(context.Context, *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	return nil, 0, nil
 }
-func (m *mockVideoRepo) UpdateProcessingInfo(context.Context, string, domain.ProcessingStatus, map[string]string, string, string) error {
+func (m *mockVideoRepo) UpdateProcessingInfo(context.Context, port.VideoProcessingParams) error {
 	return nil
 }
-func (m *mockVideoRepo) UpdateProcessingInfoWithCIDs(context.Context, string, domain.ProcessingStatus, map[string]string, string, string, map[string]string, string, string) error {
+func (m *mockVideoRepo) UpdateProcessingInfoWithCIDs(context.Context, port.VideoProcessingWithCIDsParams) error {
 	return nil
 }
 func (m *mockVideoRepo) Count(ctx context.Context) (int64, error) {

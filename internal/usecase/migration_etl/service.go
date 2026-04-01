@@ -548,6 +548,13 @@ func (s *ETLService) extractVideos(ctx context.Context, sourceDB *sqlx.DB, job *
 	}
 	stats.Videos.Total = len(rows)
 
+	// Build all valid video objects first (no DB calls).
+	type videoWithSource struct {
+		video    *domain.Video
+		sourceID int
+		name     string
+	}
+	var validVideos []videoWithSource
 	for _, r := range rows {
 		owner, ok := channelOwners[r.ChannelID]
 		if !ok {
@@ -572,14 +579,34 @@ func (s *ETLService) extractVideos(ctx context.Context, sourceDB *sqlx.DB, job *
 			CreatedAt:   r.CreatedAt,
 			UpdatedAt:   now,
 		}
+		validVideos = append(validVideos, videoWithSource{video: video, sourceID: r.ID, name: r.Name})
+	}
 
-		if err := s.videoRepo.Create(ctx, video); err != nil {
+	// Batch insert with fallback to individual creates.
+	if batcher, ok := s.videoRepo.(port.VideoBatchCreator); ok && len(validVideos) > 0 {
+		batch := make([]*domain.Video, len(validVideos))
+		for i, vws := range validVideos {
+			batch[i] = vws.video
+		}
+		if batchErr := batcher.CreateBatch(ctx, batch); batchErr == nil {
+			for _, vws := range validVideos {
+				ids.videos[vws.sourceID] = vws.video.ID
+				stats.Videos.Migrated++
+			}
+			return
+		} else {
+			log.Printf("migration %s: batch video insert failed, falling back to individual inserts: %v", job.ID, batchErr)
+		}
+	}
+
+	// Fallback: individual inserts with per-item error tracking.
+	for _, vws := range validVideos {
+		if err := s.videoRepo.Create(ctx, vws.video); err != nil {
 			stats.Videos.Failed++
-			stats.Videos.Errors = append(stats.Videos.Errors, fmt.Sprintf("video %s: %v", r.Name, err))
+			stats.Videos.Errors = append(stats.Videos.Errors, fmt.Sprintf("video %s: %v", vws.name, err))
 			continue
 		}
-
-		ids.videos[r.ID] = video.ID
+		ids.videos[vws.sourceID] = vws.video.ID
 		stats.Videos.Migrated++
 	}
 }
