@@ -11,10 +11,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"vidra-core/internal/repository"
+
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"vidra-core/internal/repository"
 )
 
 type mockLiveStreamRepo struct {

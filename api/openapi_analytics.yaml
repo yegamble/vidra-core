@@ -515,6 +515,216 @@ paths:
         - {} # Public endpoint
         - bearerAuth: []
 
+  /api/v1/analytics/export/csv:
+    get:
+      tags:
+        - Analytics Export
+      summary: Export analytics as CSV
+      description: |
+        Export analytics data as a downloadable CSV file. Supports video-level,
+        channel-level, or all-channels aggregate exports.
+
+        - With `videoId`: exports daily time-series for that video
+        - With `channelId`: exports daily time-series for that channel
+        - Without either: aggregates all user's channels
+      operationId: exportAnalyticsCSV
+      parameters:
+        - name: videoId
+          in: query
+          description: Video UUID (for video-level export)
+          schema:
+            type: string
+            format: uuid
+        - name: channelId
+          in: query
+          description: Channel UUID (for channel-level export)
+          schema:
+            type: string
+            format: uuid
+        - name: start_date
+          in: query
+          description: Start date (YYYY-MM-DD). Defaults to 30 days ago.
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          description: End date (YYYY-MM-DD). Defaults to today.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: CSV file download
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="analytics-550e8400.csv"'
+          content:
+            text/csv:
+              schema:
+                type: string
+        '400':
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/analytics/export/json:
+    get:
+      tags:
+        - Analytics Export
+      summary: Export analytics as JSON
+      description: |
+        Export full analytics data as a downloadable JSON file.
+        Returns the same data shape as the analytics summary endpoint.
+      operationId: exportAnalyticsJSON
+      parameters:
+        - name: videoId
+          in: query
+          description: Video UUID (for video-level export)
+          schema:
+            type: string
+            format: uuid
+        - name: channelId
+          in: query
+          description: Channel UUID (for channel-level export)
+          schema:
+            type: string
+            format: uuid
+        - name: start_date
+          in: query
+          description: Start date (YYYY-MM-DD). Defaults to 30 days ago.
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          description: End date (YYYY-MM-DD). Defaults to today.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: JSON file download
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="analytics-550e8400.json"'
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
+  /api/v1/analytics/export/pdf:
+    get:
+      tags:
+        - Analytics Export
+      summary: Export analytics as PDF report
+      description: |
+        Generate and download a PDF analytics report containing:
+        - Stats summary table (views, watch time, likes, etc.)
+        - Retention curve chart and data table (video-level only)
+        - Demographics: geography, device, and traffic source tables
+        - Report header with title and date range
+        - Footer with generation timestamp
+      operationId: exportAnalyticsPDF
+      parameters:
+        - name: videoId
+          in: query
+          description: Video UUID (for video-level export)
+          schema:
+            type: string
+            format: uuid
+        - name: channelId
+          in: query
+          description: Channel UUID (for channel-level export)
+          schema:
+            type: string
+            format: uuid
+        - name: start_date
+          in: query
+          description: Start date (YYYY-MM-DD). Defaults to 30 days ago.
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          description: End date (YYYY-MM-DD). Defaults to today.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: PDF file download
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="analytics-550e8400.pdf"'
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - not owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+
 components:
   schemas:
     # Global Response Wrappers

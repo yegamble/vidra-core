@@ -8,6 +8,7 @@ import (
 	"time"
 	"vidra-core/internal/httpapi/handlers/account"
 	"vidra-core/internal/httpapi/handlers/admin"
+	analyticshandlers "vidra-core/internal/httpapi/handlers/analytics"
 	"vidra-core/internal/httpapi/handlers/auth"
 	"vidra-core/internal/httpapi/handlers/autotags"
 	backuphandlers "vidra-core/internal/httpapi/handlers/backup"
@@ -838,6 +839,15 @@ func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencie
 			analyticsCollector,
 		)
 		analyticsHandler.RegisterRoutes(r, jwtSecret)
+	}
+
+	if deps.ExportService != nil {
+		exportSvc, ok := deps.ExportService.(analyticshandlers.AnalyticsExportService)
+		if ok {
+			log.Printf("Registering analytics export routes...")
+			exportHandler := analyticshandlers.NewExportHandler(exportSvc)
+			exportHandler.RegisterRoutes(r, jwtSecret)
+		}
 	}
 }
 

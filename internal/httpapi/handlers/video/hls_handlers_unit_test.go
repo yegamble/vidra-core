@@ -11,8 +11,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/stretchr/testify/assert"
 	"vidra-core/internal/repository"
+
+	"github.com/stretchr/testify/assert"
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"

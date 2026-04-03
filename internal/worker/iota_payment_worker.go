@@ -7,8 +7,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/google/uuid"
 	"vidra-core/internal/domain"
+
+	"github.com/google/uuid"
 )
 
 // IOTARepository defines the interface for IOTA data operations

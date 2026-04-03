@@ -7,11 +7,12 @@ import (
 
 	"github.com/google/uuid"
 
+	"vidra-core/internal/repository"
+
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"vidra-core/internal/repository"
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"

@@ -40,6 +40,7 @@ import (
 	"vidra-core/internal/storage"
 	"vidra-core/internal/usecase"
 	ucactivitypub "vidra-core/internal/usecase/activitypub"
+	ucanalytics "vidra-core/internal/usecase/analytics"
 	ucat "vidra-core/internal/usecase/auto_tags"
 	ucbackup "vidra-core/internal/usecase/backup"
 	"vidra-core/internal/usecase/captiongen"
@@ -167,6 +168,7 @@ type Dependencies struct {
 	InstanceDiscovery        any
 	VideoCategoryUseCase     usecase.VideoCategoryUseCase
 	AnalyticsRepo            repository.AnalyticsRepository
+	ExportService            *ucanalytics.ExportService
 }
 
 func New(cfg *config.Config) (*Application, error) {
@@ -543,6 +545,10 @@ func (app *Application) initializeDependencies() *Dependencies {
 	deps.AnalyticsRepo = repository.NewAnalyticsRepository(app.DB)
 	log.Println("Analytics repository created")
 
+	videoAnalyticsRepo := repository.NewVideoAnalyticsRepository(app.DB)
+	deps.ExportService = ucanalytics.NewExportService(videoAnalyticsRepo, deps.VideoRepo, deps.ChannelRepo)
+	log.Println("Analytics export service created")
+
 	logger := logrus.New()
 	logger.SetLevel(logrus.InfoLevel)
 	deps.StreamManager = livestream.NewStreamManager(
@@ -905,6 +911,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		WatchedWordsService:      deps.WatchedWordsService,
 		AutoTagsService:          deps.AutoTagsService,
 		StudioService:            deps.StudioService,
+		ExportService:            deps.ExportService,
 		DB:                       app.DB.DB,
 		Redis:                    app.Redis,
 		JWTSecret:                app.Config.JWTSecret,
