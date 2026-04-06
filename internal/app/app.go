@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,7 +17,6 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	redis "github.com/redis/go-redis/v9"
-	"github.com/sirupsen/logrus"
 
 	"vidra-core/internal/backup"
 	"vidra-core/internal/chat"
@@ -31,6 +30,7 @@ import (
 	"vidra-core/internal/livestream"
 	"vidra-core/internal/metrics"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 	"vidra-core/internal/payments"
 	"vidra-core/internal/plugin"
 	"vidra-core/internal/port"
@@ -82,6 +82,7 @@ type Application struct {
 	streamScheduler    *livestream.StreamScheduler
 	iotaPaymentWorker  *worker.IOTAPaymentWorker
 	rateLimiterManager *middleware.RateLimiterManager
+	auditLogger        *obs.AuditLogger
 }
 
 type Dependencies struct {
@@ -195,6 +196,13 @@ func New(cfg *config.Config) (*Application, error) {
 		return nil, fmt.Errorf("failed to verify IPFS connection: %w", err)
 	}
 
+	// Initialize audit logger when LOG_DIR is configured
+	if cfg.LogDir != "" {
+		app.auditLogger = obs.NewAuditLogger(
+			filepath.Join(cfg.LogDir, cfg.AuditLogFilename),
+		)
+	}
+
 	deps := app.initializeDependencies()
 	if err := app.ensureValidationAdmin(deps.UserRepo); err != nil {
 		return nil, fmt.Errorf("failed to bootstrap validation admin user: %w", err)
@@ -214,21 +222,21 @@ func (app *Application) initializeDatabase() error {
 
 	autoMigrate := strings.ToLower(os.Getenv("AUTO_MIGRATE"))
 	if autoMigrate != "false" && autoMigrate != "0" {
-		log.Println("Running database migrations...")
+		slog.Info("Running database migrations...")
 		if err := database.RunMigrations(context.Background(), db); err != nil {
 			if cerr := db.Close(); cerr != nil {
-				log.Printf("failed to close DB after migration error: %v", cerr)
+				slog.Info(fmt.Sprintf("failed to close DB after migration error: %v", cerr))
 			}
 			return fmt.Errorf("database migration failed: %w", err)
 		}
 	} else {
-		log.Println("AUTO_MIGRATE=false, skipping migrations")
+		slog.Info("AUTO_MIGRATE=false, skipping migrations")
 	}
 
 	pool, err := database.NewPool(db, database.DefaultPoolConfig())
 	if err != nil {
 		if cerr := db.Close(); cerr != nil {
-			log.Printf("failed to close DB after pool init error: %v", cerr)
+			slog.Info(fmt.Sprintf("failed to close DB after pool init error: %v", cerr))
 		}
 		return fmt.Errorf("failed to configure connection pool: %w", err)
 	}
@@ -288,14 +296,14 @@ func (app *Application) verifyIPFSConnection() error {
 	resp, err := client.Post(app.Config.IPFSApi+"/api/v0/version", "", nil)
 	if err != nil || (resp != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300)) {
 		if app.Config.RequireIPFS {
-			log.Printf("ERROR: Failed to connect to IPFS API at %s: %v", app.Config.IPFSApi, err)
+			slog.Info(fmt.Sprintf("ERROR: Failed to connect to IPFS API at %s: %v", app.Config.IPFSApi, err))
 			return fmt.Errorf("failed to connect to ipfs api at %s: %w", app.Config.IPFSApi, err)
 		}
-		log.Printf("WARNING: IPFS API not reachable at %s: %v (continuing as REQUIRE_IPFS=false)", app.Config.IPFSApi, err)
+		slog.Info(fmt.Sprintf("WARNING: IPFS API not reachable at %s: %v (continuing as REQUIRE_IPFS=false)", app.Config.IPFSApi, err))
 		return nil
 	}
 
-	log.Printf("INFO: Successfully connected to IPFS API at %s", app.Config.IPFSApi)
+	slog.Info(fmt.Sprintf("INFO: Successfully connected to IPFS API at %s", app.Config.IPFSApi))
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
@@ -378,7 +386,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 		deps.EmailService = email.NewService(emailConfig)
 
 		if emailConfig.SMTPHost == "" {
-			log.Println("WARNING: Email enabled but SMTP_HOST is empty - email functionality will not work")
+			slog.Info("WARNING: Email enabled but SMTP_HOST is empty - email functionality will not work")
 		}
 
 		deps.EmailVerificationService = usecase.NewEmailVerificationService(
@@ -410,7 +418,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 	if app.Config.EnableCaptionGeneration {
 		captionGenRepo := repository.NewCaptionGenerationRepository(app.DB)
 		deps.CaptionGenService = captiongen.NewService(captionGenRepo, deps.CaptionRepo, deps.VideoRepo, nil, app.Config.StorageDir)
-		log.Println("Caption generation service created")
+		slog.Info("Caption generation service created")
 	}
 
 	if app.Config.EnableATProto {
@@ -477,7 +485,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 				}
 			}
 		} else {
-			log.Printf("S3 backend init failed (encoding): %v", err)
+			slog.Info(fmt.Sprintf("S3 backend init failed (encoding): %v", err))
 		}
 	}
 
@@ -492,7 +500,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 
 		socialRepo := repository.NewSocialRepository(app.DB)
 		deps.SocialService = usecase.NewSocialService(app.Config, socialRepo, deps.AtprotoService, nil)
-		log.Println("Social service created")
+		slog.Info("Social service created")
 	}
 
 	deps.HardeningService = usecase.NewFederationHardeningService(deps.HardeningRepo, deps.FederationService, app.Config)
@@ -501,7 +509,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 	if app.Config.EnableActivityPub {
 		encryption, err := security.NewActivityPubKeyEncryption(app.Config.ActivityPubKeyEncryptionKey)
 		if err != nil {
-			log.Fatalf("Failed to initialize ActivityPub key encryption: %v", err)
+			slog.Error(fmt.Sprintf("Failed to initialize ActivityPub key encryption: %v", err))
 		}
 
 		activityPubRepo := repository.NewActivityPubRepository(app.DB, encryption)
@@ -530,54 +538,53 @@ func (app *Application) initializeDependencies() *Dependencies {
 
 	deps.PluginRepo = repository.NewPluginRepository(app.DB)
 	deps.PluginManager = plugin.NewManager(filepath.Join(app.Config.StorageDir, "plugins"))
-	log.Println("Plugin manager created")
+	slog.Info("Plugin manager created")
 
 	redundancyRepo := repository.NewRedundancyRepository(app.DB)
 	safeClient := security.NewURLValidator().NewSafeHTTPClient(30 * time.Second)
 	deps.RedundancyService = ucredundancy.NewService(redundancyRepo, nil, safeClient)
 	deps.InstanceDiscovery = ucredundancy.NewInstanceDiscovery(safeClient)
-	log.Println("Redundancy service created")
+	slog.Info("Redundancy service created")
 
 	videoCategoryRepo := repository.NewVideoCategoryRepository(app.DB)
 	deps.VideoCategoryUseCase = usecase.NewVideoCategoryUseCase(videoCategoryRepo, deps.UserRepo)
-	log.Println("Video category use case created")
+	slog.Info("Video category use case created")
 
 	deps.AnalyticsRepo = repository.NewAnalyticsRepository(app.DB)
-	log.Println("Analytics repository created")
+	slog.Info("Analytics repository created")
 
 	videoAnalyticsRepo := repository.NewVideoAnalyticsRepository(app.DB)
 	deps.ExportService = ucanalytics.NewExportService(videoAnalyticsRepo, deps.VideoRepo, deps.ChannelRepo)
-	log.Println("Analytics export service created")
+	slog.Info("Analytics export service created")
 
-	logger := logrus.New()
-	logger.SetLevel(logrus.InfoLevel)
+	subsystemLogger := slog.Default()
 	deps.StreamManager = livestream.NewStreamManager(
 		deps.LiveStreamRepo,
 		deps.ViewerSessionRepo,
 		app.Redis,
-		logger,
+		subsystemLogger,
 	)
 
-	deps.ChatServer = chat.NewChatServer(app.Config, chatRepo, deps.LiveStreamRepo, app.Redis, logger)
+	deps.ChatServer = chat.NewChatServer(app.Config, chatRepo, deps.LiveStreamRepo, app.Redis, subsystemLogger)
 
 	if app.Config.EnableLiveStreaming {
-		log.Println("Initializing HLS transcoder...")
+		slog.Info("Initializing HLS transcoder...")
 		hlsTranscoder := livestream.NewHLSTranscoder(
 			app.Config,
 			deps.LiveStreamRepo,
-			logger,
+			subsystemLogger,
 		)
 
-		log.Println("Initializing VOD converter...")
+		slog.Info("Initializing VOD converter...")
 		vodConverter := livestream.NewVODConverter(
 			app.Config,
 			deps.LiveStreamRepo,
 			deps.VideoRepo,
-			logger,
+			subsystemLogger,
 			2,
 		)
 
-		log.Println("Initializing RTMP server for live streaming...")
+		slog.Info("Initializing RTMP server for live streaming...")
 		app.rtmpServer = livestream.NewRTMPServer(
 			app.Config,
 			deps.LiveStreamRepo,
@@ -585,7 +592,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 			deps.StreamManager,
 			hlsTranscoder,
 			vodConverter,
-			logger,
+			subsystemLogger,
 		)
 
 		app.hlsTranscoder = hlsTranscoder
@@ -602,7 +609,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 			if k, err := repository.DecodeTokenKey(app.Config.IOTAWalletEncryptionKey); err == nil {
 				encKey = k
 			} else {
-				log.Printf("Warning: Failed to decode IOTA wallet encryption key, using default")
+				slog.Info("Warning: Failed to decode IOTA wallet encryption key, using default")
 				encKey = []byte(app.Config.JWTSecret)[:32]
 			}
 		} else {
@@ -622,10 +629,10 @@ func (app *Application) initializeDependencies() *Dependencies {
 			encKey,
 		)
 
-		log.Println("IOTA payment service initialized")
+		slog.Info("IOTA payment service initialized")
 
 		app.iotaPaymentWorker = worker.NewIOTAPaymentWorker(deps.IOTARepo, iotaClient)
-		log.Println("IOTA payment worker created")
+		slog.Info("IOTA payment worker created")
 	}
 
 	return deps
@@ -690,7 +697,7 @@ func (app *Application) ensureValidationAdmin(userRepo usecase.UserRepository) e
 		if err := userRepo.MarkEmailAsVerified(ctx, desiredUser.ID); err != nil {
 			return fmt.Errorf("mark validation admin email verified: %w", err)
 		}
-		log.Printf("Bootstrapped validation admin user %s <%s>", desiredUser.Username, desiredUser.Email)
+		slog.Info(fmt.Sprintf("Bootstrapped validation admin user %s <%s>", desiredUser.Username, desiredUser.Email))
 		return nil
 	}
 
@@ -732,7 +739,7 @@ func (app *Application) ensureValidationAdmin(userRepo usecase.UserRepository) e
 		return fmt.Errorf("update validation admin password: %w", err)
 	}
 
-	log.Printf("Ensured validation admin user %s <%s>", desiredUser.Username, desiredUser.Email)
+	slog.Info(fmt.Sprintf("Ensured validation admin user %s <%s>", desiredUser.Username, desiredUser.Email))
 	return nil
 }
 
@@ -780,7 +787,7 @@ func (app *Application) initializeSchedulers(deps *Dependencies) {
 	if app.DB != nil && deps.LiveStreamRepo != nil {
 		streamSchedCfg := livestream.DefaultSchedulerConfig()
 		app.streamScheduler = livestream.NewStreamScheduler(app.DB, nil, streamSchedCfg)
-		log.Println("Stream scheduler created")
+		slog.Info("Stream scheduler created")
 	}
 
 	if app.Config.BackupEnabled {
@@ -912,6 +919,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		AutoTagsService:          deps.AutoTagsService,
 		StudioService:            deps.StudioService,
 		ExportService:            deps.ExportService,
+		AuditLogger:              app.auditLogger,
 		DB:                       app.DB.DB,
 		Redis:                    app.Redis,
 		JWTSecret:                app.Config.JWTSecret,
@@ -929,9 +937,9 @@ func (app *Application) Start(ctx context.Context) error {
 
 	if app.Config.EnableLiveStreaming && app.rtmpServer != nil {
 		go func() {
-			log.Printf("Starting RTMP server on %s:%d...", app.Config.RTMPHost, app.Config.RTMPPort)
+			slog.Info(fmt.Sprintf("Starting RTMP server on %s:%d...", app.Config.RTMPHost, app.Config.RTMPPort))
 			if err := app.rtmpServer.Start(ctx); err != nil {
-				log.Printf("RTMP server stopped: %v", err)
+				slog.Info(fmt.Sprintf("RTMP server stopped: %v", err))
 			}
 		}()
 	}
@@ -939,23 +947,23 @@ func (app *Application) Start(ctx context.Context) error {
 	if app.streamScheduler != nil {
 		go func() {
 			if err := app.streamScheduler.Start(ctx); err != nil {
-				log.Printf("Stream scheduler start error: %v", err)
+				slog.Info(fmt.Sprintf("Stream scheduler start error: %v", err))
 			}
 		}()
 	}
 
 	if app.iotaPaymentWorker != nil {
 		app.iotaPaymentWorker.Start(ctx, 30*time.Second)
-		log.Println("IOTA payment worker started")
+		slog.Info("IOTA payment worker started")
 	}
 
 	if app.Config.EnableEncoding && app.Dependencies != nil && app.Dependencies.EncodingService != nil {
 		workers := app.Config.EncodingWorkers
 		encSvc := app.Dependencies.EncodingService
 		go func() {
-			log.Printf("Starting encoding workers (count=%d)...", workers)
+			slog.Info(fmt.Sprintf("Starting encoding workers (count=%d)...", workers))
 			if err := encSvc.Run(ctx, workers); err != nil {
-				log.Printf("Encoding workers stopped with error: %v", err)
+				slog.Info(fmt.Sprintf("Encoding workers stopped with error: %v", err))
 			}
 		}()
 
@@ -970,9 +978,9 @@ func (app *Application) Start(ctx context.Context) error {
 				IdleTimeout:  30 * time.Second,
 			}
 			go func() {
-				log.Printf("Starting metrics server on %s", app.Config.MetricsAddr)
+				slog.Info(fmt.Sprintf("Starting metrics server on %s", app.Config.MetricsAddr))
 				if err := app.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					log.Printf("Metrics server error: %v", err)
+					slog.Info(fmt.Sprintf("Metrics server error: %v", err))
 				}
 			}()
 		}
@@ -982,10 +990,16 @@ func (app *Application) Start(ctx context.Context) error {
 }
 
 func (app *Application) Shutdown(ctx context.Context) error {
+	if app.auditLogger != nil {
+		if err := app.auditLogger.Close(); err != nil {
+			slog.Info(fmt.Sprintf("Failed to flush audit logger: %v", err))
+		}
+	}
+
 	if app.rateLimiterManager != nil {
-		log.Println("Shutting down rate limiters...")
+		slog.Info("Shutting down rate limiters...")
 		if err := app.rateLimiterManager.Shutdown(ctx); err != nil {
-			log.Printf("Failed to shutdown rate limiters: %v", err)
+			slog.Info(fmt.Sprintf("Failed to shutdown rate limiters: %v", err))
 		}
 	}
 
@@ -1002,36 +1016,36 @@ func (app *Application) Shutdown(ctx context.Context) error {
 	}
 
 	if app.vodConverter != nil {
-		log.Println("Stopping VOD converter...")
+		slog.Info("Stopping VOD converter...")
 		if err := app.vodConverter.Shutdown(ctx); err != nil {
-			log.Printf("Failed to shutdown VOD converter: %v", err)
+			slog.Info(fmt.Sprintf("Failed to shutdown VOD converter: %v", err))
 		}
 	}
 
 	if app.hlsTranscoder != nil {
-		log.Println("Stopping HLS transcoder...")
+		slog.Info("Stopping HLS transcoder...")
 		if err := app.hlsTranscoder.Shutdown(ctx); err != nil {
-			log.Printf("Failed to shutdown HLS transcoder: %v", err)
+			slog.Info(fmt.Sprintf("Failed to shutdown HLS transcoder: %v", err))
 		}
 	}
 
 	if app.rtmpServer != nil {
-		log.Println("Stopping RTMP server...")
+		slog.Info("Stopping RTMP server...")
 		if err := app.rtmpServer.Shutdown(ctx); err != nil {
-			log.Printf("Failed to shutdown RTMP server: %v", err)
+			slog.Info(fmt.Sprintf("Failed to shutdown RTMP server: %v", err))
 		}
 	}
 
 	if app.Dependencies != nil && app.Dependencies.StreamManager != nil {
-		log.Println("Stopping StreamManager...")
+		slog.Info("Stopping StreamManager...")
 		if err := app.Dependencies.StreamManager.Shutdown(ctx); err != nil {
-			log.Printf("Failed to shutdown StreamManager: %v", err)
+			slog.Info(fmt.Sprintf("Failed to shutdown StreamManager: %v", err))
 		}
 	}
 
 	if app.metricsServer != nil {
 		if err := app.metricsServer.Shutdown(ctx); err != nil {
-			log.Printf("Failed to shutdown metrics server: %v", err)
+			slog.Info(fmt.Sprintf("Failed to shutdown metrics server: %v", err))
 		}
 	}
 

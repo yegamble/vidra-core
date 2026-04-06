@@ -7,6 +7,8 @@ import (
 	"net/http"
 
 	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 )
 
 // configResetRepo is the minimal interface needed for config reset and homepage management.
@@ -18,12 +20,17 @@ type configResetRepo interface {
 
 // ConfigResetHandlers provides config reset and custom homepage endpoints.
 type ConfigResetHandlers struct {
-	repo configResetRepo
+	repo        configResetRepo
+	auditLogger *obs.AuditLogger
 }
 
 // NewConfigResetHandlers creates a new ConfigResetHandlers.
-func NewConfigResetHandlers(repo configResetRepo) *ConfigResetHandlers {
-	return &ConfigResetHandlers{repo: repo}
+func NewConfigResetHandlers(repo configResetRepo, auditLogger ...*obs.AuditLogger) *ConfigResetHandlers {
+	h := &ConfigResetHandlers{repo: repo}
+	if len(auditLogger) > 0 {
+		h.auditLogger = auditLogger[0]
+	}
+	return h
 }
 
 // DeleteCustomConfig handles DELETE /api/v1/config/custom — resets all custom config to defaults.
@@ -87,6 +94,15 @@ func (h *ConfigResetHandlers) UpdateCustomConfig(w http.ResponseWriter, r *http.
 		signupEnabled = "false"
 	}
 	_ = h.repo.SetConfigValue(ctx, "signup_enabled", signupEnabled)
+
+	if h.auditLogger != nil {
+		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		h.auditLogger.Update("config", userID, obs.NewConfigAuditView(map[string]interface{}{
+			"instance-name":    req.Instance.Name,
+			"signup":           req.Signup.Enabled,
+		}), obs.NewConfigAuditView(map[string]interface{}{}))
+	}
+
 	shared.WriteJSON(w, http.StatusOK, req)
 }
 

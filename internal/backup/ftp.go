@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math"
 	"path/filepath"
 	"strings"
@@ -26,7 +26,7 @@ type FTPBackend struct {
 }
 
 func NewFTPBackend(host string, port int, user, password, path string) *FTPBackend {
-	log.Println("WARNING: FTP backup target sends credentials in plaintext. Consider using SFTP or S3 for secure transport.")
+	slog.Info("WARNING: FTP backup target sends credentials in plaintext. Consider using SFTP or S3 for secure transport.")
 	return &FTPBackend{
 		Host:     host,
 		Port:     port,

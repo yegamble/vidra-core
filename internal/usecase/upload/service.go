@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -400,9 +400,9 @@ func (s *service) logResolutionEstimation(video *domain.Video, arInfo aspectRati
 		return
 	}
 	if arInfo.usedDefault {
-		log.Printf("estimating source resolution using width=%d, default AR=16:9 -> estHeight=%d -> %s", video.Metadata.Width, estHeight, resolution)
+		slog.Info(fmt.Sprintf("estimating source resolution using width=%d, default AR=16:9 -> estHeight=%d -> %s", video.Metadata.Width, estHeight, resolution))
 	} else {
-		log.Printf("estimating source resolution using width=%d, AR=%q -> estHeight=%d -> %s", video.Metadata.Width, video.Metadata.AspectRatio, estHeight, resolution)
+		slog.Info(fmt.Sprintf("estimating source resolution using width=%d, AR=%q -> estHeight=%d -> %s", video.Metadata.Width, video.Metadata.AspectRatio, estHeight, resolution))
 	}
 }
 

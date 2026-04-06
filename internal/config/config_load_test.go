@@ -138,3 +138,113 @@ func TestLoadCommonFields(t *testing.T) {
 		})
 	}
 }
+
+func TestLogConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		envVars map[string]string
+		verify  func(t *testing.T, cfg *Config)
+	}{
+		{
+			name:    "log config defaults",
+			envVars: map[string]string{},
+			verify: func(t *testing.T, cfg *Config) {
+				if cfg.LogDir != "" {
+					t.Errorf("expected LogDir default empty, got %q", cfg.LogDir)
+				}
+				if cfg.LogFilename != "vidra.log" {
+					t.Errorf("expected LogFilename default vidra.log, got %q", cfg.LogFilename)
+				}
+				if cfg.AuditLogFilename != "vidra-audit.log" {
+					t.Errorf("expected AuditLogFilename default vidra-audit.log, got %q", cfg.AuditLogFilename)
+				}
+				if cfg.LogRotationEnabled != true {
+					t.Errorf("expected LogRotationEnabled default true, got %v", cfg.LogRotationEnabled)
+				}
+				if cfg.LogRotationMaxSizeMB != 12 {
+					t.Errorf("expected LogRotationMaxSizeMB default 12, got %d", cfg.LogRotationMaxSizeMB)
+				}
+				if cfg.LogRotationMaxFiles != 20 {
+					t.Errorf("expected LogRotationMaxFiles default 20, got %d", cfg.LogRotationMaxFiles)
+				}
+				if cfg.LogRotationMaxAgeDays != 0 {
+					t.Errorf("expected LogRotationMaxAgeDays default 0, got %d", cfg.LogRotationMaxAgeDays)
+				}
+				if cfg.LogAnonymizeIP != false {
+					t.Errorf("expected LogAnonymizeIP default false, got %v", cfg.LogAnonymizeIP)
+				}
+				if cfg.LogHTTPRequests != true {
+					t.Errorf("expected LogHTTPRequests default true, got %v", cfg.LogHTTPRequests)
+				}
+				if cfg.LogPingRequests != true {
+					t.Errorf("expected LogPingRequests default true, got %v", cfg.LogPingRequests)
+				}
+				if cfg.LogAcceptClientLog != true {
+					t.Errorf("expected LogAcceptClientLog default true, got %v", cfg.LogAcceptClientLog)
+				}
+			},
+		},
+		{
+			name: "log config overrides",
+			envVars: map[string]string{
+				"LOG_DIR":                   "/var/log/vidra",
+				"LOG_FILENAME":              "custom.log",
+				"AUDIT_LOG_FILENAME":        "custom-audit.log",
+				"LOG_ROTATION_ENABLED":      "false",
+				"LOG_ROTATION_MAX_SIZE_MB":  "50",
+				"LOG_ROTATION_MAX_FILES":    "5",
+				"LOG_ROTATION_MAX_AGE_DAYS": "30",
+				"LOG_ANONYMIZE_IP":          "true",
+				"LOG_HTTP_REQUESTS":         "false",
+				"LOG_PING_REQUESTS":         "false",
+				"LOG_ACCEPT_CLIENT_LOG":     "false",
+			},
+			verify: func(t *testing.T, cfg *Config) {
+				if cfg.LogDir != "/var/log/vidra" {
+					t.Errorf("expected LogDir /var/log/vidra, got %q", cfg.LogDir)
+				}
+				if cfg.LogFilename != "custom.log" {
+					t.Errorf("expected LogFilename custom.log, got %q", cfg.LogFilename)
+				}
+				if cfg.AuditLogFilename != "custom-audit.log" {
+					t.Errorf("expected AuditLogFilename custom-audit.log, got %q", cfg.AuditLogFilename)
+				}
+				if cfg.LogRotationEnabled != false {
+					t.Errorf("expected LogRotationEnabled false, got %v", cfg.LogRotationEnabled)
+				}
+				if cfg.LogRotationMaxSizeMB != 50 {
+					t.Errorf("expected LogRotationMaxSizeMB 50, got %d", cfg.LogRotationMaxSizeMB)
+				}
+				if cfg.LogRotationMaxFiles != 5 {
+					t.Errorf("expected LogRotationMaxFiles 5, got %d", cfg.LogRotationMaxFiles)
+				}
+				if cfg.LogRotationMaxAgeDays != 30 {
+					t.Errorf("expected LogRotationMaxAgeDays 30, got %d", cfg.LogRotationMaxAgeDays)
+				}
+				if cfg.LogAnonymizeIP != true {
+					t.Errorf("expected LogAnonymizeIP true, got %v", cfg.LogAnonymizeIP)
+				}
+				if cfg.LogHTTPRequests != false {
+					t.Errorf("expected LogHTTPRequests false, got %v", cfg.LogHTTPRequests)
+				}
+				if cfg.LogPingRequests != false {
+					t.Errorf("expected LogPingRequests false, got %v", cfg.LogPingRequests)
+				}
+				if cfg.LogAcceptClientLog != false {
+					t.Errorf("expected LogAcceptClientLog false, got %v", cfg.LogAcceptClientLog)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.envVars {
+				t.Setenv(k, v)
+			}
+			cfg := &Config{}
+			loadCommonFields(cfg, false)
+			tt.verify(t, cfg)
+		})
+	}
+}

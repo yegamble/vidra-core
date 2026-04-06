@@ -3,7 +3,7 @@ package video
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -72,7 +72,7 @@ func HLSHandlerWithS3(videoRepo usecase.VideoRepository, cfg *config.Config, s3B
 
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 				if _, err := io.Copy(w, reader); err != nil {
-					log.Printf("error streaming S3 object for video %s path %s: %v", videoID, requestPath, err)
+					slog.Info(fmt.Sprintf("error streaming S3 object for video %s path %s: %v", videoID, requestPath, err))
 				}
 				return
 			}

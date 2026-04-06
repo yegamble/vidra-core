@@ -12,6 +12,7 @@ import (
 	"vidra-core/internal/domain"
 	"vidra-core/internal/httpapi/shared"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 	"vidra-core/internal/security"
 	"vidra-core/internal/usecase"
 )
@@ -140,7 +141,11 @@ func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.Capti
 	}
 }
 
-func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
+func CreateVideoHandler(repo usecase.VideoRepository, auditLogger ...*obs.AuditLogger) http.HandlerFunc {
+	var al *obs.AuditLogger
+	if len(auditLogger) > 0 {
+		al = auditLogger[0]
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req domain.VideoUploadRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -201,12 +206,20 @@ func CreateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		if al != nil {
+			al.Create("videos", userID, obs.NewVideoAuditView(video))
+		}
+
 		w.Header().Set("Location", "/api/v1/videos/"+video.ID)
 		shared.WriteJSON(w, http.StatusCreated, video)
 	}
 }
 
-func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
+func UpdateVideoHandler(repo usecase.VideoRepository, auditLogger ...*obs.AuditLogger) http.HandlerFunc {
+	var al *obs.AuditLogger
+	if len(auditLogger) > 0 {
+		al = auditLogger[0]
+	}
 	type updateRequest struct {
 		Title       string     `json:"title"`
 		Description string     `json:"description"`
@@ -332,11 +345,19 @@ func UpdateVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			response.Category = rawReq.Category
 		}
 
+		if al != nil {
+			al.Update("videos", userID, obs.NewVideoAuditView(updatedVideo), obs.NewVideoAuditView(existingVideo))
+		}
+
 		shared.WriteJSON(w, http.StatusOK, response)
 	}
 }
 
-func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
+func DeleteVideoHandler(repo usecase.VideoRepository, auditLogger ...*obs.AuditLogger) http.HandlerFunc {
+	var al *obs.AuditLogger
+	if len(auditLogger) > 0 {
+		al = auditLogger[0]
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		videoID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 		if !ok {
@@ -349,6 +370,9 @@ func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		// Fetch before delete for audit
+		existingForDelete, _ := repo.GetByID(r.Context(), videoID)
+
 		if err := repo.Delete(r.Context(), videoID, userID); err != nil {
 			var domainErr domain.DomainError
 			if errors.As(err, &domainErr) {
@@ -357,6 +381,10 @@ func DeleteVideoHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			}
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("DELETE_FAILED", "Failed to delete video"))
 			return
+		}
+
+		if al != nil && existingForDelete != nil {
+			al.Delete("videos", userID, obs.NewVideoAuditView(existingForDelete))
 		}
 
 		w.WriteHeader(http.StatusNoContent)

@@ -11,6 +11,7 @@ import (
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 	"vidra-core/internal/usecase"
 )
 
@@ -173,7 +174,11 @@ func GetUserVideos(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateUserHandler creates a new user in the database
-func CreateUserHandler(repo usecase.UserRepository) http.HandlerFunc {
+func CreateUserHandler(repo usecase.UserRepository, auditLogger ...*obs.AuditLogger) http.HandlerFunc {
+	var al *obs.AuditLogger
+	if len(auditLogger) > 0 {
+		al = auditLogger[0]
+	}
 	type createUserRequest struct {
 		Username      string          `json:"username"`
 		Email         string          `json:"email"`
@@ -242,6 +247,11 @@ func CreateUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 			// Fallback conflict mapping if repo enforces uniqueness at DB level
 			shared.WriteError(w, shared.MapDomainErrorToHTTP(domain.ErrConflict), domain.NewDomainError("CREATE_FAILED", "Failed to create user"))
 			return
+		}
+
+		callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		if al != nil {
+			al.Create("users", callerID, obs.NewUserAuditView(user))
 		}
 
 		// Set Location header to new resource

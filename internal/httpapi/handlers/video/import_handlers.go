@@ -9,6 +9,7 @@ import (
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 	"vidra-core/internal/security"
 	importuc "vidra-core/internal/usecase/import"
 
@@ -31,22 +32,27 @@ func (v *RealURLValidator) ValidateVideoURL(urlStr string) error {
 type ImportHandlers struct {
 	importService importuc.Service
 	urlValidator  URLValidator
+	auditLogger   *obs.AuditLogger
 }
 
-// NewImportHandlers creates new import handlers
-// If urlValidator is nil, it will use the real security validator
-func NewImportHandlers(importService importuc.Service, urlValidator ...URLValidator) *ImportHandlers {
-	var validator URLValidator
-	if len(urlValidator) > 0 && urlValidator[0] != nil {
-		validator = urlValidator[0]
-	} else {
-		validator = &RealURLValidator{}
+// NewImportHandlers creates new import handlers.
+// If urlValidator is nil, it will use the real security validator.
+func NewImportHandlers(importService importuc.Service, urlValidatorOrAudit ...interface{}) *ImportHandlers {
+	h := &ImportHandlers{importService: importService}
+	for _, v := range urlValidatorOrAudit {
+		switch t := v.(type) {
+		case URLValidator:
+			if t != nil {
+				h.urlValidator = t
+			}
+		case *obs.AuditLogger:
+			h.auditLogger = t
+		}
 	}
-
-	return &ImportHandlers{
-		importService: importService,
-		urlValidator:  validator,
+	if h.urlValidator == nil {
+		h.urlValidator = &RealURLValidator{}
 	}
+	return h
 }
 
 // CreateImportRequest represents the request body for creating an import
@@ -146,6 +152,10 @@ func (h *ImportHandlers) CreateImport(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		handleImportError(w, err)
 		return
+	}
+
+	if h.auditLogger != nil {
+		h.auditLogger.Create("video-imports", userID, obs.NewVideoImportAuditView(imp))
 	}
 
 	resp := mapImportToResponse(imp)

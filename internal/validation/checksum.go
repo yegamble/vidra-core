@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -28,7 +28,7 @@ func (v *ChecksumValidator) ValidateChunkChecksum(data []byte, expectedChecksum 
 	// In test mode, allow bypass checksums
 	if v.config.ValidationTestMode && (expectedChecksum == "abc123" || expectedChecksum == "test") {
 		if v.config.ValidationLogEvents {
-			log.Printf("VALIDATION: Test mode bypass used for checksum: %s", expectedChecksum)
+			slog.Info(fmt.Sprintf("VALIDATION: Test mode bypass used for checksum: %s", expectedChecksum))
 		}
 		return nil
 	}
@@ -55,13 +55,13 @@ func (v *ChecksumValidator) ValidateChunkChecksum(data []byte, expectedChecksum 
 
 	if actualChecksum != expectedChecksum {
 		if v.config.ValidationLogEvents {
-			log.Printf("VALIDATION: Checksum mismatch - expected: %s, actual: %s", expectedChecksum, actualChecksum)
+			slog.Info(fmt.Sprintf("VALIDATION: Checksum mismatch - expected: %s, actual: %s", expectedChecksum, actualChecksum))
 		}
 		return domain.NewDomainError("CHECKSUM_MISMATCH", "Chunk checksum verification failed")
 	}
 
 	if v.config.ValidationLogEvents {
-		log.Printf("VALIDATION: Checksum validation successful for chunk")
+		slog.Info("VALIDATION: Checksum validation successful for chunk")
 	}
 
 	return nil
@@ -80,7 +80,7 @@ func (v *ChecksumValidator) ValidateFileChecksum(filePath string, expectedChecks
 	// In test mode, allow bypass checksums
 	if v.config.ValidationTestMode && (expectedChecksum == "abc123" || expectedChecksum == "test") {
 		if v.config.ValidationLogEvents {
-			log.Printf("VALIDATION: Test mode bypass used for file checksum: %s", expectedChecksum)
+			slog.Info(fmt.Sprintf("VALIDATION: Test mode bypass used for file checksum: %s", expectedChecksum))
 		}
 		return nil
 	}
@@ -92,7 +92,7 @@ func (v *ChecksumValidator) ValidateFileChecksum(filePath string, expectedChecks
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil && v.config.ValidationLogEvents {
-			log.Printf("VALIDATION: Warning - failed to close file: %v", closeErr)
+			slog.Info(fmt.Sprintf("VALIDATION: Warning - failed to close file: %v", closeErr))
 		}
 	}()
 
@@ -105,13 +105,13 @@ func (v *ChecksumValidator) ValidateFileChecksum(filePath string, expectedChecks
 
 	if actualChecksum != expectedChecksum {
 		if v.config.ValidationLogEvents {
-			log.Printf("VALIDATION: File checksum mismatch - expected: %s, actual: %s, file: %s", expectedChecksum, actualChecksum, filePath)
+			slog.Info(fmt.Sprintf("VALIDATION: File checksum mismatch - expected: %s, actual: %s, file: %s", expectedChecksum, actualChecksum, filePath))
 		}
 		return domain.NewDomainError("FILE_CHECKSUM_MISMATCH", "File checksum verification failed")
 	}
 
 	if v.config.ValidationLogEvents {
-		log.Printf("VALIDATION: File checksum validation successful for: %s", filePath)
+		slog.Info(fmt.Sprintf("VALIDATION: File checksum validation successful for: %s", filePath))
 	}
 
 	return nil
@@ -133,7 +133,7 @@ func (v *ChecksumValidator) CalculateFileChecksum(filePath string) (string, erro
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			log.Printf("VALIDATION: Warning - failed to close file during checksum calculation: %v", closeErr)
+			slog.Info(fmt.Sprintf("VALIDATION: Warning - failed to close file during checksum calculation: %v", closeErr))
 		}
 	}()
 

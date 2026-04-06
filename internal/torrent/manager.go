@@ -3,6 +3,7 @@ package torrent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"github.com/sirupsen/logrus"
 )
 
 // Manager coordinates torrent operations across the system
@@ -30,7 +30,7 @@ type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
-	logger *logrus.Logger
+	logger *slog.Logger
 
 	// Caches
 	activeTorrents map[string]*ManagedTorrent
@@ -121,13 +121,13 @@ type ManagerMetrics struct {
 func NewManager(
 	db *sqlx.DB,
 	config *ManagerConfig,
-	logger *logrus.Logger,
+	logger *slog.Logger,
 ) (*Manager, error) {
 	if config == nil {
 		config = DefaultManagerConfig()
 	}
 	if logger == nil {
-		logger = logrus.New()
+		logger = slog.Default()
 	}
 
 	// Create directories
@@ -210,7 +210,7 @@ func NewManager(
 
 // Start starts the torrent manager
 func (m *Manager) Start() error {
-	m.logger.Info("Starting torrent manager")
+	slog.Info("Starting torrent manager")
 
 	// Start seeder
 	if err := m.seeder.Start(); err != nil {
@@ -219,7 +219,7 @@ func (m *Manager) Start() error {
 
 	// Load existing torrents
 	if err := m.loadExistingTorrents(); err != nil {
-		m.logger.WithError(err).Error("Failed to load existing torrents")
+		m.logger.With("error", err).Error("Failed to load existing torrents")
 	}
 
 	// Start background workers
@@ -228,14 +228,14 @@ func (m *Manager) Start() error {
 	go m.statsWorker()
 	go m.healthCheckWorker()
 
-	m.logger.Info("Torrent manager started")
+	slog.Info("Torrent manager started")
 
 	return nil
 }
 
 // Stop stops the torrent manager
 func (m *Manager) Stop() error {
-	m.logger.Info("Stopping torrent manager")
+	slog.Info("Stopping torrent manager")
 
 	// Cancel context
 	m.cancel()
@@ -245,19 +245,19 @@ func (m *Manager) Stop() error {
 
 	// Save state
 	if err := m.saveState(); err != nil {
-		m.logger.WithError(err).Error("Failed to save state")
+		m.logger.With("error", err).Error("Failed to save state")
 	}
 
 	// Stop components
 	if err := m.seeder.Stop(); err != nil {
-		m.logger.WithError(err).Error("Failed to stop seeder")
+		m.logger.With("error", err).Error("Failed to stop seeder")
 	}
 
 	if err := m.client.Close(); err != nil {
-		m.logger.WithError(err).Error("Failed to close client")
+		m.logger.With("error", err).Error("Failed to close client")
 	}
 
-	m.logger.Info("Torrent manager stopped")
+	slog.Info("Torrent manager stopped")
 
 	return nil
 }
@@ -297,7 +297,7 @@ func (m *Manager) AddVideoTorrent(ctx context.Context, videoID uuid.UUID, files 
 	// Add to seeder
 	if m.config.AutoSeed {
 		if err := m.seeder.AddTorrent(info.TorrentFile, videoID); err != nil {
-			m.logger.WithError(err).Error("Failed to add torrent to seeder")
+			m.logger.With("error", err).Error("Failed to add torrent to seeder")
 			// Don't fail the whole operation
 		}
 	}
@@ -321,11 +321,7 @@ func (m *Manager) AddVideoTorrent(ctx context.Context, videoID uuid.UUID, files 
 	m.metrics.TorrentsActive++
 	m.metrics.mu.Unlock()
 
-	m.logger.WithFields(logrus.Fields{
-		"video_id":  videoID,
-		"info_hash": info.InfoHash,
-		"size":      info.TotalSize,
-	}).Info("Added video torrent")
+	slog.Info("Added video torrent")
 
 	return videoTorrent, nil
 }
@@ -340,12 +336,12 @@ func (m *Manager) RemoveVideoTorrent(ctx context.Context, videoID uuid.UUID) err
 
 	// Remove from seeder
 	if err := m.seeder.RemoveTorrent(torrent.InfoHash); err != nil {
-		m.logger.WithError(err).Error("Failed to remove torrent from seeder")
+		m.logger.With("error", err).Error("Failed to remove torrent from seeder")
 	}
 
 	// Remove torrent file
 	if err := os.Remove(torrent.TorrentFilePath); err != nil && !os.IsNotExist(err) {
-		m.logger.WithError(err).Error("Failed to remove torrent file")
+		m.logger.With("error", err).Error("Failed to remove torrent file")
 	}
 
 	// Remove from database
@@ -364,10 +360,7 @@ func (m *Manager) RemoveVideoTorrent(ctx context.Context, videoID uuid.UUID) err
 	m.metrics.TorrentsActive--
 	m.metrics.mu.Unlock()
 
-	m.logger.WithFields(logrus.Fields{
-		"video_id":  videoID,
-		"info_hash": torrent.InfoHash,
-	}).Info("Removed video torrent")
+	slog.Info("Removed video torrent")
 
 	return nil
 }
@@ -424,26 +417,26 @@ func (m *Manager) loadExistingTorrents() error {
 		return fmt.Errorf("failed to get active torrents: %w", err)
 	}
 
-	m.logger.Infof("Loading %d existing torrents", len(torrents))
+	m.logger.Info("Loading existing torrents", "count", len(torrents))
 
 	for _, torrent := range torrents {
 		// Check if torrent file exists
 		if _, err := os.Stat(torrent.TorrentFilePath); os.IsNotExist(err) {
-			m.logger.WithField("info_hash", torrent.InfoHash).Warn("Torrent file not found")
+			slog.Warn("Torrent file not found", "info_hash", torrent.InfoHash)
 			continue
 		}
 
 		// Read torrent file
 		torrentData, err := os.ReadFile(torrent.TorrentFilePath)
 		if err != nil {
-			m.logger.WithError(err).WithField("info_hash", torrent.InfoHash).Error("Failed to read torrent file")
+			m.logger.With("error", err).Error("Failed to read torrent file", "info_hash", torrent.InfoHash)
 			continue
 		}
 
 		// Add to seeder
 		if m.config.AutoSeed {
 			if err := m.seeder.AddTorrent(torrentData, torrent.VideoID); err != nil {
-				m.logger.WithError(err).WithField("info_hash", torrent.InfoHash).Error("Failed to add torrent to seeder")
+				m.logger.With("error", err).Error("Failed to add torrent to seeder", "info_hash", torrent.InfoHash)
 				continue
 			}
 		}
@@ -472,7 +465,7 @@ func (m *Manager) saveState() error {
 	m.mu.RLock()
 	for _, mt := range m.activeTorrents {
 		if err := m.torrentRepo.SetSeedingStatus(ctx, mt.VideoID, mt.Status.IsSeeding); err != nil {
-			m.logger.WithError(err).Error("Failed to save torrent status")
+			m.logger.With("error", err).Error("Failed to save torrent status")
 		}
 	}
 	m.mu.RUnlock()
@@ -494,7 +487,7 @@ func (m *Manager) cleanupWorker() {
 
 			// Cleanup old peers
 			if err := m.peerRepo.CleanupOldPeers(ctx); err != nil {
-				m.logger.WithError(err).Error("Failed to cleanup old peers")
+				m.logger.With("error", err).Error("Failed to cleanup old peers")
 			}
 
 			// Check torrent health
@@ -544,7 +537,7 @@ func (m *Manager) healthCheckWorker() {
 func (m *Manager) checkTorrentHealth() {
 	statuses, err := m.seeder.GetAllStatuses()
 	if err != nil {
-		m.logger.WithError(err).Error("Failed to get torrent statuses")
+		m.logger.With("error", err).Error("Failed to get torrent statuses")
 		return
 	}
 
@@ -553,15 +546,12 @@ func (m *Manager) checkTorrentHealth() {
 	for _, status := range statuses {
 		// Update database
 		if err := m.torrentRepo.UpdateTorrentStats(ctx, status.InfoHash, status.Seeders, status.Leechers); err != nil {
-			m.logger.WithError(err).Error("Failed to update torrent stats")
+			m.logger.With("error", err).Error("Failed to update torrent stats")
 		}
 
 		// Check if torrent needs more seeders
 		if status.IsSeeding && status.Seeders < m.config.MinSeeders {
-			m.logger.WithFields(logrus.Fields{
-				"info_hash": status.InfoHash,
-				"seeders":   status.Seeders,
-			}).Warn("Torrent has insufficient seeders")
+			slog.Warn("Torrent has insufficient seeders")
 		}
 	}
 }
@@ -599,7 +589,7 @@ func (m *Manager) recordStats() {
 		}
 
 		if err := m.statsRepo.RecordStats(ctx, stats); err != nil {
-			m.logger.WithError(err).Error("Failed to record stats")
+			m.logger.With("error", err).Error("Failed to record stats")
 		}
 
 		// Update last active time

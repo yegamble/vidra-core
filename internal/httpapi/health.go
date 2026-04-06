@@ -1,7 +1,8 @@
 package httpapi
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 	"vidra-core/internal/health"
@@ -77,7 +78,7 @@ func (h *HealthHandlers) ReadinessCheck(w http.ResponseWriter, r *http.Request) 
 	for _, checker := range h.checkers {
 		err := checker.Check(ctx)
 		if err != nil {
-			log.Printf("ERROR: %s health check failed: %v", checker.Name(), err)
+			slog.Info(fmt.Sprintf("ERROR: %s health check failed: %v", checker.Name(), err))
 			checks[checker.Name()] = "fail"
 			overallStatus = "fail"
 			statusCode = http.StatusServiceUnavailable
@@ -104,7 +105,7 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	statusCode := http.StatusOK
 
 	if err := checkDatabase(); err != nil {
-		log.Printf("ERROR: Database health check failed: %v", err)
+		slog.Info(fmt.Sprintf("ERROR: Database health check failed: %v", err))
 		checks["database"] = "fail"
 		overallStatus = "fail"
 		statusCode = http.StatusServiceUnavailable
@@ -113,7 +114,7 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := checkRedis(); err != nil {
-		log.Printf("ERROR: Redis health check failed: %v", err)
+		slog.Info(fmt.Sprintf("ERROR: Redis health check failed: %v", err))
 		checks["redis"] = "fail"
 		overallStatus = "fail"
 		statusCode = http.StatusServiceUnavailable
@@ -122,7 +123,7 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := checkIPFS(); err != nil {
-		log.Printf("ERROR: IPFS health check failed: %v", err)
+		slog.Info(fmt.Sprintf("ERROR: IPFS health check failed: %v", err))
 		checks["ipfs"] = "fail"
 		overallStatus = "fail"
 		statusCode = http.StatusServiceUnavailable
@@ -131,7 +132,7 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := checkQueueDepth(); err != nil {
-		log.Printf("ERROR: Queue health check failed: %v", err)
+		slog.Info(fmt.Sprintf("ERROR: Queue health check failed: %v", err))
 		checks["queue"] = "fail"
 		overallStatus = "fail"
 		statusCode = http.StatusServiceUnavailable

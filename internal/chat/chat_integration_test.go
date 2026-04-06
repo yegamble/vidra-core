@@ -3,6 +3,7 @@
 package chat_test
 
 import (
+	"log/slog"
 	"context"
 	"fmt"
 	"net/http"
@@ -21,7 +22,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -81,8 +81,8 @@ func TestChatIntegration_FullLifecycle(t *testing.T) {
 	streamRepo := repository.NewLiveStreamRepository(db)
 
 	cfg := &config.Config{}
-	logger := logrus.New()
-	logger.SetLevel(logrus.DebugLevel)
+	logger := slog.Default()
+	logger.SetLevel()
 
 	chatServer := chat.NewChatServer(cfg, chatRepo, streamRepo, redisClient, logger)
 
@@ -145,7 +145,7 @@ func TestChatIntegration_ConcurrentConnections(t *testing.T) {
 	streamRepo := repository.NewLiveStreamRepository(db)
 
 	cfg := &config.Config{}
-	logger := logrus.New()
+	logger := slog.Default()
 	logger.SetLevel(logrus.WarnLevel)
 
 	chatServer := chat.NewChatServer(cfg, chatRepo, streamRepo, redisClient, logger)
@@ -232,7 +232,7 @@ func TestChatIntegration_MessageBroadcast(t *testing.T) {
 	streamRepo := repository.NewLiveStreamRepository(db)
 
 	cfg := &config.Config{}
-	logger := logrus.New()
+	logger := slog.Default()
 	logger.SetLevel(logrus.WarnLevel)
 
 	chatServer := chat.NewChatServer(cfg, chatRepo, streamRepo, redisClient, logger)
@@ -346,7 +346,7 @@ func TestChatIntegration_ModerationActions(t *testing.T) {
 	streamRepo := repository.NewLiveStreamRepository(db)
 
 	cfg := &config.Config{}
-	logger := logrus.New()
+	logger := slog.Default()
 
 	chatServer := chat.NewChatServer(cfg, chatRepo, streamRepo, redisClient, logger)
 
@@ -409,7 +409,7 @@ func TestChatIntegration_RateLimiting(t *testing.T) {
 		ChatRateLimitMessages: 5,
 		ChatRateLimitWindow:   10 * time.Second,
 	}
-	logger := logrus.New()
+	logger := slog.Default()
 
 	chatServer := chat.NewChatServer(cfg, chatRepo, streamRepo, redisClient, logger)
 

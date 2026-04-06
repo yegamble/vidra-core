@@ -1,11 +1,11 @@
 package torrent
 
 import (
+	"log/slog"
 	"testing"
 
 	"vidra-core/internal/config"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,8 +18,7 @@ func TestNewClientFromAppConfig(t *testing.T) {
 	// Setup test DNS to avoid resolution errors
 	SetupTestDNS(t)
 
-	logger := logrus.New()
-	logger.SetLevel(logrus.FatalLevel)
+	logger := slog.Default()
 
 	t.Run("creates client with DHT enabled", func(t *testing.T) {
 		cfg := &config.Config{
@@ -144,8 +143,7 @@ func TestHybridDistributionConfiguration(t *testing.T) {
 }
 
 func TestNewClientWithMockedDHT(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.FatalLevel)
+	logger := slog.Default()
 
 	t.Run("creates client without external network calls", func(t *testing.T) {
 		cfg := MockedDHTConfig()

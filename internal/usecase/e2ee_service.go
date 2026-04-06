@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -317,6 +317,6 @@ func (s *E2EEService) logAudit(
 		entry.ErrorMessage = &errMsg
 	}
 	if err := s.cryptoRepo.CreateAuditLog(ctx, entry); err != nil {
-		log.Printf("WARNING: failed to write crypto audit log for user %s operation %s: %v", userID, operation, err)
+		slog.Info(fmt.Sprintf("WARNING: failed to write crypto audit log for user %s operation %s: %v", userID, operation, err))
 	}
 }

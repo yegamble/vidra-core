@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )
 
@@ -26,7 +26,7 @@ type Seeder struct {
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
-	logger      *logrus.Logger
+	logger      *slog.Logger
 	stats       *SeederStats
 	prioritizer PrioritizationStrategy
 }
@@ -95,12 +95,12 @@ type SeederStats struct {
 }
 
 // NewSeeder creates a new torrent seeder
-func NewSeeder(config *SeederConfig, logger *logrus.Logger) (*Seeder, error) {
+func NewSeeder(config *SeederConfig, logger *slog.Logger) (*Seeder, error) {
 	if config == nil {
 		config = DefaultSeederConfig()
 	}
 	if logger == nil {
-		logger = logrus.New()
+		logger = slog.Default()
 	}
 
 	// Create torrent client config
@@ -189,11 +189,7 @@ func (s *Seeder) AddTorrent(torrentData []byte, videoID uuid.UUID) error {
 	// Start downloading/seeding
 	t.DownloadAll()
 
-	s.logger.WithFields(logrus.Fields{
-		"video_id":  videoID,
-		"info_hash": infoHash,
-		"name":      t.Name(),
-	}).Info("Added torrent for seeding")
+	slog.Info("Added torrent for seeding")
 
 	// Apply prioritization
 	if s.prioritizer != nil {
@@ -234,11 +230,7 @@ func (s *Seeder) AddMagnet(magnetURI string, videoID uuid.UUID) error {
 	// Start downloading/seeding
 	t.DownloadAll()
 
-	s.logger.WithFields(logrus.Fields{
-		"video_id":  videoID,
-		"info_hash": infoHash,
-		"name":      t.Name(),
-	}).Info("Added magnet for seeding")
+	slog.Info("Added magnet for seeding")
 
 	return nil
 }
@@ -260,7 +252,7 @@ func (s *Seeder) RemoveTorrent(infoHash string) error {
 	delete(s.torrents, infoHash)
 	delete(s.addedAt, infoHash)
 
-	s.logger.WithField("info_hash", infoHash).Info("Removed torrent")
+	slog.Info("Removed torrent", "info_hash", infoHash)
 
 	return nil
 }
@@ -428,7 +420,7 @@ func (s *Seeder) GetStats() SeederStats {
 
 // Start begins seeding all torrents
 func (s *Seeder) Start() error {
-	s.logger.Info("Starting torrent seeder")
+	slog.Info("Starting torrent seeder")
 
 	// Torrents are automatically started when added
 	// This method is for any additional startup logic
@@ -438,7 +430,7 @@ func (s *Seeder) Start() error {
 
 // Stop gracefully stops the seeder
 func (s *Seeder) Stop() error {
-	s.logger.Info("Stopping torrent seeder")
+	slog.Info("Stopping torrent seeder")
 
 	// Cancel context
 	s.cancel()
@@ -455,7 +447,7 @@ func (s *Seeder) Stop() error {
 	// Close client
 	s.client.Close()
 
-	s.logger.Info("Torrent seeder stopped")
+	slog.Info("Torrent seeder stopped")
 
 	return nil
 }
@@ -647,11 +639,11 @@ type SeedManager struct {
 	generator *Generator
 	videos    map[uuid.UUID]*domain.VideoTorrent
 	mu        sync.RWMutex
-	logger    *logrus.Logger
+	logger    *slog.Logger
 }
 
 // NewSeedManager creates a new seed manager
-func NewSeedManager(seeder *Seeder, generator *Generator, logger *logrus.Logger) *SeedManager {
+func NewSeedManager(seeder *Seeder, generator *Generator, logger *slog.Logger) *SeedManager {
 	return &SeedManager{
 		seeder:    seeder,
 		generator: generator,
@@ -688,7 +680,7 @@ func (sm *SeedManager) AddVideo(videoID uuid.UUID, files []VideoFile) error {
 	}
 	sm.mu.Unlock()
 
-	sm.logger.WithField("video_id", videoID).Info("Added video for seeding")
+	slog.Info("Added video for seeding", "video_id", videoID)
 
 	return nil
 }
@@ -710,7 +702,7 @@ func (sm *SeedManager) RemoveVideo(videoID uuid.UUID) error {
 		return fmt.Errorf("failed to remove torrent: %w", err)
 	}
 
-	sm.logger.WithField("video_id", videoID).Info("Removed video from seeding")
+	slog.Info("Removed video from seeding", "video_id", videoID)
 
 	return nil
 }

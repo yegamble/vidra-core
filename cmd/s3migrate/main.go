@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	"github.com/sirupsen/logrus"
 )
 
 func main() {
@@ -42,27 +42,30 @@ func main() {
 	}
 
 	// Setup logger
-	logger := logrus.New()
-	logger.SetLevel(logrus.InfoLevel)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
 	if cfg.LogLevel == "debug" {
-		logger.SetLevel(logrus.DebugLevel)
+		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
 
 	// Check if S3 is enabled
 	if !cfg.EnableS3 {
-		logger.Fatal("S3 is not enabled. Set ENABLE_S3=true in your .env file")
+		logger.Error("S3 is not enabled. Set ENABLE_S3=true in your .env file")
+		os.Exit(1)
 	}
 
 	// Validate S3 configuration
 	if cfg.S3Endpoint == "" || cfg.S3Bucket == "" || cfg.S3AccessKey == "" || cfg.S3SecretKey == "" {
-		logger.Fatal("S3 configuration incomplete. Please set S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, and S3_SECRET_KEY")
+		logger.Error("S3 configuration incomplete. Please set S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, and S3_SECRET_KEY")
+		os.Exit(1)
 	}
 
-	logger.Infof("S3 Configuration:")
-	logger.Infof("  Endpoint: %s", cfg.S3Endpoint)
-	logger.Infof("  Bucket: %s", cfg.S3Bucket)
-	logger.Infof("  Region: %s", cfg.S3Region)
-	logger.Infof("  Delete Local: %v", deleteLocal)
+	logger.Info("S3 Configuration:",
+		"endpoint", cfg.S3Endpoint,
+		"bucket", cfg.S3Bucket,
+		"region", cfg.S3Region,
+		"delete_local", deleteLocal,
+	)
 
 	// Create S3 backend
 	s3Backend, err := storage.NewS3Backend(storage.S3Config{
@@ -74,7 +77,7 @@ func main() {
 		PathStyle: true, // Required for Backblaze B2
 	})
 	if err != nil {
-		logger.Fatalf("Failed to create S3 backend: %v", err)
+		logger.Error("Failed to create S3 backend: %v", "args", err)
 	}
 
 	logger.Info("✓ S3 backend created successfully")
@@ -82,7 +85,7 @@ func main() {
 	// Test S3 connection if requested
 	if testOnly {
 		if err := testS3Connection(context.Background(), s3Backend, logger); err != nil {
-			logger.Fatalf("S3 connection test failed: %v", err)
+			logger.Error("S3 connection test failed: %v", "args", err)
 		}
 		logger.Info("✓ S3 connection test successful!")
 		return
@@ -91,11 +94,11 @@ func main() {
 	// Connect to database
 	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
 	if err != nil {
-		logger.Fatalf("Failed to connect to database: %v", err)
+		logger.Error("Failed to connect to database: %v", "args", err)
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
-			logger.Errorf("Failed to close database connection: %v", err)
+			logger.Error(fmt.Sprintf("Failed to close database connection: %v", err))
 		}
 	}()
 
@@ -123,7 +126,7 @@ func main() {
 		logger.Info("DRY RUN MODE - No actual migration will occur")
 		videos, err := videoRepo.GetVideosForMigration(ctx, batchSize)
 		if err != nil {
-			logger.Fatalf("Failed to get videos for migration: %v", err)
+			logger.Error("Failed to get videos for migration: %v", "args", err)
 		}
 
 		if len(videos) == 0 {
@@ -131,38 +134,38 @@ func main() {
 			return
 		}
 
-		logger.Infof("Found %d videos that would be migrated:", len(videos))
+		logger.Info(fmt.Sprintf("Found %d videos that would be migrated:", len(videos)))
 		for _, v := range videos {
-			logger.Infof("  - %s: %s (Status: %s, Tier: %s)", v.ID, v.Title, v.Status, v.StorageTier)
+			logger.Info(fmt.Sprintf("  - %s: %s (Status: %s, Tier: %s)", v.ID, v.Title, v.Status, v.StorageTier))
 		}
 		return
 	}
 
 	// Migrate specific video
 	if videoID != "" {
-		logger.Infof("Migrating video: %s", videoID)
+		logger.Info(fmt.Sprintf("Migrating video: %s", videoID))
 		start := time.Now()
 
 		if err := migrationService.MigrateVideo(ctx, videoID); err != nil {
-			logger.Fatalf("Migration failed: %v", err)
+			logger.Error("Migration failed: %v", "args", err)
 		}
 
 		duration := time.Since(start)
-		logger.Infof("✓ Migration completed successfully in %v", duration)
+		logger.Info(fmt.Sprintf("✓ Migration completed successfully in %v", duration))
 		return
 	}
 
 	// Migrate batch
-	logger.Infof("Migrating batch of %d videos...", batchSize)
+	logger.Info(fmt.Sprintf("Migrating batch of %d videos...", batchSize))
 	start := time.Now()
 
 	migrated, err := migrationService.MigrateBatch(ctx, batchSize)
 	if err != nil {
-		logger.Fatalf("Batch migration failed: %v", err)
+		logger.Error("Batch migration failed: %v", "args", err)
 	}
 
 	duration := time.Since(start)
-	logger.Infof("✓ Batch migration completed: %d videos migrated in %v", migrated, duration)
+	logger.Info(fmt.Sprintf("✓ Batch migration completed: %d videos migrated in %v", migrated, duration))
 
 	if migrated == 0 {
 		logger.Info("No videos needed migration")
@@ -170,11 +173,11 @@ func main() {
 }
 
 // testS3Connection tests the S3 connection by uploading and downloading a test file
-func testS3Connection(ctx context.Context, s3Backend *storage.S3Backend, logger *logrus.Logger) error {
+func testS3Connection(ctx context.Context, s3Backend *storage.S3Backend, logger *slog.Logger) error {
 	testKey := fmt.Sprintf("test/connection-test-%d.txt", time.Now().Unix())
 	testContent := "This is a test file to verify S3 connectivity"
 
-	logger.Infof("Testing S3 connection with key: %s", testKey)
+	logger.Info(fmt.Sprintf("Testing S3 connection with key: %s", testKey))
 
 	// Test upload
 	logger.Info("  1. Testing upload...")
@@ -202,7 +205,7 @@ func testS3Connection(ctx context.Context, s3Backend *storage.S3Backend, logger 
 		return fmt.Errorf("download failed: %w", err)
 	}
 	if err := downloadReader.Close(); err != nil {
-		logger.Warnf("Failed to close download reader: %v", err)
+		logger.Warn(fmt.Sprintf("Failed to close download reader: %v", err))
 	}
 	logger.Info("  ✓ Download successful")
 
@@ -212,7 +215,7 @@ func testS3Connection(ctx context.Context, s3Backend *storage.S3Backend, logger 
 	if err != nil {
 		return fmt.Errorf("metadata retrieval failed: %w", err)
 	}
-	logger.Infof("  ✓ Metadata retrieved: Size=%d, ContentType=%s", metadata.Size, metadata.ContentType)
+	logger.Info(fmt.Sprintf("  ✓ Metadata retrieved: Size=%d, ContentType=%s", metadata.Size, metadata.ContentType))
 
 	// Test URL generation
 	logger.Info("  5. Testing URL generation...")
@@ -220,7 +223,7 @@ func testS3Connection(ctx context.Context, s3Backend *storage.S3Backend, logger 
 	if url == "" {
 		return fmt.Errorf("URL generation failed")
 	}
-	logger.Infof("  ✓ URL generated: %s", url)
+	logger.Info(fmt.Sprintf("  ✓ URL generated: %s", url))
 
 	// Test signed URL generation
 	logger.Info("  6. Testing signed URL generation...")
@@ -228,7 +231,7 @@ func testS3Connection(ctx context.Context, s3Backend *storage.S3Backend, logger 
 	if err != nil {
 		return fmt.Errorf("signed URL generation failed: %w", err)
 	}
-	logger.Infof("  ✓ Signed URL generated: %s", signedURL[:50]+"...")
+	logger.Info(fmt.Sprintf("  ✓ Signed URL generated: %s", signedURL[:50]+"..."))
 
 	// Cleanup
 	logger.Info("  7. Testing deletion...")

@@ -1,6 +1,7 @@
 package livestream
 
 import (
+	"log/slog"
 	"context"
 	"os"
 	"path/filepath"
@@ -8,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -94,8 +94,7 @@ func TestNewVODConverter(t *testing.T) {
 
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 3)
 
@@ -113,8 +112,7 @@ func TestNewVODConverter_DefaultWorkers(t *testing.T) {
 	cfg := &config.Config{}
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 0)
 
@@ -128,8 +126,7 @@ func TestVODConverter_ConvertStreamToVOD_Disabled(t *testing.T) {
 
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 
@@ -161,8 +158,7 @@ func TestVODConverter_ConvertStreamToVOD_Success(t *testing.T) {
 
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 	defer converter.Shutdown(context.Background())
@@ -201,8 +197,7 @@ func TestVODConverter_ConvertStreamToVOD_Duplicate(t *testing.T) {
 
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 	defer converter.Shutdown(context.Background())
@@ -231,8 +226,7 @@ func TestVODConverter_GetJob(t *testing.T) {
 
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 	defer func() {
@@ -265,8 +259,7 @@ func TestVODConverter_CancelJob(t *testing.T) {
 
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 	defer converter.Shutdown(context.Background())
@@ -294,8 +287,7 @@ func TestVODConverter_GetActiveJobCount(t *testing.T) {
 
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 	defer converter.Shutdown(context.Background())
@@ -313,8 +305,7 @@ func TestVODConverter_GetQueueLength(t *testing.T) {
 
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := &VODConverter{
 		cfg:          cfg,
@@ -342,8 +333,7 @@ func TestVODConverter_FindBestVariant(t *testing.T) {
 	cfg := &config.Config{}
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 	defer converter.Shutdown(context.Background())
@@ -417,8 +407,7 @@ func TestVODConverter_Shutdown(t *testing.T) {
 
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 
@@ -452,8 +441,7 @@ func TestVODConverter_JobStateTransitions(t *testing.T) {
 	cfg := &config.Config{}
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 	defer converter.Shutdown(context.Background())
@@ -513,8 +501,7 @@ func TestVODConverter_CreateOutputDirectory(t *testing.T) {
 
 	streamRepo := &MockLiveStreamRepository{}
 	videoRepo := &MockVideoRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	converter := NewVODConverter(cfg, streamRepo, videoRepo, logger, 2)
 	defer converter.Shutdown(context.Background())

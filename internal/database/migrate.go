@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 
 	migrationfs "vidra-core"
@@ -28,7 +28,7 @@ func RunMigrations(ctx context.Context, db *sqlx.DB) error {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	log.Println("Database migrations completed successfully")
+	slog.Info("Database migrations completed successfully")
 	return nil
 }
 
@@ -50,6 +50,6 @@ func RunMigrationsWithDB(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	log.Println("Database migrations completed successfully")
+	slog.Info("Database migrations completed successfully")
 	return nil
 }

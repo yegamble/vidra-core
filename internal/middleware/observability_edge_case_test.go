@@ -30,7 +30,7 @@ func TestLoggingMiddlewareWithNilLogger(t *testing.T) {
 		}
 	}()
 
-	handler := LoggingMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(LoggingConfig{Logger: nil, LogHTTPRequests: true, LogPingRequests: true})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -52,8 +52,8 @@ func TestLoggingMiddlewareWithInvalidLoggerType(t *testing.T) {
 		}
 	}()
 
-	// Pass something that's not a logger
-	handler := LoggingMiddleware("not a logger")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Pass a config with nil logger — should not panic
+	handler := LoggingMiddleware(LoggingConfig{Logger: nil, LogHTTPRequests: true, LogPingRequests: true})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -69,7 +69,7 @@ func TestLoggingMiddlewareWithHugeRequestBody(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Read the huge body
 		io.Copy(io.Discard, r.Body)
 		w.WriteHeader(http.StatusOK)
@@ -100,7 +100,7 @@ func TestLoggingMiddlewareWithHugeResponseBody(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Write 10MB response
 		w.WriteHeader(http.StatusOK)
 		w.Write(bytes.Repeat([]byte("B"), 10*1024*1024))
@@ -128,7 +128,7 @@ func TestLoggingMiddlewareWithExtremelyLongPath(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -156,7 +156,7 @@ func TestLoggingMiddlewareWithSpecialCharactersInPath(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -190,7 +190,7 @@ func TestLoggingMiddlewareConcurrentRequests(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Simulate some work
 		time.Sleep(10 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -387,7 +387,7 @@ func TestLoggingMiddlewareWithExtremelyLongRequestID(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -410,7 +410,7 @@ func TestLoggingMiddlewareWithSpecialCharactersInRequestID(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -444,7 +444,7 @@ func TestResponseWriterMultipleWriteHeaders(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.WriteHeader(http.StatusInternalServerError) // Second call should be ignored by http.ResponseWriter
 	}))
@@ -476,7 +476,7 @@ func TestResponseWriterWithoutWriteHeader(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Don't call WriteHeader, just Write
 		w.Write([]byte("response"))
 	}))
@@ -530,7 +530,7 @@ func TestObservabilityMiddlewarePerformanceOverhead(t *testing.T) {
 	)
 	defer tp.Shutdown(context.Background())
 
-	observabilityHandler := LoggingMiddleware(logger)(
+	observabilityHandler := LoggingMiddleware(newTestLoggingConfig(logger))(
 		MetricsMiddleware(metrics)(
 			TracingMiddleware(tp.Tracer("test"))(baselineHandler),
 		),
@@ -574,7 +574,7 @@ func TestObservabilityMiddlewareNoMemoryLeaks(t *testing.T) {
 	)
 	defer tp.Shutdown(context.Background())
 
-	handler := LoggingMiddleware(logger)(
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(
 		MetricsMiddleware(metrics)(
 			TracingMiddleware(tp.Tracer("test"))(
 				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -619,7 +619,7 @@ func TestMiddlewareStackWithHandlerErrors(t *testing.T) {
 		w.Write([]byte("internal error"))
 	})
 
-	handler := LoggingMiddleware(logger)(
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(
 		MetricsMiddleware(metrics)(
 			TracingMiddleware(tp.Tracer("test"))(errorHandler),
 		),

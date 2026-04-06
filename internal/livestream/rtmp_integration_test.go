@@ -1,6 +1,7 @@
 package livestream
 
 import (
+	"log/slog"
 	"context"
 	"fmt"
 	"net"
@@ -16,7 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/nareix/joy4/format/rtmp"
 	"github.com/redis/go-redis/v9"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
@@ -42,8 +42,7 @@ func TestRTMPServerIntegration(t *testing.T) {
 
 	require.NoError(t, redisClient.FlushDB(context.Background()).Err())
 
-	logger := logrus.New()
-	logger.SetLevel(logrus.DebugLevel)
+	logger := slog.Default()
 
 	streamManager := NewStreamManager(streamRepo, viewerRepo, redisClient, logger)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"log/slog"
 	"context"
 	"testing"
 	"time"
@@ -10,7 +11,6 @@ import (
 	"vidra-core/internal/repository"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
@@ -232,8 +232,7 @@ func setupChatServerTest(t *testing.T) (*ChatServer, *MockChatRepository, *MockS
 
 	var redisClient *redis.Client
 
-	logger := logrus.New()
-	logger.SetLevel(logrus.ErrorLevel)
+	logger := slog.Default()
 
 	server := NewChatServer(cfg, mockChatRepo, mockStreamRepo, redisClient, logger)
 
@@ -245,7 +244,7 @@ func TestNewChatServer(t *testing.T) {
 	mockChatRepo := new(MockChatRepository)
 	mockStreamRepo := new(MockStreamRepository)
 	redisClient := &redis.Client{}
-	logger := logrus.New()
+	logger := slog.Default()
 
 	server := NewChatServer(cfg, mockChatRepo, mockStreamRepo, redisClient, logger)
 

@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -110,7 +110,7 @@ func RequestID() func(http.Handler) http.Handler {
 				_, err := rand.Read(b)
 				if err != nil {
 					requestID = uuid.New().String()
-					log.Printf("WARNING: crypto/rand failed in RequestID generation, falling back to UUID: %v", err)
+					slog.Info(fmt.Sprintf("WARNING: crypto/rand failed in RequestID generation, falling back to UUID: %v", err))
 				} else {
 					requestID = base64.RawURLEncoding.EncodeToString(b)
 				}

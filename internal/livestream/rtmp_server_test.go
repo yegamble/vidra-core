@@ -1,12 +1,12 @@
 package livestream
 
 import (
+	"log/slog"
 	"testing"
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/repository"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,7 +24,7 @@ func TestNewRTMPServer(t *testing.T) {
 		RTMPHost: "localhost",
 		RTMPPort: 1935,
 	}
-	logger := logrus.New()
+	logger := slog.Default()
 	streamRepo := &rtmpMockLiveStreamRepo{}
 	streamKeyRepo := &rtmpMockStreamKeyRepo{}
 	streamManager := &StreamManager{}

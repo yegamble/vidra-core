@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -121,7 +121,7 @@ func (c *AnalyticsCollector) Start(ctx context.Context) error {
 	c.wg.Add(1)
 	go c.runCleanup(ctx)
 
-	log.Printf("Analytics collector started with collection interval: %v", c.config.CollectionInterval)
+	slog.Info(fmt.Sprintf("Analytics collector started with collection interval: %v", c.config.CollectionInterval))
 	return nil
 }
 
@@ -134,7 +134,7 @@ func (c *AnalyticsCollector) Stop() {
 		return
 	}
 
-	log.Println("Stopping analytics collector...")
+	slog.Info("Stopping analytics collector...")
 
 	if c.collectionTicker != nil {
 		c.collectionTicker.Stop()
@@ -148,7 +148,7 @@ func (c *AnalyticsCollector) Stop() {
 	c.wg.Wait()
 	c.running = false
 
-	log.Println("Analytics collector stopped")
+	slog.Info("Analytics collector stopped")
 }
 
 // IsRunning returns whether the collector is running
@@ -164,20 +164,20 @@ func (c *AnalyticsCollector) runCollection(ctx context.Context) {
 
 	// Collect immediately on start
 	if err := c.collectAllStreams(ctx); err != nil {
-		log.Printf("Error collecting analytics: %v", err)
+		slog.Info(fmt.Sprintf("Error collecting analytics: %v", err))
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Analytics collection context cancelled")
+			slog.Info("Analytics collection context cancelled")
 			return
 		case <-c.done:
-			log.Println("Analytics collection received stop signal")
+			slog.Info("Analytics collection received stop signal")
 			return
 		case <-c.collectionTicker.C:
 			if err := c.collectAllStreams(ctx); err != nil {
-				log.Printf("Error collecting analytics: %v", err)
+				slog.Info(fmt.Sprintf("Error collecting analytics: %v", err))
 			}
 		}
 	}
@@ -195,7 +195,7 @@ func (c *AnalyticsCollector) runCleanup(ctx context.Context) {
 			return
 		case <-c.cleanupTicker.C:
 			if err := c.analyticsRepo.CleanupOldAnalytics(ctx, c.config.RetentionDays); err != nil {
-				log.Printf("Error cleaning up old analytics: %v", err)
+				slog.Info(fmt.Sprintf("Error cleaning up old analytics: %v", err))
 			}
 		}
 	}
@@ -242,12 +242,12 @@ func (c *AnalyticsCollector) collectAllStreams(ctx context.Context) error {
 
 	if len(analyticsList) > 0 {
 		if err := c.analyticsRepo.BatchCreateAnalytics(ctx, analyticsList); err != nil {
-			log.Printf("Error batch creating analytics: %v", err)
+			slog.Info(fmt.Sprintf("Error batch creating analytics: %v", err))
 		}
 	}
 	if len(streamIDs) > 0 {
 		if err := c.analyticsRepo.BatchUpdateStreamSummaries(ctx, streamIDs); err != nil {
-			log.Printf("Error batch updating stream summaries: %v", err)
+			slog.Info(fmt.Sprintf("Error batch updating stream summaries: %v", err))
 		}
 	}
 	return nil
@@ -262,13 +262,13 @@ func (c *AnalyticsCollector) fetchBatchMetrics(ctx context.Context, streamIDs []
 ) {
 	viewerCounts, err := c.analyticsRepo.GetCurrentViewerCounts(ctx, streamIDs)
 	if err != nil {
-		log.Printf("Error batch fetching viewer counts: %v", err)
+		slog.Info(fmt.Sprintf("Error batch fetching viewer counts: %v", err))
 		viewerCounts = make(map[uuid.UUID]int)
 	}
 
 	activeViewersMap, err := c.analyticsRepo.GetActiveViewersForStreams(ctx, streamIDs)
 	if err != nil {
-		log.Printf("Error batch fetching active viewers: %v", err)
+		slog.Info(fmt.Sprintf("Error batch fetching active viewers: %v", err))
 		activeViewersMap = make(map[uuid.UUID][]*domain.AnalyticsViewerSession)
 	}
 

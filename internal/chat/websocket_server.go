@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
-	"github.com/sirupsen/logrus"
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
@@ -40,7 +39,7 @@ type ChatServer struct {
 	chatRepo   repository.ChatRepository
 	streamRepo repository.LiveStreamRepository
 	redis      *redis.Client
-	logger     *logrus.Logger
+	logger     *slog.Logger
 
 	mu          sync.RWMutex
 	connections map[uuid.UUID]map[*ChatClient]bool
@@ -77,7 +76,7 @@ func NewChatServer(
 	chatRepo repository.ChatRepository,
 	streamRepo repository.LiveStreamRepository,
 	redis *redis.Client,
-	logger *logrus.Logger,
+	logger *slog.Logger,
 ) *ChatServer {
 	s := &ChatServer{
 		cfg:          cfg,
@@ -127,11 +126,7 @@ func (s *ChatServer) checkWebSocketOrigin(r *http.Request) bool {
 		return true
 	}
 
-	s.logger.WithFields(logrus.Fields{
-		"origin":     origin,
-		"remote_ip":  r.RemoteAddr,
-		"user_agent": r.UserAgent(),
-	}).Warn("WebSocket connection rejected: invalid origin")
+	slog.Warn("WebSocket connection rejected: invalid origin")
 
 	return false
 }
@@ -139,15 +134,15 @@ func (s *ChatServer) checkWebSocketOrigin(r *http.Request) bool {
 func (s *ChatServer) HandleWebSocket(ctx context.Context, conn *websocket.Conn, streamID, userID uuid.UUID, username string) error {
 	banned, err := s.chatRepo.IsUserBanned(ctx, streamID, userID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to check ban status")
+		s.logger.With("error", err).Error("Failed to check ban status")
 		return fmt.Errorf("failed to check ban status: %w", err)
 	}
 	if banned {
 		if err := conn.WriteJSON(map[string]string{"error": "You are banned from this chat"}); err != nil {
-			log.Printf("Failed to write ban message: %v", err)
+			slog.Warn("Failed to write ban message", "error", err)
 		}
 		if err := conn.Close(); err != nil {
-			log.Printf("Failed to close banned connection: %v", err)
+			slog.Warn("Failed to close banned connection", "error", err)
 		}
 		return domain.ErrUserBanned
 	}
@@ -182,11 +177,7 @@ func (s *ChatServer) registerClient(client *ChatClient) {
 	}
 	s.connections[client.StreamID][client] = true
 
-	s.logger.WithFields(logrus.Fields{
-		"stream_id": client.StreamID,
-		"user_id":   client.UserID,
-		"username":  client.Username,
-	}).Info("Client connected to chat")
+	slog.Info("Client connected to chat")
 }
 
 func (s *ChatServer) unregisterClient(client *ChatClient) {
@@ -204,11 +195,7 @@ func (s *ChatServer) unregisterClient(client *ChatClient) {
 				delete(s.connections, client.StreamID)
 			}
 
-			s.logger.WithFields(logrus.Fields{
-				"stream_id": client.StreamID,
-				"user_id":   client.UserID,
-				"username":  client.Username,
-			}).Info("Client disconnected from chat")
+			slog.Info("Client disconnected from chat")
 
 			shouldSendLeaveMessage = true
 			username = client.Username
@@ -227,17 +214,17 @@ func (s *ChatServer) readPump(client *ChatClient) {
 		s.wg.Done()
 		s.unregisterClient(client)
 		if err := client.conn.Close(); err != nil {
-			s.logger.WithError(err).Debug("Error closing connection in readPump")
+			s.logger.With("error", err).Debug("Error closing connection in readPump")
 		}
 	}()
 
 	client.conn.SetReadLimit(maxMessageSize)
 	if err := client.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
-		s.logger.WithError(err).Warn("Failed to set read deadline")
+		s.logger.With("error", err).Warn("Failed to set read deadline")
 	}
 	client.conn.SetPongHandler(func(string) error {
 		if err := client.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
-			s.logger.WithError(err).Warn("Failed to set read deadline in pong handler")
+			s.logger.With("error", err).Warn("Failed to set read deadline in pong handler")
 		}
 		return nil
 	})
@@ -253,7 +240,7 @@ func (s *ChatServer) readPump(client *ChatClient) {
 		err := client.conn.ReadJSON(&msg)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				s.logger.WithError(err).Warn("WebSocket error")
+				s.logger.With("error", err).Warn("WebSocket error")
 			}
 			break
 		}
@@ -268,7 +255,7 @@ func (s *ChatServer) writePump(client *ChatClient) {
 		s.wg.Done()
 		ticker.Stop()
 		if err := client.conn.Close(); err != nil {
-			s.logger.WithError(err).Debug("Error closing connection in writePump")
+			s.logger.With("error", err).Debug("Error closing connection in writePump")
 		}
 	}()
 
@@ -276,24 +263,24 @@ func (s *ChatServer) writePump(client *ChatClient) {
 		select {
 		case message, ok := <-client.send:
 			if err := client.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-				s.logger.WithError(err).Warn("Failed to set write deadline")
+				s.logger.With("error", err).Warn("Failed to set write deadline")
 				return
 			}
 			if !ok {
 				if err := client.conn.WriteMessage(websocket.CloseMessage, []byte{}); err != nil {
-					s.logger.WithError(err).Debug("Failed to write close message")
+					s.logger.With("error", err).Debug("Failed to write close message")
 				}
 				return
 			}
 
 			if err := client.conn.WriteJSON(message); err != nil {
-				s.logger.WithError(err).Error("Failed to write message")
+				s.logger.With("error", err).Error("Failed to write message")
 				return
 			}
 
 		case <-ticker.C:
 			if err := client.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-				s.logger.WithError(err).Warn("Failed to set write deadline for ping")
+				s.logger.With("error", err).Warn("Failed to set write deadline for ping")
 				return
 			}
 			if err := client.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
@@ -321,7 +308,7 @@ func (s *ChatServer) handleMessage(client *ChatClient, msg *ChatMessage) {
 
 	banned, err := s.chatRepo.IsUserBanned(ctx, client.StreamID, client.UserID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to check ban status")
+		s.logger.With("error", err).Error("Failed to check ban status")
 		return
 	}
 	if banned {
@@ -352,7 +339,7 @@ func (s *ChatServer) handleMessage(client *ChatClient, msg *ChatMessage) {
 	}
 
 	if err := s.chatRepo.CreateMessage(ctx, domainMsg); err != nil {
-		s.logger.WithError(err).Error("Failed to save message")
+		s.logger.With("error", err).Error("Failed to save message")
 		s.sendToClient(client, &ChatMessage{
 			Type:      "error",
 			StreamID:  client.StreamID,
@@ -388,10 +375,7 @@ func (s *ChatServer) broadcast(streamID uuid.UUID, message *ChatMessage) {
 		select {
 		case client.send <- message:
 		default:
-			s.logger.WithFields(logrus.Fields{
-				"stream_id": streamID,
-				"user_id":   client.UserID,
-			}).Warn("Client send buffer full, dropping message")
+			slog.Warn("Client send buffer full, dropping message")
 		}
 	}
 }
@@ -411,10 +395,7 @@ func (s *ChatServer) sendToClient(client *ChatClient, message *ChatMessage) {
 	select {
 	case client.send <- message:
 	default:
-		s.logger.WithFields(logrus.Fields{
-			"stream_id": client.StreamID,
-			"user_id":   client.UserID,
-		}).Warn("Failed to send message to client, buffer full")
+		slog.Warn("Failed to send message to client, buffer full")
 	}
 }
 
@@ -430,7 +411,7 @@ func (s *ChatServer) isModerator(ctx context.Context, streamID, userID uuid.UUID
 	}
 	isMod, err := s.chatRepo.IsModerator(ctx, streamID, userID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to check moderator status")
+		s.logger.With("error", err).Error("Failed to check moderator status")
 	}
 	s.moderatorCache.Store(cacheKey, moderatorCacheEntry{isMod: isMod, cachedAt: time.Now()})
 	return isMod
@@ -461,7 +442,7 @@ func (s *ChatServer) checkRateLimit(ctx context.Context, userID, streamID uuid.U
 
 	_, execErr := pipe.Exec(ctx)
 	if execErr != nil {
-		s.logger.WithError(execErr).Error("Failed to check rate limit")
+		s.logger.With("error", execErr).Error("Failed to check rate limit")
 		return true
 	}
 
@@ -507,11 +488,7 @@ func (s *ChatServer) DeleteMessage(ctx context.Context, streamID, messageID uuid
 	}
 	s.broadcast(streamID, wsMsg)
 
-	s.logger.WithFields(logrus.Fields{
-		"stream_id":    streamID,
-		"message_id":   messageID,
-		"moderator_id": moderatorID,
-	}).Info("Message deleted by moderator")
+	slog.Info("Message deleted by moderator")
 
 	return nil
 }
@@ -567,13 +544,7 @@ func (s *ChatServer) BanUser(ctx context.Context, req BanRequest) error {
 	}
 	s.broadcast(req.StreamID, wsMsg)
 
-	s.logger.WithFields(logrus.Fields{
-		"stream_id":    req.StreamID,
-		"user_id":      req.UserID,
-		"moderator_id": req.ModeratorID,
-		"duration":     req.Duration,
-		"reason":       req.Reason,
-	}).Info("User banned from chat")
+	slog.Info("User banned from chat")
 
 	return nil
 }
@@ -597,7 +568,7 @@ func (s *ChatServer) disconnectUser(streamID, userID uuid.UUID) {
 			}
 
 			if err := client.conn.Close(); err != nil {
-				s.logger.WithError(err).Debug("Failed to close connection when disconnecting user")
+				s.logger.With("error", err).Debug("Failed to close connection when disconnecting user")
 			}
 			delete(clients, client)
 			close(client.send)
@@ -624,7 +595,7 @@ func (s *ChatServer) GetConnectedUsers(streamID uuid.UUID) int {
 }
 
 func (s *ChatServer) Shutdown(ctx context.Context) error {
-	s.logger.Info("Shutting down chat server...")
+	slog.Info("Shutting down chat server...")
 
 	close(s.shutdownChan)
 
@@ -635,10 +606,10 @@ func (s *ChatServer) Shutdown(ctx context.Context) error {
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseGoingAway, "Server shutting down"),
 			); err != nil {
-				s.logger.WithError(err).Debug("Failed to write shutdown message")
+				s.logger.With("error", err).Debug("Failed to write shutdown message")
 			}
 			if err := client.conn.Close(); err != nil {
-				s.logger.WithError(err).Debug("Failed to close connection during shutdown")
+				s.logger.With("error", err).Debug("Failed to close connection during shutdown")
 			}
 		}
 		delete(s.connections, streamID)
@@ -653,10 +624,10 @@ func (s *ChatServer) Shutdown(ctx context.Context) error {
 
 	select {
 	case <-done:
-		s.logger.Info("Chat server shutdown complete")
+		slog.Info("Chat server shutdown complete")
 		return nil
 	case <-ctx.Done():
-		s.logger.Warn("Chat server shutdown timeout")
+		slog.Warn("Chat server shutdown timeout")
 		return ctx.Err()
 	}
 }

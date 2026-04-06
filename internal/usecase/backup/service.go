@@ -3,7 +3,7 @@ package backup
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"vidra-core/internal/backup"
 )
@@ -40,9 +40,9 @@ func (s *Service) TriggerBackupWithComponents(ctx context.Context, components ba
 	go func() {
 		bgCtx := context.Background()
 		if _, err := s.backupManager.CreateBackupWithComponents(bgCtx, components); err != nil {
-			log.Printf("Backup failed: %v", err)
+			slog.Info(fmt.Sprintf("Backup failed: %v", err))
 		} else {
-			log.Printf("Backup completed successfully")
+			slog.Info("Backup completed successfully")
 		}
 	}()
 
@@ -59,7 +59,7 @@ func (s *Service) StartRestore(ctx context.Context, opts backup.RestoreOptions) 
 	go func() {
 		defer close(progressChan)
 		if err := s.restoreManager.Restore(ctx, opts, progressChan); err != nil {
-			log.Printf("Restore failed: %v", err)
+			slog.Info(fmt.Sprintf("Restore failed: %v", err))
 			progressChan <- backup.RestoreProgress{
 				Stage:   "error",
 				Message: fmt.Sprintf("Restore failed: %v", err),

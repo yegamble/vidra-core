@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -337,7 +337,7 @@ func (r *RestoreManager) restoreRedis(ctx context.Context, rdbPath string) error
 		return fmt.Errorf("failed to copy RDB file to %s: %w", destPath, err)
 	}
 
-	log.Printf("WARNING: RDB file copied to %s — restart Redis to load the snapshot (e.g. systemctl restart redis)", destPath)
+	slog.Info(fmt.Sprintf("WARNING: RDB file copied to %s — restart Redis to load the snapshot (e.g. systemctl restart redis)", destPath))
 	return nil
 }
 

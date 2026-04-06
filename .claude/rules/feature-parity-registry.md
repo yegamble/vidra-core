@@ -136,6 +136,7 @@
 | Setup wizard | Done | `setup` | `*_test.go` |
 | Backup/restore | Done | `backup` | `*_test.go` |
 | Health checks | Done | `health` | `*_test.go` |
+| Logging parity (PeerTube log system) | Done | `obs`, `middleware`, `httpapi/handlers/admin` | `obs/*_test.go`, `middleware/observability_test.go`, `admin/log_handlers_test.go` |
 
 ## Vidra Core Extensions (Beyond PeerTube)
 

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -27,18 +29,28 @@ const (
 	userIDKey    contextKey = "user_id"
 )
 
-// LoggingMiddleware logs request/response details.
-// The logger parameter is accepted for compatibility with tests; if it is a *slog.Logger,
-// it will be used. Otherwise a default JSON logger to a buffer is created and discarded.
-func LoggingMiddleware(logger interface{}) func(http.Handler) http.Handler {
+// LoggingConfig configures the LoggingMiddleware behavior.
+type LoggingConfig struct {
+	// Logger is the slog logger to write to. If nil, a no-op fallback is used.
+	Logger *slog.Logger
+	// AnonymizeIP zeros the last octet of IPv4 (or last 80 bits of IPv6) in logs.
+	// Also activated per-request by the DNT: 1 header.
+	AnonymizeIP bool
+	// LogHTTPRequests controls whether HTTP request log entries are emitted at all.
+	// When false, no request logging occurs (useful for very high traffic deployments).
+	LogHTTPRequests bool
+	// LogPingRequests controls whether /api/v1/ping and /health requests are logged.
+	// When false, health check requests are silently skipped.
+	LogPingRequests bool
+}
+
+// LoggingMiddleware logs request/response details using the provided config.
+func LoggingMiddleware(cfg LoggingConfig) func(http.Handler) http.Handler {
 	var base *slog.Logger
-	switch v := logger.(type) {
-	case *slog.Logger:
-		base = v
-	case io.Writer:
-		base = obs.NewLogger("production", "info", v)
-	default:
-		// Fallback to in-memory buffer to avoid nil deref in tests
+	if cfg.Logger != nil {
+		base = cfg.Logger
+	} else {
+		// Fallback to in-memory buffer to avoid nil deref
 		base = obs.NewLogger("production", "info", &bytes.Buffer{})
 	}
 
@@ -62,6 +74,19 @@ func LoggingMiddleware(logger interface{}) func(http.Handler) http.Handler {
 
 			next.ServeHTTP(rw, r)
 
+			// Skip logging if HTTP request logging is disabled
+			if !cfg.LogHTTPRequests {
+				return
+			}
+
+			// Skip ping/health requests when LogPingRequests is false
+			if !cfg.LogPingRequests {
+				path := r.URL.Path
+				if path == "/api/v1/ping" || path == "/health" || path == "/ready" {
+					return
+				}
+			}
+
 			// Check for user_id in context after handler runs
 			var userID string
 			if uid := r.Context().Value(userIDKey); uid != nil {
@@ -70,10 +95,21 @@ func LoggingMiddleware(logger interface{}) func(http.Handler) http.Handler {
 				}
 			}
 
-			// Level based on status
+			// Determine log level by status code
 			level := slog.LevelInfo
 			if rw.status >= 500 {
 				level = slog.LevelError
+			} else if rw.status >= 400 {
+				level = slog.LevelWarn
+			}
+
+			// Determine client IP, applying anonymization when needed
+			clientIP := r.RemoteAddr
+			if host, _, err := net.SplitHostPort(clientIP); err == nil {
+				clientIP = host
+			}
+			if cfg.AnonymizeIP || r.Header.Get("DNT") == "1" {
+				clientIP = obs.AnonymizeIP(clientIP)
 			}
 
 			// Build attrs
@@ -82,20 +118,24 @@ func LoggingMiddleware(logger interface{}) func(http.Handler) http.Handler {
 				"path", r.URL.Path,
 				"status", rw.status,
 				"duration_ms", time.Since(start).Milliseconds(),
+				"request_id", reqID,
+				"ip", clientIP,
+				"response_size", rw.size,
+				"request_content_length", readContentLength(r),
 			}
-
-			attrs = append(attrs, "request_id", reqID)
 
 			if userID != "" {
 				attrs = append(attrs, "user_id", userID)
 			}
 
-			// Log
-			l := base
-			if level == slog.LevelError {
-				l.Error("http request", attrs...)
-			} else {
-				l.Info("http request", attrs...)
+			// Log at appropriate level
+			switch level {
+			case slog.LevelError:
+				base.Error("http request", attrs...)
+			case slog.LevelWarn:
+				base.Warn("http request", attrs...)
+			default:
+				base.Info("http request", attrs...)
 			}
 		})
 	}
@@ -154,6 +194,8 @@ func TracingMiddleware(tracer oteltrace.Tracer) func(http.Handler) http.Handler 
 	}
 }
 
+// responseWriter wraps http.ResponseWriter to capture status code and response size.
+// Implements http.Hijacker and http.Flusher so WebSocket upgrades and SSE streaming work.
 type responseWriter struct {
 	http.ResponseWriter
 	status int
@@ -169,6 +211,23 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(b)
 	w.size += n
 	return n, err
+}
+
+// Hijack delegates to the underlying ResponseWriter's Hijacker if available.
+// Required for WebSocket upgrade in chat and livestream handlers.
+func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
+}
+
+// Flush delegates to the underlying ResponseWriter's Flusher if available.
+// Required for SSE (Server-Sent Events) streaming.
+func (w *responseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func readContentLength(r *http.Request) int64 {
@@ -191,3 +250,6 @@ func generateRequestID() string {
 	}
 	return hex.EncodeToString(b)
 }
+
+// Ensure responseWriter implements the io.Writer interface (used in benchmarks/tests)
+var _ io.Writer = (*responseWriter)(nil)

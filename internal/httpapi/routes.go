@@ -2,7 +2,8 @@ package httpapi
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -41,10 +42,14 @@ import (
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 	importuc "vidra-core/internal/usecase/import"
 )
 
 func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager *middleware.RateLimiterManager, deps *shared.HandlerDependencies) { //nolint:gocyclo
+	// Resolve audit logger once for the whole router
+	auditLogger, _ := deps.AuditLogger.(*obs.AuditLogger)
+
 	generalBurst := cfg.RateLimitRequests
 	strictAuthBurst := 5
 	strictLoginBurst := 10
@@ -64,7 +69,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 	defaultMaxRequestBytes, err := middleware.ParseByteSize(cfg.APIMaxRequestSize)
 	if err != nil {
 		defaultMaxRequestBytes = 10 * 1024 * 1024
-		log.Printf("Invalid API_MAX_REQUEST_SIZE value %q; using default %d bytes: %v", cfg.APIMaxRequestSize, defaultMaxRequestBytes, err)
+		slog.Info(fmt.Sprintf("Invalid API_MAX_REQUEST_SIZE value %q; using default %d bytes: %v", cfg.APIMaxRequestSize, defaultMaxRequestBytes, err))
 	}
 
 	uploadMaxRequestBytes := cfg.MaxUploadSize
@@ -203,7 +208,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 		// PeerTube-compatible /video-channels/{channelHandle} routes
 		r.Route("/video-channels", func(r chi.Router) {
-			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
+			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo, auditLogger)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}", channelHandlers.GetChannelByHandleParam)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}/videos", channelHandlers.GetChannelVideosByHandleParam)
 			r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/{channelHandle}/video-playlists", social.GetChannelPlaylistsHandler(deps.ChannelService, deps.PlaylistService))
@@ -227,7 +232,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 		// Video channel syncs
 		if syncRepo, ok := deps.ChannelSyncRepo.(channel.ChannelSyncRepository); ok {
-			syncHandlers := channel.NewSyncHandlers(syncRepo)
+			syncHandlers := channel.NewSyncHandlers(syncRepo, auditLogger)
 			r.Route("/video-channel-syncs", func(r chi.Router) {
 				r.Use(middleware.Auth(cfg.JWTSecret))
 				r.Post("/", syncHandlers.CreateSync)
@@ -356,7 +361,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/users/me/history/videos/{videoId}", viewsHandler.RemoveVideoFromHistory)
 
 		r.Route("/channels", func(r chi.Router) {
-			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
+			channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo, auditLogger)
 
 			r.Get("/", channelHandlers.ListChannels)
 			r.Get("/{id}", channelHandlers.GetChannel)
@@ -392,19 +397,19 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		}
 
 		if deps.ChatServer != nil && deps.ChatRepo != nil {
-			log.Printf("Registering chat routes...")
+			slog.Info("Registering chat routes...")
 			chatHandlers := messaging.NewChatHandlers(deps.ChatServer, deps.ChatRepo, deps.LiveStreamRepo, deps.UserRepo, deps.SubRepo)
 			chatHandlers.RegisterRoutes(r, cfg.JWTSecret)
 		}
 
 		if deps.SocialService != nil {
-			log.Printf("Registering social routes...")
+			slog.Info("Registering social routes...")
 			socialHandler := social.NewSocialHandler(deps.SocialService)
 			socialHandler.RegisterRoutes(r, cfg.JWTSecret)
 		}
 
 		r.Route("/comments", func(r chi.Router) {
-			commentHandlers := social.NewCommentHandlers(deps.CommentService)
+			commentHandlers := social.NewCommentHandlers(deps.CommentService, auditLogger)
 			r.Get("/{commentId}", commentHandlers.GetComment)
 			r.With(middleware.Auth(cfg.JWTSecret)).Put("/{commentId}", commentHandlers.UpdateComment)
 			r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{commentId}", commentHandlers.DeleteComment)
@@ -426,7 +431,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		})
 
 		if cfg.EnableIOTA && deps.PaymentService != nil {
-			log.Printf("Registering IOTA payment routes...")
+			slog.Info("Registering IOTA payment routes...")
 			r.Route("/payments", func(r chi.Router) {
 				r.Use(middleware.Auth(cfg.JWTSecret))
 				paymentHandler := payments.NewPaymentHandler(deps.PaymentService)
@@ -471,13 +476,11 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Get("/server/debug", debugHandlers.GetDebugInfo)
 		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Post("/server/debug/run-command", debugHandlers.RunCommand)
 
-		// Server log endpoints
-		if logRepo, ok := deps.LogRepo.(admin.LogRepository); ok {
-			logHandlers := admin.NewLogHandlers(logRepo)
-			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Get("/server/logs", logHandlers.GetServerLogs)
-			r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Get("/server/audit-logs", logHandlers.GetAuditLogs)
-			r.Post("/server/logs/client", logHandlers.CreateClientLog)
-		}
+		// Server log endpoints (file-based reading, no repository needed)
+		logHandlers := admin.NewLogHandlers(cfg.LogDir, cfg.LogFilename, cfg.AuditLogFilename, cfg.LogAcceptClientLog)
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Get("/server/logs", logHandlers.GetServerLogs)
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole(string(domain.RoleAdmin))).Get("/server/audit-logs", logHandlers.GetAuditLogs)
+		r.Post("/server/logs/client", logHandlers.CreateClientLog)
 
 		r.Get("/oauth-clients/local", misc.GetOAuthLocalHandler("local", cfg.JWTSecret))
 
@@ -486,7 +489,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			registerPlaylistRoutes(r, cfg.JWTSecret, playlistHandlers, "")
 		})
 
-		moderationHandlers := moderation.NewModerationHandlers(deps.ModerationRepo)
+		moderationHandlers := moderation.NewModerationHandlers(deps.ModerationRepo, auditLogger)
 		instanceHandlers := admin.NewInstanceHandlers(deps.ModerationRepo, deps.UserRepo, deps.VideoRepo)
 
 		registerModerationAPIRoutes(r, deps, cfg, moderationHandlers)
@@ -495,7 +498,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		r.Route("/config", func(r chi.Router) {
 			r.Get("/", instanceHandlers.GetPublicConfig)
 			r.Get("/about", instanceHandlers.GetInstanceAboutPublic)
-			configResetHandlers := admin.NewConfigResetHandlers(deps.ModerationRepo)
+			configResetHandlers := admin.NewConfigResetHandlers(deps.ModerationRepo, auditLogger)
 			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Get("/custom", configResetHandlers.GetCustomConfig)
 			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Put("/custom", configResetHandlers.UpdateCustomConfig)
 			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Delete("/custom", configResetHandlers.DeleteCustomConfig)
@@ -507,7 +510,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		})
 
 		r.Route("/custom-pages", func(r chi.Router) {
-			configHandlers := admin.NewConfigResetHandlers(deps.ModerationRepo)
+			configHandlers := admin.NewConfigResetHandlers(deps.ModerationRepo, auditLogger)
 			r.Get("/homepage/instance", configHandlers.GetCustomHomepage)
 			r.With(middleware.Auth(cfg.JWTSecret)).With(middleware.RequireRole(string(domain.RoleAdmin))).Put("/homepage/instance", configHandlers.UpdateCustomHomepage)
 		})
@@ -528,7 +531,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 	r.Get("/.well-known/atproto-did", admin.NewInstanceHandlers(deps.ModerationRepo, deps.UserRepo, deps.VideoRepo).WellKnownAtprotoDID)
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("NOT_FOUND %s %s", r.Method, r.URL.Path)
+		slog.Info(fmt.Sprintf("NOT_FOUND %s %s", r.Method, r.URL.Path))
 		shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("NOT_FOUND", "The requested resource was not found"))
 	})
 
@@ -538,7 +541,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 	if lvl := strings.ToLower(cfg.LogLevel); lvl == "debug" || lvl == "trace" {
 		_ = chi.Walk(r, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
-			log.Printf("ROUTE %s %s", method, route)
+			slog.Info(fmt.Sprintf("ROUTE %s %s", method, route))
 			return nil
 		})
 	}
@@ -554,8 +557,11 @@ func registerVideoAPIRoutes(
 	viewsHandler *video.ViewsHandler,
 	strictImportLimiter *middleware.RateLimiter,
 ) {
+	// Resolve audit logger once for this route group
+	videoAuditLogger, _ := deps.AuditLogger.(*obs.AuditLogger)
+
 	r.Route("/videos", func(r chi.Router) {
-		log.Printf("Registering video routes...")
+		slog.Info("Registering video routes...")
 		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", video.ListVideosHandler(deps.VideoRepo))
 		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/search", video.SearchVideosHandler(deps.VideoRepo))
 		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/qualities", video.GetSupportedQualities)
@@ -581,9 +587,9 @@ func registerVideoAPIRoutes(
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/source", video.GetVideoSourceHandler(deps.VideoRepo))
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/subscriptions", channel.ListSubscriptionVideosHandler(deps.SubRepo))
 
-		r.With(middleware.Auth(cfg.JWTSecret)).Post("/", video.CreateVideoHandler(deps.VideoRepo))
-		r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", video.UpdateVideoHandler(deps.VideoRepo))
-		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", video.DeleteVideoHandler(deps.VideoRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/", video.CreateVideoHandler(deps.VideoRepo, videoAuditLogger))
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/{id}", video.UpdateVideoHandler(deps.VideoRepo, videoAuditLogger))
+		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}", video.DeleteVideoHandler(deps.VideoRepo, videoAuditLogger))
 		if deps.OwnershipRepo != nil {
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/give-ownership", video.GiveOwnershipHandler(deps.OwnershipRepo, deps.VideoRepo))
 		}
@@ -602,7 +608,7 @@ func registerVideoAPIRoutes(
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/overall", video.GetVideoStatsOverallHandler(deps.VideoRepo))
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/stats/retention", video.GetVideoStatsRetentionHandler())
 
-		commentHandlers := social.NewCommentHandlers(deps.CommentService)
+		commentHandlers := social.NewCommentHandlers(deps.CommentService, videoAuditLogger)
 		r.Route("/{videoId}/comments", func(r chi.Router) {
 			r.Get("/", commentHandlers.GetComments)
 			r.With(middleware.Auth(cfg.JWTSecret)).Post("/", commentHandlers.CreateComment)
@@ -639,10 +645,10 @@ func registerVideoAPIRoutes(
 	r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/hls/*", video.HLSHandler(deps.VideoRepo))
 
 	if deps.ImportService != nil {
-		log.Printf("Registering video import routes...")
+		slog.Info("Registering video import routes...")
 		importService, ok := deps.ImportService.(importuc.Service)
 		if ok {
-			importHandlers := video.NewImportHandlers(importService)
+			importHandlers := video.NewImportHandlers(importService, videoAuditLogger)
 			r.Route("/videos/imports", func(r chi.Router) {
 				r.Use(middleware.Auth(cfg.JWTSecret))
 				r.With(strictImportLimiter.Limit).Post("/", importHandlers.CreateImport)
@@ -690,8 +696,9 @@ func registerUserAPIRoutes(
 	cfg *config.Config,
 	authHandlers *auth.AuthHandlers,
 ) {
+	userAuditLogger, _ := deps.AuditLogger.(*obs.AuditLogger)
 	r.Route("/users", func(r chi.Router) {
-		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole("admin")).Post("/", auth.CreateUserHandler(deps.UserRepo))
+		r.With(middleware.Auth(cfg.JWTSecret), middleware.RequireRole("admin")).Post("/", auth.CreateUserHandler(deps.UserRepo, userAuditLogger))
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me", auth.GetCurrentUserHandler(deps.UserRepo))
 		r.With(middleware.Auth(cfg.JWTSecret)).Put("/me", auth.UpdateCurrentUserHandler(deps.UserRepo))
 		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me", auth.DeleteAccountHandler(deps.UserRepo))
@@ -720,7 +727,8 @@ func registerUserAPIRoutes(
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/subscriptions/{subscriptionHandle}", channel.GetSubscriptionByHandleHandler(deps.SubRepo, deps.ChannelService))
 		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/me/subscriptions/{subscriptionHandle}", channel.UnsubscribeByHandleHandler(deps.SubRepo, deps.ChannelService))
 
-		channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
+		chanAuditLogger, _ := deps.AuditLogger.(*obs.AuditLogger)
+		channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo, chanAuditLogger)
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/channels", channelHandlers.GetMyChannels)
 
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/me/videos", video.GetMyVideosHandler(deps.VideoRepo))
@@ -806,7 +814,7 @@ func registerCommunicationsAPIRoutes(
 }
 func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencies, jwtSecret string) {
 	if deps.LiveStreamRepo != nil {
-		log.Printf("Registering waiting room routes...")
+		slog.Info("Registering waiting room routes...")
 		waitingRoomHandlers := livestream.NewWaitingRoomHandler(
 			newWaitingRoomAdapter(deps.LiveStreamRepo, deps.ChannelRepo),
 			deps.UserRepo,
@@ -815,7 +823,7 @@ func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencie
 	}
 
 	if deps.RedundancyService != nil {
-		log.Printf("Registering redundancy admin routes...")
+		slog.Info("Registering redundancy admin routes...")
 		redundancySvc, _ := deps.RedundancyService.(federation.RedundancyServiceInterface)
 		discoverySvc, _ := deps.InstanceDiscovery.(federation.InstanceDiscoveryInterface)
 		if redundancySvc != nil {
@@ -825,13 +833,13 @@ func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencie
 	}
 
 	if deps.VideoCategoryUseCase != nil {
-		log.Printf("Registering video category routes...")
+		slog.Info("Registering video category routes...")
 		categoryHandler := video.NewVideoCategoryHandler(deps.VideoCategoryUseCase)
 		categoryHandler.RegisterRoutes(r, jwtSecret)
 	}
 
 	if deps.AnalyticsRepo != nil && deps.LiveStreamRepo != nil {
-		log.Printf("Registering analytics routes...")
+		slog.Info("Registering analytics routes...")
 		analyticsCollector, _ := deps.AnalyticsCollector.(video.AnalyticsCollectorInterface)
 		analyticsHandler := video.NewAnalyticsHandler(
 			newWaitingRoomAdapter(deps.LiveStreamRepo, deps.ChannelRepo),
@@ -844,7 +852,7 @@ func registerExternalFeatureRoutes(r chi.Router, deps *shared.HandlerDependencie
 	if deps.ExportService != nil {
 		exportSvc, ok := deps.ExportService.(analyticshandlers.AnalyticsExportService)
 		if ok {
-			log.Printf("Registering analytics export routes...")
+			slog.Info("Registering analytics export routes...")
 			exportHandler := analyticshandlers.NewExportHandler(exportSvc)
 			exportHandler.RegisterRoutes(r, jwtSecret)
 		}
@@ -898,7 +906,7 @@ func (a *waitingRoomAdapter) GetUpcomingStreams(ctx context.Context, userID uuid
 // registerLiveStreamAPIRoutes registers /streams routes. Extracted to keep
 // RegisterRoutesWithDependencies within cyclomatic-complexity limits.
 func registerLiveStreamAPIRoutes(r chi.Router, deps *shared.HandlerDependencies, cfg *config.Config) {
-	log.Printf("Registering live stream routes...")
+	slog.Info("Registering live stream routes...")
 	r.Route("/streams", func(r chi.Router) {
 		liveStreamHandlers := livestream.NewLiveStreamHandlers(
 			deps.LiveStreamRepo,
@@ -1254,7 +1262,7 @@ func registerAdminAPIRoutes(
 		}
 
 		if deps.PluginManager != nil && deps.PluginRepo != nil {
-			log.Printf("Registering plugin admin routes...")
+			slog.Info("Registering plugin admin routes...")
 			ph := pluginhandlers.NewPluginHandler(deps.PluginRepo, deps.PluginManager, nil, false)
 			pih := pluginhandlers.NewPluginInstallHandlers(deps.PluginManager)
 			r.Route("/plugins", func(r chi.Router) {
@@ -1272,7 +1280,7 @@ func registerAdminAPIRoutes(
 		}
 
 		if deps.MigrationService != nil {
-			log.Printf("Registering migration routes...")
+			slog.Info("Registering migration routes...")
 			migHandlers := migrationhandlers.NewMigrationHandlers(deps.MigrationService)
 			r.Route("/migrations", func(r chi.Router) {
 				r.Post("/peertube", migHandlers.StartMigration)
@@ -1361,7 +1369,8 @@ func registerPeerTubeAliasRoutes(r chi.Router, deps *shared.HandlerDependencies,
 	// PeerTube: PUT/DELETE /api/v1/video-channels/{handle}
 	if deps.ChannelService != nil {
 		aliasHandlers := compat.NewAliasHandlers(deps.CaptionRepo, deps.ChannelService, deps.VideoRepo)
-		channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo)
+		aliasAuditLogger, _ := deps.AuditLogger.(*obs.AuditLogger)
+		channelHandlers := channel.NewChannelHandlers(deps.ChannelService, deps.SubRepo, aliasAuditLogger)
 
 		r.With(middleware.Auth(cfg.JWTSecret)).Put("/video-channels/{handle}", aliasHandlers.ResolveChannelHandle(channelHandlers.UpdateChannel))
 		r.With(middleware.Auth(cfg.JWTSecret)).Delete("/video-channels/{handle}", aliasHandlers.ResolveChannelHandle(channelHandlers.DeleteChannel))

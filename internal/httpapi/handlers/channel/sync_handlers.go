@@ -11,6 +11,7 @@ import (
 	"vidra-core/internal/domain"
 	"vidra-core/internal/httpapi/shared"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 )
 
 // ChannelSyncRepository defines the storage interface for channel syncs.
@@ -23,12 +24,17 @@ type ChannelSyncRepository interface {
 
 // SyncHandlers handles video channel sync endpoints.
 type SyncHandlers struct {
-	repo ChannelSyncRepository
+	repo        ChannelSyncRepository
+	auditLogger *obs.AuditLogger
 }
 
 // NewSyncHandlers returns a new SyncHandlers.
-func NewSyncHandlers(repo ChannelSyncRepository) *SyncHandlers {
-	return &SyncHandlers{repo: repo}
+func NewSyncHandlers(repo ChannelSyncRepository, auditLogger ...*obs.AuditLogger) *SyncHandlers {
+	h := &SyncHandlers{repo: repo}
+	if len(auditLogger) > 0 {
+		h.auditLogger = auditLogger[0]
+	}
+	return h
 }
 
 type createSyncRequest struct {
@@ -67,6 +73,10 @@ func (h *SyncHandlers) CreateSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.auditLogger != nil {
+		h.auditLogger.Create("channel-syncs", userID, obs.NewChannelSyncAuditView(created))
+	}
+
 	shared.WriteJSON(w, http.StatusOK, created)
 }
 
@@ -89,6 +99,10 @@ func (h *SyncHandlers) DeleteSync(w http.ResponseWriter, r *http.Request) {
 		status := shared.MapDomainErrorToHTTP(err)
 		shared.WriteError(w, status, err)
 		return
+	}
+
+	if h.auditLogger != nil {
+		h.auditLogger.Delete("channel-syncs", userID, obs.MapAuditView{"channel-sync-id": id})
 	}
 
 	w.WriteHeader(http.StatusNoContent)

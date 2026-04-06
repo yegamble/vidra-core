@@ -1,6 +1,7 @@
 package livestream
 
 import (
+	"log/slog"
 	"context"
 	"os"
 	"path/filepath"
@@ -11,7 +12,6 @@ import (
 
 	"vidra-core/internal/repository"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -198,8 +198,7 @@ func TestNewHLSTranscoder(t *testing.T) {
 	}
 
 	repo := &MockLiveStreamRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	transcoder := NewHLSTranscoder(cfg, repo, logger)
 
@@ -222,8 +221,7 @@ func TestHLSTranscoder_SessionManagement(t *testing.T) {
 	}
 
 	repo := &MockLiveStreamRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	transcoder := NewHLSTranscoder(cfg, repo, logger)
 
@@ -249,8 +247,7 @@ func TestHLSTranscoder_BuildFFmpegCommand(t *testing.T) {
 	}
 
 	repo := &MockLiveStreamRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	transcoder := NewHLSTranscoder(cfg, repo, logger)
 
@@ -306,8 +303,7 @@ func TestHLSTranscoder_OutputDirectoryCreation(t *testing.T) {
 	}
 
 	repo := &MockLiveStreamRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	transcoder := NewHLSTranscoder(cfg, repo, logger)
 
@@ -356,8 +352,7 @@ func TestHLSTranscoder_DuplicateStart(t *testing.T) {
 	}
 
 	repo := &MockLiveStreamRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	transcoder := NewHLSTranscoder(cfg, repo, logger)
 
@@ -399,8 +394,7 @@ func TestHLSTranscoder_Shutdown(t *testing.T) {
 	}
 
 	repo := &MockLiveStreamRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	transcoder := NewHLSTranscoder(cfg, repo, logger)
 
@@ -438,8 +432,7 @@ func TestHLSTranscoder_GetHLSPlaylistURL(t *testing.T) {
 	}
 
 	repo := &MockLiveStreamRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	transcoder := NewHLSTranscoder(cfg, repo, logger)
 
@@ -465,8 +458,7 @@ func TestHLSTranscoder_NoVariantsEnabled(t *testing.T) {
 	}
 
 	repo := &MockLiveStreamRepository{}
-	logger := logrus.New()
-	logger.SetOutput(os.Stderr)
+	logger := slog.Default()
 
 	transcoder := NewHLSTranscoder(cfg, repo, logger)
 

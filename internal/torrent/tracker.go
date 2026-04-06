@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -14,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/jmoiron/sqlx"
-	"github.com/sirupsen/logrus"
 )
 
 type Tracker struct {
@@ -25,7 +25,7 @@ type Tracker struct {
 	upgrader    websocket.Upgrader
 	ctx         context.Context
 	cancel      context.CancelFunc
-	logger      *logrus.Logger
+	logger      *slog.Logger
 	stats       *TrackerStats
 	statsMu     sync.RWMutex
 	peerRepo    *repository.TorrentPeerRepository
@@ -185,12 +185,12 @@ func checkOrigin(allowedOrigins []string) func(*http.Request) bool {
 	}
 }
 
-func NewTracker(db *sqlx.DB, config *TrackerConfig, logger *logrus.Logger) *Tracker {
+func NewTracker(db *sqlx.DB, config *TrackerConfig, logger *slog.Logger) *Tracker {
 	if config == nil {
 		config = DefaultTrackerConfig()
 	}
 	if logger == nil {
-		logger = logrus.New()
+		logger = slog.Default()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -235,7 +235,7 @@ func (t *Tracker) Stop() error {
 			peer.mu.Lock()
 			if peer.Conn != nil {
 				if err := peer.Conn.Close(); err != nil {
-					t.logger.WithError(err).Debug("Failed to close peer connection")
+					t.logger.With("error", err).Debug("Failed to close peer connection")
 				}
 			}
 			peer.mu.Unlock()
@@ -252,7 +252,7 @@ func (t *Tracker) Stop() error {
 func (t *Tracker) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := t.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		t.logger.WithError(err).Error("Failed to upgrade WebSocket connection")
+		t.logger.With("error", err).Error("Failed to upgrade WebSocket connection")
 		t.statsMu.Lock()
 		t.stats.ConnectionErrors++
 		t.statsMu.Unlock()
@@ -265,7 +265,7 @@ func (t *Tracker) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	defer func() {
 		if err := conn.Close(); err != nil {
-			t.logger.WithError(err).Debug("Failed to close WebSocket connection")
+			t.logger.With("error", err).Debug("Failed to close WebSocket connection")
 		}
 		t.statsMu.Lock()
 		t.stats.ActiveConnections--
@@ -274,11 +274,11 @@ func (t *Tracker) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	conn.SetReadLimit(t.config.MaxMessageSize)
 	if err := conn.SetReadDeadline(time.Now().Add(t.config.ReadTimeout)); err != nil {
-		t.logger.WithError(err).Debug("Failed to set read deadline")
+		t.logger.With("error", err).Debug("Failed to set read deadline")
 	}
 	conn.SetPongHandler(func(string) error {
 		if err := conn.SetReadDeadline(time.Now().Add(t.config.ReadTimeout)); err != nil {
-			t.logger.WithError(err).Debug("Failed to set read deadline in pong handler")
+			t.logger.With("error", err).Debug("Failed to set read deadline in pong handler")
 		}
 		return nil
 	})
@@ -298,7 +298,7 @@ func (t *Tracker) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					t.logger.WithError(err).Debug("WebSocket connection closed unexpectedly")
+					t.logger.With("error", err).Debug("WebSocket connection closed unexpectedly")
 				}
 				return
 			}
@@ -306,7 +306,7 @@ func (t *Tracker) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			t.handleMessage(conn, message, r.RemoteAddr)
 
 			if err := conn.SetReadDeadline(time.Now().Add(t.config.ReadTimeout)); err != nil {
-				t.logger.WithError(err).Debug("Failed to reset read deadline")
+				t.logger.With("error", err).Debug("Failed to reset read deadline")
 			}
 		}
 	}
@@ -577,17 +577,17 @@ func (t *Tracker) persistPeer(swarm *PeerSwarm, peerID string, remoteAddr string
 	}
 
 	if err := t.peerRepo.UpsertPeer(ctx, dbPeer); err != nil {
-		t.logger.WithError(err).Error("Failed to persist peer")
+		t.logger.With("error", err).Error("Failed to persist peer")
 	}
 }
 
 func (t *Tracker) sendMessage(conn *websocket.Conn, msg interface{}) {
 	if err := conn.SetWriteDeadline(time.Now().Add(t.config.WriteTimeout)); err != nil {
-		t.logger.WithError(err).Debug("Failed to set write deadline")
+		t.logger.With("error", err).Debug("Failed to set write deadline")
 		return
 	}
 	if err := conn.WriteJSON(msg); err != nil {
-		t.logger.WithError(err).Debug("Failed to send WebSocket message")
+		t.logger.With("error", err).Debug("Failed to send WebSocket message")
 	}
 }
 
@@ -666,16 +666,7 @@ func (t *Tracker) logStats() {
 	t.statsMu.RLock()
 	defer t.statsMu.RUnlock()
 
-	t.logger.WithFields(logrus.Fields{
-		"swarms":             t.stats.TotalSwarms,
-		"peers":              t.stats.TotalPeers,
-		"active_connections": t.stats.ActiveConnections,
-		"total_announces":    t.stats.TotalAnnounces,
-		"total_scrapes":      t.stats.TotalScrapes,
-		"announce_errors":    t.stats.AnnounceErrors,
-		"connection_errors":  t.stats.ConnectionErrors,
-		"uptime":             time.Since(t.stats.StartTime).String(),
-	}).Info("Tracker statistics")
+	t.logger.Info("Tracker statistics")
 }
 
 func (t *Tracker) GetStats() TrackerStats {

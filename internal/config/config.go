@@ -90,6 +90,21 @@ type Config struct {
 	LogLevel  string
 	LogFormat string
 
+	// Log file output and rotation (matches PeerTube's log.rotation.* config)
+	LogDir                string
+	LogFilename           string
+	AuditLogFilename      string
+	LogRotationEnabled    bool
+	LogRotationMaxSizeMB  int
+	LogRotationMaxFiles   int
+	LogRotationMaxAgeDays int
+
+	// Log behavior toggles (matches PeerTube's log.* config)
+	LogAnonymizeIP     bool
+	LogHTTPRequests    bool
+	LogPingRequests    bool
+	LogAcceptClientLog bool
+
 	HealthCheckTimeout int
 	DBPingTimeout      int
 	RedisPingTimeout   int

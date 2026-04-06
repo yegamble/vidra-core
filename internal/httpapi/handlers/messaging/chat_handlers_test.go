@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"log/slog"
 	"bytes"
 	"context"
 	"database/sql"
@@ -18,7 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/sirupsen/logrus"
+	
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -277,7 +278,7 @@ func setupChatHandlerTest(t *testing.T) (*ChatHandlers, *MockChatRepository, *Mo
 
 	cfg := &config.Config{}
 	redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	logger := logrus.New()
+	logger := slog.Default()
 
 	chatServer := chat.NewChatServer(cfg, mockChatRepo, mockStreamRepo, redisClient, logger)
 

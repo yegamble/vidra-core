@@ -6,8 +6,9 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"html/template"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -133,12 +134,12 @@ func NewWizard() *Wizard {
 
 	jwtSecret, err := GenerateJWTSecret()
 	if err != nil {
-		log.Fatalf("Failed to generate JWT secret: %v", err)
+		slog.Error(fmt.Sprintf("Failed to generate JWT secret: %v", err))
 	}
 
 	csrfBytes := make([]byte, 32)
 	if _, err := rand.Read(csrfBytes); err != nil {
-		log.Fatalf("Failed to generate CSRF token: %v", err)
+		slog.Error(fmt.Sprintf("Failed to generate CSRF token: %v", err))
 	}
 	csrfToken := base64.URLEncoding.EncodeToString(csrfBytes)
 
@@ -409,7 +410,7 @@ func (w *Wizard) HandleTestEmail(rw http.ResponseWriter, r *http.Request) {
 
 	response := make(map[string]interface{})
 	if sendErr != nil {
-		log.Printf("SMTP test email failed: %v", sendErr)
+		slog.Info(fmt.Sprintf("SMTP test email failed: %v", sendErr))
 		response["success"] = false
 		response["message"] = "Failed to send test email. Check your SMTP settings."
 	} else {
@@ -470,19 +471,19 @@ func (w *Wizard) renderTemplate(rw http.ResponseWriter, layout, content string, 
 	pageName := strings.TrimSuffix(content, ".html")
 	tmpl, ok := w.templates[pageName]
 	if !ok {
-		log.Printf("Template not found for page: %s", pageName)
+		slog.Info(fmt.Sprintf("Template not found for page: %s", pageName))
 		http.Error(rw, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, layout, data); err != nil {
-		log.Printf("Template rendering error: %v", err)
+		slog.Info(fmt.Sprintf("Template rendering error: %v", err))
 		http.Error(rw, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	if _, err := buf.WriteTo(rw); err != nil {
-		log.Printf("Failed to write template response: %v", err)
+		slog.Info(fmt.Sprintf("Failed to write template response: %v", err))
 	}
 }

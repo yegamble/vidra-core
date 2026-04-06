@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"log/slog"
 	"context"
 	"errors"
 	"io"
@@ -13,7 +14,6 @@ import (
 	"vidra-core/internal/port"
 	"vidra-core/internal/storage"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -205,8 +205,7 @@ func TestMigrateVideo_Success(t *testing.T) {
 	})).Return(nil)
 
 	// Create service
-	logger := logrus.New()
-	logger.SetOutput(os.Stdout)
+	logger := slog.Default()
 
 	service := NewS3MigrationService(Config{
 		S3Backend:   mockS3,
@@ -247,7 +246,7 @@ func TestMigrateVideo_AlreadyMigrated(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: mockPaths,
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -284,7 +283,7 @@ func TestMigrateVideo_FileNotFound(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: mockPaths,
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -326,7 +325,7 @@ func TestMigrateVideo_S3UploadFailure(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: mockPaths,
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -374,7 +373,7 @@ func TestMigrateVideo_WithLocalDeletion(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: mockPaths,
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: true,
 	})
 
@@ -435,7 +434,7 @@ func TestMigrateBatch_Success(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: mockPaths,
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -490,7 +489,7 @@ func TestMigrateBatch_PartialFailure(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: mockPaths,
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -505,7 +504,7 @@ func TestMigrateBatch_PartialFailure(t *testing.T) {
 
 func TestGenerateS3Key(t *testing.T) {
 	service := NewS3MigrationService(Config{
-		Logger: logrus.New(),
+		Logger: slog.Default(),
 	})
 
 	tests := []struct {
@@ -570,7 +569,7 @@ func TestMigrateVideo_GetVideoError(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: storage.NewPaths(t.TempDir()),
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -604,7 +603,7 @@ func TestMigrateVideo_EmptyOutputPath(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: storage.NewPaths(t.TempDir()),
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -642,7 +641,7 @@ func TestMigrateVideo_UpdateError(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: storage.NewPaths(tmpDir),
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -689,7 +688,7 @@ func TestMigrateVideo_WithThumbnailAndPreview(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: storage.NewPaths(tmpDir),
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -722,7 +721,7 @@ func TestMigrateVideo_ThumbnailNotFound(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: storage.NewPaths(tmpDir),
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -770,7 +769,7 @@ func TestMigrateVideo_WithHLSFiles(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: mockPaths,
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -809,7 +808,7 @@ func TestMigrateVideo_HLSUploadFailure(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: mockPaths,
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -829,7 +828,7 @@ func TestDeleteLocalFiles_AllSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	service := NewS3MigrationService(Config{
-		Logger: logrus.New(),
+		Logger: slog.Default(),
 	})
 
 	err = service.deleteLocalFiles([]string{file1, file2})
@@ -850,7 +849,7 @@ func TestDeleteLocalFiles_PartialFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	service := NewS3MigrationService(Config{
-		Logger: logrus.New(),
+		Logger: slog.Default(),
 	})
 
 	// Second file doesn't exist, should cause partial failure
@@ -875,7 +874,7 @@ func TestMigrateBatch_GetVideosError(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: storage.NewPaths(t.TempDir()),
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -897,7 +896,7 @@ func TestMigrateBatch_EmptyList(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: storage.NewPaths(t.TempDir()),
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: false,
 	})
 
@@ -939,7 +938,7 @@ func TestMigrateVideo_WithLocalDeletion_DeleteError(t *testing.T) {
 		S3Backend:   mockS3,
 		VideoRepo:   mockVideoRepo,
 		StoragePath: mockPaths,
-		Logger:      logrus.New(),
+		Logger:      slog.Default(),
 		DeleteLocal: true,
 	})
 
@@ -954,7 +953,7 @@ func TestMigrateVideo_WithLocalDeletion_DeleteError(t *testing.T) {
 
 func TestGetContentType(t *testing.T) {
 	service := NewS3MigrationService(Config{
-		Logger: logrus.New(),
+		Logger: slog.Default(),
 	})
 
 	tests := []struct {

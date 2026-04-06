@@ -8,7 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"vidra-core/internal/domain"
@@ -252,7 +252,7 @@ func (s *PaymentService) DetectPayment(ctx context.Context, intentID string) err
 	if totalAmount >= intent.AmountIOTA {
 		wallet, walletErr := s.repo.GetWalletByUserID(ctx, intent.UserID)
 		if walletErr != nil {
-			log.Printf("WARNING: failed to find wallet for payment intent %s: %v", intent.ID, walletErr)
+			slog.Info(fmt.Sprintf("WARNING: failed to find wallet for payment intent %s: %v", intent.ID, walletErr))
 		}
 
 		iotaTx := &domain.IOTATransaction{

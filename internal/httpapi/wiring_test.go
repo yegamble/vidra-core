@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"log/slog"
 	"context"
 	"net/http"
 	"strings"
@@ -9,7 +10,6 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
 	"vidra-core/internal/chat"
@@ -354,8 +354,7 @@ func buildTestRouter(deps *shared.HandlerDependencies) chi.Router {
 func TestChatRoutesRegistered_WhenChatServerSet(t *testing.T) {
 	chatRepo := &stubChatRepo{}
 	streamRepo := &stubLiveStreamRepo{}
-	logger := logrus.New()
-	logger.SetLevel(logrus.PanicLevel)
+	logger := slog.Default()
 
 	chatServer := chat.NewChatServer(&config.Config{}, chatRepo, streamRepo, nil, logger)
 

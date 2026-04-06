@@ -273,6 +273,175 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Server Logs (PeerTube Parity)",
+      "item": [
+        {
+          "name": "Get Server Logs - With startDate",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response has success field', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.have.property('success');",
+                  "  pm.expect(json.data).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/server/logs?startDate=2026-01-01T00:00:00Z",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "server", "logs"],
+              "query": [{"key": "startDate", "value": "2026-01-01T00:00:00Z"}]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Server Logs - Level Filter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/server/logs?startDate=2026-01-01T00:00:00Z&level=warn",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "server", "logs"],
+              "query": [
+                {"key": "startDate", "value": "2026-01-01T00:00:00Z"},
+                {"key": "level", "value": "warn"}
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Server Logs - Missing startDate (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 for missing startDate', () => pm.response.to.have.status(400));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/server/logs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "server", "logs"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Audit Logs - With startDate",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response has data array', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/server/audit-logs?startDate=2026-01-01T00:00:00Z",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "server", "audit-logs"],
+              "query": [{"key": "startDate", "value": "2026-01-01T00:00:00Z"}]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Client Log",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 204', () => pm.response.to.have.status(204));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"level\": \"error\", \"message\": \"Client-side error during video playback\"}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/server/logs/client",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "server", "logs", "client"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Server Logs - Unauthorized (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403 for non-admin', () => pm.response.to.have.status(403));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/server/logs?startDate=2026-01-01T00:00:00Z",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "server", "logs"],
+              "query": [{"key": "startDate", "value": "2026-01-01T00:00:00Z"}]
+            }
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }

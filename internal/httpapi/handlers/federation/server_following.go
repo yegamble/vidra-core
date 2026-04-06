@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 
 	chi "github.com/go-chi/chi/v5"
@@ -87,7 +87,7 @@ func (h *ServerFollowingHandlers) emitFollowActivity(ctx context.Context, host, 
 
 	remoteActor, err := h.apService.FetchRemoteActor(ctx, targetActorURI)
 	if err != nil {
-		log.Printf("federation: failed to fetch remote actor for %s: %v", host, err)
+		slog.Info(fmt.Sprintf("federation: failed to fetch remote actor for %s: %v", host, err))
 		return
 	}
 
@@ -100,7 +100,7 @@ func (h *ServerFollowingHandlers) emitFollowActivity(ctx context.Context, host, 
 	}
 
 	if err := h.apService.DeliverActivity(ctx, actorID, remoteActor.InboxURL, followActivity); err != nil {
-		log.Printf("federation: failed to deliver Follow activity to %s: %v", host, err)
+		slog.Info(fmt.Sprintf("federation: failed to deliver Follow activity to %s: %v", host, err))
 	}
 }
 

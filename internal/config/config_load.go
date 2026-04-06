@@ -103,6 +103,21 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.LogLevel = GetEnvOrDefault("LOG_LEVEL", "info")
 	cfg.LogFormat = GetEnvOrDefault("LOG_FORMAT", "json")
 
+	// Log file output and rotation
+	cfg.LogDir = GetEnvOrDefault("LOG_DIR", "")
+	cfg.LogFilename = GetEnvOrDefault("LOG_FILENAME", "vidra.log")
+	cfg.AuditLogFilename = GetEnvOrDefault("AUDIT_LOG_FILENAME", "vidra-audit.log")
+	cfg.LogRotationEnabled = GetBoolEnv("LOG_ROTATION_ENABLED", true)
+	cfg.LogRotationMaxSizeMB = GetIntEnv("LOG_ROTATION_MAX_SIZE_MB", 12)
+	cfg.LogRotationMaxFiles = GetIntEnv("LOG_ROTATION_MAX_FILES", 20)
+	cfg.LogRotationMaxAgeDays = GetIntEnv("LOG_ROTATION_MAX_AGE_DAYS", 0)
+
+	// Log behavior toggles
+	cfg.LogAnonymizeIP = GetBoolEnv("LOG_ANONYMIZE_IP", false)
+	cfg.LogHTTPRequests = GetBoolEnv("LOG_HTTP_REQUESTS", true)
+	cfg.LogPingRequests = GetBoolEnv("LOG_PING_REQUESTS", true)
+	cfg.LogAcceptClientLog = GetBoolEnv("LOG_ACCEPT_CLIENT_LOG", true)
+
 	cfg.HealthCheckTimeout = GetIntEnv("HEALTH_CHECK_TIMEOUT", 30)
 	cfg.DBPingTimeout = GetIntEnv("DB_PING_TIMEOUT", 5)
 	cfg.RedisPingTimeout = GetIntEnv("REDIS_PING_TIMEOUT", 3)

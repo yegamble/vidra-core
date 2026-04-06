@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -366,7 +366,7 @@ func WriteJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("ERROR: failed to encode JSON response: %v", err)
+		slog.Info(fmt.Sprintf("ERROR: failed to encode JSON response: %v", err))
 	}
 }
 
@@ -379,7 +379,7 @@ func WriteErrorResponse(w http.ResponseWriter, statusCode int, errorCode, messag
 			"message": message,
 		},
 	}); err != nil {
-		log.Printf("ERROR: failed to encode error response: %v", err)
+		slog.Info(fmt.Sprintf("ERROR: failed to encode error response: %v", err))
 	}
 }
 
@@ -407,7 +407,7 @@ func WriteValidationErrorResponse(w http.ResponseWriter, err error) {
 			"details": validationErrors,
 		},
 	}); err != nil {
-		log.Printf("ERROR: failed to encode validation error response: %v", err)
+		slog.Info(fmt.Sprintf("ERROR: failed to encode validation error response: %v", err))
 	}
 }
 

@@ -3,7 +3,7 @@ package setup
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -89,8 +89,8 @@ func (s *Server) Start() error {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	log.Printf("Setup mode: Server starting on port %s", s.Port)
-	log.Printf("Setup mode: Complete initial setup to start the application")
+	slog.Info(fmt.Sprintf("Setup mode: Server starting on port %s", s.Port))
+	slog.Info("Setup mode: Complete initial setup to start the application")
 
 	return server.ListenAndServe()
 }

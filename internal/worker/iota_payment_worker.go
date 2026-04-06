@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"vidra-core/internal/domain"
@@ -51,20 +51,20 @@ func NewIOTAPaymentWorker(repo IOTARepository, client IOTAClient) *IOTAPaymentWo
 // Start begins the worker's monitoring loop
 func (w *IOTAPaymentWorker) Start(ctx context.Context, interval time.Duration) {
 	w.ticker = time.NewTicker(interval)
-	log.Printf("IOTA payment worker started with interval %v", interval)
+	slog.Info(fmt.Sprintf("IOTA payment worker started with interval %v", interval))
 
 	go func() {
 		for {
 			select {
 			case <-w.ticker.C:
 				if err := w.processPayments(ctx); err != nil {
-					log.Printf("Error processing payments: %v", err)
+					slog.Info(fmt.Sprintf("Error processing payments: %v", err))
 				}
 			case <-w.done:
-				log.Println("IOTA payment worker stopped")
+				slog.Info("IOTA payment worker stopped")
 				return
 			case <-ctx.Done():
-				log.Println("IOTA payment worker context cancelled")
+				slog.Info("IOTA payment worker context cancelled")
 				return
 			}
 		}
@@ -89,7 +89,7 @@ func (w *IOTAPaymentWorker) processPayments(ctx context.Context) error {
 
 	for _, intent := range intents {
 		if err := w.checkPaymentIntent(ctx, intent); err != nil {
-			log.Printf("Error checking payment intent %s: %v", intent.ID, err)
+			slog.Info(fmt.Sprintf("Error checking payment intent %s: %v", intent.ID, err))
 			// Continue with other intents even if one fails
 			continue
 		}
@@ -97,7 +97,7 @@ func (w *IOTAPaymentWorker) processPayments(ctx context.Context) error {
 
 	// Expire old payment intents
 	if err := w.expireOldIntents(ctx); err != nil {
-		log.Printf("Error expiring old intents: %v", err)
+		slog.Info(fmt.Sprintf("Error expiring old intents: %v", err))
 	}
 
 	return nil
@@ -153,7 +153,7 @@ func (w *IOTAPaymentWorker) checkPaymentIntent(ctx context.Context, intent *doma
 			return fmt.Errorf("failed to update payment intent: %w", err)
 		}
 
-		log.Printf("Payment intent %s marked as paid", intent.ID)
+		slog.Info(fmt.Sprintf("Payment intent %s marked as paid", intent.ID))
 	}
 
 	return nil
@@ -168,10 +168,10 @@ func (w *IOTAPaymentWorker) expireOldIntents(ctx context.Context) error {
 
 	for _, intent := range expiredIntents {
 		if err := w.repo.UpdatePaymentIntentStatus(ctx, intent.ID, domain.PaymentIntentStatusExpired, nil); err != nil {
-			log.Printf("Failed to expire intent %s: %v", intent.ID, err)
+			slog.Info(fmt.Sprintf("Failed to expire intent %s: %v", intent.ID, err))
 			continue
 		}
-		log.Printf("Payment intent %s expired", intent.ID)
+		slog.Info(fmt.Sprintf("Payment intent %s expired", intent.ID))
 	}
 
 	return nil

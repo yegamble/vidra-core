@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -81,7 +81,7 @@ func (s *StreamScheduler) Start(ctx context.Context) error {
 	s.wg.Add(1)
 	go s.run(ctx)
 
-	log.Printf("Stream scheduler started with check interval: %v", s.config.CheckInterval)
+	slog.Info(fmt.Sprintf("Stream scheduler started with check interval: %v", s.config.CheckInterval))
 	return nil
 }
 
@@ -94,7 +94,7 @@ func (s *StreamScheduler) Stop() {
 		return
 	}
 
-	log.Println("Stopping stream scheduler...")
+	slog.Info("Stopping stream scheduler...")
 
 	if s.ticker != nil {
 		s.ticker.Stop()
@@ -104,7 +104,7 @@ func (s *StreamScheduler) Stop() {
 	s.wg.Wait()
 	s.running = false
 
-	log.Println("Stream scheduler stopped")
+	slog.Info("Stream scheduler stopped")
 }
 
 // IsRunning returns whether the scheduler is running
@@ -120,20 +120,20 @@ func (s *StreamScheduler) run(ctx context.Context) {
 
 	// Check immediately on start
 	if err := s.checkScheduledStreams(ctx); err != nil {
-		log.Printf("Error checking scheduled streams: %v", err)
+		slog.Info(fmt.Sprintf("Error checking scheduled streams: %v", err))
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Scheduler context cancelled")
+			slog.Info("Scheduler context cancelled")
 			return
 		case <-s.done:
-			log.Println("Scheduler received stop signal")
+			slog.Info("Scheduler received stop signal")
 			return
 		case <-s.ticker.C:
 			if err := s.checkScheduledStreams(ctx); err != nil {
-				log.Printf("Error checking scheduled streams: %v", err)
+				slog.Info(fmt.Sprintf("Error checking scheduled streams: %v", err))
 			}
 		}
 	}
@@ -143,17 +143,17 @@ func (s *StreamScheduler) run(ctx context.Context) {
 func (s *StreamScheduler) checkScheduledStreams(ctx context.Context) error {
 	// Check for streams needing reminder notifications
 	if err := s.sendReminders(ctx); err != nil {
-		log.Printf("Error sending reminders: %v", err)
+		slog.Info(fmt.Sprintf("Error sending reminders: %v", err))
 	}
 
 	// Check for streams that should transition to waiting room
 	if err := s.transitionToWaitingRoom(ctx); err != nil {
-		log.Printf("Error transitioning streams to waiting room: %v", err)
+		slog.Info(fmt.Sprintf("Error transitioning streams to waiting room: %v", err))
 	}
 
 	// Check for streams that should go live
 	if err := s.transitionToLive(ctx); err != nil {
-		log.Printf("Error transitioning streams to live: %v", err)
+		slog.Info(fmt.Sprintf("Error transitioning streams to live: %v", err))
 	}
 
 	return nil
@@ -197,18 +197,18 @@ func (s *StreamScheduler) sendReminders(ctx context.Context) error {
 		// Send notifications
 		if s.notificationSender != nil && len(subscribers) > 0 {
 			if err := s.notificationSender.SendStreamStartingNotification(ctx, stream.ID, subscribers); err != nil {
-				log.Printf("Failed to send notifications for stream %s: %v", stream.ID, err)
+				slog.Info(fmt.Sprintf("Failed to send notifications for stream %s: %v", stream.ID, err))
 				continue
 			}
 		}
 
 		successfullyNotified = append(successfullyNotified, stream.ID)
-		log.Printf("Sent reminder notifications for stream %s (%s)", stream.ID, stream.Title)
+		slog.Info(fmt.Sprintf("Sent reminder notifications for stream %s (%s)", stream.ID, stream.Title))
 	}
 
 	if len(successfullyNotified) > 0 {
 		if err := s.markRemindersSentBatch(ctx, successfullyNotified); err != nil {
-			log.Printf("Failed to mark reminders sent batch: %v", err)
+			slog.Info(fmt.Sprintf("Failed to mark reminders sent batch: %v", err))
 			return err
 		}
 	}
@@ -246,7 +246,7 @@ func (s *StreamScheduler) markRemindersSentBatch(ctx context.Context, streamIDs 
 	// We don't strictly enforce that rows == len(streamIDs) because of potential race conditions
 	// or deletions, but we log if there's a mismatch for debugging.
 	if rows != int64(len(streamIDs)) {
-		log.Printf("Warning: marked %d reminders sent, but expected %d", rows, len(streamIDs))
+		slog.Info(fmt.Sprintf("Warning: marked %d reminders sent, but expected %d", rows, len(streamIDs)))
 	}
 
 	return nil
@@ -269,7 +269,7 @@ func (s *StreamScheduler) transitionToWaitingRoom(ctx context.Context) error {
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			log.Printf("Failed to close rows in transitionToWaitingRoom: %v", err)
+			slog.Info(fmt.Sprintf("Failed to close rows in transitionToWaitingRoom: %v", err))
 		}
 	}()
 
@@ -277,10 +277,10 @@ func (s *StreamScheduler) transitionToWaitingRoom(ctx context.Context) error {
 		var id uuid.UUID
 		var title string
 		if err := rows.Scan(&id, &title); err != nil {
-			log.Printf("Error scanning stream: %v", err)
+			slog.Info(fmt.Sprintf("Error scanning stream: %v", err))
 			continue
 		}
-		log.Printf("Stream %s (%s) transitioned to waiting room", id, title)
+		slog.Info(fmt.Sprintf("Stream %s (%s) transitioned to waiting room", id, title))
 	}
 
 	return rows.Err()
@@ -304,7 +304,7 @@ func (s *StreamScheduler) transitionToLive(ctx context.Context) error {
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			log.Printf("Failed to close rows in transitionToLive: %v", err)
+			slog.Info(fmt.Sprintf("Failed to close rows in transitionToLive: %v", err))
 		}
 	}()
 
@@ -312,10 +312,10 @@ func (s *StreamScheduler) transitionToLive(ctx context.Context) error {
 		var id uuid.UUID
 		var title string
 		if err := rows.Scan(&id, &title); err != nil {
-			log.Printf("Error scanning stream: %v", err)
+			slog.Info(fmt.Sprintf("Error scanning stream: %v", err))
 			continue
 		}
-		log.Printf("Stream %s (%s) transitioned from scheduled to live", id, title)
+		slog.Info(fmt.Sprintf("Stream %s (%s) transitioned from scheduled to live", id, title))
 	}
 
 	return rows.Err()
@@ -472,6 +472,6 @@ func (s *StreamScheduler) ScheduleStream(ctx context.Context, streamID uuid.UUID
 		return fmt.Errorf("stream not found: %s", streamID)
 	}
 
-	log.Printf("Stream %s scheduled for %v", streamID, scheduledStart)
+	slog.Info(fmt.Sprintf("Stream %s scheduled for %v", streamID, scheduledStart))
 	return nil
 }

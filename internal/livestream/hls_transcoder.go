@@ -3,6 +3,7 @@ package livestream
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
@@ -115,7 +115,7 @@ type TranscodeSession struct {
 type HLSTranscoder struct {
 	cfg           *config.Config
 	streamRepo    repository.LiveStreamRepository
-	logger        *logrus.Logger
+	logger        *slog.Logger
 	activeStreams map[uuid.UUID]*TranscodeSession
 	mu            sync.RWMutex
 	shutdownChan  chan struct{}
@@ -125,7 +125,7 @@ type HLSTranscoder struct {
 func NewHLSTranscoder(
 	cfg *config.Config,
 	streamRepo repository.LiveStreamRepository,
-	logger *logrus.Logger,
+	logger *slog.Logger,
 ) *HLSTranscoder {
 	return &HLSTranscoder{
 		cfg:           cfg,
@@ -184,11 +184,7 @@ func (t *HLSTranscoder) StartTranscoding(ctx context.Context, stream *domain.Liv
 		t.runFFmpegProcess(session)
 	}()
 
-	t.logger.WithFields(logrus.Fields{
-		"stream_id": stream.ID,
-		"variants":  len(variants),
-		"output":    outputDir,
-	}).Info("Started HLS transcoding")
+	t.logger.Info("Started HLS transcoding")
 
 	return nil
 }
@@ -242,13 +238,10 @@ func (t *HLSTranscoder) runFFmpegProcess(session *TranscodeSession) {
 	session.FFmpegProcess.Stdout = os.Stdout
 	session.FFmpegProcess.Stderr = os.Stderr
 
-	t.logger.WithFields(logrus.Fields{
-		"stream_id": session.StreamID,
-		"command":   session.FFmpegProcess.String(),
-	}).Debug("Starting FFmpeg process")
+	t.logger.Debug("Starting FFmpeg process")
 
 	if err := session.FFmpegProcess.Start(); err != nil {
-		t.logger.WithError(err).WithField("stream_id", session.StreamID).Error("Failed to start FFmpeg")
+		t.logger.With("error", err).Error("Failed to start FFmpeg", "stream_id", session.StreamID)
 		return
 	}
 
@@ -259,17 +252,17 @@ func (t *HLSTranscoder) runFFmpegProcess(session *TranscodeSession) {
 
 	select {
 	case <-session.Ctx.Done():
-		t.logger.WithField("stream_id", session.StreamID).Info("Stopping FFmpeg process")
+		t.logger.Info("Stopping FFmpeg process", "stream_id", session.StreamID)
 		if err := session.FFmpegProcess.Process.Kill(); err != nil {
-			t.logger.WithError(err).WithField("stream_id", session.StreamID).Warn("Failed to kill FFmpeg process")
+			t.logger.With("error", err).Warn("Failed to kill FFmpeg process", "stream_id", session.StreamID)
 		}
 		<-done
 
 	case err := <-done:
 		if err != nil {
-			t.logger.WithError(err).WithField("stream_id", session.StreamID).Error("FFmpeg process failed")
+			t.logger.With("error", err).Error("FFmpeg process failed", "stream_id", session.StreamID)
 		} else {
-			t.logger.WithField("stream_id", session.StreamID).Info("FFmpeg process completed")
+			t.logger.Info("FFmpeg process completed", "stream_id", session.StreamID)
 		}
 	}
 
@@ -289,7 +282,7 @@ func (t *HLSTranscoder) StopTranscoding(streamID uuid.UUID) error {
 
 	session.Cancel()
 
-	t.logger.WithField("stream_id", streamID).Info("Stopped HLS transcoding")
+	t.logger.Info("Stopped HLS transcoding", "stream_id", streamID)
 	return nil
 }
 

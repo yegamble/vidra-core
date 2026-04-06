@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -370,13 +370,13 @@ func (h *InstanceHandlers) OEmbed(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(xml.Header))
 		if err := xml.NewEncoder(w).Encode(resp); err != nil {
-			log.Printf("Failed to encode XML response: %v", err)
+			slog.Info(fmt.Sprintf("Failed to encode XML response: %v", err))
 		}
 	} else {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			log.Printf("Failed to encode JSON response: %v", err)
+			slog.Info(fmt.Sprintf("Failed to encode JSON response: %v", err))
 		}
 	}
 }

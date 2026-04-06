@@ -3,6 +3,7 @@ package livestream
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	redis "github.com/redis/go-redis/v9"
-	"github.com/sirupsen/logrus"
 )
 
 // StreamManager manages live stream state and viewer tracking
@@ -19,7 +19,7 @@ type StreamManager struct {
 	streamRepo       repository.LiveStreamRepository
 	viewerRepo       repository.ViewerSessionRepository
 	redisClient      *redis.Client
-	logger           *logrus.Logger
+	logger           *slog.Logger
 	activeStreams    map[uuid.UUID]*StreamState
 	activeStreamsMu  sync.RWMutex
 	viewerHeartbeats chan ViewerHeartbeat
@@ -51,7 +51,7 @@ func NewStreamManager(
 	streamRepo repository.LiveStreamRepository,
 	viewerRepo repository.ViewerSessionRepository,
 	redisClient *redis.Client,
-	logger *logrus.Logger,
+	logger *slog.Logger,
 ) *StreamManager {
 	return &StreamManager{
 		streamRepo:       streamRepo,
@@ -66,7 +66,7 @@ func NewStreamManager(
 
 // Start starts the stream manager background workers
 func (sm *StreamManager) Start(ctx context.Context) error {
-	sm.logger.Info("Starting stream manager")
+	slog.Info("Starting stream manager")
 
 	// Start heartbeat processor
 	sm.wg.Add(1)
@@ -85,7 +85,7 @@ func (sm *StreamManager) Start(ctx context.Context) error {
 
 // Shutdown gracefully shuts down the stream manager
 func (sm *StreamManager) Shutdown(ctx context.Context) error {
-	sm.logger.Info("Shutting down stream manager")
+	slog.Info("Shutting down stream manager")
 	close(sm.shutdownChan)
 
 	// Wait for workers to finish
@@ -97,10 +97,10 @@ func (sm *StreamManager) Shutdown(ctx context.Context) error {
 
 	select {
 	case <-done:
-		sm.logger.Info("Stream manager shut down successfully")
+		slog.Info("Stream manager shut down successfully")
 		return nil
 	case <-ctx.Done():
-		sm.logger.Warn("Stream manager shutdown timed out")
+		slog.Warn("Stream manager shutdown timed out")
 		return ctx.Err()
 	}
 }
@@ -141,14 +141,11 @@ func (sm *StreamManager) StartStream(ctx context.Context, streamID uuid.UUID) er
 	if sm.redisClient != nil {
 		key := fmt.Sprintf("stream:active:%s", streamID)
 		if err := sm.redisClient.Set(ctx, key, "1", 0).Err(); err != nil {
-			sm.logger.WithError(err).Warn("Failed to cache stream in Redis")
+			sm.logger.With("error", err).Warn("Failed to cache stream in Redis")
 		}
 	}
 
-	sm.logger.WithFields(logrus.Fields{
-		"stream_id":  streamID,
-		"channel_id": stream.ChannelID,
-	}).Info("Stream started")
+	slog.Info("Stream started", "stream_id", streamID, "channel_id", stream.ChannelID)
 
 	return nil
 }
@@ -169,11 +166,11 @@ func (sm *StreamManager) EndStream(ctx context.Context, streamID uuid.UUID) erro
 	if sm.redisClient != nil {
 		key := fmt.Sprintf("stream:active:%s", streamID)
 		if err := sm.redisClient.Del(ctx, key).Err(); err != nil {
-			sm.logger.WithError(err).Warn("Failed to remove stream from Redis")
+			sm.logger.With("error", err).Warn("Failed to remove stream from Redis")
 		}
 	}
 
-	sm.logger.WithField("stream_id", streamID).Info("Stream ended")
+	slog.Info("Stream ended", "stream_id", streamID)
 
 	return nil
 }
@@ -219,10 +216,7 @@ func (sm *StreamManager) RecordViewerJoin(ctx context.Context, streamID uuid.UUI
 		return fmt.Errorf("failed to create viewer session: %w", err)
 	}
 
-	sm.logger.WithFields(logrus.Fields{
-		"stream_id":  streamID,
-		"session_id": params.SessionID,
-	}).Debug("Viewer joined stream")
+	slog.Debug("Viewer joined stream", "stream_id", streamID, "session_id", params.SessionID)
 
 	return nil
 }
@@ -233,7 +227,7 @@ func (sm *StreamManager) RecordViewerLeave(ctx context.Context, sessionID string
 		return fmt.Errorf("failed to end viewer session: %w", err)
 	}
 
-	sm.logger.WithField("session_id", sessionID).Debug("Viewer left stream")
+	slog.Debug("Viewer left stream", "session_id", sessionID)
 
 	return nil
 }
@@ -248,7 +242,7 @@ func (sm *StreamManager) SendHeartbeat(streamID uuid.UUID, sessionID string) {
 	}:
 	default:
 		// Channel full, drop heartbeat (not critical)
-		sm.logger.Debug("Viewer heartbeat channel full, dropping heartbeat")
+		slog.Debug("Viewer heartbeat channel full, dropping heartbeat")
 	}
 }
 
@@ -300,8 +294,7 @@ func (sm *StreamManager) flushHeartbeatBatch(ctx context.Context, batch map[stri
 		sessionIDs = append(sessionIDs, sessionID)
 	}
 	if err := sm.viewerRepo.BatchUpdateHeartbeats(ctx, sessionIDs); err != nil {
-		sm.logger.WithError(err).WithField("count", len(sessionIDs)).
-			Debug("Failed to batch update heartbeats")
+		sm.logger.Debug("Failed to batch update heartbeats", "error", err, "count", len(sessionIDs))
 	}
 }
 
@@ -334,8 +327,7 @@ func (sm *StreamManager) refreshViewerCounts(ctx context.Context) {
 	for _, streamID := range streamIDs {
 		count, err := sm.viewerRepo.CountActiveViewers(ctx, streamID)
 		if err != nil {
-			sm.logger.WithError(err).WithField("stream_id", streamID).
-				Error("Failed to count active viewers")
+			sm.logger.Error("Failed to count active viewers", "error", err, "stream_id", streamID)
 			continue
 		}
 
@@ -352,8 +344,7 @@ func (sm *StreamManager) refreshViewerCounts(ctx context.Context) {
 
 		// Update in database
 		if err := sm.streamRepo.UpdateViewerCount(ctx, streamID, count); err != nil {
-			sm.logger.WithError(err).WithField("stream_id", streamID).
-				Error("Failed to update viewer count in database")
+			sm.logger.Error("Failed to update viewer count in database", "error", err, "stream_id", streamID)
 		}
 	}
 }
@@ -380,9 +371,9 @@ func (sm *StreamManager) performCleanup(ctx context.Context) {
 	// Cleanup stale viewer sessions
 	count, err := sm.viewerRepo.CleanupStale(ctx)
 	if err != nil {
-		sm.logger.WithError(err).Error("Failed to cleanup stale viewer sessions")
+		sm.logger.With("error", err).Error("Failed to cleanup stale viewer sessions")
 	} else if count > 0 {
-		sm.logger.WithField("count", count).Info("Cleaned up stale viewer sessions")
+		slog.Info("Cleaned up stale viewer sessions", "count", count)
 	}
 
 	// Check for streams that should have ended but are still marked as active
@@ -390,10 +381,7 @@ func (sm *StreamManager) performCleanup(ctx context.Context) {
 	for streamID, state := range sm.activeStreams {
 		// If stream has been live for more than 24 hours, check if it's really still active
 		if time.Since(state.StartedAt) > 24*time.Hour {
-			sm.logger.WithFields(logrus.Fields{
-				"stream_id": streamID,
-				"duration":  time.Since(state.StartedAt),
-			}).Warn("Stream has been active for over 24 hours")
+			slog.Warn("Stream has been active for over 24 hours", "stream_id", streamID, "duration", time.Since(state.StartedAt))
 		}
 	}
 	sm.activeStreamsMu.RUnlock()

@@ -9,6 +9,7 @@ import (
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 	"vidra-core/internal/usecase"
 	ucchannel "vidra-core/internal/usecase/channel"
 
@@ -20,14 +21,19 @@ import (
 type ChannelHandlers struct {
 	channelService *ucchannel.Service
 	subRepo        usecase.SubscriptionRepository
+	auditLogger    *obs.AuditLogger
 }
 
 // NewChannelHandlers creates new channel handlers
-func NewChannelHandlers(channelService *ucchannel.Service, subRepo usecase.SubscriptionRepository) *ChannelHandlers {
-	return &ChannelHandlers{
+func NewChannelHandlers(channelService *ucchannel.Service, subRepo usecase.SubscriptionRepository, auditLogger ...*obs.AuditLogger) *ChannelHandlers {
+	h := &ChannelHandlers{
 		channelService: channelService,
 		subRepo:        subRepo,
 	}
+	if len(auditLogger) > 0 {
+		h.auditLogger = auditLogger[0]
+	}
+	return h
 }
 
 // ListChannels handles GET /api/v1/channels
@@ -131,6 +137,10 @@ func (h *ChannelHandlers) CreateChannel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if h.auditLogger != nil {
+		h.auditLogger.Create("channels", userID.String(), obs.NewChannelAuditView(channel))
+	}
+
 	shared.WriteJSON(w, http.StatusCreated, channel)
 }
 
@@ -175,6 +185,10 @@ func (h *ChannelHandlers) UpdateChannel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if h.auditLogger != nil {
+		h.auditLogger.Update("channels", userID.String(), obs.NewChannelAuditView(channel), obs.NewChannelAuditView(channel))
+	}
+
 	shared.WriteJSON(w, http.StatusOK, channel)
 }
 
@@ -207,6 +221,11 @@ func (h *ChannelHandlers) DeleteChannel(w http.ResponseWriter, r *http.Request) 
 		}
 		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to delete channel"))
 		return
+	}
+
+	if h.auditLogger != nil {
+		// Use minimal channel view since we don't have the full object post-delete
+		h.auditLogger.Delete("channels", userID.String(), obs.MapAuditView{"channel-id": channelID.String()})
 	}
 
 	w.WriteHeader(http.StatusNoContent)

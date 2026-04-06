@@ -3,6 +3,7 @@ package livestream
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nareix/joy4/format/rtmp"
-	"github.com/sirupsen/logrus"
 )
 
 // RTMPServer handles RTMP stream ingestion
@@ -26,7 +26,7 @@ type RTMPServer struct {
 	streamManager   *StreamManager
 	hlsTranscoder   *HLSTranscoder
 	vodConverter    *VODConverter
-	logger          *logrus.Logger
+	logger          *slog.Logger
 	activeStreams   map[string]*StreamSession // streamKey -> session
 	activeStreamsMu sync.RWMutex
 	shutdownChan    chan struct{}
@@ -63,7 +63,7 @@ func NewRTMPServer(
 	streamManager *StreamManager,
 	hlsTranscoder *HLSTranscoder,
 	vodConverter *VODConverter,
-	logger *logrus.Logger,
+	logger *slog.Logger,
 ) *RTMPServer {
 	s := &RTMPServer{
 		cfg:           cfg,
@@ -96,7 +96,7 @@ func (s *RTMPServer) Start(ctx context.Context) error {
 	}
 
 	s.listener = listener
-	s.logger.WithField("address", rtmpAddr).Info("RTMP server started")
+	slog.Info("RTMP server started", "address", rtmpAddr)
 
 	// Start cleanup goroutine
 	s.wg.Add(1)
@@ -111,20 +111,20 @@ func (s *RTMPServer) Start(ctx context.Context) error {
 
 // Shutdown gracefully shuts down the RTMP server
 func (s *RTMPServer) Shutdown(ctx context.Context) error {
-	s.logger.Info("Shutting down RTMP server...")
+	slog.Info("Shutting down RTMP server...")
 	close(s.shutdownChan)
 
 	// Close listener to stop accepting new connections
 	if s.listener != nil {
 		if err := s.listener.Close(); err != nil {
-			s.logger.WithError(err).Error("Error closing RTMP listener")
+			s.logger.With("error", err).Error("Error closing RTMP listener")
 		}
 	}
 
 	// End all active streams
 	s.activeStreamsMu.Lock()
 	for streamKey, session := range s.activeStreams {
-		s.logger.WithField("stream_key", streamKey).Info("Ending active stream")
+		slog.Info("Ending active stream", "stream_key", streamKey)
 		if session.cancelFunc != nil {
 			session.cancelFunc()
 		}
@@ -140,10 +140,10 @@ func (s *RTMPServer) Shutdown(ctx context.Context) error {
 
 	select {
 	case <-done:
-		s.logger.Info("RTMP server shut down successfully")
+		slog.Info("RTMP server shut down successfully")
 		return nil
 	case <-ctx.Done():
-		s.logger.Warn("RTMP server shutdown timed out")
+		slog.Warn("RTMP server shutdown timed out")
 		return ctx.Err()
 	}
 }
@@ -162,7 +162,7 @@ func (s *RTMPServer) acceptConnections(ctx context.Context) {
 
 		// Set deadline to allow periodic checks for shutdown
 		if err := s.listener.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second)); err != nil {
-			s.logger.WithError(err).Error("Failed to set listener deadline")
+			s.logger.With("error", err).Error("Failed to set listener deadline")
 			continue
 		}
 
@@ -175,7 +175,7 @@ func (s *RTMPServer) acceptConnections(ctx context.Context) {
 			case <-s.shutdownChan:
 				return // Server is shutting down
 			default:
-				s.logger.WithError(err).Error("Failed to accept RTMP connection")
+				s.logger.With("error", err).Error("Failed to accept RTMP connection")
 				continue
 			}
 		}
@@ -189,7 +189,7 @@ func (s *RTMPServer) handleConnection(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
 	defer func() {
 		if err := conn.Close(); err != nil {
-			s.logger.WithError(err).Error("Failed to close RTMP connection")
+			s.logger.With("error", err).Error("Failed to close RTMP connection")
 		}
 	}()
 
@@ -203,16 +203,13 @@ func (s *RTMPServer) handleConnection(ctx context.Context, conn net.Conn) {
 func (s *RTMPServer) handlePublish(conn *rtmp.Conn) {
 	streamKey := conn.URL.Path[1:] // Remove leading slash
 
-	s.logger.WithFields(logrus.Fields{
-		"stream_key": streamKey,
-		"remote_ip":  conn.NetConn().RemoteAddr().String(),
-	}).Info("RTMP publish request received")
+	slog.Info("RTMP publish request received")
 
 	// Authenticate stream key
 	ctx := context.Background()
 	stream, err := s.authenticateStream(ctx, streamKey)
 	if err != nil {
-		s.logger.WithError(err).WithField("stream_key", streamKey).Warn("Stream authentication failed")
+		s.logger.With("error", err).Warn("Stream authentication failed", "stream_key", streamKey)
 		return
 	}
 
@@ -220,7 +217,7 @@ func (s *RTMPServer) handlePublish(conn *rtmp.Conn) {
 	s.activeStreamsMu.RLock()
 	if _, exists := s.activeStreams[streamKey]; exists {
 		s.activeStreamsMu.RUnlock()
-		s.logger.WithField("stream_key", streamKey).Warn("Stream is already active")
+		slog.Warn("Stream is already active", "stream_key", streamKey)
 		return
 	}
 	s.activeStreamsMu.RUnlock()
@@ -243,21 +240,21 @@ func (s *RTMPServer) handlePublish(conn *rtmp.Conn) {
 
 	// Update stream status to live
 	if err := s.streamManager.StartStream(ctx, stream.ID); err != nil {
-		s.logger.WithError(err).Error("Failed to start stream")
+		s.logger.With("error", err).Error("Failed to start stream")
 		cancel()
 		return
 	}
 
-	s.logger.WithField("stream_id", stream.ID).Info("Stream started successfully")
+	slog.Info("Stream started successfully", "stream_id", stream.ID)
 
 	// Start HLS transcoding if transcoder is available
 	if s.hlsTranscoder != nil {
 		rtmpURL := fmt.Sprintf("rtmp://localhost:%d/%s", s.cfg.RTMPPort, streamKey)
 		if err := s.hlsTranscoder.StartTranscoding(sessionCtx, stream, rtmpURL); err != nil {
-			s.logger.WithError(err).Error("Failed to start HLS transcoding")
+			s.logger.With("error", err).Error("Failed to start HLS transcoding")
 			// Don't fail the stream if transcoding fails, continue with RTMP only
 		} else {
-			s.logger.WithField("stream_id", stream.ID).Info("HLS transcoding started")
+			slog.Info("HLS transcoding started", "stream_id", stream.ID)
 		}
 	}
 
@@ -272,33 +269,32 @@ func (s *RTMPServer) handlePublish(conn *rtmp.Conn) {
 	// Stop HLS transcoding if it was running
 	if s.hlsTranscoder != nil && s.hlsTranscoder.IsTranscoding(stream.ID) {
 		if err := s.hlsTranscoder.StopTranscoding(stream.ID); err != nil {
-			s.logger.WithError(err).Error("Failed to stop HLS transcoding")
+			s.logger.With("error", err).Error("Failed to stop HLS transcoding")
 		} else {
-			s.logger.WithField("stream_id", stream.ID).Info("HLS transcoding stopped")
+			slog.Info("HLS transcoding stopped", "stream_id", stream.ID)
 		}
 	}
 
 	// Start VOD conversion if converter is available
 	if s.vodConverter != nil {
 		if err := s.vodConverter.ConvertStreamToVOD(ctx, stream); err != nil {
-			s.logger.WithError(err).WithField("stream_id", stream.ID).Warn("Failed to queue VOD conversion")
+			s.logger.With("error", err).Warn("Failed to queue VOD conversion", "stream_id", stream.ID)
 		} else {
-			s.logger.WithField("stream_id", stream.ID).Info("VOD conversion queued")
+			slog.Info("VOD conversion queued", "stream_id", stream.ID)
 		}
 	}
 
 	// End the stream
 	if err := s.streamManager.EndStream(ctx, stream.ID); err != nil {
-		s.logger.WithError(err).Error("Failed to end stream")
+		s.logger.With("error", err).Error("Failed to end stream")
 	}
 
-	s.logger.WithField("stream_id", stream.ID).Info("Stream ended")
+	slog.Info("Stream ended", "stream_id", stream.ID)
 }
 
 func (s *RTMPServer) handlePlay(conn *rtmp.Conn) {
 	// For now, we don't support RTMP playback (only HLS)
-	s.logger.WithField("remote_ip", conn.NetConn().RemoteAddr().String()).
-		Warn("RTMP playback not supported, use HLS instead")
+	s.logger.Warn("RTMP playback not supported, use HLS instead", "remote_ip", conn.NetConn().RemoteAddr().String())
 }
 
 func (s *RTMPServer) authenticateStream(ctx context.Context, streamKey string) (*domain.LiveStream, error) {
@@ -347,14 +343,10 @@ func (s *RTMPServer) performCleanup(ctx context.Context) {
 	s.activeStreamsMu.RLock()
 	defer s.activeStreamsMu.RUnlock()
 
-	for streamKey, session := range s.activeStreams {
+	for _, session := range s.activeStreams {
 		// Check if stream has been running too long (if max duration is set)
 		if s.cfg.MaxStreamDuration > 0 && time.Since(session.StartedAt) > s.cfg.MaxStreamDuration {
-			s.logger.WithFields(logrus.Fields{
-				"stream_key": streamKey,
-				"stream_id":  session.StreamID,
-				"duration":   time.Since(session.StartedAt),
-			}).Warn("Stream exceeded maximum duration, ending")
+			slog.Warn("Stream exceeded maximum duration, ending")
 
 			if session.cancelFunc != nil {
 				session.cancelFunc()

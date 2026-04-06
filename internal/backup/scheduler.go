@@ -2,7 +2,8 @@ package backup
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -44,15 +45,15 @@ func (s *Scheduler) run(ctx context.Context) {
 	ticker := time.NewTicker(s.tickInterval)
 	defer ticker.Stop()
 
-	log.Printf("Backup scheduler started (interval: %v, retention: %d)", s.tickInterval, s.retention)
+	slog.Info(fmt.Sprintf("Backup scheduler started (interval: %v, retention: %d)", s.tickInterval, s.retention))
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Backup scheduler stopped (context canceled)")
+			slog.Info("Backup scheduler stopped (context canceled)")
 			return
 		case <-s.stopChan:
-			log.Println("Backup scheduler stopped")
+			slog.Info("Backup scheduler stopped")
 			return
 		case <-ticker.C:
 			if s.running.CompareAndSwap(false, true) {
@@ -61,26 +62,26 @@ func (s *Scheduler) run(ctx context.Context) {
 					s.runBackup(ctx)
 				}()
 			} else {
-				log.Println("Backup scheduler: skipping tick, previous backup still running")
+				slog.Info("Backup scheduler: skipping tick, previous backup still running")
 			}
 		}
 	}
 }
 
 func (s *Scheduler) runBackup(ctx context.Context) {
-	log.Println("Scheduled backup starting...")
+	slog.Info("Scheduled backup starting...")
 
 	result, err := s.manager.CreateBackup(ctx)
 	if err != nil {
-		log.Printf("Scheduled backup failed: %v", err)
+		slog.Info(fmt.Sprintf("Scheduled backup failed: %v", err))
 		return
 	}
 
-	log.Printf("Scheduled backup completed: %s (size: %d bytes)", result.BackupPath, result.BytesSize)
+	slog.Info(fmt.Sprintf("Scheduled backup completed: %s (size: %d bytes)", result.BackupPath, result.BytesSize))
 
 	if s.retention > 0 {
 		if err := s.applyRetention(ctx); err != nil {
-			log.Printf("Failed to apply retention policy: %v", err)
+			slog.Info(fmt.Sprintf("Failed to apply retention policy: %v", err))
 		}
 	}
 }
@@ -102,9 +103,9 @@ func (s *Scheduler) applyRetention(ctx context.Context) error {
 	toDelete := len(backups) - s.retention
 	for i := 0; i < toDelete; i++ {
 		if err := s.manager.Target.Delete(ctx, backups[i].Path); err != nil {
-			log.Printf("Failed to delete old backup %s: %v", backups[i].Path, err)
+			slog.Info(fmt.Sprintf("Failed to delete old backup %s: %v", backups[i].Path, err))
 		} else {
-			log.Printf("Deleted old backup: %s", backups[i].Path)
+			slog.Info(fmt.Sprintf("Deleted old backup: %s", backups[i].Path))
 		}
 	}
 

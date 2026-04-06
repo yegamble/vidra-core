@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,11 +12,12 @@ import (
 	"time"
 
 	chi "github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 
 	"vidra-core/internal/app"
 	"vidra-core/internal/config"
 	appMiddleware "vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 	"vidra-core/internal/setup"
 )
 
@@ -28,25 +29,45 @@ var (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		slog.Error("Failed to load config", "error", err)
+		os.Exit(1)
 	}
 
+	// Bootstrap application logger with file output and rotation
+	logger, logCloser := obs.NewLoggerWithFile(obs.LoggerConfig{
+		Level:    cfg.LogLevel,
+		Format:   cfg.LogFormat,
+		LogDir:   cfg.LogDir,
+		Filename: cfg.LogFilename,
+		Rotation: obs.RotationConfig{
+			Enabled:    cfg.LogRotationEnabled,
+			MaxSizeMB:  cfg.LogRotationMaxSizeMB,
+			MaxFiles:   cfg.LogRotationMaxFiles,
+			MaxAgeDays: cfg.LogRotationMaxAgeDays,
+		},
+	})
+	defer logCloser.Close()
+	obs.SetGlobalLogger(logger)
+	slog.SetDefault(logger)
+
 	if cfg.SetupMode {
-		log.Println("Application is in setup mode")
+		logger.Info("Application is in setup mode")
 		setupServer := setup.NewServer(fmt.Sprintf("%d", cfg.Port))
 		if err := setupServer.Start(); err != nil {
-			log.Fatalf("Setup server failed: %v", err)
+			logger.Error("Setup server failed", "error", err)
+			os.Exit(1)
 		}
 		return
 	}
 
 	application, err := app.New(cfg)
 	if err != nil {
-		log.Fatalf("Failed to initialize application: %v", err)
+		logger.Error("Failed to initialize application", "error", err)
+		os.Exit(1)
 	}
 	defer func() {
 		if err := application.Shutdown(context.Background()); err != nil {
-			log.Printf("Failed to shutdown application cleanly: %v", err)
+			logger.Error("Failed to shutdown application cleanly", "error", err)
 		}
 	}()
 
@@ -84,11 +105,16 @@ func main() {
 	root.Use(appMiddleware.SecurityHeaders(securityCfg))
 	root.Use(appMiddleware.RequestID())
 
-	root.Use(middleware.RealIP)
-	root.Use(middleware.Logger)
-	root.Use(middleware.Recoverer)
-	root.Use(middleware.Timeout(60 * time.Second))
-	root.Use(middleware.Compress(5))
+	root.Use(chiMiddleware.RealIP)
+	root.Use(appMiddleware.LoggingMiddleware(appMiddleware.LoggingConfig{
+		Logger:          logger,
+		AnonymizeIP:     cfg.LogAnonymizeIP,
+		LogHTTPRequests: cfg.LogHTTPRequests,
+		LogPingRequests: cfg.LogPingRequests,
+	}))
+	root.Use(chiMiddleware.Recoverer)
+	root.Use(chiMiddleware.Timeout(60 * time.Second))
+	root.Use(chiMiddleware.Compress(5))
 
 	root.Use(appMiddleware.CORS(cfg.CORSAllowedOrigins, cfg.CORSAllowedMethods, cfg.CORSAllowedHeaders))
 	root.Use(appMiddleware.SizeLimiter(100 * 1024 * 1024))
@@ -99,7 +125,8 @@ func main() {
 	defer backgroundCancel()
 
 	if err := application.Start(backgroundCtx); err != nil {
-		log.Fatalf("Failed to start background services: %v", err)
+		logger.Error("Failed to start background services", "error", err)
+		os.Exit(1)
 	}
 
 	server := &http.Server{
@@ -113,19 +140,20 @@ func main() {
 	go func() {
 		if cfg.EnableEncoding {
 			if buildTime != "" {
-				log.Printf("Server starting on port %d with encoding workers (version=%s, build=%s)", cfg.Port, version, buildTime)
+				logger.Info("Server starting with encoding workers", "port", cfg.Port, "version", version, "build", buildTime)
 			} else {
-				log.Printf("Server starting on port %d with encoding workers (version=%s)", cfg.Port, version)
+				logger.Info("Server starting with encoding workers", "port", cfg.Port, "version", version)
 			}
 		} else {
 			if buildTime != "" {
-				log.Printf("Server starting on port %d (version=%s, build=%s)", cfg.Port, version, buildTime)
+				logger.Info("Server starting", "port", cfg.Port, "version", version, "build", buildTime)
 			} else {
-				log.Printf("Server starting on port %d (version=%s)", cfg.Port, version)
+				logger.Info("Server starting", "port", cfg.Port, "version", version)
 			}
 		}
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed to start: %v", err)
+			logger.Error("Server failed to start", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -133,7 +161,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	logger.Info("Shutting down server...")
 
 	backgroundCancel()
 
@@ -141,8 +169,9 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		logger.Error("Server forced to shutdown", "error", err)
+		os.Exit(1)
 	}
 
-	log.Println("Server exited")
+	logger.Info("Server exited")
 }

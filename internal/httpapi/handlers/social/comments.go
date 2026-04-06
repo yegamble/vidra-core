@@ -9,6 +9,7 @@ import (
 	"vidra-core/internal/domain"
 	"vidra-core/internal/httpapi/shared"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 	uccmt "vidra-core/internal/usecase/comment"
 
 	"github.com/go-chi/chi/v5"
@@ -17,12 +18,15 @@ import (
 
 type CommentHandlers struct {
 	commentService CommentServiceInterface
+	auditLogger    *obs.AuditLogger
 }
 
-func NewCommentHandlers(commentService *uccmt.Service) *CommentHandlers {
-	return &CommentHandlers{
-		commentService: commentService,
+func NewCommentHandlers(commentService *uccmt.Service, auditLogger ...*obs.AuditLogger) *CommentHandlers {
+	h := &CommentHandlers{commentService: commentService}
+	if len(auditLogger) > 0 {
+		h.auditLogger = auditLogger[0]
 	}
+	return h
 }
 
 func (h *CommentHandlers) CreateComment(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +64,10 @@ func (h *CommentHandlers) CreateComment(w http.ResponseWriter, r *http.Request) 
 		}
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
 		return
+	}
+
+	if h.auditLogger != nil {
+		h.auditLogger.Create("comments", userID.String(), obs.NewCommentAuditView(comment))
 	}
 
 	shared.WriteJSON(w, http.StatusCreated, comment)
@@ -214,6 +222,10 @@ func (h *CommentHandlers) DeleteComment(w http.ResponseWriter, r *http.Request) 
 		}
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("internal server error"))
 		return
+	}
+
+	if h.auditLogger != nil {
+		h.auditLogger.Delete("comments", userID.String(), obs.MapAuditView{"comment-id": commentID.String()})
 	}
 
 	w.WriteHeader(http.StatusNoContent)

@@ -2,7 +2,8 @@ package backup
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -27,7 +28,7 @@ func (h *Handler) ListBackups(w http.ResponseWriter, r *http.Request) {
 
 	backups, err := h.service.ListBackups(ctx)
 	if err != nil {
-		log.Printf("ListBackups error: %v", err)
+		slog.Info(fmt.Sprintf("ListBackups error: %v", err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -76,7 +77,7 @@ func (h *Handler) TriggerBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.TriggerBackupWithComponents(ctx, components); err != nil {
-		log.Printf("TriggerBackup error: %v", err)
+		slog.Info(fmt.Sprintf("TriggerBackup error: %v", err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -97,7 +98,7 @@ func (h *Handler) DeleteBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.DeleteBackup(ctx, backupID); err != nil {
-		log.Printf("DeleteBackup error: %v", err)
+		slog.Info(fmt.Sprintf("DeleteBackup error: %v", err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -124,7 +125,7 @@ func (h *Handler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 
 	progressChan, err := h.service.StartRestore(ctx, opts)
 	if err != nil {
-		log.Printf("RestoreBackup error: %v", err)
+		slog.Info(fmt.Sprintf("RestoreBackup error: %v", err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -150,7 +151,7 @@ func (h *Handler) respondJSON(w http.ResponseWriter, status int, data interface{
 	w.WriteHeader(status)
 
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("respondJSON: failed to encode response: %v", err)
+		slog.Info(fmt.Sprintf("respondJSON: failed to encode response: %v", err))
 	}
 }
 

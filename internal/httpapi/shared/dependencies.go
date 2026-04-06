@@ -124,7 +124,8 @@ type HandlerDependencies struct {
 	ArchiveRepo        any // user.ArchiveRepository
 	ChannelSyncRepo    any // channel.ChannelSyncRepository
 	PlayerSettingsRepo any // player.PlayerSettingsRepository
-	LogRepo            any // admin.LogRepository
+	LogRepo            any // admin.LogRepository (deprecated — now file-based)
+	AuditLogger        any // *obs.AuditLogger — set by app.go when LOG_DIR is configured
 
 	DB               *sql.DB
 	Redis            *redis.Client

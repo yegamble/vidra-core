@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -16,7 +17,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
@@ -46,7 +46,7 @@ type VODConverter struct {
 	cfg          *config.Config
 	streamRepo   repository.LiveStreamRepository
 	videoRepo    usecase.VideoRepository
-	logger       *logrus.Logger
+	logger       *slog.Logger
 	jobs         map[uuid.UUID]*VODConversionJob
 	mu           sync.RWMutex
 	jobQueue     chan *VODConversionJob
@@ -60,7 +60,7 @@ func NewVODConverter(
 	cfg *config.Config,
 	streamRepo repository.LiveStreamRepository,
 	videoRepo usecase.VideoRepository,
-	logger *logrus.Logger,
+	logger *slog.Logger,
 	workers int,
 ) *VODConverter {
 	if workers <= 0 {
@@ -90,26 +90,23 @@ func (v *VODConverter) startWorkers() {
 		v.wg.Add(1)
 		go v.worker(i)
 	}
-	v.logger.WithField("workers", v.workers).Info("Started VOD conversion workers")
+	v.logger.Info("Started VOD conversion workers", "workers", v.workers)
 }
 
 // worker processes VOD conversion jobs from the queue
 func (v *VODConverter) worker(id int) {
 	defer v.wg.Done()
 
-	v.logger.WithField("worker_id", id).Debug("VOD worker started")
+	v.logger.Debug("VOD worker started", "worker_id", id)
 
 	for {
 		select {
 		case <-v.shutdownChan:
-			v.logger.WithField("worker_id", id).Debug("VOD worker shutting down")
+			v.logger.Debug("VOD worker shutting down", "worker_id", id)
 			return
 
 		case job := <-v.jobQueue:
-			v.logger.WithFields(logrus.Fields{
-				"worker_id": id,
-				"stream_id": job.StreamID,
-			}).Info("Processing VOD conversion job")
+			v.logger.Info("Processing VOD conversion job")
 
 			v.processJob(job)
 		}
@@ -164,7 +161,7 @@ func (v *VODConverter) ConvertStreamToVOD(ctx context.Context, stream *domain.Li
 	// Queue job
 	select {
 	case v.jobQueue <- job:
-		v.logger.WithField("stream_id", stream.ID).Info("Queued VOD conversion job")
+		v.logger.Info("Queued VOD conversion job", "stream_id", stream.ID)
 		return nil
 	case <-ctx.Done():
 		cancel()
@@ -196,10 +193,7 @@ func (v *VODConverter) processJob(job *VODConversionJob) {
 		return
 	}
 
-	v.logger.WithFields(logrus.Fields{
-		"stream_id": job.StreamID,
-		"variant":   variant,
-	}).Info("Selected variant for VOD conversion")
+	v.logger.Info("Selected variant for VOD conversion")
 
 	// Step 2: Concatenate segments
 	tempFile := job.OutputPath + ".tmp"
@@ -211,7 +205,7 @@ func (v *VODConverter) processJob(job *VODConversionJob) {
 	// Step 3: Optimize for web streaming (+faststart)
 	if err := v.optimizeVideo(ctx, tempFile, job.OutputPath); err != nil {
 		if removeErr := os.Remove(tempFile); removeErr != nil {
-			v.logger.WithError(removeErr).Warn("Failed to remove temp file after optimization failure")
+			v.logger.With("error", removeErr).Warn("Failed to remove temp file after optimization failure")
 		}
 		v.failJob(job, fmt.Errorf("failed to optimize video: %w", err))
 		return
@@ -219,20 +213,17 @@ func (v *VODConverter) processJob(job *VODConversionJob) {
 
 	// Clean up temp file
 	if err := os.Remove(tempFile); err != nil {
-		v.logger.WithError(err).Warn("Failed to remove temp file")
+		v.logger.With("error", err).Warn("Failed to remove temp file")
 	}
 
 	// Step 4: Upload to IPFS (if enabled)
 	if v.cfg.ReplayUploadToIPFS {
 		cid, err := v.uploadToIPFS(ctx, job.OutputPath)
 		if err != nil {
-			v.logger.WithError(err).WithField("stream_id", job.StreamID).Warn("Failed to upload replay to IPFS")
+			v.logger.With("error", err).Warn("Failed to upload replay to IPFS", "stream_id", job.StreamID)
 		} else {
 			job.IPFSCid = cid
-			v.logger.WithFields(logrus.Fields{
-				"stream_id": job.StreamID,
-				"cid":       cid,
-			}).Info("Uploaded replay to IPFS")
+			v.logger.Info("Uploaded replay to IPFS")
 		}
 	}
 
@@ -240,7 +231,7 @@ func (v *VODConverter) processJob(job *VODConversionJob) {
 	// This creates a permanent video record from the live stream
 	videoID, err := v.createVideoFromStream(ctx, job)
 	if err != nil {
-		v.logger.WithError(err).WithField("stream_id", job.StreamID).Warn("Failed to create video entry")
+		v.logger.With("error", err).Warn("Failed to create video entry", "stream_id", job.StreamID)
 	} else {
 		job.VideoID = &videoID
 	}
@@ -300,11 +291,11 @@ func (v *VODConverter) concatenateSegments(ctx context.Context, segmentsDir, var
 	// Capture output for logging
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		v.logger.WithError(err).WithField("output", string(output)).Error("FFmpeg concatenation failed")
+		v.logger.With("error", err).Error("FFmpeg concatenation failed", "output", string(output))
 		return fmt.Errorf("ffmpeg concatenation failed: %w", err)
 	}
 
-	v.logger.WithField("output_path", outputPath).Debug("Segments concatenated successfully")
+	v.logger.Debug("Segments concatenated successfully", "output_path", outputPath)
 	return nil
 }
 
@@ -325,11 +316,11 @@ func (v *VODConverter) optimizeVideo(ctx context.Context, inputPath, outputPath 
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		v.logger.WithError(err).WithField("output", string(output)).Error("FFmpeg optimization failed")
+		v.logger.With("error", err).Error("FFmpeg optimization failed", "output", string(output))
 		return fmt.Errorf("ffmpeg optimization failed: %w", err)
 	}
 
-	v.logger.WithField("output_path", outputPath).Debug("Video optimized successfully")
+	v.logger.Debug("Video optimized successfully", "output_path", outputPath)
 	return nil
 }
 
@@ -346,7 +337,7 @@ func (v *VODConverter) uploadToIPFS(ctx context.Context, filePath string) (strin
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			v.logger.WithError(closeErr).Warn("Failed to close file after IPFS upload")
+			v.logger.With("error", closeErr).Warn("Failed to close file after IPFS upload")
 		}
 	}()
 
@@ -389,7 +380,7 @@ func (v *VODConverter) uploadToIPFS(ctx context.Context, filePath string) (strin
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			v.logger.WithError(closeErr).Warn("Failed to close response body after IPFS upload")
+			v.logger.With("error", closeErr).Warn("Failed to close response body after IPFS upload")
 		}
 	}()
 
@@ -412,7 +403,7 @@ func (v *VODConverter) uploadToIPFS(ctx context.Context, filePath string) (strin
 			continue
 		}
 		if err := json.Unmarshal(line, &lastResponse); err != nil {
-			v.logger.WithError(err).Warn("Failed to parse IPFS response line")
+			v.logger.With("error", err).Warn("Failed to parse IPFS response line")
 			continue
 		}
 	}
@@ -425,11 +416,7 @@ func (v *VODConverter) uploadToIPFS(ctx context.Context, filePath string) (strin
 		return "", fmt.Errorf("IPFS did not return a CID")
 	}
 
-	v.logger.WithFields(logrus.Fields{
-		"cid":  lastResponse.Hash,
-		"size": lastResponse.Size,
-		"file": filePath,
-	}).Info("Successfully uploaded replay to IPFS")
+	v.logger.Info("Successfully uploaded replay to IPFS")
 
 	return lastResponse.Hash, nil
 }
@@ -451,7 +438,7 @@ func (v *VODConverter) createVideoFromStream(ctx context.Context, job *VODConver
 
 		if output, err := cmd.Output(); err == nil {
 			if _, err := fmt.Sscanf(string(output), "%d", &duration); err != nil {
-				v.logger.WithError(err).Warn("Failed to parse video duration")
+				v.logger.With("error", err).Warn("Failed to parse video duration")
 			}
 		}
 	}
@@ -492,13 +479,7 @@ func (v *VODConverter) createVideoFromStream(ctx context.Context, job *VODConver
 		return uuid.UUID{}, fmt.Errorf("failed to create video entry: %w", err)
 	}
 
-	v.logger.WithFields(logrus.Fields{
-		"video_id":  videoID,
-		"stream_id": job.StreamID,
-		"title":     job.StreamTitle,
-		"file_size": fileInfo.Size(),
-		"duration":  duration,
-	}).Info("Created video entry from stream")
+	v.logger.Info("Created video entry from stream")
 
 	return videoID, nil
 }
@@ -512,9 +493,9 @@ func (v *VODConverter) cleanupSegments(segmentsDir string) {
 
 	// Remove entire segments directory
 	if err := os.RemoveAll(segmentsDir); err != nil {
-		v.logger.WithError(err).WithField("dir", segmentsDir).Warn("Failed to clean up segments")
+		v.logger.With("error", err).Warn("Failed to clean up segments", "dir", segmentsDir)
 	} else {
-		v.logger.WithField("dir", segmentsDir).Info("Cleaned up HLS segments")
+		v.logger.Info("Cleaned up HLS segments", "dir", segmentsDir)
 	}
 }
 
@@ -528,7 +509,7 @@ func (v *VODConverter) failJob(job *VODConversionJob, err error) {
 	now := time.Now()
 	job.CompletedAt = &now
 
-	v.logger.WithError(err).WithField("stream_id", job.StreamID).Error("VOD conversion failed")
+	v.logger.With("error", err).Error("VOD conversion failed", "stream_id", job.StreamID)
 }
 
 // completeJob marks a job as completed
@@ -540,13 +521,7 @@ func (v *VODConverter) completeJob(job *VODConversionJob) {
 	now := time.Now()
 	job.CompletedAt = &now
 
-	v.logger.WithFields(logrus.Fields{
-		"stream_id": job.StreamID,
-		"output":    job.OutputPath,
-		"ipfs_cid":  job.IPFSCid,
-		"video_id":  job.VideoID,
-		"duration":  now.Sub(job.StartedAt),
-	}).Info("VOD conversion completed")
+	v.logger.Info("VOD conversion completed")
 }
 
 // GetJob returns a conversion job
@@ -568,7 +543,7 @@ func (v *VODConverter) CancelJob(streamID uuid.UUID) error {
 	v.mu.Unlock()
 
 	job.Cancel()
-	v.logger.WithField("stream_id", streamID).Info("Cancelled VOD conversion job")
+	v.logger.Info("Cancelled VOD conversion job", "stream_id", streamID)
 	return nil
 }
 

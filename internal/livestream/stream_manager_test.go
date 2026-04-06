@@ -1,8 +1,8 @@
 package livestream
 
 import (
+	"log/slog"
 	"context"
-	"io"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +13,6 @@ import (
 
 	"vidra-core/internal/repository"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -121,8 +120,7 @@ func (m *mockViewerSessionRepo) EndSession(ctx context.Context, sessionID string
 func (m *mockViewerSessionRepo) CleanupStale(ctx context.Context) (int, error) { return 0, nil }
 
 func newTestStreamManager() *StreamManager {
-	logger := logrus.New()
-	logger.SetOutput(io.Discard)
+	logger := slog.Default()
 	return NewStreamManager(
 		newMockLiveStreamRepo(),
 		&mockViewerSessionRepo{},
@@ -165,8 +163,7 @@ func TestStreamManager_GetAllActiveStreams_EmptyInitially(t *testing.T) {
 
 func TestStreamManager_StartStream_ActivatesStream(t *testing.T) {
 	streamRepo := newMockLiveStreamRepo()
-	logger := logrus.New()
-	logger.SetOutput(io.Discard)
+	logger := slog.Default()
 	sm := NewStreamManager(streamRepo, &mockViewerSessionRepo{}, nil, logger)
 
 	streamID := uuid.New()
@@ -194,8 +191,7 @@ func TestStreamManager_StartStream_StreamNotFound_ReturnsError(t *testing.T) {
 
 func TestStreamManager_EndStream_RemovesFromActiveStreams(t *testing.T) {
 	streamRepo := newMockLiveStreamRepo()
-	logger := logrus.New()
-	logger.SetOutput(io.Discard)
+	logger := slog.Default()
 	sm := NewStreamManager(streamRepo, &mockViewerSessionRepo{}, nil, logger)
 
 	streamID := uuid.New()
@@ -257,8 +253,7 @@ func TestStreamManager_StartAndShutdown(t *testing.T) {
 
 func TestStreamManager_ConcurrentStreamAccess(t *testing.T) {
 	streamRepo := newMockLiveStreamRepo()
-	logger := logrus.New()
-	logger.SetOutput(io.Discard)
+	logger := slog.Default()
 	sm := NewStreamManager(streamRepo, &mockViewerSessionRepo{}, nil, logger)
 
 	streamIDs := make([]uuid.UUID, 5)

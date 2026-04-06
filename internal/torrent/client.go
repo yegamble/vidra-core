@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 	"vidra-core/internal/config"
@@ -13,7 +14,6 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
 )
 
 // Client wraps the anacrolix torrent client with additional functionality
@@ -24,7 +24,7 @@ type Client struct {
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
-	logger      *logrus.Logger
+	logger      *slog.Logger
 	rateLimiter *BandwidthManager
 }
 
@@ -93,7 +93,7 @@ func DefaultClientConfig() *ClientConfig {
 }
 
 // NewClient creates a new torrent client
-func NewClient(config *ClientConfig, logger *logrus.Logger) (*Client, error) {
+func NewClient(config *ClientConfig, logger *slog.Logger) (*Client, error) {
 	if config == nil {
 		config = DefaultClientConfig()
 	}
@@ -104,7 +104,7 @@ func NewClient(config *ClientConfig, logger *logrus.Logger) (*Client, error) {
 	config = &configCopy
 
 	if logger == nil {
-		logger = logrus.New()
+		logger = slog.Default()
 	}
 
 	// Create torrent client config
@@ -169,9 +169,9 @@ func NewClient(config *ClientConfig, logger *logrus.Logger) (*Client, error) {
 }
 
 // NewClientFromAppConfig creates a new torrent client from application config
-func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client, error) {
+func NewClientFromAppConfig(cfg *config.Config, logger *slog.Logger) (*Client, error) {
 	if logger == nil {
-		logger = logrus.New()
+		logger = slog.Default()
 	}
 
 	// Create torrent client config
@@ -196,13 +196,7 @@ func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client,
 	// - router.utorrent.com:6881
 	// Custom bootstrap nodes can be added via future enhancement if needed
 	if cfg.EnableDHT {
-		logger.WithFields(logrus.Fields{
-			"default_nodes": []string{
-				"router.bittorrent.com:6881",
-				"dht.transmissionbt.com:6881",
-				"router.utorrent.com:6881",
-			},
-		}).Info("DHT enabled with default bootstrap nodes")
+		slog.Info("DHT enabled with default bootstrap nodes")
 	}
 
 	// Set storage
@@ -259,14 +253,7 @@ func NewClientFromAppConfig(cfg *config.Config, logger *logrus.Logger) (*Client,
 		)
 	}
 
-	logger.WithFields(logrus.Fields{
-		"dht_enabled":     cfg.EnableDHT,
-		"pex_enabled":     cfg.EnablePEX,
-		"webtorrent":      cfg.EnableWebTorrent,
-		"listen_port":     cfg.TorrentListenPort,
-		"max_connections": cfg.TorrentMaxConnections,
-		"bootstrap_nodes": len(cfg.DHTBootstrapNodes),
-	}).Info("Torrent client created with advanced P2P features")
+	slog.Info("Torrent client created with advanced P2P features")
 
 	return client, nil
 }
@@ -347,12 +334,7 @@ func (c *Client) AddTorrent(data []byte) (*Download, error) {
 	// Monitor progress
 	go c.monitorDownload(download)
 
-	c.logger.WithFields(logrus.Fields{
-		"id":        download.ID,
-		"info_hash": download.InfoHash,
-		"name":      download.Name,
-		"size":      download.Size,
-	}).Info("Added torrent")
+	slog.Info("Added torrent")
 
 	return download, nil
 }
@@ -400,12 +382,7 @@ func (c *Client) AddMagnet(magnetURI string) (*Download, error) {
 	// Monitor progress
 	go c.monitorDownload(download)
 
-	c.logger.WithFields(logrus.Fields{
-		"id":        download.ID,
-		"info_hash": download.InfoHash,
-		"name":      download.Name,
-		"size":      download.Size,
-	}).Info("Added magnet")
+	slog.Info("Added magnet")
 
 	return download, nil
 }
@@ -450,7 +427,7 @@ func (c *Client) PauseDownload(infoHash string) error {
 	download.Torrent.DisallowDataUpload()
 	download.Status = DownloadStatusPaused
 
-	c.logger.WithField("info_hash", infoHash).Info("Paused download")
+	slog.Info("Paused download", "info_hash", infoHash)
 
 	return nil
 }
@@ -474,7 +451,7 @@ func (c *Client) ResumeDownload(infoHash string) error {
 		download.Status = DownloadStatusDownloading
 	}
 
-	c.logger.WithField("info_hash", infoHash).Info("Resumed download")
+	slog.Info("Resumed download", "info_hash", infoHash)
 
 	return nil
 }
@@ -495,7 +472,7 @@ func (c *Client) RemoveDownload(infoHash string) error {
 	// Remove from map
 	delete(c.downloads, infoHash)
 
-	c.logger.WithField("info_hash", infoHash).Info("Removed download")
+	slog.Info("Removed download", "info_hash", infoHash)
 
 	return nil
 }
@@ -544,11 +521,7 @@ func (c *Client) markDownloadComplete(download *Download) {
 		download.Status = DownloadStatusCompleted
 	}
 
-	c.logger.WithFields(logrus.Fields{
-		"info_hash": download.InfoHash,
-		"name":      download.Name,
-		"duration":  now.Sub(download.StartedAt),
-	}).Info("Download completed")
+	slog.Info("Download completed")
 }
 
 // downloadExists reports whether the download with the given info hash is
@@ -599,7 +572,7 @@ type ClientStats struct {
 
 // Close closes the client
 func (c *Client) Close() error {
-	c.logger.Info("Closing torrent client")
+	slog.Info("Closing torrent client")
 
 	// Cancel context
 	c.cancel()
@@ -615,7 +588,7 @@ func (c *Client) Close() error {
 	// Close client
 	c.client.Close()
 
-	c.logger.Info("Torrent client closed")
+	slog.Info("Torrent client closed")
 
 	return nil
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -401,7 +401,7 @@ func (h *FeedHandlers) CommentsFeed(w http.ResponseWriter, r *http.Request) {
 				Limit:   20,
 			})
 			if err != nil {
-				log.Printf("feed: failed to list comments for video %s: %v", videoIDStr, err)
+				slog.Info(fmt.Sprintf("feed: failed to list comments for video %s: %v", videoIDStr, err))
 			} else {
 				for _, c := range comments {
 					entry := atomEntry{

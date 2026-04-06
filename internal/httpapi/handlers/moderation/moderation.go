@@ -13,6 +13,7 @@ import (
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
+	"vidra-core/internal/obs"
 	"vidra-core/internal/repository"
 
 	"github.com/go-chi/chi/v5"
@@ -22,11 +23,16 @@ import (
 // ModerationHandlers handles moderation-related HTTP requests
 type ModerationHandlers struct {
 	moderationRepo *repository.ModerationRepository
+	auditLogger    *obs.AuditLogger
 }
 
 // NewModerationHandlers creates a new instance of ModerationHandlers
-func NewModerationHandlers(moderationRepo *repository.ModerationRepository) *ModerationHandlers {
-	return &ModerationHandlers{moderationRepo: moderationRepo}
+func NewModerationHandlers(moderationRepo *repository.ModerationRepository, auditLogger ...*obs.AuditLogger) *ModerationHandlers {
+	h := &ModerationHandlers{moderationRepo: moderationRepo}
+	if len(auditLogger) > 0 {
+		h.auditLogger = auditLogger[0]
+	}
+	return h
 }
 
 // helper: get the caller's role from DB (fallback when middleware role is not present)
@@ -122,6 +128,11 @@ func (h *ModerationHandlers) CreateAbuseReport(w http.ResponseWriter, r *http.Re
 	if err := h.moderationRepo.CreateAbuseReport(r.Context(), report); err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("INTERNAL_ERROR", "Failed to create abuse report"))
 		return
+	}
+
+	if h.auditLogger != nil {
+		reporterID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		h.auditLogger.Create("abuse", reporterID, obs.NewAbuseAuditView(report))
 	}
 
 	shared.WriteJSON(w, http.StatusCreated, report)

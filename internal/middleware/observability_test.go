@@ -24,7 +24,7 @@ func TestLoggingMiddleware(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -71,7 +71,7 @@ func TestLoggingMiddlewareWithRequestID(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -100,7 +100,7 @@ func TestLoggingMiddlewareWithUserID(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Simulate authenticated request
 		ctx := context.WithValue(r.Context(), userIDKey, "user-456")
 		*r = *r.WithContext(ctx)
@@ -126,7 +126,7 @@ func TestLoggingMiddlewareErrorHandling(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("internal error"))
 	}))
@@ -155,7 +155,7 @@ func TestLoggingMiddlewareDuration(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(50 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -419,7 +419,7 @@ func TestObservabilityMiddlewareStack(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	// Stack all observability middleware
-	handler := LoggingMiddleware(logger)(
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(
 		MetricsMiddleware(metrics)(
 			TracingMiddleware(tp.Tracer("test"))(
 				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -466,7 +466,7 @@ func TestObservabilityMiddlewareRequestIDPropagation(t *testing.T) {
 
 	requestID := "test-req-123"
 
-	handler := LoggingMiddleware(logger)(
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(
 		MetricsMiddleware(metrics)(
 			TracingMiddleware(tp.Tracer("test"))(
 				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -523,7 +523,7 @@ func TestErrorCorrelation(t *testing.T) {
 	)
 	defer tp.Shutdown(context.Background())
 
-	handler := LoggingMiddleware(logger)(
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(
 		TracingMiddleware(tp.Tracer("test"))(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
@@ -577,7 +577,7 @@ func BenchmarkLoggingMiddleware(b *testing.B) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf)
 
-	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -637,7 +637,7 @@ func BenchmarkObservabilityStack(b *testing.B) {
 	)
 	defer tp.Shutdown(context.Background())
 
-	handler := LoggingMiddleware(logger)(
+	handler := LoggingMiddleware(newTestLoggingConfig(logger))(
 		MetricsMiddleware(metrics)(
 			TracingMiddleware(tp.Tracer("test"))(
 				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -656,10 +656,137 @@ func BenchmarkObservabilityStack(b *testing.B) {
 	}
 }
 
+// TestLoggingMiddlewareHTTPRequestsDisabled verifies that no log entry is emitted when LogHTTPRequests=false.
+func TestLoggingMiddlewareHTTPRequestsDisabled(t *testing.T) {
+	var buf bytes.Buffer
+	logger := newTestLogger(&buf)
+
+	handler := LoggingMiddleware(LoggingConfig{
+		Logger:          logger,
+		LogHTTPRequests: false,
+		LogPingRequests: true,
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/v1/videos", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no log output when LogHTTPRequests=false, got: %s", buf.String())
+	}
+}
+
+// TestLoggingMiddlewarePingRequestsDisabled verifies that /api/v1/ping is not logged when LogPingRequests=false.
+func TestLoggingMiddlewarePingRequestsDisabled(t *testing.T) {
+	var buf bytes.Buffer
+	logger := newTestLogger(&buf)
+
+	handler := LoggingMiddleware(LoggingConfig{
+		Logger:          logger,
+		LogHTTPRequests: true,
+		LogPingRequests: false,
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Ping request should be suppressed
+	req := httptest.NewRequest("GET", "/api/v1/ping", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if buf.Len() != 0 {
+		t.Errorf("expected /api/v1/ping to be suppressed when LogPingRequests=false, got: %s", buf.String())
+	}
+
+	// Health request should also be suppressed
+	buf.Reset()
+	req = httptest.NewRequest("GET", "/health", nil)
+	handler.ServeHTTP(rec, req)
+	if buf.Len() != 0 {
+		t.Errorf("expected /health to be suppressed when LogPingRequests=false, got: %s", buf.String())
+	}
+
+	// Regular request should still be logged
+	buf.Reset()
+	req = httptest.NewRequest("GET", "/api/v1/videos", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	if buf.Len() == 0 {
+		t.Error("expected non-ping request to be logged")
+	}
+}
+
+// TestLoggingMiddlewareAnonymizeIP verifies that logged IP ends in .0 when AnonymizeIP=true.
+func TestLoggingMiddlewareAnonymizeIP(t *testing.T) {
+	var buf bytes.Buffer
+	logger := newTestLogger(&buf)
+
+	handler := LoggingMiddleware(LoggingConfig{
+		Logger:          logger,
+		LogHTTPRequests: true,
+		LogPingRequests: true,
+		AnonymizeIP:     true,
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/v1/videos", nil)
+	req.RemoteAddr = "192.168.1.55:12345"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	output := buf.String()
+	if !strings.Contains(output, "192.168.1.0") {
+		t.Errorf("expected anonymized IP 192.168.1.0 in log, got: %s", output)
+	}
+	if strings.Contains(output, "192.168.1.55") {
+		t.Errorf("expected real IP to be anonymized, but found it in log: %s", output)
+	}
+}
+
+// TestLoggingMiddlewareDNTHeader verifies that DNT: 1 triggers anonymization even with AnonymizeIP=false.
+func TestLoggingMiddlewareDNTHeader(t *testing.T) {
+	var buf bytes.Buffer
+	logger := newTestLogger(&buf)
+
+	handler := LoggingMiddleware(LoggingConfig{
+		Logger:          logger,
+		LogHTTPRequests: true,
+		LogPingRequests: true,
+		AnonymizeIP:     false, // disabled in config
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/v1/videos", nil)
+	req.RemoteAddr = "10.20.30.40:9999"
+	req.Header.Set("DNT", "1")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	output := buf.String()
+	if strings.Contains(output, "10.20.30.40") {
+		t.Errorf("expected DNT:1 to trigger anonymization but found real IP in log: %s", output)
+	}
+	if !strings.Contains(output, "10.20.30.0") {
+		t.Errorf("expected anonymized IP 10.20.30.0 when DNT=1, got: %s", output)
+	}
+}
+
 // Helper functions and types
 
 func newTestLogger(w io.Writer) *slog.Logger {
 	return obs.NewLogger("production", "info", w)
+}
+
+// newTestLoggingConfig creates a LoggingConfig with the given logger and sensible test defaults.
+func newTestLoggingConfig(logger *slog.Logger) LoggingConfig {
+	return LoggingConfig{
+		Logger:          logger,
+		LogHTTPRequests: true,
+		LogPingRequests: true,
+		AnonymizeIP:     false,
+	}
 }
 
 func newTestMetrics() *obs.Metrics {

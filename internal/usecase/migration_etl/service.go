@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -250,12 +250,12 @@ func (s *ETLService) runPipeline(jobID, adminUserID string) {
 
 	job, err := s.repo.GetByID(ctx, jobID)
 	if err != nil {
-		log.Printf("migration pipeline: failed to load job %s: %v", jobID, err)
+		slog.Info(fmt.Sprintf("migration pipeline: failed to load job %s: %v", jobID, err))
 		return
 	}
 
 	if !job.CanTransition(domain.MigrationStatusRunning) {
-		log.Printf("migration pipeline: job %s cannot transition to running from %s", jobID, job.Status)
+		slog.Info(fmt.Sprintf("migration pipeline: job %s cannot transition to running from %s", jobID, job.Status))
 		return
 	}
 
@@ -263,7 +263,7 @@ func (s *ETLService) runPipeline(jobID, adminUserID string) {
 	job.Status = domain.MigrationStatusRunning
 	job.StartedAt = &now
 	if err := s.repo.Update(ctx, job); err != nil {
-		log.Printf("migration pipeline: failed to update job %s to running: %v", jobID, err)
+		slog.Info(fmt.Sprintf("migration pipeline: failed to update job %s to running: %v", jobID, err))
 		return
 	}
 
@@ -303,11 +303,11 @@ func (s *ETLService) runPipeline(jobID, adminUserID string) {
 
 	job.Status = domain.MigrationStatusCompleted
 	if err := job.SetStats(stats); err != nil {
-		log.Printf("migration pipeline: failed to set stats for job %s: %v", jobID, err)
+		slog.Info(fmt.Sprintf("migration pipeline: failed to set stats for job %s: %v", jobID, err))
 	}
 
 	if err := s.repo.Update(ctx, job); err != nil {
-		log.Printf("migration pipeline: failed to update job %s to completed: %v", jobID, err)
+		slog.Info(fmt.Sprintf("migration pipeline: failed to update job %s to completed: %v", jobID, err))
 	}
 }
 
@@ -316,12 +316,12 @@ func (s *ETLService) runDryRunPipeline(jobID string) {
 
 	job, err := s.repo.GetByID(ctx, jobID)
 	if err != nil {
-		log.Printf("dry-run pipeline: failed to load job %s: %v", jobID, err)
+		slog.Info(fmt.Sprintf("dry-run pipeline: failed to load job %s: %v", jobID, err))
 		return
 	}
 
 	if !job.CanTransition(domain.MigrationStatusDryRun) {
-		log.Printf("dry-run pipeline: job %s cannot transition to dry_run from %s", jobID, job.Status)
+		slog.Info(fmt.Sprintf("dry-run pipeline: job %s cannot transition to dry_run from %s", jobID, job.Status))
 		return
 	}
 
@@ -329,7 +329,7 @@ func (s *ETLService) runDryRunPipeline(jobID string) {
 	job.Status = domain.MigrationStatusDryRun
 	job.StartedAt = &now
 	if err := s.repo.Update(ctx, job); err != nil {
-		log.Printf("dry-run pipeline: failed to update job %s to dry_run: %v", jobID, err)
+		slog.Info(fmt.Sprintf("dry-run pipeline: failed to update job %s to dry_run: %v", jobID, err))
 		return
 	}
 
@@ -341,11 +341,11 @@ func (s *ETLService) runDryRunPipeline(jobID string) {
 	job.CompletedAt = &completedAt
 
 	if err := job.SetStats(stats); err != nil {
-		log.Printf("dry-run pipeline: failed to set stats for job %s: %v", jobID, err)
+		slog.Info(fmt.Sprintf("dry-run pipeline: failed to set stats for job %s: %v", jobID, err))
 	}
 
 	if err := s.repo.Update(ctx, job); err != nil {
-		log.Printf("dry-run pipeline: failed to update job %s to completed: %v", jobID, err)
+		slog.Info(fmt.Sprintf("dry-run pipeline: failed to update job %s to completed: %v", jobID, err))
 	}
 }
 
@@ -355,7 +355,7 @@ func (s *ETLService) failJob(ctx context.Context, job *domain.MigrationJob, errM
 	now := time.Now()
 	job.CompletedAt = &now
 	if err := s.repo.Update(ctx, job); err != nil {
-		log.Printf("migration pipeline: failed to mark job %s as failed: %v", job.ID, err)
+		slog.Info(fmt.Sprintf("migration pipeline: failed to mark job %s as failed: %v", job.ID, err))
 	}
 }
 
@@ -375,7 +375,7 @@ type ptUser struct {
 }
 
 func (s *ETLService) extractUsers(ctx context.Context, sourceDB *sqlx.DB, job *domain.MigrationJob, stats *domain.MigrationStats, ids *idMap) {
-	log.Printf("migration %s: extracting users from %s", job.ID, job.SourceHost)
+	slog.Info(fmt.Sprintf("migration %s: extracting users from %s", job.ID, job.SourceHost))
 
 	const query = `
 		SELECT u.id, u.username, u.email, u.role, u.blocked,
@@ -429,7 +429,7 @@ type ptChannel struct {
 }
 
 func (s *ETLService) extractChannels(ctx context.Context, sourceDB *sqlx.DB, job *domain.MigrationJob, stats *domain.MigrationStats, ids *idMap, channelOwners map[int]*channelOwner) {
-	log.Printf("migration %s: extracting channels from %s", job.ID, job.SourceHost)
+	slog.Info(fmt.Sprintf("migration %s: extracting channels from %s", job.ID, job.SourceHost))
 
 	const query = `
 		SELECT vc.id, vc.name, vc.description, vc.support,
@@ -530,7 +530,7 @@ type ptVideo struct {
 }
 
 func (s *ETLService) extractVideos(ctx context.Context, sourceDB *sqlx.DB, job *domain.MigrationJob, stats *domain.MigrationStats, ids *idMap, channelOwners map[int]*channelOwner) {
-	log.Printf("migration %s: extracting videos from %s", job.ID, job.SourceHost)
+	slog.Info(fmt.Sprintf("migration %s: extracting videos from %s", job.ID, job.SourceHost))
 
 	const query = `
 		SELECT v.id, v.uuid, v.name, COALESCE(v.description, '') AS description,
@@ -595,7 +595,7 @@ func (s *ETLService) extractVideos(ctx context.Context, sourceDB *sqlx.DB, job *
 			}
 			return
 		} else {
-			log.Printf("migration %s: batch video insert failed, falling back to individual inserts: %v", job.ID, batchErr)
+			slog.Info(fmt.Sprintf("migration %s: batch video insert failed, falling back to individual inserts: %v", job.ID, batchErr))
 		}
 	}
 
@@ -623,7 +623,7 @@ type ptComment struct {
 }
 
 func (s *ETLService) extractComments(ctx context.Context, sourceDB *sqlx.DB, job *domain.MigrationJob, stats *domain.MigrationStats, ids *idMap) {
-	log.Printf("migration %s: extracting comments from %s", job.ID, job.SourceHost)
+	slog.Info(fmt.Sprintf("migration %s: extracting comments from %s", job.ID, job.SourceHost))
 
 	const query = `
 		SELECT vc.id, vc.text,
@@ -734,7 +734,7 @@ type ptPlaylistElement struct {
 }
 
 func (s *ETLService) extractPlaylists(ctx context.Context, sourceDB *sqlx.DB, job *domain.MigrationJob, stats *domain.MigrationStats, ids *idMap) {
-	log.Printf("migration %s: extracting playlists from %s", job.ID, job.SourceHost)
+	slog.Info(fmt.Sprintf("migration %s: extracting playlists from %s", job.ID, job.SourceHost))
 
 	// Resolve account → user map for playlist ownership.
 	type accountUser struct {
@@ -822,13 +822,13 @@ func (s *ETLService) extractPlaylists(ctx context.Context, sourceDB *sqlx.DB, jo
 		for _, elem := range elemsByPlaylist[p.ID] {
 			videoID, ok := ids.videos[elem.VideoID]
 			if !ok {
-				log.Printf("migration %s: playlist item skipped — video %d not migrated", job.ID, elem.VideoID)
+				slog.Info(fmt.Sprintf("migration %s: playlist item skipped — video %d not migrated", job.ID, elem.VideoID))
 				continue
 			}
 			videoUUID, _ := uuid.Parse(videoID)
 			pos := elem.Position
 			if err := s.playlistRepo.AddItem(ctx, playlist.ID, videoUUID, &pos); err != nil {
-				log.Printf("migration %s: failed to add item to playlist %s: %v", job.ID, playlist.ID, err)
+				slog.Info(fmt.Sprintf("migration %s: failed to add item to playlist %s: %v", job.ID, playlist.ID, err))
 			}
 		}
 
@@ -845,7 +845,7 @@ type ptCaption struct {
 }
 
 func (s *ETLService) extractCaptions(ctx context.Context, sourceDB *sqlx.DB, job *domain.MigrationJob, stats *domain.MigrationStats, ids *idMap) {
-	log.Printf("migration %s: extracting captions from %s", job.ID, job.SourceHost)
+	slog.Info(fmt.Sprintf("migration %s: extracting captions from %s", job.ID, job.SourceHost))
 
 	const query = `
 		SELECT id, "videoId" AS video_id, language, COALESCE(filename, '') AS filename
@@ -888,12 +888,12 @@ func (s *ETLService) extractCaptions(ctx context.Context, sourceDB *sqlx.DB, job
 }
 
 func (s *ETLService) extractMedia(_ context.Context, job *domain.MigrationJob, stats *domain.MigrationStats) {
-	log.Printf("migration %s: media transfer skipped (requires filesystem access)", job.ID)
+	slog.Info(fmt.Sprintf("migration %s: media transfer skipped (requires filesystem access)", job.ID))
 	stats.Media.Skipped = stats.Videos.Migrated
 }
 
 func (s *ETLService) validateMigration(_ context.Context, job *domain.MigrationJob, stats *domain.MigrationStats) {
-	log.Printf("migration %s: validating — users=%d/%d channels=%d/%d videos=%d/%d comments=%d/%d playlists=%d/%d captions=%d/%d",
+	slog.Info(fmt.Sprintf("migration %s: validating — users=%d/%d channels=%d/%d videos=%d/%d comments=%d/%d playlists=%d/%d captions=%d/%d",
 		job.ID,
 		stats.Users.Migrated, stats.Users.Total,
 		stats.Channels.Migrated, stats.Channels.Total,
@@ -901,11 +901,11 @@ func (s *ETLService) validateMigration(_ context.Context, job *domain.MigrationJ
 		stats.Comments.Migrated, stats.Comments.Total,
 		stats.Playlists.Migrated, stats.Playlists.Total,
 		stats.Captions.Migrated, stats.Captions.Total,
-	)
+	))
 }
 
 func (s *ETLService) dryRunExtract(ctx context.Context, job *domain.MigrationJob, stats *domain.MigrationStats) {
-	log.Printf("migration %s: dry-run counting source entities from %s", job.ID, job.SourceHost)
+	slog.Info(fmt.Sprintf("migration %s: dry-run counting source entities from %s", job.ID, job.SourceHost))
 
 	sourceDB, err := connectSourceDB(job)
 	if err != nil {
