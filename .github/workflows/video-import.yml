@@ -44,7 +44,7 @@ jobs:
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
         with:
-          go-version: '1.25.8'
+          go-version: '1.25.9'
           cache-dependency-path: go.sum
 
       - name: Run domain tests
@@ -118,7 +118,7 @@ jobs:
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
         with:
-          go-version: '1.25.8'
+          go-version: '1.25.9'
           cache-dependency-path: go.sum
 
       - name: Install Goose
@@ -159,7 +159,7 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
 
     container:
-      image: golang:1.25.8
+      image: golang:1.25.9
       options: --user root
 
     steps:
@@ -172,7 +172,7 @@ jobs:
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
         with:
-          go-version: '1.25.8'
+          go-version: '1.25.9'
           cache-dependency-path: go.sum
 
       - name: Run domain tests with race detection
@@ -206,7 +206,7 @@ jobs:
       - name: Set up Go (cached)
         uses: ./.github/actions/setup-go-cached
         with:
-          go-version: '1.25.8'
+          go-version: '1.25.9'
           cache-dependency-path: go.sum
 
       - name: Build

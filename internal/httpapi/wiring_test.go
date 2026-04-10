@@ -1,8 +1,8 @@
 package httpapi
 
 import (
-	"log/slog"
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"

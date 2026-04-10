@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.25.8'
+  GO_VERSION: '1.25.9'
   POSTGRES_VERSION: '15'
 
 concurrency:
@@ -73,6 +73,9 @@ jobs:
           command: 'go install github.com/pressly/goose/v3/cmd/goose@latest'
           max_attempts: '5'
           description: 'Installing Goose migration tool'
+
+      - name: Add Go bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Verify Goose installation
         run: goose -version

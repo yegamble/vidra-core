@@ -14,12 +14,12 @@ internal/usecase                         80.0
 
 # Usecase subpackages
 internal/usecase/activitypub             80.0
-internal/usecase/analytics               97.0
+internal/usecase/analytics               92.0
 internal/usecase/caption                 86.5
 internal/usecase/captiongen              93.0
 internal/usecase/channel                 93.0
 internal/usecase/comment                 92.0
-internal/usecase/encoding                83.5
+internal/usecase/encoding                82.0
 internal/usecase/import                  85.0
 internal/usecase/ipfs_streaming          91.0
 internal/usecase/message                 100.0

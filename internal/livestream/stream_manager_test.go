@@ -1,8 +1,8 @@
 package livestream
 
 import (
-	"log/slog"
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"

@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: "1.25.8"
+  GO_VERSION: "1.25.9"
   GOPROXY: "https://proxy.golang.org,direct"  # Official Go proxy with direct fallback
   # Runner configuration: uses ubuntu-latest by default, falls back to self-hosted via vars.RUNNER
   DEFAULT_RUNNER: "ubuntu-latest"

@@ -98,8 +98,8 @@ func (h *ConfigResetHandlers) UpdateCustomConfig(w http.ResponseWriter, r *http.
 	if h.auditLogger != nil {
 		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		h.auditLogger.Update("config", userID, obs.NewConfigAuditView(map[string]interface{}{
-			"instance-name":    req.Instance.Name,
-			"signup":           req.Signup.Enabled,
+			"instance-name": req.Instance.Name,
+			"signup":        req.Signup.Enabled,
 		}), obs.NewConfigAuditView(map[string]interface{}{}))
 	}
 

@@ -5,7 +5,7 @@ inputs:
   go-version:
     description: 'Go version to use'
     required: false
-    default: '1.25.8'
+    default: '1.25.9'
   cache-dependency-path:
     description: 'Path to go.sum for cache key'
     required: false

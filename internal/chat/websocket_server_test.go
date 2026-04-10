@@ -1,8 +1,8 @@
 package chat
 
 import (
-	"log/slog"
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
