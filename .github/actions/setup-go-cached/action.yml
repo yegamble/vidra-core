@@ -14,6 +14,10 @@ inputs:
     description: 'Fallback GOPROXY to use if not already set (empty to skip)'
     required: false
     default: 'https://goproxy.io,direct'
+  clean-modcache:
+    description: 'Set to true to force a module cache cleanup before downloading modules'
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -238,7 +242,7 @@ runs:
     # Clean potentially corrupted module cache to avoid ziphash errors
     # Skipped under act — wiping the cache defeats local caching and forces full re-download
     - name: Clean Go module cache
-      if: ${{ env.ACT != 'true' }}
+      if: ${{ env.ACT != 'true' && inputs.clean-modcache == 'true' }}
       shell: bash
       run: |
         set -euo pipefail

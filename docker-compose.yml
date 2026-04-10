@@ -399,7 +399,7 @@ services:
 
   app-test:
     profiles: ["test"]
-    image: vidra:latest
+    image: ${VIDRA_IMAGE:-vidra:latest}
     build: .
     depends_on:
       postgres-test:
@@ -524,6 +524,8 @@ services:
     profiles: ["ci"]
     image: clamav/clamav:stable
     platform: linux/amd64
+    volumes:
+      - clamav-ci-signatures:/var/lib/clamav
     ports:
       - "3310:3310"
     healthcheck:
@@ -739,6 +741,8 @@ volumes:
   iota_data:
     driver: local
   clamav_signatures:
+    driver: local
+  clamav-ci-signatures:
     driver: local
   clamav-test-signatures:
     driver: local

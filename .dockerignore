@@ -3,11 +3,19 @@ bin/
 coverage*
 *.out
 *.html
+dist/
 
 # Git repository
 .git
 .gitignore
 .gitattributes
+
+# Local agent/editor state
+.agents/
+.claude/
+.codegraph/
+.jules/
+.worktrees/
 
 # IDE and editor folders
 .idea/
@@ -31,6 +39,17 @@ docker-compose.test.yml
 # Build cache and modules (let Docker handle these)
 .cache/
 vendor/
+
+# CI/CD, infra, and docs (not needed to build the server binary)
+.github/
+api/
+docker/
+k8s/
+migrations_atlas_backup/
+postman/
+terraform/
+tests/
+testdata/
 
 # Documentation files (not needed in runtime image)
 README.md

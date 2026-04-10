@@ -65,14 +65,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Go (cached)
+        uses: ./.github/actions/setup-go-cached
         with:
           go-version: '1.25.9'
-          cache: true
+          cache-dependency-path: go.sum
 
-      - name: Install Newman
-        run: npm install -g newman newman-reporter-htmlextra
+      - name: Set up Node.js with Newman
+        uses: ./.github/actions/setup-node-tools
+        with:
+          node-version: '20'
+          packages: 'newman newman-reporter-htmlextra'
+          cache-key-suffix: 'registration-api'
 
       - name: Run database migrations
         run: |

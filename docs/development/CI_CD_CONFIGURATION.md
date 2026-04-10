@@ -98,6 +98,21 @@ volumes:
 
 ## Workflow Structure
 
+### Image Reuse and Cache Strategy
+
+The heavy API workflows now pre-build the Vidra application image with Docker Buildx
+and reuse a shared GitHub Actions cache scope across runs. This keeps smoke and E2E
+jobs from rebuilding the full app image from scratch on every run.
+
+Key points:
+
+- `Dockerfile` copies only the server build inputs needed for `./cmd/server`
+- Smoke and E2E workflows build a tagged local image first, then let Compose reuse it
+- Buildx uses `cache-from/cache-to` with a shared scope so separate workflows can
+  reuse the same image layers
+- Cleanup steps avoid deleting named volumes so ClamAV signature caches can persist
+  on self-hosted runners
+
 ### Test Suite Workflow (.github/workflows/test.yml)
 
 **Jobs:**

@@ -116,7 +116,7 @@ jobs:
         with:
           version: latest
           args: --timeout=10m
-          skip-cache: true  # We manage cache ourselves
+          skip-cache: false
 
       - name: Run golangci-lint (act local)
         if: ${{ env.ACT == 'true' }}
@@ -197,7 +197,7 @@ jobs:
       - name: Cleanup services
         if: always()
         run: |
-          docker compose --profile ci down -v
+          docker compose --profile ci down --remove-orphans
           docker compose --profile ci ps
 
   # ============================================================================
@@ -319,5 +319,5 @@ jobs:
       - name: Cleanup services
         if: always()
         run: |
-          docker compose --profile ci down -v
+          docker compose --profile ci down --remove-orphans
           docker compose --profile ci ps

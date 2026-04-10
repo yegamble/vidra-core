@@ -67,8 +67,8 @@ services:
     image: clamav/clamav:latest
     ports:
       - "3311:3310"
-    tmpfs:
-      - /var/lib/clamav
+    volumes:
+      - clamav-e2e-signatures:/var/lib/clamav
     healthcheck:
       test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
       interval: 30s
@@ -78,6 +78,7 @@ services:
 
   # Vidra Core API Server (test instance)
   vidra-api-e2e:
+    image: ${VIDRA_IMAGE:-vidra-e2e:latest}
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -145,3 +146,5 @@ services:
 
 networks:
   default:
+volumes:
+  clamav-e2e-signatures:

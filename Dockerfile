@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # Build stage
 FROM golang:1.25-bookworm AS builder
 
@@ -12,15 +14,24 @@ ENV GOSUMDB=sum.golang.org
 
 # Copy go mod files
 COPY go.mod go.sum ./
-RUN go mod download && go mod verify
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download && go mod verify
 
-# Copy source code (cache bust: 2025-08-31-11:50)
-COPY . .
+# Copy only the build inputs needed for the server binary so unrelated repo
+# changes do not invalidate the Docker build cache.
+COPY migrationfs.go ./
+COPY cmd ./cmd
+COPY internal ./internal
+COPY migrations ./migrations
+COPY nginx ./nginx
+COPY pkg ./pkg
 
 # Verify modules and build
 ARG VERSION=dev
 ARG BUILD_TIME
-RUN : "${BUILD_TIME:=$(date -u +%Y%m%d.%H%M%S)}" && \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    : "${BUILD_TIME:=$(date -u +%Y%m%d.%H%M%S)}" && \
     # Ensure we're in modules mode and verify the module \
     export GO111MODULE=on && \
     go env GO111MODULE && \
