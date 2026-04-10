@@ -670,7 +670,7 @@ func registerVideoAPIRoutes(
 		r.Get("/batch/{batchId}", video.GetBatchStatusHandler(deps.UploadService))
 		r.Route("/{sessionId}", func(r chi.Router) {
 			r.Post("/chunks", video.UploadChunkHandler(deps.UploadService, cfg))
-			r.Post("/complete", video.CompleteUploadHandler(deps.UploadService, deps.EncodingRepo))
+			r.Post("/complete", video.CompleteUploadHandler(deps.UploadService, deps.EncodingRepo, deps.VideoRepo))
 			r.Get("/status", video.GetUploadStatusHandler(deps.UploadService))
 			r.Get("/resume", video.ResumeUploadHandler(deps.UploadService))
 		})

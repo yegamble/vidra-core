@@ -135,7 +135,7 @@ func UploadChunkHandler(uploadService usecase.UploadService, cfg *config.Config)
 	}
 }
 
-func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo usecase.EncodingRepository) http.HandlerFunc {
+func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo usecase.EncodingRepository, videoRepo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := chi.URLParam(r, "sessionId")
 		if sessionID == "" {
@@ -147,7 +147,57 @@ func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo use
 			return
 		}
 
+		// Get session before completing — need the video ID for response and metadata update
 		ctx := r.Context()
+		session, err := uploadService.GetUploadStatus(ctx, sessionID)
+		if err != nil {
+			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("SESSION_NOT_FOUND", "Upload session not found"))
+			return
+		}
+
+		// Parse and apply metadata from request body (title, description, privacy, etc.)
+		var meta struct {
+			Title          string   `json:"title"`
+			Description    string   `json:"description"`
+			Privacy        string   `json:"privacy"`
+			ChannelID      string   `json:"channelId"`
+			CategoryID     string   `json:"category_id"`
+			Tags           []string `json:"tags"`
+			Language       string   `json:"language"`
+			NSFW           bool     `json:"nsfw"`
+			CommentsEnabled *bool   `json:"commentsEnabled"`
+			ScheduledUpdate string  `json:"scheduledUpdate"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&meta) // best-effort — metadata is optional
+
+		if meta.Title != "" || meta.Description != "" || meta.Privacy != "" {
+			video, vErr := videoRepo.GetByID(ctx, session.VideoID)
+			if vErr == nil {
+				if meta.Title != "" {
+					video.Title = meta.Title
+				}
+				if meta.Description != "" {
+					video.Description = meta.Description
+				}
+				if meta.Privacy != "" {
+					video.Privacy = domain.Privacy(meta.Privacy)
+				}
+				if meta.ChannelID != "" {
+					if channelUUID, pErr := uuid.Parse(meta.ChannelID); pErr == nil {
+						video.ChannelID = channelUUID
+					}
+				}
+				if meta.Language != "" {
+					video.Language = meta.Language
+				}
+				if meta.Tags != nil {
+					video.Tags = meta.Tags
+				}
+				video.UpdatedAt = time.Now()
+				_ = videoRepo.Update(ctx, video) // best-effort — complete should still succeed
+			}
+		}
+
 		if err := uploadService.CompleteUpload(ctx, sessionID); err != nil {
 			var domainErr domain.DomainError
 			if errors.As(err, &domainErr) {
@@ -159,6 +209,7 @@ func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo use
 		}
 
 		resp := map[string]interface{}{
+			"video_id":   session.VideoID,
 			"session_id": sessionID,
 			"status":     "completed",
 			"message":    "Upload completed, processing queued",
