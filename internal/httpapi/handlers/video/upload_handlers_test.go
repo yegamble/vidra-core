@@ -188,6 +188,24 @@ func TestUploadChunkHandler(t *testing.T) {
 	assert.Len(t, chunkResponse.RemainingChunks, response.TotalChunks-1)
 }
 
+func TestUploadChunkHandler_RejectsMultipartContentType(t *testing.T) {
+	// Unit test — no DB needed. The Content-Type guard fires before any service call.
+	httpReq := httptest.NewRequest("POST", "/api/v1/uploads/some-session/chunks", bytes.NewReader([]byte("data")))
+	httpReq.Header.Set("Content-Type", "multipart/form-data; boundary=----WebKitFormBoundary")
+	httpReq.Header.Set("X-Chunk-Index", "0")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "00000000-0000-0000-0000-000000000001")
+	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handler := UploadChunkHandler(nil, createTestConfig()) // nil service — guard fires before service call
+	handler(w, httpReq)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "INVALID_CONTENT_TYPE")
+}
+
 func TestUploadChunkHandler_InvalidChecksum(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")

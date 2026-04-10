@@ -70,6 +70,14 @@ func UploadChunkHandler(uploadService usecase.UploadService, cfg *config.Config)
 			return
 		}
 
+		// Reject multipart/form-data — chunks must be sent as raw binary (application/octet-stream).
+		// Multipart encoding corrupts chunk data with boundary framing, producing invalid video files.
+		if ct := r.Header.Get("Content-Type"); strings.HasPrefix(ct, "multipart/") {
+			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_CONTENT_TYPE",
+				"Chunks must be sent as raw binary (application/octet-stream), not multipart/form-data"))
+			return
+		}
+
 		chunkIndex, err := strconv.Atoi(r.Header.Get("X-Chunk-Index"))
 		if err != nil {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_CHUNK_INDEX", "Invalid chunk index"))
