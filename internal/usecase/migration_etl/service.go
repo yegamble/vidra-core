@@ -41,13 +41,14 @@ type channelOwner struct {
 
 // ETLService handles PeerTube instance migration operations.
 type ETLService struct {
-	repo         port.MigrationJobRepository
-	userRepo     port.UserRepository
-	channelRepo  port.ChannelRepository
-	commentRepo  port.CommentRepository
-	playlistRepo port.PlaylistRepository
-	captionRepo  port.CaptionRepository
-	videoRepo    port.VideoRepository
+	repo          port.MigrationJobRepository
+	userRepo      port.UserRepository
+	channelRepo   port.ChannelRepository
+	commentRepo   port.CommentRepository
+	playlistRepo  port.PlaylistRepository
+	captionRepo   port.CaptionRepository
+	videoRepo     port.VideoRepository
+	idMappingRepo port.IDMappingRepository
 }
 
 // NewETLService creates a new ETLService with all target repositories.
@@ -59,15 +60,17 @@ func NewETLService(
 	playlistRepo port.PlaylistRepository,
 	captionRepo port.CaptionRepository,
 	videoRepo port.VideoRepository,
+	idMappingRepo port.IDMappingRepository,
 ) *ETLService {
 	return &ETLService{
-		repo:         repo,
-		userRepo:     userRepo,
-		channelRepo:  channelRepo,
-		commentRepo:  commentRepo,
-		playlistRepo: playlistRepo,
-		captionRepo:  captionRepo,
-		videoRepo:    videoRepo,
+		repo:          repo,
+		userRepo:      userRepo,
+		channelRepo:   channelRepo,
+		commentRepo:   commentRepo,
+		playlistRepo:  playlistRepo,
+		captionRepo:   captionRepo,
+		videoRepo:     videoRepo,
+		idMappingRepo: idMappingRepo,
 	}
 }
 
@@ -241,11 +244,167 @@ func (s *ETLService) DryRun(ctx context.Context, adminUserID string, req *domain
 	return job, nil
 }
 
+// ResumeMigration resumes a failed migration from its last completed checkpoint.
+func (s *ETLService) ResumeMigration(ctx context.Context, jobID string) (*domain.MigrationJob, error) {
+	job, err := s.repo.GetByID(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("getting migration job for resume: %w", err)
+	}
+
+	if job.Status != domain.MigrationStatusFailed {
+		return nil, domain.ErrMigrationCantResume
+	}
+
+	if !job.CanTransition(domain.MigrationStatusResuming) {
+		return nil, domain.ErrMigrationCantResume
+	}
+
+	job.Status = domain.MigrationStatusResuming
+	job.ErrorMessage = nil
+	if err := s.repo.Update(ctx, job); err != nil {
+		return nil, fmt.Errorf("updating job to resuming: %w", err)
+	}
+
+	go s.runResumePipeline(job.ID, job.AdminUserID)
+
+	return job, nil
+}
+
+// rebuildIDMap reconstructs the in-memory ID map from persisted DB mappings.
+func (s *ETLService) rebuildIDMap(ctx context.Context, jobID string) (*idMap, error) {
+	mappings, err := s.idMappingRepo.ListByJobID(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("loading id mappings for rebuild: %w", err)
+	}
+
+	ids := newIDMap()
+	for _, m := range mappings {
+		switch m.EntityType {
+		case "user":
+			ids.users[m.PeertubeID] = m.VidraID
+		case "channel":
+			parsed, parseErr := uuid.Parse(m.VidraID)
+			if parseErr == nil {
+				ids.channels[m.PeertubeID] = parsed
+			}
+		case "video":
+			ids.videos[m.PeertubeID] = m.VidraID
+		case "comment":
+			parsed, parseErr := uuid.Parse(m.VidraID)
+			if parseErr == nil {
+				ids.comments[m.PeertubeID] = parsed
+			}
+		}
+	}
+	return ids, nil
+}
+
+// runResumePipeline continues a failed pipeline from the last checkpoint.
+func (s *ETLService) runResumePipeline(jobID, adminUserID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Info(fmt.Sprintf("migration resume pipeline: recovered panic in job %s: %v", jobID, r))
+		}
+	}()
+
+	ctx := context.Background()
+
+	job, err := s.repo.GetByID(ctx, jobID)
+	if err != nil {
+		slog.Info(fmt.Sprintf("resume pipeline: failed to load job %s: %v", jobID, err))
+		return
+	}
+
+	job.Status = domain.MigrationStatusRunning
+	if err := s.repo.Update(ctx, job); err != nil {
+		slog.Info(fmt.Sprintf("resume pipeline: failed to update job %s to running: %v", jobID, err))
+		return
+	}
+
+	sourceDB, err := connectSourceDB(job)
+	if err != nil {
+		s.failJob(ctx, job, fmt.Sprintf("source db connection failed on resume: %v", err))
+		return
+	}
+	defer sourceDB.Close()
+
+	// Load completed phases
+	completedPhases, err := s.idMappingRepo.GetCompletedPhases(ctx, jobID)
+	if err != nil {
+		s.failJob(ctx, job, fmt.Sprintf("failed to load checkpoints: %v", err))
+		return
+	}
+	completed := make(map[string]bool)
+	for _, phase := range completedPhases {
+		completed[phase] = true
+	}
+
+	// Rebuild in-memory ID map from persisted mappings
+	ids, err := s.rebuildIDMap(ctx, jobID)
+	if err != nil {
+		s.failJob(ctx, job, fmt.Sprintf("failed to rebuild id map: %v", err))
+		return
+	}
+
+	stats, _ := job.GetStats()
+	if stats == nil {
+		stats = &domain.MigrationStats{}
+	}
+
+	channelOwners := make(map[int]*channelOwner)
+
+	// Run only phases that haven't completed
+	if !completed["users"] {
+		s.extractUsers(ctx, sourceDB, job, stats, ids)
+		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "users")
+	}
+	if !completed["channels"] {
+		s.extractChannels(ctx, sourceDB, job, stats, ids, channelOwners)
+		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "channels")
+	}
+	if !completed["videos"] {
+		s.extractVideos(ctx, sourceDB, job, stats, ids, channelOwners)
+		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "videos")
+	}
+	if !completed["comments"] {
+		s.extractComments(ctx, sourceDB, job, stats, ids)
+		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "comments")
+	}
+	if !completed["playlists"] {
+		s.extractPlaylists(ctx, sourceDB, job, stats, ids)
+		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "playlists")
+	}
+	if !completed["captions"] {
+		s.extractCaptions(ctx, sourceDB, job, stats, ids)
+		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "captions")
+	}
+
+	s.extractMedia(ctx, job, stats)
+	s.validateMigration(ctx, job, stats)
+
+	completedAt := time.Now()
+	job.CompletedAt = &completedAt
+	job.Status = domain.MigrationStatusCompleted
+
+	if err := job.SetStats(stats); err != nil {
+		slog.Info(fmt.Sprintf("resume pipeline: failed to set stats for job %s: %v", jobID, err))
+	}
+	if err := s.repo.Update(ctx, job); err != nil {
+		slog.Info(fmt.Sprintf("resume pipeline: failed to update job %s to completed: %v", jobID, err))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Pipeline orchestration
 // ---------------------------------------------------------------------------
 
 func (s *ETLService) runPipeline(jobID, adminUserID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Info(fmt.Sprintf("migration pipeline: recovered panic in job %s: %v", jobID, r))
+		}
+	}()
+
 	ctx := context.Background()
 
 	job, err := s.repo.GetByID(ctx, jobID)
@@ -281,11 +440,17 @@ func (s *ETLService) runPipeline(jobID, adminUserID string) {
 	channelOwners := make(map[int]*channelOwner)
 
 	s.extractUsers(ctx, sourceDB, job, stats, ids)
+	s.saveCheckpoint(ctx, jobID, "users")
 	s.extractChannels(ctx, sourceDB, job, stats, ids, channelOwners)
+	s.saveCheckpoint(ctx, jobID, "channels")
 	s.extractVideos(ctx, sourceDB, job, stats, ids, channelOwners)
+	s.saveCheckpoint(ctx, jobID, "videos")
 	s.extractComments(ctx, sourceDB, job, stats, ids)
+	s.saveCheckpoint(ctx, jobID, "comments")
 	s.extractPlaylists(ctx, sourceDB, job, stats, ids)
+	s.saveCheckpoint(ctx, jobID, "playlists")
 	s.extractCaptions(ctx, sourceDB, job, stats, ids)
+	s.saveCheckpoint(ctx, jobID, "captions")
 	s.extractMedia(ctx, job, stats)
 	s.validateMigration(ctx, job, stats)
 
@@ -312,6 +477,12 @@ func (s *ETLService) runPipeline(jobID, adminUserID string) {
 }
 
 func (s *ETLService) runDryRunPipeline(jobID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Info(fmt.Sprintf("dry-run pipeline: recovered panic in job %s: %v", jobID, r))
+		}
+	}()
+
 	ctx := context.Background()
 
 	job, err := s.repo.GetByID(ctx, jobID)
@@ -413,6 +584,7 @@ func (s *ETLService) extractUsers(ctx context.Context, sourceDB *sqlx.DB, job *d
 		}
 
 		ids.users[r.ID] = user.ID
+		s.persistIDMapping(ctx, job.ID, "user", r.ID, user.ID)
 		stats.Users.Migrated++
 	}
 }
@@ -509,6 +681,7 @@ func (s *ETLService) extractChannels(ctx context.Context, sourceDB *sqlx.DB, job
 		}
 
 		ids.channels[r.ID] = chID
+		s.persistIDMapping(ctx, job.ID, "channel", r.ID, chID.String())
 		channelOwners[r.ID] = &channelOwner{userID: ownerID, channelID: chID}
 		stats.Channels.Migrated++
 	}
@@ -591,6 +764,7 @@ func (s *ETLService) extractVideos(ctx context.Context, sourceDB *sqlx.DB, job *
 		if batchErr := batcher.CreateBatch(ctx, batch); batchErr == nil {
 			for _, vws := range validVideos {
 				ids.videos[vws.sourceID] = vws.video.ID
+				s.persistIDMapping(ctx, job.ID, "video", vws.sourceID, vws.video.ID)
 				stats.Videos.Migrated++
 			}
 			return
@@ -607,6 +781,7 @@ func (s *ETLService) extractVideos(ctx context.Context, sourceDB *sqlx.DB, job *
 			continue
 		}
 		ids.videos[vws.sourceID] = vws.video.ID
+		s.persistIDMapping(ctx, job.ID, "video", vws.sourceID, vws.video.ID)
 		stats.Videos.Migrated++
 	}
 }
@@ -699,6 +874,7 @@ func (s *ETLService) extractComments(ctx context.Context, sourceDB *sqlx.DB, job
 		}
 
 		ids.comments[r.ID] = comment.ID
+		s.persistIDMapping(ctx, job.ID, "comment", r.ID, comment.ID.String())
 		stats.Comments.Migrated++
 	}
 
@@ -832,6 +1008,7 @@ func (s *ETLService) extractPlaylists(ctx context.Context, sourceDB *sqlx.DB, jo
 			}
 		}
 
+		s.persistIDMapping(ctx, job.ID, "playlist", p.ID, playlist.ID.String())
 		stats.Playlists.Migrated++
 	}
 }
@@ -883,7 +1060,34 @@ func (s *ETLService) extractCaptions(ctx context.Context, sourceDB *sqlx.DB, job
 			stats.Captions.Errors = append(stats.Captions.Errors, fmt.Sprintf("caption %d: %v", r.ID, err))
 			continue
 		}
+		s.persistIDMapping(ctx, job.ID, "caption", r.ID, caption.ID.String())
 		stats.Captions.Migrated++
+	}
+}
+
+// persistIDMapping writes a PeerTube→Vidra ID mapping to the database (best-effort).
+func (s *ETLService) persistIDMapping(ctx context.Context, jobID, entityType string, peertubeID int, vidraID string) {
+	if s.idMappingRepo == nil {
+		return
+	}
+	mapping := &domain.MigrationIDMapping{
+		JobID:      jobID,
+		EntityType: entityType,
+		PeertubeID: peertubeID,
+		VidraID:    vidraID,
+	}
+	if err := s.idMappingRepo.Upsert(ctx, mapping); err != nil {
+		slog.Info(fmt.Sprintf("migration: failed to persist id mapping %s/%d→%s: %v", entityType, peertubeID, vidraID, err))
+	}
+}
+
+// saveCheckpoint records that an ETL phase completed (best-effort).
+func (s *ETLService) saveCheckpoint(ctx context.Context, jobID, entityType string) {
+	if s.idMappingRepo == nil {
+		return
+	}
+	if err := s.idMappingRepo.UpsertCheckpoint(ctx, jobID, entityType); err != nil {
+		slog.Info(fmt.Sprintf("migration: failed to save checkpoint %s/%s: %v", jobID, entityType, err))
 	}
 }
 

@@ -98,6 +98,73 @@ func (m *mockMigrationRepo) GetRunning(ctx context.Context) (*domain.MigrationJo
 	return cloneMigrationJob(m.running), nil
 }
 
+// mockIDMappingRepo is a test double for port.IDMappingRepository
+type mockIDMappingRepo struct {
+	mu          sync.RWMutex
+	mappings    []*domain.MigrationIDMapping
+	checkpoints map[string][]string // jobID -> completed entity types
+}
+
+func newMockIDMappingRepo() *mockIDMappingRepo {
+	return &mockIDMappingRepo{
+		checkpoints: make(map[string][]string),
+	}
+}
+
+func (m *mockIDMappingRepo) Upsert(_ context.Context, mapping *domain.MigrationIDMapping) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mappings = append(m.mappings, mapping)
+	return nil
+}
+
+func (m *mockIDMappingRepo) GetVidraID(_ context.Context, entityType string, peertubeID int) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, mp := range m.mappings {
+		if mp.EntityType == entityType && mp.PeertubeID == peertubeID {
+			return mp.VidraID, nil
+		}
+	}
+	return "", domain.ErrNotFound
+}
+
+func (m *mockIDMappingRepo) GetPeertubeID(_ context.Context, entityType string, vidraID string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, mp := range m.mappings {
+		if mp.EntityType == entityType && mp.VidraID == vidraID {
+			return mp.PeertubeID, nil
+		}
+	}
+	return 0, domain.ErrNotFound
+}
+
+func (m *mockIDMappingRepo) ListByJobID(_ context.Context, jobID string) ([]*domain.MigrationIDMapping, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []*domain.MigrationIDMapping
+	for _, mp := range m.mappings {
+		if mp.JobID == jobID {
+			result = append(result, mp)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockIDMappingRepo) UpsertCheckpoint(_ context.Context, jobID string, entityType string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkpoints[jobID] = append(m.checkpoints[jobID], entityType)
+	return nil
+}
+
+func (m *mockIDMappingRepo) GetCompletedPhases(_ context.Context, jobID string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.checkpoints[jobID], nil
+}
+
 func cloneMigrationJob(job *domain.MigrationJob) *domain.MigrationJob {
 	if job == nil {
 		return nil
@@ -202,7 +269,7 @@ func TestStartMigration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newMockRepo()
 			repo.running = tt.running
-			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil)
+			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil, nil)
 			ctx := context.Background()
 
 			job, err := svc.StartMigration(ctx, "admin-user-id", tt.req)
@@ -255,7 +322,7 @@ func TestGetMigrationStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newMockRepo()
 			tt.setup(repo)
-			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil)
+			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil, nil)
 			ctx := context.Background()
 
 			job, err := svc.GetMigrationStatus(ctx, tt.id)
@@ -313,7 +380,7 @@ func TestListMigrations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newMockRepo()
 			tt.setup(repo)
-			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil)
+			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil, nil)
 			ctx := context.Background()
 
 			jobs, total, err := svc.ListMigrations(ctx, tt.limit, tt.offset)
@@ -376,7 +443,7 @@ func TestCancelMigration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newMockRepo()
 			id := tt.setup(repo)
-			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil)
+			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil, nil)
 			ctx := context.Background()
 
 			err := svc.CancelMigration(ctx, id)
@@ -418,7 +485,7 @@ func TestDryRun(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newMockRepo()
-			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil)
+			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil, nil)
 			ctx := context.Background()
 
 			job, err := svc.DryRun(ctx, "admin-user-id", tt.req)
@@ -433,6 +500,89 @@ func TestDryRun(t *testing.T) {
 			assert.Equal(t, domain.MigrationStatusPending, job.Status)
 		})
 	}
+}
+
+func TestResumeMigration(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(repo *mockMigrationRepo) string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "resume failed job succeeds",
+			setup: func(repo *mockMigrationRepo) string {
+				repo.jobs["failed-job"] = &domain.MigrationJob{
+					ID:          "failed-job",
+					AdminUserID: "admin",
+					SourceHost:  "pt.example.com",
+					Status:      domain.MigrationStatusFailed,
+				}
+				return "failed-job"
+			},
+			wantErr: false,
+		},
+		{
+			name: "resume completed job returns error",
+			setup: func(repo *mockMigrationRepo) string {
+				repo.jobs["done-job"] = &domain.MigrationJob{
+					ID:     "done-job",
+					Status: domain.MigrationStatusCompleted,
+				}
+				return "done-job"
+			},
+			wantErr: true,
+			errMsg:  "cannot resume",
+		},
+		{
+			name: "resume cancelled job returns error",
+			setup: func(repo *mockMigrationRepo) string {
+				repo.jobs["cancelled-job"] = &domain.MigrationJob{
+					ID:     "cancelled-job",
+					Status: domain.MigrationStatusCancelled,
+				}
+				return "cancelled-job"
+			},
+			wantErr: true,
+			errMsg:  "cannot resume",
+		},
+		{
+			name: "resume nonexistent job returns error",
+			setup: func(repo *mockMigrationRepo) string {
+				return "nonexistent"
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newMockRepo()
+			idRepo := newMockIDMappingRepo()
+			jobID := tt.setup(repo)
+			svc := NewETLService(repo, nil, nil, nil, nil, nil, nil, idRepo)
+			ctx := context.Background()
+
+			job, err := svc.ResumeMigration(ctx, jobID)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, job)
+			assert.Equal(t, domain.MigrationStatusResuming, job.Status)
+		})
+	}
+}
+
+func TestCanTransitionFromFailed(t *testing.T) {
+	job := &domain.MigrationJob{Status: domain.MigrationStatusFailed}
+	assert.True(t, job.CanTransition(domain.MigrationStatusResuming), "failed -> resuming should be allowed")
+	assert.False(t, job.CanTransition(domain.MigrationStatusRunning), "failed -> running should not be allowed directly")
 }
 
 func TestMigrationRequestValidation(t *testing.T) {

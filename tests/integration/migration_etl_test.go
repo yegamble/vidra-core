@@ -79,6 +79,7 @@ func TestMigrationETL(t *testing.T) {
 		playlistRepo,
 		captionRepo,
 		videoRepo,
+		nil, // IDMappingRepository - not used in integration test
 	)
 
 	// -----------------------------------------------------------------------

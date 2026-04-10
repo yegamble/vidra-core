@@ -481,6 +481,113 @@ func TestWriteError(t *testing.T) {
 	})
 }
 
+// --- DualAuth tests (PeerTube JWT acceptance during cutover) ---
+
+func generatePeerTubeToken(secret string, userID int) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": float64(userID), // PeerTube uses integer IDs, Go JSON decodes as float64
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	tokenString, _ := token.SignedString([]byte(secret))
+	return "Bearer " + tokenString
+}
+
+func TestDualAuth(t *testing.T) {
+	vidraSecret := "vidra-secret-key"
+	ptSecret := "peertube-secret-key"
+	vidraUserID := uuid.New().String()
+
+	// Mock ID mapping lookup: PeerTube user 42 -> Vidra UUID
+	idLookup := func(_ context.Context, entityType string, peertubeID int) (string, error) {
+		if entityType == "user" && peertubeID == 42 {
+			return vidraUserID, nil
+		}
+		return "", domain.ErrNotFound
+	}
+
+	tests := []struct {
+		name           string
+		authHeader     string
+		expectedStatus int
+		expectedUserID string
+	}{
+		{
+			name:           "vidra token accepted",
+			authHeader:     generateTokenWithRole(vidraSecret, vidraUserID, "user"),
+			expectedStatus: http.StatusOK,
+			expectedUserID: vidraUserID,
+		},
+		{
+			name:           "peertube token accepted and mapped",
+			authHeader:     generatePeerTubeToken(ptSecret, 42),
+			expectedStatus: http.StatusOK,
+			expectedUserID: vidraUserID,
+		},
+		{
+			name:           "peertube token with unmapped user returns 401",
+			authHeader:     generatePeerTubeToken(ptSecret, 999),
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "invalid token rejected",
+			authHeader:     "Bearer invalid.token.here",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "missing header rejected",
+			authHeader:     "",
+			expectedStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+			w := httptest.NewRecorder()
+
+			var gotUserID string
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotUserID, _ = r.Context().Value(UserIDKey).(string)
+				w.WriteHeader(http.StatusOK)
+			})
+
+			handler := DualAuth(vidraSecret, ptSecret, idLookup)(next)
+			handler.ServeHTTP(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+			if tt.expectedUserID != "" && gotUserID != tt.expectedUserID {
+				t.Errorf("Expected userID %s, got %s", tt.expectedUserID, gotUserID)
+			}
+		})
+	}
+}
+
+func TestDualAuth_DisabledWhenPTSecretEmpty(t *testing.T) {
+	vidraSecret := "vidra-secret-key"
+	ptSecret := "peertube-secret-key"
+
+	// With empty ptSecret, PeerTube tokens should be rejected
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", generatePeerTubeToken(ptSecret, 42))
+	w := httptest.NewRecorder()
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := DualAuth(vidraSecret, "", nil)(next) // empty ptSecret = disabled
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 when ptSecret is empty, got %d", w.Code)
+	}
+}
+
 func generateValidToken(jwtSecret string) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": uuid.New().String(),

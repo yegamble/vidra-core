@@ -96,6 +96,20 @@ func (h *MigrationHandlers) CancelMigration(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ResumeMigration handles POST /api/v1/admin/migrations/{id}/resume
+func (h *MigrationHandlers) ResumeMigration(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	job, err := h.service.ResumeMigration(r.Context(), id)
+	if err != nil {
+		status := shared.MapDomainErrorToHTTP(err)
+		shared.WriteError(w, status, err)
+		return
+	}
+
+	shared.WriteJSON(w, http.StatusOK, job)
+}
+
 // DryRun handles POST /api/v1/admin/migrations/{id}/dry-run
 func (h *MigrationHandlers) DryRun(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())

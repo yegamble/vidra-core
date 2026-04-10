@@ -43,6 +43,7 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.IOTAWalletEncryptionKey = GetEnvOrDefault("IOTA_WALLET_ENCRYPTION_KEY", "")
 	cfg.FFMPEGPath = GetEnvOrDefault("FFMPEG_PATH", "ffmpeg")
 	cfg.JWTSecret = GetEnvOrDefault("JWT_SECRET", "")
+	cfg.PeerTubeJWTSecret = GetEnvOrDefault("PEERTUBE_JWT_SECRET", "")
 
 	cfg.EnableIOTA = GetBoolEnv("ENABLE_IOTA", false)
 	cfg.EnableIPFS = GetBoolEnv("ENABLE_IPFS_CLUSTER", prodDefault(setupMode, true, false))

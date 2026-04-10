@@ -123,6 +123,7 @@ type Dependencies struct {
 	CollaboratorRepo      *repository.ChannelCollaboratorRepository
 	RunnerRepo            *repository.RunnerRepository
 	MigrationJobRepo      *repository.MigrationRepository
+	IDMappingRepo         *repository.MigrationIDMappingRepository
 	VideoPasswordRepo     port.VideoPasswordRepository
 	VideoStoryboardRepo   port.VideoStoryboardRepository
 	VideoEmbedRepo        port.VideoEmbedPrivacyRepository
@@ -347,6 +348,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 		CollaboratorRepo:      repository.NewChannelCollaboratorRepository(app.DB),
 		RunnerRepo:            repository.NewRunnerRepository(app.DB),
 		MigrationJobRepo:      repository.NewMigrationRepository(app.DB),
+		IDMappingRepo:         repository.NewMigrationIDMappingRepository(app.DB),
 		VideoPasswordRepo:     repository.NewVideoPasswordRepository(app.DB),
 		VideoStoryboardRepo:   repository.NewVideoStoryboardRepository(app.DB),
 		VideoEmbedRepo:        repository.NewVideoEmbedPrivacyRepository(app.DB),
@@ -365,6 +367,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 		deps.PlaylistRepo,
 		deps.CaptionRepo,
 		deps.VideoRepo,
+		deps.IDMappingRepo,
 	)
 
 	// Initialize TwoFA service

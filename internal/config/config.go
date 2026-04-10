@@ -56,7 +56,8 @@ type Config struct {
 
 	FFMPEGPath string
 
-	JWTSecret string
+	JWTSecret          string
+	PeerTubeJWTSecret  string // Optional: PeerTube JWT secret for dual-auth during migration cutover
 
 	EnableIOTA bool
 	EnableIPFS bool

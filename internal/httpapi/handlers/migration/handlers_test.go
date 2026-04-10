@@ -153,7 +153,7 @@ var _ port.MigrationJobRepository = (*mockMigrationRepo)(nil)
 
 func setupTestHandlers() (*MigrationHandlers, *mockMigrationRepo) {
 	repo := newMockRepo()
-	svc := migration_etl.NewETLService(repo, nil, nil, nil, nil, nil, nil)
+	svc := migration_etl.NewETLService(repo, nil, nil, nil, nil, nil, nil, nil)
 	return NewMigrationHandlers(svc), repo
 }
 

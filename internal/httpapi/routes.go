@@ -1288,6 +1288,7 @@ func registerAdminAPIRoutes(
 				r.Get("/{id}", migHandlers.GetMigration)
 				r.Delete("/{id}", migHandlers.CancelMigration)
 				r.Post("/{id}/dry-run", migHandlers.DryRun)
+				r.Post("/{id}/resume", migHandlers.ResumeMigration)
 			})
 		}
 	})

@@ -17,11 +17,13 @@ const (
 	MigrationStatusCancelled  MigrationStatus = "cancelled"
 	MigrationStatusDryRun     MigrationStatus = "dry_run"
 	MigrationStatusValidating MigrationStatus = "validating"
+	MigrationStatusResuming   MigrationStatus = "resuming"
 )
 
-// IsTerminal returns true if the migration status is in a terminal state
+// IsTerminal returns true if the migration status is in a terminal state.
+// Note: "failed" is NOT terminal because it can transition to "resuming" for resume support.
 func (s MigrationStatus) IsTerminal() bool {
-	return s == MigrationStatusCompleted || s == MigrationStatusFailed || s == MigrationStatusCancelled
+	return s == MigrationStatusCompleted || s == MigrationStatusCancelled
 }
 
 // MigrationJob represents an instance migration job from a PeerTube instance
@@ -150,6 +152,13 @@ func (j *MigrationJob) CanTransition(newStatus MigrationStatus) bool {
 			MigrationStatusFailed,
 			MigrationStatusCancelled,
 		},
+		MigrationStatusFailed: {
+			MigrationStatusResuming,
+		},
+		MigrationStatusResuming: {
+			MigrationStatusRunning,
+			MigrationStatusFailed,
+		},
 	}
 
 	allowed, exists := validTransitions[j.Status]
@@ -166,11 +175,28 @@ func (j *MigrationJob) CanTransition(newStatus MigrationStatus) bool {
 	return false
 }
 
+// MigrationIDMapping represents a PeerTube integer ID → Vidra Core ID mapping
+type MigrationIDMapping struct {
+	JobID      string    `db:"job_id" json:"job_id"`
+	EntityType string    `db:"entity_type" json:"entity_type"`
+	PeertubeID int       `db:"peertube_id" json:"peertube_id"`
+	VidraID    string    `db:"vidra_id" json:"vidra_id"`
+	CreatedAt  time.Time `db:"created_at" json:"created_at"`
+}
+
+// MigrationCheckpoint records completion of an ETL phase for resume support
+type MigrationCheckpoint struct {
+	JobID       string    `db:"job_id" json:"job_id"`
+	EntityType  string    `db:"entity_type" json:"entity_type"`
+	CompletedAt time.Time `db:"completed_at" json:"completed_at"`
+}
+
 // Migration sentinel errors
 var (
 	ErrMigrationNotFound     = errors.New("migration job not found")
 	ErrMigrationInProgress   = errors.New("a migration is already in progress")
 	ErrMigrationCantCancel   = errors.New("migration cannot be cancelled in current state")
+	ErrMigrationCantResume   = errors.New("migration cannot resume from current state")
 	ErrMigrationSourceFailed = errors.New("failed to connect to source database")
 	ErrMigrationValidation   = errors.New("migration validation failed")
 )
