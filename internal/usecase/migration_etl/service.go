@@ -356,27 +356,39 @@ func (s *ETLService) runResumePipeline(jobID, adminUserID string) {
 	// Run only phases that haven't completed
 	if !completed["users"] {
 		s.extractUsers(ctx, sourceDB, job, stats, ids)
-		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "users")
+		if err := s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "users"); err != nil {
+			slog.Warn("failed to save checkpoint", "phase", "users", "job", jobID, "error", err)
+		}
 	}
 	if !completed["channels"] {
 		s.extractChannels(ctx, sourceDB, job, stats, ids, channelOwners)
-		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "channels")
+		if err := s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "channels"); err != nil {
+			slog.Warn("failed to save checkpoint", "phase", "channels", "job", jobID, "error", err)
+		}
 	}
 	if !completed["videos"] {
 		s.extractVideos(ctx, sourceDB, job, stats, ids, channelOwners)
-		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "videos")
+		if err := s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "videos"); err != nil {
+			slog.Warn("failed to save checkpoint", "phase", "videos", "job", jobID, "error", err)
+		}
 	}
 	if !completed["comments"] {
 		s.extractComments(ctx, sourceDB, job, stats, ids)
-		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "comments")
+		if err := s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "comments"); err != nil {
+			slog.Warn("failed to save checkpoint", "phase", "comments", "job", jobID, "error", err)
+		}
 	}
 	if !completed["playlists"] {
 		s.extractPlaylists(ctx, sourceDB, job, stats, ids)
-		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "playlists")
+		if err := s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "playlists"); err != nil {
+			slog.Warn("failed to save checkpoint", "phase", "playlists", "job", jobID, "error", err)
+		}
 	}
 	if !completed["captions"] {
 		s.extractCaptions(ctx, sourceDB, job, stats, ids)
-		s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "captions")
+		if err := s.idMappingRepo.UpsertCheckpoint(ctx, jobID, "captions"); err != nil {
+			slog.Warn("failed to save checkpoint", "phase", "captions", "job", jobID, "error", err)
+		}
 	}
 
 	s.extractMedia(ctx, job, stats)

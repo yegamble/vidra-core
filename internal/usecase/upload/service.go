@@ -411,6 +411,39 @@ const (
 	maxSingleFileSize     = 10 * 1024 * 1024 * 1024 // 10GB per file
 )
 
+func validateBatchVideos(videos []domain.BatchUploadVideoItem) (int64, error) {
+	var aggregateSize int64
+	for i := range videos {
+		v := &videos[i]
+		ext := filepath.Ext(v.FileName)
+		if !validUploadExt(ext) {
+			return 0, domain.NewDomainError("INVALID_FILE_EXTENSION",
+				fmt.Sprintf("Video %d: invalid file extension %q", i+1, ext))
+		}
+		if v.FileSize <= 0 || v.FileSize > maxSingleFileSize {
+			return 0, domain.NewDomainError("INVALID_FILE_SIZE",
+				fmt.Sprintf("Video %d: file size must be between 1 byte and 10GB", i+1))
+		}
+		if v.ChunkSize == 0 {
+			v.ChunkSize = defaultBatchChunkSize
+		}
+		if v.ChunkSize < 0 || v.ChunkSize > MaxChunkSize {
+			return 0, domain.NewDomainError("INVALID_CHUNK_SIZE",
+				fmt.Sprintf("Video %d: chunk size must be between 1 and %d bytes", i+1, MaxChunkSize))
+		}
+		if strings.TrimSpace(v.Title) == "" {
+			return 0, domain.NewDomainError("MISSING_TITLE",
+				fmt.Sprintf("Video %d: title is required", i+1))
+		}
+		if v.Privacy != "" && v.Privacy != string(domain.PrivacyPublic) && v.Privacy != string(domain.PrivacyUnlisted) && v.Privacy != string(domain.PrivacyPrivate) {
+			return 0, domain.NewDomainError("INVALID_PRIVACY",
+				fmt.Sprintf("Video %d: privacy must be public, unlisted, or private", i+1))
+		}
+		aggregateSize += v.FileSize
+	}
+	return aggregateSize, nil
+}
+
 func (s *service) InitiateBatchUpload(ctx context.Context, userID string, req *domain.BatchUploadRequest) (*domain.BatchUploadResponse, error) {
 	if len(req.Videos) == 0 {
 		return nil, domain.NewDomainError("EMPTY_BATCH", "Batch must contain at least one video")
@@ -421,34 +454,9 @@ func (s *service) InitiateBatchUpload(ctx context.Context, userID string, req *d
 	}
 
 	// Validate each video and compute aggregate size
-	var aggregateSize int64
-	for i := range req.Videos {
-		v := &req.Videos[i]
-		ext := filepath.Ext(v.FileName)
-		if !validUploadExt(ext) {
-			return nil, domain.NewDomainError("INVALID_FILE_EXTENSION",
-				fmt.Sprintf("Video %d: invalid file extension %q", i+1, ext))
-		}
-		if v.FileSize <= 0 || v.FileSize > maxSingleFileSize {
-			return nil, domain.NewDomainError("INVALID_FILE_SIZE",
-				fmt.Sprintf("Video %d: file size must be between 1 byte and 10GB", i+1))
-		}
-		if v.ChunkSize == 0 {
-			v.ChunkSize = defaultBatchChunkSize
-		}
-		if v.ChunkSize < 0 || v.ChunkSize > MaxChunkSize {
-			return nil, domain.NewDomainError("INVALID_CHUNK_SIZE",
-				fmt.Sprintf("Video %d: chunk size must be between 1 and %d bytes", i+1, MaxChunkSize))
-		}
-		if strings.TrimSpace(v.Title) == "" {
-			return nil, domain.NewDomainError("MISSING_TITLE",
-				fmt.Sprintf("Video %d: title is required", i+1))
-		}
-		if v.Privacy != "" && v.Privacy != string(domain.PrivacyPublic) && v.Privacy != string(domain.PrivacyUnlisted) && v.Privacy != string(domain.PrivacyPrivate) {
-			return nil, domain.NewDomainError("INVALID_PRIVACY",
-				fmt.Sprintf("Video %d: privacy must be public, unlisted, or private", i+1))
-		}
-		aggregateSize += v.FileSize
+	aggregateSize, err := validateBatchVideos(req.Videos)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check aggregate quota
@@ -477,7 +485,7 @@ func (s *service) InitiateBatchUpload(ctx context.Context, userID string, req *d
 	var responses []domain.InitiateUploadResponse
 	var createdTempDirs []string
 
-	err := s.uploadRepo.WithTransaction(ctx, func(txCtx context.Context) error {
+	err = s.uploadRepo.WithTransaction(ctx, func(txCtx context.Context) error {
 		if err := s.uploadRepo.CreateBatch(txCtx, batch); err != nil {
 			return fmt.Errorf("failed to create batch record: %w", err)
 		}
