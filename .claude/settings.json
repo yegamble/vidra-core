@@ -72,6 +72,15 @@
             "command": "bash -c 'FILE=\"${TOOL_INPUT_FILE_PATH:-${TOOL_INPUT_file_path:-}}\"; CONTENT=\"${TOOL_INPUT_NEW_STRING:-${TOOL_INPUT_new_string:-${TOOL_INPUT_CONTENT:-${TOOL_INPUT_content:-}}}}\"; if [ -z \"$FILE\" ] || [ -z \"$CONTENT\" ]; then exit 0; fi; case \"$FILE\" in *_test.go|*/federation/*|*/auth/oauth*) exit 0;; */httpapi/handlers/*.go) ;; *) exit 0;; esac; if echo \"$CONTENT\" | grep -qE \"json\\.NewEncoder\\(w\\)\\.Encode\"; then echo \"WARN: Raw json.NewEncoder(w).Encode bypasses response envelope. Use shared.WriteJSON() or shared.WriteJSONWithMeta() for PeerTube API compatibility.\" >&2; fi; exit 0'"
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/check-gstack.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
