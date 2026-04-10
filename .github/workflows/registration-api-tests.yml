@@ -78,6 +78,9 @@ jobs:
           packages: 'newman newman-reporter-htmlextra'
           cache-key-suffix: 'registration-api'
 
+      - name: Add Go bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
       - name: Run database migrations
         run: |
           go install github.com/pressly/goose/v3/cmd/goose@latest
