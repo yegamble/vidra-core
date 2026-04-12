@@ -70,15 +70,15 @@ func TestUploadRepository_Unit_CreateSession(t *testing.T) {
 			`INSERT INTO upload_sessions (
 			id, video_id, user_id, filename, file_size, chunk_size,
 			total_chunks, uploaded_chunks, status, temp_file_path,
-			created_at, updated_at, expires_at
+			created_at, updated_at, expires_at, batch_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)`)).
 			WithArgs(
 				session.ID, session.VideoID, session.UserID, session.FileName,
 				session.FileSize, session.ChunkSize, session.TotalChunks,
 				pq.Array(session.UploadedChunks), session.Status, session.TempFilePath,
-				session.CreatedAt, session.UpdatedAt, session.ExpiresAt,
+				session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.BatchID,
 			).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -97,15 +97,15 @@ func TestUploadRepository_Unit_CreateSession(t *testing.T) {
 			`INSERT INTO upload_sessions (
 			id, video_id, user_id, filename, file_size, chunk_size,
 			total_chunks, uploaded_chunks, status, temp_file_path,
-			created_at, updated_at, expires_at
+			created_at, updated_at, expires_at, batch_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)`)).
 			WithArgs(
 				session.ID, session.VideoID, session.UserID, session.FileName,
 				session.FileSize, session.ChunkSize, session.TotalChunks,
 				pq.Array(session.UploadedChunks), session.Status, session.TempFilePath,
-				session.CreatedAt, session.UpdatedAt, session.ExpiresAt,
+				session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.BatchID,
 			).
 			WillReturnError(errors.New("insert failed"))
 
@@ -123,7 +123,7 @@ func TestUploadRepository_Unit_GetSession(t *testing.T) {
 
 	selectQuery := `SELECT id, video_id, user_id, filename, file_size, chunk_size,
 		       total_chunks, uploaded_chunks, status, temp_file_path,
-		       created_at, updated_at, expires_at
+		       created_at, updated_at, expires_at, batch_id
 		FROM upload_sessions WHERE id = $1`
 
 	t.Run("success", func(t *testing.T) {
@@ -138,12 +138,12 @@ func TestUploadRepository_Unit_GetSession(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{
 				"id", "video_id", "user_id", "filename", "file_size", "chunk_size",
 				"total_chunks", "uploaded_chunks", "status", "temp_file_path",
-				"created_at", "updated_at", "expires_at",
+				"created_at", "updated_at", "expires_at", "batch_id",
 			}).AddRow(
 				session.ID, session.VideoID, session.UserID, session.FileName,
 				session.FileSize, session.ChunkSize, session.TotalChunks,
 				chunks, session.Status, session.TempFilePath,
-				session.CreatedAt, session.UpdatedAt, session.ExpiresAt,
+				session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.BatchID,
 			))
 
 		got, err := repo.GetSession(ctx, session.ID)
@@ -523,7 +523,7 @@ func TestUploadRepository_Unit_GetExpiredSessions(t *testing.T) {
 
 	expiredQuery := `SELECT id, video_id, user_id, filename, file_size, chunk_size,
 		       total_chunks, uploaded_chunks, status, temp_file_path,
-		       created_at, updated_at, expires_at
+		       created_at, updated_at, expires_at, batch_id
 		FROM upload_sessions
 		WHERE status = 'expired' OR (expires_at < NOW() AND status != 'completed')`
 
@@ -539,12 +539,12 @@ func TestUploadRepository_Unit_GetExpiredSessions(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{
 				"id", "video_id", "user_id", "filename", "file_size", "chunk_size",
 				"total_chunks", "uploaded_chunks", "status", "temp_file_path",
-				"created_at", "updated_at", "expires_at",
+				"created_at", "updated_at", "expires_at", "batch_id",
 			}).AddRow(
 				s.ID, s.VideoID, s.UserID, s.FileName,
 				s.FileSize, s.ChunkSize, s.TotalChunks,
 				chunks, s.Status, s.TempFilePath,
-				s.CreatedAt, s.UpdatedAt, s.ExpiresAt,
+				s.CreatedAt, s.UpdatedAt, s.ExpiresAt, s.BatchID,
 			))
 
 		got, err := repo.GetExpiredSessions(ctx)
@@ -564,7 +564,7 @@ func TestUploadRepository_Unit_GetExpiredSessions(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{
 				"id", "video_id", "user_id", "filename", "file_size", "chunk_size",
 				"total_chunks", "uploaded_chunks", "status", "temp_file_path",
-				"created_at", "updated_at", "expires_at",
+				"created_at", "updated_at", "expires_at", "batch_id",
 			}))
 
 		got, err := repo.GetExpiredSessions(ctx)

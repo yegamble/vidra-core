@@ -356,3 +356,7 @@ func (r *mockVideoRepository) GetVideosForMigration(ctx context.Context, limit i
 func (r *mockVideoRepository) GetVideoQuotaUsed(ctx context.Context, userID string) (int64, error) {
 	return 0, nil
 }
+
+func (r *mockVideoRepository) AppendOutputPath(ctx context.Context, videoID string, key string, path string) error {
+	return nil
+}

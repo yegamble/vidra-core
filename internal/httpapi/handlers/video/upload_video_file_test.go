@@ -187,7 +187,7 @@ func TestUploadWithActualVideoFile(t *testing.T) {
 	rctx.URLParams.Add("sessionId", sessionID)
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
 	w = httptest.NewRecorder()
-	compHandler := CompleteUploadHandler(uploadService, encodingRepo)
+	compHandler := CompleteUploadHandler(uploadService, encodingRepo, nil)
 	compHandler(w, httpReq)
 	if w.Code != http.StatusOK {
 		t.Fatalf("complete failed: code=%d body=%s", w.Code, w.Body.String())
@@ -309,7 +309,7 @@ func TestUploadLargeVideo_VariousChunkSizes(t *testing.T) {
 		rctx.URLParams.Add("sessionId", initResp.SessionID)
 		httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
 		w = httptest.NewRecorder()
-		CompleteUploadHandler(uploadService, encodingRepo)(w, httpReq)
+		CompleteUploadHandler(uploadService, encodingRepo, nil)(w, httpReq)
 		if w.Code != http.StatusOK {
 			t.Fatalf("complete failed chunkSize=%d: code=%d body=%s", chunkSize, w.Code, w.Body.String())
 		}
@@ -474,7 +474,7 @@ func TestResumeUploadWithActualVideoFile(t *testing.T) {
 	rctx.URLParams.Add("sessionId", initResp.SessionID)
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
 	w = httptest.NewRecorder()
-	CompleteUploadHandler(uploadService, encodingRepo)(w, httpReq)
+	CompleteUploadHandler(uploadService, encodingRepo, nil)(w, httpReq)
 	if w.Code != http.StatusOK {
 		t.Fatalf("complete failed: %d %s", w.Code, w.Body.String())
 	}
@@ -671,7 +671,7 @@ func TestUploadResumeAfterChecksumMismatch_WithVideoFile(t *testing.T) {
 	rctx.URLParams.Add("sessionId", initResp.SessionID)
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
 	w = httptest.NewRecorder()
-	CompleteUploadHandler(uploadService, encodingRepo)(w, httpReq)
+	CompleteUploadHandler(uploadService, encodingRepo, nil)(w, httpReq)
 	if w.Code != http.StatusOK {
 		t.Fatalf("complete failed: %d %s", w.Code, w.Body.String())
 	}
