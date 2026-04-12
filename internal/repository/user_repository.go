@@ -157,7 +157,7 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, 
 }
 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
-	return r.getUserWhere(ctx, "u.email = $1", email)
+	return r.getUserWhere(ctx, "LOWER(u.email) = LOWER($1)", email)
 }
 
 func (r *userRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
