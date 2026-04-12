@@ -18,11 +18,16 @@ type StoryboardRepository interface {
 // StoryboardHandlers handles video storyboard endpoints.
 type StoryboardHandlers struct {
 	storyboardRepo StoryboardRepository
+	baseURL        string
 }
 
 // NewStoryboardHandlers creates a new StoryboardHandlers.
-func NewStoryboardHandlers(storyboardRepo StoryboardRepository) *StoryboardHandlers {
-	return &StoryboardHandlers{storyboardRepo: storyboardRepo}
+func NewStoryboardHandlers(storyboardRepo StoryboardRepository, baseURL ...string) *StoryboardHandlers {
+	bu := ""
+	if len(baseURL) > 0 {
+		bu = baseURL[0]
+	}
+	return &StoryboardHandlers{storyboardRepo: storyboardRepo, baseURL: bu}
 }
 
 // ListStoryboards handles GET /api/v1/videos/{id}/storyboards.
@@ -40,6 +45,10 @@ func (h *StoryboardHandlers) ListStoryboards(w http.ResponseWriter, r *http.Requ
 	}
 	if storyboards == nil {
 		storyboards = []domain.VideoStoryboard{}
+	}
+
+	for i := range storyboards {
+		storyboards[i].ComputeFileURL(h.baseURL)
 	}
 
 	shared.WriteJSON(w, http.StatusOK, storyboards)

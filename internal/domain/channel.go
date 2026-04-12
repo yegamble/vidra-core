@@ -40,6 +40,7 @@ type Channel struct {
 type ChannelAvatar struct {
 	Path      string    `json:"path,omitempty"`
 	URL       string    `json:"url,omitempty"`
+	FileURL   string    `json:"fileUrl,omitempty"` // PeerTube v8.1 compat: deprecated path → fileUrl
 	IPFSCID   string    `json:"ipfsCid,omitempty"`
 	CreatedAt time.Time `json:"createdAt,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt,omitempty"`
@@ -49,9 +50,20 @@ type ChannelAvatar struct {
 type ChannelBanner struct {
 	Path      string    `json:"path,omitempty"`
 	URL       string    `json:"url,omitempty"`
+	FileURL   string    `json:"fileUrl,omitempty"` // PeerTube v8.1 compat: deprecated path → fileUrl
 	IPFSCID   string    `json:"ipfsCid,omitempty"`
 	CreatedAt time.Time `json:"createdAt,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+}
+
+// PopulateFileURLs sets the FileURL field on Avatar and Banner from their URL fields.
+func (c *Channel) PopulateFileURLs() {
+	if c.Avatar != nil && c.Avatar.URL != "" {
+		c.Avatar.FileURL = c.Avatar.URL
+	}
+	if c.Banner != nil && c.Banner.URL != "" {
+		c.Banner.FileURL = c.Banner.URL
+	}
 }
 
 // ChannelListParams represents parameters for listing channels

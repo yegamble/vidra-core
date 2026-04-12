@@ -28,8 +28,16 @@ type Caption struct {
 	CreatedAt       time.Time     `json:"created_at" db:"created_at"`
 	UpdatedAt       time.Time     `json:"updated_at" db:"updated_at"`
 
-	// Computed field for API response
-	URL string `json:"url,omitempty" db:"-"` // Generated download URL
+	// Computed fields for API response
+	URL     string `json:"url,omitempty" db:"-"`     // Generated download URL
+	FileURL string `json:"fileUrl,omitempty" db:"-"` // PeerTube v8.1 compat: deprecated captionPath → fileUrl
+}
+
+// PopulateFileURL sets FileURL from URL for PeerTube v8.1 compat.
+func (c *Caption) PopulateFileURL() {
+	if c.URL != "" {
+		c.FileURL = c.URL
+	}
 }
 
 // CreateCaptionRequest represents a request to create/upload a caption

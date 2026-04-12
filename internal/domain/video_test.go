@@ -437,6 +437,22 @@ func TestVideoThumbnailsJSONSerialization(t *testing.T) {
 	assert.Equal(t, "/previews/test-id_preview.webp", result["preview_path"])
 }
 
+func TestStoryboardComputeFileURL(t *testing.T) {
+	s := VideoStoryboard{Filename: "storyboard-vid1.jpg"}
+	s.ComputeFileURL("https://example.com")
+
+	assert.Equal(t, "/lazy-static/storyboards/storyboard-vid1.jpg", s.StoryboardPath)
+	assert.Equal(t, "https://example.com/lazy-static/storyboards/storyboard-vid1.jpg", s.FileURL)
+}
+
+func TestStoryboardComputeFileURL_Empty(t *testing.T) {
+	s := VideoStoryboard{}
+	s.ComputeFileURL("https://example.com")
+
+	assert.Empty(t, s.StoryboardPath)
+	assert.Empty(t, s.FileURL)
+}
+
 func TestAbsFunction(t *testing.T) {
 	tests := []struct {
 		input    int
