@@ -61,16 +61,45 @@ func (p Paths) AvatarWebPPath(fileID string) string {
 	return filepath.Join(p.AvatarsDir(), fileID+".webp")
 }
 
-// ThumbnailPath returns the path for a video's thumbnail image.
+// ThumbnailPath returns the path for a video's thumbnail image (default JPEG).
 func (p Paths) ThumbnailsDir() string { return filepath.Join(p.Root, "thumbnails") }
 func (p Paths) ThumbnailPath(videoID string) string {
 	return filepath.Join(p.ThumbnailsDir(), videoID+"_thumb.jpg")
 }
 
-// PreviewPath returns the path for a video's preview animation.
+// ThumbnailPathWithExt returns the thumbnail path with a custom extension.
+// PeerTube v8.1 parity: supports .jpg, .png, .webp thumbnails.
+func (p Paths) ThumbnailPathWithExt(videoID, ext string) string {
+	ext = strings.TrimPrefix(ext, ".")
+	return filepath.Join(p.ThumbnailsDir(), videoID+"_thumb."+ext)
+}
+
+// PreviewPath returns the path for a video's preview animation (default WebP).
 func (p Paths) PreviewsDir() string { return filepath.Join(p.Root, "previews") }
 func (p Paths) PreviewPath(videoID string) string {
 	return filepath.Join(p.PreviewsDir(), videoID+"_preview.webp")
+}
+
+// IsValidThumbnailMIME returns true if the MIME type is accepted for thumbnails.
+// PeerTube v8.1 parity: JPEG, PNG, and WebP are accepted.
+func IsValidThumbnailMIME(mimeType string) bool {
+	switch strings.ToLower(mimeType) {
+	case "image/jpeg", "image/png", "image/webp":
+		return true
+	}
+	return false
+}
+
+// ThumbnailExtForMIME returns the file extension for a thumbnail MIME type.
+func ThumbnailExtForMIME(mimeType string) string {
+	switch strings.ToLower(mimeType) {
+	case "image/png":
+		return "png"
+	case "image/webp":
+		return "webp"
+	default:
+		return "jpg"
+	}
 }
 
 // WebVideoFilePath returns the final assembled upload file for a video.

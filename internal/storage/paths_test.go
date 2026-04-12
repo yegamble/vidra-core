@@ -132,6 +132,28 @@ func BenchmarkPaths_HLSRelPath(b *testing.B) {
 	}
 }
 
+func TestThumbnailPathWithExt(t *testing.T) {
+	p := NewPaths("/storage")
+	assert.Equal(t, filepath.Join("/storage", "thumbnails", "vid1_thumb.png"), p.ThumbnailPathWithExt("vid1", "png"))
+	assert.Equal(t, filepath.Join("/storage", "thumbnails", "vid1_thumb.webp"), p.ThumbnailPathWithExt("vid1", ".webp"))
+	assert.Equal(t, filepath.Join("/storage", "thumbnails", "vid1_thumb.jpg"), p.ThumbnailPathWithExt("vid1", "jpg"))
+}
+
+func TestIsValidThumbnailMIME(t *testing.T) {
+	assert.True(t, IsValidThumbnailMIME("image/jpeg"))
+	assert.True(t, IsValidThumbnailMIME("image/png"))
+	assert.True(t, IsValidThumbnailMIME("image/webp"))
+	assert.False(t, IsValidThumbnailMIME("image/gif"))
+	assert.False(t, IsValidThumbnailMIME("text/plain"))
+}
+
+func TestThumbnailExtForMIME(t *testing.T) {
+	assert.Equal(t, "jpg", ThumbnailExtForMIME("image/jpeg"))
+	assert.Equal(t, "png", ThumbnailExtForMIME("image/png"))
+	assert.Equal(t, "webp", ThumbnailExtForMIME("image/webp"))
+	assert.Equal(t, "jpg", ThumbnailExtForMIME("unknown"))
+}
+
 func BenchmarkPaths_UploadTempChunksDir(b *testing.B) {
 	p := NewPaths("/var/lib/app/storage")
 	b.ResetTimer()
