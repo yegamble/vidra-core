@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"testing"
@@ -360,6 +361,80 @@ func TestDetectResolutionFromHeight_EdgeCases(t *testing.T) {
 			assert.True(t, exists, "Detected resolution %s should be valid", result)
 		})
 	}
+}
+
+func TestVideoComputeThumbnails(t *testing.T) {
+	tests := []struct {
+		name          string
+		video         Video
+		expectedLen   int
+		expectedTypes []string
+	}{
+		{
+			name: "both thumbnail and preview paths",
+			video: Video{
+				ID:            "test-video-id",
+				ThumbnailPath: "/thumbnails/test-video-id_thumb.jpg",
+				PreviewPath:   "/previews/test-video-id_preview.webp",
+			},
+			expectedLen:   2,
+			expectedTypes: []string{"thumbnail", "preview"},
+		},
+		{
+			name: "only thumbnail path",
+			video: Video{
+				ID:            "test-video-id",
+				ThumbnailPath: "/thumbnails/test-video-id_thumb.jpg",
+			},
+			expectedLen:   1,
+			expectedTypes: []string{"thumbnail"},
+		},
+		{
+			name: "no paths set",
+			video: Video{
+				ID: "test-video-id",
+			},
+			expectedLen: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.video.ComputeThumbnails()
+
+			assert.Len(t, tt.video.Thumbnails, tt.expectedLen)
+
+			for i, expectedType := range tt.expectedTypes {
+				assert.Equal(t, expectedType, tt.video.Thumbnails[i].Type)
+				assert.NotEmpty(t, tt.video.Thumbnails[i].Path)
+			}
+		})
+	}
+}
+
+func TestVideoThumbnailsJSONSerialization(t *testing.T) {
+	v := Video{
+		ID:            "test-id",
+		ThumbnailPath: "/thumbnails/test-id_thumb.jpg",
+		PreviewPath:   "/previews/test-id_preview.webp",
+	}
+	v.ComputeThumbnails()
+
+	data, err := json.Marshal(v)
+	assert.NoError(t, err)
+
+	var result map[string]interface{}
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	// Should have thumbnails array
+	thumbs, ok := result["thumbnails"].([]interface{})
+	assert.True(t, ok, "thumbnails should be an array")
+	assert.Len(t, thumbs, 2)
+
+	// Should still have legacy fields
+	assert.Equal(t, "/thumbnails/test-id_thumb.jpg", result["thumbnail_path"])
+	assert.Equal(t, "/previews/test-id_preview.webp", result["preview_path"])
 }
 
 func TestAbsFunction(t *testing.T) {

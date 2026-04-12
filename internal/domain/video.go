@@ -80,6 +80,37 @@ type Video struct {
 	RemoteLastSyncedAt   *time.Time `json:"remote_last_synced_at,omitempty" db:"remote_last_synced_at"`
 	CreatedAt            time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at" db:"updated_at"`
+	// Computed field for PeerTube v8.1 compat — populated by ComputeThumbnails()
+	Thumbnails []VideoThumbnail `json:"thumbnails,omitempty" db:"-"`
+}
+
+// VideoThumbnail represents an entry in the PeerTube v8.1 thumbnails array.
+type VideoThumbnail struct {
+	Type   string `json:"type"`
+	Path   string `json:"path"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
+}
+
+// ComputeThumbnails populates the Thumbnails array from ThumbnailPath and PreviewPath.
+func (v *Video) ComputeThumbnails() {
+	v.Thumbnails = nil
+	if v.ThumbnailPath != "" {
+		v.Thumbnails = append(v.Thumbnails, VideoThumbnail{
+			Type:   "thumbnail",
+			Path:   v.ThumbnailPath,
+			Width:  280,
+			Height: 157,
+		})
+	}
+	if v.PreviewPath != "" {
+		v.Thumbnails = append(v.Thumbnails, VideoThumbnail{
+			Type:   "preview",
+			Path:   v.PreviewPath,
+			Width:  850,
+			Height: 480,
+		})
+	}
 }
 
 type VideoMetadata struct {

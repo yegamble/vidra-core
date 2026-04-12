@@ -45,6 +45,10 @@ func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		for _, v := range videos {
+			v.ComputeThumbnails()
+		}
+
 		meta := &shared.Meta{
 			Total:    total,
 			Limit:    limit,
@@ -85,6 +89,10 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			return
 		}
 
+		for _, v := range videos {
+			v.ComputeThumbnails()
+		}
+
 		meta := &shared.Meta{
 			Total:    total,
 			Limit:    limit,
@@ -118,6 +126,8 @@ func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.Capti
 			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
 			return
 		}
+
+		video.ComputeThumbnails()
 
 		var captions []domain.Caption
 		if captionService != nil {

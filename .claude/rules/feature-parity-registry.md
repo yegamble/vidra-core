@@ -168,6 +168,11 @@ These are acknowledged gaps. They do NOT trigger stop hooks but should be implem
 | External runners | Yes | Low | Vidra Core uses in-process FFmpeg |
 | Full PeerTube UI client compat | Partial | Medium | Response shape parity needed |
 | Fixture-based migration E2E | No | Medium | PeerTube dump migration rehearsals |
+| Sensitive content flags system | Yes (v7.2) | Medium | Predefined flags, per-flag user overrides, Blur/Warn policies. Needs own /spec plan. |
+| Player theme system (Lucide/Galaxy) | Yes (v8.0) | Medium | Admin/channel/video level theme selection. Backend schema + config + API. |
+| Viewer Protocol V2 | Yes (v7.0) | Low | Concurrent viewer scalability optimization. Architectural change. |
+| Captions object storage | Yes (v7.1) | Low | Separate S3 bucket for captions. Storage layer refactoring. |
+| SVG logo support | Yes (v8.1) | Low | Admin config for SVG logos. Minor backend + frontend. |
 
 ## How to Use This Registry
 
