@@ -2,7 +2,7 @@
 
 Created: 2026-04-12
 Author: yegamble@gmail.com
-Status: PENDING
+Status: COMPLETE
 Approved: Yes
 Iterations: 0
 Worktree: No
@@ -184,9 +184,9 @@ After all encoding:
 - [x] Task 3: Per-resolution incremental availability in encoding pipeline
 - [x] Task 4: Post-encoding orchestration (cleanup, WebTorrent, federation, completion logging)
 - [x] Task 5: PeerTube-compatible files[] API response
-- [ ] Task 6: Video visibility filtering for processing videos
+- [x] Task 6: Video visibility filtering for processing videos
 
-**Total Tasks:** 6 | **Completed:** 5 | **Remaining:** 1
+**Total Tasks:** 6 | **Completed:** 6 | **Remaining:** 0
 
 ## Implementation Tasks
 
