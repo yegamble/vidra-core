@@ -167,6 +167,7 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.WebPQuality = GetIntEnv("WEBP_QUALITY", 0)
 	cfg.EnableEncoding = GetBoolEnv("ENABLE_ENCODING", false)
 	cfg.EncodingWorkers = GetIntEnv("ENCODING_WORKERS", 2)
+	cfg.KeepOriginalFile = GetBoolEnv("KEEP_ORIGINAL_FILE", true)
 	cfg.MetricsAddr = GetEnvOrDefault("METRICS_ADDR", ":9090")
 
 	cfg.EnableCaptionGeneration = GetBoolEnv("ENABLE_CAPTION_GENERATION", false)

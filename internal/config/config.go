@@ -156,9 +156,10 @@ type Config struct {
 
 	WebPQuality int
 
-	EnableEncoding  bool
-	EncodingWorkers int
-	MetricsAddr     string
+	EnableEncoding   bool
+	EncodingWorkers  int
+	KeepOriginalFile bool // PeerTube parity: keep original video file after transcoding (default true)
+	MetricsAddr      string
 
 	EnableCaptionGeneration  bool
 	WhisperProvider          string
