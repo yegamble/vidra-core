@@ -167,7 +167,7 @@ func TestFullUploadWorkflow_Integration(t *testing.T) {
 				httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
 
 				w := httptest.NewRecorder()
-				handler := CompleteUploadHandler(uploadService, encodingRepo)
+				handler := CompleteUploadHandler(uploadService, encodingRepo, nil)
 				handler(w, httpReq)
 
 				assert.Equal(t, http.StatusOK, w.Code)
@@ -384,7 +384,7 @@ func TestResumeUploadWorkflow_Integration(t *testing.T) {
 	httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), chi.RouteCtxKey, rctx))
 
 	w = httptest.NewRecorder()
-	handler = CompleteUploadHandler(uploadService, encodingRepo)
+	handler = CompleteUploadHandler(uploadService, encodingRepo, nil)
 	handler(w, httpReq)
 
 	assert.Equal(t, http.StatusOK, w.Code)

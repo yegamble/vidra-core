@@ -225,7 +225,7 @@ func TestUserRepository_Unit_Getters(t *testing.T) {
 		repo, mock, cleanup := newUserRepo(t)
 		defer cleanup()
 
-		mock.ExpectQuery(`(?s)SELECT u\.id, u\.username, u\.email, u\.display_name.*WHERE u\.email = \$1`).
+		mock.ExpectQuery(`(?s)SELECT u\.id, u\.username, u\.email, u\.display_name.*WHERE LOWER\(u\.email\) = LOWER\(\$1\)`).
 			WithArgs("missing@example.com").
 			WillReturnError(sql.ErrNoRows)
 

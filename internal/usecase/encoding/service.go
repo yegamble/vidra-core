@@ -415,10 +415,7 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 	s.triggerNotifications(ctx, job.VideoID)
 
 	// Step 11: Trigger caption generation
-	captionsTriggered := false
-	if s.captionGen != nil && s.cfg != nil && s.cfg.EnableCaptionGeneration {
-		captionsTriggered = true
-	}
+	captionsTriggered := s.captionGen != nil && s.cfg != nil && s.cfg.EnableCaptionGeneration
 	s.triggerCaptionGeneration(ctx, job.VideoID)
 
 	// Step 12: Finalize video state (publish if waitTranscoding=true)
