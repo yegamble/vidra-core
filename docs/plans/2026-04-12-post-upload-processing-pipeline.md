@@ -180,13 +180,13 @@ After all encoding:
 ## Progress Tracking
 
 - [x] Task 1: Domain model, config, and migration
-- [ ] Task 2: Upload flow — waitTranscoding and immediate original availability
-- [ ] Task 3: Per-resolution incremental availability in encoding pipeline
+- [x] Task 2: Upload flow — waitTranscoding and immediate original availability
+- [x] Task 3: Per-resolution incremental availability in encoding pipeline
 - [ ] Task 4: Post-encoding orchestration (cleanup, WebTorrent, federation, completion logging)
 - [ ] Task 5: PeerTube-compatible files[] API response
 - [ ] Task 6: Video visibility filtering for processing videos
 
-**Total Tasks:** 6 | **Completed:** 1 | **Remaining:** 5
+**Total Tasks:** 6 | **Completed:** 3 | **Remaining:** 3
 
 ## Implementation Tasks
 

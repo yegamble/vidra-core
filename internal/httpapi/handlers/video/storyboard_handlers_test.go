@@ -23,6 +23,10 @@ func (m *mockStoryboardRepo) ListByVideoID(ctx context.Context, videoID string) 
 	return m.listFn(ctx, videoID)
 }
 
+func (m *mockStoryboardRepo) Create(_ context.Context, _ *domain.VideoStoryboard) error {
+	return nil
+}
+
 func TestListStoryboards_Success(t *testing.T) {
 	repo := &mockStoryboardRepo{
 		listFn: func(_ context.Context, _ string) ([]domain.VideoStoryboard, error) {

@@ -463,6 +463,16 @@ func (app *Application) initializeDependencies() *Dependencies {
 		}
 	}
 
+	// Wire storyboard repo into encoding service for sprite-sheet generation
+	{
+		type sbWireable interface {
+			WithStoryboardRepo(repo ucenc.StoryboardRepo) ucenc.Service
+		}
+		if sw, ok := deps.EncodingService.(sbWireable); ok {
+			deps.EncodingService = sw.WithStoryboardRepo(deps.VideoStoryboardRepo)
+		}
+	}
+
 	if app.Config.EnableS3 && app.Config.S3Bucket != "" {
 		s3Cfg := storage.S3Config{
 			Endpoint:  app.Config.S3Endpoint,

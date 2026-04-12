@@ -46,6 +46,27 @@ type CaptionGenerator interface {
 	CreateJob(ctx context.Context, videoID uuid.UUID, userID uuid.UUID, req *domain.CreateCaptionGenerationJobRequest) (*domain.CaptionGenerationJob, error)
 }
 
+// TorrentGenerator creates WebTorrent files for encoded video resolutions.
+type TorrentGenerator interface {
+	GenerateFromVideo(ctx context.Context, videoID uuid.UUID, files []torrentVideoFile) (*torrentInfo, error)
+}
+
+// torrentVideoFile and torrentInfo mirror torrent package types to avoid import cycle.
+type torrentVideoFile struct {
+	Path string
+	Size int64
+}
+
+type torrentInfo struct {
+	InfoHash  string
+	MagnetUri string
+}
+
+// StoryboardRepo persists storyboard sprite-sheet metadata.
+type StoryboardRepo interface {
+	Create(ctx context.Context, sb *domain.VideoStoryboard) error
+}
+
 type service struct {
 	repo            port.EncodingRepository
 	videoRepo       port.VideoRepository
@@ -58,6 +79,7 @@ type service struct {
 	ipfsClient      *ipfs.Client
 	captionGen      CaptionGenerator
 	s3Backend       storage.StorageBackend
+	storyboardRepo  StoryboardRepo
 }
 
 func NewService(repo port.EncodingRepository, videoRepo port.VideoRepository, notificationSvc ucn.Service, uploadsDir string, cfg *config.Config, atproto Publisher, enq JobEnqueuer, ipfsClient *ipfs.Client) Service {
@@ -81,6 +103,11 @@ func (s *service) WithCaptionGenerator(gen CaptionGenerator) Service {
 
 func (s *service) WithS3Backend(backend storage.StorageBackend) Service {
 	s.s3Backend = backend
+	return s
+}
+
+func (s *service) WithStoryboardRepo(repo StoryboardRepo) Service {
+	s.storyboardRepo = repo
 	return s
 }
 
@@ -335,14 +362,20 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 
 	thumbCID, previewCID := s.uploadMediaToIPFS(ctx, thumb, preview)
 
+	// Step 4: Generate storyboard sprite-sheet (best-effort)
+	s.generateStoryboard(ctx, job)
+
 	if err := s.updateVideoInfo(ctx, job, outBaseDir, thumb, preview, processedCIDs, thumbCID, previewCID); err != nil {
 		return err
 	}
 
+	// Step 6: Upload HLS + source + media to S3
+	s3Migrated := false
 	s3URLs, err := s.uploadHLSToS3(ctx, job.VideoID, job.SourceFilePath, outBaseDir, thumb, preview, job.TargetResolutions)
 	if err != nil {
 		slog.Warn("failed to upload HLS to S3", "video_id", job.VideoID, "error", err)
 	} else if len(s3URLs) > 0 {
+		s3Migrated = true
 		if v, getErr := s.videoRepo.GetByID(ctx, job.VideoID); getErr == nil && v != nil {
 			v.S3URLs = s3URLs
 			if updateErr := s.videoRepo.Update(ctx, v); updateErr != nil {
@@ -351,24 +384,48 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 		}
 	}
 
+	// Step 7: Handle original file (keep/remove per config)
+	s.cleanupOriginalFile(ctx, job, s3Migrated)
+
+	// Step 8-9: Federate via ATProto and ActivityPub
+	federatedATProto := false
+	federatedActivityPub := false
 	if s.atproto != nil || s.activitypub != nil {
 		if v, err := s.videoRepo.GetByID(ctx, job.VideoID); err == nil && v != nil {
 			if s.atproto != nil {
-				if err := s.atproto.PublishVideo(ctx, v); err != nil && s.fedEnq != nil {
-					_ = s.enqueuePublishRetry(ctx, v.ID, 30*time.Second)
+				if err := s.atproto.PublishVideo(ctx, v); err != nil {
+					if s.fedEnq != nil {
+						_ = s.enqueuePublishRetry(ctx, v.ID, 30*time.Second)
+					}
+				} else {
+					federatedATProto = true
 				}
 			}
 			if s.activitypub != nil {
 				if err := s.activitypub.PublishVideo(ctx, v); err != nil {
 					slog.Warn("failed to publish video via ActivityPub", "video_id", v.ID, "error", err)
+				} else {
+					federatedActivityPub = true
 				}
 			}
 		}
 	}
 
+	// Step 10: Trigger notifications
 	s.triggerNotifications(ctx, job.VideoID)
 
+	// Step 11: Trigger caption generation
+	captionsTriggered := false
+	if s.captionGen != nil && s.cfg != nil && s.cfg.EnableCaptionGeneration {
+		captionsTriggered = true
+	}
 	s.triggerCaptionGeneration(ctx, job.VideoID)
+
+	// Step 12: Finalize video state (publish if waitTranscoding=true)
+	s.finalizeVideoState(ctx, job.VideoID)
+
+	// Step 13: Structured completion log
+	s.logPipelineCompletion(job, processedCIDs, s3Migrated, federatedATProto, federatedActivityPub, captionsTriggered)
 
 	return nil
 }
@@ -652,6 +709,138 @@ func (s *service) triggerCaptionGeneration(ctx context.Context, videoID string) 
 	}
 
 	_, _ = s.captionGen.CreateJob(ctx, vidUUID, userUUID, req)
+}
+
+// generateStoryboard creates a sprite-sheet preview image from the source video
+// using FFmpeg. The sprite-sheet is a grid of thumbnails (10 columns, 160x90px each)
+// captured at regular intervals. Best-effort — failures are logged, not fatal.
+func (s *service) generateStoryboard(ctx context.Context, job *domain.EncodingJob) {
+	if s.storyboardRepo == nil {
+		return
+	}
+
+	sp := storage.NewPaths(s.uploadsDir)
+	storyboardDir := filepath.Join(sp.HLSVideoDir(job.VideoID), "storyboard")
+	if err := os.MkdirAll(storyboardDir, 0o750); err != nil {
+		slog.Warn("failed to create storyboard dir", "video_id", job.VideoID, "error", err)
+		return
+	}
+
+	outFile := filepath.Join(storyboardDir, "storyboard.jpg")
+
+	// Get video duration to calculate sprite count and tile layout
+	duration, err := s.getVideoDuration(ctx, job.SourceFilePath)
+	if err != nil || duration <= 0 {
+		slog.Warn("could not get duration for storyboard", "video_id", job.VideoID, "error", err)
+		return
+	}
+
+	spriteInterval := 2.0 // One sprite every 2 seconds
+	spriteCount := int(duration.Seconds() / spriteInterval)
+	if spriteCount < 1 {
+		spriteCount = 1
+	}
+	if spriteCount > 150 {
+		spriteCount = 150 // Cap for very long videos
+	}
+
+	cols := 10
+	rows := (spriteCount + cols - 1) / cols
+
+	args := []string{
+		"-y",
+		"-i", job.SourceFilePath,
+		"-vf", fmt.Sprintf("fps=1/%d,scale=160:90,tile=%dx%d", int(spriteInterval), cols, rows),
+		"-frames:v", "1",
+		"-q:v", "5",
+		outFile,
+	}
+
+	if err := s.execFFmpeg(ctx, args); err != nil {
+		slog.Warn("storyboard generation failed", "video_id", job.VideoID, "error", err)
+		return
+	}
+
+	sb := &domain.VideoStoryboard{
+		VideoID:        job.VideoID,
+		Filename:       filepath.ToSlash(outFile),
+		TotalWidth:     cols * 160,
+		TotalHeight:    rows * 90,
+		SpriteWidth:    160,
+		SpriteHeight:   90,
+		SpriteDuration: spriteInterval,
+	}
+
+	if err := s.storyboardRepo.Create(ctx, sb); err != nil {
+		slog.Warn("failed to save storyboard record", "video_id", job.VideoID, "error", err)
+	} else {
+		slog.Info("storyboard generated", "video_id", job.VideoID, "sprites", spriteCount, "file", outFile)
+	}
+}
+
+// cleanupOriginalFile removes the original uploaded file after encoding
+// when KeepOriginalFile config is false and S3 migration succeeded (or S3 is disabled).
+func (s *service) cleanupOriginalFile(ctx context.Context, job *domain.EncodingJob, s3Migrated bool) {
+	if s.cfg == nil || s.cfg.KeepOriginalFile {
+		return // Config says keep — nothing to do
+	}
+
+	// Only remove if S3 migration succeeded OR S3 is not enabled
+	s3Enabled := s.s3Backend != nil
+	if s3Enabled && !s3Migrated {
+		slog.Warn("skipping original file removal: S3 enabled but migration failed",
+			"video_id", job.VideoID, "source", job.SourceFilePath)
+		return
+	}
+
+	if err := os.Remove(job.SourceFilePath); err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("failed to remove original file", "video_id", job.VideoID, "path", job.SourceFilePath, "error", err)
+		}
+		return
+	}
+
+	// Clear the source path from OutputPaths so the API doesn't try to serve a deleted file
+	if err := s.videoRepo.AppendOutputPath(ctx, job.VideoID, "source", ""); err != nil {
+		slog.Warn("failed to clear source output path", "video_id", job.VideoID, "error", err)
+	}
+
+	slog.Info("original file removed after encoding", "video_id", job.VideoID, "path", job.SourceFilePath)
+}
+
+// finalizeVideoState transitions videos with waitTranscoding=true from
+// StatusProcessing to StatusCompleted (published) after all encoding finishes.
+func (s *service) finalizeVideoState(ctx context.Context, videoID string) {
+	video, err := s.videoRepo.GetByID(ctx, videoID)
+	if err != nil || video == nil {
+		return
+	}
+
+	if video.WaitTranscoding && video.Status == domain.StatusProcessing {
+		video.Status = domain.StatusCompleted
+		video.UpdatedAt = time.Now()
+		if err := s.videoRepo.Update(ctx, video); err != nil {
+			slog.Warn("failed to finalize video state", "video_id", videoID, "error", err)
+		} else {
+			slog.Info("video published after encoding", "video_id", videoID)
+		}
+	}
+}
+
+// logPipelineCompletion emits a structured log summarizing all pipeline steps.
+func (s *service) logPipelineCompletion(job *domain.EncodingJob, processedCIDs map[string]string, s3Migrated, federatedATProto, federatedActivityPub, captionsTriggered bool) {
+	slog.Info("video processing complete",
+		"video_id", job.VideoID,
+		"resolutions", job.TargetResolutions,
+		"source_resolution", job.SourceResolution,
+		"ipfs_pinned", len(processedCIDs) > 0,
+		"ipfs_cids_count", len(processedCIDs),
+		"s3_migrated", s3Migrated,
+		"federated_activitypub", federatedActivityPub,
+		"federated_atproto", federatedATProto,
+		"captions_triggered", captionsTriggered,
+		"keep_original", s.cfg != nil && s.cfg.KeepOriginalFile,
+	)
 }
 
 func (s *service) transcodeHLS(ctx context.Context, input string, height int, outPlaylist string, segPattern string, duration time.Duration, onProgress func(int)) error {
