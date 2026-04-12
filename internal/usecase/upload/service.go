@@ -79,20 +79,21 @@ func (s *service) InitiateUpload(ctx context.Context, userID string, req *domain
 		safeFileName = "Untitled Upload"
 	}
 	video := &domain.Video{
-		ID:            uuid.NewString(),
-		ThumbnailID:   uuid.NewString(),
-		Title:         fmt.Sprintf("Uploading: %s", safeFileName),
-		Description:   "Upload in progress",
-		Privacy:       domain.PrivacyPrivate,
-		Status:        domain.StatusUploading,
-		UploadDate:    now,
-		UserID:        userID,
-		FileSize:      req.FileSize,
-		ProcessedCIDs: make(map[string]string),
-		Tags:          []string{},
-		Metadata:      domain.VideoMetadata{},
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:              uuid.NewString(),
+		ThumbnailID:     uuid.NewString(),
+		Title:           fmt.Sprintf("Uploading: %s", safeFileName),
+		Description:     "Upload in progress",
+		Privacy:         domain.PrivacyPrivate,
+		Status:          domain.StatusUploading,
+		UploadDate:      now,
+		UserID:          userID,
+		FileSize:        req.FileSize,
+		WaitTranscoding: req.WaitTranscoding,
+		ProcessedCIDs:   make(map[string]string),
+		Tags:            []string{},
+		Metadata:        domain.VideoMetadata{},
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	if err := s.videoRepo.Create(ctx, video); err != nil {
 		return nil, fmt.Errorf("failed to create video record: %w", err)
@@ -248,7 +249,23 @@ func (s *service) CompleteUpload(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get video: %w", err)
 	}
-	video.Status = domain.StatusQueued
+
+	// PeerTube parity: set status based on waitTranscoding.
+	// waitTranscoding=false → publish immediately (StatusCompleted), original available for playback.
+	// waitTranscoding=true  → hold until encoding finishes (StatusProcessing), only owner/mod/admin can see.
+	if video.WaitTranscoding {
+		video.Status = domain.StatusProcessing
+	} else {
+		video.Status = domain.StatusCompleted
+	}
+
+	// Store the original file path so the API can serve it for immediate playback.
+	finalFilePath := s.paths.WebVideoFilePath(session.VideoID, filepath.Ext(session.FileName))
+	if video.OutputPaths == nil {
+		video.OutputPaths = make(map[string]string)
+	}
+	video.OutputPaths["source"] = filepath.ToSlash(finalFilePath)
+
 	video.UpdatedAt = time.Now()
 	if err := s.videoRepo.Update(ctx, video); err != nil {
 		return fmt.Errorf("failed to update video status: %w", err)
@@ -258,7 +275,6 @@ func (s *service) CompleteUpload(ctx context.Context, sessionID string) error {
 	if existingJob != nil {
 		return nil
 	}
-	finalFilePath := s.paths.WebVideoFilePath(session.VideoID, filepath.Ext(session.FileName))
 	sourceResolution := s.detectSourceResolution(video)
 	job := &domain.EncodingJob{
 		ID:                uuid.NewString(),

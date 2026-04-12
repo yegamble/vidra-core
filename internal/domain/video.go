@@ -350,6 +350,7 @@ type InitiateUploadRequest struct {
 	FileSize         int64  `json:"file_size" validate:"required,min=1"`
 	ChunkSize        int64  `json:"chunk_size" validate:"min=1048576,max=104857600"` // 1MB to 100MB
 	ExpectedChecksum string `json:"expected_checksum"`
+	WaitTranscoding  bool   `json:"waitTranscoding"` // PeerTube parity: if true, video not published until encoding completes
 }
 
 type InitiateUploadResponse struct {

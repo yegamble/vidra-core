@@ -3,7 +3,7 @@
 Created: 2026-04-12
 Author: yegamble@gmail.com
 Status: PENDING
-Approved: No
+Approved: Yes
 Iterations: 0
 Worktree: No
 Type: Feature
@@ -179,14 +179,14 @@ After all encoding:
 
 ## Progress Tracking
 
-- [ ] Task 1: Domain model, config, and migration
+- [x] Task 1: Domain model, config, and migration
 - [ ] Task 2: Upload flow — waitTranscoding and immediate original availability
 - [ ] Task 3: Per-resolution incremental availability in encoding pipeline
 - [ ] Task 4: Post-encoding orchestration (cleanup, WebTorrent, federation, completion logging)
 - [ ] Task 5: PeerTube-compatible files[] API response
 - [ ] Task 6: Video visibility filtering for processing videos
 
-**Total Tasks:** 6 | **Completed:** 0 | **Remaining:** 6
+**Total Tasks:** 6 | **Completed:** 1 | **Remaining:** 5
 
 ## Implementation Tasks
 
