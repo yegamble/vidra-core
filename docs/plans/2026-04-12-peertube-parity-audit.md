@@ -2,7 +2,7 @@
 
 Created: 2026-04-12
 Author: yegamble@gmail.com
-Status: PENDING
+Status: COMPLETE
 Approved: Yes
 Iterations: 1
 Worktree: No
@@ -117,9 +117,9 @@ These are substantial features that each warrant their own `/spec` plan:
 - [x] Task 10: WebP/PNG thumbnail acceptance
 - [x] Task 11: Mastodon verification + Video public link in ActivityPub
 - [x] Task 12: playlistUrl in HLS video file response (auto-added by hook)
-- [ ] Task 13: Wire activity writes into video/collaborator handlers
+- [x] Task 13: Wire activity writes into video/collaborator handlers
 - [x] Task 0: Add deferred features to parity registry
-      **Total Tasks:** 14 | **Completed:** 0 | **Remaining:** 14
+      **Total Tasks:** 14 | **Completed:** 14 | **Remaining:** 0
 
 ## Implementation Tasks
 
