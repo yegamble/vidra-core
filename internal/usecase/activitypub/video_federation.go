@@ -82,6 +82,15 @@ func (s *Service) BuildVideoObject(ctx context.Context, video *domain.Video) (*d
 		}
 	}
 
+	// FEP-1b12 / PeerTube v7.0: add public watch page link for discoverability
+	// Akkoma, Sharkey, etc. use this to find the human-readable page
+	watchPageURL := domain.APUrl{
+		Type:      "Link",
+		MediaType: "text/html",
+		Href:      fmt.Sprintf("%s/w/%s", s.cfg.PublicBaseURL, video.ID),
+	}
+	videoObj.URL = append(videoObj.URL, watchPageURL)
+
 	if len(video.OutputPaths) > 0 {
 		mp4URL := domain.APUrl{
 			Type:      "Link",

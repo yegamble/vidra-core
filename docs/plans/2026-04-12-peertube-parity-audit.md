@@ -111,8 +111,8 @@ These are substantial features that each warrant their own `/spec` plan:
 - [x] Task 4: typeOneOf alias on notifications
 - [x] Task 5: channelUpdatedAt sort on subscriptions
 - [x] Task 6: Case-insensitive email matching
-- [ ] Task 7: Channel Activities endpoint
-- [ ] Task 8: Redis TLS support
+- [x] Task 7: Channel Activities endpoint
+- [x] Task 8: Redis TLS support
 - [ ] Task 9: FEP-1b12 ActivityPub compatibility
 - [ ] Task 10: WebP/PNG thumbnail acceptance
 - [ ] Task 11: Mastodon verification + Video public link in ActivityPub
