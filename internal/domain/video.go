@@ -78,10 +78,37 @@ type Video struct {
 	RemoteInstanceDomain *string    `json:"remote_instance_domain,omitempty" db:"remote_instance_domain"`
 	RemoteThumbnailURL   *string    `json:"remote_thumbnail_url,omitempty" db:"remote_thumbnail_url"`
 	RemoteLastSyncedAt   *time.Time `json:"remote_last_synced_at,omitempty" db:"remote_last_synced_at"`
+	WaitTranscoding      bool       `json:"wait_transcoding" db:"wait_transcoding"`
 	CreatedAt            time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at" db:"updated_at"`
 	// Computed field for PeerTube v8.1 compat — populated by ComputeThumbnails()
 	Thumbnails []VideoThumbnail `json:"thumbnails,omitempty" db:"-"`
+}
+
+// VideoResolution identifies a video resolution for PeerTube-compatible API responses.
+type VideoResolution struct {
+	ID    int    `json:"id"`    // Height in pixels (e.g., 720)
+	Label string `json:"label"` // Human-readable label (e.g., "720p")
+}
+
+// VideoFile represents a single video file in PeerTube-compatible API responses.
+type VideoFile struct {
+	Resolution      VideoResolution `json:"resolution"`
+	MagnetUri       string          `json:"magnetUri,omitempty"`
+	InfoHash        string          `json:"infoHash,omitempty"`
+	Size            int64           `json:"size,omitempty"`
+	Fps             float64         `json:"fps,omitempty"`
+	FileUrl         string          `json:"fileUrl"`
+	FileDownloadUrl string          `json:"fileDownloadUrl,omitempty"`
+}
+
+// StreamingPlaylist represents an HLS streaming playlist in PeerTube-compatible API responses.
+type StreamingPlaylist struct {
+	Type             int         `json:"type"` // 1 = HLS
+	PlaylistUrl      string      `json:"playlistUrl"`
+	SegmentsSha256Url string     `json:"segmentsSha256Url,omitempty"`
+	Files            []VideoFile `json:"files"`
+	RedundancyUrls   []string    `json:"redundancies,omitempty"`
 }
 
 // VideoThumbnail represents an entry in the PeerTube v8.1 thumbnails array.
@@ -157,12 +184,13 @@ type VideoSearchRequest struct {
 }
 
 type VideoUploadRequest struct {
-	Title       string     `json:"title" validate:"required,min=1,max=255"`
-	Description string     `json:"description" validate:"max=5000"`
-	Privacy     Privacy    `json:"privacy" validate:"required"`
-	Tags        []string   `json:"tags" validate:"max=10"`
-	CategoryID  *uuid.UUID `json:"category_id" validate:"omitempty"`
-	Language    string     `json:"language"`
+	Title           string     `json:"title" validate:"required,min=1,max=255"`
+	Description     string     `json:"description" validate:"max=5000"`
+	Privacy         Privacy    `json:"privacy" validate:"required"`
+	Tags            []string   `json:"tags" validate:"max=10"`
+	CategoryID      *uuid.UUID `json:"category_id" validate:"omitempty"`
+	Language        string     `json:"language"`
+	WaitTranscoding bool       `json:"waitTranscoding"` // PeerTube parity: if true, video not published until encoding completes
 }
 
 type VideoUpdateRequest struct {

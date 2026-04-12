@@ -9,6 +9,52 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestVideoWaitTranscodingField(t *testing.T) {
+	v := Video{
+		ID:               "test-id",
+		WaitTranscoding:  true,
+	}
+	assert.True(t, v.WaitTranscoding)
+
+	data, err := json.Marshal(v)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"wait_transcoding":true`)
+
+	var v2 Video
+	err = json.Unmarshal([]byte(`{"id":"x","wait_transcoding":false}`), &v2)
+	assert.NoError(t, err)
+	assert.False(t, v2.WaitTranscoding)
+}
+
+func TestVideoFileStruct(t *testing.T) {
+	vf := VideoFile{
+		Resolution: VideoResolution{ID: 720, Label: "720p"},
+		FileUrl:    "https://example.com/720p/stream.m3u8",
+		Size:       12345678,
+	}
+	data, err := json.Marshal(vf)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"resolution"`)
+	assert.Contains(t, string(data), `"fileUrl"`)
+	assert.Contains(t, string(data), `"720p"`)
+}
+
+func TestStreamingPlaylistStruct(t *testing.T) {
+	sp := StreamingPlaylist{
+		Type:        1,
+		PlaylistUrl: "https://example.com/master.m3u8",
+		Files: []VideoFile{
+			{Resolution: VideoResolution{ID: 480, Label: "480p"}, FileUrl: "https://example.com/480p.m3u8"},
+		},
+	}
+	data, err := json.Marshal(sp)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"type":1`)
+	assert.Contains(t, string(data), `"playlistUrl"`)
+	assert.Contains(t, string(data), `"files"`)
+	assert.Equal(t, 1, len(sp.Files))
+}
+
 func TestGetTargetResolutions(t *testing.T) {
 	tests := []struct {
 		name               string

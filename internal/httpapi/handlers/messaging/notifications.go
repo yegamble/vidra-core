@@ -93,6 +93,13 @@ func parseNotificationTypes(r *http.Request) ([]domain.NotificationType, error) 
 		rawTypes = append(rawTypes, strings.Split(value, ",")...)
 	}
 
+	// PeerTube v7.0 compat: accept typeOneOf as alias for types
+	if len(rawTypes) == 0 {
+		if typeOneOf := r.URL.Query().Get("typeOneOf"); typeOneOf != "" {
+			rawTypes = append(rawTypes, strings.Split(typeOneOf, ",")...)
+		}
+	}
+
 	if len(rawTypes) == 0 {
 		return nil, nil
 	}
