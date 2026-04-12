@@ -56,6 +56,32 @@ func (r *videoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, para
 	return nil
 }
 
+// AppendOutputPath atomically merges a single key-value pair into the video's
+// output_paths JSONB column without overwriting existing entries.  This is safe
+// to call from concurrent goroutines encoding different resolutions.
+func (r *videoRepository) AppendOutputPath(ctx context.Context, videoID string, key string, path string) error {
+	query := `
+		UPDATE videos
+		SET output_paths = COALESCE(output_paths, '{}'::jsonb) || $2::jsonb,
+		    updated_at   = NOW()
+		WHERE id = $1`
+
+	patch := map[string]string{key: path}
+	patchJSON, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("marshal output path patch: %w", err)
+	}
+
+	result, err := r.db.ExecContext(ctx, query, videoID, patchJSON)
+	if err != nil {
+		return fmt.Errorf("append output path: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (r *videoRepository) CreateRemoteVideo(ctx context.Context, video *domain.Video) error {
 	query := `
 		INSERT INTO videos (

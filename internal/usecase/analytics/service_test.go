@@ -1428,6 +1428,10 @@ func (m *MockVideoRepository) GetVideoQuotaUsed(_ context.Context, _ string) (in
 	return 0, nil
 }
 
+func (m *MockVideoRepository) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 func TestAggregateAllVideosForDate(t *testing.T) {
 	svc, _ := newTestService()
 	date := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)

@@ -98,6 +98,10 @@ func (m *mockVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, e
 	return 0, nil
 }
 
+func (m *mockVideoRepo) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 type mockChannelRepo struct{ mock.Mock }
 
 func (m *mockChannelRepo) Create(ctx context.Context, channel *domain.Channel) error {

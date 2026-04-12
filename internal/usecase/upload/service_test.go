@@ -241,6 +241,10 @@ func (m *mockVideoRepo) GetVideoQuotaUsed(ctx context.Context, userID string) (i
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *mockVideoRepo) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 func newTestService(t *testing.T) (Service, *mockUploadRepo, *mockEncodingRepo, *mockVideoRepo, string) {
 	t.Helper()
 	uploadRepo := new(mockUploadRepo)

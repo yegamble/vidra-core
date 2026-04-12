@@ -243,6 +243,10 @@ func (m *MockVideoRepository) GetVideoQuotaUsed(_ context.Context, _ string) (in
 	return 0, nil
 }
 
+func (m *MockVideoRepository) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 type MockWhisperClient struct {
 	mock.Mock
 }

@@ -92,6 +92,10 @@ func (m *MockVideoRepoForFeed) GetVideoQuotaUsed(_ context.Context, _ string) (i
 	return 0, nil
 }
 
+func (m *MockVideoRepoForFeed) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 var _ usecase.VideoRepository = (*MockVideoRepoForFeed)(nil)
 
 // MockCommentRepoForFeed satisfies usecase.CommentRepository for feed tests.

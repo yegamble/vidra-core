@@ -431,3 +431,13 @@ func (r *mockVideoRepository) GetByChannelID(_ context.Context, _ string, _, _ i
 func (r *mockVideoRepository) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
 	return 0, nil
 }
+
+func (r *mockVideoRepository) AppendOutputPath(_ context.Context, videoID string, key string, path string) error {
+	if video, exists := r.videos[videoID]; exists {
+		if video.OutputPaths == nil {
+			video.OutputPaths = make(map[string]string)
+		}
+		video.OutputPaths[key] = path
+	}
+	return nil
+}

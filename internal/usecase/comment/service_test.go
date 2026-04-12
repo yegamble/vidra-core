@@ -180,6 +180,10 @@ func (m *mockVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, e
 	return 0, nil
 }
 
+func (m *mockVideoRepo) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 type mockUserRepo struct{ mock.Mock }
 
 func (m *mockUserRepo) GetByID(ctx context.Context, id string) (*domain.User, error) {

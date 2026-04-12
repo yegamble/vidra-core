@@ -265,6 +265,12 @@ func (s *service) encodeResolutions(ctx context.Context, job *domain.EncodingJob
 				errCh <- fmt.Errorf("encode %s: %w", label, err)
 				return
 			}
+			// Immediately register this resolution so the API can serve it
+			// before the remaining resolutions finish encoding.
+			relPlaylist := filepath.ToSlash(filepath.Join(outBaseDir, fmt.Sprintf("%dp/stream.m3u8", h)))
+			if appendErr := s.videoRepo.AppendOutputPath(ctx, job.VideoID, label, relPlaylist); appendErr != nil {
+				slog.Warn("failed to append output path for resolution", "video_id", job.VideoID, "resolution", label, "error", appendErr)
+			}
 			update()
 		}(height, res)
 	}

@@ -61,6 +61,10 @@ func (m *MockVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, e
 	return 0, nil
 }
 
+func (m *MockVideoRepo) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 type MockUserRepo struct {
 	User *domain.User
 }

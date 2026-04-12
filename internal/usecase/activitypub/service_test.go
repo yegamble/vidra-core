@@ -334,6 +334,10 @@ func (m *MockVideoRepository) GetVideoQuotaUsed(_ context.Context, _ string) (in
 	return 0, nil
 }
 
+func (m *MockVideoRepository) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 func TestGetLocalActor(t *testing.T) {
 	mockAPRepo := new(MockActivityPubRepository)
 	mockUserRepo := new(MockUserRepository)

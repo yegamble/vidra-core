@@ -63,6 +63,10 @@ func (m *minimalVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64
 	panic("not implemented")
 }
 
+func (m *minimalVideoRepo) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 func withUserID(r *http.Request, id string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), middleware.UserIDKey, id))
 }

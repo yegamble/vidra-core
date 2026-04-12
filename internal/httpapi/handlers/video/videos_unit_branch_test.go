@@ -115,6 +115,10 @@ func (s *unitVideoRepoStub) GetVideoQuotaUsed(_ context.Context, _ string) (int6
 	return 0, nil
 }
 
+func (s *unitVideoRepoStub) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 type unitEncodingRepoStub struct {
 	getJobCountsFn func(ctx context.Context) (map[string]int64, error)
 }

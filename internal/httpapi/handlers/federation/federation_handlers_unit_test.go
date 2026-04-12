@@ -299,6 +299,10 @@ func (m *mockVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, e
 	return 0, nil
 }
 
+func (m *mockVideoRepo) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 func TestRequireAdmin_Unit(t *testing.T) {
 	t.Run("no role in context returns forbidden", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)

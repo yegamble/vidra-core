@@ -61,6 +61,10 @@ func (m *mockVideoRepoPrivacy) GetVideoQuotaUsed(_ context.Context, _ string) (i
 	return 0, nil
 }
 
+func (m *mockVideoRepoPrivacy) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 func TestGetVideo_PrivacyGate(t *testing.T) {
 	ownerID := "owner-1"
 	mv := &mockVideoRepoPrivacy{v: &domain.Video{ID: "v1", UserID: ownerID, Privacy: domain.PrivacyPrivate}}

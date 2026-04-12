@@ -63,6 +63,10 @@ func (m *mockStreamRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, 
 	return 0, nil
 }
 
+func (m *mockStreamRepo) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 func TestStreamVideoHandler_DBOutputMasterRedirectsToHLS(t *testing.T) {
 	videoID := "vid-stream-1"
 	base := filepath.Join("./storage", "streaming-playlists", "hls", videoID)

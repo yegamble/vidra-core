@@ -60,6 +60,10 @@ func (m *mockAdminVideoRepo) GetByChannelID(_ context.Context, _ string, _, _ in
 func (m *mockAdminVideoRepo) GetVideoQuotaUsed(_ context.Context, _ string) (int64, error) {
 	return 0, nil
 }
+
+func (m *mockAdminVideoRepo) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
 func (m *mockAdminVideoRepo) Create(_ context.Context, _ *domain.Video) error    { return m.err }
 func (m *mockAdminVideoRepo) Update(_ context.Context, _ *domain.Video) error    { return m.err }
 func (m *mockAdminVideoRepo) Delete(_ context.Context, _ string, _ string) error { return m.err }

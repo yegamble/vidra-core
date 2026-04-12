@@ -24,6 +24,10 @@ func (m *mockQuotaVideoRepo) GetVideoQuotaUsed(ctx context.Context, userID strin
 	return m.quotaUsed, m.err
 }
 
+func (m *mockQuotaVideoRepo) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 func TestGetVideoQuotaUsed_ReturnsQuota(t *testing.T) {
 	repo := &mockQuotaVideoRepo{quotaUsed: 123456789}
 	handler := auth.GetVideoQuotaUsedHandler(repo)

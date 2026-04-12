@@ -82,6 +82,10 @@ func (m *MockVideoRepository) GetVideoQuotaUsed(_ context.Context, _ string) (in
 	return 0, nil
 }
 
+func (m *MockVideoRepository) AppendOutputPath(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 func TestNewVODConverter(t *testing.T) {
 	cfg := &config.Config{
 		HLSOutputDir:           "/tmp/test-vod",
