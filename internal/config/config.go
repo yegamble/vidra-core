@@ -29,7 +29,9 @@ type Config struct {
 
 	DatabaseURL string
 
-	RedisURL string
+	RedisURL         string
+	RedisTLS         bool
+	RedisTLSInsecure bool
 
 	IPFSApi             string
 	IPFSCluster         string
@@ -349,6 +351,8 @@ func Load() (*Config, error) {
 
 	cfg.DatabaseURL = GetEnvOrDefault("DATABASE_URL", "")
 	cfg.RedisURL = GetEnvOrDefault("REDIS_URL", "")
+	cfg.RedisTLS = GetEnvOrDefault("REDIS_TLS", "") == "true"
+	cfg.RedisTLSInsecure = GetEnvOrDefault("REDIS_TLS_INSECURE", "") == "true"
 	jwtSecret := GetEnvOrDefault("JWT_SECRET", "")
 
 	if setupExplicitlyDisabled || (!isSetupCompleted && (cfg.DatabaseURL == "" || cfg.RedisURL == "" || jwtSecret == "")) {

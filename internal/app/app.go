@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -256,6 +257,18 @@ func (app *Application) initializeRedis() error {
 	redisOpts.MinIdleConns = 10
 	redisOpts.ConnMaxIdleTime = 5 * time.Minute
 	redisOpts.ConnMaxLifetime = 1 * time.Hour
+
+	// PeerTube v8.1 parity: Redis TLS support
+	// TLS is auto-enabled by rediss:// URL scheme via ParseURL.
+	// REDIS_TLS=true explicitly enables TLS for redis:// URLs.
+	if app.Config.RedisTLS && redisOpts.TLSConfig == nil {
+		redisOpts.TLSConfig = &tls.Config{
+			InsecureSkipVerify: app.Config.RedisTLSInsecure,
+		}
+	}
+	if app.Config.RedisTLSInsecure && redisOpts.TLSConfig != nil {
+		redisOpts.TLSConfig.InsecureSkipVerify = true
+	}
 
 	rdb := redis.NewClient(redisOpts)
 
