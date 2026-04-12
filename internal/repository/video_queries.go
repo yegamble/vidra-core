@@ -225,6 +225,13 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 		argIndex++
 	}
 
+	if req.Host != "" {
+		baseQuery += fmt.Sprintf(" AND remote_instance_domain = $%d", argIndex)
+		countQuery += fmt.Sprintf(" AND remote_instance_domain = $%d", argIndex)
+		args = append(args, req.Host)
+		argIndex++
+	}
+
 	orderBy := "upload_date"
 	if req.Sort != "" {
 		switch req.Sort {

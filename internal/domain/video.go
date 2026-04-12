@@ -148,6 +148,7 @@ type VideoSearchRequest struct {
 	ChannelID  *uuid.UUID `json:"channel_id"`
 	AccountID  *uuid.UUID `json:"account_id"`
 	Language   string     `json:"language"`
+	Host       string     `json:"host"` // PeerTube v7.0: filter by instance domain
 	Privacy    Privacy    `json:"privacy"`
 	Sort       string     `json:"sort"`
 	Order      string     `json:"order"`

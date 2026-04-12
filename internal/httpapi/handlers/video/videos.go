@@ -33,6 +33,7 @@ func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 
 		req := &domain.VideoSearchRequest{
 			Language: r.URL.Query().Get("language"),
+			Host:     r.URL.Query().Get("host"),
 			Sort:     sort,
 			Order:    order,
 			Limit:    limit,
@@ -77,6 +78,7 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 			Query:    query,
 			Tags:     tags,
 			Language: r.URL.Query().Get("language"),
+			Host:     r.URL.Query().Get("host"),
 			Sort:     r.URL.Query().Get("sort"),
 			Order:    r.URL.Query().Get("order"),
 			Limit:    limit,
