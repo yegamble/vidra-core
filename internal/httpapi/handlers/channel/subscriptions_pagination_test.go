@@ -21,7 +21,7 @@ type mockSubRepo struct {
 
 func (m *mockSubRepo) Subscribe(_ context.Context, _, _ string) error   { return nil }
 func (m *mockSubRepo) Unsubscribe(_ context.Context, _, _ string) error { return nil }
-func (m *mockSubRepo) ListSubscriptions(_ context.Context, _ string, limit, offset int) ([]*domain.User, int64, error) {
+func (m *mockSubRepo) ListSubscriptions(_ context.Context, _ string, limit, offset int, _ ...string) ([]*domain.User, int64, error) {
 	m.gotLimit, m.gotOffset = limit, offset
 	return []*domain.User{}, 0, nil
 }

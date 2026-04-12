@@ -155,7 +155,7 @@ func (s *unitSubscriptionRepoStub) UnsubscribeFromChannel(ctx context.Context, s
 func (s *unitSubscriptionRepoStub) IsSubscribed(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
 	return false, nil
 }
-func (s *unitSubscriptionRepoStub) ListUserSubscriptions(ctx context.Context, subscriberID uuid.UUID, limit, offset int) (*domain.SubscriptionResponse, error) {
+func (s *unitSubscriptionRepoStub) ListUserSubscriptions(ctx context.Context, subscriberID uuid.UUID, limit, offset int, _ ...string) (*domain.SubscriptionResponse, error) {
 	if s.listUserSubscriptionsFn != nil {
 		return s.listUserSubscriptionsFn(ctx, subscriberID, limit, offset)
 	}
@@ -188,7 +188,7 @@ func (s *unitSubscriptionRepoStub) Unsubscribe(ctx context.Context, subscriberID
 	}
 	return nil
 }
-func (s *unitSubscriptionRepoStub) ListSubscriptions(context.Context, string, int, int) ([]*domain.User, int64, error) {
+func (s *unitSubscriptionRepoStub) ListSubscriptions(_ context.Context, _ string, _, _ int, _ ...string) ([]*domain.User, int64, error) {
 	return nil, 0, nil
 }
 func (s *unitSubscriptionRepoStub) ListSubscriptionVideos(context.Context, string, int, int) ([]*domain.Video, int64, error) {

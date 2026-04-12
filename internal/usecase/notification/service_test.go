@@ -83,7 +83,7 @@ func (m *mockSubscriptionRepo) IsSubscribed(ctx context.Context, subscriberID, c
 	args := m.Called(ctx, subscriberID, channelID)
 	return args.Bool(0), args.Error(1)
 }
-func (m *mockSubscriptionRepo) ListUserSubscriptions(ctx context.Context, subscriberID uuid.UUID, limit, offset int) (*domain.SubscriptionResponse, error) {
+func (m *mockSubscriptionRepo) ListUserSubscriptions(ctx context.Context, subscriberID uuid.UUID, limit, offset int, _ ...string) (*domain.SubscriptionResponse, error) {
 	args := m.Called(ctx, subscriberID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -110,7 +110,7 @@ func (m *mockSubscriptionRepo) Subscribe(ctx context.Context, subscriberID, chan
 func (m *mockSubscriptionRepo) Unsubscribe(ctx context.Context, subscriberID, channelID string) error {
 	return m.Called(ctx, subscriberID, channelID).Error(0)
 }
-func (m *mockSubscriptionRepo) ListSubscriptions(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.User, int64, error) {
+func (m *mockSubscriptionRepo) ListSubscriptions(ctx context.Context, subscriberID string, limit, offset int, _ ...string) ([]*domain.User, int64, error) {
 	args := m.Called(ctx, subscriberID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Get(1).(int64), args.Error(2)

@@ -205,7 +205,7 @@ func (m *MockSubscriptionRepository) UnsubscribeFromChannel(ctx context.Context,
 	return nil
 }
 
-func (m *MockSubscriptionRepository) ListUserSubscriptions(ctx context.Context, subscriberID uuid.UUID, limit, offset int) (*domain.SubscriptionResponse, error) {
+func (m *MockSubscriptionRepository) ListUserSubscriptions(_ context.Context, _ uuid.UUID, _, _ int, _ ...string) (*domain.SubscriptionResponse, error) {
 	return nil, nil
 }
 
@@ -225,7 +225,7 @@ func (m *MockSubscriptionRepository) Unsubscribe(ctx context.Context, subscriber
 	return nil
 }
 
-func (m *MockSubscriptionRepository) ListSubscriptions(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.User, int64, error) {
+func (m *MockSubscriptionRepository) ListSubscriptions(_ context.Context, _ string, _, _ int, _ ...string) ([]*domain.User, int64, error) {
 	return nil, 0, nil
 }
 

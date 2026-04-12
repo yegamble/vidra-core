@@ -109,8 +109,8 @@ These are substantial features that each warrant their own `/spec` plan:
 - [x] Task 2: fileUrl deprecation compat fields
 - [x] Task 3: Host filter on video list endpoints
 - [x] Task 4: typeOneOf alias on notifications
-- [ ] Task 5: channelUpdatedAt sort on subscriptions
-- [ ] Task 6: Case-insensitive email matching
+- [x] Task 5: channelUpdatedAt sort on subscriptions
+- [x] Task 6: Case-insensitive email matching
 - [ ] Task 7: Channel Activities endpoint
 - [ ] Task 8: Redis TLS support
 - [ ] Task 9: FEP-1b12 ActivityPub compatibility
