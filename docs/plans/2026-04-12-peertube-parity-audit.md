@@ -108,7 +108,7 @@ These are substantial features that each warrant their own `/spec` plan:
 - [x] Task 1: Thumbnails array in Video API response
 - [x] Task 2: fileUrl deprecation compat fields
 - [x] Task 3: Host filter on video list endpoints
-- [ ] Task 4: typeOneOf alias on notifications
+- [x] Task 4: typeOneOf alias on notifications
 - [ ] Task 5: channelUpdatedAt sort on subscriptions
 - [ ] Task 6: Case-insensitive email matching
 - [ ] Task 7: Channel Activities endpoint

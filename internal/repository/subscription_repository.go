@@ -97,7 +97,7 @@ func (r *subscriptionRepository) IsSubscribed(ctx context.Context, subscriberID,
 }
 
 // ListUserSubscriptions lists all channels a user is subscribed to
-func (r *subscriptionRepository) ListUserSubscriptions(ctx context.Context, subscriberID uuid.UUID, limit, offset int) (*domain.SubscriptionResponse, error) {
+func (r *subscriptionRepository) ListUserSubscriptions(ctx context.Context, subscriberID uuid.UUID, limit, offset int, sortBy ...string) (*domain.SubscriptionResponse, error) {
 	// Count total
 	var total int
 	countQuery := `SELECT COUNT(*) FROM subscriptions WHERE subscriber_id = $1`
@@ -122,8 +122,14 @@ func (r *subscriptionRepository) ListUserSubscriptions(ctx context.Context, subs
         FROM subscriptions s
         JOIN channels c ON s.channel_id = c.id
         WHERE s.subscriber_id = $1
-        ORDER BY s.created_at DESC
+        ORDER BY %s DESC
         LIMIT $2 OFFSET $3`
+
+	orderCol := "s.created_at"
+	if len(sortBy) > 0 && sortBy[0] == "channelUpdatedAt" {
+		orderCol = "c.updated_at"
+	}
+	query = fmt.Sprintf(query, orderCol)
 
 	rows, err := r.db.QueryContext(ctx, query, subscriberID, limit, offset)
 	if err != nil {
@@ -346,13 +352,17 @@ func (r *subscriptionRepository) Unsubscribe(ctx context.Context, subscriberID, 
 }
 
 // ListSubscriptions lists user subscriptions (DEPRECATED - use ListUserSubscriptions)
-func (r *subscriptionRepository) ListSubscriptions(ctx context.Context, subscriberID string, limit, offset int) ([]*domain.User, int64, error) {
+func (r *subscriptionRepository) ListSubscriptions(ctx context.Context, subscriberID string, limit, offset int, sort ...string) ([]*domain.User, int64, error) {
 	subID, err := uuid.Parse(subscriberID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("invalid subscriber ID: %w", err)
 	}
 
-	response, err := r.ListUserSubscriptions(ctx, subID, limit, offset)
+	sortBy := ""
+	if len(sort) > 0 {
+		sortBy = sort[0]
+	}
+	response, err := r.ListUserSubscriptions(ctx, subID, limit, offset, sortBy)
 	if err != nil {
 		return nil, 0, err
 	}

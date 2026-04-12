@@ -87,7 +87,10 @@ func ListMySubscriptionsHandler(subRepo usecase.SubscriptionRepository) http.Han
 			return
 		}
 
-		users, total, err := subRepo.ListSubscriptions(r.Context(), me, limit, offset)
+		// PeerTube v7.0: support sort param (e.g., channelUpdatedAt)
+		sortParam := r.URL.Query().Get("sort")
+
+		users, total, err := subRepo.ListSubscriptions(r.Context(), me, limit, offset, sortParam)
 		if err != nil {
 			shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("LIST_FAILED", "Failed to list subscriptions"))
 			return
