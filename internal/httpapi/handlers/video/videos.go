@@ -139,14 +139,21 @@ func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.Capti
 			}
 		}
 
-		type VideoWithCaptions struct {
+		// Build PeerTube-compatible files[] and streamingPlaylists[]
+		webFiles, streamingPlaylists := BuildVideoFilesResponse(video)
+
+		type VideoWithExtras struct {
 			*domain.Video
-			Captions []domain.Caption `json:"captions"`
+			Captions           []domain.Caption            `json:"captions"`
+			Files              []domain.VideoFile          `json:"files"`
+			StreamingPlaylists []domain.StreamingPlaylist   `json:"streamingPlaylists"`
 		}
 
-		response := VideoWithCaptions{
-			Video:    video,
-			Captions: captions,
+		response := VideoWithExtras{
+			Video:              video,
+			Captions:           captions,
+			Files:              webFiles,
+			StreamingPlaylists: streamingPlaylists,
 		}
 
 		shared.WriteJSON(w, http.StatusOK, response)
