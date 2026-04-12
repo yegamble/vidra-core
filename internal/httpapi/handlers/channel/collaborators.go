@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/httpapi/shared"
@@ -33,17 +35,46 @@ type collaboratorRepository interface {
 	Delete(ctx context.Context, collaboratorID uuid.UUID) error
 }
 
+// collaboratorActivityRepo is an optional interface for logging channel activities.
+type collaboratorActivityRepo interface {
+	CreateActivity(ctx context.Context, activity *domain.ChannelActivity) error
+}
+
 type CollaboratorHandlers struct {
 	channelRepo      collaboratorChannelRepository
 	userRepo         collaboratorUserRepository
 	collaboratorRepo collaboratorRepository
+	activityRepo     collaboratorActivityRepo
 }
 
-func NewCollaboratorHandlers(channelRepo collaboratorChannelRepository, userRepo collaboratorUserRepository, collaboratorRepo collaboratorRepository) *CollaboratorHandlers {
-	return &CollaboratorHandlers{
+func NewCollaboratorHandlers(channelRepo collaboratorChannelRepository, userRepo collaboratorUserRepository, collaboratorRepo collaboratorRepository, activityRepo ...collaboratorActivityRepo) *CollaboratorHandlers {
+	h := &CollaboratorHandlers{
 		channelRepo:      channelRepo,
 		userRepo:         userRepo,
 		collaboratorRepo: collaboratorRepo,
+	}
+	if len(activityRepo) > 0 && activityRepo[0] != nil {
+		h.activityRepo = activityRepo[0]
+	}
+	return h
+}
+
+// logActivity records a channel activity, logging errors without failing the primary operation.
+func (h *CollaboratorHandlers) logActivity(ctx context.Context, channelID, userID uuid.UUID, action domain.ChannelActivityAction, targetID string) {
+	if h.activityRepo == nil {
+		return
+	}
+	activity := &domain.ChannelActivity{
+		ID:         uuid.New(),
+		ChannelID:  channelID,
+		UserID:     userID,
+		ActionType: action,
+		TargetType: "collaborator",
+		TargetID:   targetID,
+		CreatedAt:  time.Now(),
+	}
+	if err := h.activityRepo.CreateActivity(ctx, activity); err != nil {
+		slog.Warn("failed to log channel activity", "action", action, "error", err)
 	}
 }
 
@@ -145,6 +176,7 @@ func (h *CollaboratorHandlers) InviteCollaborator(w http.ResponseWriter, r *http
 		return
 	}
 
+	h.logActivity(r.Context(), channel.ID, userID, domain.ActivityCollaboratorInvite, inviteeID.String())
 	shared.WriteJSON(w, http.StatusCreated, refreshed)
 }
 
@@ -194,6 +226,7 @@ func (h *CollaboratorHandlers) DeleteCollaborator(w http.ResponseWriter, r *http
 		return
 	}
 
+	h.logActivity(r.Context(), channel.ID, userID, domain.ActivityCollaboratorRemove, collaboratorID.String())
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -234,6 +267,12 @@ func (h *CollaboratorHandlers) respondToInvite(w http.ResponseWriter, r *http.Re
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("reload collaborator: %w", err))
 		return
 	}
+
+	action := domain.ActivityCollaboratorAccept
+	if status == domain.ChannelCollaboratorStatusRejected {
+		action = domain.ActivityCollaboratorReject
+	}
+	h.logActivity(r.Context(), channel.ID, userID, action, collaborator.ID.String())
 
 	shared.WriteJSON(w, http.StatusOK, refreshed)
 }

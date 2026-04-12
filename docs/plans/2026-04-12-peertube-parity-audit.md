@@ -113,10 +113,10 @@ These are substantial features that each warrant their own `/spec` plan:
 - [x] Task 6: Case-insensitive email matching
 - [x] Task 7: Channel Activities endpoint
 - [x] Task 8: Redis TLS support
-- [ ] Task 9: FEP-1b12 ActivityPub compatibility
-- [ ] Task 10: WebP/PNG thumbnail acceptance
-- [ ] Task 11: Mastodon verification + Video public link in ActivityPub
-- [ ] Task 12: playlistUrl in HLS video file response
+- [x] Task 9: FEP-1b12 ActivityPub compatibility
+- [x] Task 10: WebP/PNG thumbnail acceptance
+- [x] Task 11: Mastodon verification + Video public link in ActivityPub
+- [x] Task 12: playlistUrl in HLS video file response (auto-added by hook)
 - [ ] Task 13: Wire activity writes into video/collaborator handlers
 - [x] Task 0: Add deferred features to parity registry
       **Total Tasks:** 14 | **Completed:** 0 | **Remaining:** 14
