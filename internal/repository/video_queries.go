@@ -157,7 +157,8 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
-               created_at, updated_at, output_paths, thumbnail_path, preview_path
+               created_at, updated_at, output_paths, thumbnail_path, preview_path,
+               wait_transcoding
         FROM videos
         WHERE user_id = $1
         ORDER BY upload_date DESC
@@ -187,7 +188,8 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
-               created_at, updated_at, output_paths, thumbnail_path, preview_path
+               created_at, updated_at, output_paths, thumbnail_path, preview_path,
+               wait_transcoding
         FROM videos
         WHERE privacy = 'public' AND status = 'completed'
           AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
@@ -289,7 +291,8 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
-               created_at, updated_at, output_paths, thumbnail_path, preview_path
+               created_at, updated_at, output_paths, thumbnail_path, preview_path,
+               wait_transcoding
         FROM videos
         WHERE privacy = 'public' AND status = 'completed'
           AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
@@ -523,7 +526,8 @@ func (r *videoRepository) GetByChannelID(ctx context.Context, channelID string, 
                privacy, status, upload_date, user_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
-               created_at, updated_at, output_paths, thumbnail_path, preview_path
+               created_at, updated_at, output_paths, thumbnail_path, preview_path,
+               wait_transcoding
         FROM videos
         WHERE channel_id = $1
         ORDER BY upload_date DESC

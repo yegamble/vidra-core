@@ -84,6 +84,7 @@ jobs:
       - name: Run database migrations
         run: |
           go install github.com/pressly/goose/v3/cmd/goose@latest
+          export PATH="$(go env GOPATH)/bin:$PATH"
           cd migrations
           goose postgres "$DATABASE_URL" up
 

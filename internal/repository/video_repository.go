@@ -57,6 +57,7 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
+		&v.WaitTranscoding,
 	)
 	if err != nil {
 		return nil, domain.NewDomainError("SCAN_FAILED", "Failed to scan video row")
@@ -123,7 +124,8 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
             original_cid, processed_cids, thumbnail_cid,
             tags, category_id, language, file_size, mime_type, metadata,
             created_at, updated_at,
-            output_paths, thumbnail_path, preview_path
+            output_paths, thumbnail_path, preview_path,
+            wait_transcoding
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9, $10,
@@ -133,7 +135,8 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
             $12, $13, $14,
             $15, $16, $17, $18, $19, $20,
             $21, $22,
-            $23, $24, $25
+            $23, $24, $25,
+            $26
         )`
 	} else {
 		query = `
@@ -143,14 +146,16 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
             original_cid, processed_cids, thumbnail_cid,
             tags, category_id, language, file_size, mime_type, metadata,
             created_at, updated_at,
-            output_paths, thumbnail_path, preview_path
+            output_paths, thumbnail_path, preview_path,
+            wait_transcoding
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9, $10,
             $11, $12, $13,
             $14, $15, $16, $17, $18, $19,
             $20, $21,
-            $22, $23, $24
+            $22, $23, $24,
+            $25
         )`
 	}
 
@@ -175,6 +180,7 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 			pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
 			v.CreatedAt, v.UpdatedAt,
 			outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
+			v.WaitTranscoding,
 		)
 	} else {
 		_, err = exec.ExecContext(ctx, query,
@@ -184,6 +190,7 @@ func (r *videoRepository) Create(ctx context.Context, v *domain.Video) error {
 			pq.Array(v.Tags), v.CategoryID, v.Language, v.FileSize, v.MimeType, metadataJSON,
 			v.CreatedAt, v.UpdatedAt,
 			outputPathsJSON, v.ThumbnailPath, v.PreviewPath,
+			v.WaitTranscoding,
 		)
 	}
 	if err != nil {
@@ -207,6 +214,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
                COALESCE(v.storage_tier, 'hot') as storage_tier,
                v.s3_migrated_at,
                COALESCE(v.local_deleted, false) as local_deleted,
+               COALESCE(v.wait_transcoding, false) as wait_transcoding,
                c.id, c.name, c.slug, c.description, c.icon, c.color, c.display_order, c.is_active
         FROM videos v
         LEFT JOIN video_categories c ON v.category_id = c.id
@@ -218,6 +226,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
                v.original_cid, v.processed_cids, v.thumbnail_cid,
                v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
                v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
+               COALESCE(v.wait_transcoding, false) as wait_transcoding,
                c.id, c.name, c.slug, c.description, c.icon, c.color, c.display_order, c.is_active
         FROM videos v
         LEFT JOIN video_categories c ON v.category_id = c.id
@@ -243,6 +252,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 			&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 			&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
 			&s3URLsJSON, &v.StorageTier, &v.S3MigratedAt, &v.LocalDeleted,
+			&v.WaitTranscoding,
 			&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
 		)
 	} else {
@@ -252,6 +262,7 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 			&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 			&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 			&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &thumbnailPath, &previewPath,
+			&v.WaitTranscoding,
 			&v.CategoryID, &categoryName, &categorySlug, &categoryDesc, &categoryIcon, &categoryColor, &categoryOrder, &categoryActive,
 		)
 		v.StorageTier = "hot"

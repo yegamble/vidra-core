@@ -116,8 +116,13 @@ runs:
           echo "GOPATH path: ${CHOSEN_GOPATH}"
           echo "GOPATH=${CHOSEN_GOPATH}" >> "$GITHUB_ENV"
         else
+          CHOSEN_GOPATH="${CURRENT_GOPATH}"
           echo "✓ GOPATH already set: ${CURRENT_GOPATH}"
         fi
+
+        # Ensure GOPATH/bin is on PATH so `go install`-ed binaries are found
+        mkdir -p "${CHOSEN_GOPATH}/bin"
+        echo "${CHOSEN_GOPATH}/bin" >> "$GITHUB_PATH"
 
     # Ensure Go build cache is enabled and consistent across steps
     - name: Ensure Go build cache path

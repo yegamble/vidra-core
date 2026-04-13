@@ -316,6 +316,11 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 	hbCtx, hbCancel := context.WithCancel(ctx)
 	defer hbCancel()
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Warn("recovered panic in encoding heartbeat", "video_id", job.VideoID, "panic", r)
+			}
+		}()
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for {
@@ -415,11 +420,8 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 	s.triggerNotifications(ctx, job.VideoID)
 
 	// Step 11: Trigger caption generation
-	captionsTriggered := false
-	if s.captionGen != nil && s.cfg != nil && s.cfg.EnableCaptionGeneration {
-		captionsTriggered = true
-	}
 	s.triggerCaptionGeneration(ctx, job.VideoID)
+	captionsTriggered := s.captionGen != nil && s.cfg != nil && s.cfg.EnableCaptionGeneration
 
 	// Step 12: Finalize video state (publish if waitTranscoding=true)
 	s.finalizeVideoState(ctx, job.VideoID)
@@ -550,7 +552,19 @@ func (s *service) uploadMediaToIPFS(ctx context.Context, thumbPath, previewPath 
 }
 
 func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, outBaseDir, thumb, preview string, processedCIDs map[string]string, thumbCID, previewCID string) error {
+	// Read existing video to merge OutputPaths (preserve "source" key and
+	// any per-resolution entries added during incremental encoding).
+	existing, err := s.videoRepo.GetByID(ctx, job.VideoID)
+	if err != nil {
+		return fmt.Errorf("read video for output merge: %w", err)
+	}
+
 	outputs := make(map[string]string)
+	// Carry forward existing entries (especially "source" from upload)
+	for k, v := range existing.OutputPaths {
+		outputs[k] = v
+	}
+	// Add/overwrite with final HLS paths
 	outputs["master"] = filepath.ToSlash(filepath.Join(outBaseDir, "master.m3u8"))
 	for _, res := range job.TargetResolutions {
 		if h, ok := domain.HeightForResolution(res); ok {
@@ -558,10 +572,19 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 		}
 	}
 
+	// Preserve existing status — don't force StatusCompleted here.
+	// finalizeVideoState() handles the transition for waitTranscoding=true.
+	// For waitTranscoding=false, video is already StatusCompleted from upload.
+	status := existing.Status
+	if status == domain.StatusQueued {
+		// Legacy behavior: videos without waitTranscoding field still get completed
+		status = domain.StatusCompleted
+	}
+
 	return s.videoRepo.UpdateProcessingInfoWithCIDs(ctx, port.VideoProcessingWithCIDsParams{
 		VideoProcessingParams: port.VideoProcessingParams{
 			VideoID:       job.VideoID,
-			Status:        domain.StatusCompleted,
+			Status:        status,
 			OutputPaths:   outputs,
 			ThumbnailPath: filepath.ToSlash(thumb),
 			PreviewPath:   filepath.ToSlash(preview),

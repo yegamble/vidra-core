@@ -644,9 +644,12 @@ func TestUpdateVideoInfo(t *testing.T) {
 	}
 
 	videoID := uuid.NewString()
+	// Video with StatusProcessing (waitTranscoding=true case) — updateVideoInfo
+	// should preserve the existing status, not force StatusCompleted.
 	video := &domain.Video{
-		ID:     videoID,
-		Status: domain.StatusProcessing,
+		ID:          videoID,
+		Status:      domain.StatusProcessing,
+		OutputPaths: map[string]string{"source": "/uploads/original.mp4"},
 	}
 	require.NoError(t, videoRepo.Create(context.Background(), video))
 
@@ -670,10 +673,11 @@ func TestUpdateVideoInfo(t *testing.T) {
 
 	assert.NoError(t, err)
 
-	// Verify the video was updated
+	// Verify the video was updated but status preserved (not forced to Completed)
 	updatedVideo, _ := videoRepo.GetByID(ctx, videoID)
-	assert.Equal(t, domain.StatusCompleted, updatedVideo.Status)
+	assert.Equal(t, domain.StatusProcessing, updatedVideo.Status)
 	assert.NotEmpty(t, updatedVideo.OutputPaths)
+	assert.Equal(t, "/uploads/original.mp4", updatedVideo.OutputPaths["source"]) // source key preserved
 	assert.Equal(t, "QmABC", updatedVideo.ProcessedCIDs["720p"])
 	assert.Equal(t, "QmThumb", updatedVideo.ThumbnailCID)
 }
