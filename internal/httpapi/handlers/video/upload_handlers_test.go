@@ -287,7 +287,7 @@ func TestCompleteUploadHandler(t *testing.T) {
 
 	w := httptest.NewRecorder()
 
-	handler := CompleteUploadHandler(uploadService, encodingRepo)
+	handler := CompleteUploadHandler(uploadService, encodingRepo, videoRepo)
 	handler(w, httpReq)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -458,7 +458,7 @@ func TestUploadHandlers_InvalidSessionID(t *testing.T) {
 		path    string
 	}{
 		{"UploadChunk", UploadChunkHandler(uploadService, createTestConfig()), "POST", "/chunks"},
-		{"CompleteUpload", CompleteUploadHandler(uploadService, encodingRepo), "POST", "/complete"},
+		{"CompleteUpload", CompleteUploadHandler(uploadService, encodingRepo, videoRepo), "POST", "/complete"},
 		{"GetUploadStatus", GetUploadStatusHandler(uploadService), "GET", "/status"},
 		{"ResumeUpload", ResumeUploadHandler(uploadService), "GET", "/resume"},
 	}

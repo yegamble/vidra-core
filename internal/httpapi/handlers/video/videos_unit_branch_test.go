@@ -551,7 +551,7 @@ func TestCompleteUploadHandler_UnitBranches(t *testing.T) {
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/uploads/complete", nil)
 		req = withChiURLParam(req, "sessionId", "")
-		CompleteUploadHandler(&unitUploadServiceStub{}, nil).ServeHTTP(rr, req)
+		CompleteUploadHandler(&unitUploadServiceStub{}, nil, nil).ServeHTTP(rr, req)
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		response := decodeHandlerResponse(t, rr)
@@ -563,7 +563,7 @@ func TestCompleteUploadHandler_UnitBranches(t *testing.T) {
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/uploads/not-a-uuid/complete", nil)
 		req = withChiURLParam(req, "sessionId", "not-a-uuid")
-		CompleteUploadHandler(&unitUploadServiceStub{}, nil).ServeHTTP(rr, req)
+		CompleteUploadHandler(&unitUploadServiceStub{}, nil, nil).ServeHTTP(rr, req)
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		response := decodeHandlerResponse(t, rr)
@@ -576,12 +576,15 @@ func TestCompleteUploadHandler_UnitBranches(t *testing.T) {
 			completeUploadFn: func(context.Context, string) error {
 				return domain.NewDomainError("INCOMPLETE_UPLOAD", "missing chunks")
 			},
+			getUploadStatus: func(_ context.Context, sid string) (*domain.UploadSession, error) {
+				return &domain.UploadSession{ID: sid, VideoID: uuid.NewString()}, nil
+			},
 		}
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/uploads/"+sessionID+"/complete", nil)
 		req = withChiURLParam(req, "sessionId", sessionID)
 
-		CompleteUploadHandler(service, nil).ServeHTTP(rr, req)
+		CompleteUploadHandler(service, nil, nil).ServeHTTP(rr, req)
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		response := decodeHandlerResponse(t, rr)
@@ -594,12 +597,15 @@ func TestCompleteUploadHandler_UnitBranches(t *testing.T) {
 			completeUploadFn: func(context.Context, string) error {
 				return nil
 			},
+			getUploadStatus: func(_ context.Context, sid string) (*domain.UploadSession, error) {
+				return &domain.UploadSession{ID: sid, VideoID: uuid.NewString()}, nil
+			},
 		}
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/uploads/"+sessionID+"/complete", nil)
 		req = withChiURLParam(req, "sessionId", sessionID)
 
-		CompleteUploadHandler(service, nil).ServeHTTP(rr, req)
+		CompleteUploadHandler(service, nil, nil).ServeHTTP(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		response := decodeHandlerResponse(t, rr)

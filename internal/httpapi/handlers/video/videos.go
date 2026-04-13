@@ -156,9 +156,9 @@ func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.Capti
 
 		type VideoWithExtras struct {
 			*domain.Video
-			Captions           []domain.Caption            `json:"captions"`
-			Files              []domain.VideoFile          `json:"files"`
-			StreamingPlaylists []domain.StreamingPlaylist   `json:"streamingPlaylists"`
+			Captions           []domain.Caption           `json:"captions"`
+			Files              []domain.VideoFile         `json:"files"`
+			StreamingPlaylists []domain.StreamingPlaylist `json:"streamingPlaylists"`
 		}
 
 		response := VideoWithExtras{

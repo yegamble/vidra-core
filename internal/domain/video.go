@@ -104,11 +104,11 @@ type VideoFile struct {
 
 // StreamingPlaylist represents an HLS streaming playlist in PeerTube-compatible API responses.
 type StreamingPlaylist struct {
-	Type             int         `json:"type"` // 1 = HLS
-	PlaylistUrl      string      `json:"playlistUrl"`
-	SegmentsSha256Url string     `json:"segmentsSha256Url,omitempty"`
-	Files            []VideoFile `json:"files"`
-	RedundancyUrls   []string    `json:"redundancies,omitempty"`
+	Type              int         `json:"type"` // 1 = HLS
+	PlaylistUrl       string      `json:"playlistUrl"`
+	SegmentsSha256Url string      `json:"segmentsSha256Url,omitempty"`
+	Files             []VideoFile `json:"files"`
+	RedundancyUrls    []string    `json:"redundancies,omitempty"`
 }
 
 // VideoThumbnail represents an entry in the PeerTube v8.1 thumbnails array.

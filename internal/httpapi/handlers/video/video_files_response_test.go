@@ -76,7 +76,7 @@ func TestBuildVideoFilesResponse_SourceAndHLS(t *testing.T) {
 		},
 	}
 	files, playlists := BuildVideoFilesResponse(v)
-	assert.Equal(t, 1, len(files))           // source as web video
-	assert.Equal(t, 1, len(playlists))       // one HLS playlist
+	assert.Equal(t, 1, len(files))              // source as web video
+	assert.Equal(t, 1, len(playlists))          // one HLS playlist
 	assert.Equal(t, 3, len(playlists[0].Files)) // 720p, 480p, 240p
 }

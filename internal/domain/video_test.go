@@ -11,8 +11,8 @@ import (
 
 func TestVideoWaitTranscodingField(t *testing.T) {
 	v := Video{
-		ID:               "test-id",
-		WaitTranscoding:  true,
+		ID:              "test-id",
+		WaitTranscoding: true,
 	}
 	assert.True(t, v.WaitTranscoding)
 

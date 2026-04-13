@@ -157,16 +157,16 @@ func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo use
 
 		// Parse and apply metadata from request body (title, description, privacy, etc.)
 		var meta struct {
-			Title          string   `json:"title"`
-			Description    string   `json:"description"`
-			Privacy        string   `json:"privacy"`
-			ChannelID      string   `json:"channelId"`
-			CategoryID     string   `json:"category_id"`
-			Tags           []string `json:"tags"`
-			Language       string   `json:"language"`
-			NSFW           bool     `json:"nsfw"`
-			CommentsEnabled *bool   `json:"commentsEnabled"`
-			ScheduledUpdate string  `json:"scheduledUpdate"`
+			Title           string   `json:"title"`
+			Description     string   `json:"description"`
+			Privacy         string   `json:"privacy"`
+			ChannelID       string   `json:"channelId"`
+			CategoryID      string   `json:"category_id"`
+			Tags            []string `json:"tags"`
+			Language        string   `json:"language"`
+			NSFW            bool     `json:"nsfw"`
+			CommentsEnabled *bool    `json:"commentsEnabled"`
+			ScheduledUpdate string   `json:"scheduledUpdate"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&meta) // best-effort — metadata is optional
 
