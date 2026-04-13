@@ -163,6 +163,25 @@ func TestWhisperProvider_IsValid(t *testing.T) {
 	}
 }
 
+func TestCaption_PopulateFileURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		url         string
+		wantFileURL string
+	}{
+		{"sets FileURL from URL", "https://example.com/caption.vtt", "https://example.com/caption.vtt"},
+		{"empty URL does not set FileURL", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Caption{URL: tt.url}
+			c.PopulateFileURL()
+			assert.Equal(t, tt.wantFileURL, c.FileURL)
+		})
+	}
+}
+
 func TestWhisperProvider_String(t *testing.T) {
 	tests := []struct {
 		name     string

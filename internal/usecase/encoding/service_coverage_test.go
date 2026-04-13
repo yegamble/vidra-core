@@ -658,6 +658,434 @@ func TestAV1Encoder_Encode_InvalidBinaryPath(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// --- WithActivityPubPublisher / WithStoryboardRepo tests ---
+
+func TestWithActivityPubPublisher(t *testing.T) {
+	repo := NewMockEncodingRepository()
+	videoRepo := NewMockVideoRepository()
+	cfg := &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4}
+
+	svc := NewService(repo, videoRepo, nil, "/tmp", cfg, nil, nil, nil)
+	concrete := svc.(*service)
+
+	assert.Nil(t, concrete.activitypub)
+
+	mockPub := &mockPublisher{}
+	result := concrete.WithActivityPubPublisher(mockPub)
+
+	assert.NotNil(t, result)
+	assert.NotNil(t, concrete.activitypub)
+}
+
+func TestWithStoryboardRepo(t *testing.T) {
+	repo := NewMockEncodingRepository()
+	videoRepo := NewMockVideoRepository()
+	cfg := &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4}
+
+	svc := NewService(repo, videoRepo, nil, "/tmp", cfg, nil, nil, nil)
+	concrete := svc.(*service)
+
+	assert.Nil(t, concrete.storyboardRepo)
+
+	mockSB := &mockStoryboardRepo{}
+	result := concrete.WithStoryboardRepo(mockSB)
+
+	assert.NotNil(t, result)
+	assert.NotNil(t, concrete.storyboardRepo)
+}
+
+// --- cleanupOriginalFile tests ---
+
+func TestCleanupOriginalFile_KeepOriginalTrue(t *testing.T) {
+	svc := &service{
+		cfg: &config.Config{KeepOriginalFile: true, FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4},
+	}
+
+	tempDir := t.TempDir()
+	sourceFile := filepath.Join(tempDir, "video.mp4")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("video data"), 0600))
+
+	job := &domain.EncodingJob{VideoID: uuid.NewString(), SourceFilePath: sourceFile}
+	svc.cleanupOriginalFile(context.Background(), job, false)
+
+	assert.FileExists(t, sourceFile, "file should NOT be removed when KeepOriginalFile=true")
+}
+
+func TestCleanupOriginalFile_NilConfig(t *testing.T) {
+	svc := &service{cfg: nil}
+
+	tempDir := t.TempDir()
+	sourceFile := filepath.Join(tempDir, "video.mp4")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("video data"), 0600))
+
+	job := &domain.EncodingJob{VideoID: uuid.NewString(), SourceFilePath: sourceFile}
+	svc.cleanupOriginalFile(context.Background(), job, false)
+
+	assert.FileExists(t, sourceFile, "file should NOT be removed when config is nil")
+}
+
+func TestCleanupOriginalFile_S3EnabledButMigrationFailed(t *testing.T) {
+	videoRepo := NewMockVideoRepository()
+	svc := &service{
+		cfg:       &config.Config{KeepOriginalFile: false, FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4},
+		videoRepo: videoRepo,
+		s3Backend: &mockStorageBackend{}, // S3 enabled
+	}
+
+	tempDir := t.TempDir()
+	sourceFile := filepath.Join(tempDir, "video.mp4")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("video data"), 0600))
+
+	job := &domain.EncodingJob{VideoID: uuid.NewString(), SourceFilePath: sourceFile}
+	svc.cleanupOriginalFile(context.Background(), job, false) // s3Migrated=false
+
+	assert.FileExists(t, sourceFile, "file should NOT be removed when S3 is enabled but migration failed")
+}
+
+func TestCleanupOriginalFile_SuccessfulRemoval(t *testing.T) {
+	videoRepo := NewMockVideoRepository()
+	videoID := uuid.NewString()
+	require.NoError(t, videoRepo.Create(context.Background(), &domain.Video{ID: videoID}))
+
+	svc := &service{
+		cfg:       &config.Config{KeepOriginalFile: false, FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4},
+		videoRepo: videoRepo,
+	}
+
+	tempDir := t.TempDir()
+	sourceFile := filepath.Join(tempDir, "video.mp4")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("video data"), 0600))
+
+	job := &domain.EncodingJob{VideoID: videoID, SourceFilePath: sourceFile}
+	svc.cleanupOriginalFile(context.Background(), job, false) // no S3 backend, s3Migrated irrelevant
+
+	assert.NoFileExists(t, sourceFile, "file should be removed")
+}
+
+func TestCleanupOriginalFile_FileAlreadyGone(t *testing.T) {
+	videoRepo := NewMockVideoRepository()
+	svc := &service{
+		cfg:       &config.Config{KeepOriginalFile: false, FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4},
+		videoRepo: videoRepo,
+	}
+
+	job := &domain.EncodingJob{VideoID: uuid.NewString(), SourceFilePath: "/nonexistent/video.mp4"}
+	// Should not panic
+	assert.NotPanics(t, func() {
+		svc.cleanupOriginalFile(context.Background(), job, false)
+	})
+}
+
+// --- finalizeVideoState tests ---
+
+func TestFinalizeVideoState_WaitTranscodingPublishes(t *testing.T) {
+	videoRepo := NewMockVideoRepository()
+	videoID := uuid.NewString()
+	video := &domain.Video{
+		ID:              videoID,
+		Status:          domain.StatusProcessing,
+		WaitTranscoding: true,
+	}
+	require.NoError(t, videoRepo.Create(context.Background(), video))
+
+	svc := &service{
+		videoRepo: videoRepo,
+		cfg:       &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4},
+	}
+
+	svc.finalizeVideoState(context.Background(), videoID)
+
+	updated, err := videoRepo.GetByID(context.Background(), videoID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.StatusCompleted, updated.Status, "should transition to completed")
+}
+
+func TestFinalizeVideoState_NoWaitTranscodingSkips(t *testing.T) {
+	videoRepo := NewMockVideoRepository()
+	videoID := uuid.NewString()
+	video := &domain.Video{
+		ID:              videoID,
+		Status:          domain.StatusProcessing,
+		WaitTranscoding: false,
+	}
+	require.NoError(t, videoRepo.Create(context.Background(), video))
+
+	svc := &service{
+		videoRepo: videoRepo,
+		cfg:       &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4},
+	}
+
+	svc.finalizeVideoState(context.Background(), videoID)
+
+	updated, err := videoRepo.GetByID(context.Background(), videoID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.StatusProcessing, updated.Status, "should stay processing when WaitTranscoding=false")
+}
+
+func TestFinalizeVideoState_VideoNotFound(t *testing.T) {
+	videoRepo := NewMockVideoRepository()
+	svc := &service{
+		videoRepo: videoRepo,
+		cfg:       &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4},
+	}
+
+	// Should not panic
+	assert.NotPanics(t, func() {
+		svc.finalizeVideoState(context.Background(), "nonexistent-id")
+	})
+}
+
+func TestFinalizeVideoState_AlreadyCompleted(t *testing.T) {
+	videoRepo := NewMockVideoRepository()
+	videoID := uuid.NewString()
+	video := &domain.Video{
+		ID:              videoID,
+		Status:          domain.StatusCompleted,
+		WaitTranscoding: true,
+	}
+	require.NoError(t, videoRepo.Create(context.Background(), video))
+
+	svc := &service{
+		videoRepo: videoRepo,
+		cfg:       &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4},
+	}
+
+	svc.finalizeVideoState(context.Background(), videoID)
+
+	updated, err := videoRepo.GetByID(context.Background(), videoID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.StatusCompleted, updated.Status, "should remain completed")
+}
+
+// --- logPipelineCompletion tests ---
+
+func TestLogPipelineCompletion_NoPanic(t *testing.T) {
+	svc := &service{
+		cfg: &config.Config{KeepOriginalFile: true, FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4},
+	}
+
+	job := &domain.EncodingJob{
+		VideoID:           uuid.NewString(),
+		TargetResolutions: []string{"720p", "1080p"},
+		SourceResolution:  "1080p",
+	}
+
+	assert.NotPanics(t, func() {
+		svc.logPipelineCompletion(job, map[string]string{"720p": "QmABC"}, true, true, true, true)
+	})
+}
+
+func TestLogPipelineCompletion_NilConfig(t *testing.T) {
+	svc := &service{cfg: nil}
+
+	job := &domain.EncodingJob{
+		VideoID:           uuid.NewString(),
+		TargetResolutions: []string{},
+		SourceResolution:  "720p",
+	}
+
+	assert.NotPanics(t, func() {
+		svc.logPipelineCompletion(job, nil, false, false, false, false)
+	})
+}
+
+// --- generateThumbnail / generatePreviewWebP tests ---
+
+func TestGenerateThumbnail_InvalidBinary(t *testing.T) {
+	svc := &service{
+		cfg: &config.Config{FFMPEGPath: "nonexistent_ffmpeg_binary_xyz", HLSSegmentDuration: 4},
+	}
+
+	err := svc.generateThumbnail(context.Background(), "/input.mp4", "/output.jpg")
+	assert.Error(t, err)
+}
+
+func TestGeneratePreviewWebP_InvalidBinary(t *testing.T) {
+	svc := &service{
+		cfg: &config.Config{FFMPEGPath: "nonexistent_ffmpeg_binary_xyz", HLSSegmentDuration: 4},
+	}
+
+	err := svc.generatePreviewWebP(context.Background(), "/input.mp4", "/output.webp")
+	assert.Error(t, err)
+}
+
+// --- generateStoryboard tests ---
+
+func TestGenerateStoryboard_NilStoryboardRepo(t *testing.T) {
+	svc := &service{
+		cfg:            &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4},
+		storyboardRepo: nil,
+	}
+
+	job := &domain.EncodingJob{VideoID: uuid.NewString(), SourceFilePath: "/input.mp4"}
+
+	// Should return early without panic when storyboardRepo is nil
+	assert.NotPanics(t, func() {
+		svc.generateStoryboard(context.Background(), job)
+	})
+}
+
+// --- contentTypeForPath tests ---
+
+func TestContentTypeForPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"stream.m3u8", "application/vnd.apple.mpegurl"},
+		{"segment_00001.ts", "video/MP2T"},
+		{"video.mp4", "application/octet-stream"},
+		{"file.M3U8", "application/vnd.apple.mpegurl"},
+		{"segment.TS", "video/MP2T"},
+		{"data.bin", "application/octet-stream"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			assert.Equal(t, tt.want, contentTypeForPath(tt.path))
+		})
+	}
+}
+
+// --- encodeResolutions with valid resolution but ffmpeg failure ---
+
+func TestEncodeResolutions_ValidResolutionFFmpegFails(t *testing.T) {
+	repo := NewMockEncodingRepository()
+	videoRepo := NewMockVideoRepository()
+	cfg := &config.Config{
+		FFMPEGPath:         "nonexistent_ffmpeg_binary_xyz",
+		HLSSegmentDuration: 4,
+	}
+
+	svc := &service{repo: repo, videoRepo: videoRepo, cfg: cfg}
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	// Create a fake source file so getVideoDuration has something to try
+	sourceFile := filepath.Join(tempDir, "source.mp4")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("fake"), 0600))
+
+	job := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           uuid.NewString(),
+		SourceFilePath:    sourceFile,
+		TargetResolutions: []string{"720p"},
+	}
+
+	updateCalled := 0
+	update := func() { updateCalled++ }
+
+	err := svc.encodeResolutions(ctx, job, tempDir, update)
+
+	// Should fail because FFmpeg binary doesn't exist
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "encode 720p")
+}
+
+// --- processJob exercising validation + output dir + failure at encoding ---
+
+func TestProcessJob_ValidationPassesEncodingFails(t *testing.T) {
+	repo := NewMockEncodingRepository()
+	videoRepo := NewMockVideoRepository()
+	cfg := &config.Config{
+		FFMPEGPath:         "nonexistent_ffmpeg_binary_xyz",
+		HLSSegmentDuration: 4,
+	}
+
+	tempDir := t.TempDir()
+	sourceFile := filepath.Join(tempDir, "source.mp4")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("fake video data"), 0600))
+
+	svc := &service{repo: repo, videoRepo: videoRepo, uploadsDir: tempDir, cfg: cfg}
+
+	job := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           uuid.NewString(),
+		SourceFilePath:    sourceFile,
+		SourceResolution:  "1080p",
+		TargetResolutions: []string{"720p"},
+		Status:            domain.EncodingStatusProcessing,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	require.NoError(t, repo.CreateJob(context.Background(), job))
+
+	err := svc.processJob(context.Background(), job)
+
+	assert.Error(t, err, "should fail because ffmpeg binary doesn't exist")
+}
+
+func TestProcessJob_EmptyResolutionsReachesMediaAssets(t *testing.T) {
+	repo := NewMockEncodingRepository()
+	videoRepo := NewMockVideoRepository()
+	cfg := &config.Config{
+		FFMPEGPath:         "nonexistent_ffmpeg_binary_xyz",
+		HLSSegmentDuration: 4,
+	}
+
+	tempDir := t.TempDir()
+	sourceFile := filepath.Join(tempDir, "source.mp4")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("fake video data"), 0600))
+
+	svc := &service{repo: repo, videoRepo: videoRepo, uploadsDir: tempDir, cfg: cfg}
+
+	job := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           uuid.NewString(),
+		SourceFilePath:    sourceFile,
+		SourceResolution:  "1080p",
+		TargetResolutions: []string{}, // empty — encodeResolutions succeeds
+		Status:            domain.EncodingStatusProcessing,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	require.NoError(t, repo.CreateJob(context.Background(), job))
+
+	err := svc.processJob(context.Background(), job)
+
+	// Should get past encodeResolutions and generateMasterPlaylist,
+	// then fail at generateMediaAssets (thumbnail generation needs ffmpeg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "thumbnail")
+}
+
+// --- uploadHLSToS3 tests ---
+
+func TestUploadHLSToS3_NilBackend(t *testing.T) {
+	svc := &service{s3Backend: nil, cfg: &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4}}
+
+	urls, err := svc.uploadHLSToS3(context.Background(), "vid-1", "/src.mp4", "/out", "/thumb.jpg", "/prev.webp", []string{"720p"})
+
+	assert.NoError(t, err)
+	assert.Empty(t, urls)
+}
+
+// --- WithS3Backend test ---
+
+func TestWithS3Backend(t *testing.T) {
+	repo := NewMockEncodingRepository()
+	videoRepo := NewMockVideoRepository()
+	cfg := &config.Config{FFMPEGPath: "ffmpeg", HLSSegmentDuration: 4}
+
+	svc := NewService(repo, videoRepo, nil, "/tmp", cfg, nil, nil, nil)
+	concrete := svc.(*service)
+
+	assert.Nil(t, concrete.s3Backend)
+
+	mock := &mockStorageBackend{}
+	result := concrete.WithS3Backend(mock)
+
+	assert.NotNil(t, result)
+	assert.NotNil(t, concrete.s3Backend)
+}
+
+// --- mock helpers ---
+
+type mockStoryboardRepo struct{}
+
+func (m *mockStoryboardRepo) Create(_ context.Context, _ *domain.VideoStoryboard) error { return nil }
+
 type mockPublisher struct {
 	publishCalled bool
 	shouldFail    bool

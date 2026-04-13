@@ -48,6 +48,41 @@ func TestChannelCreateRequest_Validate(t *testing.T) {
 	}
 }
 
+func TestChannel_PopulateFileURLs(t *testing.T) {
+	t.Run("sets FileURL on avatar and banner", func(t *testing.T) {
+		ch := &Channel{
+			Avatar: &ChannelAvatar{URL: "https://example.com/avatar.jpg"},
+			Banner: &ChannelBanner{URL: "https://example.com/banner.jpg"},
+		}
+		ch.PopulateFileURLs()
+		assert.Equal(t, "https://example.com/avatar.jpg", ch.Avatar.FileURL)
+		assert.Equal(t, "https://example.com/banner.jpg", ch.Banner.FileURL)
+	})
+
+	t.Run("nil avatar and banner does not panic", func(t *testing.T) {
+		ch := &Channel{}
+		assert.NotPanics(t, func() { ch.PopulateFileURLs() })
+	})
+
+	t.Run("empty URLs are not copied", func(t *testing.T) {
+		ch := &Channel{
+			Avatar: &ChannelAvatar{URL: ""},
+			Banner: &ChannelBanner{URL: ""},
+		}
+		ch.PopulateFileURLs()
+		assert.Empty(t, ch.Avatar.FileURL)
+		assert.Empty(t, ch.Banner.FileURL)
+	})
+
+	t.Run("only avatar set", func(t *testing.T) {
+		ch := &Channel{
+			Avatar: &ChannelAvatar{URL: "https://example.com/avatar.jpg"},
+		}
+		ch.PopulateFileURLs()
+		assert.Equal(t, "https://example.com/avatar.jpg", ch.Avatar.FileURL)
+	})
+}
+
 func TestChannelUpdateRequest_Validate(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 

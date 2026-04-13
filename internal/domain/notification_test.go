@@ -343,6 +343,41 @@ func TestNotification_ReadStatus(t *testing.T) {
 	}
 }
 
+func TestDefaultNotificationPreferences(t *testing.T) {
+	userID := "user-123"
+	prefs := DefaultNotificationPreferences(userID)
+
+	if prefs.UserID != userID {
+		t.Errorf("Expected UserID %s, got %s", userID, prefs.UserID)
+	}
+
+	// All preferences should default to true
+	if !prefs.Comment {
+		t.Error("Expected Comment to be true")
+	}
+	if !prefs.Like {
+		t.Error("Expected Like to be true")
+	}
+	if !prefs.Subscribe {
+		t.Error("Expected Subscribe to be true")
+	}
+	if !prefs.Mention {
+		t.Error("Expected Mention to be true")
+	}
+	if !prefs.Reply {
+		t.Error("Expected Reply to be true")
+	}
+	if !prefs.Upload {
+		t.Error("Expected Upload to be true")
+	}
+	if !prefs.System {
+		t.Error("Expected System to be true")
+	}
+	if !prefs.EmailEnabled {
+		t.Error("Expected EmailEnabled to be true")
+	}
+}
+
 func TestNotificationData_OptionalFields(t *testing.T) {
 	// Test with minimal fields
 	data := NotificationData{
