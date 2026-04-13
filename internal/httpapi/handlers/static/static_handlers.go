@@ -73,26 +73,44 @@ func (h *Handlers) ServePrivateWebVideo(w http.ResponseWriter, r *http.Request) 
 }
 
 // ServeHLSFile serves an HLS streaming playlist or segment file.
-// GET /static/streaming-playlists/hls/{filename}
+// GET /static/streaming-playlists/hls/*
 func (h *Handlers) ServeHLSFile(w http.ResponseWriter, r *http.Request) {
-	filename := chi.URLParam(r, "filename")
-	if filename == "" {
+	subPath := chi.URLParam(r, "*")
+	if subPath == "" {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FILENAME", "Filename is required"))
 		return
 	}
 
-	if err := validateFilename(filename); err != nil {
+	if err := validateHLSPath(subPath); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, err)
 		return
 	}
 
-	filePath := filepath.Join(h.paths.HLSRootDir(), filename)
+	filePath := filepath.Join(h.paths.HLSRootDir(), filepath.FromSlash(subPath))
 	serveFile(w, r, filePath)
 }
 
 // ServePrivateHLSFile serves a private HLS streaming file (auth required).
-// GET /static/streaming-playlists/hls/private/{filename}
+// GET /static/streaming-playlists/hls/private/*
 func (h *Handlers) ServePrivateHLSFile(w http.ResponseWriter, r *http.Request) {
+	subPath := chi.URLParam(r, "*")
+	if subPath == "" {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FILENAME", "Filename is required"))
+		return
+	}
+
+	if err := validateHLSPath(subPath); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	filePath := filepath.Join(h.paths.HLSRootDir(), "private", filepath.FromSlash(subPath))
+	serveFile(w, r, filePath)
+}
+
+// ServeThumbnail serves a video thumbnail image.
+// GET /static/thumbnails/{filename}
+func (h *Handlers) ServeThumbnail(w http.ResponseWriter, r *http.Request) {
 	filename := chi.URLParam(r, "filename")
 	if filename == "" {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FILENAME", "Filename is required"))
@@ -104,7 +122,25 @@ func (h *Handlers) ServePrivateHLSFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := filepath.Join(h.paths.HLSRootDir(), "private", filename)
+	filePath := filepath.Join(h.paths.ThumbnailsDir(), filename)
+	serveFile(w, r, filePath)
+}
+
+// ServePreview serves a video preview animation.
+// GET /static/previews/{filename}
+func (h *Handlers) ServePreview(w http.ResponseWriter, r *http.Request) {
+	filename := chi.URLParam(r, "filename")
+	if filename == "" {
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_FILENAME", "Filename is required"))
+		return
+	}
+
+	if err := validateFilename(filename); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	filePath := filepath.Join(h.paths.PreviewsDir(), filename)
 	serveFile(w, r, filePath)
 }
 
@@ -167,6 +203,21 @@ func validateFilename(name string) error {
 	}
 	if strings.HasPrefix(name, ".") {
 		return domain.NewDomainError("INVALID_FILENAME", "Filename must not start with a dot")
+	}
+	return nil
+}
+
+// validateHLSPath validates a multi-segment HLS path (e.g. "{videoID}/720p/stream.m3u8").
+// Rejects path traversal, absolute paths, and dot-prefixed segments.
+func validateHLSPath(p string) error {
+	if p == "" {
+		return domain.NewDomainError("INVALID_FILENAME", "Path must not be empty")
+	}
+	if strings.Contains(p, "..") || strings.Contains(p, `\`) {
+		return domain.NewDomainError("INVALID_FILENAME", "Path contains invalid characters")
+	}
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, ".") {
+		return domain.NewDomainError("INVALID_FILENAME", "Path must not start with / or .")
 	}
 	return nil
 }

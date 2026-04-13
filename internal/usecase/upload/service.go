@@ -259,12 +259,13 @@ func (s *service) CompleteUpload(ctx context.Context, sessionID string) error {
 		video.Status = domain.StatusCompleted
 	}
 
-	// Store the original file path so the API can serve it for immediate playback.
-	finalFilePath := s.paths.WebVideoFilePath(session.VideoID, filepath.Ext(session.FileName))
+	// Store the HTTP-servable path so the API returns a valid URL for playback.
+	ext := filepath.Ext(session.FileName)
+	finalFilePath := s.paths.WebVideoFilePath(session.VideoID, ext)
 	if video.OutputPaths == nil {
 		video.OutputPaths = make(map[string]string)
 	}
-	video.OutputPaths["source"] = filepath.ToSlash(finalFilePath)
+	video.OutputPaths["source"] = s.paths.WebVideoHTTPPath(session.VideoID, ext)
 
 	video.UpdatedAt = time.Now()
 	if err := s.videoRepo.Update(ctx, video); err != nil {

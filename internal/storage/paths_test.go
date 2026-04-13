@@ -115,6 +115,19 @@ func TestPaths_Negative_ExtensionsStrangeButNoSeparators(t *testing.T) {
 	assert.Equal(t, filepath.Join(root, "avatars", "file   "), got3)
 }
 
+func TestPaths_HTTPPaths(t *testing.T) {
+	p := NewPaths("./storage") // Root is irrelevant for HTTP paths
+	vid := "vid-abc123"
+
+	assert.Equal(t, "/static/web-videos/vid-abc123.mp4", p.WebVideoHTTPPath(vid, ".mp4"))
+	assert.Equal(t, "/static/web-videos/vid-abc123.mov", p.WebVideoHTTPPath(vid, ".mov"))
+
+	assert.Equal(t, "/static/streaming-playlists/hls/vid-abc123", p.HLSVideoHTTPDir(vid))
+
+	assert.Equal(t, "/static/thumbnails/vid-abc123_thumb.jpg", p.ThumbnailHTTPPath(vid))
+	assert.Equal(t, "/static/previews/vid-abc123_preview.webp", p.PreviewHTTPPath(vid))
+}
+
 // Benchmarks
 func BenchmarkPaths_AvatarFilePath(b *testing.B) {
 	p := NewPaths("/var/lib/app/storage")

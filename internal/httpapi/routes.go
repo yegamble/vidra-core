@@ -1305,11 +1305,17 @@ func registerPeerTubeCompatRoutes(r chi.Router, deps *shared.HandlerDependencies
 		r.With(middleware.Auth(cfg.JWTSecret)).Get("/private/{filename}", staticH.ServePrivateWebVideo)
 	})
 
-	// Static HLS streaming playlists
+	// Static HLS streaming playlists (wildcard to support nested paths like {videoID}/720p/stream.m3u8)
 	r.Route("/static/streaming-playlists/hls", func(r chi.Router) {
-		r.Get("/{filename}", staticH.ServeHLSFile)
-		r.With(middleware.Auth(cfg.JWTSecret)).Get("/private/{filename}", staticH.ServePrivateHLSFile)
+		r.Get("/*", staticH.ServeHLSFile)
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/private/*", staticH.ServePrivateHLSFile)
 	})
+
+	// Static thumbnails
+	r.Get("/static/thumbnails/{filename}", staticH.ServeThumbnail)
+
+	// Static previews
+	r.Get("/static/previews/{filename}", staticH.ServePreview)
 
 	// Video download endpoint
 	r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/download/videos/generate/{videoId}", staticH.DownloadVideo)

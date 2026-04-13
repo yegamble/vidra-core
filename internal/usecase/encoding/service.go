@@ -294,7 +294,8 @@ func (s *service) encodeResolutions(ctx context.Context, job *domain.EncodingJob
 			}
 			// Immediately register this resolution so the API can serve it
 			// before the remaining resolutions finish encoding.
-			relPlaylist := filepath.ToSlash(filepath.Join(outBaseDir, fmt.Sprintf("%dp/stream.m3u8", h)))
+			httpSP := storage.NewPaths(s.uploadsDir)
+			relPlaylist := httpSP.HLSVideoHTTPDir(job.VideoID) + fmt.Sprintf("/%dp/stream.m3u8", h)
 			if appendErr := s.videoRepo.AppendOutputPath(ctx, job.VideoID, label, relPlaylist); appendErr != nil {
 				slog.Warn("failed to append output path for resolution", "video_id", job.VideoID, "resolution", label, "error", appendErr)
 			}
@@ -564,11 +565,13 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 	for k, v := range existing.OutputPaths {
 		outputs[k] = v
 	}
-	// Add/overwrite with final HLS paths
-	outputs["master"] = filepath.ToSlash(filepath.Join(outBaseDir, "master.m3u8"))
+	// Add/overwrite with final HLS paths (HTTP-relative, not filesystem)
+	sp := storage.NewPaths(s.uploadsDir)
+	hlsHTTPDir := sp.HLSVideoHTTPDir(job.VideoID)
+	outputs["master"] = hlsHTTPDir + "/master.m3u8"
 	for _, res := range job.TargetResolutions {
 		if h, ok := domain.HeightForResolution(res); ok {
-			outputs[res] = filepath.ToSlash(filepath.Join(outBaseDir, fmt.Sprintf("%dp/stream.m3u8", h)))
+			outputs[res] = hlsHTTPDir + fmt.Sprintf("/%dp/stream.m3u8", h)
 		}
 	}
 
@@ -586,8 +589,8 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 			VideoID:       job.VideoID,
 			Status:        status,
 			OutputPaths:   outputs,
-			ThumbnailPath: filepath.ToSlash(thumb),
-			PreviewPath:   filepath.ToSlash(preview),
+			ThumbnailPath: sp.ThumbnailHTTPPath(job.VideoID),
+			PreviewPath:   sp.PreviewHTTPPath(job.VideoID),
 		},
 		ProcessedCIDs: processedCIDs,
 		ThumbnailCID:  thumbCID,

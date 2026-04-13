@@ -107,6 +107,28 @@ func (p Paths) WebVideoFilePath(videoID, ext string) string {
 	return filepath.Join(p.WebVideosDir(), videoID+ext)
 }
 
+// HTTP path helpers — return URL-relative paths for API responses (not filesystem paths).
+
+// WebVideoHTTPPath returns the HTTP-servable path for a web video file.
+func (Paths) WebVideoHTTPPath(videoID, ext string) string {
+	return "/static/web-videos/" + videoID + ext
+}
+
+// HLSVideoHTTPDir returns the HTTP-servable directory prefix for a video's HLS assets.
+func (Paths) HLSVideoHTTPDir(videoID string) string {
+	return "/static/streaming-playlists/hls/" + videoID
+}
+
+// ThumbnailHTTPPath returns the HTTP-servable path for a video's thumbnail.
+func (Paths) ThumbnailHTTPPath(videoID string) string {
+	return "/static/thumbnails/" + videoID + "_thumb.jpg"
+}
+
+// PreviewHTTPPath returns the HTTP-servable path for a video's preview animation.
+func (Paths) PreviewHTTPPath(videoID string) string {
+	return "/static/previews/" + videoID + "_preview.webp"
+}
+
 // CaptionsRootDir returns the root directory for caption files.
 func (p Paths) CaptionsRootDir() string { return filepath.Join(p.Root, "captions") }
 

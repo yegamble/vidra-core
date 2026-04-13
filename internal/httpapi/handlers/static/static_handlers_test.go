@@ -199,7 +199,22 @@ func TestServeHLSFile_Success(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(hlsDir, "playlist.m3u8"), []byte("#EXTM3U"), 0o644))
 
 	h := newTestHandler(t, dir, nil)
-	req := newChiRequest("GET", "/static/streaming-playlists/hls/playlist.m3u8", map[string]string{"filename": "playlist.m3u8"})
+	req := newChiRequest("GET", "/static/streaming-playlists/hls/playlist.m3u8", map[string]string{"*": "playlist.m3u8"})
+	rec := httptest.NewRecorder()
+
+	h.ServeHLSFile(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestServeHLSFile_NestedPath(t *testing.T) {
+	dir := t.TempDir()
+	hlsDir := filepath.Join(dir, "streaming-playlists", "hls", "vid123", "720p")
+	require.NoError(t, os.MkdirAll(hlsDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(hlsDir, "stream.m3u8"), []byte("#EXTM3U"), 0o644))
+
+	h := newTestHandler(t, dir, nil)
+	req := newChiRequest("GET", "/static/streaming-playlists/hls/vid123/720p/stream.m3u8", map[string]string{"*": "vid123/720p/stream.m3u8"})
 	rec := httptest.NewRecorder()
 
 	h.ServeHLSFile(rec, req)
@@ -210,12 +225,23 @@ func TestServeHLSFile_Success(t *testing.T) {
 func TestServeHLSFile_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	h := newTestHandler(t, dir, nil)
-	req := newChiRequest("GET", "/static/streaming-playlists/hls/missing.m3u8", map[string]string{"filename": "missing.m3u8"})
+	req := newChiRequest("GET", "/static/streaming-playlists/hls/missing.m3u8", map[string]string{"*": "missing.m3u8"})
 	rec := httptest.NewRecorder()
 
 	h.ServeHLSFile(rec, req)
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestServeHLSFile_PathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(t, dir, nil)
+	req := newChiRequest("GET", "/static/streaming-playlists/hls/../../../etc/passwd", map[string]string{"*": "../../../etc/passwd"})
+	rec := httptest.NewRecorder()
+
+	h.ServeHLSFile(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 // --- ServePrivateHLSFile tests ---
@@ -227,7 +253,7 @@ func TestServePrivateHLSFile_Success(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(privateHLS, "seg.ts"), []byte("segment-data"), 0o644))
 
 	h := newTestHandler(t, dir, nil)
-	req := newChiRequest("GET", "/static/streaming-playlists/hls/private/seg.ts", map[string]string{"filename": "seg.ts"})
+	req := newChiRequest("GET", "/static/streaming-playlists/hls/private/seg.ts", map[string]string{"*": "seg.ts"})
 	rec := httptest.NewRecorder()
 
 	h.ServePrivateHLSFile(rec, req)
@@ -388,6 +414,75 @@ func TestDownloadVideo_FileNotOnDisk(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	h.DownloadVideo(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// --- ServeThumbnail tests ---
+
+func TestServeThumbnail_Success(t *testing.T) {
+	dir := t.TempDir()
+	thumbDir := filepath.Join(dir, "thumbnails")
+	require.NoError(t, os.MkdirAll(thumbDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(thumbDir, "vid1_thumb.jpg"), []byte("thumb-data"), 0o644))
+
+	h := newTestHandler(t, dir, nil)
+	req := newChiRequest("GET", "/static/thumbnails/vid1_thumb.jpg", map[string]string{"filename": "vid1_thumb.jpg"})
+	rec := httptest.NewRecorder()
+
+	h.ServeThumbnail(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Header().Get("Cache-Control"), "public")
+}
+
+func TestServeThumbnail_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(t, dir, nil)
+	req := newChiRequest("GET", "/static/thumbnails/missing.jpg", map[string]string{"filename": "missing.jpg"})
+	rec := httptest.NewRecorder()
+
+	h.ServeThumbnail(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestServeThumbnail_PathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(t, dir, nil)
+	req := newChiRequest("GET", "/static/thumbnails/../../../etc/passwd", map[string]string{"filename": "../../../etc/passwd"})
+	rec := httptest.NewRecorder()
+
+	h.ServeThumbnail(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// --- ServePreview tests ---
+
+func TestServePreview_Success(t *testing.T) {
+	dir := t.TempDir()
+	previewDir := filepath.Join(dir, "previews")
+	require.NoError(t, os.MkdirAll(previewDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(previewDir, "vid1_preview.webp"), []byte("preview-data"), 0o644))
+
+	h := newTestHandler(t, dir, nil)
+	req := newChiRequest("GET", "/static/previews/vid1_preview.webp", map[string]string{"filename": "vid1_preview.webp"})
+	rec := httptest.NewRecorder()
+
+	h.ServePreview(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Header().Get("Cache-Control"), "public")
+}
+
+func TestServePreview_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	h := newTestHandler(t, dir, nil)
+	req := newChiRequest("GET", "/static/previews/missing.webp", map[string]string{"filename": "missing.webp"})
+	rec := httptest.NewRecorder()
+
+	h.ServePreview(rec, req)
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
