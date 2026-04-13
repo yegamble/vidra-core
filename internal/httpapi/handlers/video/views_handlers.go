@@ -25,10 +25,10 @@ func NewViewsHandler(viewsService *ucviews.Service) *ViewsHandler {
 	}
 }
 
-// TrackView handles POST /api/v1/videos/{videoId}/views
+// TrackView handles POST /api/v1/videos/{id}/views
 // Tracks a user view with comprehensive metrics and deduplication
 func (h *ViewsHandler) TrackView(w http.ResponseWriter, r *http.Request) {
-	videoID, ok := shared.RequireUUIDParam(w, r, "videoId", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+	videoID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 	if !ok {
 		return
 	}
@@ -73,10 +73,10 @@ func (h *ViewsHandler) TrackView(w http.ResponseWriter, r *http.Request) {
 	shared.WriteJSON(w, http.StatusOK, response)
 }
 
-// GetVideoAnalytics handles GET /api/v1/videos/{videoId}/analytics
+// GetVideoAnalytics handles GET /api/v1/videos/{id}/analytics
 // Returns comprehensive analytics for a specific video
 func (h *ViewsHandler) GetVideoAnalytics(w http.ResponseWriter, r *http.Request) {
-	videoID, ok := shared.RequireUUIDParam(w, r, "videoId", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+	videoID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 	if !ok {
 		return
 	}
@@ -136,10 +136,10 @@ func (h *ViewsHandler) GetVideoAnalytics(w http.ResponseWriter, r *http.Request)
 	shared.WriteJSON(w, http.StatusOK, analytics)
 }
 
-// GetDailyStats handles GET /api/v1/videos/{videoId}/stats/daily
+// GetDailyStats handles GET /api/v1/videos/{id}/stats/daily
 // Returns pre-aggregated daily statistics for a video
 func (h *ViewsHandler) GetDailyStats(w http.ResponseWriter, r *http.Request) {
-	videoID, ok := shared.RequireUUIDParam(w, r, "videoId", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
+	videoID, ok := shared.RequireUUIDParam(w, r, "id", "MISSING_VIDEO_ID", "INVALID_VIDEO_ID", "Video ID is required", "Invalid video ID format")
 	if !ok {
 		return
 	}

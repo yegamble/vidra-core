@@ -208,7 +208,7 @@ func TestViewsHandler_TrackView_UnitBranches(t *testing.T) {
 	t.Run("invalid json", func(t *testing.T) {
 		handler := newUnitViewsHandler(nil, nil)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/"+videoID+"/views", strings.NewReader("{bad"))
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		rr := httptest.NewRecorder()
 		handler.TrackView(rr, req)
 		require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -220,7 +220,7 @@ func TestViewsHandler_TrackView_UnitBranches(t *testing.T) {
 	t.Run("validation error", func(t *testing.T) {
 		handler := newUnitViewsHandler(nil, nil)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/"+videoID+"/views", strings.NewReader(`{"session_id":"","fingerprint":"x"}`))
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		rr := httptest.NewRecorder()
 		handler.TrackView(rr, req)
 		require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -238,7 +238,7 @@ func TestViewsHandler_TrackView_UnitBranches(t *testing.T) {
 		handler := newUnitViewsHandler(&unitViewsRepoStub{}, videoRepo)
 		body := `{"session_id":"` + uuid.NewString() + `","fingerprint":"fp","watch_duration":10,"video_duration":100}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/"+videoID+"/views", strings.NewReader(body))
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		rr := httptest.NewRecorder()
 		handler.TrackView(rr, req)
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
@@ -255,7 +255,7 @@ func TestViewsHandler_TrackView_UnitBranches(t *testing.T) {
 		handler := newUnitViewsHandler(repo, nil)
 		body := `{"session_id":"` + uuid.NewString() + `","fingerprint":"fp","watch_duration":10,"video_duration":100}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/"+videoID+"/views", strings.NewReader(body))
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-123"))
 		rr := httptest.NewRecorder()
 		handler.TrackView(rr, req)
@@ -272,7 +272,7 @@ func TestViewsHandler_GetVideoAnalytics_UnitBranches(t *testing.T) {
 	t.Run("invalid start date", func(t *testing.T) {
 		handler := newUnitViewsHandler(nil, nil)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/analytics?start_date=bad", nil)
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		rr := httptest.NewRecorder()
 		handler.GetVideoAnalytics(rr, req)
 		require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -281,7 +281,7 @@ func TestViewsHandler_GetVideoAnalytics_UnitBranches(t *testing.T) {
 	t.Run("invalid anonymous filter", func(t *testing.T) {
 		handler := newUnitViewsHandler(nil, nil)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/analytics?is_anonymous=nope", nil)
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		rr := httptest.NewRecorder()
 		handler.GetVideoAnalytics(rr, req)
 		require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -295,7 +295,7 @@ func TestViewsHandler_GetVideoAnalytics_UnitBranches(t *testing.T) {
 		}
 		handler := newUnitViewsHandler(repo, nil)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/analytics", nil)
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		rr := httptest.NewRecorder()
 		handler.GetVideoAnalytics(rr, req)
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
@@ -311,7 +311,7 @@ func TestViewsHandler_GetVideoAnalytics_UnitBranches(t *testing.T) {
 		}
 		handler := newUnitViewsHandler(repo, nil)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/analytics?device_type=mobile&country_code=US&is_anonymous=true", nil)
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		rr := httptest.NewRecorder()
 		handler.GetVideoAnalytics(rr, req)
 		require.Equal(t, http.StatusOK, rr.Code)
@@ -390,7 +390,7 @@ func TestViewsHandler_GetDailyStats_UnitBranches(t *testing.T) {
 	t.Run("invalid days", func(t *testing.T) {
 		handler := newUnitViewsHandler(nil, nil)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/stats/daily?days=0", nil)
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		rr := httptest.NewRecorder()
 		handler.GetDailyStats(rr, req)
 		require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -404,7 +404,7 @@ func TestViewsHandler_GetDailyStats_UnitBranches(t *testing.T) {
 		}
 		handler := newUnitViewsHandler(repo, nil)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/stats/daily?days=7", nil)
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		rr := httptest.NewRecorder()
 		handler.GetDailyStats(rr, req)
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
@@ -413,7 +413,7 @@ func TestViewsHandler_GetDailyStats_UnitBranches(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		handler := newUnitViewsHandler(nil, nil)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/stats/daily?days=7", nil)
-		req = withChiURLParam(req, "videoId", videoID)
+		req = withChiURLParam(req, "id", videoID)
 		rr := httptest.NewRecorder()
 		handler.GetDailyStats(rr, req)
 		require.Equal(t, http.StatusOK, rr.Code)
@@ -610,4 +610,58 @@ func TestRemoveVideoFromHistory_ReturnsNoContent(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.RemoveVideoFromHistory(rr, req)
 	require.Equal(t, http.StatusNoContent, rr.Code)
+}
+
+// TestViewsHandler_RouteParamRegression verifies that view handlers work when
+// mounted under the actual route pattern /{id}/views (as in routes.go), not
+// /{videoId}/views. This catches param-name mismatches between routes and handlers.
+func TestViewsHandler_RouteParamRegression(t *testing.T) {
+	videoID := uuid.NewString()
+
+	repo := &unitViewsRepoStub{
+		createUserViewFn: func(_ context.Context, _ *domain.UserView) error { return nil },
+	}
+	videoRepo := &unitVideoRepoStub{
+		getByIDFn: func(_ context.Context, id string) (*domain.Video, error) {
+			return &domain.Video{ID: id, Title: "test"}, nil
+		},
+	}
+	handler := newUnitViewsHandler(repo, videoRepo)
+
+	t.Run("TrackView via /{id}/views route", func(t *testing.T) {
+		r := chi.NewRouter()
+		r.Post("/api/v1/videos/{id}/views", handler.TrackView)
+
+		body := `{"current_time":10,"session_id":"sess-1","fingerprint":"abc123"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/"+videoID+"/views", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code, "TrackView should succeed with {id} route param")
+	})
+
+	t.Run("GetVideoAnalytics via /{id}/analytics route", func(t *testing.T) {
+		r := chi.NewRouter()
+		r.Get("/api/v1/videos/{id}/analytics", handler.GetVideoAnalytics)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/analytics", nil)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		// May return 500 if mock doesn't implement analytics, but NOT 400 MISSING_VIDEO_ID
+		assert.NotEqual(t, http.StatusBadRequest, rr.Code, "GetVideoAnalytics should not return 400 MISSING_VIDEO_ID with {id} route param")
+	})
+
+	t.Run("GetDailyStats via /{id}/stats/daily route", func(t *testing.T) {
+		r := chi.NewRouter()
+		r.Get("/api/v1/videos/{id}/stats/daily", handler.GetDailyStats)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+videoID+"/stats/daily", nil)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		// May return 500 if mock doesn't implement stats, but NOT 400 MISSING_VIDEO_ID
+		assert.NotEqual(t, http.StatusBadRequest, rr.Code, "GetDailyStats should not return 400 MISSING_VIDEO_ID with {id} route param")
+	})
 }
