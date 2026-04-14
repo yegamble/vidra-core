@@ -21,13 +21,15 @@ import (
 type mockStudioService struct {
 	createJob *domain.StudioJob
 	createErr error
+	lastReq   domain.StudioEditRequest
 	getJob    *domain.StudioJob
 	getErr    error
 	listJobs  []*domain.StudioJob
 	listErr   error
 }
 
-func (m *mockStudioService) CreateEditJob(_ context.Context, _, _ string, _ domain.StudioEditRequest) (*domain.StudioJob, error) {
+func (m *mockStudioService) CreateEditJob(_ context.Context, _, _ string, req domain.StudioEditRequest) (*domain.StudioJob, error) {
+	m.lastReq = req
 	return m.createJob, m.createErr
 }
 
@@ -242,6 +244,181 @@ func TestStudioHandlers_GetJob(t *testing.T) {
 
 			h.GetJob(rec, req)
 			assert.Equal(t, tt.wantStatus, rec.Code)
+		})
+	}
+}
+
+// --- Tests for individual studio operation wrappers ---
+
+func TestStudioHandlers_CutVideo(t *testing.T) {
+	tests := []struct {
+		name       string
+		videoID    string
+		userID     string
+		body       interface{}
+		video      *domain.Video
+		videoErr   error
+		createJob  *domain.StudioJob
+		createErr  error
+		wantStatus int
+	}{
+		{
+			name:       "unauthenticated returns 401",
+			videoID:    "vid-1",
+			userID:     "",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "non-owner returns 403",
+			videoID:    "vid-1",
+			userID:     "user-2",
+			video:      &domain.Video{ID: "vid-1", UserID: "user-1"},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:    "success creates cut job",
+			videoID: "vid-1",
+			userID:  "user-1",
+			video:   &domain.Video{ID: "vid-1", UserID: "user-1"},
+			body:    map[string]interface{}{"start": 5.0, "end": 30.0},
+			createJob:  &domain.StudioJob{ID: "job-1", VideoID: "vid-1", Status: domain.StudioJobStatusPending},
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:    "invalid body returns 400",
+			videoID: "vid-1",
+			userID:  "user-1",
+			video:   &domain.Video{ID: "vid-1", UserID: "user-1"},
+			body:    "not json",
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &mockStudioService{createJob: tt.createJob, createErr: tt.createErr}
+			vRepo := &mockStudioVideoRepo{video: tt.video, err: tt.videoErr}
+			h := NewStudioHandlers(svc, vRepo)
+
+			req := newStudioRequest(t, http.MethodPost, "/api/v1/videos/"+tt.videoID+"/studio/cut", tt.body, tt.videoID, "", tt.userID)
+			rec := httptest.NewRecorder()
+
+			h.CutVideo(rec, req)
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			if tt.wantStatus == http.StatusCreated {
+				require.Len(t, svc.lastReq.Tasks, 1)
+				assert.Equal(t, "cut", svc.lastReq.Tasks[0].Name)
+			}
+		})
+	}
+}
+
+func TestStudioHandlers_AddIntro(t *testing.T) {
+	tests := []struct {
+		name       string
+		videoID    string
+		userID     string
+		body       interface{}
+		video      *domain.Video
+		videoErr   error
+		createJob  *domain.StudioJob
+		createErr  error
+		wantStatus int
+	}{
+		{
+			name:       "unauthenticated returns 401",
+			videoID:    "vid-1",
+			userID:     "",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "non-owner returns 403",
+			videoID:    "vid-1",
+			userID:     "user-2",
+			video:      &domain.Video{ID: "vid-1", UserID: "user-1"},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:    "success creates intro job",
+			videoID: "vid-1",
+			userID:  "user-1",
+			video:   &domain.Video{ID: "vid-1", UserID: "user-1"},
+			body:    map[string]interface{}{"file": "/uploads/intro.mp4"},
+			createJob:  &domain.StudioJob{ID: "job-1", VideoID: "vid-1", Status: domain.StudioJobStatusPending},
+			wantStatus: http.StatusCreated,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &mockStudioService{createJob: tt.createJob, createErr: tt.createErr}
+			vRepo := &mockStudioVideoRepo{video: tt.video, err: tt.videoErr}
+			h := NewStudioHandlers(svc, vRepo)
+
+			req := newStudioRequest(t, http.MethodPost, "/api/v1/videos/"+tt.videoID+"/studio/intro", tt.body, tt.videoID, "", tt.userID)
+			rec := httptest.NewRecorder()
+
+			h.AddIntro(rec, req)
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			if tt.wantStatus == http.StatusCreated {
+				require.Len(t, svc.lastReq.Tasks, 1)
+				assert.Equal(t, "add-intro", svc.lastReq.Tasks[0].Name)
+			}
+		})
+	}
+}
+
+func TestStudioHandlers_AddWatermark(t *testing.T) {
+	tests := []struct {
+		name       string
+		videoID    string
+		userID     string
+		body       interface{}
+		video      *domain.Video
+		videoErr   error
+		createJob  *domain.StudioJob
+		createErr  error
+		wantStatus int
+	}{
+		{
+			name:       "unauthenticated returns 401",
+			videoID:    "vid-1",
+			userID:     "",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "non-owner returns 403",
+			videoID:    "vid-1",
+			userID:     "user-2",
+			video:      &domain.Video{ID: "vid-1", UserID: "user-1"},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:    "success creates watermark job",
+			videoID: "vid-1",
+			userID:  "user-1",
+			video:   &domain.Video{ID: "vid-1", UserID: "user-1"},
+			body:    map[string]interface{}{"file": "/uploads/logo.png"},
+			createJob:  &domain.StudioJob{ID: "job-1", VideoID: "vid-1", Status: domain.StudioJobStatusPending},
+			wantStatus: http.StatusCreated,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &mockStudioService{createJob: tt.createJob, createErr: tt.createErr}
+			vRepo := &mockStudioVideoRepo{video: tt.video, err: tt.videoErr}
+			h := NewStudioHandlers(svc, vRepo)
+
+			req := newStudioRequest(t, http.MethodPost, "/api/v1/videos/"+tt.videoID+"/studio/watermark", tt.body, tt.videoID, "", tt.userID)
+			rec := httptest.NewRecorder()
+
+			h.AddWatermark(rec, req)
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			if tt.wantStatus == http.StatusCreated {
+				require.Len(t, svc.lastReq.Tasks, 1)
+				assert.Equal(t, "add-watermark", svc.lastReq.Tasks[0].Name)
+			}
 		})
 	}
 }

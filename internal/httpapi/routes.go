@@ -1027,6 +1027,9 @@ func registerModerationAPIRoutes(r chi.Router, deps *shared.HandlerDependencies,
 			r.Route("/videos/{id}/studio", func(r chi.Router) {
 				r.Use(middleware.Auth(cfg.JWTSecret))
 				r.Post("/edit", studioHandlers.CreateEditJob)
+				r.Post("/cut", studioHandlers.CutVideo)
+				r.Post("/intro", studioHandlers.AddIntro)
+				r.Post("/watermark", studioHandlers.AddWatermark)
 				r.Get("/jobs", studioHandlers.ListJobs)
 				r.Get("/jobs/{jobId}", studioHandlers.GetJob)
 			})
