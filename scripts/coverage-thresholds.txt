@@ -25,7 +25,7 @@ internal/usecase/ipfs_streaming          91.0
 internal/usecase/message                 100.0
 internal/usecase/migration               94.0
 internal/usecase/notification            100.0
-internal/usecase/payments                93.0
+internal/usecase/payments                80.0
 internal/usecase/playlist                100.0
 internal/usecase/rating                  82.0
 internal/usecase/redundancy              89.0

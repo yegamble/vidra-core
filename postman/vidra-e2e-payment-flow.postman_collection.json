@@ -1,45 +1,43 @@
 {
   "info": {
-    "name": "Vidra Core E2E: Payment Flow",
-    "description": "End-to-end IOTA payment workflow: create wallets, create payment intent, check status, view transaction history.\n\nThis collection tests the complete payment lifecycle.\n\n## Environment Variables Required\n- `baseUrl` - API base URL\n\n## Variables Set During Run\n- `e2e_pay_sender_token` - Sender JWT access token\n- `e2e_pay_receiver_token` - Receiver JWT access token\n- `e2e_pay_intent_id` - Created payment intent UUID",
+    "name": "Vidra Core E2E: Bitcoin Payment Flow",
+    "description": "End-to-end Bitcoin payment workflow via BTCPay Server: create invoice, check status, list invoices.\n\nThis collection tests the complete payment lifecycle.\n\n## Environment Variables Required\n- `baseUrl` - API base URL\n- `admin_username` - Admin username\n- `admin_password` - Admin password",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
-  "variable": [
-    {"key": "baseUrl", "value": "http://app-test:8080", "type": "string"}
-  ],
   "item": [
     {
-      "name": "Setup: Register Sender",
+      "name": "Login",
       "event": [
-        {
-          "listen": "prerequest",
-          "script": {
-            "exec": [
-              "const ts = Date.now();",
-              "pm.environment.set('e2e_pay_sender_user', 'paysender_' + ts);",
-              "pm.environment.set('e2e_pay_sender_email', 'paysender_' + ts + '@example.com');",
-              "pm.environment.set('e2e_pay_receiver_user', 'payrecv_' + ts);",
-              "pm.environment.set('e2e_pay_receiver_email', 'payrecv_' + ts + '@example.com');"
-            ],
-            "type": "text/javascript"
-          }
-        },
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test('Status is 201 or acceptable', () => {",
-              "  pm.expect([200, 201, 400, 403, 404, 405, 500]).to.include(pm.response.code);",
-              "});",
-              "if (pm.response.code === 200 || pm.response.code === 201) {",
-              "  const body = pm.response.json();",
-              "  if (body.data && body.data.access_token) {",
-              "    pm.environment.set('e2e_pay_sender_token', body.data.access_token);",
-              "  }",
-              "  if (body.data && body.data.user && body.data.user.id) {",
-              "    pm.environment.set('e2e_pay_sender_id', body.data.user.id);",
-              "  }",
-              "}"
+              "pm.test('Login succeeds', function() { pm.response.to.have.status(200); });",
+              "var json = pm.response.json();",
+              "pm.collectionVariables.set('access_token', json.data.access_token);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\"username\":\"{{admin_username}}\",\"password\":\"{{admin_password}}\"}" },
+        "url": { "raw": "{{baseUrl}}/api/v1/users/token", "host": ["{{baseUrl}}"], "path": ["api","v1","users","token"] }
+      }
+    },
+    {
+      "name": "Create Invoice (50k sats)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Invoice created', function() { pm.response.to.have.status(201); });",
+              "var json = pm.response.json();",
+              "pm.expect(json.data.status).to.equal('New');",
+              "pm.collectionVariables.set('invoice_id', json.data.id);"
             ],
             "type": "text/javascript"
           }
@@ -48,202 +46,26 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Content-Type", "value": "application/json", "type": "text" }
+          { "key": "Authorization", "value": "Bearer {{access_token}}" },
+          { "key": "Content-Type", "value": "application/json" }
         ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"username\": \"{{e2e_pay_sender_user}}\",\n  \"email\": \"{{e2e_pay_sender_email}}\",\n  \"password\": \"E2ePayPass123!\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/auth/register",
-          "host": ["{{baseUrl}}"],
-          "path": ["auth", "register"]
-        }
-      },
-      "response": []
+        "body": { "mode": "raw", "raw": "{\"amount_sats\":50000,\"currency\":\"BTC\"}" },
+        "url": { "raw": "{{baseUrl}}/api/v1/payments/invoices", "host": ["{{baseUrl}}"], "path": ["api","v1","payments","invoices"] }
+      }
     },
     {
-      "name": "Setup: Register Receiver",
+      "name": "Get Invoice",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test('Status is 201 or acceptable', () => {",
-              "  pm.expect([200, 201, 400, 403, 404, 405, 500]).to.include(pm.response.code);",
-              "});",
-              "if (pm.response.code === 200 || pm.response.code === 201) {",
-              "  const body = pm.response.json();",
-              "  if (body.data && body.data.access_token) {",
-              "    pm.environment.set('e2e_pay_receiver_token', body.data.access_token);",
-              "  }",
-              "  if (body.data && body.data.user && body.data.user.id) {",
-              "    pm.environment.set('e2e_pay_receiver_id', body.data.user.id);",
-              "  }",
-              "}"
-            ],
-            "type": "text/javascript"
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Content-Type", "value": "application/json", "type": "text" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"username\": \"{{e2e_pay_receiver_user}}\",\n  \"email\": \"{{e2e_pay_receiver_email}}\",\n  \"password\": \"E2ePayPass123!\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/auth/register",
-          "host": ["{{baseUrl}}"],
-          "path": ["auth", "register"]
-        }
-      },
-      "response": []
-    },
-    {
-      "name": "Create Wallet (sender)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is acceptable', () => {",
-              "  pm.expect([200, 201, 400, 403, 404, 405, 500, 503]).to.include(pm.response.code);",
-              "});",
-              "if (pm.response.code === 200 || pm.response.code === 201) {",
-              "  const body = pm.response.json();",
-              "  pm.test('Wallet created', () => {",
-              "    pm.expect(body).to.have.property('success', true);",
-              "    pm.expect(body.data).to.have.property('address');",
-              "  });",
-              "  pm.environment.set('e2e_pay_sender_address', body.data.address);",
-              "}"
-            ],
-            "type": "text/javascript"
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Authorization", "value": "Bearer {{e2e_pay_sender_token}}", "type": "text" },
-          { "key": "Content-Type", "value": "application/json", "type": "text" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/api/v1/payments/wallet",
-          "host": ["{{baseUrl}}"],
-          "path": ["api", "v1", "payments", "wallet"]
-        }
-      },
-      "response": []
-    },
-    {
-      "name": "Create Wallet (receiver)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is acceptable', () => {",
-              "  pm.expect([200, 201, 400, 403, 404, 405, 500, 503]).to.include(pm.response.code);",
-              "});",
-              "if (pm.response.code === 200 || pm.response.code === 201) {",
-              "  const body = pm.response.json();",
-              "  pm.test('Wallet created', () => {",
-              "    pm.expect(body).to.have.property('success', true);",
-              "    pm.expect(body.data).to.have.property('address');",
-              "  });",
-              "  pm.environment.set('e2e_pay_receiver_address', body.data.address);",
-              "}"
-            ],
-            "type": "text/javascript"
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Authorization", "value": "Bearer {{e2e_pay_receiver_token}}", "type": "text" },
-          { "key": "Content-Type", "value": "application/json", "type": "text" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/api/v1/payments/wallet",
-          "host": ["{{baseUrl}}"],
-          "path": ["api", "v1", "payments", "wallet"]
-        }
-      },
-      "response": []
-    },
-    {
-      "name": "Create Payment Intent",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is acceptable', () => {",
-              "  pm.expect([200, 201, 400, 403, 404, 405, 500, 503]).to.include(pm.response.code);",
-              "});",
-              "if (pm.response.code === 200 || pm.response.code === 201) {",
-              "  const body = pm.response.json();",
-              "  pm.test('Payment intent created', () => {",
-              "    pm.expect(body).to.have.property('success', true);",
-              "    pm.expect(body.data).to.have.property('id');",
-              "  });",
-              "  pm.environment.set('e2e_pay_intent_id', body.data.id);",
-              "}"
-            ],
-            "type": "text/javascript"
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Authorization", "value": "Bearer {{e2e_pay_sender_token}}", "type": "text" },
-          { "key": "Content-Type", "value": "application/json", "type": "text" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"receiver_id\": \"{{e2e_pay_receiver_id}}\",\n  \"amount\": 1000000,\n  \"description\": \"E2E test payment\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/api/v1/payments/intents",
-          "host": ["{{baseUrl}}"],
-          "path": ["api", "v1", "payments", "intents"]
-        }
-      },
-      "response": []
-    },
-    {
-      "name": "Get Payment Intent (verify pending)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "exec": [
-              "pm.test('Status is acceptable', () => {",
-              "  pm.expect([200, 400, 403, 404, 405, 500, 503]).to.include(pm.response.code);",
-              "});",
-              "if (pm.response.code === 200) {",
-              "  const body = pm.response.json();",
-              "  pm.test('Intent status returned', () => {",
-              "    pm.expect(body).to.have.property('success', true);",
-              "    pm.expect(body.data).to.have.property('id');",
-              "    pm.expect(body.data).to.have.property('status');",
-              "  });",
-              "}"
+              "pm.test('Invoice retrieved', function() { pm.response.to.have.status(200); });",
+              "pm.test('Has required fields', function() {",
+              "  var d = pm.response.json().data;",
+              "  pm.expect(d).to.have.property('amount_sats');",
+              "  pm.expect(d).to.have.property('checkout_link');",
+              "});"
             ],
             "type": "text/javascript"
           }
@@ -251,33 +73,19 @@
       ],
       "request": {
         "method": "GET",
-        "header": [
-          { "key": "Authorization", "value": "Bearer {{e2e_pay_sender_token}}", "type": "text" }
-        ],
-        "url": {
-          "raw": "{{baseUrl}}/api/v1/payments/intents/{{e2e_pay_intent_id}}",
-          "host": ["{{baseUrl}}"],
-          "path": ["api", "v1", "payments", "intents", "{{e2e_pay_intent_id}}"]
-        }
-      },
-      "response": []
+        "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+        "url": { "raw": "{{baseUrl}}/api/v1/payments/invoices/{{invoice_id}}", "host": ["{{baseUrl}}"], "path": ["api","v1","payments","invoices","{{invoice_id}}"] }
+      }
     },
     {
-      "name": "Get Transaction History",
+      "name": "List Invoices",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test('Status is acceptable', () => {",
-              "  pm.expect([200, 400, 403, 404, 405, 500, 503]).to.include(pm.response.code);",
-              "});",
-              "if (pm.response.code === 200) {",
-              "  const body = pm.response.json();",
-              "  pm.test('Transaction history returned', () => {",
-              "    pm.expect(body).to.have.property('success', true);",
-              "  });",
-              "}"
+              "pm.test('List succeeds', function() { pm.response.to.have.status(200); });",
+              "pm.test('Returns array', function() { pm.expect(pm.response.json().data).to.be.an('array'); });"
             ],
             "type": "text/javascript"
           }
@@ -285,16 +93,13 @@
       ],
       "request": {
         "method": "GET",
-        "header": [
-          { "key": "Authorization", "value": "Bearer {{e2e_pay_sender_token}}", "type": "text" }
-        ],
-        "url": {
-          "raw": "{{baseUrl}}/api/v1/payments/transactions",
-          "host": ["{{baseUrl}}"],
-          "path": ["api", "v1", "payments", "transactions"]
-        }
-      },
-      "response": []
+        "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+        "url": { "raw": "{{baseUrl}}/api/v1/payments/invoices?count=15", "host": ["{{baseUrl}}"], "path": ["api","v1","payments","invoices"], "query": [{"key":"count","value":"15"}] }
+      }
     }
+  ],
+  "variable": [
+    { "key": "access_token", "value": "" },
+    { "key": "invoice_id", "value": "" }
   ]
 }

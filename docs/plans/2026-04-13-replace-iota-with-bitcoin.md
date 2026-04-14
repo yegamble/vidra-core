@@ -228,11 +228,11 @@ Type: Feature
 - [x] Task 3: BTCPay client + domain models + config
 - [x] Task 4: BTCPay repository + service layer
 - [x] Task 5: BTCPay HTTP handlers + app wiring
-- [ ] Task 6: Database migration
+- [x] Task 6: Database migration
 - [ ] Task 7: OpenAPI + Postman + validation
 - [ ] Task 8: vidra-user frontend + docs update
 
-**Total Tasks:** 8 | **Completed:** 5 | **Remaining:** 3
+**Total Tasks:** 8 | **Completed:** 6 | **Remaining:** 2
 
 ## Implementation Tasks
 

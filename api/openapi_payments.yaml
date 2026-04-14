@@ -1,100 +1,41 @@
 openapi: 3.0.3
 info:
-  title: Vidra Core IOTA Payments API
-  description: IOTA cryptocurrency payment integration for Vidra Core video platform
-  version: 1.0.0
+  title: Vidra Core Bitcoin Payments API
+  description: Bitcoin payment integration via BTCPay Server for Vidra Core video platform
+  version: 2.0.0
 servers:
   - url: /api/v1
     description: API v1
 tags:
   - name: payments
-    description: IOTA payment wallet and transaction management
-security:
-  - bearerAuth: []
+    description: Bitcoin payment invoice management via BTCPay Server
 
 paths:
-  /payments/wallet:
+  /payments/invoices:
     post:
       tags:
         - payments
-      summary: Create IOTA wallet
-      description: Creates a new IOTA wallet for the authenticated user with encrypted seed storage
-      operationId: createWallet
-      responses:
-        '201':
-          description: Wallet created successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    $ref: '#/components/schemas/IOTAWallet'
-                  success: { type: boolean, example: true }
-                required: [data, success]
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '409':
-          description: Wallet already exists for this user
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-    get:
-      tags:
-        - payments
-      summary: Get user wallet
-      description: Retrieves the IOTA wallet for the authenticated user
-      operationId: getWallet
-      responses:
-        '200':
-          description: Wallet retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    $ref: '#/components/schemas/IOTAWallet'
-                  success: { type: boolean, example: true }
-                required: [data, success]
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '404':
-          description: Wallet not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /payments/intents:
-    post:
-      tags:
-        - payments
-      summary: Create payment intent
-      description: Creates a new payment intent for video tips, subscriptions, or other payments
-      operationId: createPaymentIntent
+      summary: Create payment invoice
+      description: Creates a new Bitcoin payment invoice via BTCPay Server
+      operationId: createInvoice
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreatePaymentIntentRequest'
+              $ref: '#/components/schemas/CreateInvoiceRequest'
       responses:
         '201':
-          description: Payment intent created successfully
+          description: Invoice created successfully
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   data:
-                    $ref: '#/components/schemas/IOTAPaymentIntent'
+                    $ref: '#/components/schemas/BTCPayInvoice'
                   success: { type: boolean, example: true }
                 required: [data, success]
         '400':
@@ -105,79 +46,36 @@ paths:
                 $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
-        '404':
-          description: Referenced video was not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
-  /payments/intents/{id}:
     get:
       tags:
         - payments
-      summary: Get payment intent
-      description: Retrieves a specific payment intent by ID
-      operationId: getPaymentIntent
+      summary: List user invoices
+      description: Retrieves paginated list of invoices for the authenticated user
+      operationId: listInvoices
+      security:
+        - bearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          description: Payment intent UUID
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Payment intent retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    $ref: '#/components/schemas/IOTAPaymentIntent'
-                  success: { type: boolean, example: true }
-                required: [data, success]
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '404':
-          description: Payment intent not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /payments/transactions:
-    get:
-      tags:
-        - payments
-      summary: Get transaction history
-      description: Retrieves transaction history for the authenticated user's wallet
-      operationId: getTransactionHistory
-      parameters:
-        - name: limit
+        - name: count
           in: query
-          description: Maximum number of transactions to return
+          description: Maximum number of invoices to return
           schema:
             type: integer
             minimum: 1
             maximum: 100
-            default: 20
-        - name: offset
+            default: 15
+        - name: start
           in: query
-          description: Number of transactions to skip for pagination
+          description: Offset for pagination
           schema:
             type: integer
             minimum: 0
             default: 0
       responses:
         '200':
-          description: Transaction history retrieved successfully
+          description: Invoices retrieved successfully
           content:
             application/json:
               schema:
@@ -186,13 +84,90 @@ paths:
                   data:
                     type: array
                     items:
-                      $ref: '#/components/schemas/IOTATransaction'
+                      $ref: '#/components/schemas/BTCPayInvoice'
+                  success: { type: boolean, example: true }
+                required: [data, success]
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /payments/invoices/{id}:
+    get:
+      tags:
+        - payments
+      summary: Get invoice
+      description: Retrieves a specific invoice by ID
+      operationId: getInvoice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Invoice UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Invoice retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/BTCPayInvoice'
                   success: { type: boolean, example: true }
                 required: [data, success]
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '404':
-          description: Wallet not found
+          description: Invoice not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /payments/webhooks/btcpay:
+    post:
+      tags:
+        - payments
+      summary: BTCPay Server webhook callback
+      description: |
+        Receives webhook notifications from BTCPay Server when invoice status changes.
+        Authenticates via HMAC-SHA256 signature in BTCPay-Sig header (no JWT required).
+      operationId: btcpayWebhook
+      parameters:
+        - name: BTCPay-Sig
+          in: header
+          description: HMAC-SHA256 signature of the request body
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BTCPayWebhookEvent'
+      responses:
+        '200':
+          description: Webhook processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, example: "ok" }
+                  success: { type: boolean, example: true }
+        '401':
+          description: Invalid webhook signature
           content:
             application/json:
               schema:
@@ -209,101 +184,68 @@ components:
       description: JWT access token obtained from /auth/login or /auth/refresh
 
   schemas:
-    IOTAWallet:
+    CreateInvoiceRequest:
       type: object
       properties:
-        id:
-          type: string
-          format: uuid
-          description: Wallet UUID
-        user_id:
-          type: string
-          format: uuid
-          description: User UUID
-        address:
-          type: string
-          description: IOTA address for receiving payments
-          example: "iota1qp..."
-        balance_iota:
-          type: integer
-          format: int64
-          description: Balance in IOTA base units (i)
-          example: 1000000
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-      required:
-        - id
-        - user_id
-        - address
-        - balance_iota
-
-    CreatePaymentIntentRequest:
-      type: object
-      properties:
-        video_id:
-          type: string
-          format: uuid
-          description: Optional video UUID for video-specific payments (tips, PPV)
-          nullable: true
-        amount_iota:
+        amount_sats:
           type: integer
           format: int64
           minimum: 1
-          description: Payment amount in IOTA base units (i)
-          example: 1000000
+          description: Payment amount in satoshis (1 BTC = 100,000,000 sats)
+          example: 100000
+        currency:
+          type: string
+          default: "BTC"
+          description: Currency code (default BTC)
         metadata:
           type: object
-          description: Optional metadata (product info, user notes)
+          description: Optional metadata (product info, video ID, etc.)
           additionalProperties: true
       required:
-        - amount_iota
+        - amount_sats
 
-    IOTAPaymentIntent:
+    BTCPayInvoice:
       type: object
       properties:
         id:
           type: string
           format: uuid
+          description: Internal invoice UUID
+        btcpay_invoice_id:
+          type: string
+          description: BTCPay Server invoice ID
         user_id:
           type: string
           format: uuid
-        video_id:
-          type: string
-          format: uuid
-          nullable: true
-        amount_iota:
+        amount_sats:
           type: integer
           format: int64
-          description: Payment amount in IOTA base units
-        payment_address:
+          description: Amount in satoshis
+        currency:
           type: string
-          description: IOTA address to send payment to
+          example: "BTC"
         status:
           type: string
-          enum: [pending, paid, expired, refunded]
-          description: Payment status
-        expires_at:
+          enum: [New, Processing, Settled, Invalid, Expired]
+          description: Invoice status
+        checkout_link:
           type: string
-          format: date-time
-          description: Payment intent expiration time
-        paid_at:
+          description: BTCPay Server checkout page URL
+        bitcoin_address:
           type: string
-          format: date-time
           nullable: true
-          description: Time when payment was confirmed
-        transaction_id:
-          type: string
-          format: uuid
-          nullable: true
-          description: Associated transaction ID if paid
+          description: Bitcoin address for payment
         metadata:
           type: object
           nullable: true
           additionalProperties: true
+        expires_at:
+          type: string
+          format: date-time
+        settled_at:
+          type: string
+          format: date-time
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -312,66 +254,29 @@ components:
           format: date-time
       required:
         - id
+        - btcpay_invoice_id
         - user_id
-        - amount_iota
-        - payment_address
+        - amount_sats
+        - currency
         - status
         - expires_at
 
-    IOTATransaction:
+    BTCPayWebhookEvent:
       type: object
       properties:
-        id:
+        type:
           type: string
-          format: uuid
-        wallet_id:
+          description: Webhook event type
+          example: "InvoiceSettled"
+        invoiceId:
           type: string
-          format: uuid
-          nullable: true
-        transaction_hash:
+          description: BTCPay Server invoice ID
+        storeId:
           type: string
-          description: IOTA blockchain transaction hash
-        amount_iota:
-          type: integer
-          format: int64
-          description: Transaction amount in IOTA base units
-        tx_type:
-          type: string
-          enum: [deposit, withdrawal, payment]
-          description: Transaction type
-        status:
-          type: string
-          enum: [pending, confirmed, failed]
-          description: Transaction status
-        confirmations:
-          type: integer
-          description: Number of blockchain confirmations
-        from_address:
-          type: string
-          nullable: true
-          description: Sender IOTA address
-        to_address:
-          type: string
-          nullable: true
-          description: Recipient IOTA address
-        metadata:
-          type: object
-          nullable: true
-          additionalProperties: true
-        confirmed_at:
-          type: string
-          format: date-time
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
+          description: BTCPay Server store ID
       required:
-        - id
-        - transaction_hash
-        - amount_iota
-        - tx_type
-        - status
-        - confirmations
+        - type
+        - invoiceId
 
     Error:
       type: object
