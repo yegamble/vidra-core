@@ -49,8 +49,12 @@ func WriteComposeOverride(path string, config *WizardConfig) error {
 		lines = append(lines, `    profiles: ["disabled"]`)
 	}
 
-	if !config.EnableIOTA || config.IOTAMode == "external" {
-		lines = append(lines, "  iota-node:")
+	if !config.EnableBitcoin {
+		lines = append(lines, "  bitcoind:")
+		lines = append(lines, `    profiles: ["disabled"]`)
+		lines = append(lines, "  nbxplorer:")
+		lines = append(lines, `    profiles: ["disabled"]`)
+		lines = append(lines, "  btcpay-server:")
 		lines = append(lines, `    profiles: ["disabled"]`)
 	}
 

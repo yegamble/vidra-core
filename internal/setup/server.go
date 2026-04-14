@@ -52,7 +52,7 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/setup/test-database", wizard.HandleTestDatabase)
 	r.Post("/setup/test-redis", wizard.HandleTestRedis)
 	r.Post("/setup/test-ipfs", wizard.HandleTestIPFS)
-	r.Post("/setup/test-iota", wizard.HandleTestIOTA)
+	r.Post("/setup/test-btcpay", wizard.HandleTestBTCPay)
 	r.Get("/setup/networking", wizard.HandleNetworking)
 	r.Post("/setup/networking", wizard.HandleNetworking)
 	r.Get("/setup/storage", wizard.HandleStorage)

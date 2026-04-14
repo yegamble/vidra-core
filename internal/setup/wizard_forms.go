@@ -152,24 +152,17 @@ func (w *Wizard) processServicesForm(rw http.ResponseWriter, r *http.Request) {
 	w.config.EnableClamAV = r.FormValue("ENABLE_CLAMAV") == "true"
 	w.config.EnableWhisper = r.FormValue("ENABLE_WHISPER") == "true"
 
-	w.config.EnableIOTA = r.FormValue("ENABLE_IOTA") == "true"
-	if w.config.EnableIOTA {
-		w.config.IOTAMode = r.FormValue("IOTA_MODE")
-		w.config.IOTANetwork = r.FormValue("IOTA_NETWORK")
-		if w.config.IOTANetwork == "" {
-			w.config.IOTANetwork = "testnet"
-		}
-		if err := ValidateIOTANetwork(w.config.IOTANetwork); err != nil {
-			http.Error(rw, "Invalid IOTA network: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if w.config.IOTAMode == "external" {
-			w.config.IOTANodeURL = r.FormValue("IOTA_NODE_URL")
-			if err := ValidateIOTANodeURL(w.config.IOTANodeURL); err != nil {
-				http.Error(rw, "Invalid IOTA node URL: "+err.Error(), http.StatusBadRequest)
+	w.config.EnableBitcoin = r.FormValue("ENABLE_BITCOIN") == "true"
+	if w.config.EnableBitcoin {
+		w.config.BTCPayServerURL = r.FormValue("BTCPAY_SERVER_URL")
+		if w.config.BTCPayServerURL != "" {
+			if err := ValidateBTCPayServerURL(w.config.BTCPayServerURL); err != nil {
+				http.Error(rw, "Invalid BTCPay Server URL: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 		}
+		w.config.BTCPayAPIKey = r.FormValue("BTCPAY_API_KEY")
+		w.config.BTCPayStoreID = r.FormValue("BTCPAY_STORE_ID")
 	}
 
 	http.Redirect(rw, r, "/setup/email", http.StatusSeeOther)

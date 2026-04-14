@@ -62,10 +62,10 @@ type WizardConfig struct {
 	EnableClamAV  bool
 	EnableWhisper bool
 
-	EnableIOTA  bool
-	IOTAMode    string
-	IOTANodeURL string
-	IOTANetwork string
+	EnableBitcoin    bool
+	BTCPayServerURL  string
+	BTCPayAPIKey     string
+	BTCPayStoreID    string
 
 	EnableEmail         bool
 	SMTPMode            string
@@ -157,8 +157,6 @@ func NewWizard() *Wizard {
 			PostgresSSLMode: "disable",
 			RedisMode:       "docker",
 			IPFSMode:        "docker",
-			IOTAMode:        "docker",
-			IOTANetwork:     "testnet",
 			EnableEmail:     true,
 			SMTPMode:        "docker",
 			SMTPHost:        "localhost",

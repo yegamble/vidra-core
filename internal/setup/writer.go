@@ -1,8 +1,6 @@
 package setup
 
 import (
-	cryptoRand "crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,29 +58,20 @@ func WriteEnvFile(path string, config *WizardConfig) error { //nolint:gocyclo //
 	}
 	lines = append(lines, "")
 
-	lines = append(lines, "# IOTA Payments Configuration")
-	lines = append(lines, fmt.Sprintf("ENABLE_IOTA=%t", config.EnableIOTA))
-	if config.EnableIOTA {
-		iotaMode := config.IOTAMode
-		if iotaMode == "" {
-			iotaMode = "docker"
+	lines = append(lines, "# Bitcoin Payments Configuration (BTCPay Server)")
+	lines = append(lines, fmt.Sprintf("ENABLE_BITCOIN=%t", config.EnableBitcoin))
+	if config.EnableBitcoin {
+		btcpayURL := config.BTCPayServerURL
+		if btcpayURL == "" {
+			btcpayURL = "http://btcpay-server:49392"
 		}
-		lines = append(lines, fmt.Sprintf("IOTA_MODE=%s", iotaMode))
-		iotaNetwork := config.IOTANetwork
-		if iotaNetwork == "" {
-			iotaNetwork = "testnet"
+		lines = append(lines, fmt.Sprintf("BTCPAY_SERVER_URL=%s", btcpayURL))
+		if config.BTCPayAPIKey != "" {
+			lines = append(lines, fmt.Sprintf("BTCPAY_API_KEY=%s", config.BTCPayAPIKey))
 		}
-		lines = append(lines, fmt.Sprintf("IOTA_NETWORK=%s", iotaNetwork))
-		if iotaMode == "external" && config.IOTANodeURL != "" {
-			lines = append(lines, fmt.Sprintf("IOTA_NODE_URL=%s", config.IOTANodeURL))
-		} else {
-			lines = append(lines, "IOTA_NODE_URL=http://iota-node:9000")
+		if config.BTCPayStoreID != "" {
+			lines = append(lines, fmt.Sprintf("BTCPAY_STORE_ID=%s", config.BTCPayStoreID))
 		}
-		walletKey := make([]byte, 32)
-		if _, err := cryptoRand.Read(walletKey); err != nil {
-			return fmt.Errorf("generating IOTA wallet encryption key: %w", err)
-		}
-		lines = append(lines, fmt.Sprintf("IOTA_WALLET_ENCRYPTION_KEY=%s", hex.EncodeToString(walletKey)))
 	}
 	lines = append(lines, "")
 
@@ -172,8 +161,8 @@ func WriteEnvFile(path string, config *WizardConfig) error { //nolint:gocyclo //
 		profiles["ipfs"] = true
 	}
 
-	if config.EnableIOTA && config.IOTAMode == "docker" {
-		profiles["iota"] = true
+	if config.EnableBitcoin {
+		profiles["bitcoin"] = true
 	}
 
 	if config.EnableClamAV {

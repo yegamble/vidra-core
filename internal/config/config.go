@@ -51,17 +51,17 @@ type Config struct {
 	IPFSStreamingFallbackToLocal   bool
 	IPFSStreamingBufferSize        int
 
-	IOTANodeURL             string
-	IOTAMode                string
-	IOTANetwork             string
-	IOTAWalletEncryptionKey string
+	BTCPayServerURL    string
+	BTCPayAPIKey       string
+	BTCPayStoreID      string
+	BTCPayWebhookSecret string
 
 	FFMPEGPath string
 
 	JWTSecret         string
 	PeerTubeJWTSecret string // Optional: PeerTube JWT secret for dual-auth during migration cutover
 
-	EnableIOTA bool
+	EnableBitcoin bool
 	EnableIPFS bool
 	EnableS3   bool
 

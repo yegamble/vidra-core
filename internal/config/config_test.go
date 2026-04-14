@@ -572,7 +572,7 @@ func TestValidateJWTSecret(t *testing.T) {
 	}
 }
 
-func TestLoad_IOTADefaults(t *testing.T) {
+func TestLoad_BitcoinDefaults(t *testing.T) {
 	setMinimumLoadEnv(t, "test-secret")
 
 	cfg, err := Load()
@@ -580,40 +580,43 @@ func TestLoad_IOTADefaults(t *testing.T) {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if cfg.EnableIOTA {
-		t.Errorf("expected EnableIOTA default false, got true")
+	if cfg.EnableBitcoin {
+		t.Errorf("expected EnableBitcoin default false, got true")
 	}
-	if cfg.IOTAMode != "docker" {
-		t.Errorf("expected IOTAMode default 'docker', got %q", cfg.IOTAMode)
+	if cfg.BTCPayServerURL != "" {
+		t.Errorf("expected BTCPayServerURL default empty, got %q", cfg.BTCPayServerURL)
 	}
-	if cfg.IOTANetwork != "testnet" {
-		t.Errorf("expected IOTANetwork default 'testnet', got %q", cfg.IOTANetwork)
+	if cfg.BTCPayStoreID != "" {
+		t.Errorf("expected BTCPayStoreID default empty, got %q", cfg.BTCPayStoreID)
 	}
 }
 
-func TestLoad_IOTAFromEnv(t *testing.T) {
+func TestLoad_BitcoinFromEnv(t *testing.T) {
 	setMinimumLoadEnv(t, "test-secret")
-	t.Setenv("ENABLE_IOTA", "true")
-	t.Setenv("IOTA_NODE_URL", "http://my-node:14265")
-	t.Setenv("IOTA_MODE", "external")
-	t.Setenv("IOTA_NETWORK", "mainnet")
-	t.Setenv("IOTA_WALLET_ENCRYPTION_KEY", "test-key-32-chars-long-padding!!")
+	t.Setenv("ENABLE_BITCOIN", "true")
+	t.Setenv("BTCPAY_SERVER_URL", "http://btcpay:49392")
+	t.Setenv("BTCPAY_API_KEY", "test-api-key")
+	t.Setenv("BTCPAY_STORE_ID", "test-store-id")
+	t.Setenv("BTCPAY_WEBHOOK_SECRET", "test-webhook-secret")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if !cfg.EnableIOTA {
-		t.Errorf("expected EnableIOTA true")
+	if !cfg.EnableBitcoin {
+		t.Errorf("expected EnableBitcoin true")
 	}
-	if cfg.IOTANodeURL != "http://my-node:14265" {
-		t.Errorf("expected IOTANodeURL 'http://my-node:14265', got %q", cfg.IOTANodeURL)
+	if cfg.BTCPayServerURL != "http://btcpay:49392" {
+		t.Errorf("expected BTCPayServerURL 'http://btcpay:49392', got %q", cfg.BTCPayServerURL)
 	}
-	if cfg.IOTAMode != "external" {
-		t.Errorf("expected IOTAMode 'external', got %q", cfg.IOTAMode)
+	if cfg.BTCPayAPIKey != "test-api-key" {
+		t.Errorf("expected BTCPayAPIKey 'test-api-key', got %q", cfg.BTCPayAPIKey)
 	}
-	if cfg.IOTANetwork != "mainnet" {
-		t.Errorf("expected IOTANetwork 'mainnet', got %q", cfg.IOTANetwork)
+	if cfg.BTCPayStoreID != "test-store-id" {
+		t.Errorf("expected BTCPayStoreID 'test-store-id', got %q", cfg.BTCPayStoreID)
+	}
+	if cfg.BTCPayWebhookSecret != "test-webhook-secret" {
+		t.Errorf("expected BTCPayWebhookSecret 'test-webhook-secret', got %q", cfg.BTCPayWebhookSecret)
 	}
 }

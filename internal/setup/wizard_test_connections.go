@@ -2,7 +2,6 @@ package setup
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -281,8 +280,8 @@ func (w *Wizard) HandleTestIPFS(rw http.ResponseWriter, r *http.Request) {
 	respondTestConnectionSuccess(rw, "IPFS connection successful")
 }
 
-// HandleTestIOTA tests IOTA node connection
-func (w *Wizard) HandleTestIOTA(rw http.ResponseWriter, r *http.Request) {
+// HandleTestBTCPay tests BTCPay Server connection
+func (w *Wizard) HandleTestBTCPay(rw http.ResponseWriter, r *http.Request) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -319,31 +318,18 @@ func (w *Wizard) HandleTestIOTA(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Test connection with timeout
+	// Test connection with timeout via BTCPay health endpoint
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	client := w.URLValidator.NewSafeHTTPClient(5 * time.Second)
 
-	// Use iota_getChainIdentifier as a lightweight health check for IOTA Rebased
-	jsonRPCReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "iota_getChainIdentifier",
-		"id":      1,
-	}
-
-	body, err := json.Marshal(jsonRPCReq)
+	healthURL := req.URL + "/api/v1/health"
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
 	if err != nil {
 		respondTestConnectionError(rw, fmt.Sprintf("Failed to create request: %s", err.Error()))
 		return
 	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", req.URL, bytes.NewReader(body))
-	if err != nil {
-		respondTestConnectionError(rw, fmt.Sprintf("Failed to create request: %s", err.Error()))
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -353,23 +339,11 @@ func (w *Wizard) HandleTestIOTA(rw http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respondTestConnectionError(rw, fmt.Sprintf("IOTA node returned status %d", resp.StatusCode))
+		respondTestConnectionError(rw, fmt.Sprintf("BTCPay Server returned status %d", resp.StatusCode))
 		return
 	}
 
-	// Decode and validate JSON-RPC response
-	var jsonRPCResp map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&jsonRPCResp); err != nil {
-		respondTestConnectionError(rw, fmt.Sprintf("Invalid JSON-RPC response: %s", err.Error()))
-		return
-	}
-
-	if _, ok := jsonRPCResp["error"]; ok {
-		respondTestConnectionError(rw, "IOTA node returned an error")
-		return
-	}
-
-	respondTestConnectionSuccess(rw, "IOTA node connection successful")
+	respondTestConnectionSuccess(rw, "BTCPay Server connection successful")
 }
 
 // Helper functions for consistent JSON responses
