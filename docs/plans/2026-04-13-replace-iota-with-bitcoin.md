@@ -2,7 +2,7 @@
 
 Created: 2026-04-13
 Author: yegamble@gmail.com
-Status: PENDING
+Status: COMPLETE
 Approved: Yes
 Iterations: 0
 Worktree: No
@@ -230,9 +230,9 @@ Type: Feature
 - [x] Task 5: BTCPay HTTP handlers + app wiring
 - [x] Task 6: Database migration
 - [x] Task 7: OpenAPI + Postman + validation
-- [ ] Task 8: vidra-user frontend + docs update
+- [x] Task 8: vidra-user frontend + docs update
 
-**Total Tasks:** 8 | **Completed:** 7 | **Remaining:** 1
+**Total Tasks:** 8 | **Completed:** 8 | **Remaining:** 0
 
 ## Implementation Tasks
 
