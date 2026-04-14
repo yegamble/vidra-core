@@ -336,8 +336,17 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
 		v.StorageTier = "hot"
 	}
 
+	var outputPathsJSON []byte
 	var s3URLsJSON []byte
 	var err error
+	if v.OutputPaths == nil {
+		outputPathsJSON = []byte("{}")
+	} else {
+		outputPathsJSON, err = json.Marshal(v.OutputPaths)
+		if err != nil {
+			return domain.NewDomainError("JSON_MARSHAL_FAILED", "Failed to marshal output paths")
+		}
+	}
 	if v.S3URLs == nil {
 		s3URLsJSON = []byte("{}")
 	} else {
@@ -352,14 +361,15 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
             title = $2, description = $3, privacy = $4,
             tags = $5, category_id = $6, language = $7,
             status = $8, updated_at = $9,
-            s3_urls = $11, storage_tier = $12,
-            s3_migrated_at = $13, local_deleted = $14
-        WHERE id = $1 AND user_id = $10`
+            output_paths = $10, thumbnail_path = $11, preview_path = $12,
+            s3_urls = $14, storage_tier = $15,
+            s3_migrated_at = $16, local_deleted = $17
+        WHERE id = $1 AND user_id = $13`
 
 	result, err := exec.ExecContext(ctx, query,
 		v.ID, v.Title, v.Description, v.Privacy,
 		pq.Array(v.Tags), v.CategoryID, v.Language,
-		v.Status, v.UpdatedAt, v.UserID,
+		v.Status, v.UpdatedAt, outputPathsJSON, v.ThumbnailPath, v.PreviewPath, v.UserID,
 		s3URLsJSON, v.StorageTier, v.S3MigratedAt, v.LocalDeleted,
 	)
 	if err != nil {

@@ -366,13 +366,21 @@ func (s *service) processJob(ctx context.Context, job *domain.EncodingJob) error
 		return err
 	}
 
+	// Persist local playback metadata before best-effort IPFS/storyboard work so
+	// the frontend can play HLS and show thumbnails as soon as assets exist.
+	if err := s.updateVideoInfo(ctx, job, outBaseDir, thumb, preview, processedCIDs, "", ""); err != nil {
+		return err
+	}
+
 	thumbCID, previewCID := s.uploadMediaToIPFS(ctx, thumb, preview)
 
 	// Step 4: Generate storyboard sprite-sheet (best-effort)
 	s.generateStoryboard(ctx, job)
 
-	if err := s.updateVideoInfo(ctx, job, outBaseDir, thumb, preview, processedCIDs, thumbCID, previewCID); err != nil {
-		return err
+	if thumbCID != "" || previewCID != "" {
+		if err := s.updateVideoInfo(ctx, job, outBaseDir, thumb, preview, processedCIDs, thumbCID, previewCID); err != nil {
+			return err
+		}
 	}
 
 	// Step 6: Upload HLS + source + media to S3
@@ -564,6 +572,11 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 	// Carry forward existing entries (especially "source" from upload)
 	for k, v := range existing.OutputPaths {
 		outputs[k] = v
+	}
+	if outputs["source"] == "" {
+		if ext := filepath.Ext(job.SourceFilePath); ext != "" {
+			outputs["source"] = storage.Paths{}.WebVideoHTTPPath(job.VideoID, ext)
+		}
 	}
 	// Add/overwrite with final HLS paths (HTTP-relative, not filesystem)
 	sp := storage.NewPaths(s.uploadsDir)

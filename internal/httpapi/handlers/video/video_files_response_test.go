@@ -46,6 +46,22 @@ func TestBuildVideoFilesResponse_HLSResolutions(t *testing.T) {
 	assert.Equal(t, 2, len(playlists[0].Files))
 }
 
+func TestBuildVideoFilesResponse_DerivesMasterPlaylistWhenMissing(t *testing.T) {
+	v := &domain.Video{
+		ID: "v1",
+		OutputPaths: map[string]string{
+			"720p": "https://cdn.example.com/videos/v1/hls/720p/stream.m3u8",
+			"480p": "https://cdn.example.com/videos/v1/hls/480p/stream.m3u8",
+		},
+	}
+
+	_, playlists := BuildVideoFilesResponse(v)
+
+	assert.Equal(t, 1, len(playlists))
+	assert.Equal(t, "https://cdn.example.com/videos/v1/hls/master.m3u8", playlists[0].PlaylistUrl)
+	assert.Equal(t, 2, len(playlists[0].Files))
+}
+
 func TestBuildVideoFilesResponse_S3URLsPreferred(t *testing.T) {
 	v := &domain.Video{
 		ID: "v1",

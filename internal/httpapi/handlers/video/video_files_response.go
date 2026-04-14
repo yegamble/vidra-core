@@ -2,6 +2,7 @@ package video
 
 import (
 	"sort"
+	"strings"
 
 	"vidra-core/internal/domain"
 )
@@ -62,6 +63,11 @@ func BuildVideoFilesResponse(v *domain.Video) ([]domain.VideoFile, []domain.Stre
 		return hlsFiles[i].Resolution.ID > hlsFiles[j].Resolution.ID
 	})
 
+	if !hasMaster && len(hlsFiles) > 0 {
+		masterURL = deriveMasterPlaylistURL(hlsFiles[0].FileUrl)
+		hasMaster = masterURL != ""
+	}
+
 	if hasMaster && len(hlsFiles) > 0 {
 		playlists = append(playlists, domain.StreamingPlaylist{
 			Type:        1, // HLS
@@ -71,4 +77,29 @@ func BuildVideoFilesResponse(v *domain.Video) ([]domain.VideoFile, []domain.Stre
 	}
 
 	return files, playlists
+}
+
+func deriveMasterPlaylistURL(fileURL string) string {
+	if fileURL == "" {
+		return ""
+	}
+
+	suffixIndex := strings.IndexAny(fileURL, "?#")
+	pathname := fileURL
+	suffix := ""
+	if suffixIndex >= 0 {
+		pathname = fileURL[:suffixIndex]
+		suffix = fileURL[suffixIndex:]
+	}
+
+	lastSlash := strings.LastIndex(pathname, "/")
+	if lastSlash <= 0 {
+		return ""
+	}
+	parentSlash := strings.LastIndex(pathname[:lastSlash], "/")
+	if parentSlash <= 0 {
+		return ""
+	}
+
+	return pathname[:parentSlash] + "/master.m3u8" + suffix
 }

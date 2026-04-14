@@ -222,6 +222,24 @@ func TestServeHLSFile_NestedPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
+func TestServeHLSFile_RouterWildcardRoute(t *testing.T) {
+	dir := t.TempDir()
+	hlsDir := filepath.Join(dir, "streaming-playlists", "hls", "vid123", "720p")
+	require.NoError(t, os.MkdirAll(hlsDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(hlsDir), "master.m3u8"), []byte("#EXTM3U"), 0o644))
+
+	h := newTestHandler(t, dir, nil)
+	router := chi.NewRouter()
+	router.Get("/static/streaming-playlists/hls/*", h.ServeHLSFile)
+
+	req := httptest.NewRequest(http.MethodGet, "/static/streaming-playlists/hls/vid123/master.m3u8", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
 func TestServeHLSFile_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	h := newTestHandler(t, dir, nil)

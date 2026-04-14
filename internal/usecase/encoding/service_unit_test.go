@@ -682,6 +682,43 @@ func TestUpdateVideoInfo(t *testing.T) {
 	assert.Equal(t, "QmThumb", updatedVideo.ThumbnailCID)
 }
 
+func TestUpdateVideoInfo_BackfillsSourceFromJobPath(t *testing.T) {
+	videoRepo := NewMockVideoRepository()
+	cfg := &config.Config{
+		FFMPEGPath:         "ffmpeg",
+		HLSSegmentDuration: 4,
+	}
+
+	videoID := uuid.NewString()
+	video := &domain.Video{
+		ID:          videoID,
+		Status:      domain.StatusCompleted,
+		OutputPaths: map[string]string{},
+	}
+	require.NoError(t, videoRepo.Create(context.Background(), video))
+
+	svc := &service{
+		videoRepo:  videoRepo,
+		cfg:        cfg,
+		uploadsDir: t.TempDir(),
+	}
+
+	job := &domain.EncodingJob{
+		ID:                uuid.NewString(),
+		VideoID:           videoID,
+		SourceFilePath:    filepath.Join("/tmp", videoID+".mov"),
+		TargetResolutions: []string{"720p"},
+	}
+
+	err := svc.updateVideoInfo(context.Background(), job, t.TempDir(), "/thumb.jpg", "/preview.webp", nil, "", "")
+
+	assert.NoError(t, err)
+
+	updatedVideo, _ := videoRepo.GetByID(context.Background(), videoID)
+	assert.Equal(t, "/static/web-videos/"+videoID+".mov", updatedVideo.OutputPaths["source"])
+	assert.Equal(t, "/static/streaming-playlists/hls/"+videoID+"/master.m3u8", updatedVideo.OutputPaths["master"])
+}
+
 // --- Run tests ---
 
 func TestRun_ContextCancellation(t *testing.T) {
