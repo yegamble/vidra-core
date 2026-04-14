@@ -23,18 +23,17 @@ type HealthResponse struct {
 var startTime = time.Now()
 
 type HealthHandlers struct {
-	checkers    []health.Checker
-	db          *sqlx.DB
-	redis       *redis.Client
-	ipfsAPI     string
-	iotaNodeURL string
+	checkers []health.Checker
+	db       *sqlx.DB
+	redis    *redis.Client
+	ipfsAPI  string
 }
 
 // QueueDepthFunc returns the current depth of a queue. Nil functions are treated as
 // unavailable queues and the queue health check will be skipped.
 type QueueDepthFunc func() (int, error)
 
-func NewHealthHandlers(db *sqlx.DB, redisClient *redis.Client, ipfsAPI string, iotaNodeURL string, encodingQueueDepth, activityQueueDepth QueueDepthFunc) *HealthHandlers {
+func NewHealthHandlers(db *sqlx.DB, redisClient *redis.Client, ipfsAPI string, encodingQueueDepth, activityQueueDepth QueueDepthFunc) *HealthHandlers {
 	checkers := []health.Checker{
 		health.NewDatabaseChecker(db),
 		health.NewRedisChecker(redisClient),
@@ -45,16 +44,11 @@ func NewHealthHandlers(db *sqlx.DB, redisClient *redis.Client, ipfsAPI string, i
 		checkers = append(checkers, health.NewQueueDepthChecker(encodingQueueDepth, activityQueueDepth))
 	}
 
-	if iotaNodeURL != "" {
-		checkers = append(checkers, health.NewIOTAChecker(iotaNodeURL))
-	}
-
 	return &HealthHandlers{
-		checkers:    checkers,
-		db:          db,
-		redis:       redisClient,
-		ipfsAPI:     ipfsAPI,
-		iotaNodeURL: iotaNodeURL,
+		checkers: checkers,
+		db:       db,
+		redis:    redisClient,
+		ipfsAPI:  ipfsAPI,
 	}
 }
 

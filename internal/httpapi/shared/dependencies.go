@@ -84,7 +84,6 @@ type HandlerDependencies struct {
 	CaptionService           *usecase.CaptionService
 	CaptionGenService        captiongen.Service
 	TwoFAService             *usecase.TwoFAService
-	PaymentService           port.PaymentService
 	SocialService            *usecase.SocialService
 	AtprotoService           usecase.AtprotoPublisher
 	FederationService        usecase.FederationService

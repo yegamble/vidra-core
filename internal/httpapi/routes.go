@@ -23,7 +23,6 @@ import (
 	migrationhandlers "vidra-core/internal/httpapi/handlers/migration"
 	"vidra-core/internal/httpapi/handlers/misc"
 	"vidra-core/internal/httpapi/handlers/moderation"
-	"vidra-core/internal/httpapi/handlers/payments"
 	"vidra-core/internal/httpapi/handlers/player"
 	pluginhandlers "vidra-core/internal/httpapi/handlers/plugin"
 	runnerhandlers "vidra-core/internal/httpapi/handlers/runner"
@@ -429,19 +428,6 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.Post("/read", notificationHandlers.MarkBatchAsRead)
 			r.Delete("/{id}", notificationHandlers.DeleteNotification)
 		})
-
-		if cfg.EnableIOTA && deps.PaymentService != nil {
-			slog.Info("Registering IOTA payment routes...")
-			r.Route("/payments", func(r chi.Router) {
-				r.Use(middleware.Auth(cfg.JWTSecret))
-				paymentHandler := payments.NewPaymentHandler(deps.PaymentService)
-				r.Post("/wallet", paymentHandler.CreateWallet)
-				r.Get("/wallet", paymentHandler.GetWallet)
-				r.Post("/intents", paymentHandler.CreatePaymentIntent)
-				r.Get("/intents/{id}", paymentHandler.GetPaymentIntent)
-				r.Get("/transactions", paymentHandler.GetTransactionHistory)
-			})
-		}
 
 		if deps.IPFSStreamingService != nil {
 			r.Route("/ipfs", func(r chi.Router) {

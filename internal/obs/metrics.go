@@ -25,12 +25,6 @@ type Metrics struct {
 	IPFSErrors          *prometheus.CounterVec
 	IPFSPinnedSize      prometheus.Gauge
 
-	// IOTA
-	IOTAPaymentIntents       *prometheus.CounterVec
-	IOTAConfirmationDuration prometheus.Histogram
-	IOTAWallets              prometheus.Counter
-	IOTAErrors               *prometheus.CounterVec
-
 	// Security / processing
 	VirusScanDuration     *prometheus.HistogramVec
 	MalwareDetections     *prometheus.CounterVec
@@ -87,17 +81,6 @@ func NewMetrics() *Metrics {
 		),
 		IPFSPinnedSize: prometheus.NewGauge(prometheus.GaugeOpts{Name: "ipfs_pinned_size_bytes", Help: "Total size of pinned content in bytes"}),
 
-		IOTAPaymentIntents: prometheus.NewCounterVec(
-			prometheus.CounterOpts{Name: "iota_payment_intents_total", Help: "Total number of IOTA payment intents"},
-			[]string{"status"},
-		),
-		IOTAConfirmationDuration: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "iota_payment_confirmation_duration_seconds", Help: "IOTA payment confirmation duration", Buckets: prometheus.DefBuckets}),
-		IOTAWallets:              prometheus.NewCounter(prometheus.CounterOpts{Name: "iota_wallets_total", Help: "Total number of IOTA wallets created"}),
-		IOTAErrors: prometheus.NewCounterVec(
-			prometheus.CounterOpts{Name: "iota_errors_total", Help: "Total number of IOTA errors"},
-			[]string{"error_type"},
-		),
-
 		VirusScanDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "virus_scan_duration_seconds", Help: "Virus scan duration", Buckets: prometheus.DefBuckets},
 			[]string{"result"},
@@ -129,7 +112,6 @@ func RegisterMetrics(reg *prometheus.Registry, m *Metrics) error {
 		m.HTTPRequestsTotal, m.HTTPRequestDuration, m.HTTPRequestSize, m.HTTPResponseSize,
 		m.DBConnections, m.DBQueryDuration, m.DBQueryErrors,
 		m.IPFSPinDuration, m.IPFSGatewayDuration, m.IPFSErrors, m.IPFSPinnedSize,
-		m.IOTAPaymentIntents, m.IOTAConfirmationDuration, m.IOTAWallets, m.IOTAErrors,
 		m.VirusScanDuration, m.MalwareDetections, m.VirusScanErrors,
 		m.VideoEncodingDuration, m.VideoEncodingQueue, m.VideoProcessingErrors,
 	}

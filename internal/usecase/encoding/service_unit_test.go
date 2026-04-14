@@ -344,6 +344,8 @@ func TestGenerateMasterPlaylist_BasicResolutions(t *testing.T) {
 	assert.Contains(t, playlist, "1080p/stream.m3u8")
 	assert.Contains(t, playlist, "BANDWIDTH=2800000") // 720p
 	assert.Contains(t, playlist, "BANDWIDTH=5000000") // 1080p
+	assert.Contains(t, playlist, "RESOLUTION=1280x720")
+	assert.Contains(t, playlist, "RESOLUTION=1920x1080")
 }
 
 func TestGenerateMasterPlaylist_AllResolutions(t *testing.T) {

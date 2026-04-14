@@ -177,6 +177,8 @@ func TestGenerateLegacyMasterPlaylist(t *testing.T) {
 	// Verify variants
 	assert.Contains(t, playlist, "720p/stream.m3u8")
 	assert.Contains(t, playlist, "1080p/stream.m3u8")
+	assert.Contains(t, playlist, "RESOLUTION=1280x720")
+	assert.Contains(t, playlist, "RESOLUTION=1920x1080")
 
 	// Should not contain codec strings in legacy mode
 	assert.NotContains(t, playlist, "CODECS=")

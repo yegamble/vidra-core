@@ -148,7 +148,11 @@ func (g *MultiCodecPlaylistGenerator) GenerateLegacyMasterPlaylist(outBaseDir st
 			continue
 		}
 
-		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,NAME=\"%s\"\n", bandwidth, res)
+		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,NAME=\"%s\"\n",
+			bandwidth,
+			g.calculateWidth(height),
+			height,
+			res)
 		b.WriteString(playlistPath + "\n")
 	}
 

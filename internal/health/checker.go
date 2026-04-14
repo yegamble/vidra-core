@@ -3,7 +3,6 @@ package health
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -428,64 +427,3 @@ type RedisInfo struct {
 	Role              string  `json:"role"`
 }
 
-type IOTAChecker struct {
-	NodeURL         string
-	MaxResponseTime time.Duration
-	client          *http.Client
-}
-
-func NewIOTAChecker(nodeURL string) *IOTAChecker {
-	return &IOTAChecker{
-		NodeURL:         nodeURL,
-		MaxResponseTime: 5 * time.Second,
-		client:          &http.Client{Timeout: 30 * time.Second},
-	}
-}
-
-func (c *IOTAChecker) Check(ctx context.Context) error {
-	timeout := c.MaxResponseTime
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"iota_getLatestCheckpointSequenceNumber","params":[]}`)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.NodeURL, body)
-	if err != nil {
-		return fmt.Errorf("IOTA node request creation failed: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("IOTA node unreachable at %s: %w", c.NodeURL, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("IOTA node returned HTTP %d", resp.StatusCode)
-	}
-
-	var result struct {
-		Error *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-		Result interface{} `json:"result"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("IOTA node returned invalid JSON: %w", err)
-	}
-	if result.Error != nil {
-		return fmt.Errorf("IOTA node JSON-RPC error %d: %s", result.Error.Code, result.Error.Message)
-	}
-	if result.Result == nil {
-		return fmt.Errorf("IOTA node returned null result for checkpoint query")
-	}
-	return nil
-}
-
-func (c *IOTAChecker) Name() string {
-	return "iota"
-}

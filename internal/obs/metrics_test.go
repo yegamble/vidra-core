@@ -50,18 +50,6 @@ func TestNewMetrics(t *testing.T) {
 	if metrics.IPFSPinnedSize == nil {
 		t.Error("IPFSPinnedSize not initialized")
 	}
-	if metrics.IOTAPaymentIntents == nil {
-		t.Error("IOTAPaymentIntents not initialized")
-	}
-	if metrics.IOTAConfirmationDuration == nil {
-		t.Error("IOTAConfirmationDuration not initialized")
-	}
-	if metrics.IOTAWallets == nil {
-		t.Error("IOTAWallets not initialized")
-	}
-	if metrics.IOTAErrors == nil {
-		t.Error("IOTAErrors not initialized")
-	}
 	if metrics.VirusScanDuration == nil {
 		t.Error("VirusScanDuration not initialized")
 	}
@@ -299,87 +287,6 @@ func TestIPFSPinnedSize(t *testing.T) {
 	}
 }
 
-func TestIOTAPaymentIntents(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics()
-	registry.MustRegister(metrics.IOTAPaymentIntents)
-
-	// Record payment intent creations
-	metrics.IOTAPaymentIntents.WithLabelValues("created").Inc()
-	metrics.IOTAPaymentIntents.WithLabelValues("created").Inc()
-	metrics.IOTAPaymentIntents.WithLabelValues("confirmed").Inc()
-	metrics.IOTAPaymentIntents.WithLabelValues("failed").Inc()
-
-	expectedMetrics := `
-		# HELP iota_payment_intents_total Total number of IOTA payment intents
-		# TYPE iota_payment_intents_total counter
-		iota_payment_intents_total{status="confirmed"} 1
-		iota_payment_intents_total{status="created"} 2
-		iota_payment_intents_total{status="failed"} 1
-	`
-
-	if err := testutil.CollectAndCompare(metrics.IOTAPaymentIntents, strings.NewReader(expectedMetrics)); err != nil {
-		t.Errorf("unexpected metric output: %v", err)
-	}
-}
-
-func TestIOTAConfirmationDuration(t *testing.T) {
-	metrics := NewMetrics()
-
-	// Record payment confirmation durations
-	metrics.IOTAConfirmationDuration.Observe(30.5) // 30.5 seconds
-	metrics.IOTAConfirmationDuration.Observe(45.2) // 45.2 seconds
-	metrics.IOTAConfirmationDuration.Observe(60.0) // 60 seconds
-
-	count := testutil.CollectAndCount(metrics.IOTAConfirmationDuration)
-	if count == 0 {
-		t.Error("IOTAConfirmationDuration has no metrics")
-	}
-}
-
-func TestIOTAWallets(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics()
-	registry.MustRegister(metrics.IOTAWallets)
-
-	// Record wallet creations
-	metrics.IOTAWallets.Inc()
-	metrics.IOTAWallets.Inc()
-	metrics.IOTAWallets.Inc()
-
-	expectedMetrics := `
-		# HELP iota_wallets_total Total number of IOTA wallets created
-		# TYPE iota_wallets_total counter
-		iota_wallets_total 3
-	`
-
-	if err := testutil.CollectAndCompare(metrics.IOTAWallets, strings.NewReader(expectedMetrics)); err != nil {
-		t.Errorf("unexpected metric output: %v", err)
-	}
-}
-
-func TestIOTAErrors(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics()
-	registry.MustRegister(metrics.IOTAErrors)
-
-	// Record IOTA errors
-	metrics.IOTAErrors.WithLabelValues("network_error").Inc()
-	metrics.IOTAErrors.WithLabelValues("insufficient_funds").Inc()
-	metrics.IOTAErrors.WithLabelValues("network_error").Inc()
-
-	expectedMetrics := `
-		# HELP iota_errors_total Total number of IOTA errors
-		# TYPE iota_errors_total counter
-		iota_errors_total{error_type="insufficient_funds"} 1
-		iota_errors_total{error_type="network_error"} 2
-	`
-
-	if err := testutil.CollectAndCompare(metrics.IOTAErrors, strings.NewReader(expectedMetrics)); err != nil {
-		t.Errorf("unexpected metric output: %v", err)
-	}
-}
-
 func TestVirusScanDuration(t *testing.T) {
 	metrics := NewMetrics()
 
@@ -516,8 +423,6 @@ func TestMetricsRegistration(t *testing.T) {
 	metrics.IPFSPinDuration.WithLabelValues("add").Observe(0)
 	metrics.IPFSGatewayDuration.WithLabelValues("test").Observe(0)
 	metrics.IPFSErrors.WithLabelValues("test").Add(0)
-	metrics.IOTAPaymentIntents.WithLabelValues("created").Add(0)
-	metrics.IOTAErrors.WithLabelValues("test").Add(0)
 	metrics.VirusScanDuration.WithLabelValues("clean").Observe(0)
 	metrics.MalwareDetections.WithLabelValues("test").Add(0)
 	metrics.VirusScanErrors.WithLabelValues("test").Add(0)
@@ -542,10 +447,6 @@ func TestMetricsRegistration(t *testing.T) {
 		"ipfs_gateway_duration_seconds",
 		"ipfs_errors_total",
 		"ipfs_pinned_size_bytes",
-		"iota_payment_intents_total",
-		"iota_payment_confirmation_duration_seconds",
-		"iota_wallets_total",
-		"iota_errors_total",
 		"virus_scan_duration_seconds",
 		"malware_detections_total",
 		"virus_scan_errors_total",

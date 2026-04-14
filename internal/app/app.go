@@ -32,7 +32,6 @@ import (
 	"vidra-core/internal/metrics"
 	"vidra-core/internal/middleware"
 	"vidra-core/internal/obs"
-	"vidra-core/internal/payments"
 	"vidra-core/internal/plugin"
 	"vidra-core/internal/port"
 	"vidra-core/internal/repository"
@@ -51,14 +50,12 @@ import (
 	ucipfs "vidra-core/internal/usecase/ipfs_streaming"
 	ucmigration "vidra-core/internal/usecase/migration_etl"
 	ucn "vidra-core/internal/usecase/notification"
-	ucpayments "vidra-core/internal/usecase/payments"
 	ucrt "vidra-core/internal/usecase/rating"
 	ucredundancy "vidra-core/internal/usecase/redundancy"
 	ucstudio "vidra-core/internal/usecase/studio"
 	ucup "vidra-core/internal/usecase/upload"
 	ucviews "vidra-core/internal/usecase/views"
 	ucww "vidra-core/internal/usecase/watched_words"
-	"vidra-core/internal/worker"
 )
 
 type Application struct {
@@ -81,7 +78,6 @@ type Application struct {
 	hlsTranscoder      *livestream.HLSTranscoder
 	vodConverter       *livestream.VODConverter
 	streamScheduler    *livestream.StreamScheduler
-	iotaPaymentWorker  *worker.IOTAPaymentWorker
 	rateLimiterManager *middleware.RateLimiterManager
 	auditLogger        *obs.AuditLogger
 }
@@ -111,7 +107,6 @@ type Dependencies struct {
 	LiveStreamRepo        repository.LiveStreamRepository
 	StreamKeyRepo         repository.StreamKeyRepository
 	ViewerSessionRepo     repository.ViewerSessionRepository
-	IOTARepo              *repository.IOTARepository
 	EmailVerificationRepo usecase.EmailVerificationRepository
 	PasswordResetRepo     repository.PasswordResetRepository
 	BlacklistRepo         repository.BlacklistRepository
@@ -158,7 +153,6 @@ type Dependencies struct {
 	HardeningService         *usecase.FederationHardeningService
 	EncodingService          ucenc.Service
 	ImportService            any
-	PaymentService           *ucpayments.PaymentService
 	StreamManager            *livestream.StreamManager
 	IPFSStreamingService     *ucipfs.Service
 	ChatServer               *chat.ChatServer
@@ -393,10 +387,6 @@ func (app *Application) initializeDependencies() *Dependencies {
 	// Initialize studio service
 	deps.StudioService = ucstudio.NewService(deps.StudioJobRepo, deps.VideoRepo, nil, nil)
 
-	if app.Config.EnableIOTA {
-		deps.IOTARepo = repository.NewIOTARepository(app.DB)
-	}
-
 	if app.Config.EnableEmail {
 		emailConfig := email.NewConfigFromAppConfig(app.Config)
 		deps.EmailService = email.NewService(emailConfig)
@@ -626,40 +616,6 @@ func (app *Application) initializeDependencies() *Dependencies {
 	}
 
 	app.WireImportDependencies(deps)
-
-	if app.Config.EnableIOTA && deps.IOTARepo != nil {
-		iotaClient := payments.NewIOTAClient(app.Config.IOTANodeURL)
-
-		var encKey []byte
-		if app.Config.IOTAWalletEncryptionKey != "" {
-			if k, err := repository.DecodeTokenKey(app.Config.IOTAWalletEncryptionKey); err == nil {
-				encKey = k
-			} else {
-				slog.Info("Warning: Failed to decode IOTA wallet encryption key, using default")
-				encKey = []byte(app.Config.JWTSecret)[:32]
-			}
-		} else {
-			encKey = []byte(app.Config.JWTSecret)
-			if len(encKey) > 32 {
-				encKey = encKey[:32]
-			} else if len(encKey) < 32 {
-				padded := make([]byte, 32)
-				copy(padded, encKey)
-				encKey = padded
-			}
-		}
-
-		deps.PaymentService = ucpayments.NewPaymentService(
-			deps.IOTARepo,
-			iotaClient,
-			encKey,
-		)
-
-		slog.Info("IOTA payment service initialized")
-
-		app.iotaPaymentWorker = worker.NewIOTAPaymentWorker(deps.IOTARepo, iotaClient)
-		slog.Info("IOTA payment worker created")
-	}
 
 	return deps
 }
@@ -907,7 +863,6 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		HardeningService:         deps.HardeningService,
 		EncodingService:          deps.EncodingService,
 		ImportService:            deps.ImportService,
-		PaymentService:           deps.PaymentService,
 		StreamManager:            deps.StreamManager,
 		ChatServer:               deps.ChatServer,
 		ChatRepo:                 deps.ChatRepo,
@@ -978,11 +933,6 @@ func (app *Application) Start(ctx context.Context) error {
 		}()
 	}
 
-	if app.iotaPaymentWorker != nil {
-		app.iotaPaymentWorker.Start(ctx, 30*time.Second)
-		slog.Info("IOTA payment worker started")
-	}
-
 	if app.Config.EnableEncoding && app.Dependencies != nil && app.Dependencies.EncodingService != nil {
 		workers := app.Config.EncodingWorkers
 		encSvc := app.Dependencies.EncodingService
@@ -1035,10 +985,6 @@ func (app *Application) Shutdown(ctx context.Context) error {
 
 	if app.streamScheduler != nil {
 		app.streamScheduler.Stop()
-	}
-
-	if app.iotaPaymentWorker != nil {
-		app.iotaPaymentWorker.Stop()
 	}
 
 	if app.vodConverter != nil {
