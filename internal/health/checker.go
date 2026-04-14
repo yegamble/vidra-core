@@ -427,3 +427,48 @@ type RedisInfo struct {
 	Role              string  `json:"role"`
 }
 
+// BTCPayChecker verifies BTCPay Server connectivity via its health endpoint.
+type BTCPayChecker struct {
+	ServerURL       string
+	MaxResponseTime time.Duration
+	client          *http.Client
+}
+
+func NewBTCPayChecker(serverURL string) *BTCPayChecker {
+	return &BTCPayChecker{
+		ServerURL:       serverURL,
+		MaxResponseTime: 5 * time.Second,
+		client:          &http.Client{Timeout: 10 * time.Second},
+	}
+}
+
+func (c *BTCPayChecker) Check(ctx context.Context) error {
+	timeout := c.MaxResponseTime
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.ServerURL+"/api/v1/health", nil)
+	if err != nil {
+		return fmt.Errorf("BTCPay health request creation failed: %w", err)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("BTCPay Server unreachable at %s: %w", c.ServerURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("BTCPay Server returned HTTP %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (c *BTCPayChecker) Name() string {
+	return "btcpay"
+}
+

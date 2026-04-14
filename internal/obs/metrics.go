@@ -25,6 +25,10 @@ type Metrics struct {
 	IPFSErrors          *prometheus.CounterVec
 	IPFSPinnedSize      prometheus.Gauge
 
+	// Bitcoin/BTCPay
+	BTCPayInvoicesTotal   *prometheus.CounterVec
+	BTCPayWebhookEvents   *prometheus.CounterVec
+
 	// Security / processing
 	VirusScanDuration     *prometheus.HistogramVec
 	MalwareDetections     *prometheus.CounterVec
@@ -81,6 +85,15 @@ func NewMetrics() *Metrics {
 		),
 		IPFSPinnedSize: prometheus.NewGauge(prometheus.GaugeOpts{Name: "ipfs_pinned_size_bytes", Help: "Total size of pinned content in bytes"}),
 
+		BTCPayInvoicesTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{Name: "btcpay_invoices_total", Help: "Total number of BTCPay invoices"},
+			[]string{"status"},
+		),
+		BTCPayWebhookEvents: prometheus.NewCounterVec(
+			prometheus.CounterOpts{Name: "btcpay_webhook_events_total", Help: "Total number of BTCPay webhook events"},
+			[]string{"type"},
+		),
+
 		VirusScanDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "virus_scan_duration_seconds", Help: "Virus scan duration", Buckets: prometheus.DefBuckets},
 			[]string{"result"},
@@ -112,6 +125,7 @@ func RegisterMetrics(reg *prometheus.Registry, m *Metrics) error {
 		m.HTTPRequestsTotal, m.HTTPRequestDuration, m.HTTPRequestSize, m.HTTPResponseSize,
 		m.DBConnections, m.DBQueryDuration, m.DBQueryErrors,
 		m.IPFSPinDuration, m.IPFSGatewayDuration, m.IPFSErrors, m.IPFSPinnedSize,
+		m.BTCPayInvoicesTotal, m.BTCPayWebhookEvents,
 		m.VirusScanDuration, m.MalwareDetections, m.VirusScanErrors,
 		m.VideoEncodingDuration, m.VideoEncodingQueue, m.VideoProcessingErrors,
 	}

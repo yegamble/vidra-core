@@ -32,6 +32,7 @@ import (
 	"vidra-core/internal/metrics"
 	"vidra-core/internal/middleware"
 	"vidra-core/internal/obs"
+	"vidra-core/internal/payments"
 	"vidra-core/internal/plugin"
 	"vidra-core/internal/port"
 	"vidra-core/internal/repository"
@@ -50,6 +51,7 @@ import (
 	ucipfs "vidra-core/internal/usecase/ipfs_streaming"
 	ucmigration "vidra-core/internal/usecase/migration_etl"
 	ucn "vidra-core/internal/usecase/notification"
+	ucpayments "vidra-core/internal/usecase/payments"
 	ucrt "vidra-core/internal/usecase/rating"
 	ucredundancy "vidra-core/internal/usecase/redundancy"
 	ucstudio "vidra-core/internal/usecase/studio"
@@ -153,6 +155,7 @@ type Dependencies struct {
 	HardeningService         *usecase.FederationHardeningService
 	EncodingService          ucenc.Service
 	ImportService            any
+	BTCPayService            *ucpayments.BTCPayService
 	StreamManager            *livestream.StreamManager
 	IPFSStreamingService     *ucipfs.Service
 	ChatServer               *chat.ChatServer
@@ -617,6 +620,21 @@ func (app *Application) initializeDependencies() *Dependencies {
 
 	app.WireImportDependencies(deps)
 
+	if app.Config.EnableBitcoin && app.Config.BTCPayServerURL != "" {
+		btcpayClient := payments.NewBTCPayClient(
+			app.Config.BTCPayServerURL,
+			app.Config.BTCPayAPIKey,
+			app.Config.BTCPayStoreID,
+		)
+		btcpayRepo := repository.NewBTCPayRepository(app.DB)
+		deps.BTCPayService = ucpayments.NewBTCPayService(
+			btcpayRepo,
+			btcpayClient,
+			app.Config.BTCPayWebhookSecret,
+		)
+		slog.Info("Bitcoin payment service initialized (BTCPay Server)")
+	}
+
 	return deps
 }
 
@@ -863,6 +881,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		HardeningService:         deps.HardeningService,
 		EncodingService:          deps.EncodingService,
 		ImportService:            deps.ImportService,
+		BTCPayService:            deps.BTCPayService,
 		StreamManager:            deps.StreamManager,
 		ChatServer:               deps.ChatServer,
 		ChatRepo:                 deps.ChatRepo,

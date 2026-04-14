@@ -23,6 +23,7 @@ import (
 	migrationhandlers "vidra-core/internal/httpapi/handlers/migration"
 	"vidra-core/internal/httpapi/handlers/misc"
 	"vidra-core/internal/httpapi/handlers/moderation"
+	"vidra-core/internal/httpapi/handlers/payments"
 	"vidra-core/internal/httpapi/handlers/player"
 	pluginhandlers "vidra-core/internal/httpapi/handlers/plugin"
 	runnerhandlers "vidra-core/internal/httpapi/handlers/runner"
@@ -428,6 +429,20 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 			r.Post("/read", notificationHandlers.MarkBatchAsRead)
 			r.Delete("/{id}", notificationHandlers.DeleteNotification)
 		})
+
+		if cfg.EnableBitcoin && deps.BTCPayService != nil {
+			slog.Info("Registering Bitcoin payment routes...")
+			r.Route("/payments", func(r chi.Router) {
+				btcpayHandler := payments.NewBTCPayHandler(deps.BTCPayService)
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.Auth(cfg.JWTSecret))
+					r.Post("/invoices", btcpayHandler.CreateInvoice)
+					r.Get("/invoices", btcpayHandler.ListInvoices)
+					r.Get("/invoices/{id}", btcpayHandler.GetInvoice)
+				})
+				r.Post("/webhooks/btcpay", btcpayHandler.WebhookCallback)
+			})
+		}
 
 		if deps.IPFSStreamingService != nil {
 			r.Route("/ipfs", func(r chi.Router) {

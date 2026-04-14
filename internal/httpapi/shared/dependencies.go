@@ -23,6 +23,7 @@ import (
 	ucipfs "vidra-core/internal/usecase/ipfs_streaming"
 	ucmigration "vidra-core/internal/usecase/migration_etl"
 	ucn "vidra-core/internal/usecase/notification"
+	ucpayments "vidra-core/internal/usecase/payments"
 	ucrt "vidra-core/internal/usecase/rating"
 	ucup "vidra-core/internal/usecase/upload"
 	ucviews "vidra-core/internal/usecase/views"
@@ -84,6 +85,7 @@ type HandlerDependencies struct {
 	CaptionService           *usecase.CaptionService
 	CaptionGenService        captiongen.Service
 	TwoFAService             *usecase.TwoFAService
+	BTCPayService            *ucpayments.BTCPayService
 	SocialService            *usecase.SocialService
 	AtprotoService           usecase.AtprotoPublisher
 	FederationService        usecase.FederationService
