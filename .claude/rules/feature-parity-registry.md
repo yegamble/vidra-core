@@ -142,7 +142,7 @@
 
 | Feature | Status | Package | Test File(s) |
 |---------|--------|---------|--------------|
-| IOTA payments | Done | `payments` | `*_test.go` |
+| Bitcoin payments (BTCPay Server) | Done | `payments`, `httpapi/handlers/payments`, `usecase/payments` | `btcpay_client_test.go`, `btcpay_handlers_test.go`, `btcpay_service_test.go`, `btcpay_repository_test.go` |
 | ATProto (BlueSky) | Done | `activitypub` | `atproto_test.go` |
 | Secure messaging | Done | `httpapi/handlers` | `messaging_test.go` |
 | IPFS streaming | Done | `ipfs` | `*_test.go` |

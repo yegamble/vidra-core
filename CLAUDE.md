@@ -2,11 +2,11 @@
 
 ## Vision
 
-Vidra Core is a high-performance, PeerTube-compatible video platform backend in Go. It maintains full API compatibility with [PeerTube](https://github.com/Chocobozzz/PeerTube) while extending beyond it with IOTA payments, ATProto/BlueSky federation, IPFS-native storage, and secure messaging. Every change must preserve PeerTube parity and Vidra-specific extensions.
+Vidra Core is a high-performance, PeerTube-compatible video platform backend in Go. It maintains full API compatibility with [PeerTube](https://github.com/Chocobozzz/PeerTube) while extending beyond it with Bitcoin payments (BTCPay Server), ATProto/BlueSky federation, IPFS-native storage, and secure messaging. Every change must preserve PeerTube parity and Vidra-specific extensions.
 
 ## Quick Reference
 
-**Stack**: Go (Chi router), PostgreSQL (SQLX), Redis, IPFS, FFmpeg, IOTA payments (Phase 2)
+**Stack**: Go (Chi router), PostgreSQL (SQLX), Redis, IPFS, FFmpeg, Bitcoin payments (BTCPay Server)
 **Architecture**: Clean architecture with domain/usecase/repository layers
 **Upstream Reference**: https://github.com/Chocobozzz/PeerTube
 
@@ -45,7 +45,7 @@ This runs: `gofmt`, `goimports`, `golangci-lint` (with gosec), unit tests, and b
   metrics/          → Prometheus metrics
   middleware/       → auth, rate-limit, cors, tracing
   obs/              → Observability (logging, tracing)
-  payments/         → IOTA payment integration
+  payments/         → Bitcoin payment integration (BTCPay Server client)
   plugin/           → plugin system with hooks
   port/             → Interface definitions (ports)
   repository/       → SQLX repos for Postgres
@@ -166,7 +166,7 @@ These guardrails are enforced by `.claude/settings.json`, `.githooks/pre-commit`
 - Coverage: 69.9% overall unit test coverage (90%+ for core packages)
 - Newman: 44 Postman collections in CI runner, all validated
 - ATProto (BlueSky) `PublishVideo` fully implemented and verified
-- IOTA Rebased payments: Ed25519 transaction signing + submission implemented
+- Bitcoin payments: BTCPay Server integration with Greenfield API, invoice management, webhook callbacks
 
 **Key Features:**
 

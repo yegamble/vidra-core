@@ -1386,6 +1386,42 @@ func registerPeerTubeAliasRoutes(r chi.Router, deps *shared.HandlerDependencies,
 	// are handled by the existing {captionId} handlers which accept both UUIDs and
 	// language codes. See the caption handler's UpdateCaption/DeleteCaption methods.
 
+	// --- PeerTube video compatibility aliases ---
+	if deps.VideoRepo != nil {
+		videoCompatHandlers := compat.NewVideoCompatHandlers(deps.VideoRepo)
+		overviewHandlers := compat.NewOverviewHandlers(deps.VideoRepo)
+
+		// PUT /api/v1/videos/{id}/rate → alias for PUT /videos/{id}/rating
+		if deps.RatingService != nil {
+			ratingHandlers := social.NewRatingHandlers(deps.RatingService)
+			r.With(middleware.Auth(cfg.JWTSecret)).Put("/videos/{id}/rate", ratingHandlers.SetRating)
+		}
+
+		// GET /api/v1/videos/{id}/description → extract description from video
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/videos/{id}/description", videoCompatHandlers.GetVideoDescription)
+
+		// PUT /api/v1/videos/{id}/watching → track watch progress
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/videos/{id}/watching", videoCompatHandlers.TrackWatching)
+
+		// GET /api/v1/overviews/videos → composite trending overview
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/overviews/videos", overviewHandlers.GetVideoOverview)
+	}
+
+	// PUT /api/v1/users/me/notification-settings → alias for notification-preferences
+	if deps.NotificationPrefRepo != nil {
+		r.With(middleware.Auth(cfg.JWTSecret)).Put("/users/me/notification-settings", auth.UpdateNotificationPreferencesHandler(deps.NotificationPrefRepo))
+		r.With(middleware.Auth(cfg.JWTSecret)).Get("/users/me/notification-settings", auth.GetNotificationPreferencesHandler(deps.NotificationPrefRepo))
+	}
+
+	// POST /api/v1/bulk/remove-comments-of → alias for /bulk/comments/remove
+	if deps.CommentRepo != nil {
+		bulkCommentHandlers := moderation.NewCommentModerationHandlers(deps.CommentRepo)
+		r.With(middleware.Auth(cfg.JWTSecret)).Post("/bulk/remove-comments-of", bulkCommentHandlers.BulkRemoveComments)
+	}
+
+	// GET /api/v1/server/redundancy/{host} → 501 (Vidra uses IPFS)
+	r.Get("/server/redundancy/{host}", compat.PeerTubeNotImplemented("Vidra uses IPFS for content distribution instead of PeerTube redundancy"))
+
 	// --- Playback metrics ---
 	playbackHandler := metricshandlers.NewPlaybackHandler()
 	r.Post("/metrics/playback", playbackHandler.ReportPlaybackMetrics)

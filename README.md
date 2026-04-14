@@ -84,11 +84,9 @@ Status legend:
 
 ### Implemented Beta Features (`🧪`)
 
-- **IOTA Payments (BETA)** - Wallet creation, payment intents, transaction history API (feature-flagged via `EnableIOTA`); node communication layer is stubbed pending real IOTA node integration
+- **Bitcoin Payments (BTCPay Server)** - Invoice creation, payment tracking, and webhook callbacks via self-hosted BTCPay Server (feature-flagged via `ENABLE_BITCOIN`)
 
 ### Planned / In-Progress Roadmap (`🛣️`)
-
-- **IOTA Node Integration** - Replace stubbed IOTA node client with real Hornet/Bee HTTP client for live network transactions
 - **Advanced Analytics Enhancements** - Additional analytics/reporting depth
 
 See the detailed status section in [Project Status](#project-status) and planning docs in [Project Management](docs/project-management/README.md).
