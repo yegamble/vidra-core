@@ -126,30 +126,81 @@ services:
         reservations:
           memory: 2G
 
-  # IOTA Rebased fullnode (testnet). Pinned to v1.16.2 on 2026-02-17.
-  # JSON-RPC API version: Rebased v1.16.x (iota_ and iotax_ prefixes).
-  # Host port 14265 avoids collision with Whisper which binds host port 9000.
-  # Container-to-container: http://iota-node:9000  |  Host access: http://localhost:14265
-  # GraphQL API port 9125 — expose when GraphQL support is added in Phase 2
-  iota-node:
-    profiles: ["iota", "full"]
-    image: iotaledger/iota-node:v1.16.2
+  # Bitcoin node (regtest) for BTCPay Server.
+  # Container-to-container: http://bitcoind:18443  |  No host port exposed (internal only)
+  bitcoind:
+    profiles: ["bitcoin", "full"]
+    image: btcpayserver/bitcoin:27.1
     restart: on-failure:3
-    entrypoint: ["/entrypoint.sh"]
-    ports:
-      - "14265:9000"    # JSON-RPC (host:container)
+    environment:
+      BITCOIN_NETWORK: regtest
+      BITCOIN_WALLETDIR: /data/wallets
+      BITCOIN_EXTRA_ARGS: >-
+        rpcuser=vidra
+        rpcpassword=vidra
+        rpcallowip=0.0.0.0/0
+        rpcbind=0.0.0.0
+        server=1
+        txindex=1
+        fallbackfee=0.00001
     volumes:
-      - iota_data:/opt/iota/db
-      - ./docker/iota/fullnode.yaml:/opt/iota/config/fullnode.yaml:ro
-      - ./docker/iota/entrypoint.sh:/entrypoint.sh:ro
+      - bitcoin_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json",
-             "-d", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"iota_getLatestCheckpointSequenceNumber\",\"params\":[]}",
-             "http://localhost:9000"]
+      test: ["CMD", "bitcoin-cli", "-regtest", "-rpcuser=vidra", "-rpcpassword=vidra", "getblockchaininfo"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 30s
+    networks:
+      - vidra-network
+
+  # NBXplorer indexes Bitcoin blockchain for BTCPay Server.
+  nbxplorer:
+    profiles: ["bitcoin", "full"]
+    image: nicolasdorier/nbxplorer:2.5.12
+    restart: on-failure:3
+    environment:
+      NBXPLORER_NETWORK: regtest
+      NBXPLORER_BIND: 0.0.0.0:32838
+      NBXPLORER_CHAINS: btc
+      NBXPLORER_BTCRPCURL: http://bitcoind:18443/
+      NBXPLORER_BTCRPCUSER: vidra
+      NBXPLORER_BTCRPCPASSWORD: vidra
+      NBXPLORER_BTCNODEENDPOINT: bitcoind:18444
+      NBXPLORER_POSTGRES: Host=postgres;Port=5432;Database=nbxplorer;Username=postgres;Password=postgres
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - vidra-network
+
+  # BTCPay Server — self-hosted Bitcoin payment processor.
+  # Container-to-container: http://btcpay-server:49392  |  Host access: http://localhost:14080
+  btcpay-server:
+    profiles: ["bitcoin", "full"]
+    image: btcpayserver/btcpayserver:1.14.4
+    restart: on-failure:3
+    ports:
+      - "14080:49392"
+    environment:
+      BTCPAY_NETWORK: regtest
+      BTCPAY_BIND: 0.0.0.0:49392
+      BTCPAY_CHAINS: btc
+      BTCPAY_POSTGRES: Host=postgres;Port=5432;Database=btcpay;Username=postgres;Password=postgres
+      BTCPAY_BTCEXPLORERURL: http://nbxplorer:32838/
+    depends_on:
+      nbxplorer:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:49392/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     networks:
       - vidra-network
 
@@ -184,11 +235,12 @@ services:
       IPFS_LOCAL_GATEWAY_URL: ${IPFS_LOCAL_GATEWAY_URL:-http://ipfs:8080}
       REQUIRE_IPFS: ${REQUIRE_IPFS:-false}
 
-      # IOTA Rebased node (container-to-container uses port 9000; host access uses 14265)
-      ENABLE_IOTA: ${ENABLE_IOTA:-false}
-      IOTA_MODE: ${IOTA_MODE:-docker}
-      IOTA_NETWORK: ${IOTA_NETWORK:-testnet}
-      IOTA_NODE_URL: ${IOTA_NODE_URL:-http://iota-node:9000}
+      # BTCPay Server (container-to-container: http://btcpay-server:49392)
+      ENABLE_BITCOIN: ${ENABLE_BITCOIN:-false}
+      BTCPAY_SERVER_URL: ${BTCPAY_SERVER_URL:-http://btcpay-server:49392}
+      BTCPAY_API_KEY: ${BTCPAY_API_KEY:-}
+      BTCPAY_STORE_ID: ${BTCPAY_STORE_ID:-}
+      BTCPAY_WEBHOOK_SECRET: ${BTCPAY_WEBHOOK_SECRET:-}
 
       ENABLE_CLAMAV: ${ENABLE_CLAMAV:-false}
 
@@ -342,28 +394,6 @@ services:
     networks:
       - test-network
 
-  iota-node-test:
-    profiles: ["test"]
-    image: iotaledger/iota-node:v1.16.2
-    entrypoint: ["/entrypoint.sh"]
-    tmpfs:
-      - /opt/iota/db
-    ports:
-      - "19000:9000"    # JSON-RPC (host:container) — test port
-    volumes:
-      - ./docker/iota/fullnode.yaml:/opt/iota/config/fullnode.yaml:ro
-      - ./docker/iota/entrypoint.sh:/entrypoint.sh:ro
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json",
-             "-d", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"iota_getLatestCheckpointSequenceNumber\",\"params\":[]}",
-             "http://localhost:9000"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    networks:
-      - test-network
-
   clamav-test:
     profiles: ["test"]
     image: clamav/clamav:stable
@@ -412,8 +442,6 @@ services:
         condition: service_started
       mock-atproto-pds-test:
         condition: service_healthy
-      iota-node-test:
-        condition: service_started
     environment:
       DATABASE_URL: postgres://test_user:test_password@postgres-test:5432/vidra_test?sslmode=disable
       REDIS_URL: redis://redis-test:6379/0
@@ -430,8 +458,7 @@ services:
       ATPROTO_PDS_URL: http://mock-atproto-pds-test:8080
       ATPROTO_HANDLE: test.handle
       ATPROTO_APP_PASSWORD: test-password
-      ENABLE_IOTA: "true"
-      IOTA_NODE_URL: http://iota-node-test:9000
+      ENABLE_BITCOIN: "false"
       PORT: 8080
       VALIDATION_TEST_MODE: "true"
       VALIDATION_TEST_ADMIN_USERNAME: admin
@@ -611,22 +638,6 @@ services:
     networks:
       - test-integration-network
 
-  mock-iota-rpc:
-    profiles: ["test-integration"]
-    build:
-      context: tests/mocks/iota-rpc
-      dockerfile: Dockerfile
-    ports:
-      - "19500:8080"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-    networks:
-      - test-integration-network
-
   mailpit-integration:
     profiles: ["test-integration"]
     image: axllent/mailpit:latest
@@ -738,7 +749,7 @@ volumes:
     driver: local
   whisper_models:
     driver: local
-  iota_data:
+  bitcoin_data:
     driver: local
   clamav_signatures:
     driver: local

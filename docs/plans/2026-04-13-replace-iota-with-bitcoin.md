@@ -223,7 +223,7 @@ Type: Feature
 
 ## Progress Tracking
 
-- [ ] Task 1: Remove all IOTA code
+- [x] Task 1: Remove all IOTA code
 - [ ] Task 2: Add BTCPay Docker services
 - [ ] Task 3: BTCPay client + domain models + config
 - [ ] Task 4: BTCPay repository + service layer
@@ -232,7 +232,7 @@ Type: Feature
 - [ ] Task 7: OpenAPI + Postman + validation
 - [ ] Task 8: vidra-user frontend + docs update
 
-**Total Tasks:** 8 | **Completed:** 0 | **Remaining:** 8
+**Total Tasks:** 8 | **Completed:** 1 | **Remaining:** 7
 
 ## Implementation Tasks
 
