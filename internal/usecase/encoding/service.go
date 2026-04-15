@@ -3,7 +3,6 @@ package encoding
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +18,7 @@ import (
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
 	"vidra-core/internal/ipfs"
+	"vidra-core/internal/media"
 	"vidra-core/internal/metrics"
 	"vidra-core/internal/port"
 	"vidra-core/internal/storage"
@@ -909,14 +908,13 @@ func (s *service) transcodeHLS(ctx context.Context, input string, height int, ou
 }
 
 func (s *service) generateThumbnail(ctx context.Context, input string, output string) error {
-	args := []string{
-		"-y",
-		"-ss", "00:00:01",
-		"-i", input,
-		"-frames:v", "1",
-		"-q:v", "2",
-		output,
+	duration, err := media.ProbeDuration(ctx, s.cfg.FFMPEGPath, input)
+	if err != nil {
+		slog.Debug("falling back to default encoded thumbnail capture", "input", input, "error", err)
+		duration = 0
 	}
+
+	args := media.BuildRepresentativeThumbnailArgs(input, output, duration)
 	return s.execFFmpeg(ctx, args)
 }
 
@@ -996,40 +994,7 @@ func validateBinaryPath(path string) error {
 }
 
 func (s *service) getVideoDuration(ctx context.Context, input string) (time.Duration, error) {
-	bin := "ffprobe"
-	if s.cfg.FFMPEGPath != "" {
-		bin = filepath.Join(filepath.Dir(s.cfg.FFMPEGPath), "ffprobe")
-	}
-
-	args := []string{
-		"-v", "error",
-		"-show_entries", "format=duration",
-		"-of", "json",
-		input,
-	}
-
-	cmd := exec.CommandContext(ctx, bin, args...)
-	output, err := cmd.Output()
-	if err != nil {
-		return 0, fmt.Errorf("ffprobe failed: %w", err)
-	}
-
-	var result struct {
-		Format struct {
-			Duration string `json:"duration"`
-		} `json:"format"`
-	}
-
-	if err := json.Unmarshal(output, &result); err != nil {
-		return 0, fmt.Errorf("failed to parse ffprobe output: %w", err)
-	}
-
-	seconds, err := strconv.ParseFloat(result.Format.Duration, 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse duration: %w", err)
-	}
-
-	return time.Duration(seconds) * time.Second, nil
+	return media.ProbeDuration(ctx, s.cfg.FFMPEGPath, input)
 }
 
 func (s *service) execFFmpegWithProgress(ctx context.Context, args []string, duration time.Duration, resolutionLabel string, onProgress func(int)) error {

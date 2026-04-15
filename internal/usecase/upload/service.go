@@ -18,6 +18,7 @@ import (
 
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
+	"vidra-core/internal/media"
 	"vidra-core/internal/port"
 	"vidra-core/internal/security"
 	"vidra-core/internal/storage"
@@ -384,14 +385,13 @@ func defaultGenerateThumbnail(cfg *config.Config) func(ctx context.Context, inpu
 	}
 
 	return func(ctx context.Context, input string, output string) error {
-		cmd := exec.CommandContext(ctx, ffmpegPath,
-			"-y",
-			"-ss", "00:00:01",
-			"-i", input,
-			"-frames:v", "1",
-			"-q:v", "2",
-			output,
-		)
+		duration, err := media.ProbeDuration(ctx, ffmpegPath, input)
+		if err != nil {
+			slog.Debug("falling back to default upload thumbnail capture", "input", input, "error", err)
+			duration = 0
+		}
+
+		cmd := exec.CommandContext(ctx, ffmpegPath, media.BuildRepresentativeThumbnailArgs(input, output, duration)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("ffmpeg thumbnail generation failed: %w (%s)", err, strings.TrimSpace(string(out)))
 		}
