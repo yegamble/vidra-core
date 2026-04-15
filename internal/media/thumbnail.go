@@ -14,6 +14,7 @@ const (
 	defaultThumbnailSeek = 1 * time.Second
 	longThumbnailWindow  = 5 * time.Second
 	midThumbnailWindow   = 3 * time.Second
+	previewWindow        = 3 * time.Second
 )
 
 // ProbeDuration returns the media duration using ffprobe. Callers can fall back
@@ -65,6 +66,7 @@ func BuildRepresentativeThumbnailArgs(input string, output string, duration time
 			"-ss", formatFFmpegTimestamp(defaultThumbnailSeek),
 			"-i", input,
 			"-frames:v", "1",
+			"-update", "1",
 			"-q:v", "2",
 			output,
 		}
@@ -81,7 +83,43 @@ func BuildRepresentativeThumbnailArgs(input string, output string, duration time
 		"-t", formatFFmpegTimestamp(window),
 		"-vf", fmt.Sprintf("thumbnail=%d", frames),
 		"-frames:v", "1",
+		"-update", "1",
 		"-q:v", "2",
+		output,
+	}
+}
+
+func BuildRepresentativePreviewArgs(input string, output string, duration time.Duration) []string {
+	if duration <= 0 {
+		return []string{
+			"-y",
+			"-ss", formatFFmpegTimestamp(defaultThumbnailSeek),
+			"-t", formatFFmpegTimestamp(previewWindow),
+			"-i", input,
+			"-vf", "fps=10,scale=320:-2",
+			"-loop", "0",
+			"-an",
+			"-vsync", "0",
+			"-c:v", "libwebp",
+			"-quality", "80",
+			output,
+		}
+	}
+
+	window := previewDuration(duration)
+	start := representativeThumbnailStart(duration, window)
+
+	return []string{
+		"-y",
+		"-ss", formatFFmpegTimestamp(start),
+		"-t", formatFFmpegTimestamp(window),
+		"-i", input,
+		"-vf", "fps=10,scale=320:-2",
+		"-loop", "0",
+		"-an",
+		"-vsync", "0",
+		"-c:v", "libwebp",
+		"-quality", "80",
 		output,
 	}
 }
@@ -120,6 +158,17 @@ func representativeThumbnailFrames(window time.Duration) int {
 		return 24
 	default:
 		return 12
+	}
+}
+
+func previewDuration(duration time.Duration) time.Duration {
+	switch {
+	case duration <= 0:
+		return previewWindow
+	case duration < previewWindow:
+		return duration
+	default:
+		return previewWindow
 	}
 }
 

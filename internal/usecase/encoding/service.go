@@ -919,19 +919,13 @@ func (s *service) generateThumbnail(ctx context.Context, input string, output st
 }
 
 func (s *service) generatePreviewWebP(ctx context.Context, input string, output string) error {
-	args := []string{
-		"-y",
-		"-ss", "00:00:01",
-		"-t", "3",
-		"-i", input,
-		"-vf", "fps=10,scale=320:-2",
-		"-loop", "0",
-		"-an",
-		"-vsync", "0",
-		"-c:v", "libwebp",
-		"-quality", "80",
-		output,
+	duration, err := media.ProbeDuration(ctx, s.cfg.FFMPEGPath, input)
+	if err != nil {
+		slog.Debug("falling back to default preview capture", "input", input, "error", err)
+		duration = 0
 	}
+
+	args := media.BuildRepresentativePreviewArgs(input, output, duration)
 	return s.execFFmpeg(ctx, args)
 }
 
@@ -966,11 +960,11 @@ func (s *service) execFFmpeg(ctx context.Context, args []string) error {
 	if err := validateBinaryPath(bin); err != nil {
 		return fmt.Errorf("invalid ffmpeg binary path: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ffmpeg failed: %w", err)
+	cmdArgs := append([]string{"-hide_banner", "-loglevel", "error", "-nostats"}, args...)
+	cmd := exec.CommandContext(ctx, bin, cmdArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffmpeg failed: %w (%s)", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
