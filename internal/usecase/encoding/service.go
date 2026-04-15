@@ -847,15 +847,17 @@ func (s *service) cleanupOriginalFile(ctx context.Context, job *domain.EncodingJ
 	slog.Info("original file removed after encoding", "video_id", job.VideoID, "path", job.SourceFilePath)
 }
 
-// finalizeVideoState transitions videos with waitTranscoding=true from
-// StatusProcessing to StatusCompleted (published) after all encoding finishes.
+// finalizeVideoState publishes processing videos once the encoding pipeline has
+// produced display assets. This covers waitTranscoding uploads and fast-publish
+// uploads that intentionally stayed hidden until a thumbnail existed.
 func (s *service) finalizeVideoState(ctx context.Context, videoID string) {
 	video, err := s.videoRepo.GetByID(ctx, videoID)
 	if err != nil || video == nil {
 		return
 	}
 
-	if video.WaitTranscoding && video.Status == domain.StatusProcessing {
+	hasDisplayAsset := video.IsRemote || video.ThumbnailPath != "" || video.PreviewPath != ""
+	if video.Status == domain.StatusProcessing && hasDisplayAsset {
 		video.Status = domain.StatusCompleted
 		video.UpdatedAt = time.Now()
 		if err := s.videoRepo.Update(ctx, video); err != nil {

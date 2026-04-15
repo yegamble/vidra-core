@@ -718,6 +718,12 @@ func TestCompleteUpload_FullSuccess(t *testing.T) {
 
 func TestCompleteUpload_WaitTranscodingFalse_PublishesImmediately(t *testing.T) {
 	svc, uploadRepo, encodingRepo, videoRepo, tmpDir := newTestService(t)
+	svc.(*service).generateThumbnailFn = func(_ context.Context, _ string, output string) error {
+		if err := os.MkdirAll(filepath.Dir(output), 0o750); err != nil {
+			return err
+		}
+		return os.WriteFile(output, []byte("thumb"), 0o600)
+	}
 
 	sessionID := "wt-false-test"
 	chunksDir := filepath.Join(tmpDir, "cache", "uploads", sessionID, "chunks")
@@ -745,7 +751,9 @@ func TestCompleteUpload_WaitTranscodingFalse_PublishesImmediately(t *testing.T) 
 	uploadRepo.On("UpdateSession", mock.Anything, mock.AnythingOfType("*domain.UploadSession")).Return(nil)
 	videoRepo.On("GetByID", mock.Anything, "video-wt-false").Return(video, nil)
 	videoRepo.On("Update", mock.Anything, mock.MatchedBy(func(v *domain.Video) bool {
-		return v.Status == domain.StatusCompleted && v.OutputPaths["source"] != ""
+		return v.Status == domain.StatusCompleted &&
+			v.OutputPaths["source"] != "" &&
+			v.ThumbnailPath == "/static/thumbnails/video-wt-false_thumb.jpg"
 	})).Return(nil)
 	encodingRepo.On("GetJobByVideoID", mock.Anything, "video-wt-false").Return((*domain.EncodingJob)(nil), nil)
 	encodingRepo.On("CreateJob", mock.Anything, mock.AnythingOfType("*domain.EncodingJob")).Return(nil)
@@ -757,6 +765,12 @@ func TestCompleteUpload_WaitTranscodingFalse_PublishesImmediately(t *testing.T) 
 
 func TestCompleteUpload_WaitTranscodingTrue_SetsProcessing(t *testing.T) {
 	svc, uploadRepo, encodingRepo, videoRepo, tmpDir := newTestService(t)
+	svc.(*service).generateThumbnailFn = func(_ context.Context, _ string, output string) error {
+		if err := os.MkdirAll(filepath.Dir(output), 0o750); err != nil {
+			return err
+		}
+		return os.WriteFile(output, []byte("thumb"), 0o600)
+	}
 
 	sessionID := "wt-true-test"
 	chunksDir := filepath.Join(tmpDir, "cache", "uploads", sessionID, "chunks")
@@ -784,9 +798,55 @@ func TestCompleteUpload_WaitTranscodingTrue_SetsProcessing(t *testing.T) {
 	uploadRepo.On("UpdateSession", mock.Anything, mock.AnythingOfType("*domain.UploadSession")).Return(nil)
 	videoRepo.On("GetByID", mock.Anything, "video-wt-true").Return(video, nil)
 	videoRepo.On("Update", mock.Anything, mock.MatchedBy(func(v *domain.Video) bool {
-		return v.Status == domain.StatusProcessing && v.OutputPaths["source"] != ""
+		return v.Status == domain.StatusProcessing &&
+			v.OutputPaths["source"] != "" &&
+			v.ThumbnailPath == "/static/thumbnails/video-wt-true_thumb.jpg"
 	})).Return(nil)
 	encodingRepo.On("GetJobByVideoID", mock.Anything, "video-wt-true").Return((*domain.EncodingJob)(nil), nil)
+	encodingRepo.On("CreateJob", mock.Anything, mock.AnythingOfType("*domain.EncodingJob")).Return(nil)
+
+	err := svc.CompleteUpload(context.Background(), sessionID)
+	assert.NoError(t, err)
+	videoRepo.AssertExpectations(t)
+}
+
+func TestCompleteUpload_WaitTranscodingFalse_WithoutInitialThumbnail_StaysProcessing(t *testing.T) {
+	svc, uploadRepo, encodingRepo, videoRepo, tmpDir := newTestService(t)
+	svc.(*service).generateThumbnailFn = func(_ context.Context, _ string, _ string) error {
+		return assert.AnError
+	}
+
+	sessionID := "wt-false-no-thumb"
+	chunksDir := filepath.Join(tmpDir, "cache", "uploads", sessionID, "chunks")
+	_ = os.MkdirAll(chunksDir, 0o750)
+	_ = os.WriteFile(filepath.Join(chunksDir, "chunk_0"), []byte("video data"), 0o600)
+
+	session := &domain.UploadSession{
+		ID:           sessionID,
+		VideoID:      "video-wt-false-no-thumb",
+		UserID:       "user-1",
+		FileName:     "test.mp4",
+		TotalChunks:  1,
+		Status:       domain.UploadStatusActive,
+		TempFilePath: chunksDir,
+	}
+
+	video := &domain.Video{
+		ID:              "video-wt-false-no-thumb",
+		WaitTranscoding: false,
+		Metadata:        domain.VideoMetadata{Height: 720},
+	}
+
+	uploadRepo.On("GetSession", mock.Anything, sessionID).Return(session, nil)
+	uploadRepo.On("GetUploadedChunks", mock.Anything, sessionID).Return([]int{0}, nil)
+	uploadRepo.On("UpdateSession", mock.Anything, mock.AnythingOfType("*domain.UploadSession")).Return(nil)
+	videoRepo.On("GetByID", mock.Anything, "video-wt-false-no-thumb").Return(video, nil)
+	videoRepo.On("Update", mock.Anything, mock.MatchedBy(func(v *domain.Video) bool {
+		return v.Status == domain.StatusProcessing &&
+			v.OutputPaths["source"] != "" &&
+			v.ThumbnailPath == ""
+	})).Return(nil)
+	encodingRepo.On("GetJobByVideoID", mock.Anything, "video-wt-false-no-thumb").Return((*domain.EncodingJob)(nil), nil)
 	encodingRepo.On("CreateJob", mock.Anything, mock.AnythingOfType("*domain.EncodingJob")).Return(nil)
 
 	err := svc.CompleteUpload(context.Background(), sessionID)

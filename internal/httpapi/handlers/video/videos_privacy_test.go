@@ -67,7 +67,13 @@ func (m *mockVideoRepoPrivacy) AppendOutputPath(_ context.Context, _ string, _ s
 
 func TestGetVideo_PrivacyGate(t *testing.T) {
 	ownerID := "owner-1"
-	mv := &mockVideoRepoPrivacy{v: &domain.Video{ID: "v1", UserID: ownerID, Privacy: domain.PrivacyPrivate}}
+	mv := &mockVideoRepoPrivacy{v: &domain.Video{
+		ID:            "v1",
+		UserID:        ownerID,
+		Privacy:       domain.PrivacyPrivate,
+		Status:        domain.StatusCompleted,
+		ThumbnailPath: "/static/thumbnails/v1_thumb.jpg",
+	}}
 	h := GetVideoHandler(mv, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/v1", nil)
@@ -85,6 +91,27 @@ func TestGetVideo_PrivacyGate(t *testing.T) {
 	h.ServeHTTP(rr2, req2)
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("expected 200 for owner, got %d", rr2.Code)
+	}
+}
+
+func TestGetVideo_HidesUnreadyVideosFromPrivilegedUsers(t *testing.T) {
+	ownerID := "owner-2"
+	mv := &mockVideoRepoPrivacy{v: &domain.Video{
+		ID:      "v2",
+		UserID:  ownerID,
+		Privacy: domain.PrivacyPublic,
+		Status:  domain.StatusProcessing,
+	}}
+	h := GetVideoHandler(mv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/v2", nil)
+	req = withChiURLParam(req, "id", "123e4567-e89b-12d3-a456-426614174001")
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, ownerID))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for owner while video is unready, got %d", rr.Code)
 	}
 }
 

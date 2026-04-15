@@ -778,13 +778,14 @@ func TestCleanupOriginalFile_FileAlreadyGone(t *testing.T) {
 
 // --- finalizeVideoState tests ---
 
-func TestFinalizeVideoState_WaitTranscodingPublishes(t *testing.T) {
+func TestFinalizeVideoState_PublishesProcessingVideosWithDisplayAssets(t *testing.T) {
 	videoRepo := NewMockVideoRepository()
 	videoID := uuid.NewString()
 	video := &domain.Video{
 		ID:              videoID,
 		Status:          domain.StatusProcessing,
 		WaitTranscoding: true,
+		ThumbnailPath:   "/static/thumbnails/" + videoID + "_thumb.jpg",
 	}
 	require.NoError(t, videoRepo.Create(context.Background(), video))
 
@@ -800,7 +801,7 @@ func TestFinalizeVideoState_WaitTranscodingPublishes(t *testing.T) {
 	assert.Equal(t, domain.StatusCompleted, updated.Status, "should transition to completed")
 }
 
-func TestFinalizeVideoState_NoWaitTranscodingSkips(t *testing.T) {
+func TestFinalizeVideoState_KeepsProcessingWithoutDisplayAssets(t *testing.T) {
 	videoRepo := NewMockVideoRepository()
 	videoID := uuid.NewString()
 	video := &domain.Video{
@@ -819,7 +820,7 @@ func TestFinalizeVideoState_NoWaitTranscodingSkips(t *testing.T) {
 
 	updated, err := videoRepo.GetByID(context.Background(), videoID)
 	require.NoError(t, err)
-	assert.Equal(t, domain.StatusProcessing, updated.Status, "should stay processing when WaitTranscoding=false")
+	assert.Equal(t, domain.StatusProcessing, updated.Status, "should stay processing until a display asset exists")
 }
 
 func TestFinalizeVideoState_VideoNotFound(t *testing.T) {

@@ -129,16 +129,13 @@ func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.Capti
 			return
 		}
 
-		// Visibility: processing/queued videos are only visible to the owner,
-		// moderators, and admins. Other users get 404 (PeerTube parity for waitTranscoding).
-		if video.Status != domain.StatusCompleted {
-			requesterRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
-			isOwner := requesterID == video.UserID
-			isPrivileged := requesterRole == "admin" || requesterRole == "moderator"
-			if !isOwner && !isPrivileged {
-				shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
-				return
-			}
+		// Only serve a video once it is actually ready for the watch surface.
+		// This prevents owners/admins/moderators from seeing a watch page whose
+		// thumbnail/poster asset still 404s while processing is in flight.
+		hasDisplayAsset := video.IsRemote || video.ThumbnailPath != "" || video.PreviewPath != ""
+		if video.Status != domain.StatusCompleted || !hasDisplayAsset {
+			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
+			return
 		}
 
 		video.ComputeThumbnails()

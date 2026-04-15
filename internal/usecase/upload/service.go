@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -35,24 +36,26 @@ type Service interface {
 }
 
 type service struct {
-	uploadRepo   port.UploadRepository
-	encodingRepo port.EncodingRepository
-	videoRepo    port.VideoRepository
-	uploadsDir   string
-	paths        storage.Paths
-	validator    *validation.ChecksumValidator
-	cfg          *config.Config
+	uploadRepo          port.UploadRepository
+	encodingRepo        port.EncodingRepository
+	videoRepo           port.VideoRepository
+	uploadsDir          string
+	paths               storage.Paths
+	validator           *validation.ChecksumValidator
+	cfg                 *config.Config
+	generateThumbnailFn func(ctx context.Context, input string, output string) error
 }
 
 func NewService(uploadRepo port.UploadRepository, encodingRepo port.EncodingRepository, videoRepo port.VideoRepository, uploadsDir string, cfg *config.Config) Service {
 	return &service{
-		uploadRepo:   uploadRepo,
-		encodingRepo: encodingRepo,
-		videoRepo:    videoRepo,
-		uploadsDir:   uploadsDir,
-		paths:        storage.NewPaths(uploadsDir),
-		validator:    validation.NewChecksumValidator(cfg),
-		cfg:          cfg,
+		uploadRepo:          uploadRepo,
+		encodingRepo:        encodingRepo,
+		videoRepo:           videoRepo,
+		uploadsDir:          uploadsDir,
+		paths:               storage.NewPaths(uploadsDir),
+		validator:           validation.NewChecksumValidator(cfg),
+		cfg:                 cfg,
+		generateThumbnailFn: defaultGenerateThumbnail(cfg),
 	}
 }
 
@@ -250,15 +253,6 @@ func (s *service) CompleteUpload(ctx context.Context, sessionID string) error {
 		return fmt.Errorf("failed to get video: %w", err)
 	}
 
-	// PeerTube parity: set status based on waitTranscoding.
-	// waitTranscoding=false → publish immediately (StatusCompleted), original available for playback.
-	// waitTranscoding=true  → hold until encoding finishes (StatusProcessing), only owner/mod/admin can see.
-	if video.WaitTranscoding {
-		video.Status = domain.StatusProcessing
-	} else {
-		video.Status = domain.StatusCompleted
-	}
-
 	// Store the HTTP-servable path so the API returns a valid URL for playback.
 	ext := filepath.Ext(session.FileName)
 	finalFilePath := s.paths.WebVideoFilePath(session.VideoID, ext)
@@ -266,6 +260,26 @@ func (s *service) CompleteUpload(ctx context.Context, sessionID string) error {
 		video.OutputPaths = make(map[string]string)
 	}
 	video.OutputPaths["source"] = s.paths.WebVideoHTTPPath(session.VideoID, ext)
+
+	thumbnailHTTPPath, thumbErr := s.generateInitialThumbnail(ctx, session.VideoID, finalFilePath)
+	if thumbErr != nil {
+		slog.Warn("failed to generate initial upload thumbnail", "video_id", session.VideoID, "error", thumbErr)
+	}
+	if thumbnailHTTPPath != "" {
+		video.ThumbnailPath = thumbnailHTTPPath
+	}
+
+	// Publish only after the first thumbnail exists. This keeps freshly uploaded
+	// videos from surfacing a broken 404 thumbnail in the frontend while the rest
+	// of the encoding pipeline continues.
+	switch {
+	case video.WaitTranscoding:
+		video.Status = domain.StatusProcessing
+	case video.ThumbnailPath != "":
+		video.Status = domain.StatusCompleted
+	default:
+		video.Status = domain.StatusProcessing
+	}
 
 	video.UpdatedAt = time.Now()
 	if err := s.videoRepo.Update(ctx, video); err != nil {
@@ -344,6 +358,45 @@ func (s *service) AssembleChunks(ctx context.Context, session *domain.UploadSess
 		}
 	}
 	return nil
+}
+
+func (s *service) generateInitialThumbnail(ctx context.Context, videoID, sourcePath string) (string, error) {
+	thumbnailPath := s.paths.ThumbnailPath(videoID)
+	if err := os.MkdirAll(filepath.Dir(thumbnailPath), 0o750); err != nil {
+		return "", fmt.Errorf("create thumbnail dir: %w", err)
+	}
+
+	if err := s.generateThumbnailFn(ctx, sourcePath, thumbnailPath); err != nil {
+		return "", err
+	}
+
+	if _, err := os.Stat(thumbnailPath); err != nil {
+		return "", fmt.Errorf("initial thumbnail missing after generation: %w", err)
+	}
+
+	return s.paths.ThumbnailHTTPPath(videoID), nil
+}
+
+func defaultGenerateThumbnail(cfg *config.Config) func(ctx context.Context, input string, output string) error {
+	ffmpegPath := "ffmpeg"
+	if cfg != nil && cfg.FFMPEGPath != "" {
+		ffmpegPath = cfg.FFMPEGPath
+	}
+
+	return func(ctx context.Context, input string, output string) error {
+		cmd := exec.CommandContext(ctx, ffmpegPath,
+			"-y",
+			"-ss", "00:00:01",
+			"-i", input,
+			"-frames:v", "1",
+			"-q:v", "2",
+			output,
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("ffmpeg thumbnail generation failed: %w (%s)", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
 }
 
 func (s *service) CleanupTempFiles(ctx context.Context, sessionID string) error {

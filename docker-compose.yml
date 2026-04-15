@@ -135,7 +135,7 @@ services:
     environment:
       BITCOIN_NETWORK: regtest
       BITCOIN_WALLETDIR: /data/wallets
-      BITCOIN_EXTRA_ARGS: >-
+      BITCOIN_EXTRA_ARGS: |-
         rpcuser=vidra
         rpcpassword=vidra
         rpcallowip=0.0.0.0/0
@@ -180,7 +180,7 @@ services:
   # Container-to-container: http://btcpay-server:49392  |  Host access: http://localhost:14080
   btcpay-server:
     profiles: ["bitcoin", "full"]
-    image: btcpayserver/btcpayserver:1.14.4
+    image: btcpayserver/btcpayserver:2.3.3
     restart: on-failure:3
     ports:
       - "14080:49392"
