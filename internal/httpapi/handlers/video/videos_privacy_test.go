@@ -94,7 +94,7 @@ func TestGetVideo_PrivacyGate(t *testing.T) {
 	}
 }
 
-func TestGetVideo_HidesUnreadyVideosFromPrivilegedUsers(t *testing.T) {
+func TestGetVideo_AllowsPrivilegedProcessingAccess(t *testing.T) {
 	ownerID := "owner-2"
 	mv := &mockVideoRepoPrivacy{v: &domain.Video{
 		ID:      "v2",
@@ -110,8 +110,75 @@ func TestGetVideo_HidesUnreadyVideosFromPrivilegedUsers(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for owner while video is unready, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for owner while video is processing, got %d", rr.Code)
+	}
+
+	reqMod := httptest.NewRequest(http.MethodGet, "/api/v1/videos/v2", nil)
+	reqMod = withChiURLParam(reqMod, "id", "123e4567-e89b-12d3-a456-426614174001")
+	ctx := context.WithValue(reqMod.Context(), middleware.UserIDKey, "mod-1")
+	ctx = context.WithValue(ctx, middleware.UserRoleKey, "moderator")
+	reqMod = reqMod.WithContext(ctx)
+	rrMod := httptest.NewRecorder()
+	h.ServeHTTP(rrMod, reqMod)
+
+	if rrMod.Code != http.StatusOK {
+		t.Fatalf("expected 200 for moderator while video is processing, got %d", rrMod.Code)
+	}
+
+	reqPublic := httptest.NewRequest(http.MethodGet, "/api/v1/videos/v2", nil)
+	reqPublic = withChiURLParam(reqPublic, "id", "123e4567-e89b-12d3-a456-426614174001")
+	rrPublic := httptest.NewRecorder()
+	h.ServeHTTP(rrPublic, reqPublic)
+
+	if rrPublic.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for public while video has no encoded rendition, got %d", rrPublic.Code)
+	}
+}
+
+func TestGetVideo_AllowsPublicAccessOnceEncodedRenditionExists(t *testing.T) {
+	mv := &mockVideoRepoPrivacy{v: &domain.Video{
+		ID:       "v3",
+		UserID:   "owner-3",
+		Privacy:  domain.PrivacyPublic,
+		Status:   domain.StatusProcessing,
+		OutputPaths: map[string]string{
+			"master": "/static/streaming-playlists/hls/v3/master.m3u8",
+			"720p":   "/static/streaming-playlists/hls/v3/720p.m3u8",
+		},
+	}}
+	h := GetVideoHandler(mv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/v3", nil)
+	req = withChiURLParam(req, "id", "123e4567-e89b-12d3-a456-426614174002")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 once an encoded rendition exists, got %d", rr.Code)
+	}
+}
+
+func TestGetVideo_AllowsPublicAccessToPublishedSourceWhileTranscoding(t *testing.T) {
+	mv := &mockVideoRepoPrivacy{v: &domain.Video{
+		ID:              "v4",
+		UserID:          "owner-4",
+		Privacy:         domain.PrivacyPublic,
+		Status:          domain.StatusProcessing,
+		WaitTranscoding: false,
+		OutputPaths: map[string]string{
+			"source": "/static/web-videos/v4.mp4",
+		},
+	}}
+	h := GetVideoHandler(mv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/v4", nil)
+	req = withChiURLParam(req, "id", "123e4567-e89b-12d3-a456-426614174004")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 once the original source is publicly playable, got %d", rr.Code)
 	}
 }
 

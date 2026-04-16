@@ -66,6 +66,9 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("q")
 		if query == "" {
+			query = r.URL.Query().Get("search")
+		}
+		if query == "" {
 			shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("MISSING_QUERY", "Search query is required"))
 			return
 		}
@@ -124,16 +127,28 @@ func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.Capti
 			return
 		}
 		requesterID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		requesterRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
 		if video.Privacy == domain.PrivacyPrivate && requesterID != video.UserID {
 			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("FORBIDDEN", "Access denied"))
 			return
 		}
 
-		// Only serve a video once it is actually ready for the watch surface.
-		// This prevents owners/admins/moderators from seeing a watch page whose
-		// thumbnail/poster asset still 404s while processing is in flight.
-		hasDisplayAsset := video.IsRemote || video.ThumbnailPath != "" || video.PreviewPath != ""
-		if video.Status != domain.StatusCompleted || !hasDisplayAsset {
+		// Public access starts once the video has either fully completed or exposed
+		// at least one encoded HLS rendition. Owners/admins/moderators can inspect
+		// the processing state earlier via authenticated requests.
+		webFiles, streamingPlaylists := BuildVideoFilesResponse(video)
+		hasEncodedRendition := video.Status == domain.StatusCompleted
+		if !hasEncodedRendition {
+			for _, playlist := range streamingPlaylists {
+				if playlist.PlaylistUrl != "" || len(playlist.Files) > 0 {
+					hasEncodedRendition = true
+					break
+				}
+			}
+		}
+		hasPlayableSource := len(webFiles) > 0 && !video.WaitTranscoding
+		canInspectProcessing := requesterID == video.UserID || requesterRole == "admin" || requesterRole == "moderator"
+		if !hasEncodedRendition && !hasPlayableSource && !canInspectProcessing {
 			shared.WriteError(w, http.StatusNotFound, domain.NewDomainError("VIDEO_NOT_FOUND", "Video not found"))
 			return
 		}
@@ -147,9 +162,6 @@ func GetVideoHandler(repo usecase.VideoRepository, captionService *usecase.Capti
 				captions = captionList.Captions
 			}
 		}
-
-		// Build PeerTube-compatible files[] and streamingPlaylists[]
-		webFiles, streamingPlaylists := BuildVideoFilesResponse(video)
 
 		type VideoWithExtras struct {
 			*domain.Video

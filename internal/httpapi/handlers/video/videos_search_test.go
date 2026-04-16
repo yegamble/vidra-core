@@ -92,6 +92,21 @@ func TestSearchVideos_MissingQuery_400(t *testing.T) {
 	}
 }
 
+func TestSearchVideos_AcceptsSearchAlias(t *testing.T) {
+	repo := &mockVideoRepo{videos: []*domain.Video{{ID: "v1", Title: "alias test"}}, total: 1}
+	handler := SearchVideosHandler(repo)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/videos?search=alias", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if repo.capturedSearch == nil || repo.capturedSearch.Query != "alias" {
+		t.Fatalf("expected captured search query 'alias', got %+v", repo.capturedSearch)
+	}
+}
+
 func TestListVideos_WithFilters_CapturesRequest(t *testing.T) {
 	repo := &mockVideoRepo{videos: []*domain.Video{}, total: 0}
 	handler := ListVideosHandler(repo)

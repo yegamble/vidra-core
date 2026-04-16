@@ -136,3 +136,95 @@ func TestSearchAndUserVideos_ReturnUploadedVideo(t *testing.T) {
 		}
 	}
 }
+
+func TestListAndSearch_IncludePublishedSourceWhileTranscoding(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+	td := testutil.SetupTestDB(t)
+	if td == nil {
+		t.Skip("TestDB not available")
+		return
+	}
+
+	videoRepo := repository.NewVideoRepository(td.DB)
+	userRepo := repository.NewUserRepository(td.DB)
+	ctx := context.Background()
+
+	user := createTestUser(t, userRepo, ctx, "u_source_"+time.Now().Format("150405"), "source@example.com")
+	video := &domain.Video{
+		ID:              "11111111-1111-1111-1111-111111111111",
+		ThumbnailID:     "22222222-2222-2222-2222-222222222222",
+		Title:           "Source Visible Demo",
+		Description:     "Published before transcoding completes",
+		Privacy:         domain.PrivacyPublic,
+		Status:          domain.StatusProcessing,
+		WaitTranscoding: false,
+		UploadDate:      time.Now(),
+		UserID:          user.ID,
+		OutputPaths: map[string]string{
+			"source": "/static/web-videos/source-visible-demo.mp4",
+		},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := videoRepo.Create(ctx, video); err != nil {
+		t.Fatalf("create video: %v", err)
+	}
+
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos", nil)
+		rr := httptest.NewRecorder()
+		ListVideosHandler(videoRepo).ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200 from list, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		var env Response
+		if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+			t.Fatalf("decode env: %v", err)
+		}
+		var got []*domain.Video
+		b, _ := json.Marshal(env.Data)
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("decode data: %v", err)
+		}
+		found := false
+		for _, v := range got {
+			if v.ID == video.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("published source-only video not found in list results; got %v", got)
+		}
+	}
+
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/search/videos?search=Source+Visible", nil)
+		rr := httptest.NewRecorder()
+		SearchVideosHandler(videoRepo).ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200 from search alias, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		var env Response
+		if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+			t.Fatalf("decode env: %v", err)
+		}
+		var got []*domain.Video
+		b, _ := json.Marshal(env.Data)
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("decode data: %v", err)
+		}
+		found := false
+		for _, v := range got {
+			if v.ID == video.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("published source-only video not found in search results; got %v", got)
+		}
+	}
+}

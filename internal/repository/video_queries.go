@@ -11,6 +11,15 @@ import (
 	"github.com/lib/pq"
 )
 
+const publicVideoReadyClause = `(
+        status = 'completed'
+        OR (
+            COALESCE(wait_transcoding, false) = false
+            AND NULLIF(COALESCE(output_paths->>'source', ''), '') IS NOT NULL
+        )
+        OR COALESCE(processed_cids, '{}'::jsonb) <> '{}'::jsonb
+    )`
+
 func (r *videoRepository) GetByIDs(ctx context.Context, ids []string) ([]*domain.Video, error) {
 	if len(ids) == 0 {
 		return []*domain.Video{}, nil
@@ -191,10 +200,10 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
                created_at, updated_at, output_paths, thumbnail_path, preview_path,
                wait_transcoding
         FROM videos
-        WHERE privacy = 'public' AND status = 'completed'
+        WHERE privacy = 'public' AND ` + publicVideoReadyClause + `
           AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
 
-	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed' AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
+	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND ` + publicVideoReadyClause + ` AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
 
 	args := []interface{}{}
 	argIndex := 1
@@ -294,10 +303,10 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
                created_at, updated_at, output_paths, thumbnail_path, preview_path,
                wait_transcoding
         FROM videos
-        WHERE privacy = 'public' AND status = 'completed'
+        WHERE privacy = 'public' AND ` + publicVideoReadyClause + `
           AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
 
-	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed' AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
+	countQuery := `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND ` + publicVideoReadyClause + ` AND NOT EXISTS (SELECT 1 FROM video_blacklist vb WHERE vb.video_id = videos.id)`
 
 	args := []interface{}{}
 	argIndex := 1
