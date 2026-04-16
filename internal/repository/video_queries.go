@@ -8,6 +8,7 @@ import (
 	"strings"
 	"vidra-core/internal/domain"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
 
@@ -150,6 +151,10 @@ func (r *videoRepository) GetByIDs(ctx context.Context, ids []string) ([]*domain
 		videos = append(videos, &v)
 	}
 
+	if err := r.hydrateVideoChannels(ctx, videos); err != nil {
+		return nil, err
+	}
+
 	return videos, nil
 }
 
@@ -163,7 +168,7 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 
 	query := `
         SELECT id, thumbnail_id, title, description, duration, views,
-               privacy, status, upload_date, user_id,
+               privacy, status, upload_date, user_id, channel_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path,
@@ -188,13 +193,17 @@ func (r *videoRepository) GetByUserID(ctx context.Context, userID string, limit,
 		videos = append(videos, v)
 	}
 
+	if err := r.hydrateVideoChannels(ctx, videos); err != nil {
+		return nil, 0, err
+	}
+
 	return videos, total, nil
 }
 
 func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	baseQuery := `
         SELECT id, thumbnail_id, title, description, duration, views,
-               privacy, status, upload_date, user_id,
+               privacy, status, upload_date, user_id, channel_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path,
@@ -291,13 +300,17 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 		videos = append(videos, v)
 	}
 
+	if err := r.hydrateVideoChannels(ctx, videos); err != nil {
+		return nil, 0, err
+	}
+
 	return videos, total, nil
 }
 
 func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchRequest) ([]*domain.Video, int64, error) {
 	baseQuery := `
         SELECT id, thumbnail_id, title, description, duration, views,
-               privacy, status, upload_date, user_id,
+               privacy, status, upload_date, user_id, channel_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path,
@@ -402,6 +415,10 @@ func (r *videoRepository) Search(ctx context.Context, req *domain.VideoSearchReq
 			return nil, 0, err
 		}
 		videos = append(videos, v)
+	}
+
+	if err := r.hydrateVideoChannels(ctx, videos); err != nil {
+		return nil, 0, err
 	}
 
 	return videos, total, nil
@@ -532,7 +549,7 @@ func (r *videoRepository) GetByChannelID(ctx context.Context, channelID string, 
 
 	query := `
         SELECT id, thumbnail_id, title, description, duration, views,
-               privacy, status, upload_date, user_id,
+               privacy, status, upload_date, user_id, channel_id,
                original_cid, processed_cids, thumbnail_cid,
                tags, category_id, language, file_size, mime_type, metadata,
                created_at, updated_at, output_paths, thumbnail_path, preview_path,
@@ -557,5 +574,67 @@ func (r *videoRepository) GetByChannelID(ctx context.Context, channelID string, 
 		videos = append(videos, v)
 	}
 
+	if err := r.hydrateVideoChannels(ctx, videos); err != nil {
+		return nil, 0, err
+	}
+
 	return videos, total, nil
+}
+
+func (r *videoRepository) hydrateVideoChannels(ctx context.Context, videos []*domain.Video) error {
+	if len(videos) == 0 {
+		return nil
+	}
+
+	channelIDs := make([]uuid.UUID, 0, len(videos))
+	seen := make(map[uuid.UUID]struct{}, len(videos))
+	for _, video := range videos {
+		if video == nil || video.ChannelID == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[video.ChannelID]; ok {
+			continue
+		}
+		seen[video.ChannelID] = struct{}{}
+		channelIDs = append(channelIDs, video.ChannelID)
+	}
+
+	if len(channelIDs) == 0 {
+		return nil
+	}
+
+	query := `
+		SELECT
+			c.id, c.account_id, c.handle, c.display_name, c.description, c.support,
+			c.is_local, c.atproto_did, c.atproto_pds_url,
+			c.avatar_filename, c.avatar_ipfs_cid, c.banner_filename, c.banner_ipfs_cid,
+			c.followers_count, c.following_count, c.videos_count,
+			c.created_at, c.updated_at
+		FROM channels c
+		WHERE c.id = ANY($1::uuid[])`
+
+	var channels []domain.Channel
+	if err := r.db.SelectContext(ctx, &channels, query, pq.Array(channelIDs)); err != nil {
+		return domain.NewDomainError("QUERY_FAILED", "Failed to load video channels")
+	}
+
+	channelMap := make(map[uuid.UUID]*domain.Channel, len(channels))
+	for i := range channels {
+		channel := channels[i]
+		if channel.Name == "" {
+			channel.Name = channel.DisplayName
+		}
+		channelMap[channel.ID] = &channel
+	}
+
+	for _, video := range videos {
+		if video == nil {
+			continue
+		}
+		if channel, ok := channelMap[video.ChannelID]; ok {
+			video.Channel = channel
+		}
+	}
+
+	return nil
 }

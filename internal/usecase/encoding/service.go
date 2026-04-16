@@ -567,6 +567,15 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 		return fmt.Errorf("read video for output merge: %w", err)
 	}
 
+	duration := existing.Duration
+	metadata := existing.Metadata
+	if probedMetadata, probedDuration, probeErr := media.ProbeVideoMetadata(ctx, s.cfg.FFMPEGPath, job.SourceFilePath); probeErr != nil {
+		slog.Warn("failed to probe encoded video metadata", "video_id", job.VideoID, "error", probeErr)
+	} else {
+		duration = mergeProcessingDuration(duration, probedDuration)
+		metadata = mergeProcessingMetadata(existing.Metadata, probedMetadata)
+	}
+
 	outputs := make(map[string]string)
 	// Carry forward existing entries (especially "source" from upload)
 	for k, v := range existing.OutputPaths {
@@ -600,6 +609,8 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 		VideoProcessingParams: port.VideoProcessingParams{
 			VideoID:       job.VideoID,
 			Status:        status,
+			Duration:      duration,
+			Metadata:      metadata,
 			OutputPaths:   outputs,
 			ThumbnailPath: sp.ThumbnailHTTPPath(job.VideoID),
 			PreviewPath:   sp.PreviewHTTPPath(job.VideoID),
@@ -608,6 +619,42 @@ func (s *service) updateVideoInfo(ctx context.Context, job *domain.EncodingJob, 
 		ThumbnailCID:  thumbCID,
 		PreviewCID:    previewCID,
 	})
+}
+
+func mergeProcessingDuration(existing int, probed time.Duration) int {
+	if probed > 0 {
+		return int(probed.Seconds())
+	}
+	return existing
+}
+
+func mergeProcessingMetadata(existing domain.VideoMetadata, probed *domain.VideoMetadata) domain.VideoMetadata {
+	merged := existing
+	if probed == nil {
+		return merged
+	}
+	if probed.Width > 0 {
+		merged.Width = probed.Width
+	}
+	if probed.Height > 0 {
+		merged.Height = probed.Height
+	}
+	if probed.Framerate > 0 {
+		merged.Framerate = probed.Framerate
+	}
+	if probed.Bitrate > 0 {
+		merged.Bitrate = probed.Bitrate
+	}
+	if probed.AudioCodec != "" {
+		merged.AudioCodec = probed.AudioCodec
+	}
+	if probed.VideoCodec != "" {
+		merged.VideoCodec = probed.VideoCodec
+	}
+	if probed.AspectRatio != "" {
+		merged.AspectRatio = probed.AspectRatio
+	}
+	return merged
 }
 
 // uploadHLSToS3 walks outBaseDir, uploads every HLS file, the source video,

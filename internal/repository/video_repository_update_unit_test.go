@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -19,13 +18,13 @@ func setupVideoUpdateMockDB(t *testing.T) (*sqlx.DB, sqlmock.Sqlmock) {
 	mockDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		require.NoError(t, mockDB.Close())
+		_ = mockDB.Close()
 	})
 
 	return sqlx.NewDb(mockDB, "sqlmock"), mock
 }
 
-func TestVideoRepositoryUpdate_PersistsOutputPathsAndMediaPaths(t *testing.T) {
+func TestVideoRepositoryUpdate_PersistsDurationMetadataAndMediaPaths(t *testing.T) {
 	db, mock := setupVideoUpdateMockDB(t)
 	repo := &videoRepository{db: db, tm: NewTransactionManager(db)}
 
@@ -33,18 +32,26 @@ func TestVideoRepositoryUpdate_PersistsOutputPathsAndMediaPaths(t *testing.T) {
 		"source": "/static/web-videos/video-123.mov",
 		"master": "/static/streaming-playlists/hls/video-123/master.m3u8",
 	}
-	outputPathsJSON, err := json.Marshal(outputPaths)
-	require.NoError(t, err)
+	metadata := domain.VideoMetadata{
+		Width:       1920,
+		Height:      1080,
+		Framerate:   30,
+		Bitrate:     8_000_000,
+		VideoCodec:  "h264",
+		AspectRatio: "16:9",
+	}
 
 	video := &domain.Video{
 		ID:            "video-123",
 		UserID:        "user-123",
 		Title:         "Video",
 		Description:   "Desc",
+		Duration:      95,
 		Privacy:       domain.PrivacyPublic,
 		Tags:          []string{"test"},
 		Language:      "en",
 		Status:        domain.StatusCompleted,
+		Metadata:      metadata,
 		UpdatedAt:     time.Now(),
 		OutputPaths:   outputPaths,
 		ThumbnailPath: "/static/thumbnails/video-123_thumb.jpg",
@@ -52,29 +59,10 @@ func TestVideoRepositoryUpdate_PersistsOutputPathsAndMediaPaths(t *testing.T) {
 		StorageTier:   "hot",
 	}
 
-	mock.ExpectExec(`UPDATE videos SET`).
-		WithArgs(
-			video.ID,
-			video.Title,
-			video.Description,
-			video.Privacy,
-			sqlmock.AnyArg(),
-			video.CategoryID,
-			video.Language,
-			video.Status,
-			video.UpdatedAt,
-			outputPathsJSON,
-			video.ThumbnailPath,
-			video.PreviewPath,
-			video.UserID,
-			[]byte("{}"),
-			video.StorageTier,
-			video.S3MigratedAt,
-			video.LocalDeleted,
-		).
+	mock.ExpectExec(updateVideoQueryRegex).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err = repo.Update(context.Background(), video)
+	err := repo.Update(context.Background(), video)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

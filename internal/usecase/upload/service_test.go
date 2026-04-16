@@ -256,6 +256,9 @@ func newTestService(t *testing.T) (Service, *mockUploadRepo, *mockEncodingRepo, 
 		LogLevel:           "info",
 	}
 	svc := NewService(uploadRepo, encodingRepo, videoRepo, tmpDir, cfg)
+	svc.(*service).probeMetadataFn = func(context.Context, string) (*domain.VideoMetadata, time.Duration, error) {
+		return &domain.VideoMetadata{}, 0, nil
+	}
 	return svc, uploadRepo, encodingRepo, videoRepo, tmpDir
 }
 
@@ -724,6 +727,15 @@ func TestCompleteUpload_WaitTranscodingFalse_PublishesImmediately(t *testing.T) 
 		}
 		return os.WriteFile(output, []byte("thumb"), 0o600)
 	}
+	svc.(*service).probeMetadataFn = func(_ context.Context, _ string) (*domain.VideoMetadata, time.Duration, error) {
+		return &domain.VideoMetadata{
+			Width:       1920,
+			Height:      1080,
+			Framerate:   30,
+			VideoCodec:  "h264",
+			AspectRatio: "16:9",
+		}, 95 * time.Second, nil
+	}
 
 	sessionID := "wt-false-test"
 	chunksDir := filepath.Join(tmpDir, "cache", "uploads", sessionID, "chunks")
@@ -753,7 +765,11 @@ func TestCompleteUpload_WaitTranscodingFalse_PublishesImmediately(t *testing.T) 
 	videoRepo.On("Update", mock.Anything, mock.MatchedBy(func(v *domain.Video) bool {
 		return v.Status == domain.StatusCompleted &&
 			v.OutputPaths["source"] != "" &&
-			v.ThumbnailPath == "/static/thumbnails/video-wt-false_thumb.jpg"
+			v.ThumbnailPath == "/static/thumbnails/video-wt-false_thumb.jpg" &&
+			v.Duration == 95 &&
+			v.Metadata.Width == 1920 &&
+			v.Metadata.Height == 1080 &&
+			v.Metadata.AspectRatio == "16:9"
 	})).Return(nil)
 	encodingRepo.On("GetJobByVideoID", mock.Anything, "video-wt-false").Return((*domain.EncodingJob)(nil), nil)
 	encodingRepo.On("CreateJob", mock.Anything, mock.AnythingOfType("*domain.EncodingJob")).Return(nil)

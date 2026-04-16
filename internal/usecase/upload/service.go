@@ -45,6 +45,7 @@ type service struct {
 	validator           *validation.ChecksumValidator
 	cfg                 *config.Config
 	generateThumbnailFn func(ctx context.Context, input string, output string) error
+	probeMetadataFn     func(ctx context.Context, input string) (*domain.VideoMetadata, time.Duration, error)
 }
 
 func NewService(uploadRepo port.UploadRepository, encodingRepo port.EncodingRepository, videoRepo port.VideoRepository, uploadsDir string, cfg *config.Config) Service {
@@ -57,6 +58,7 @@ func NewService(uploadRepo port.UploadRepository, encodingRepo port.EncodingRepo
 		validator:           validation.NewChecksumValidator(cfg),
 		cfg:                 cfg,
 		generateThumbnailFn: defaultGenerateThumbnail(cfg),
+		probeMetadataFn:     defaultProbeMetadata(cfg),
 	}
 }
 
@@ -262,6 +264,12 @@ func (s *service) CompleteUpload(ctx context.Context, sessionID string) error {
 	}
 	video.OutputPaths["source"] = s.paths.WebVideoHTTPPath(session.VideoID, ext)
 
+	if metadata, duration, probeErr := s.probeMetadataFn(ctx, finalFilePath); probeErr != nil {
+		slog.Warn("failed to probe upload metadata", "video_id", session.VideoID, "error", probeErr)
+	} else {
+		s.applySourceMetadata(video, metadata, duration)
+	}
+
 	thumbnailHTTPPath, thumbErr := s.generateInitialThumbnail(ctx, session.VideoID, finalFilePath)
 	if thumbErr != nil {
 		slog.Warn("failed to generate initial upload thumbnail", "video_id", session.VideoID, "error", thumbErr)
@@ -396,6 +404,44 @@ func defaultGenerateThumbnail(cfg *config.Config) func(ctx context.Context, inpu
 			return fmt.Errorf("ffmpeg thumbnail generation failed: %w (%s)", err, strings.TrimSpace(string(out)))
 		}
 		return nil
+	}
+}
+
+func defaultProbeMetadata(cfg *config.Config) func(ctx context.Context, input string) (*domain.VideoMetadata, time.Duration, error) {
+	ffmpegPath := "ffmpeg"
+	if cfg != nil && cfg.FFMPEGPath != "" {
+		ffmpegPath = cfg.FFMPEGPath
+	}
+
+	return func(ctx context.Context, input string) (*domain.VideoMetadata, time.Duration, error) {
+		return media.ProbeVideoMetadata(ctx, ffmpegPath, input)
+	}
+}
+
+func (s *service) applySourceMetadata(video *domain.Video, metadata *domain.VideoMetadata, duration time.Duration) {
+	if metadata != nil {
+		if metadata.Width > 0 {
+			video.Metadata.Width = metadata.Width
+		}
+		if metadata.Height > 0 {
+			video.Metadata.Height = metadata.Height
+		}
+		if metadata.Framerate > 0 {
+			video.Metadata.Framerate = metadata.Framerate
+		}
+		if metadata.Bitrate > 0 {
+			video.Metadata.Bitrate = metadata.Bitrate
+		}
+		if metadata.VideoCodec != "" {
+			video.Metadata.VideoCodec = metadata.VideoCodec
+		}
+		if metadata.AspectRatio != "" {
+			video.Metadata.AspectRatio = metadata.AspectRatio
+		}
+	}
+
+	if duration > 0 {
+		video.Duration = int(duration.Seconds())
 	}
 }
 

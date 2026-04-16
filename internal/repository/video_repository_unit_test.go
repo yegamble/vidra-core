@@ -106,6 +106,7 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 	videoID := uuid.New().String()
 	userID := uuid.New().String()
 	categoryID := uuid.New()
+	channelID := uuid.New()
 	now := time.Now()
 
 	expectedVideo := &domain.Video{
@@ -119,6 +120,7 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 		Status:        "completed",
 		UploadDate:    now,
 		UserID:        userID,
+		ChannelID:     channelID,
 		OriginalCID:   "orig-cid",
 		ProcessedCIDs: map[string]string{"1080p": "cid-1080"},
 		ThumbnailCID:  "thumb-cid",
@@ -156,15 +158,15 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 		"original_cid", "processed_cids", "thumbnail_cid",
 		"tags", "category_id", "language", "file_size", "mime_type", "metadata",
 		"created_at", "updated_at", "output_paths", "thumbnail_path", "preview_path",
-		"s3_urls", "storage_tier", "s3_migrated_at", "local_deleted",
+		"s3_urls", "storage_tier", "s3_migrated_at", "local_deleted", "wait_transcoding",
 		"cat_id", "cat_name", "cat_slug", "cat_desc", "cat_icon", "cat_color", "cat_order", "cat_active",
 	}).AddRow(
 		expectedVideo.ID, expectedVideo.ThumbnailID, expectedVideo.Title, expectedVideo.Description, expectedVideo.Duration, expectedVideo.Views,
-		expectedVideo.Privacy, expectedVideo.Status, expectedVideo.UploadDate, expectedVideo.UserID, uuid.New(),
+		expectedVideo.Privacy, expectedVideo.Status, expectedVideo.UploadDate, expectedVideo.UserID, expectedVideo.ChannelID.String(),
 		expectedVideo.OriginalCID, processedCIDsJSON, expectedVideo.ThumbnailCID,
 		pq.Array(expectedVideo.Tags), expectedVideo.CategoryID, expectedVideo.Language, expectedVideo.FileSize, expectedVideo.MimeType, metadataJSON,
 		expectedVideo.CreatedAt, expectedVideo.UpdatedAt, outputPathsJSON, expectedVideo.ThumbnailPath, expectedVideo.PreviewPath,
-		s3URLsJSON, expectedVideo.StorageTier, nil, expectedVideo.LocalDeleted,
+		s3URLsJSON, expectedVideo.StorageTier, nil, expectedVideo.LocalDeleted, false,
 		expectedVideo.Category.ID, expectedVideo.Category.Name, expectedVideo.Category.Slug, nil, nil, nil, expectedVideo.Category.DisplayOrder, expectedVideo.Category.IsActive,
 	)
 
@@ -174,6 +176,21 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT v.id, v.thumbnail_id, v.title`)).
 		WithArgs(videoID).
 		WillReturnRows(rows)
+	mock.ExpectQuery(`(?s).*FROM channels c.*WHERE c\.id = ANY.*`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "account_id", "handle", "display_name", "description", "support",
+			"is_local", "atproto_did", "atproto_pds_url",
+			"avatar_filename", "avatar_ipfs_cid", "banner_filename", "banner_ipfs_cid",
+			"followers_count", "following_count", "videos_count",
+			"created_at", "updated_at",
+		}).AddRow(
+			expectedVideo.ChannelID.String(), uuid.New().String(), "creator-handle", "Creator Display", nil, nil,
+			true, nil, nil,
+			nil, nil, nil, nil,
+			12, 3, 4,
+			now, now,
+		))
 
 	result, err := repo.GetByID(ctx, videoID)
 	require.NoError(t, err)
@@ -181,6 +198,9 @@ func TestVideoRepository_Unit_GetByID(t *testing.T) {
 	assert.Equal(t, expectedVideo.Title, result.Title)
 	assert.Equal(t, expectedVideo.ProcessedCIDs, result.ProcessedCIDs)
 	assert.Equal(t, expectedVideo.Category.Name, result.Category.Name)
+	require.NotNil(t, result.Channel)
+	assert.Equal(t, "creator-handle", result.Channel.Handle)
+	assert.Equal(t, "Creator Display", result.Channel.DisplayName)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 

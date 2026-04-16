@@ -9,6 +9,8 @@ import (
 type VideoProcessingParams struct {
 	VideoID       string
 	Status        domain.ProcessingStatus
+	Duration      int
+	Metadata      domain.VideoMetadata
 	OutputPaths   map[string]string
 	ThumbnailPath string
 	PreviewPath   string

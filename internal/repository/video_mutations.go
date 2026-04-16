@@ -14,14 +14,27 @@ func (r *videoRepository) UpdateProcessingInfo(ctx context.Context, params port.
 	query := `
         UPDATE videos SET
             status = $2,
-            output_paths = $3,
-            thumbnail_path = $4,
-            preview_path = $5,
+            duration = $3,
+            metadata = $4,
+            output_paths = $5,
+            thumbnail_path = $6,
+            preview_path = $7,
             updated_at = NOW()
         WHERE id = $1`
 
 	outJSON, _ := json.Marshal(params.OutputPaths)
-	result, err := r.db.ExecContext(ctx, query, params.VideoID, params.Status, outJSON, params.ThumbnailPath, params.PreviewPath)
+	metadataJSON, _ := json.Marshal(params.Metadata)
+	result, err := r.db.ExecContext(
+		ctx,
+		query,
+		params.VideoID,
+		params.Status,
+		params.Duration,
+		metadataJSON,
+		outJSON,
+		params.ThumbnailPath,
+		params.PreviewPath,
+	)
 	if err != nil {
 		return domain.NewDomainError("UPDATE_PROCESSING_FAILED", "Failed to update processing info")
 	}
@@ -35,18 +48,33 @@ func (r *videoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, para
 	query := `
         UPDATE videos SET
             status = $2,
-            output_paths = $3,
-            thumbnail_path = $4,
-            preview_path = $5,
-            processed_cids = $6,
-            thumbnail_cid = $7,
+            duration = $3,
+            metadata = $4,
+            output_paths = $5,
+            thumbnail_path = $6,
+            preview_path = $7,
+            processed_cids = $8,
+            thumbnail_cid = $9,
             updated_at = NOW()
         WHERE id = $1`
 
 	outJSON, _ := json.Marshal(params.OutputPaths)
+	metadataJSON, _ := json.Marshal(params.Metadata)
 	cidsJSON, _ := json.Marshal(params.ProcessedCIDs)
 
-	result, err := r.db.ExecContext(ctx, query, params.VideoID, params.Status, outJSON, params.ThumbnailPath, params.PreviewPath, cidsJSON, params.ThumbnailCID)
+	result, err := r.db.ExecContext(
+		ctx,
+		query,
+		params.VideoID,
+		params.Status,
+		params.Duration,
+		metadataJSON,
+		outJSON,
+		params.ThumbnailPath,
+		params.PreviewPath,
+		cidsJSON,
+		params.ThumbnailCID,
+	)
 	if err != nil {
 		return domain.NewDomainError("UPDATE_PROCESSING_FAILED", "Failed to update processing info with CIDs")
 	}

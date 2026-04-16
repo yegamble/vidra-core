@@ -2,11 +2,15 @@ package video
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,6 +22,7 @@ import (
 	"vidra-core/internal/config"
 	"vidra-core/internal/domain"
 	"vidra-core/internal/httpapi/shared"
+	"vidra-core/internal/media"
 	"vidra-core/internal/middleware"
 	"vidra-core/internal/storage"
 	"vidra-core/internal/usecase"
@@ -393,6 +398,24 @@ func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) ht
 
 		video.FileSize = written
 		video.MimeType = contentType
+		video.OutputPaths = map[string]string{"source": sp.WebVideoHTTPPath(video.ID, ext)}
+
+		ffmpegPath := "ffmpeg"
+		if cfg != nil && cfg.FFMPEGPath != "" {
+			ffmpegPath = cfg.FFMPEGPath
+		}
+
+		if metadata, duration, probeErr := media.ProbeVideoMetadata(r.Context(), ffmpegPath, dstPath); probeErr != nil {
+			slog.Warn("failed to probe direct upload metadata", "video_id", video.ID, "error", probeErr)
+		} else {
+			applyUploadedSourceMetadata(video, metadata, duration)
+		}
+
+		if thumbnailPath, thumbErr := generateUploadedVideoThumbnail(r.Context(), ffmpegPath, sp, video.ID, dstPath); thumbErr != nil {
+			slog.Warn("failed to generate direct upload thumbnail", "video_id", video.ID, "error", thumbErr)
+		} else if thumbnailPath != "" {
+			video.ThumbnailPath = thumbnailPath
+		}
 
 		if err := repo.Create(r.Context(), video); err != nil {
 			_ = os.Remove(dstPath)
@@ -411,6 +434,57 @@ func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) ht
 			"upload_date": video.UploadDate,
 		})
 	}
+}
+
+func applyUploadedSourceMetadata(video *domain.Video, metadata *domain.VideoMetadata, duration time.Duration) {
+	if metadata != nil {
+		if metadata.Width > 0 {
+			video.Metadata.Width = metadata.Width
+		}
+		if metadata.Height > 0 {
+			video.Metadata.Height = metadata.Height
+		}
+		if metadata.Framerate > 0 {
+			video.Metadata.Framerate = metadata.Framerate
+		}
+		if metadata.Bitrate > 0 {
+			video.Metadata.Bitrate = metadata.Bitrate
+		}
+		if metadata.VideoCodec != "" {
+			video.Metadata.VideoCodec = metadata.VideoCodec
+		}
+		if metadata.AspectRatio != "" {
+			video.Metadata.AspectRatio = metadata.AspectRatio
+		}
+	}
+
+	if duration > 0 {
+		video.Duration = int(duration.Seconds())
+	}
+}
+
+func generateUploadedVideoThumbnail(ctx context.Context, ffmpegPath string, sp storage.Paths, videoID string, sourcePath string) (string, error) {
+	thumbnailPath := sp.ThumbnailPath(videoID)
+	if err := os.MkdirAll(filepath.Dir(thumbnailPath), 0o750); err != nil {
+		return "", fmt.Errorf("create thumbnail dir: %w", err)
+	}
+
+	duration, err := media.ProbeDuration(ctx, ffmpegPath, sourcePath)
+	if err != nil {
+		slog.Debug("falling back to default direct upload thumbnail capture", "input", sourcePath, "error", err)
+		duration = 0
+	}
+
+	cmd := exec.CommandContext(ctx, ffmpegPath, media.BuildRepresentativeThumbnailArgs(sourcePath, thumbnailPath, duration)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("ffmpeg thumbnail generation failed: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	if _, err := os.Stat(thumbnailPath); err != nil {
+		return "", fmt.Errorf("initial thumbnail missing after generation: %w", err)
+	}
+
+	return sp.ThumbnailHTTPPath(videoID), nil
 }
 
 func VideoUploadChunkHandler(uploadService usecase.UploadService, cfg *config.Config) http.HandlerFunc {

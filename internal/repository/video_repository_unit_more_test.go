@@ -20,33 +20,54 @@ import (
 )
 
 const (
-	selectVideoFieldsRegex    = `SELECT\s+id,\s+thumbnail_id,\s+title,\s+description,\s+duration,\s+views`
-	selectVideoAliasRegex     = `SELECT\s+v\.id,\s+v\.thumbnail_id,\s+v\.title`
-	updateVideoQueryRegex     = `UPDATE\s+videos\s+SET`
-	insertVideoQueryRegex     = `INSERT\s+INTO\s+videos`
-	deleteVideoQueryRegex     = `DELETE\s+FROM\s+videos\s+WHERE\s+id\s+=\s+\$1\s+AND\s+user_id\s+=\s+\$2`
-	countByUserQueryRegex     = `SELECT\s+COUNT\(\*\)\s+FROM\s+videos\s+WHERE\s+user_id\s+=\s+\$1`
-	countPublicVideoQueryText = `SELECT COUNT(*) FROM videos WHERE privacy = 'public' AND status = 'completed'`
-	countAllVideosQueryText   = `SELECT COUNT(*) FROM videos WHERE deleted_at IS NULL`
+	selectVideoFieldsRegex      = `SELECT\s+id,\s+thumbnail_id,\s+title,\s+description,\s+duration,\s+views`
+	selectVideoAliasRegex       = `SELECT\s+v\.id,\s+v\.thumbnail_id,\s+v\.title`
+	selectChannelHydrationRegex = `(?s).*FROM channels c.*WHERE c\.id = ANY.*`
+	updateVideoQueryRegex       = `UPDATE\s+videos\s+SET`
+	insertVideoQueryRegex       = `INSERT\s+INTO\s+videos`
+	deleteVideoQueryRegex       = `DELETE\s+FROM\s+videos\s+WHERE\s+id\s+=\s+\$1\s+AND\s+user_id\s+=\s+\$2`
+	countByUserQueryRegex       = `SELECT\s+COUNT\(\*\)\s+FROM\s+videos\s+WHERE\s+user_id\s+=\s+\$1`
+	countPublicVideoQueryRegex  = `(?s)SELECT COUNT\(\*\) FROM videos WHERE privacy = 'public'.*NOT EXISTS`
+	countAllVideosQueryText     = `SELECT COUNT(*) FROM videos WHERE deleted_at IS NULL`
 )
 
-func newScanVideoRow(now time.Time, userID string) *sqlmock.Rows {
+func newScanVideoRow(now time.Time, userID string, channelID uuid.UUID) *sqlmock.Rows {
 	processedCIDsJSON, _ := json.Marshal(map[string]string{"720p": "cid-720"})
 	metadataJSON, _ := json.Marshal(domain.VideoMetadata{Width: 1280, Height: 720})
 	outputPathsJSON, _ := json.Marshal(map[string]string{"hls": "/out/hls"})
 
 	return sqlmock.NewRows([]string{
 		"id", "thumbnail_id", "title", "description", "duration", "views",
-		"privacy", "status", "upload_date", "user_id",
+		"privacy", "status", "upload_date", "user_id", "channel_id",
 		"original_cid", "processed_cids", "thumbnail_cid",
 		"tags", "category_id", "language", "file_size", "mime_type", "metadata",
 		"created_at", "updated_at", "output_paths", "thumbnail_path", "preview_path",
+		"wait_transcoding",
 	}).AddRow(
 		uuid.New().String(), uuid.New().String(), "title", "desc", 123, int64(9),
-		domain.PrivacyPublic, domain.StatusCompleted, now, userID,
+		domain.PrivacyPublic, domain.StatusCompleted, now, userID, channelID.String(),
 		"orig-cid", processedCIDsJSON, "thumb-cid",
 		pq.Array([]string{"go", "test"}), nil, "en", int64(2048), "video/mp4", metadataJSON,
-		now, now, outputPathsJSON, "/thumb.jpg", "/preview.jpg",
+		now, now, outputPathsJSON, "/thumb.jpg", "/preview.jpg", false,
+	)
+}
+
+func newVideoChannelRows(now time.Time, channelID uuid.UUID) *sqlmock.Rows {
+	accountID := uuid.New()
+	description := "Channel description"
+	support := "Support"
+	return sqlmock.NewRows([]string{
+		"id", "account_id", "handle", "display_name", "description", "support",
+		"is_local", "atproto_did", "atproto_pds_url",
+		"avatar_filename", "avatar_ipfs_cid", "banner_filename", "banner_ipfs_cid",
+		"followers_count", "following_count", "videos_count",
+		"created_at", "updated_at",
+	}).AddRow(
+		channelID.String(), accountID.String(), "creator-handle", "Creator Display", description, support,
+		true, nil, nil,
+		nil, nil, nil, nil,
+		42, 5, 7,
+		now, now,
 	)
 }
 
@@ -248,6 +269,7 @@ func TestVideoRepository_Unit_GetByID_Branches(t *testing.T) {
 
 		videoID := uuid.New().String()
 		userID := uuid.New().String()
+		channelID := uuid.New()
 		now := time.Now()
 		processedCIDsJSON, _ := json.Marshal(map[string]string{"720p": "cid-720"})
 		metadataJSON, _ := json.Marshal(domain.VideoMetadata{Width: 1280, Height: 720})
@@ -259,22 +281,28 @@ func TestVideoRepository_Unit_GetByID_Branches(t *testing.T) {
 			"original_cid", "processed_cids", "thumbnail_cid",
 			"tags", "category_id", "language", "file_size", "mime_type", "metadata",
 			"created_at", "updated_at", "output_paths", "thumbnail_path", "preview_path",
+			"wait_transcoding",
 			"cat_id", "cat_name", "cat_slug", "cat_desc", "cat_icon", "cat_color", "cat_order", "cat_active",
 		}).AddRow(
 			videoID, uuid.New().String(), "simple-title", "simple-desc", 140, int64(7),
-			domain.PrivacyPublic, domain.StatusCompleted, now, userID, uuid.New(),
+			domain.PrivacyPublic, domain.StatusCompleted, now, userID, channelID.String(),
 			"orig-cid", processedCIDsJSON, "thumb-cid",
 			pq.Array([]string{"tag1"}), nil, "en", int64(4096), "video/mp4", metadataJSON,
-			now, now, outputPathsJSON, "/thumb.jpg", "/preview.jpg",
+			now, now, outputPathsJSON, "/thumb.jpg", "/preview.jpg", false,
 			nil, nil, nil, nil, nil, nil, nil, nil,
 		)
 
 		mock.ExpectQuery(selectVideoAliasRegex).WithArgs(videoID).WillReturnRows(simpleRows)
+		mock.ExpectQuery(selectChannelHydrationRegex).
+			WithArgs(sqlmock.AnyArg()).
+			WillReturnRows(newVideoChannelRows(now, channelID))
 
 		video, err := repo.GetByID(context.Background(), videoID)
 		require.NoError(t, err)
 		require.NotNil(t, video)
 		assert.Equal(t, "simple-title", video.Title)
+		require.NotNil(t, video.Channel)
+		assert.Equal(t, "creator-handle", video.Channel.Handle)
 		assert.Equal(t, "hot", video.StorageTier)
 		assert.False(t, video.LocalDeleted)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -323,15 +351,22 @@ func TestVideoRepository_Unit_GetByUserID(t *testing.T) {
 
 		userID := uuid.New().String()
 		now := time.Now()
+		channelID := uuid.New()
 		mock.ExpectQuery(countByUserQueryRegex).WithArgs(userID).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 		mock.ExpectQuery(selectVideoFieldsRegex).WithArgs(userID, 10, 0).
-			WillReturnRows(newScanVideoRow(now, userID))
+			WillReturnRows(newScanVideoRow(now, userID, channelID))
+		mock.ExpectQuery(selectChannelHydrationRegex).
+			WithArgs(sqlmock.AnyArg()).
+			WillReturnRows(newVideoChannelRows(now, channelID))
 
 		videos, total, err := repo.GetByUserID(context.Background(), userID, 10, 0)
 		require.NoError(t, err)
 		require.Len(t, videos, 1)
 		assert.Equal(t, int64(1), total)
+		require.NotNil(t, videos[0].Channel)
+		assert.Equal(t, "creator-handle", videos[0].Channel.Handle)
+		assert.Equal(t, "Creator Display", videos[0].Channel.DisplayName)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
@@ -343,24 +378,30 @@ func TestVideoRepository_Unit_UpdateAndDelete(t *testing.T) {
 		repo := NewVideoRepository(db)
 
 		video := &domain.Video{
-			ID:           uuid.New().String(),
-			UserID:       uuid.New().String(),
-			Title:        "updated-title",
-			Description:  "updated-desc",
-			Privacy:      domain.PrivacyPublic,
-			Tags:         []string{"go"},
-			Language:     "en",
-			Status:       domain.StatusCompleted,
-			UpdatedAt:    time.Now(),
-			StorageTier:  "hot",
-			LocalDeleted: false,
+			ID:            uuid.New().String(),
+			UserID:        uuid.New().String(),
+			Title:         "updated-title",
+			Description:   "updated-desc",
+			Duration:      95,
+			Privacy:       domain.PrivacyPublic,
+			Tags:          []string{"go"},
+			Language:      "en",
+			Status:        domain.StatusCompleted,
+			Metadata:      domain.VideoMetadata{Width: 1920, Height: 1080},
+			UpdatedAt:     time.Now(),
+			OutputPaths:   map[string]string{"source": "/static/web-videos/video.mp4"},
+			ThumbnailPath: "/thumb.jpg",
+			PreviewPath:   "/preview.jpg",
+			StorageTier:   "hot",
+			LocalDeleted:  false,
 		}
 
 		mock.ExpectExec(updateVideoQueryRegex).
 			WithArgs(
 				video.ID, video.Title, video.Description, video.Privacy,
 				pq.Array(video.Tags), video.CategoryID, video.Language,
-				video.Status, video.UpdatedAt, video.UserID,
+				video.Status, video.UpdatedAt, video.Duration, sqlmock.AnyArg(),
+				sqlmock.AnyArg(), video.ThumbnailPath, video.PreviewPath, video.UserID,
 				sqlmock.AnyArg(), video.StorageTier, video.S3MigratedAt, video.LocalDeleted,
 			).
 			WillReturnResult(sqlmock.NewResult(0, 1))
@@ -491,6 +532,7 @@ func TestVideoRepository_Unit_ListAndSearch(t *testing.T) {
 		repo := NewVideoRepository(db)
 		now := time.Now()
 		categoryID := uuid.New()
+		channelID := uuid.New()
 
 		req := &domain.VideoSearchRequest{
 			CategoryID: &categoryID,
@@ -501,14 +543,20 @@ func TestVideoRepository_Unit_ListAndSearch(t *testing.T) {
 			Offset:     1,
 		}
 
-		mock.ExpectQuery(regexp.QuoteMeta(countPublicVideoQueryText)).
+		mock.ExpectQuery(countPublicVideoQueryRegex).
+			WithArgs(req.CategoryID, req.Language).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-		mock.ExpectQuery(selectVideoFieldsRegex).WillReturnRows(newScanVideoRow(now, uuid.New().String()))
+		mock.ExpectQuery(selectVideoFieldsRegex).WillReturnRows(newScanVideoRow(now, uuid.New().String(), channelID))
+		mock.ExpectQuery(selectChannelHydrationRegex).
+			WithArgs(sqlmock.AnyArg()).
+			WillReturnRows(newVideoChannelRows(now, channelID))
 
 		videos, total, err := repo.List(context.Background(), req)
 		require.NoError(t, err)
 		require.Len(t, videos, 1)
 		assert.Equal(t, int64(1), total)
+		require.NotNil(t, videos[0].Channel)
+		assert.Equal(t, "creator-handle", videos[0].Channel.Handle)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -517,7 +565,7 @@ func TestVideoRepository_Unit_ListAndSearch(t *testing.T) {
 		defer db.Close()
 		repo := NewVideoRepository(db)
 
-		mock.ExpectQuery(regexp.QuoteMeta(countPublicVideoQueryText)).
+		mock.ExpectQuery(countPublicVideoQueryRegex).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 		mock.ExpectQuery(selectVideoFieldsRegex).WillReturnError(errors.New("query failed"))
 
@@ -535,6 +583,7 @@ func TestVideoRepository_Unit_ListAndSearch(t *testing.T) {
 		repo := NewVideoRepository(db)
 		now := time.Now()
 		categoryID := uuid.New()
+		channelID := uuid.New()
 
 		req := &domain.VideoSearchRequest{
 			Query:      "federation",
@@ -547,14 +596,20 @@ func TestVideoRepository_Unit_ListAndSearch(t *testing.T) {
 			Offset:     2,
 		}
 
-		mock.ExpectQuery(regexp.QuoteMeta(countPublicVideoQueryText)).
+		mock.ExpectQuery(countPublicVideoQueryRegex).
+			WithArgs(req.Query, "%"+req.Query+"%", "%"+req.Query+"%", sqlmock.AnyArg(), req.CategoryID, req.Language).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-		mock.ExpectQuery(selectVideoFieldsRegex).WillReturnRows(newScanVideoRow(now, uuid.New().String()))
+		mock.ExpectQuery(selectVideoFieldsRegex).WillReturnRows(newScanVideoRow(now, uuid.New().String(), channelID))
+		mock.ExpectQuery(selectChannelHydrationRegex).
+			WithArgs(sqlmock.AnyArg()).
+			WillReturnRows(newVideoChannelRows(now, channelID))
 
 		videos, total, err := repo.Search(context.Background(), req)
 		require.NoError(t, err)
 		require.Len(t, videos, 1)
 		assert.Equal(t, int64(1), total)
+		require.NotNil(t, videos[0].Channel)
+		assert.Equal(t, "Creator Display", videos[0].Channel.DisplayName)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -563,7 +618,7 @@ func TestVideoRepository_Unit_ListAndSearch(t *testing.T) {
 		defer db.Close()
 		repo := NewVideoRepository(db)
 
-		mock.ExpectQuery(regexp.QuoteMeta(countPublicVideoQueryText)).
+		mock.ExpectQuery(countPublicVideoQueryRegex).
 			WillReturnError(errors.New("count failed"))
 
 		videos, total, err := repo.Search(context.Background(), &domain.VideoSearchRequest{Query: "q"})

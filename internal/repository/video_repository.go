@@ -53,7 +53,7 @@ func scanVideoRow(rows *sql.Rows) (*domain.Video, error) {
 
 	err := rows.Scan(
 		&v.ID, &v.ThumbnailID, &v.Title, &v.Description, &v.Duration, &v.Views,
-		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID,
+		&v.Privacy, &v.Status, &v.UploadDate, &v.UserID, &v.ChannelID,
 		&v.OriginalCID, &processedCIDsJSON, &v.ThumbnailCID,
 		&tags, &v.CategoryID, &v.Language, &v.FileSize, &v.MimeType, &metadataJSON,
 		&v.CreatedAt, &v.UpdatedAt, &outputPathsJSON, &v.ThumbnailPath, &v.PreviewPath,
@@ -222,7 +222,14 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 	} else {
 		query = `
         SELECT v.id, v.thumbnail_id, v.title, v.description, v.duration, v.views,
-               v.privacy, v.status, v.upload_date, v.user_id, v.channel_id,
+               v.privacy, v.status, v.upload_date, v.user_id,
+               COALESCE((
+                   SELECT c2.id
+                   FROM channels c2
+                   WHERE c2.account_id = v.user_id::uuid
+                   ORDER BY c2.created_at ASC
+                   LIMIT 1
+               ), NULL::uuid) AS channel_id,
                v.original_cid, v.processed_cids, v.thumbnail_cid,
                v.tags, v.category_id, v.language, v.file_size, v.mime_type, v.metadata,
                v.created_at, v.updated_at, v.output_paths, v.thumbnail_path, v.preview_path,
@@ -320,6 +327,10 @@ func (r *videoRepository) GetByID(ctx context.Context, id string) (*domain.Video
 		v.Category = &category
 	}
 
+	if err := r.hydrateVideoChannels(ctx, []*domain.Video{&v}); err != nil {
+		return nil, err
+	}
+
 	return &v, nil
 }
 
@@ -361,15 +372,21 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
             title = $2, description = $3, privacy = $4,
             tags = $5, category_id = $6, language = $7,
             status = $8, updated_at = $9,
-            output_paths = $10, thumbnail_path = $11, preview_path = $12,
-            s3_urls = $14, storage_tier = $15,
-            s3_migrated_at = $16, local_deleted = $17
-        WHERE id = $1 AND user_id = $13`
+            duration = $10, metadata = $11,
+            output_paths = $12, thumbnail_path = $13, preview_path = $14,
+            s3_urls = $16, storage_tier = $17,
+            s3_migrated_at = $18, local_deleted = $19
+        WHERE id = $1 AND user_id = $15`
+
+	metadataJSON, err := json.Marshal(v.Metadata)
+	if err != nil {
+		return domain.NewDomainError("JSON_MARSHAL_FAILED", "Failed to marshal video metadata")
+	}
 
 	result, err := exec.ExecContext(ctx, query,
 		v.ID, v.Title, v.Description, v.Privacy,
 		pq.Array(v.Tags), v.CategoryID, v.Language,
-		v.Status, v.UpdatedAt, outputPathsJSON, v.ThumbnailPath, v.PreviewPath, v.UserID,
+		v.Status, v.UpdatedAt, v.Duration, metadataJSON, outputPathsJSON, v.ThumbnailPath, v.PreviewPath, v.UserID,
 		s3URLsJSON, v.StorageTier, v.S3MigratedAt, v.LocalDeleted,
 	)
 	if err != nil {

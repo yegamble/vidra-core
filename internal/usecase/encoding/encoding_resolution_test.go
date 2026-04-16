@@ -383,6 +383,8 @@ func (r *mockVideoRepository) GetByUserID(ctx context.Context, userID string, li
 func (r *mockVideoRepository) UpdateProcessingInfo(ctx context.Context, params port.VideoProcessingParams) error {
 	if video, exists := r.videos[params.VideoID]; exists {
 		video.Status = params.Status
+		video.Duration = params.Duration
+		video.Metadata = params.Metadata
 		video.OutputPaths = params.OutputPaths
 		video.ThumbnailPath = params.ThumbnailPath
 		video.PreviewPath = params.PreviewPath
@@ -394,6 +396,8 @@ func (r *mockVideoRepository) UpdateProcessingInfo(ctx context.Context, params p
 func (r *mockVideoRepository) UpdateProcessingInfoWithCIDs(ctx context.Context, params port.VideoProcessingWithCIDsParams) error {
 	if video, exists := r.videos[params.VideoID]; exists {
 		video.Status = params.Status
+		video.Duration = params.Duration
+		video.Metadata = params.Metadata
 		video.OutputPaths = params.OutputPaths
 		video.ThumbnailPath = params.ThumbnailPath
 		video.PreviewPath = params.PreviewPath
