@@ -7,10 +7,11 @@ import (
 )
 
 type User struct {
-	ID          string `json:"id" db:"id"`
-	Username    string `json:"username" db:"username"`
-	Email       string `json:"email" db:"email"`
-	DisplayName string `json:"display_name" db:"display_name"`
+	ID                  string  `json:"id" db:"id"`
+	Username            string  `json:"username" db:"username"`
+	Email               string  `json:"email" db:"email"`
+	DisplayName         string  `json:"display_name" db:"display_name"`
+	DefaultVideoPrivacy Privacy `json:"default_video_privacy" db:"default_video_privacy"`
 	// Avatar is stored in a separate table and joined in repository queries
 	Avatar          *Avatar      `json:"-"`
 	Bio             string       `json:"bio" db:"bio"`

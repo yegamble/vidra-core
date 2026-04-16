@@ -55,13 +55,13 @@ func makeUserSelectRows(now time.Time, withAvatar bool, withTwoFA bool) *sqlmock
 	return sqlmock.NewRows([]string{
 		"id", "username", "email", "display_name",
 		"avatar_id", "avatar_ipfs_cid", "avatar_webp_ipfs_cid",
-		"bio", "bitcoin_wallet", "role", "is_active", "email_verified", "email_verified_at",
+		"bio", "bitcoin_wallet", "default_video_privacy", "role", "is_active", "email_verified", "email_verified_at",
 		"twofa_enabled", "twofa_secret", "twofa_confirmed_at",
 		"created_at", "updated_at",
 	}).AddRow(
 		"user-1", "unit-user", "unit@example.com", "Unit User",
 		avatarID, avatarCID, avatarWebpCID,
-		"bio", "btc-wallet", string(domain.RoleAdmin), true, true, now,
+		"bio", "btc-wallet", string(domain.PrivacyUnlisted), string(domain.RoleAdmin), true, true, now,
 		withTwoFA, twoFASecret, twoFAConfirmedAt,
 		now, now,
 	)
@@ -72,16 +72,17 @@ func TestUserRepository_Unit_Create(t *testing.T) {
 	now := time.Now()
 
 	baseUser := &domain.User{
-		ID:            "user-1",
-		Username:      "unit-user",
-		Email:         "unit@example.com",
-		DisplayName:   "Unit User",
-		Bio:           "bio",
-		BitcoinWallet: "wallet",
-		Role:          domain.RoleUser,
-		IsActive:      true,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:                  "user-1",
+		Username:            "unit-user",
+		Email:               "unit@example.com",
+		DisplayName:         "Unit User",
+		Bio:                 "bio",
+		BitcoinWallet:       "wallet",
+		DefaultVideoPrivacy: domain.PrivacyPrivate,
+		Role:                domain.RoleUser,
+		IsActive:            true,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 
 	t.Run("success without channels table", func(t *testing.T) {
@@ -92,7 +93,7 @@ func TestUserRepository_Unit_Create(t *testing.T) {
 		mock.ExpectExec(`(?s)INSERT INTO users`).
 			WithArgs(
 				baseUser.ID, baseUser.Username, baseUser.Email, baseUser.DisplayName, baseUser.Bio, baseUser.BitcoinWallet,
-				baseUser.Role, "hash", baseUser.IsActive, baseUser.CreatedAt, baseUser.UpdatedAt,
+				baseUser.DefaultVideoPrivacy, baseUser.Role, "hash", baseUser.IsActive, baseUser.CreatedAt, baseUser.UpdatedAt,
 			).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS (
@@ -216,6 +217,7 @@ func TestUserRepository_Unit_Getters(t *testing.T) {
 		assert.Equal(t, "unit-user", user.Username)
 		require.NotNil(t, user.Avatar)
 		assert.Equal(t, "avatar-1", user.Avatar.ID)
+		assert.Equal(t, domain.PrivacyUnlisted, user.DefaultVideoPrivacy)
 		assert.Equal(t, "twofa-secret", user.TwoFASecret)
 		assert.True(t, user.TwoFAConfirmedAt.Valid)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -225,7 +227,7 @@ func TestUserRepository_Unit_Getters(t *testing.T) {
 		repo, mock, cleanup := newUserRepo(t)
 		defer cleanup()
 
-		mock.ExpectQuery(`(?s)SELECT u\.id, u\.username, u\.email, u\.display_name.*WHERE u\.email = \$1`).
+		mock.ExpectQuery(`(?s)SELECT u\.id, u\.username, u\.email, u\.display_name.*WHERE LOWER\(u\.email\) = LOWER\(\$1\)`).
 			WithArgs("missing@example.com").
 			WillReturnError(sql.ErrNoRows)
 
@@ -260,24 +262,25 @@ func TestUserRepository_Unit_Update(t *testing.T) {
 		defer cleanup()
 
 		user := &domain.User{
-			ID:               "user-1",
-			Username:         "unit-user",
-			Email:            "unit@example.com",
-			DisplayName:      "Unit User",
-			Bio:              "bio",
-			BitcoinWallet:    "wallet",
-			Role:             domain.RoleAdmin,
-			IsActive:         true,
-			TwoFAEnabled:     true,
-			TwoFASecret:      "secret",
-			TwoFAConfirmedAt: sql.NullTime{Time: now, Valid: true},
-			UpdatedAt:        now,
+			ID:                  "user-1",
+			Username:            "unit-user",
+			Email:               "unit@example.com",
+			DisplayName:         "Unit User",
+			Bio:                 "bio",
+			BitcoinWallet:       "wallet",
+			DefaultVideoPrivacy: domain.PrivacyPrivate,
+			Role:                domain.RoleAdmin,
+			IsActive:            true,
+			TwoFAEnabled:        true,
+			TwoFASecret:         "secret",
+			TwoFAConfirmedAt:    sql.NullTime{Time: now, Valid: true},
+			UpdatedAt:           now,
 		}
 
 		mock.ExpectExec(`(?s)UPDATE users`).
 			WithArgs(
 				user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
-				user.Role, user.IsActive, user.TwoFAEnabled, user.TwoFASecret, sqlmock.AnyArg(), user.UpdatedAt,
+				user.DefaultVideoPrivacy, user.Role, user.IsActive, user.TwoFAEnabled, user.TwoFASecret, sqlmock.AnyArg(), user.UpdatedAt,
 			).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 

@@ -22,15 +22,16 @@ func TestUserRepository_Create(t *testing.T) {
 	now := time.Now()
 
 	user := &domain.User{
-		ID:          uuid.New().String(),
-		Username:    "testuser",
-		Email:       "test@example.com",
-		DisplayName: "Test User",
-		Bio:         "Test bio",
-		Role:        domain.RoleUser,
-		IsActive:    true,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:                  uuid.New().String(),
+		Username:            "testuser",
+		Email:               "test@example.com",
+		DisplayName:         "Test User",
+		Bio:                 "Test bio",
+		DefaultVideoPrivacy: domain.PrivacyUnlisted,
+		Role:                domain.RoleUser,
+		IsActive:            true,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 
 	err := repo.Create(ctx, user, "hashed_password")
@@ -41,6 +42,7 @@ func TestUserRepository_Create(t *testing.T) {
 	assert.Equal(t, user.Username, createdUser.Username)
 	assert.Equal(t, user.Email, createdUser.Email)
 	assert.Equal(t, user.DisplayName, createdUser.DisplayName)
+	assert.Equal(t, user.DefaultVideoPrivacy, createdUser.DefaultVideoPrivacy)
 	assert.Equal(t, user.Role, createdUser.Role)
 	assert.Equal(t, user.IsActive, createdUser.IsActive)
 }
@@ -86,6 +88,7 @@ func TestUserRepository_Update(t *testing.T) {
 
 	user.DisplayName = "Updated Name"
 	user.Bio = "Updated bio"
+	user.DefaultVideoPrivacy = domain.PrivacyPrivate
 	user.UpdatedAt = time.Now()
 
 	err := repo.Update(ctx, user)
@@ -95,6 +98,7 @@ func TestUserRepository_Update(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Updated Name", updatedUser.DisplayName)
 	assert.Equal(t, "Updated bio", updatedUser.Bio)
+	assert.Equal(t, domain.PrivacyPrivate, updatedUser.DefaultVideoPrivacy)
 }
 
 func TestUserRepository_Delete(t *testing.T) {

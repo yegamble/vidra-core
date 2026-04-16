@@ -256,6 +256,7 @@ func ensureTestSchema(db *sqlx.DB) error {
             display_name VARCHAR(100),
             bio TEXT,
             bitcoin_wallet VARCHAR(62),
+            default_video_privacy VARCHAR(20) NOT NULL DEFAULT 'public' CHECK (default_video_privacy IN ('public', 'unlisted', 'private')),
             role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin', 'moderator')),
             password_hash TEXT NOT NULL,
             is_active BOOLEAN NOT NULL DEFAULT true,

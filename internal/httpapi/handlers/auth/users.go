@@ -41,9 +41,10 @@ func GetCurrentUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 // UpdateCurrentUserHandler updates the current user using the repository
 func UpdateCurrentUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 	type updateRequest struct {
-		DisplayName   string `json:"display_name"`
-		Bio           string `json:"bio"`
-		BitcoinWallet string `json:"bitcoin_wallet"`
+		DisplayName         string  `json:"display_name"`
+		Bio                 string  `json:"bio"`
+		BitcoinWallet       string  `json:"bitcoin_wallet"`
+		DefaultVideoPrivacy *string `json:"default_video_privacy"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +79,15 @@ func UpdateCurrentUserHandler(repo usecase.UserRepository) http.HandlerFunc {
 		}
 		if req.BitcoinWallet != "" {
 			user.BitcoinWallet = req.BitcoinWallet
+		}
+		if req.DefaultVideoPrivacy != nil {
+			switch *req.DefaultVideoPrivacy {
+			case string(domain.PrivacyPublic), string(domain.PrivacyUnlisted), string(domain.PrivacyPrivate):
+				user.DefaultVideoPrivacy = domain.Privacy(*req.DefaultVideoPrivacy)
+			default:
+				shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_PRIVACY", "Default video privacy must be public, unlisted, or private"))
+				return
+			}
 		}
 		user.UpdatedAt = time.Now()
 
@@ -224,16 +234,17 @@ func CreateUserHandler(repo usecase.UserRepository, auditLogger ...*obs.AuditLog
 		}
 
 		user := &domain.User{
-			ID:            id,
-			Username:      req.Username,
-			Email:         req.Email,
-			DisplayName:   req.DisplayName,
-			Bio:           req.Bio,
-			BitcoinWallet: req.BitcoinWallet,
-			Role:          role,
-			IsActive:      isActive,
-			CreatedAt:     now,
-			UpdatedAt:     now,
+			ID:                  id,
+			Username:            req.Username,
+			Email:               req.Email,
+			DisplayName:         req.DisplayName,
+			Bio:                 req.Bio,
+			BitcoinWallet:       req.BitcoinWallet,
+			DefaultVideoPrivacy: domain.PrivacyPublic,
+			Role:                role,
+			IsActive:            isActive,
+			CreatedAt:           now,
+			UpdatedAt:           now,
 		}
 
 		// Hash password

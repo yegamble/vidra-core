@@ -274,6 +274,77 @@ func TestUpdateCurrentUserHandler_Success(t *testing.T) {
 	}
 }
 
+func TestUpdateCurrentUserHandler_DefaultVideoPrivacy(t *testing.T) {
+	repo := newMockUserRepo()
+	u := &domain.User{
+		ID:                  "user123",
+		Username:            "testuser",
+		Email:               "test@example.com",
+		DisplayName:         "Before",
+		DefaultVideoPrivacy: domain.PrivacyPublic,
+		Role:                domain.RoleUser,
+		IsActive:            true,
+		CreatedAt:           time.Now().Add(-48 * time.Hour),
+		UpdatedAt:           time.Now().Add(-24 * time.Hour),
+	}
+	repo.users[u.ID] = u
+
+	body := map[string]string{
+		"default_video_privacy": "unlisted",
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, u.ID))
+
+	rr := httptest.NewRecorder()
+	UpdateCurrentUserHandler(repo).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	resp := decodeResponse(t, rr)
+	var got domain.User
+	if err := json.Unmarshal(resp.Data, &got); err != nil {
+		t.Fatalf("failed to unmarshal user: %v", err)
+	}
+
+	if got.DefaultVideoPrivacy != domain.PrivacyUnlisted {
+		t.Fatalf("default video privacy not updated: %+v", got)
+	}
+}
+
+func TestUpdateCurrentUserHandler_InvalidDefaultVideoPrivacy(t *testing.T) {
+	repo := newMockUserRepo()
+	u := &domain.User{
+		ID:                  "user123",
+		Username:            "testuser",
+		Email:               "test@example.com",
+		DefaultVideoPrivacy: domain.PrivacyPublic,
+		Role:                domain.RoleUser,
+		IsActive:            true,
+		CreatedAt:           time.Now().Add(-48 * time.Hour),
+		UpdatedAt:           time.Now().Add(-24 * time.Hour),
+	}
+	repo.users[u.ID] = u
+
+	body := map[string]string{
+		"default_video_privacy": "friends-only",
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/me", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, u.ID))
+
+	rr := httptest.NewRecorder()
+	UpdateCurrentUserHandler(repo).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
 func TestGetUserHandler_Success(t *testing.T) {
 	repo := newMockUserRepo()
 	u := &domain.User{ID: "123e4567-e89b-12d3-a456-426614174000", Username: "public", Email: "p@e.com", CreatedAt: time.Now(), UpdatedAt: time.Now()}

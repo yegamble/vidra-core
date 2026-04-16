@@ -37,14 +37,19 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User, password
 }
 
 func (r *userRepository) createWithExecutor(ctx context.Context, exec Executor, user *domain.User, passwordHash string) error {
+	defaultVideoPrivacy := user.DefaultVideoPrivacy
+	if defaultVideoPrivacy == "" {
+		defaultVideoPrivacy = domain.PrivacyPublic
+	}
+
 	// Insert user record (avatar stored in user_avatars separately)
 	query := `
-            INSERT INTO users (id, username, email, display_name, bio, bitcoin_wallet, role, password_hash, is_active, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+            INSERT INTO users (id, username, email, display_name, bio, bitcoin_wallet, default_video_privacy, role, password_hash, is_active, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 
 	_, err := exec.ExecContext(ctx, query,
 		user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
-		user.Role, passwordHash, user.IsActive, user.CreatedAt, user.UpdatedAt)
+		defaultVideoPrivacy, user.Role, passwordHash, user.IsActive, user.CreatedAt, user.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
@@ -79,31 +84,32 @@ const selectUserWithAvatar = `
                a.id            AS avatar_id,
                a.ipfs_cid      AS avatar_ipfs_cid,
                a.webp_ipfs_cid AS avatar_webp_ipfs_cid,
-               u.bio, u.bitcoin_wallet, u.role, u.is_active, u.email_verified, u.email_verified_at,
+               u.bio, u.bitcoin_wallet, u.default_video_privacy, u.role, u.is_active, u.email_verified, u.email_verified_at,
                u.twofa_enabled, u.twofa_secret, u.twofa_confirmed_at,
                u.created_at, u.updated_at
         FROM users u
         LEFT JOIN user_avatars a ON a.user_id = u.id`
 
 type userRow struct {
-	ID                string          `db:"id"`
-	Username          string          `db:"username"`
-	Email             string          `db:"email"`
-	DisplayName       string          `db:"display_name"`
-	AvatarID          sql.NullString  `db:"avatar_id"`
-	AvatarIPFSCID     sql.NullString  `db:"avatar_ipfs_cid"`
-	AvatarWebPIPFSCID sql.NullString  `db:"avatar_webp_ipfs_cid"`
-	Bio               string          `db:"bio"`
-	BitcoinWallet     string          `db:"bitcoin_wallet"`
-	Role              domain.UserRole `db:"role"`
-	IsActive          bool            `db:"is_active"`
-	EmailVerified     bool            `db:"email_verified"`
-	EmailVerifiedAt   sql.NullTime    `db:"email_verified_at"`
-	TwoFAEnabled      bool            `db:"twofa_enabled"`
-	TwoFASecret       sql.NullString  `db:"twofa_secret"`
-	TwoFAConfirmedAt  sql.NullTime    `db:"twofa_confirmed_at"`
-	CreatedAt         time.Time       `db:"created_at"`
-	UpdatedAt         time.Time       `db:"updated_at"`
+	ID                  string          `db:"id"`
+	Username            string          `db:"username"`
+	Email               string          `db:"email"`
+	DisplayName         string          `db:"display_name"`
+	AvatarID            sql.NullString  `db:"avatar_id"`
+	AvatarIPFSCID       sql.NullString  `db:"avatar_ipfs_cid"`
+	AvatarWebPIPFSCID   sql.NullString  `db:"avatar_webp_ipfs_cid"`
+	Bio                 string          `db:"bio"`
+	BitcoinWallet       string          `db:"bitcoin_wallet"`
+	DefaultVideoPrivacy domain.Privacy  `db:"default_video_privacy"`
+	Role                domain.UserRole `db:"role"`
+	IsActive            bool            `db:"is_active"`
+	EmailVerified       bool            `db:"email_verified"`
+	EmailVerifiedAt     sql.NullTime    `db:"email_verified_at"`
+	TwoFAEnabled        bool            `db:"twofa_enabled"`
+	TwoFASecret         sql.NullString  `db:"twofa_secret"`
+	TwoFAConfirmedAt    sql.NullTime    `db:"twofa_confirmed_at"`
+	CreatedAt           time.Time       `db:"created_at"`
+	UpdatedAt           time.Time       `db:"updated_at"`
 }
 
 func mapUserRow(rrow userRow) *domain.User {
@@ -114,21 +120,22 @@ func mapUserRow(rrow userRow) *domain.User {
 	}
 
 	u := &domain.User{
-		ID:               rrow.ID,
-		Username:         rrow.Username,
-		Email:            rrow.Email,
-		DisplayName:      rrow.DisplayName,
-		Bio:              rrow.Bio,
-		BitcoinWallet:    rrow.BitcoinWallet,
-		Role:             rrow.Role,
-		IsActive:         rrow.IsActive,
-		EmailVerified:    rrow.EmailVerified,
-		EmailVerifiedAt:  rrow.EmailVerifiedAt,
-		TwoFAEnabled:     rrow.TwoFAEnabled,
-		TwoFASecret:      twoFASecret,
-		TwoFAConfirmedAt: rrow.TwoFAConfirmedAt,
-		CreatedAt:        rrow.CreatedAt,
-		UpdatedAt:        rrow.UpdatedAt,
+		ID:                  rrow.ID,
+		Username:            rrow.Username,
+		Email:               rrow.Email,
+		DisplayName:         rrow.DisplayName,
+		Bio:                 rrow.Bio,
+		BitcoinWallet:       rrow.BitcoinWallet,
+		DefaultVideoPrivacy: rrow.DefaultVideoPrivacy,
+		Role:                rrow.Role,
+		IsActive:            rrow.IsActive,
+		EmailVerified:       rrow.EmailVerified,
+		EmailVerifiedAt:     rrow.EmailVerifiedAt,
+		TwoFAEnabled:        rrow.TwoFAEnabled,
+		TwoFASecret:         twoFASecret,
+		TwoFAConfirmedAt:    rrow.TwoFAConfirmedAt,
+		CreatedAt:           rrow.CreatedAt,
+		UpdatedAt:           rrow.UpdatedAt,
 	}
 	if rrow.AvatarID.Valid || rrow.AvatarIPFSCID.Valid || rrow.AvatarWebPIPFSCID.Valid {
 		u.Avatar = &domain.Avatar{
@@ -172,9 +179,9 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 	query := `
         UPDATE users
         SET username = $2, email = $3, display_name = $4, bio = $5,
-            bitcoin_wallet = $6, role = $7, is_active = $8,
-            twofa_enabled = $9, twofa_secret = $10, twofa_confirmed_at = $11,
-            updated_at = $12
+            bitcoin_wallet = $6, default_video_privacy = $7, role = $8, is_active = $9,
+            twofa_enabled = $10, twofa_secret = $11, twofa_confirmed_at = $12,
+            updated_at = $13
         WHERE id = $1`
 
 	var twoFAConfirmedAt interface{}
@@ -184,7 +191,7 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 
 	result, err := exec.ExecContext(ctx, query,
 		user.ID, user.Username, user.Email, user.DisplayName, user.Bio, user.BitcoinWallet,
-		user.Role, user.IsActive,
+		user.DefaultVideoPrivacy, user.Role, user.IsActive,
 		user.TwoFAEnabled, user.TwoFASecret, twoFAConfirmedAt,
 		user.UpdatedAt)
 
