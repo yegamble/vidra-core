@@ -7,10 +7,13 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/port"
 	"vidra-core/internal/usecase"
+
+	"github.com/google/uuid"
 )
 
 // mockVideoRepo minimally satisfies usecase.VideoRepository for HTTP tests
@@ -107,6 +110,69 @@ func TestSearchVideos_AcceptsSearchAlias(t *testing.T) {
 	}
 }
 
+func TestSearchVideos_CapturesPeerTubeFiltersAndAliases(t *testing.T) {
+	repo := &mockVideoRepo{videos: []*domain.Video{{ID: "v1", Title: "filtered"}}, total: 1}
+	handler := SearchVideosHandler(repo)
+	categoryID := uuid.New()
+	startDate := "2026-04-01T00:00:00Z"
+	endDate := "2026-04-30T23:59:59Z"
+
+	u := url.URL{Path: "/api/v1/search/videos"}
+	q := u.Query()
+	q.Set("search", "creator")
+	q.Add("tagsOneOf", "music")
+	q.Add("tagsOneOf", "indie")
+	q.Set("categoryOneOf", categoryID.String())
+	q.Set("durationMin", "60")
+	q.Set("durationMax", "600")
+	q.Set("startDate", startDate)
+	q.Set("endDate", endDate)
+	q.Set("sort", "-publishedAt")
+	q.Set("count", "10")
+	q.Set("start", "20")
+	u.RawQuery = q.Encode()
+
+	req := httptest.NewRequest(http.MethodGet, u.String(), nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if repo.capturedSearch == nil {
+		t.Fatalf("expected captured search request")
+	}
+	if repo.capturedSearch.Query != "creator" {
+		t.Fatalf("expected query 'creator', got %+v", repo.capturedSearch)
+	}
+	if repo.capturedSearch.Sort != "upload_date" || repo.capturedSearch.Order != "desc" {
+		t.Fatalf("expected upload_date desc sort, got %+v", repo.capturedSearch)
+	}
+	if repo.capturedSearch.Limit != 10 || repo.capturedSearch.Offset != 20 {
+		t.Fatalf("expected limit=10 offset=20, got %+v", repo.capturedSearch)
+	}
+	if repo.capturedSearch.DurationMin == nil || *repo.capturedSearch.DurationMin != 60 {
+		t.Fatalf("expected durationMin=60, got %+v", repo.capturedSearch)
+	}
+	if repo.capturedSearch.DurationMax == nil || *repo.capturedSearch.DurationMax != 600 {
+		t.Fatalf("expected durationMax=600, got %+v", repo.capturedSearch)
+	}
+	if repo.capturedSearch.CategoryID == nil || *repo.capturedSearch.CategoryID != categoryID {
+		t.Fatalf("expected categoryID=%s, got %+v", categoryID, repo.capturedSearch)
+	}
+	if len(repo.capturedSearch.Tags) != 2 || repo.capturedSearch.Tags[0] != "music" || repo.capturedSearch.Tags[1] != "indie" {
+		t.Fatalf("expected tags to be preserved, got %+v", repo.capturedSearch)
+	}
+	expectedStart, _ := time.Parse(time.RFC3339, startDate)
+	expectedEnd, _ := time.Parse(time.RFC3339, endDate)
+	if repo.capturedSearch.PublishedAfter == nil || !repo.capturedSearch.PublishedAfter.Equal(expectedStart) {
+		t.Fatalf("expected PublishedAfter=%s, got %+v", expectedStart, repo.capturedSearch)
+	}
+	if repo.capturedSearch.PublishedBefore == nil || !repo.capturedSearch.PublishedBefore.Equal(expectedEnd) {
+		t.Fatalf("expected PublishedBefore=%s, got %+v", expectedEnd, repo.capturedSearch)
+	}
+}
+
 func TestListVideos_WithFilters_CapturesRequest(t *testing.T) {
 	repo := &mockVideoRepo{videos: []*domain.Video{}, total: 0}
 	handler := ListVideosHandler(repo)
@@ -136,6 +202,40 @@ func TestListVideos_WithFilters_CapturesRequest(t *testing.T) {
 	}
 	if repo.capturedList.Sort != "views" || repo.capturedList.Order != "desc" || repo.capturedList.Limit != 5 || repo.capturedList.Offset != 0 {
 		t.Fatalf("unexpected sort/paging: %+v", repo.capturedList)
+	}
+}
+
+func TestListVideos_AcceptsPeerTubeSortAndPaginationAliases(t *testing.T) {
+	repo := &mockVideoRepo{videos: []*domain.Video{}, total: 0}
+	handler := ListVideosHandler(repo)
+	categoryID := uuid.New()
+
+	u := url.URL{Path: "/api/v1/videos"}
+	q := u.Query()
+	q.Set("categoryOneOf", categoryID.String())
+	q.Set("sort", "-publishedAt")
+	q.Set("count", "8")
+	q.Set("start", "16")
+	u.RawQuery = q.Encode()
+
+	req := httptest.NewRequest(http.MethodGet, u.String(), nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if repo.capturedList == nil {
+		t.Fatalf("expected captured list request")
+	}
+	if repo.capturedList.CategoryID == nil || *repo.capturedList.CategoryID != categoryID {
+		t.Fatalf("expected categoryID=%s, got %+v", categoryID, repo.capturedList)
+	}
+	if repo.capturedList.Sort != "upload_date" || repo.capturedList.Order != "desc" {
+		t.Fatalf("expected upload_date desc sort, got %+v", repo.capturedList)
+	}
+	if repo.capturedList.Limit != 8 || repo.capturedList.Offset != 16 {
+		t.Fatalf("expected limit=8 offset=16, got %+v", repo.capturedList)
 	}
 }
 

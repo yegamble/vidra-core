@@ -3,6 +3,7 @@ package video
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -225,6 +226,133 @@ func TestListAndSearch_IncludePublishedSourceWhileTranscoding(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("published source-only video not found in search results; got %v", got)
+		}
+	}
+}
+
+func TestSearchVideos_SortsByRelevanceDateViewsAndDuration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+	td := testutil.SetupTestDB(t)
+	if td == nil {
+		t.Skip("TestDB not available")
+		return
+	}
+
+	videoRepo := repository.NewVideoRepository(td.DB)
+	userRepo := repository.NewUserRepository(td.DB)
+	ctx := context.Background()
+	user := createTestUser(t, userRepo, ctx, "u_search_sort_"+time.Now().Format("150405"), "search-sort@example.com")
+	baseTime := time.Now().UTC().Add(-12 * time.Hour)
+
+	t.Run("relevance", func(t *testing.T) {
+		query := fmt.Sprintf("relevance%d", time.Now().UnixNano())
+		mostRelevant := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" "+query+" "+query, baseTime.Add(1*time.Minute), 25, 60)
+		middleRelevant := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" "+query, baseTime.Add(2*time.Minute), 25, 60)
+		lowestRelevant := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query, baseTime.Add(3*time.Minute), 25, 60)
+
+		results := searchVideosForTest(t, videoRepo, "/api/v1/search/videos?search="+query+"&sort=-match&count=10")
+		assertLeadingVideoIDs(t, results, mostRelevant.ID, middleRelevant.ID, lowestRelevant.ID)
+	})
+
+	t.Run("date", func(t *testing.T) {
+		query := fmt.Sprintf("date%d", time.Now().UnixNano())
+		oldest := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" oldest", baseTime.Add(1*time.Hour), 10, 60)
+		middle := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" middle", baseTime.Add(2*time.Hour), 10, 60)
+		newest := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" newest", baseTime.Add(3*time.Hour), 10, 60)
+
+		results := searchVideosForTest(t, videoRepo, "/api/v1/search/videos?search="+query+"&sort=-publishedAt&count=10")
+		assertLeadingVideoIDs(t, results, newest.ID, middle.ID, oldest.ID)
+	})
+
+	t.Run("views", func(t *testing.T) {
+		query := fmt.Sprintf("views%d", time.Now().UnixNano())
+		lowestViews := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" lowest", baseTime.Add(4*time.Hour), 15, 60)
+		middleViews := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" middle", baseTime.Add(5*time.Hour), 150, 60)
+		highestViews := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" highest", baseTime.Add(6*time.Hour), 1_500, 60)
+
+		results := searchVideosForTest(t, videoRepo, "/api/v1/search/videos?search="+query+"&sort=-views&count=10")
+		assertLeadingVideoIDs(t, results, highestViews.ID, middleViews.ID, lowestViews.ID)
+	})
+
+	t.Run("duration", func(t *testing.T) {
+		query := fmt.Sprintf("duration%d", time.Now().UnixNano())
+		shortest := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" shortest", baseTime.Add(7*time.Hour), 10, 45)
+		middle := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" middle", baseTime.Add(8*time.Hour), 10, 240)
+		longest := createPublicSearchVideo(t, videoRepo, ctx, user.ID, query+" longest", baseTime.Add(9*time.Hour), 10, 1_200)
+
+		results := searchVideosForTest(t, videoRepo, "/api/v1/search/videos?search="+query+"&sort=-duration&count=10")
+		assertLeadingVideoIDs(t, results, longest.ID, middle.ID, shortest.ID)
+	})
+}
+
+func createPublicSearchVideo(
+	t *testing.T,
+	repo usecase.VideoRepository,
+	ctx context.Context,
+	userID string,
+	title string,
+	uploadDate time.Time,
+	views int64,
+	duration int,
+) *domain.Video {
+	t.Helper()
+
+	video := &domain.Video{
+		Title:       title,
+		Description: title,
+		Privacy:     domain.PrivacyPublic,
+		Status:      domain.StatusCompleted,
+		UploadDate:  uploadDate,
+		UserID:      userID,
+		Views:       views,
+		Duration:    duration,
+		CreatedAt:   uploadDate,
+		UpdatedAt:   uploadDate,
+	}
+
+	if err := repo.Create(ctx, video); err != nil {
+		t.Fatalf("create search video: %v", err)
+	}
+
+	return video
+}
+
+func searchVideosForTest(t *testing.T, repo usecase.VideoRepository, requestURL string) []*domain.Video {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, requestURL, nil)
+	rr := httptest.NewRecorder()
+	SearchVideosHandler(repo).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 from search, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var env Response
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode env: %v", err)
+	}
+
+	var got []*domain.Video
+	b, _ := json.Marshal(env.Data)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("decode data: %v", err)
+	}
+
+	return got
+}
+
+func assertLeadingVideoIDs(t *testing.T, videos []*domain.Video, expectedIDs ...string) {
+	t.Helper()
+
+	if len(videos) < len(expectedIDs) {
+		t.Fatalf("expected at least %d videos, got %d", len(expectedIDs), len(videos))
+	}
+
+	for index, expectedID := range expectedIDs {
+		if videos[index].ID != expectedID {
+			t.Fatalf("expected result %d to be %s, got %s", index, expectedID, videos[index].ID)
 		}
 	}
 }

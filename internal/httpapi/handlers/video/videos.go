@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,27 +18,133 @@ import (
 	"vidra-core/internal/usecase"
 )
 
+func parseVideoSort(raw string, defaultSort string, defaultOrder string, allowRelevance bool) (string, string) {
+	if raw == "" {
+		return defaultSort, defaultOrder
+	}
+
+	order := "asc"
+	if strings.HasPrefix(raw, "-") {
+		order = "desc"
+		raw = strings.TrimPrefix(raw, "-")
+	}
+
+	switch raw {
+	case "match":
+		if allowRelevance {
+			return "relevance", order
+		}
+	case "publishedAt", "createdAt", "upload_date":
+		return "upload_date", order
+	case "views", "duration", "title", "name":
+		if raw == "name" {
+			return "title", order
+		}
+		return raw, order
+	}
+
+	return defaultSort, defaultOrder
+}
+
+func applyOrderOverride(rawSort string, currentOrder string, requestedOrder string) string {
+	if strings.HasPrefix(rawSort, "-") {
+		return currentOrder
+	}
+
+	switch requestedOrder {
+	case "asc", "desc":
+		return requestedOrder
+	default:
+		return currentOrder
+	}
+}
+
+func parseStringListParam(r *http.Request, keys ...string) []string {
+	for _, key := range keys {
+		values := r.URL.Query()[key]
+		if len(values) == 0 {
+			continue
+		}
+
+		var out []string
+		for _, value := range values {
+			for _, item := range strings.Split(value, ",") {
+				trimmed := strings.TrimSpace(item)
+				if trimmed != "" {
+					out = append(out, trimmed)
+				}
+			}
+		}
+
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	return nil
+}
+
+func parseOptionalIntParam(r *http.Request, key string) *int {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return nil
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil
+	}
+
+	return &value
+}
+
+func parseOptionalTimeParam(r *http.Request, key string) *time.Time {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return nil
+	}
+
+	layouts := []string{time.RFC3339, "2006-01-02"}
+	for _, layout := range layouts {
+		value, err := time.Parse(layout, raw)
+		if err == nil {
+			return &value
+		}
+	}
+
+	return nil
+}
+
+func parseOptionalCategoryID(r *http.Request, keys ...string) *uuid.UUID {
+	values := parseStringListParam(r, keys...)
+	if len(values) == 0 {
+		return nil
+	}
+
+	parsed, err := uuid.Parse(values[0])
+	if err != nil {
+		return nil
+	}
+
+	return &parsed
+}
+
 func ListVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		page, limit, offset, pageSize := shared.ParsePagination(r, 20)
-
-		sort := r.URL.Query().Get("sort")
-		if sort == "" {
-			sort = "upload_date"
-		}
-
-		order := r.URL.Query().Get("order")
-		if order != "asc" && order != "desc" {
-			order = "desc"
-		}
+		rawSort := r.URL.Query().Get("sort")
+		sort, order := parseVideoSort(rawSort, "upload_date", "desc", false)
+		order = applyOrderOverride(rawSort, order, r.URL.Query().Get("order"))
+		categoryID := parseOptionalCategoryID(r, "categoryOneOf", "category")
 
 		req := &domain.VideoSearchRequest{
-			Language: r.URL.Query().Get("language"),
-			Host:     r.URL.Query().Get("host"),
-			Sort:     sort,
-			Order:    order,
-			Limit:    limit,
-			Offset:   offset,
+			CategoryID: categoryID,
+			Language:   r.URL.Query().Get("language"),
+			Host:       r.URL.Query().Get("host"),
+			Sort:       sort,
+			Order:      order,
+			Limit:      limit,
+			Offset:     offset,
 		}
 
 		videos, total, err := repo.List(r.Context(), req)
@@ -74,18 +181,26 @@ func SearchVideosHandler(repo usecase.VideoRepository) http.HandlerFunc {
 		}
 
 		page, limit, offset, pageSize := shared.ParsePagination(r, 20)
-
-		tags := r.URL.Query()["tags"]
+		rawSort := r.URL.Query().Get("sort")
+		sort, order := parseVideoSort(rawSort, "relevance", "desc", true)
+		order = applyOrderOverride(rawSort, order, r.URL.Query().Get("order"))
+		tags := parseStringListParam(r, "tagsOneOf", "tags")
+		categoryID := parseOptionalCategoryID(r, "categoryOneOf", "category")
 
 		req := &domain.VideoSearchRequest{
-			Query:    query,
-			Tags:     tags,
-			Language: r.URL.Query().Get("language"),
-			Host:     r.URL.Query().Get("host"),
-			Sort:     r.URL.Query().Get("sort"),
-			Order:    r.URL.Query().Get("order"),
-			Limit:    limit,
-			Offset:   offset,
+			Query:           query,
+			Tags:            tags,
+			CategoryID:      categoryID,
+			Language:        r.URL.Query().Get("language"),
+			Host:            r.URL.Query().Get("host"),
+			DurationMin:     parseOptionalIntParam(r, "durationMin"),
+			DurationMax:     parseOptionalIntParam(r, "durationMax"),
+			PublishedAfter:  parseOptionalTimeParam(r, "startDate"),
+			PublishedBefore: parseOptionalTimeParam(r, "endDate"),
+			Sort:            sort,
+			Order:           order,
+			Limit:           limit,
+			Offset:          offset,
 		}
 
 		videos, total, err := repo.Search(r.Context(), req)

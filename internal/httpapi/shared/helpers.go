@@ -51,6 +51,19 @@ func ParsePagination(r *http.Request, defaultPageSize int) (page, limit, offset,
 	pageSize, _ = strconv.Atoi(r.URL.Query().Get("pageSize"))
 	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
+	count, _ := strconv.Atoi(r.URL.Query().Get("count"))
+	start, _ := strconv.Atoi(r.URL.Query().Get("start"))
+
+	if limit <= 0 && count > 0 {
+		limit = count
+	}
+
+	if offset < 0 {
+		offset = 0
+	}
+	if offset == 0 && start > 0 {
+		offset = start
+	}
 
 	// Set pageSize with fallbacks
 	if pageSize <= 0 || pageSize > 100 {
@@ -63,9 +76,6 @@ func ParsePagination(r *http.Request, defaultPageSize int) (page, limit, offset,
 
 	// Calculate page from offset if not provided
 	if page <= 0 {
-		if offset < 0 {
-			offset = 0
-		}
 		page = (offset / pageSize) + 1
 		if page <= 0 {
 			page = 1

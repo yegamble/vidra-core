@@ -224,6 +224,34 @@ func (r *videoRepository) List(ctx context.Context, req *domain.VideoSearchReque
 		argIndex++
 	}
 
+	if req.DurationMin != nil {
+		baseQuery += fmt.Sprintf(" AND duration >= $%d", argIndex)
+		countQuery += fmt.Sprintf(" AND duration >= $%d", argIndex)
+		args = append(args, *req.DurationMin)
+		argIndex++
+	}
+
+	if req.DurationMax != nil {
+		baseQuery += fmt.Sprintf(" AND duration <= $%d", argIndex)
+		countQuery += fmt.Sprintf(" AND duration <= $%d", argIndex)
+		args = append(args, *req.DurationMax)
+		argIndex++
+	}
+
+	if req.PublishedAfter != nil {
+		baseQuery += fmt.Sprintf(" AND upload_date >= $%d", argIndex)
+		countQuery += fmt.Sprintf(" AND upload_date >= $%d", argIndex)
+		args = append(args, *req.PublishedAfter)
+		argIndex++
+	}
+
+	if req.PublishedBefore != nil {
+		baseQuery += fmt.Sprintf(" AND upload_date <= $%d", argIndex)
+		countQuery += fmt.Sprintf(" AND upload_date <= $%d", argIndex)
+		args = append(args, *req.PublishedBefore)
+		argIndex++
+	}
+
 	if req.Language != "" {
 		baseQuery += fmt.Sprintf(" AND language = $%d", argIndex)
 		countQuery += fmt.Sprintf(" AND language = $%d", argIndex)
