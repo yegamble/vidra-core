@@ -9,6 +9,7 @@ type UploadRepository interface {
 	// Upload session management
 	CreateSession(ctx context.Context, session *domain.UploadSession) error
 	GetSession(ctx context.Context, sessionID string) (*domain.UploadSession, error)
+	FindReusableSessionByUserAndFingerprint(ctx context.Context, userID, fileFingerprint string) (*domain.UploadSession, error)
 	UpdateSession(ctx context.Context, session *domain.UploadSession) error
 	DeleteSession(ctx context.Context, sessionID string) error
 

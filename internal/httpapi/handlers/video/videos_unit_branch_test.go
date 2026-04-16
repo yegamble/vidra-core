@@ -402,7 +402,7 @@ func TestUpdateVideoHandler_UnitBranches(t *testing.T) {
 			},
 		}
 		rr := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/videos/"+videoID, strings.NewReader(`{"title":"updated","description":"desc","privacy":"public","category":"music"}`))
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/videos/"+videoID, strings.NewReader(`{"title":"updated","description":"desc","privacy":"public","category":"music","waitTranscoding":true}`))
 		req = withChiURLParam(req, "id", videoID)
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "owner-1"))
 
@@ -411,6 +411,7 @@ func TestUpdateVideoHandler_UnitBranches(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.NotNil(t, updateInput)
 		assert.Equal(t, "updated", updateInput.Title)
+		assert.True(t, updateInput.WaitTranscoding)
 		assert.NotNil(t, updateInput.Tags)
 		assert.Len(t, updateInput.Tags, 0)
 
@@ -420,6 +421,52 @@ func TestUpdateVideoHandler_UnitBranches(t *testing.T) {
 		var payload map[string]any
 		require.NoError(t, json.Unmarshal(raw, &payload))
 		assert.Equal(t, "music", payload["category"])
+	})
+
+	t.Run("update success applies channel and category metadata", func(t *testing.T) {
+		channelID := uuid.New()
+		categoryID := uuid.New()
+		var updateInput *domain.Video
+		getCalls := 0
+
+		repo := &unitVideoRepoStub{
+			getByIDFn: func(context.Context, string) (*domain.Video, error) {
+				getCalls++
+				video := &domain.Video{
+					ID:              videoID,
+					UserID:          "owner-1",
+					Status:          domain.StatusProcessing,
+					ChannelID:       channelID,
+					WaitTranscoding: false,
+				}
+				if getCalls > 1 {
+					video.CategoryID = &categoryID
+					video.Language = "en"
+					video.Tags = []string{"one", "two"}
+				}
+				return video, nil
+			},
+			updateFn: func(_ context.Context, v *domain.Video) error {
+				updateInput = v
+				return nil
+			},
+		}
+
+		body := `{"title":"updated","description":"desc","privacy":"private","channelId":"` + channelID.String() + `","category_id":"` + categoryID.String() + `","language":"en","tags":["one","two"]}`
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/videos/"+videoID, strings.NewReader(body))
+		req = withChiURLParam(req, "id", videoID)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "owner-1"))
+
+		UpdateVideoHandler(repo).ServeHTTP(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		require.NotNil(t, updateInput)
+		assert.Equal(t, channelID, updateInput.ChannelID)
+		require.NotNil(t, updateInput.CategoryID)
+		assert.Equal(t, categoryID, *updateInput.CategoryID)
+		assert.Equal(t, "en", updateInput.Language)
+		assert.Equal(t, []string{"one", "two"}, updateInput.Tags)
 	})
 }
 
@@ -615,6 +662,81 @@ func TestCompleteUploadHandler_UnitBranches(t *testing.T) {
 		require.NoError(t, json.Unmarshal(raw, &payload))
 		assert.Equal(t, "completed", payload["status"])
 		assert.Equal(t, sessionID, payload["session_id"])
+	})
+
+	t.Run("applies waitTranscoding metadata before completion", func(t *testing.T) {
+		videoID := uuid.NewString()
+		var updated *domain.Video
+		service := &unitUploadServiceStub{
+			completeUploadFn: func(context.Context, string) error {
+				return nil
+			},
+			getUploadStatus: func(_ context.Context, sid string) (*domain.UploadSession, error) {
+				return &domain.UploadSession{ID: sid, VideoID: videoID}, nil
+			},
+		}
+		repo := &unitVideoRepoStub{
+			getByIDFn: func(context.Context, string) (*domain.Video, error) {
+				return &domain.Video{ID: videoID, UserID: "user-1", Status: domain.StatusProcessing}, nil
+			},
+			updateFn: func(_ context.Context, video *domain.Video) error {
+				updated = video
+				return nil
+			},
+		}
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/uploads/"+sessionID+"/complete", strings.NewReader(`{"title":"updated","waitTranscoding":true}`))
+		req = withChiURLParam(req, "sessionId", sessionID)
+
+		CompleteUploadHandler(service, nil, repo).ServeHTTP(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		require.NotNil(t, updated)
+		assert.Equal(t, "updated", updated.Title)
+		assert.True(t, updated.WaitTranscoding)
+	})
+
+	t.Run("applies draft metadata before completion for resumed uploads", func(t *testing.T) {
+		videoID := uuid.NewString()
+		channelID := uuid.New()
+		categoryID := uuid.New()
+		var updated *domain.Video
+
+		service := &unitUploadServiceStub{
+			completeUploadFn: func(context.Context, string) error {
+				return nil
+			},
+			getUploadStatus: func(_ context.Context, sid string) (*domain.UploadSession, error) {
+				return &domain.UploadSession{ID: sid, VideoID: videoID}, nil
+			},
+		}
+		repo := &unitVideoRepoStub{
+			getByIDFn: func(context.Context, string) (*domain.Video, error) {
+				return &domain.Video{ID: videoID, UserID: "user-1", Status: domain.StatusProcessing}, nil
+			},
+			updateFn: func(_ context.Context, video *domain.Video) error {
+				updated = video
+				return nil
+			},
+		}
+
+		body := `{"title":"resumed","description":"draft","privacy":"private","channelId":"` + channelID.String() + `","category_id":"` + categoryID.String() + `","language":"en","tags":["one","two"]}`
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/uploads/"+sessionID+"/complete", strings.NewReader(body))
+		req = withChiURLParam(req, "sessionId", sessionID)
+
+		CompleteUploadHandler(service, nil, repo).ServeHTTP(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		require.NotNil(t, updated)
+		assert.Equal(t, "resumed", updated.Title)
+		assert.Equal(t, "draft", updated.Description)
+		assert.Equal(t, domain.PrivacyPrivate, updated.Privacy)
+		assert.Equal(t, channelID, updated.ChannelID)
+		require.NotNil(t, updated.CategoryID)
+		assert.Equal(t, categoryID, *updated.CategoryID)
+		assert.Equal(t, "en", updated.Language)
+		assert.Equal(t, []string{"one", "two"}, updated.Tags)
 	})
 }
 
@@ -1185,6 +1307,29 @@ func TestUploadVideoFileHandler_UnitBranches(t *testing.T) {
 		expectedPath := filepath.Join(storageDir, "web-videos", attemptedVideoID+".mp4")
 		_, err := os.Stat(expectedPath)
 		assert.True(t, os.IsNotExist(err), "expected temporary file to be removed after repo failure")
+	})
+
+	t.Run("waitTranscoding keeps direct upload in processing state", func(t *testing.T) {
+		var created *domain.Video
+		repo := &unitVideoRepoStub{
+			createFn: func(_ context.Context, v *domain.Video) error {
+				created = v
+				return nil
+			},
+		}
+		storageDir := t.TempDir()
+		req := buildMultipartUploadRequest(t, "sample.mp4", validMP4Bytes, map[string]string{
+			"title":           "video",
+			"privacy":         "public",
+			"waitTranscoding": "true",
+		})
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, "user-1"))
+		rr := httptest.NewRecorder()
+		UploadVideoFileHandler(repo, &config.Config{StorageDir: storageDir}).ServeHTTP(rr, req)
+		require.Equal(t, http.StatusCreated, rr.Code)
+		require.NotNil(t, created)
+		assert.True(t, created.WaitTranscoding)
+		assert.Equal(t, domain.StatusProcessing, created.Status)
 	})
 
 	t.Run("success stores file and returns created payload", func(t *testing.T) {

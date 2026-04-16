@@ -194,12 +194,14 @@ type VideoUploadRequest struct {
 }
 
 type VideoUpdateRequest struct {
-	Title       string     `json:"title" validate:"required,min=1,max=255"`
-	Description string     `json:"description" validate:"max=5000"`
-	Privacy     Privacy    `json:"privacy" validate:"required"`
-	Tags        []string   `json:"tags" validate:"max=10"`
-	CategoryID  *uuid.UUID `json:"category_id" validate:"omitempty"`
-	Language    string     `json:"language"`
+	Title           string     `json:"title" validate:"required,min=1,max=255"`
+	Description     string     `json:"description" validate:"max=5000"`
+	Privacy         Privacy    `json:"privacy" validate:"required"`
+	ChannelID       *uuid.UUID `json:"channel_id" validate:"omitempty"`
+	Tags            []string   `json:"tags" validate:"max=10"`
+	CategoryID      *uuid.UUID `json:"category_id" validate:"omitempty"`
+	Language        string     `json:"language"`
+	WaitTranscoding *bool      `json:"waitTranscoding"`
 }
 
 // Upload tracking models
@@ -208,6 +210,7 @@ type UploadSession struct {
 	VideoID          string       `json:"video_id" db:"video_id"`
 	UserID           string       `json:"user_id" db:"user_id"`
 	BatchID          *string      `json:"batch_id,omitempty" db:"batch_id"`
+	FileFingerprint  string       `json:"file_fingerprint,omitempty" db:"file_fingerprint"`
 	FileName         string       `json:"filename" db:"filename"`
 	FileSize         int64        `json:"file_size" db:"file_size"`
 	ChunkSize        int64        `json:"chunk_size" db:"chunk_size"`
@@ -349,15 +352,18 @@ type InitiateUploadRequest struct {
 	FileName         string `json:"filename" validate:"required"`
 	FileSize         int64  `json:"file_size" validate:"required,min=1"`
 	ChunkSize        int64  `json:"chunk_size" validate:"min=1048576,max=104857600"` // 1MB to 100MB
+	FileFingerprint  string `json:"file_fingerprint,omitempty"`
 	ExpectedChecksum string `json:"expected_checksum"`
 	WaitTranscoding  bool   `json:"waitTranscoding"` // PeerTube parity: if true, video not published until encoding completes
 }
 
 type InitiateUploadResponse struct {
 	SessionID   string `json:"session_id"`
+	VideoID     string `json:"video_id"`
 	ChunkSize   int64  `json:"chunk_size"`
 	TotalChunks int    `json:"total_chunks"`
 	UploadURL   string `json:"upload_url"`
+	Resumed     bool   `json:"resumed,omitempty"`
 }
 
 type ChunkUploadResponse struct {

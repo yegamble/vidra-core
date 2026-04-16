@@ -165,6 +165,7 @@ func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo use
 			Title           string   `json:"title"`
 			Description     string   `json:"description"`
 			Privacy         string   `json:"privacy"`
+			WaitTranscoding *bool    `json:"waitTranscoding"`
 			ChannelID       string   `json:"channelId"`
 			CategoryID      string   `json:"category_id"`
 			Tags            []string `json:"tags"`
@@ -175,7 +176,7 @@ func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo use
 		}
 		_ = json.NewDecoder(r.Body).Decode(&meta) // best-effort — metadata is optional
 
-		if meta.Title != "" || meta.Description != "" || meta.Privacy != "" {
+		if meta.Title != "" || meta.Description != "" || meta.Privacy != "" || meta.WaitTranscoding != nil || meta.ChannelID != "" || meta.CategoryID != "" || meta.Tags != nil || meta.Language != "" {
 			video, vErr := videoRepo.GetByID(ctx, session.VideoID)
 			if vErr == nil {
 				if meta.Title != "" {
@@ -187,9 +188,17 @@ func CompleteUploadHandler(uploadService usecase.UploadService, encodingRepo use
 				if meta.Privacy != "" {
 					video.Privacy = domain.Privacy(meta.Privacy)
 				}
+				if meta.WaitTranscoding != nil {
+					video.WaitTranscoding = *meta.WaitTranscoding
+				}
 				if meta.ChannelID != "" {
 					if channelUUID, pErr := uuid.Parse(meta.ChannelID); pErr == nil {
 						video.ChannelID = channelUUID
+					}
+				}
+				if meta.CategoryID != "" {
+					if categoryUUID, pErr := uuid.Parse(meta.CategoryID); pErr == nil {
+						video.CategoryID = &categoryUUID
 					}
 				}
 				if meta.Language != "" {
@@ -329,6 +338,8 @@ func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) ht
 			return
 		}
 
+		waitTranscoding := strings.EqualFold(strings.TrimSpace(r.FormValue("waitTranscoding")), "true")
+
 		ext := strings.ToLower(filepath.Ext(header.Filename))
 		var head [512]byte
 		n, _ := file.Read(head[:])
@@ -352,17 +363,18 @@ func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) ht
 
 		now := time.Now()
 		video := &domain.Video{
-			ID:          uuid.NewString(),
-			ThumbnailID: uuid.NewString(),
-			Title:       title,
-			Description: description,
-			Privacy:     domain.Privacy(privacy),
-			Status:      domain.StatusCompleted,
-			UploadDate:  now,
-			UserID:      userID,
-			Tags:        []string{},
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:              uuid.NewString(),
+			ThumbnailID:     uuid.NewString(),
+			Title:           title,
+			Description:     description,
+			Privacy:         domain.Privacy(privacy),
+			Status:          domain.StatusProcessing,
+			UploadDate:      now,
+			UserID:          userID,
+			Tags:            []string{},
+			WaitTranscoding: waitTranscoding,
+			CreatedAt:       now,
+			UpdatedAt:       now,
 		}
 
 		root := "./storage"
@@ -415,6 +427,12 @@ func UploadVideoFileHandler(repo usecase.VideoRepository, cfg *config.Config) ht
 			slog.Warn("failed to generate direct upload thumbnail", "video_id", video.ID, "error", thumbErr)
 		} else if thumbnailPath != "" {
 			video.ThumbnailPath = thumbnailPath
+		}
+
+		if video.WaitTranscoding || video.ThumbnailPath == "" {
+			video.Status = domain.StatusProcessing
+		} else {
+			video.Status = domain.StatusCompleted
 		}
 
 		if err := repo.Create(r.Context(), video); err != nil {

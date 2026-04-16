@@ -26,19 +26,18 @@ func NewUploadRepository(db *sqlx.DB) usecase.UploadRepository {
 func (r *uploadRepository) CreateSession(ctx context.Context, session *domain.UploadSession) error {
 	query := `
 		INSERT INTO upload_sessions (
-			id, video_id, user_id, filename, file_size, chunk_size,
+			id, video_id, user_id, file_fingerprint, filename, file_size, chunk_size,
 			total_chunks, uploaded_chunks, status, temp_file_path,
 			created_at, updated_at, expires_at, batch_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)`
 
 	exec := GetExecutor(ctx, r.db)
 	_, err := exec.ExecContext(ctx, query,
-		session.ID, session.VideoID, session.UserID, session.FileName,
-		session.FileSize, session.ChunkSize, session.TotalChunks,
-		pq.Array(session.UploadedChunks), session.Status, session.TempFilePath,
-		session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.BatchID,
+		session.ID, session.VideoID, session.UserID, session.FileFingerprint, session.FileName,
+		session.FileSize, session.ChunkSize, session.TotalChunks, pq.Array(session.UploadedChunks),
+		session.Status, session.TempFilePath, session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.BatchID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create upload session: %w", err)
@@ -48,7 +47,7 @@ func (r *uploadRepository) CreateSession(ctx context.Context, session *domain.Up
 
 func (r *uploadRepository) GetSession(ctx context.Context, sessionID string) (*domain.UploadSession, error) {
 	query := `
-		SELECT id, video_id, user_id, filename, file_size, chunk_size,
+		SELECT id, video_id, user_id, file_fingerprint, filename, file_size, chunk_size,
 		       total_chunks, uploaded_chunks, status, temp_file_path,
 		       created_at, updated_at, expires_at, batch_id
 		FROM upload_sessions WHERE id = $1`
@@ -57,7 +56,7 @@ func (r *uploadRepository) GetSession(ctx context.Context, sessionID string) (*d
 	var uploadedChunks pq.Int32Array
 
 	err := r.db.QueryRowContext(ctx, query, sessionID).Scan(
-		&session.ID, &session.VideoID, &session.UserID, &session.FileName,
+		&session.ID, &session.VideoID, &session.UserID, &session.FileFingerprint, &session.FileName,
 		&session.FileSize, &session.ChunkSize, &session.TotalChunks,
 		&uploadedChunks, &session.Status, &session.TempFilePath,
 		&session.CreatedAt, &session.UpdatedAt, &session.ExpiresAt, &session.BatchID,
@@ -70,6 +69,47 @@ func (r *uploadRepository) GetSession(ctx context.Context, sessionID string) (*d
 	}
 
 	// Convert pq.Int32Array to []int
+	session.UploadedChunks = make([]int, len(uploadedChunks))
+	for i, chunk := range uploadedChunks {
+		session.UploadedChunks[i] = int(chunk)
+	}
+
+	return &session, nil
+}
+
+func (r *uploadRepository) FindReusableSessionByUserAndFingerprint(ctx context.Context, userID, fileFingerprint string) (*domain.UploadSession, error) {
+	if fileFingerprint == "" {
+		return nil, nil
+	}
+
+	query := `
+		SELECT id, video_id, user_id, file_fingerprint, filename, file_size, chunk_size,
+		       total_chunks, uploaded_chunks, status, temp_file_path,
+		       created_at, updated_at, expires_at, batch_id
+		FROM upload_sessions
+		WHERE user_id = $1
+		  AND file_fingerprint = $2
+		  AND status = 'active'
+		  AND expires_at > NOW()
+		ORDER BY updated_at DESC
+		LIMIT 1`
+
+	var session domain.UploadSession
+	var uploadedChunks pq.Int32Array
+
+	err := r.db.QueryRowContext(ctx, query, userID, fileFingerprint).Scan(
+		&session.ID, &session.VideoID, &session.UserID, &session.FileFingerprint, &session.FileName,
+		&session.FileSize, &session.ChunkSize, &session.TotalChunks,
+		&uploadedChunks, &session.Status, &session.TempFilePath,
+		&session.CreatedAt, &session.UpdatedAt, &session.ExpiresAt, &session.BatchID,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find reusable upload session: %w", err)
+	}
+
 	session.UploadedChunks = make([]int, len(uploadedChunks))
 	for i, chunk := range uploadedChunks {
 		session.UploadedChunks[i] = int(chunk)
@@ -217,7 +257,7 @@ func (r *uploadRepository) ExpireOldSessions(ctx context.Context) error {
 
 func (r *uploadRepository) GetExpiredSessions(ctx context.Context) ([]*domain.UploadSession, error) {
 	query := `
-		SELECT id, video_id, user_id, filename, file_size, chunk_size,
+		SELECT id, video_id, user_id, file_fingerprint, filename, file_size, chunk_size,
 		       total_chunks, uploaded_chunks, status, temp_file_path,
 		       created_at, updated_at, expires_at, batch_id
 		FROM upload_sessions
@@ -235,7 +275,7 @@ func (r *uploadRepository) GetExpiredSessions(ctx context.Context) ([]*domain.Up
 		var uploadedChunks pq.Int32Array
 
 		err := rows.Scan(
-			&session.ID, &session.VideoID, &session.UserID, &session.FileName,
+			&session.ID, &session.VideoID, &session.UserID, &session.FileFingerprint, &session.FileName,
 			&session.FileSize, &session.ChunkSize, &session.TotalChunks,
 			&uploadedChunks, &session.Status, &session.TempFilePath,
 			&session.CreatedAt, &session.UpdatedAt, &session.ExpiresAt, &session.BatchID,
@@ -302,7 +342,7 @@ func (r *uploadRepository) GetBatch(ctx context.Context, batchID string) (*domai
 
 func (r *uploadRepository) GetSessionsByBatchID(ctx context.Context, batchID string) ([]*domain.UploadSession, error) {
 	query := `
-		SELECT id, video_id, user_id, filename, file_size, chunk_size,
+		SELECT id, video_id, user_id, file_fingerprint, filename, file_size, chunk_size,
 		       total_chunks, uploaded_chunks, status, temp_file_path,
 		       created_at, updated_at, expires_at, batch_id
 		FROM upload_sessions WHERE batch_id = $1`
@@ -319,7 +359,7 @@ func (r *uploadRepository) GetSessionsByBatchID(ctx context.Context, batchID str
 		var uploadedChunks pq.Int32Array
 
 		err := rows.Scan(
-			&session.ID, &session.VideoID, &session.UserID, &session.FileName,
+			&session.ID, &session.VideoID, &session.UserID, &session.FileFingerprint, &session.FileName,
 			&session.FileSize, &session.ChunkSize, &session.TotalChunks,
 			&uploadedChunks, &session.Status, &session.TempFilePath,
 			&session.CreatedAt, &session.UpdatedAt, &session.ExpiresAt, &session.BatchID,

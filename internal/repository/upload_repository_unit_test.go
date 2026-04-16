@@ -39,19 +39,20 @@ func newUploadRepo(t *testing.T) (usecase.UploadRepository, sqlmock.Sqlmock, fun
 func sampleUploadSession() domain.UploadSession {
 	now := time.Now()
 	return domain.UploadSession{
-		ID:             "session-001",
-		VideoID:        "video-001",
-		UserID:         "user-001",
-		FileName:       "test_video.mp4",
-		FileSize:       1048576,
-		ChunkSize:      10485,
-		TotalChunks:    100,
-		UploadedChunks: []int{0, 1, 2},
-		Status:         domain.UploadStatusActive,
-		TempFilePath:   "/tmp/test_session",
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		ExpiresAt:      now.Add(24 * time.Hour),
+		ID:              "session-001",
+		VideoID:         "video-001",
+		UserID:          "user-001",
+		FileFingerprint: "fingerprint-001",
+		FileName:        "test_video.mp4",
+		FileSize:        1048576,
+		ChunkSize:       10485,
+		TotalChunks:     100,
+		UploadedChunks:  []int{0, 1, 2},
+		Status:          domain.UploadStatusActive,
+		TempFilePath:    "/tmp/test_session",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		ExpiresAt:       now.Add(24 * time.Hour),
 	}
 }
 
@@ -68,17 +69,16 @@ func TestUploadRepository_Unit_CreateSession(t *testing.T) {
 
 		mock.ExpectExec(regexp.QuoteMeta(
 			`INSERT INTO upload_sessions (
-			id, video_id, user_id, filename, file_size, chunk_size,
+			id, video_id, user_id, file_fingerprint, filename, file_size, chunk_size,
 			total_chunks, uploaded_chunks, status, temp_file_path,
-			created_at, updated_at, expires_at
+			created_at, updated_at, expires_at, batch_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)`)).
 			WithArgs(
-				session.ID, session.VideoID, session.UserID, session.FileName,
-				session.FileSize, session.ChunkSize, session.TotalChunks,
-				pq.Array(session.UploadedChunks), session.Status, session.TempFilePath,
-				session.CreatedAt, session.UpdatedAt, session.ExpiresAt,
+				session.ID, session.VideoID, session.UserID, session.FileFingerprint, session.FileName,
+				session.FileSize, session.ChunkSize, session.TotalChunks, pq.Array(session.UploadedChunks),
+				session.Status, session.TempFilePath, session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.BatchID,
 			).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -95,17 +95,16 @@ func TestUploadRepository_Unit_CreateSession(t *testing.T) {
 
 		mock.ExpectExec(regexp.QuoteMeta(
 			`INSERT INTO upload_sessions (
-			id, video_id, user_id, filename, file_size, chunk_size,
+			id, video_id, user_id, file_fingerprint, filename, file_size, chunk_size,
 			total_chunks, uploaded_chunks, status, temp_file_path,
-			created_at, updated_at, expires_at
+			created_at, updated_at, expires_at, batch_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)`)).
 			WithArgs(
-				session.ID, session.VideoID, session.UserID, session.FileName,
-				session.FileSize, session.ChunkSize, session.TotalChunks,
-				pq.Array(session.UploadedChunks), session.Status, session.TempFilePath,
-				session.CreatedAt, session.UpdatedAt, session.ExpiresAt,
+				session.ID, session.VideoID, session.UserID, session.FileFingerprint, session.FileName,
+				session.FileSize, session.ChunkSize, session.TotalChunks, pq.Array(session.UploadedChunks),
+				session.Status, session.TempFilePath, session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.BatchID,
 			).
 			WillReturnError(errors.New("insert failed"))
 
@@ -121,9 +120,9 @@ func TestUploadRepository_Unit_CreateSession(t *testing.T) {
 func TestUploadRepository_Unit_GetSession(t *testing.T) {
 	ctx := context.Background()
 
-	selectQuery := `SELECT id, video_id, user_id, filename, file_size, chunk_size,
+	selectQuery := `SELECT id, video_id, user_id, file_fingerprint, filename, file_size, chunk_size,
 		       total_chunks, uploaded_chunks, status, temp_file_path,
-		       created_at, updated_at, expires_at
+		       created_at, updated_at, expires_at, batch_id
 		FROM upload_sessions WHERE id = $1`
 
 	t.Run("success", func(t *testing.T) {
@@ -136,14 +135,14 @@ func TestUploadRepository_Unit_GetSession(t *testing.T) {
 		mock.ExpectQuery(regexp.QuoteMeta(selectQuery)).
 			WithArgs(session.ID).
 			WillReturnRows(sqlmock.NewRows([]string{
-				"id", "video_id", "user_id", "filename", "file_size", "chunk_size",
+				"id", "video_id", "user_id", "file_fingerprint", "filename", "file_size", "chunk_size",
 				"total_chunks", "uploaded_chunks", "status", "temp_file_path",
-				"created_at", "updated_at", "expires_at",
+				"created_at", "updated_at", "expires_at", "batch_id",
 			}).AddRow(
-				session.ID, session.VideoID, session.UserID, session.FileName,
+				session.ID, session.VideoID, session.UserID, session.FileFingerprint, session.FileName,
 				session.FileSize, session.ChunkSize, session.TotalChunks,
 				chunks, session.Status, session.TempFilePath,
-				session.CreatedAt, session.UpdatedAt, session.ExpiresAt,
+				session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.BatchID,
 			))
 
 		got, err := repo.GetSession(ctx, session.ID)
@@ -151,6 +150,7 @@ func TestUploadRepository_Unit_GetSession(t *testing.T) {
 		require.NotNil(t, got)
 		assert.Equal(t, session.ID, got.ID)
 		assert.Equal(t, session.VideoID, got.VideoID)
+		assert.Equal(t, session.FileFingerprint, got.FileFingerprint)
 		assert.Equal(t, session.FileName, got.FileName)
 		assert.Equal(t, []int{0, 1, 2}, got.UploadedChunks)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -183,6 +183,64 @@ func TestUploadRepository_Unit_GetSession(t *testing.T) {
 		require.Nil(t, got)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to get upload session")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestUploadRepository_Unit_FindReusableSessionByUserAndFingerprint(t *testing.T) {
+	ctx := context.Background()
+
+	query := `SELECT id, video_id, user_id, file_fingerprint, filename, file_size, chunk_size,
+		       total_chunks, uploaded_chunks, status, temp_file_path,
+		       created_at, updated_at, expires_at, batch_id
+		FROM upload_sessions
+		WHERE user_id = $1
+		  AND file_fingerprint = $2
+		  AND status = 'active'
+		  AND expires_at > NOW()
+		ORDER BY updated_at DESC
+		LIMIT 1`
+
+	t.Run("returns matching active session", func(t *testing.T) {
+		repo, mock, cleanup := newUploadRepo(t)
+		defer cleanup()
+
+		session := sampleUploadSession()
+		chunks := pq.Int32Array{0, 1}
+
+		mock.ExpectQuery(regexp.QuoteMeta(query)).
+			WithArgs(session.UserID, session.FileFingerprint).
+			WillReturnRows(sqlmock.NewRows([]string{
+				"id", "video_id", "user_id", "file_fingerprint", "filename", "file_size", "chunk_size",
+				"total_chunks", "uploaded_chunks", "status", "temp_file_path",
+				"created_at", "updated_at", "expires_at", "batch_id",
+			}).AddRow(
+				session.ID, session.VideoID, session.UserID, session.FileFingerprint, session.FileName,
+				session.FileSize, session.ChunkSize, session.TotalChunks,
+				chunks, session.Status, session.TempFilePath,
+				session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.BatchID,
+			))
+
+		got, err := repo.FindReusableSessionByUserAndFingerprint(ctx, session.UserID, session.FileFingerprint)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, session.ID, got.ID)
+		assert.Equal(t, session.FileFingerprint, got.FileFingerprint)
+		assert.Equal(t, []int{0, 1}, got.UploadedChunks)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns nil when no reusable session exists", func(t *testing.T) {
+		repo, mock, cleanup := newUploadRepo(t)
+		defer cleanup()
+
+		mock.ExpectQuery(regexp.QuoteMeta(query)).
+			WithArgs("user-001", "missing-fingerprint").
+			WillReturnError(sql.ErrNoRows)
+
+		got, err := repo.FindReusableSessionByUserAndFingerprint(ctx, "user-001", "missing-fingerprint")
+		require.NoError(t, err)
+		assert.Nil(t, got)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
@@ -521,9 +579,9 @@ func TestUploadRepository_Unit_ExpireOldSessions(t *testing.T) {
 func TestUploadRepository_Unit_GetExpiredSessions(t *testing.T) {
 	ctx := context.Background()
 
-	expiredQuery := `SELECT id, video_id, user_id, filename, file_size, chunk_size,
+	expiredQuery := `SELECT id, video_id, user_id, file_fingerprint, filename, file_size, chunk_size,
 		       total_chunks, uploaded_chunks, status, temp_file_path,
-		       created_at, updated_at, expires_at
+		       created_at, updated_at, expires_at, batch_id
 		FROM upload_sessions
 		WHERE status = 'expired' OR (expires_at < NOW() AND status != 'completed')`
 
@@ -537,14 +595,14 @@ func TestUploadRepository_Unit_GetExpiredSessions(t *testing.T) {
 
 		mock.ExpectQuery(regexp.QuoteMeta(expiredQuery)).
 			WillReturnRows(sqlmock.NewRows([]string{
-				"id", "video_id", "user_id", "filename", "file_size", "chunk_size",
+				"id", "video_id", "user_id", "file_fingerprint", "filename", "file_size", "chunk_size",
 				"total_chunks", "uploaded_chunks", "status", "temp_file_path",
-				"created_at", "updated_at", "expires_at",
+				"created_at", "updated_at", "expires_at", "batch_id",
 			}).AddRow(
-				s.ID, s.VideoID, s.UserID, s.FileName,
+				s.ID, s.VideoID, s.UserID, s.FileFingerprint, s.FileName,
 				s.FileSize, s.ChunkSize, s.TotalChunks,
 				chunks, s.Status, s.TempFilePath,
-				s.CreatedAt, s.UpdatedAt, s.ExpiresAt,
+				s.CreatedAt, s.UpdatedAt, s.ExpiresAt, s.BatchID,
 			))
 
 		got, err := repo.GetExpiredSessions(ctx)
@@ -562,9 +620,9 @@ func TestUploadRepository_Unit_GetExpiredSessions(t *testing.T) {
 
 		mock.ExpectQuery(regexp.QuoteMeta(expiredQuery)).
 			WillReturnRows(sqlmock.NewRows([]string{
-				"id", "video_id", "user_id", "filename", "file_size", "chunk_size",
+				"id", "video_id", "user_id", "file_fingerprint", "filename", "file_size", "chunk_size",
 				"total_chunks", "uploaded_chunks", "status", "temp_file_path",
-				"created_at", "updated_at", "expires_at",
+				"created_at", "updated_at", "expires_at", "batch_id",
 			}))
 
 		got, err := repo.GetExpiredSessions(ctx)

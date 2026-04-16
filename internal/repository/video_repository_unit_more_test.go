@@ -378,22 +378,24 @@ func TestVideoRepository_Unit_UpdateAndDelete(t *testing.T) {
 		repo := NewVideoRepository(db)
 
 		video := &domain.Video{
-			ID:            uuid.New().String(),
-			UserID:        uuid.New().String(),
-			Title:         "updated-title",
-			Description:   "updated-desc",
-			Duration:      95,
-			Privacy:       domain.PrivacyPublic,
-			Tags:          []string{"go"},
-			Language:      "en",
-			Status:        domain.StatusCompleted,
-			Metadata:      domain.VideoMetadata{Width: 1920, Height: 1080},
-			UpdatedAt:     time.Now(),
-			OutputPaths:   map[string]string{"source": "/static/web-videos/video.mp4"},
-			ThumbnailPath: "/thumb.jpg",
-			PreviewPath:   "/preview.jpg",
-			StorageTier:   "hot",
-			LocalDeleted:  false,
+			ID:              uuid.New().String(),
+			UserID:          uuid.New().String(),
+			ChannelID:       uuid.New(),
+			Title:           "updated-title",
+			Description:     "updated-desc",
+			Duration:        95,
+			Privacy:         domain.PrivacyPublic,
+			Tags:            []string{"go"},
+			Language:        "en",
+			Status:          domain.StatusCompleted,
+			Metadata:        domain.VideoMetadata{Width: 1920, Height: 1080},
+			UpdatedAt:       time.Now(),
+			OutputPaths:     map[string]string{"source": "/static/web-videos/video.mp4"},
+			ThumbnailPath:   "/thumb.jpg",
+			PreviewPath:     "/preview.jpg",
+			StorageTier:     "hot",
+			LocalDeleted:    false,
+			WaitTranscoding: true,
 		}
 
 		mock.ExpectExec(updateVideoQueryRegex).
@@ -402,7 +404,7 @@ func TestVideoRepository_Unit_UpdateAndDelete(t *testing.T) {
 				pq.Array(video.Tags), video.CategoryID, video.Language,
 				video.Status, video.UpdatedAt, video.Duration, sqlmock.AnyArg(),
 				sqlmock.AnyArg(), video.ThumbnailPath, video.PreviewPath, video.UserID,
-				sqlmock.AnyArg(), video.StorageTier, video.S3MigratedAt, video.LocalDeleted,
+				sqlmock.AnyArg(), video.StorageTier, video.S3MigratedAt, video.LocalDeleted, video.WaitTranscoding, video.ChannelID,
 			).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 

@@ -27,6 +27,18 @@ func (m *mockUploadRepo) GetSession(ctx context.Context, sessionID string) (*dom
 	}
 	return args.Get(0).(*domain.UploadSession), args.Error(1)
 }
+func (m *mockUploadRepo) FindReusableSessionByUserAndFingerprint(ctx context.Context, userID, fileFingerprint string) (*domain.UploadSession, error) {
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "FindReusableSessionByUserAndFingerprint" {
+			args := m.Called(ctx, userID, fileFingerprint)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).(*domain.UploadSession), args.Error(1)
+		}
+	}
+	return nil, nil
+}
 func (m *mockUploadRepo) UpdateSession(ctx context.Context, session *domain.UploadSession) error {
 	return m.Called(ctx, session).Error(0)
 }
@@ -401,6 +413,72 @@ func TestInitiateUpload_Success(t *testing.T) {
 	assert.Equal(t, 10, resp.TotalChunks)
 	videoRepo.AssertExpectations(t)
 	uploadRepo.AssertExpectations(t)
+}
+
+func TestInitiateUpload_ReusesExistingSessionForSameUserAndFingerprint(t *testing.T) {
+	svc, uploadRepo, _, videoRepo, _ := newTestService(t)
+
+	existingSession := &domain.UploadSession{
+		ID:              "sess-reuse",
+		VideoID:         "video-reuse",
+		UserID:          "user-1",
+		FileFingerprint: "fingerprint-1",
+		FileSize:        4096,
+		ChunkSize:       1024,
+		TotalChunks:     4,
+		Status:          domain.UploadStatusActive,
+		UpdatedAt:       time.Now(),
+		ExpiresAt:       time.Now().Add(time.Hour),
+	}
+
+	uploadRepo.On("FindReusableSessionByUserAndFingerprint", mock.Anything, "user-1", "fingerprint-1").Return(existingSession, nil).Once()
+
+	req := &domain.InitiateUploadRequest{
+		FileName:        "test.mp4",
+		FileSize:        4096,
+		ChunkSize:       1024,
+		FileFingerprint: "fingerprint-1",
+	}
+
+	resp, err := svc.InitiateUpload(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+	assert.Equal(t, &domain.InitiateUploadResponse{
+		SessionID:   "sess-reuse",
+		VideoID:     "video-reuse",
+		ChunkSize:   1024,
+		TotalChunks: 4,
+		UploadURL:   "/api/v1/uploads/sess-reuse/chunks",
+		Resumed:     true,
+	}, resp)
+	videoRepo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+	uploadRepo.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	uploadRepo.AssertExpectations(t)
+}
+
+func TestInitiateUpload_DoesNotReuseOtherUsersSession(t *testing.T) {
+	svc, uploadRepo, _, videoRepo, _ := newTestService(t)
+
+	uploadRepo.On("FindReusableSessionByUserAndFingerprint", mock.Anything, "user-2", "shared-fingerprint").Return(nil, nil).Once()
+	videoRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.Video")).Return(nil).Once()
+	uploadRepo.On("CreateSession", mock.Anything, mock.AnythingOfType("*domain.UploadSession")).Return(nil).Once()
+
+	req := &domain.InitiateUploadRequest{
+		FileName:        "test.mp4",
+		FileSize:        4096,
+		ChunkSize:       1024,
+		FileFingerprint: "shared-fingerprint",
+	}
+
+	resp, err := svc.InitiateUpload(context.Background(), "user-2", req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.False(t, resp.Resumed)
+	assert.NotEmpty(t, resp.SessionID)
+	assert.NotEmpty(t, resp.VideoID)
+	videoRepo.AssertCalled(t, "Create", mock.Anything, mock.AnythingOfType("*domain.Video"))
+	uploadRepo.AssertCalled(t, "CreateSession", mock.Anything, mock.AnythingOfType("*domain.UploadSession"))
+	uploadRepo.AssertExpectations(t)
+	videoRepo.AssertExpectations(t)
 }
 
 func TestInitiateUpload_InvalidExtension(t *testing.T) {

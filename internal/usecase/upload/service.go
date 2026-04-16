@@ -78,6 +78,24 @@ func (s *service) InitiateUpload(ctx context.Context, userID string, req *domain
 		return nil, domain.NewDomainError("INVALID_CHUNK_SIZE",
 			fmt.Sprintf("Chunk size must be between 1 and %d bytes", MaxChunkSize))
 	}
+
+	if req.FileFingerprint != "" {
+		existingSession, err := s.uploadRepo.FindReusableSessionByUserAndFingerprint(ctx, userID, req.FileFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find reusable upload session: %w", err)
+		}
+		if existingSession != nil && existingSession.FileSize == req.FileSize {
+			return &domain.InitiateUploadResponse{
+				SessionID:   existingSession.ID,
+				VideoID:     existingSession.VideoID,
+				ChunkSize:   existingSession.ChunkSize,
+				TotalChunks: existingSession.TotalChunks,
+				UploadURL:   fmt.Sprintf("/api/v1/uploads/%s/chunks", existingSession.ID),
+				Resumed:     true,
+			}, nil
+		}
+	}
+
 	totalChunks := int((req.FileSize + req.ChunkSize - 1) / req.ChunkSize)
 	now := time.Now()
 	safeFileName := security.SanitizeStrictText(req.FileName)
@@ -114,6 +132,7 @@ func (s *service) InitiateUpload(ctx context.Context, userID string, req *domain
 		ID:               sessionID,
 		VideoID:          video.ID,
 		UserID:           userID,
+		FileFingerprint:  req.FileFingerprint,
 		FileName:         req.FileName,
 		FileSize:         req.FileSize,
 		ChunkSize:        req.ChunkSize,
@@ -130,7 +149,13 @@ func (s *service) InitiateUpload(ctx context.Context, userID string, req *domain
 		_ = os.RemoveAll(tempDir)
 		return nil, fmt.Errorf("failed to create upload session: %w", err)
 	}
-	return &domain.InitiateUploadResponse{SessionID: sessionID, ChunkSize: req.ChunkSize, TotalChunks: totalChunks, UploadURL: fmt.Sprintf("/api/v1/uploads/%s/chunks", sessionID)}, nil
+	return &domain.InitiateUploadResponse{
+		SessionID:   sessionID,
+		VideoID:     video.ID,
+		ChunkSize:   req.ChunkSize,
+		TotalChunks: totalChunks,
+		UploadURL:   fmt.Sprintf("/api/v1/uploads/%s/chunks", sessionID),
+	}, nil
 }
 
 func validUploadExt(ext string) bool {

@@ -261,13 +261,15 @@ func UpdateVideoHandler(repo usecase.VideoRepository, auditLogger ...*obs.AuditL
 		al = auditLogger[0]
 	}
 	type updateRequest struct {
-		Title       string     `json:"title"`
-		Description string     `json:"description"`
-		Privacy     string     `json:"privacy"`
-		Tags        []string   `json:"tags"`
-		Category    string     `json:"category"`
-		CategoryID  *uuid.UUID `json:"category_id"`
-		Language    string     `json:"language"`
+		Title           string     `json:"title"`
+		Description     string     `json:"description"`
+		Privacy         string     `json:"privacy"`
+		ChannelID       *uuid.UUID `json:"channelId"`
+		Tags            []string   `json:"tags"`
+		Category        string     `json:"category"`
+		CategoryID      *uuid.UUID `json:"category_id"`
+		Language        string     `json:"language"`
+		WaitTranscoding *bool      `json:"waitTranscoding"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -283,12 +285,14 @@ func UpdateVideoHandler(repo usecase.VideoRepository, auditLogger ...*obs.AuditL
 		}
 
 		req := domain.VideoUpdateRequest{
-			Title:       rawReq.Title,
-			Description: rawReq.Description,
-			Privacy:     domain.Privacy(rawReq.Privacy),
-			Tags:        rawReq.Tags,
-			CategoryID:  rawReq.CategoryID,
-			Language:    rawReq.Language,
+			Title:           rawReq.Title,
+			Description:     rawReq.Description,
+			Privacy:         domain.Privacy(rawReq.Privacy),
+			ChannelID:       rawReq.ChannelID,
+			Tags:            rawReq.Tags,
+			CategoryID:      rawReq.CategoryID,
+			Language:        rawReq.Language,
+			WaitTranscoding: rawReq.WaitTranscoding,
 		}
 
 		if req.Title == "" {
@@ -332,25 +336,47 @@ func UpdateVideoHandler(repo usecase.VideoRepository, auditLogger ...*obs.AuditL
 		}
 		sanitizedDescription := security.SanitizeCommentHTML(req.Description)
 
-		tags := req.Tags
+		tags := existingVideo.Tags
+		if req.Tags != nil {
+			tags = req.Tags
+		}
 		if tags == nil {
 			tags = []string{}
 		}
 
-		video := &domain.Video{
-			ID:          videoID,
-			Title:       sanitizedTitle,
-			Description: sanitizedDescription,
-			Privacy:     req.Privacy,
-			Status:      existingVideo.Status,
-			UserID:      userID,
-			Tags:        tags,
-			CategoryID:  req.CategoryID,
-			Language:    req.Language,
-			UpdatedAt:   time.Now(),
+		categoryID := existingVideo.CategoryID
+		if req.CategoryID != nil {
+			categoryID = req.CategoryID
 		}
 
-		if err := repo.Update(r.Context(), video); err != nil {
+		language := existingVideo.Language
+		if req.Language != "" {
+			language = req.Language
+		}
+
+		channelID := existingVideo.ChannelID
+		if req.ChannelID != nil {
+			channelID = *req.ChannelID
+		}
+
+		waitTranscoding := existingVideo.WaitTranscoding
+		if req.WaitTranscoding != nil {
+			waitTranscoding = *req.WaitTranscoding
+		}
+
+		video := *existingVideo
+		video.Title = sanitizedTitle
+		video.Description = sanitizedDescription
+		video.Privacy = req.Privacy
+		video.UserID = userID
+		video.Tags = tags
+		video.CategoryID = categoryID
+		video.Language = language
+		video.ChannelID = channelID
+		video.WaitTranscoding = waitTranscoding
+		video.UpdatedAt = time.Now()
+
+		if err := repo.Update(r.Context(), &video); err != nil {
 			var domainErr domain.DomainError
 			if errors.As(err, &domainErr) {
 				shared.WriteError(w, http.StatusNotFound, domainErr)

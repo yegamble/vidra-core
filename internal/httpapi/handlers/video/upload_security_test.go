@@ -37,6 +37,18 @@ func (m *MockUploadRepository) GetSession(ctx context.Context, sessionID string)
 	}
 	return args.Get(0).(*domain.UploadSession), args.Error(1)
 }
+func (m *MockUploadRepository) FindReusableSessionByUserAndFingerprint(ctx context.Context, userID, fileFingerprint string) (*domain.UploadSession, error) {
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "FindReusableSessionByUserAndFingerprint" {
+			args := m.Called(ctx, userID, fileFingerprint)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).(*domain.UploadSession), args.Error(1)
+		}
+	}
+	return nil, nil
+}
 func (m *MockUploadRepository) UpdateSession(ctx context.Context, session *domain.UploadSession) error {
 	args := m.Called(ctx, session)
 	return args.Error(0)

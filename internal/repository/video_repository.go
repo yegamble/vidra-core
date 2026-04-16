@@ -367,6 +367,13 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
 		}
 	}
 
+	var channelIDParam interface{}
+	if v.ChannelID == uuid.Nil {
+		channelIDParam = nil
+	} else {
+		channelIDParam = v.ChannelID
+	}
+
 	query := `
         UPDATE videos SET
             title = $2, description = $3, privacy = $4,
@@ -375,7 +382,9 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
             duration = $10, metadata = $11,
             output_paths = $12, thumbnail_path = $13, preview_path = $14,
             s3_urls = $16, storage_tier = $17,
-            s3_migrated_at = $18, local_deleted = $19
+            s3_migrated_at = $18, local_deleted = $19,
+            wait_transcoding = $20,
+            channel_id = COALESCE($21::uuid, channel_id)
         WHERE id = $1 AND user_id = $15`
 
 	metadataJSON, err := json.Marshal(v.Metadata)
@@ -387,7 +396,7 @@ func (r *videoRepository) Update(ctx context.Context, v *domain.Video) error {
 		v.ID, v.Title, v.Description, v.Privacy,
 		pq.Array(v.Tags), v.CategoryID, v.Language,
 		v.Status, v.UpdatedAt, v.Duration, metadataJSON, outputPathsJSON, v.ThumbnailPath, v.PreviewPath, v.UserID,
-		s3URLsJSON, v.StorageTier, v.S3MigratedAt, v.LocalDeleted,
+		s3URLsJSON, v.StorageTier, v.S3MigratedAt, v.LocalDeleted, v.WaitTranscoding, channelIDParam,
 	)
 	if err != nil {
 		return domain.NewDomainError("UPDATE_FAILED", "Failed to update video")
