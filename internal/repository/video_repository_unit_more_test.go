@@ -586,20 +586,39 @@ func TestVideoRepository_Unit_ListAndSearch(t *testing.T) {
 		now := time.Now()
 		categoryID := uuid.New()
 		channelID := uuid.New()
+		durationMin := 60
+		durationMax := 600
+		publishedAfter := time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC)
+		publishedBefore := time.Date(2026, time.April, 30, 23, 59, 59, 0, time.UTC)
 
 		req := &domain.VideoSearchRequest{
-			Query:      "federation",
-			Tags:       []string{"go", "activitypub"},
-			CategoryID: &categoryID,
-			Language:   "en",
-			Sort:       "relevance",
-			Order:      "asc",
-			Limit:      5,
-			Offset:     2,
+			Query:           "federation",
+			Tags:            []string{"go", "activitypub"},
+			CategoryID:      &categoryID,
+			DurationMin:     &durationMin,
+			DurationMax:     &durationMax,
+			PublishedAfter:  &publishedAfter,
+			PublishedBefore: &publishedBefore,
+			Language:        "en",
+			Sort:            "relevance",
+			Order:           "asc",
+			Limit:           5,
+			Offset:          2,
 		}
 
 		mock.ExpectQuery(countPublicVideoQueryRegex).
-			WithArgs(req.Query, "%"+req.Query+"%", "%"+req.Query+"%", sqlmock.AnyArg(), req.CategoryID, req.Language).
+			WithArgs(
+				req.Query,
+				"%"+req.Query+"%",
+				"%"+req.Query+"%",
+				sqlmock.AnyArg(),
+				req.CategoryID,
+				durationMin,
+				durationMax,
+				publishedAfter,
+				publishedBefore,
+				req.Language,
+			).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 		mock.ExpectQuery(selectVideoFieldsRegex).WillReturnRows(newScanVideoRow(now, uuid.New().String(), channelID))
 		mock.ExpectQuery(selectChannelHydrationRegex).

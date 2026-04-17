@@ -10,6 +10,8 @@ import (
 	"time"
 
 	chi "github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 
 	"vidra-core/internal/domain"
 	"vidra-core/internal/repository"
@@ -287,6 +289,63 @@ func TestSearchVideos_SortsByRelevanceDateViewsAndDuration(t *testing.T) {
 	})
 }
 
+func TestSearchVideos_AppliesCategoryTagDurationAndDateFilters(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+	td := testutil.SetupTestDB(t)
+	if td == nil {
+		t.Skip("TestDB not available")
+		return
+	}
+
+	videoRepo := repository.NewVideoRepository(td.DB)
+	userRepo := repository.NewUserRepository(td.DB)
+	ctx := context.Background()
+	user := createTestUser(t, userRepo, ctx, "u_search_filters_"+time.Now().Format("150405"), "search-filters@example.com")
+	categoryID := lookupVideoCategoryIDBySlug(t, td.DB, "music")
+	baseTime := time.Date(2026, time.April, 17, 12, 0, 0, 0, time.UTC)
+	query := fmt.Sprintf("filters%d", time.Now().UnixNano())
+
+	match := createPublicSearchVideoWithOptions(t, videoRepo, ctx, user.ID, query+" match", baseTime, 120, 300, publicSearchVideoOptions{
+		Tags:       []string{"music", "indie"},
+		CategoryID: &categoryID,
+	})
+	createPublicSearchVideoWithOptions(t, videoRepo, ctx, user.ID, query+" wrong-category", baseTime, 120, 300, publicSearchVideoOptions{
+		Tags: []string{"music", "indie"},
+	})
+	createPublicSearchVideoWithOptions(t, videoRepo, ctx, user.ID, query+" wrong-tags", baseTime, 120, 300, publicSearchVideoOptions{
+		Tags:       []string{"gaming"},
+		CategoryID: &categoryID,
+	})
+	createPublicSearchVideoWithOptions(t, videoRepo, ctx, user.ID, query+" too-short", baseTime, 120, 120, publicSearchVideoOptions{
+		Tags:       []string{"music", "indie"},
+		CategoryID: &categoryID,
+	})
+	createPublicSearchVideoWithOptions(t, videoRepo, ctx, user.ID, query+" too-old", baseTime.AddDate(0, 0, -45), 120, 300, publicSearchVideoOptions{
+		Tags:       []string{"music", "indie"},
+		CategoryID: &categoryID,
+	})
+
+	startDate := baseTime.AddDate(0, 0, -7).Format(time.RFC3339)
+	requestURL := fmt.Sprintf(
+		"/api/v1/search/videos?search=%s&categoryOneOf=%s&tagsOneOf=indie&durationMin=240&durationMax=600&startDate=%s&count=10",
+		query,
+		categoryID.String(),
+		startDate,
+	)
+	results := searchVideosForTest(t, videoRepo, requestURL)
+	assertLeadingVideoIDs(t, results, match.ID)
+	if len(results) != 1 {
+		t.Fatalf("expected exactly one filtered result, got %d (%v)", len(results), results)
+	}
+}
+
+type publicSearchVideoOptions struct {
+	Tags       []string
+	CategoryID *uuid.UUID
+}
+
 func createPublicSearchVideo(
 	t *testing.T,
 	repo usecase.VideoRepository,
@@ -296,6 +355,20 @@ func createPublicSearchVideo(
 	uploadDate time.Time,
 	views int64,
 	duration int,
+) *domain.Video {
+	return createPublicSearchVideoWithOptions(t, repo, ctx, userID, title, uploadDate, views, duration, publicSearchVideoOptions{})
+}
+
+func createPublicSearchVideoWithOptions(
+	t *testing.T,
+	repo usecase.VideoRepository,
+	ctx context.Context,
+	userID string,
+	title string,
+	uploadDate time.Time,
+	views int64,
+	duration int,
+	options publicSearchVideoOptions,
 ) *domain.Video {
 	t.Helper()
 
@@ -310,6 +383,8 @@ func createPublicSearchVideo(
 		Duration:    duration,
 		CreatedAt:   uploadDate,
 		UpdatedAt:   uploadDate,
+		Tags:        options.Tags,
+		CategoryID:  options.CategoryID,
 	}
 
 	if err := repo.Create(ctx, video); err != nil {
@@ -317,6 +392,17 @@ func createPublicSearchVideo(
 	}
 
 	return video
+}
+
+func lookupVideoCategoryIDBySlug(t *testing.T, db *sqlx.DB, slug string) uuid.UUID {
+	t.Helper()
+
+	var categoryID uuid.UUID
+	if err := db.QueryRowContext(context.Background(), "SELECT id FROM video_categories WHERE slug = $1", slug).Scan(&categoryID); err != nil {
+		t.Fatalf("lookup category %q: %v", slug, err)
+	}
+
+	return categoryID
 }
 
 func searchVideosForTest(t *testing.T, repo usecase.VideoRepository, requestURL string) []*domain.Video {
