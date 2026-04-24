@@ -168,6 +168,7 @@ type Dependencies struct {
 	InstanceDiscovery        any
 	VideoCategoryUseCase     usecase.VideoCategoryUseCase
 	AnalyticsRepo            repository.AnalyticsRepository
+	VideoAnalyticsRepo       port.VideoAnalyticsRepository
 	ExportService            *ucanalytics.ExportService
 }
 
@@ -573,6 +574,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 	slog.Info("Analytics repository created")
 
 	videoAnalyticsRepo := repository.NewVideoAnalyticsRepository(app.DB)
+	deps.VideoAnalyticsRepo = videoAnalyticsRepo
 	deps.ExportService = ucanalytics.NewExportService(videoAnalyticsRepo, deps.VideoRepo, deps.ChannelRepo)
 	slog.Info("Analytics export service created")
 
@@ -892,6 +894,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		InstanceDiscovery:        deps.InstanceDiscovery,
 		VideoCategoryUseCase:     deps.VideoCategoryUseCase,
 		AnalyticsRepo:            deps.AnalyticsRepo,
+		VideoAnalyticsRepo:       deps.VideoAnalyticsRepo,
 		UserBlockRepo:            deps.UserBlockRepo,
 		AbuseMessageRepo:         deps.AbuseMessageRepo,
 		LiveStreamSessionRepo:    deps.LiveStreamSessionRepo,

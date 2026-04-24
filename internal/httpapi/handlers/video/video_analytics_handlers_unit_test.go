@@ -795,6 +795,33 @@ func TestGetChannelAnalytics_Success(t *testing.T) {
 	assert.Equal(t, float64(5000), resp["total_views"])
 }
 
+func TestGetChannelAnalytics_AcceptsIdURLParam(t *testing.T) {
+	// Route is registered as /channels/{id}/analytics — handler must read "id" too.
+	channelID := uuid.New()
+	mockService := &mockVideoAnalyticsService{
+		getChannelDailyAnalyticsRangeFunc: func(ctx context.Context, cid uuid.UUID, startDate, endDate time.Time) ([]*domain.ChannelDailyAnalytics, error) {
+			return []*domain.ChannelDailyAnalytics{}, nil
+		},
+		getChannelTotalViewsFunc: func(ctx context.Context, cid uuid.UUID) (int, error) {
+			return 42, nil
+		},
+	}
+	handler := NewVideoAnalyticsHandler(mockService)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/"+channelID.String()+"/analytics", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", channelID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handler.GetChannelAnalytics(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Equal(t, float64(42), resp["total_views"])
+}
+
 func TestGetChannelAnalytics_InvalidChannelID(t *testing.T) {
 	handler := NewVideoAnalyticsHandler(&mockVideoAnalyticsService{})
 

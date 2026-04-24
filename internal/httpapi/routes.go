@@ -43,6 +43,7 @@ import (
 	"vidra-core/internal/domain"
 	"vidra-core/internal/middleware"
 	"vidra-core/internal/obs"
+	ucanalytics "vidra-core/internal/usecase/analytics"
 	importuc "vidra-core/internal/usecase/import"
 )
 
@@ -382,6 +383,13 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/avatar", channelMediaHandlers.DeleteAvatar)
 					r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/banner", channelMediaHandlers.UploadBanner)
 					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/banner", channelMediaHandlers.DeleteBanner)
+				}
+
+				// Channel analytics (creator/admin access — handler enforces ownership).
+				if deps.VideoAnalyticsRepo != nil {
+					analyticsSvc := ucanalytics.NewService(deps.VideoAnalyticsRepo, deps.VideoRepo)
+					videoAnalyticsHandler := video.NewVideoAnalyticsHandler(analyticsSvc)
+					r.With(middleware.Auth(cfg.JWTSecret)).Get("/{id}/analytics", videoAnalyticsHandler.GetChannelAnalytics)
 				}
 			})
 		})

@@ -270,7 +270,11 @@ func (h *VideoAnalyticsHandler) GetActiveViewers(w http.ResponseWriter, r *http.
 }
 
 func (h *VideoAnalyticsHandler) GetChannelAnalytics(w http.ResponseWriter, r *http.Request) {
-	channelIDStr := chi.URLParam(r, "channelID")
+	// Accept both "id" (from /channels/{id}/analytics) and "channelID" (historical).
+	channelIDStr := chi.URLParam(r, "id")
+	if channelIDStr == "" {
+		channelIDStr = chi.URLParam(r, "channelID")
+	}
 	channelID, err := uuid.Parse(channelIDStr)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid channel ID", nil)

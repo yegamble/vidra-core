@@ -114,6 +114,7 @@ type HandlerDependencies struct {
 
 	VideoCategoryUseCase usecase.VideoCategoryUseCase
 	AnalyticsRepo        repository.AnalyticsRepository
+	VideoAnalyticsRepo   port.VideoAnalyticsRepository
 	AnalyticsCollector   any
 	ExportService        any // *ucanalytics.ExportService (handler defines its own interface)
 
