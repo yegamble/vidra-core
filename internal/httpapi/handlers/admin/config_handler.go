@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"vidra-core/internal/httpapi/shared"
 	"vidra-core/internal/middleware"
@@ -43,19 +44,57 @@ func (h *ConfigResetHandlers) DeleteCustomConfig(w http.ResponseWriter, r *http.
 }
 
 // customConfigBody is the request/response body for GET/PUT /api/v1/config/custom.
+// Mirrors the frontend InstanceConfig shape so the admin settings form round-trips
+// without silent field drops.
 type customConfigBody struct {
-	Instance customConfigInstance `json:"instance"`
-	Signup   customConfigSignup   `json:"signup"`
+	Instance    customConfigInstance    `json:"instance"`
+	Signup      customConfigSignup      `json:"signup"`
+	User        customConfigUser        `json:"user"`
+	Transcoding customConfigTranscoding `json:"transcoding"`
+	Live        customConfigLive        `json:"live"`
+	Import      customConfigImport      `json:"import"`
 }
 
 type customConfigInstance struct {
-	Name             string `json:"name"`
-	ShortDescription string `json:"shortDescription"`
-	Description      string `json:"description"`
-	IsNSFW           bool   `json:"isNSFW"`
+	Name              string `json:"name"`
+	ShortDescription  string `json:"shortDescription"`
+	Description       string `json:"description"`
+	Terms             string `json:"terms"`
+	IsNSFW            bool   `json:"isNSFW"`
+	DefaultNSFWPolicy string `json:"defaultNSFWPolicy"`
 }
 
 type customConfigSignup struct {
+	Enabled                   bool `json:"enabled"`
+	RequiresEmailVerification bool `json:"requiresEmailVerification"`
+	Limit                     int  `json:"limit"`
+}
+
+type customConfigUser struct {
+	VideoQuota      int64 `json:"videoQuota"`
+	VideoQuotaDaily int64 `json:"videoQuotaDaily"`
+}
+
+type customConfigTranscoding struct {
+	Enabled     bool            `json:"enabled"`
+	Resolutions map[string]bool `json:"resolutions"`
+}
+
+type customConfigLive struct {
+	Enabled     bool `json:"enabled"`
+	MaxDuration int  `json:"maxDuration"`
+}
+
+type customConfigImport struct {
+	Videos customConfigImportVideos `json:"videos"`
+}
+
+type customConfigImportVideos struct {
+	HTTP    customConfigImportTransport `json:"http"`
+	Torrent customConfigImportTransport `json:"torrent"`
+}
+
+type customConfigImportTransport struct {
 	Enabled bool `json:"enabled"`
 }
 
@@ -63,13 +102,49 @@ type customConfigSignup struct {
 func (h *ConfigResetHandlers) GetCustomConfig(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	cfg := customConfigBody{}
+
+	// Instance.
 	cfg.Instance.Name, _ = h.repo.GetConfigValue(ctx, "instance_name")
 	cfg.Instance.ShortDescription, _ = h.repo.GetConfigValue(ctx, "instance_short_description")
 	cfg.Instance.Description, _ = h.repo.GetConfigValue(ctx, "instance_description")
+	cfg.Instance.Terms, _ = h.repo.GetConfigValue(ctx, "instance_terms")
 	isNSFW, _ := h.repo.GetConfigValue(ctx, "instance_is_nsfw")
 	cfg.Instance.IsNSFW = isNSFW == "true"
+	defaultNSFW, _ := h.repo.GetConfigValue(ctx, "instance_default_nsfw_policy")
+	if defaultNSFW == "" {
+		defaultNSFW = "blur"
+	}
+	cfg.Instance.DefaultNSFWPolicy = defaultNSFW
+
+	// Signup.
 	signupEnabled, _ := h.repo.GetConfigValue(ctx, "signup_enabled")
 	cfg.Signup.Enabled = signupEnabled != "false"
+	requiresEmail, _ := h.repo.GetConfigValue(ctx, "signup_requires_email_verification")
+	cfg.Signup.RequiresEmailVerification = requiresEmail != "false"
+	signupLimit, _ := h.repo.GetConfigValue(ctx, "signup_limit")
+	cfg.Signup.Limit = parseIntOrDefault(signupLimit, 0)
+
+	// User quotas.
+	cfg.User.VideoQuota = parseInt64OrDefault(mustGet(h.repo, ctx, "user_video_quota"), 50)
+	cfg.User.VideoQuotaDaily = parseInt64OrDefault(mustGet(h.repo, ctx, "user_video_quota_daily"), -1)
+
+	// Transcoding.
+	transEnabled, _ := h.repo.GetConfigValue(ctx, "transcoding_enabled")
+	cfg.Transcoding.Enabled = transEnabled != "false"
+	resBlob, _ := h.repo.GetConfigValue(ctx, "transcoding_resolutions")
+	cfg.Transcoding.Resolutions = parseResolutionMap(resBlob)
+
+	// Live.
+	liveEnabled, _ := h.repo.GetConfigValue(ctx, "live_enabled")
+	cfg.Live.Enabled = liveEnabled != "false"
+	cfg.Live.MaxDuration = parseIntOrDefault(mustGet(h.repo, ctx, "live_max_duration"), -1)
+
+	// Import.
+	httpImport, _ := h.repo.GetConfigValue(ctx, "import_http_enabled")
+	cfg.Import.Videos.HTTP.Enabled = httpImport != "false"
+	torrentImport, _ := h.repo.GetConfigValue(ctx, "import_torrent_enabled")
+	cfg.Import.Videos.Torrent.Enabled = torrentImport == "true"
+
 	shared.WriteJSON(w, http.StatusOK, cfg)
 }
 
@@ -81,29 +156,105 @@ func (h *ConfigResetHandlers) UpdateCustomConfig(w http.ResponseWriter, r *http.
 		return
 	}
 	ctx := r.Context()
+
+	// Instance.
 	_ = h.repo.SetConfigValue(ctx, "instance_name", req.Instance.Name)
 	_ = h.repo.SetConfigValue(ctx, "instance_short_description", req.Instance.ShortDescription)
 	_ = h.repo.SetConfigValue(ctx, "instance_description", req.Instance.Description)
-	isNSFW := "false"
-	if req.Instance.IsNSFW {
-		isNSFW = "true"
+	_ = h.repo.SetConfigValue(ctx, "instance_terms", req.Instance.Terms)
+	_ = h.repo.SetConfigValue(ctx, "instance_is_nsfw", boolStr(req.Instance.IsNSFW))
+	if req.Instance.DefaultNSFWPolicy != "" {
+		_ = h.repo.SetConfigValue(ctx, "instance_default_nsfw_policy", req.Instance.DefaultNSFWPolicy)
 	}
-	_ = h.repo.SetConfigValue(ctx, "instance_is_nsfw", isNSFW)
-	signupEnabled := "true"
-	if !req.Signup.Enabled {
-		signupEnabled = "false"
+
+	// Signup.
+	_ = h.repo.SetConfigValue(ctx, "signup_enabled", boolStr(req.Signup.Enabled))
+	_ = h.repo.SetConfigValue(ctx, "signup_requires_email_verification", boolStr(req.Signup.RequiresEmailVerification))
+	_ = h.repo.SetConfigValue(ctx, "signup_limit", strconv.Itoa(req.Signup.Limit))
+
+	// User quotas.
+	_ = h.repo.SetConfigValue(ctx, "user_video_quota", strconv.FormatInt(req.User.VideoQuota, 10))
+	_ = h.repo.SetConfigValue(ctx, "user_video_quota_daily", strconv.FormatInt(req.User.VideoQuotaDaily, 10))
+
+	// Transcoding.
+	_ = h.repo.SetConfigValue(ctx, "transcoding_enabled", boolStr(req.Transcoding.Enabled))
+	if req.Transcoding.Resolutions == nil {
+		req.Transcoding.Resolutions = map[string]bool{}
 	}
-	_ = h.repo.SetConfigValue(ctx, "signup_enabled", signupEnabled)
+	resBlob, err := json.Marshal(req.Transcoding.Resolutions)
+	if err == nil {
+		_ = h.repo.SetConfigValue(ctx, "transcoding_resolutions", string(resBlob))
+	}
+
+	// Live.
+	_ = h.repo.SetConfigValue(ctx, "live_enabled", boolStr(req.Live.Enabled))
+	_ = h.repo.SetConfigValue(ctx, "live_max_duration", strconv.Itoa(req.Live.MaxDuration))
+
+	// Import.
+	_ = h.repo.SetConfigValue(ctx, "import_http_enabled", boolStr(req.Import.Videos.HTTP.Enabled))
+	_ = h.repo.SetConfigValue(ctx, "import_torrent_enabled", boolStr(req.Import.Videos.Torrent.Enabled))
 
 	if h.auditLogger != nil {
 		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		h.auditLogger.Update("config", userID, obs.NewConfigAuditView(map[string]interface{}{
-			"instance-name": req.Instance.Name,
-			"signup":        req.Signup.Enabled,
+			"instance-name":       req.Instance.Name,
+			"signup":              req.Signup.Enabled,
+			"transcoding-enabled": req.Transcoding.Enabled,
+			"live-enabled":        req.Live.Enabled,
+			"user-video-quota":    req.User.VideoQuota,
 		}), obs.NewConfigAuditView(map[string]interface{}{}))
 	}
 
 	shared.WriteJSON(w, http.StatusOK, req)
+}
+
+// boolStr returns the canonical string representation for a boolean config value.
+func boolStr(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
+}
+
+// parseIntOrDefault parses a string as int; returns def on empty/error.
+func parseIntOrDefault(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+// parseInt64OrDefault parses a string as int64; returns def on empty/error.
+func parseInt64OrDefault(s string, def int64) int64 {
+	if s == "" {
+		return def
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+// parseResolutionMap unmarshals the transcoding_resolutions JSON blob.
+// Returns an empty map if the blob is missing or malformed.
+func parseResolutionMap(blob string) map[string]bool {
+	result := map[string]bool{}
+	if blob == "" {
+		return result
+	}
+	_ = json.Unmarshal([]byte(blob), &result)
+	return result
+}
+
+// mustGet returns the value for key, ignoring errors (callers apply defaults).
+func mustGet(repo configResetRepo, ctx context.Context, key string) string {
+	v, _ := repo.GetConfigValue(ctx, key)
+	return v
 }
 
 // GetCustomHomepage handles GET /api/v1/custom-pages/homepage/instance.
