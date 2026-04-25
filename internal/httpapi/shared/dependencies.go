@@ -86,6 +86,10 @@ type HandlerDependencies struct {
 	CaptionGenService        captiongen.Service
 	TwoFAService             *usecase.TwoFAService
 	BTCPayService            *ucpayments.BTCPayService
+	LedgerService            *ucpayments.LedgerService
+	PaymentLedgerRepo        *repository.PaymentLedgerRepository
+	PayoutService            *ucpayments.PayoutService
+	PayoutRepo               *repository.PayoutRepository
 	SocialService            *usecase.SocialService
 	AtprotoService           usecase.AtprotoPublisher
 	FederationService        usecase.FederationService

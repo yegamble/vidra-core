@@ -156,6 +156,10 @@ type Dependencies struct {
 	EncodingService          ucenc.Service
 	ImportService            any
 	BTCPayService            *ucpayments.BTCPayService
+	LedgerService            *ucpayments.LedgerService
+	PaymentLedgerRepo        *repository.PaymentLedgerRepository
+	PayoutService            *ucpayments.PayoutService
+	PayoutRepo               *repository.PayoutRepository
 	StreamManager            *livestream.StreamManager
 	IPFSStreamingService     *ucipfs.Service
 	ChatServer               *chat.ChatServer
@@ -634,7 +638,31 @@ func (app *Application) initializeDependencies() *Dependencies {
 			btcpayClient,
 			app.Config.BTCPayWebhookSecret,
 		)
-		slog.Info("Bitcoin payment service initialized (BTCPay Server)")
+
+		// Phase 8 Task 2: wire LedgerService so settled-invoice webhooks write
+		// tip_in/tip_out entries + emit tip_received notifications.
+		ledgerRepo := repository.NewPaymentLedgerRepository(app.DB)
+		ledgerSvc := ucpayments.NewLedgerService(
+			ledgerRepo,
+			btcpayRepo,
+			ucpayments.NewRepoChannelLookup(deps.ChannelRepo),
+			ucpayments.NewRepoNotificationEmitter(deps.NotificationRepo),
+		)
+		deps.BTCPayService.SetLedgerService(ledgerSvc)
+		deps.PaymentLedgerRepo = ledgerRepo
+		deps.LedgerService = ledgerSvc
+
+		// Phase 8 Task 4: payout service.
+		payoutRepo := repository.NewPayoutRepository(app.DB)
+		deps.PayoutRepo = payoutRepo
+		deps.PayoutService = ucpayments.NewPayoutService(
+			payoutRepo,
+			ledgerRepo,
+			ucpayments.NewRepoNotificationEmitter(deps.NotificationRepo),
+			ucpayments.NewSQLAdminLister(app.DB),
+		)
+
+		slog.Info("Bitcoin payment service initialized (BTCPay Server + ledger + payouts)")
 	}
 
 	return deps

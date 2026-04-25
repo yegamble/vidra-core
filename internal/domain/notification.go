@@ -28,6 +28,22 @@ const (
 	NotificationNewMessage NotificationType = "new_message"
 	// NotificationMessageRead is sent when a message is read (optional, for read receipts)
 	NotificationMessageRead NotificationType = "message_read"
+
+	// Phase-8 payment notification types. See migration 097 for paper trail.
+	// NotificationTipReceived is sent to a channel owner when a tip invoice settles.
+	NotificationTipReceived NotificationType = "tip_received"
+	// NotificationPayoutPendingApproval is sent to admins when a creator requests a payout.
+	NotificationPayoutPendingApproval NotificationType = "payout_pending_approval"
+	// NotificationPayoutApproved is sent to the requester when an admin approves a payout.
+	NotificationPayoutApproved NotificationType = "payout_approved"
+	// NotificationPayoutCompleted is sent to the requester when admin marks a payout executed (records txid).
+	NotificationPayoutCompleted NotificationType = "payout_completed"
+	// NotificationPayoutRejected is sent to the requester when admin rejects a payout (with reason).
+	NotificationPayoutRejected NotificationType = "payout_rejected"
+	// NotificationPayoutReady is sent by the balance worker when a creator's balance first crosses MinPayoutSats.
+	NotificationPayoutReady NotificationType = "payout_ready"
+	// NotificationLowBalanceStuck is sent by the balance worker when a creator's balance > 0 < MinPayoutSats for >7d.
+	NotificationLowBalanceStuck NotificationType = "low_balance_stuck"
 )
 
 // Notification represents a user notification

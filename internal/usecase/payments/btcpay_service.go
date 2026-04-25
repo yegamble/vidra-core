@@ -22,6 +22,7 @@ type BTCPayService struct {
 	repo          *repository.BTCPayRepository
 	client        *payments.BTCPayClient
 	webhookSecret string
+	ledger        *LedgerService // optional — nil when ledger feature disabled
 }
 
 // NewBTCPayService creates a new BTCPay service.
@@ -31,6 +32,12 @@ func NewBTCPayService(repo *repository.BTCPayRepository, client *payments.BTCPay
 		client:        client,
 		webhookSecret: webhookSecret,
 	}
+}
+
+// SetLedgerService attaches the optional ledger service. When set, settled-invoice
+// webhooks write tip_in/tip_out ledger entries. Called once at startup in app.go.
+func (s *BTCPayService) SetLedgerService(l *LedgerService) {
+	s.ledger = l
 }
 
 // CreateInvoice creates a new payment invoice via BTCPay Server and stores it locally.
@@ -126,6 +133,20 @@ func (s *BTCPayService) ProcessWebhook(ctx context.Context, event *domain.BTCPay
 	}
 
 	slog.Info(fmt.Sprintf("BTCPay invoice %s updated to %s", event.InvoiceID, newStatus))
+
+	// On settlement, write ledger entries (tip_out / tip_in) via the ledger service.
+	// Idempotent via UNIQUE idempotency_key — webhook retries are safe.
+	if newStatus == domain.InvoiceStatusSettled && s.ledger != nil {
+		invoice, err := s.repo.GetInvoiceByBTCPayID(ctx, event.InvoiceID)
+		if err != nil {
+			slog.Error("ledger write: fetch invoice failed", "btcpay_id", event.InvoiceID, "err", err)
+			return nil // don't fail the webhook — status update already succeeded
+		}
+		if lerr := s.ledger.RecordInvoiceSettlement(ctx, invoice); lerr != nil {
+			slog.Error("ledger write: settlement recording failed", "invoice_id", invoice.ID, "err", lerr)
+		}
+	}
+
 	return nil
 }
 

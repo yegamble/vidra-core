@@ -447,6 +447,31 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 					r.Post("/invoices", btcpayHandler.CreateInvoice)
 					r.Get("/invoices", btcpayHandler.ListInvoices)
 					r.Get("/invoices/{id}", btcpayHandler.GetInvoice)
+
+					// Phase 8 Task 3 — wallet balance + transactions
+					if deps.PaymentLedgerRepo != nil {
+						walletHandler := payments.NewWalletHandler(deps.PaymentLedgerRepo)
+						r.Get("/wallet/balance", walletHandler.GetBalance)
+						r.Get("/wallet/transactions", walletHandler.GetTransactions)
+					}
+
+					// Phase 8 Task 4 — payout request lifecycle (creator side)
+					if deps.PayoutService != nil {
+						payoutHandler := payments.NewPayoutHandler(deps.PayoutService)
+						r.Post("/payouts", payoutHandler.Request)
+						r.Get("/payouts/me", payoutHandler.ListMine)
+						r.Delete("/payouts/{id}", payoutHandler.Cancel)
+
+						// Admin queue + transitions (admin role enforced)
+						adminPayoutHandler := payments.NewAdminPayoutHandler(deps.PayoutService)
+						r.Group(func(r chi.Router) {
+							r.Use(middleware.RequireRole(string(domain.RoleAdmin)))
+							r.Get("/admin/payouts", adminPayoutHandler.ListPending)
+							r.Patch("/admin/payouts/{id}/approve", adminPayoutHandler.Approve)
+							r.Patch("/admin/payouts/{id}/reject", adminPayoutHandler.Reject)
+							r.Patch("/admin/payouts/{id}/mark-executed", adminPayoutHandler.MarkExecuted)
+						})
+					}
 				})
 				r.Post("/webhooks/btcpay", btcpayHandler.WebhookCallback)
 			})
