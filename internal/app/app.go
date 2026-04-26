@@ -26,6 +26,7 @@ import (
 	"vidra-core/internal/domain"
 	"vidra-core/internal/email"
 	"vidra-core/internal/httpapi"
+	"vidra-core/internal/httpapi/handlers/debug"
 	"vidra-core/internal/httpapi/shared"
 	"vidra-core/internal/ipfs"
 	"vidra-core/internal/livestream"
@@ -975,6 +976,13 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 }
 
 func (app *Application) Start(ctx context.Context) error {
+	// Phase 8B Task 13: refuse to start when production env is paired
+	// with a debug-tagged binary. The build tag is the primary safeguard;
+	// this runtime check is defense in depth.
+	if debug.Enabled && strings.EqualFold(os.Getenv("ENV"), "production") {
+		return fmt.Errorf("debug endpoints compiled into production binary; refusing to start (build without -tags=debug)")
+	}
+
 	for _, s := range app.schedulers {
 		go s.Start(ctx)
 	}

@@ -23,6 +23,7 @@ import (
 	migrationhandlers "vidra-core/internal/httpapi/handlers/migration"
 	"vidra-core/internal/httpapi/handlers/misc"
 	"vidra-core/internal/httpapi/handlers/moderation"
+	"vidra-core/internal/httpapi/handlers/debug"
 	"vidra-core/internal/httpapi/handlers/payments"
 	"vidra-core/internal/httpapi/handlers/player"
 	pluginhandlers "vidra-core/internal/httpapi/handlers/plugin"
@@ -478,6 +479,15 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 					}
 				})
 				r.Post("/webhooks/btcpay", btcpayHandler.WebhookCallback)
+
+				// Phase 8B Task 13 — build-tag-gated debug endpoints.
+				// Non-debug builds: debug.RegisterDebugRoutes is a no-op stub.
+				// Debug builds (-tags=debug): mounts /debug/balance-worker/tick
+				// (admin-only via the existing RequireRole gate when cfg permits).
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireRole(string(domain.RoleAdmin)))
+					debug.RegisterDebugRoutes(r)
+				})
 			})
 		}
 
