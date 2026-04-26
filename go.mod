@@ -13,6 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.24
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.20.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.89.2
+	github.com/btcsuite/btcd v0.24.1-0.20240123000108-62e6af035ec5
 	github.com/dutchcoders/go-clamd v0.0.0-20170520113014-b970184f4d9e
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/go-playground/validator/v10 v10.25.0
@@ -24,6 +25,7 @@ require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
+	github.com/lightningnetwork/lnd v0.17.4-beta
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mssola/user_agent v0.6.0
 	github.com/nareix/joy4 v0.0.0-20200507095837-05a4ffbb5369
@@ -41,7 +43,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.40.0
 	go.opentelemetry.io/otel/trace v1.40.0
 	golang.org/x/crypto v0.36.0
-	golang.org/x/image v0.38.0
+	golang.org/x/image v0.39.0
 	golang.org/x/time v0.5.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
@@ -87,7 +89,6 @@ require (
 	github.com/bits-and-blooms/bitset v1.2.2 // indirect
 	github.com/boombuler/barcode v1.0.1 // indirect
 	github.com/bradfitz/iter v0.0.0-20191230175014-e8f45d346db8 // indirect
-	github.com/btcsuite/btcd v0.24.1-0.20240123000108-62e6af035ec5 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2 // indirect
 	github.com/btcsuite/btcd/btcutil v1.1.5 // indirect
 	github.com/btcsuite/btcd/btcutil/psbt v1.1.8 // indirect
@@ -132,7 +133,6 @@ require (
 	github.com/lightninglabs/gozmq v0.0.0-20191113021534-d20a764486bf // indirect
 	github.com/lightninglabs/neutrino v0.16.0 // indirect
 	github.com/lightninglabs/neutrino/cache v1.1.1 // indirect
-	github.com/lightningnetwork/lnd v0.17.4-beta // indirect
 	github.com/lightningnetwork/lnd/clock v1.1.1 // indirect
 	github.com/lightningnetwork/lnd/queue v1.1.1 // indirect
 	github.com/lightningnetwork/lnd/ticker v1.1.1 // indirect
@@ -191,7 +191,7 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.30.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.1.6 // indirect
