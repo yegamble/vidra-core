@@ -91,16 +91,40 @@ func TestBolt11DecodeHandler_NetworkParams(t *testing.T) {
 		{"mainnet", "mainnet"},
 		{"testnet", "testnet"},
 		{"regtest", "regtest"},
-		{"", "regtest"},        // default
+		{"", "regtest"},        // default (non-production)
 		{"unknown", "regtest"}, // invalid → default
 	}
 	for _, tc := range cases {
 		t.Run(tc.env, func(t *testing.T) {
 			t.Setenv("BITCOIN_NETWORK", tc.env)
-			_, label := networkParams()
+			t.Setenv("ENV", "")
+			_, label, err := networkParams()
+			assert.NoError(t, err)
 			assert.Equal(t, tc.expected, label)
 		})
 	}
+}
+
+func TestBolt11DecodeHandler_NetworkParams_ProductionRequiresExplicitNetwork(t *testing.T) {
+	// Per F06: production env must not silently fall back to regtest.
+	cases := []string{"", "regtest"}
+	for _, net := range cases {
+		t.Run("BITCOIN_NETWORK="+net, func(t *testing.T) {
+			t.Setenv("ENV", "production")
+			t.Setenv("BITCOIN_NETWORK", net)
+			_, _, err := networkParams()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "production")
+		})
+	}
+}
+
+func TestBolt11DecodeHandler_NetworkParams_ProductionAcceptsMainnet(t *testing.T) {
+	t.Setenv("ENV", "production")
+	t.Setenv("BITCOIN_NETWORK", "mainnet")
+	_, label, err := networkParams()
+	assert.NoError(t, err)
+	assert.Equal(t, "mainnet", label)
 }
 
 // Smoke test: handler accepts an empty context (no JWT middleware in unit test);

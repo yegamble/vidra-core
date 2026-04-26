@@ -44,16 +44,27 @@ type bolt11DecodeResponse struct {
 	Expired           bool   `json:"expired"`
 }
 
-func networkParams() (*chaincfg.Params, string) {
-	switch strings.ToLower(os.Getenv("BITCOIN_NETWORK")) {
+func networkParams() (*chaincfg.Params, string, error) {
+	net := strings.ToLower(os.Getenv("BITCOIN_NETWORK"))
+	env := strings.ToLower(os.Getenv("ENV"))
+
+	// Per spec-verify F06: never silently default to regtest in
+	// production. An unset/empty BITCOIN_NETWORK on a production deploy
+	// is a misconfiguration that would otherwise quietly accept regtest
+	// invoices when admins expect mainnet rejection.
+	if env == "production" && (net == "" || net == "regtest") {
+		return nil, "", fmt.Errorf("BITCOIN_NETWORK must be set to mainnet or testnet in production (got %q)", net)
+	}
+
+	switch net {
 	case "mainnet":
-		return &chaincfg.MainNetParams, "mainnet"
+		return &chaincfg.MainNetParams, "mainnet", nil
 	case "testnet":
-		return &chaincfg.TestNet3Params, "testnet"
+		return &chaincfg.TestNet3Params, "testnet", nil
 	case "regtest", "":
-		return &chaincfg.RegressionNetParams, "regtest"
+		return &chaincfg.RegressionNetParams, "regtest", nil
 	default:
-		return &chaincfg.RegressionNetParams, "regtest"
+		return &chaincfg.RegressionNetParams, "regtest", nil
 	}
 }
 
@@ -70,7 +81,11 @@ func (h *Bolt11DecodeHandler) Decode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params, networkLabel := networkParams()
+	params, networkLabel, netErr := networkParams()
+	if netErr != nil {
+		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("MISCONFIGURED_NETWORK", netErr.Error()))
+		return
+	}
 	inv, err := zpay32.Decode(bolt11, params)
 	if err != nil {
 		// Try to detect the more specific "wrong network" error by matching

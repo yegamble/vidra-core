@@ -477,17 +477,18 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 							r.Patch("/admin/payouts/{id}/mark-executed", adminPayoutHandler.MarkExecuted)
 						})
 					}
+
+					// Phase 8B Task 13 — build-tag-gated debug endpoints.
+					// Non-debug builds: debug.RegisterDebugRoutes is a no-op stub.
+					// Debug builds (-tags=debug): mounts /debug/balance-worker/tick.
+					// MUST be nested INSIDE the auth-protected group so RequireRole
+					// has UserIDKey populated (per spec-verify F01).
+					r.Group(func(r chi.Router) {
+						r.Use(middleware.RequireRole(string(domain.RoleAdmin)))
+						debug.RegisterDebugRoutes(r)
+					})
 				})
 				r.Post("/webhooks/btcpay", btcpayHandler.WebhookCallback)
-
-				// Phase 8B Task 13 — build-tag-gated debug endpoints.
-				// Non-debug builds: debug.RegisterDebugRoutes is a no-op stub.
-				// Debug builds (-tags=debug): mounts /debug/balance-worker/tick
-				// (admin-only via the existing RequireRole gate when cfg permits).
-				r.Group(func(r chi.Router) {
-					r.Use(middleware.RequireRole(string(domain.RoleAdmin)))
-					debug.RegisterDebugRoutes(r)
-				})
 			})
 		}
 

@@ -124,6 +124,15 @@ func (w *BalanceWorker) Start(ctx context.Context) {
 
 // RunOnce executes a single tick — visible for the build-tag-gated debug
 // endpoint (Task 13) and for unit tests.
+//
+// In multi-replica deployments (Phase 8C scale-out) every replica may
+// fire its initial tick simultaneously. Spec-verify F04 calls for an
+// advisory lock so only one replica processes a given tick at a time.
+// We use pg_try_advisory_lock (non-blocking) with a stable key derived
+// from "balance_worker_tick" — replicas that fail to acquire skip this
+// tick and try again on the next interval. Cooldown rows still
+// guarantee at-most-one notification per (user, type, 24h) regardless,
+// so the lock is correctness redundancy, not the primary safeguard.
 func (w *BalanceWorker) RunOnce(ctx context.Context) error {
 	if w.cfg == nil {
 		return fmt.Errorf("balance worker has no PaymentConfigSource")
@@ -131,6 +140,20 @@ func (w *BalanceWorker) RunOnce(ctx context.Context) error {
 	minSats := w.cfg.MinPayoutSats()
 	if minSats <= 0 {
 		return fmt.Errorf("min_payout_sats must be > 0, got %d", minSats)
+	}
+
+	if w.db != nil {
+		var acquired bool
+		if err := w.db.GetContext(ctx, &acquired,
+			`SELECT pg_try_advisory_lock(hashtextextended('balance_worker_tick', 0))`,
+		); err == nil && !acquired {
+			slog.Debug("balance worker: advisory lock unavailable; another replica is ticking")
+			return nil
+		}
+		defer func() {
+			_, _ = w.db.ExecContext(context.Background(),
+				`SELECT pg_advisory_unlock(hashtextextended('balance_worker_tick', 0))`)
+		}()
 	}
 
 	users, err := w.candidateUsers(ctx)
