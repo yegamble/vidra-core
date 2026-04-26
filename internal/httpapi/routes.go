@@ -448,6 +448,10 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 					r.Get("/invoices", btcpayHandler.ListInvoices)
 					r.Get("/invoices/{id}", btcpayHandler.GetInvoice)
 
+					// Phase 8B Task 9 — backend BOLT11 decode (auth-gated, not admin)
+					bolt11Handler := payments.NewBolt11DecodeHandler()
+					r.Post("/bolt11/decode", bolt11Handler.Decode)
+
 					// Phase 8 Task 3 — wallet balance + transactions
 					if deps.PaymentLedgerRepo != nil {
 						walletHandler := payments.NewWalletHandler(deps.PaymentLedgerRepo)
