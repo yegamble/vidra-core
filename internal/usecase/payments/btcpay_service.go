@@ -41,7 +41,14 @@ func (s *BTCPayService) SetLedgerService(l *LedgerService) {
 }
 
 // CreateInvoice creates a new payment invoice via BTCPay Server and stores it locally.
-func (s *BTCPayService) CreateInvoice(ctx context.Context, userID string, amountSats int64, currency string, metadata map[string]interface{}) (*domain.BTCPayInvoice, error) {
+//
+// paymentMethod is one of "" / "on_chain" / "lightning" / "both". Empty/"on_chain"
+// preserves the legacy single-method behavior. "lightning" and "both" enable the
+// BTCPay Lightning payment method on the invoice and populate the returned
+// invoice's LightningInvoice / LightningExpiresAt fields when BTCPay surfaces
+// them. The LN destination is stored on BTCPay Server only (no DB column);
+// callers re-fetch via GetInvoicePaymentMethods if they need it later.
+func (s *BTCPayService) CreateInvoice(ctx context.Context, userID string, amountSats int64, currency string, paymentMethod string, metadata map[string]interface{}) (*domain.BTCPayInvoice, error) {
 	if amountSats <= 0 {
 		return nil, domain.ErrInvalidAmount
 	}
@@ -53,13 +60,16 @@ func (s *BTCPayService) CreateInvoice(ctx context.Context, userID string, amount
 	// Convert sats to BTC for the API (1 BTC = 100,000,000 sats)
 	amountBTC := float64(amountSats) / 100_000_000
 
+	checkout := &payments.InvoiceCheckout{
+		ExpirationMinutes: 15,
+		PaymentMethods:    payments.PaymentMethodsForRequest(paymentMethod),
+	}
+
 	resp, err := s.client.CreateInvoice(ctx, &payments.CreateInvoiceRequest{
 		Amount:   amountBTC,
 		Currency: currency,
 		Metadata: metadata,
-		Checkout: &payments.InvoiceCheckout{
-			ExpirationMinutes: 15,
-		},
+		Checkout: checkout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating BTCPay invoice: %w", err)
@@ -83,7 +93,36 @@ func (s *BTCPayService) CreateInvoice(ctx context.Context, userID string, amount
 		return nil, fmt.Errorf("storing invoice: %w", err)
 	}
 
+	// Populate Lightning fields when the caller asked for LN. Best-effort —
+	// failures here do NOT roll back the invoice (on-chain still works).
+	if paymentMethod == "lightning" || paymentMethod == "both" {
+		s.attachLightningFields(ctx, invoice)
+	}
+
 	return invoice, nil
+}
+
+// attachLightningFields fetches per-method payment data from BTCPay and copies
+// the Lightning destination + expiry onto the invoice in-place. Called after
+// CreateInvoice when the caller requested LN. Any error is logged and swallowed
+// — the invoice still works for on-chain.
+func (s *BTCPayService) attachLightningFields(ctx context.Context, inv *domain.BTCPayInvoice) {
+	methods, err := s.client.GetInvoicePaymentMethods(ctx, inv.BTCPayInvoiceID)
+	if err != nil {
+		slog.Warn("attachLightningFields: GetInvoicePaymentMethods failed", "invoice_id", inv.BTCPayInvoiceID, "err", err)
+		return
+	}
+	ln := payments.FindLightningMethod(methods)
+	if ln == nil {
+		slog.Info("attachLightningFields: no activated LN method on invoice", "invoice_id", inv.BTCPayInvoiceID)
+		return
+	}
+	bolt11 := ln.Destination
+	inv.LightningInvoice = &bolt11
+	// BTCPay does not expose a per-method expiry on the payment-methods
+	// endpoint; LN invoices inherit the invoice-level expiry. Reuse it.
+	expires := inv.ExpiresAt
+	inv.LightningExpiresAt = &expires
 }
 
 // GetInvoice retrieves an invoice by its internal ID.

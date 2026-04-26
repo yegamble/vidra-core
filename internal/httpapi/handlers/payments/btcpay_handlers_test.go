@@ -60,6 +60,27 @@ func TestBTCPayHandler_CreateInvoice_InvalidAmount(t *testing.T) {
 	assert.Equal(t, "INVALID_AMOUNT", envelope.Error.Code)
 }
 
+func TestBTCPayHandler_CreateInvoice_InvalidPaymentMethod(t *testing.T) {
+	handler := NewBTCPayHandler(nil)
+
+	ctx := context.WithValue(context.Background(), middleware.UserIDKey, "user-1")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/invoices",
+		strings.NewReader(`{"amount_sats": 1000, "payment_method": "telepathy"}`)).WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	handler.CreateInvoice(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.NewDecoder(w.Body).Decode(&envelope)
+	assert.Equal(t, "INVALID_PAYMENT_METHOD", envelope.Error.Code)
+}
+
 func TestBTCPayHandler_GetInvoice_Unauthorized(t *testing.T) {
 	handler := NewBTCPayHandler(nil)
 

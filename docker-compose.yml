@@ -143,6 +143,8 @@ services:
         server=1
         txindex=1
         fallbackfee=0.00001
+        zmqpubrawblock=tcp://0.0.0.0:28332
+        zmqpubrawtx=tcp://0.0.0.0:28333
     volumes:
       - bitcoin_data:/data
     healthcheck:
@@ -150,6 +152,48 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 30s
+    networks:
+      - vidra-network
+
+  # Lightning Network Daemon (regtest) — provides BOLT11 invoices to BTCPay.
+  # BTCPay connects via gRPC at lnd:10009 with the macaroon + TLS cert
+  # extracted by scripts/lnd-bootstrap.sh.
+  # REST: 18080 (host) → 8080 (container). gRPC: container-internal only.
+  lnd:
+    profiles: ["bitcoin", "full"]
+    image: lightninglabs/lnd:v0.17.4-beta
+    restart: on-failure:3
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    environment:
+      NETWORK: regtest
+    command:
+      - --bitcoin.active
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=bitcoind:18443
+      - --bitcoind.rpcuser=vidra
+      - --bitcoind.rpcpass=vidra
+      - --bitcoind.zmqpubrawblock=tcp://bitcoind:28332
+      - --bitcoind.zmqpubrawtx=tcp://bitcoind:28333
+      - --rpclisten=0.0.0.0:10009
+      - --restlisten=0.0.0.0:8080
+      - --alias=vidra-dev-lnd
+      - --tlsextraip=lnd
+      - --tlsextradomain=lnd
+      - --no-macaroons=false
+      - --debuglevel=info
+    ports:
+      - "18080:8080"
+    volumes:
+      - lnd_data:/root/.lnd
+    healthcheck:
+      test: ["CMD-SHELL", "lncli --network=regtest getinfo >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
       start_period: 30s
     networks:
       - vidra-network
@@ -750,6 +794,8 @@ volumes:
   whisper_models:
     driver: local
   bitcoin_data:
+    driver: local
+  lnd_data:
     driver: local
   clamav_signatures:
     driver: local

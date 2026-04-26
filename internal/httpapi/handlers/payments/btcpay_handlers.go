@@ -33,9 +33,10 @@ func (h *BTCPayHandler) CreateInvoice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AmountSats int64                  `json:"amount_sats"`
-		Currency   string                 `json:"currency,omitempty"`
-		Metadata   map[string]interface{} `json:"metadata,omitempty"`
+		AmountSats    int64                  `json:"amount_sats"`
+		Currency      string                 `json:"currency,omitempty"`
+		PaymentMethod string                 `json:"payment_method,omitempty"`
+		Metadata      map[string]interface{} `json:"metadata,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -48,7 +49,15 @@ func (h *BTCPayHandler) CreateInvoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	invoice, err := h.service.CreateInvoice(r.Context(), userID, req.AmountSats, req.Currency, req.Metadata)
+	switch req.PaymentMethod {
+	case "", "on_chain", "lightning", "both":
+		// valid
+	default:
+		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_PAYMENT_METHOD", "payment_method must be one of: on_chain, lightning, both"))
+		return
+	}
+
+	invoice, err := h.service.CreateInvoice(r.Context(), userID, req.AmountSats, req.Currency, req.PaymentMethod, req.Metadata)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("CREATE_INVOICE_FAILED", "Failed to create invoice"))
 		return

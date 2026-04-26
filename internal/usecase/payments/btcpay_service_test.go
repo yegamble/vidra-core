@@ -15,10 +15,10 @@ import (
 func TestBTCPayService_CreateInvoice_InvalidAmount(t *testing.T) {
 	svc := NewBTCPayService(nil, nil, "")
 
-	_, err := svc.CreateInvoice(context.Background(), "user-1", 0, "BTC", nil)
+	_, err := svc.CreateInvoice(context.Background(), "user-1", 0, "BTC", "", nil)
 	assert.ErrorIs(t, err, domain.ErrInvalidAmount)
 
-	_, err = svc.CreateInvoice(context.Background(), "user-1", -100, "BTC", nil)
+	_, err = svc.CreateInvoice(context.Background(), "user-1", -100, "BTC", "", nil)
 	assert.ErrorIs(t, err, domain.ErrInvalidAmount)
 }
 

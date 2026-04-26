@@ -41,8 +41,36 @@ type CreateInvoiceRequest struct {
 }
 
 // InvoiceCheckout configures checkout behavior.
+//
+// PaymentMethods is the list of payment methods to enable on the invoice.
+// Valid values are "BTC" (on-chain) and "BTC-LightningNetwork" (Lightning).
+// When omitted/empty, BTCPay defaults to whatever the store has enabled
+// (callers that want explicit on-chain-only behavior should pass ["BTC"]).
 type InvoiceCheckout struct {
-	ExpirationMinutes int `json:"expirationMinutes,omitempty"`
+	ExpirationMinutes int      `json:"expirationMinutes,omitempty"`
+	PaymentMethods    []string `json:"paymentMethods,omitempty"`
+}
+
+// PaymentMethod identifiers used in BTCPay Greenfield checkout config.
+const (
+	PaymentMethodOnChain   = "BTC"
+	PaymentMethodLightning = "BTC-LightningNetwork"
+)
+
+// InvoicePaymentMethod represents a per-method payment record on a BTCPay invoice,
+// returned by GET /invoices/{id}/payment-methods.
+type InvoicePaymentMethod struct {
+	PaymentMethod         string `json:"paymentMethod"`
+	Destination           string `json:"destination"`
+	PaymentLink           string `json:"paymentLink,omitempty"`
+	Rate                  string `json:"rate,omitempty"`
+	PaymentMethodPaid     string `json:"paymentMethodPaid,omitempty"`
+	TotalPaid             string `json:"totalPaid,omitempty"`
+	Due                   string `json:"due,omitempty"`
+	Amount                string `json:"amount,omitempty"`
+	NetworkFee            string `json:"networkFee,omitempty"`
+	PaymentMethodFee      string `json:"paymentMethodFee,omitempty"`
+	Activated             bool   `json:"activated"`
 }
 
 // BTCPayInvoiceResponse is the response from BTCPay Server when creating or getting an invoice.
@@ -151,6 +179,40 @@ func (c *BTCPayClient) ListInvoices(ctx context.Context) ([]BTCPayInvoiceRespons
 	}
 
 	return invoices, nil
+}
+
+// GetInvoicePaymentMethods returns the per-method payment records for an invoice.
+// Each record contains the destination (bech32 address for on-chain, BOLT11 string
+// for Lightning), the activation state, and per-method amount/fees.
+func (c *BTCPayClient) GetInvoicePaymentMethods(ctx context.Context, invoiceID string) ([]InvoicePaymentMethod, error) {
+	url := fmt.Sprintf("%s/api/v1/stores/%s/invoices/%s/payment-methods", c.baseURL, c.storeID, invoiceID)
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating HTTP request: %w", err)
+	}
+	c.setHeaders(httpReq)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", domain.ErrBTCPayUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, domain.ErrInvoiceNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("BTCPay returned HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var methods []InvoicePaymentMethod
+	if err := json.NewDecoder(resp.Body).Decode(&methods); err != nil {
+		return nil, fmt.Errorf("decoding payment methods response: %w", err)
+	}
+
+	return methods, nil
 }
 
 // CheckHealth checks if BTCPay Server is reachable.
