@@ -160,6 +160,7 @@ type Dependencies struct {
 	PaymentLedgerRepo        *repository.PaymentLedgerRepository
 	PayoutService            *ucpayments.PayoutService
 	PayoutRepo               *repository.PayoutRepository
+	BalanceWorker            *ucpayments.BalanceWorker
 	StreamManager            *livestream.StreamManager
 	IPFSStreamingService     *ucipfs.Service
 	ChatServer               *chat.ChatServer
@@ -662,7 +663,19 @@ func (app *Application) initializeDependencies() *Dependencies {
 			ucpayments.NewSQLAdminLister(app.DB),
 		)
 
-		slog.Info("Bitcoin payment service initialized (BTCPay Server + ledger + payouts)")
+		// Phase 8B Task 11: balance worker (payout_ready + low_balance_stuck).
+		cooldownsRepo := repository.NewPaymentNotificationCooldownsRepository(app.DB)
+		lowBalanceRepo := repository.NewUserLowBalanceStateRepository(app.DB)
+		deps.BalanceWorker = ucpayments.NewBalanceWorker(
+			app.DB,
+			ledgerRepo,
+			cooldownsRepo,
+			lowBalanceRepo,
+			ucpayments.NewRepoNotificationEmitter(deps.NotificationRepo),
+			ucpayments.NewStaticConfig(50_000),
+		)
+
+		slog.Info("Bitcoin payment service initialized (BTCPay Server + ledger + payouts + balance worker)")
 	}
 
 	return deps
@@ -964,6 +977,13 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 func (app *Application) Start(ctx context.Context) error {
 	for _, s := range app.schedulers {
 		go s.Start(ctx)
+	}
+
+	// Phase 8B Task 11: balance worker (payout_ready + low_balance_stuck).
+	// Started here alongside other long-running schedulers so SIGTERM-driven
+	// ctx cancellation triggers a clean shutdown.
+	if app.Dependencies != nil && app.Dependencies.BalanceWorker != nil {
+		go app.Dependencies.BalanceWorker.Start(ctx)
 	}
 
 	if app.Config.EnableLiveStreaming && app.rtmpServer != nil {
