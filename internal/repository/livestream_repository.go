@@ -38,6 +38,7 @@ type LiveStreamRepository interface {
 	EndStream(ctx context.Context, id uuid.UUID) error
 	GetChannelByStreamID(ctx context.Context, streamID uuid.UUID) (*domain.Channel, error)
 	UpdateWaitingRoom(ctx context.Context, streamID uuid.UUID, enabled bool, message string) error
+	SetSlowMode(ctx context.Context, streamID uuid.UUID, seconds int) error
 	ScheduleStream(ctx context.Context, streamID uuid.UUID, params ScheduleStreamParams) error
 	CancelSchedule(ctx context.Context, streamID uuid.UUID) error
 	GetScheduledStreams(ctx context.Context, limit, offset int) ([]*domain.LiveStream, error)
@@ -80,12 +81,14 @@ func liveStreamSelectColumns(prefix string) string {
 		COALESCE(%swaiting_room_message, '') AS waiting_room_message,
 		%sreminder_sent,
 		%schat_enabled,
+		%sslow_mode_seconds,
 		%screated_at,
 		%supdated_at
 	`,
 		prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix,
 		prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix,
 		prefix, prefix, prefix, prefix, prefix, prefix, prefix, prefix,
+		prefix,
 	)
 }
 
@@ -345,6 +348,26 @@ func (r *liveStreamRepository) UpdateWaitingRoom(ctx context.Context, streamID u
 	result, err := r.db.ExecContext(ctx, query, streamID, enabled, message)
 	if err != nil {
 		return fmt.Errorf("failed to update waiting room: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrStreamNotFound
+	}
+	return nil
+}
+
+func (r *liveStreamRepository) SetSlowMode(ctx context.Context, streamID uuid.UUID, seconds int) error {
+	query := `
+		UPDATE live_streams
+		SET slow_mode_seconds = $2, updated_at = NOW()
+		WHERE id = $1
+	`
+	result, err := r.db.ExecContext(ctx, query, streamID, seconds)
+	if err != nil {
+		return fmt.Errorf("failed to set slow mode: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {

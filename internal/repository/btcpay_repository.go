@@ -74,6 +74,29 @@ func (r *BTCPayRepository) GetInvoicesByUser(ctx context.Context, userID string,
 	return invoices, nil
 }
 
+// MarkInvoiceSystemMessageBroadcast atomically sets the broadcast marker on an invoice. It
+// uses a conditional update so the FIRST caller wins; subsequent callers see rows=0 and
+// receive ErrInvoiceAlreadyBroadcast (the replay-protection signal). The invoice must already
+// be settled — the handler enforces that separately by reading the row first.
+func (r *BTCPayRepository) MarkInvoiceSystemMessageBroadcast(ctx context.Context, invoiceID string) error {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE btcpay_invoices
+		 SET system_message_broadcast_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND system_message_broadcast_at IS NULL`,
+		invoiceID,
+	)
+	if err != nil {
+		return fmt.Errorf("marking invoice system_message_broadcast_at: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		// Either the invoice doesn't exist OR the marker is already set. The caller fetched
+		// the invoice before calling so the "already broadcast" interpretation is correct.
+		return domain.ErrInvoiceAlreadyBroadcast
+	}
+	return nil
+}
+
 // UpdateInvoiceStatus updates the status of an invoice.
 func (r *BTCPayRepository) UpdateInvoiceStatus(ctx context.Context, btcpayID string, status domain.InvoiceStatus) error {
 	result, err := r.db.ExecContext(ctx,

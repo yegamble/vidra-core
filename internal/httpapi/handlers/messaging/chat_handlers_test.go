@@ -639,3 +639,306 @@ func TestChatHandlers_GetChatMessages_PrivateStreamNonSubscriberDenied(t *testin
 	mockStreamRepo.AssertExpectations(t)
 	mockSubscriptionRepo.AssertExpectations(t)
 }
+
+// fakeInvoiceRepo is the seam for the system-message handler tests. The real BTCPayRepository
+// hits a database; for unit tests we want explicit control over which invoice the lookup
+// returns and whether the conditional UPDATE wins.
+type fakeInvoiceRepo struct {
+	getByID    func(ctx context.Context, id string) (*domain.BTCPayInvoice, error)
+	markCalled int
+	markErr    error
+}
+
+func (f *fakeInvoiceRepo) GetInvoiceByID(ctx context.Context, id string) (*domain.BTCPayInvoice, error) {
+	return f.getByID(ctx, id)
+}
+
+func (f *fakeInvoiceRepo) MarkInvoiceSystemMessageBroadcast(_ context.Context, _ string) error {
+	f.markCalled++
+	return f.markErr
+}
+
+// systemMessageRequest builds the JSON body for the broadcast endpoint.
+func systemMessageRequest(invoiceID string) []byte {
+	body, _ := json.Marshal(map[string]string{"invoice_id": invoiceID})
+	return body
+}
+
+func TestChatHandlers_BroadcastTipSystemMessage_HappyPath(t *testing.T) {
+	handlers, _, mockStreamRepo, mockUserRepo, _ := setupChatHandlerTest(t)
+
+	streamID := uuid.New()
+	channelID := uuid.New()
+	callerID := uuid.New()
+	invoiceID := uuid.NewString()
+
+	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
+		ID:        streamID,
+		ChannelID: channelID,
+	}, nil)
+	mockUserRepo.On("GetByID", mock.Anything, callerID.String()).Return(&domain.User{
+		ID:       callerID.String(),
+		Username: "alice",
+	}, nil)
+
+	meta, _ := json.Marshal(map[string]string{"type": "tip", "channel_id": channelID.String()})
+	repo := &fakeInvoiceRepo{
+		getByID: func(_ context.Context, id string) (*domain.BTCPayInvoice, error) {
+			require.Equal(t, invoiceID, id)
+			return &domain.BTCPayInvoice{
+				ID:         invoiceID,
+				UserID:     callerID.String(),
+				AmountSats: 1000,
+				Status:     domain.InvoiceStatusSettled,
+				Metadata:   meta,
+			}, nil
+		},
+	}
+	handlers.SetInvoiceRepo(repo)
+
+	req := httptest.NewRequest("POST", "/api/v1/streams/"+streamID.String()+"/chat/system-message",
+		bytes.NewReader(systemMessageRequest(invoiceID)))
+	w := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("streamId", streamID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withUserContext(req.Context(), callerID))
+
+	handlers.BroadcastTipSystemMessage(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "alice")
+	assert.Contains(t, w.Body.String(), "1000 sat")
+	assert.Equal(t, 1, repo.markCalled)
+}
+
+func TestChatHandlers_BroadcastTipSystemMessage_RejectsAlienInvoice(t *testing.T) {
+	handlers, _, _, _, _ := setupChatHandlerTest(t)
+
+	callerID := uuid.New()
+	otherUserID := uuid.New()
+	streamID := uuid.New()
+	invoiceID := uuid.NewString()
+
+	repo := &fakeInvoiceRepo{
+		getByID: func(_ context.Context, _ string) (*domain.BTCPayInvoice, error) {
+			return &domain.BTCPayInvoice{
+				ID:     invoiceID,
+				UserID: otherUserID.String(),
+				Status: domain.InvoiceStatusSettled,
+			}, nil
+		},
+	}
+	handlers.SetInvoiceRepo(repo)
+
+	req := httptest.NewRequest("POST", "/api/v1/streams/"+streamID.String()+"/chat/system-message",
+		bytes.NewReader(systemMessageRequest(invoiceID)))
+	w := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("streamId", streamID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withUserContext(req.Context(), callerID))
+
+	handlers.BroadcastTipSystemMessage(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, 0, repo.markCalled)
+}
+
+func TestChatHandlers_BroadcastTipSystemMessage_RejectsUnsettledInvoice(t *testing.T) {
+	handlers, _, _, _, _ := setupChatHandlerTest(t)
+
+	callerID := uuid.New()
+	streamID := uuid.New()
+	invoiceID := uuid.NewString()
+
+	repo := &fakeInvoiceRepo{
+		getByID: func(_ context.Context, _ string) (*domain.BTCPayInvoice, error) {
+			return &domain.BTCPayInvoice{
+				ID:     invoiceID,
+				UserID: callerID.String(),
+				Status: domain.InvoiceStatusProcessing,
+			}, nil
+		},
+	}
+	handlers.SetInvoiceRepo(repo)
+
+	req := httptest.NewRequest("POST", "/api/v1/streams/"+streamID.String()+"/chat/system-message",
+		bytes.NewReader(systemMessageRequest(invoiceID)))
+	w := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("streamId", streamID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withUserContext(req.Context(), callerID))
+
+	handlers.BroadcastTipSystemMessage(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, 0, repo.markCalled)
+}
+
+func TestChatHandlers_BroadcastTipSystemMessage_RejectsChannelMismatch(t *testing.T) {
+	handlers, _, mockStreamRepo, _, _ := setupChatHandlerTest(t)
+
+	callerID := uuid.New()
+	streamID := uuid.New()
+	streamChannelID := uuid.New()
+	invoiceChannelID := uuid.New()
+	invoiceID := uuid.NewString()
+
+	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
+		ID:        streamID,
+		ChannelID: streamChannelID,
+	}, nil)
+
+	meta, _ := json.Marshal(map[string]string{"type": "tip", "channel_id": invoiceChannelID.String()})
+	repo := &fakeInvoiceRepo{
+		getByID: func(_ context.Context, _ string) (*domain.BTCPayInvoice, error) {
+			return &domain.BTCPayInvoice{
+				ID:         invoiceID,
+				UserID:     callerID.String(),
+				AmountSats: 500,
+				Status:     domain.InvoiceStatusSettled,
+				Metadata:   meta,
+			}, nil
+		},
+	}
+	handlers.SetInvoiceRepo(repo)
+
+	req := httptest.NewRequest("POST", "/api/v1/streams/"+streamID.String()+"/chat/system-message",
+		bytes.NewReader(systemMessageRequest(invoiceID)))
+	w := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("streamId", streamID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withUserContext(req.Context(), callerID))
+
+	handlers.BroadcastTipSystemMessage(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, 0, repo.markCalled)
+}
+
+func TestChatHandlers_BroadcastTipSystemMessage_RejectsReplay(t *testing.T) {
+	handlers, _, mockStreamRepo, mockUserRepo, _ := setupChatHandlerTest(t)
+
+	streamID := uuid.New()
+	channelID := uuid.New()
+	callerID := uuid.New()
+	invoiceID := uuid.NewString()
+
+	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{
+		ID:        streamID,
+		ChannelID: channelID,
+	}, nil)
+	mockUserRepo.On("GetByID", mock.Anything, callerID.String()).Return(&domain.User{
+		ID:       callerID.String(),
+		Username: "alice",
+	}, nil).Maybe()
+
+	meta, _ := json.Marshal(map[string]string{"type": "tip", "channel_id": channelID.String()})
+	repo := &fakeInvoiceRepo{
+		getByID: func(_ context.Context, _ string) (*domain.BTCPayInvoice, error) {
+			return &domain.BTCPayInvoice{
+				ID:         invoiceID,
+				UserID:     callerID.String(),
+				AmountSats: 100,
+				Status:     domain.InvoiceStatusSettled,
+				Metadata:   meta,
+			}, nil
+		},
+		markErr: domain.ErrInvoiceAlreadyBroadcast,
+	}
+	handlers.SetInvoiceRepo(repo)
+
+	req := httptest.NewRequest("POST", "/api/v1/streams/"+streamID.String()+"/chat/system-message",
+		bytes.NewReader(systemMessageRequest(invoiceID)))
+	w := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("streamId", streamID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withUserContext(req.Context(), callerID))
+
+	handlers.BroadcastTipSystemMessage(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, 1, repo.markCalled)
+}
+
+func TestChatHandlers_SetSlowMode_AsModerator(t *testing.T) {
+	handlers, mockChatRepo, mockStreamRepo, _, _ := setupChatHandlerTest(t)
+
+	streamID := uuid.New()
+	moderatorID := uuid.New()
+	ownerID := uuid.New()
+
+	mockChatRepo.On("IsModerator", mock.Anything, streamID, moderatorID).Return(true, nil)
+	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{ID: streamID, UserID: ownerID}, nil).Maybe()
+	mockStreamRepo.On("SetSlowMode", mock.Anything, streamID, 30).Return(nil)
+
+	body, _ := json.Marshal(map[string]int{"seconds": 30})
+	req := httptest.NewRequest("PUT", "/api/v1/streams/"+streamID.String()+"/chat/slow-mode", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("streamId", streamID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withUserContext(req.Context(), moderatorID))
+
+	handlers.SetSlowMode(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	mockStreamRepo.AssertExpectations(t)
+	mockChatRepo.AssertExpectations(t)
+}
+
+func TestChatHandlers_SetSlowMode_NonModeratorForbidden(t *testing.T) {
+	handlers, mockChatRepo, mockStreamRepo, _, _ := setupChatHandlerTest(t)
+
+	streamID := uuid.New()
+	userID := uuid.New()
+	ownerID := uuid.New()
+
+	mockChatRepo.On("IsModerator", mock.Anything, streamID, userID).Return(false, nil)
+	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{ID: streamID, UserID: ownerID}, nil)
+
+	body, _ := json.Marshal(map[string]int{"seconds": 10})
+	req := httptest.NewRequest("PUT", "/api/v1/streams/"+streamID.String()+"/chat/slow-mode", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("streamId", streamID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withUserContext(req.Context(), userID))
+
+	handlers.SetSlowMode(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestChatHandlers_SetSlowMode_RejectsOutOfRange(t *testing.T) {
+	handlers, mockChatRepo, mockStreamRepo, _, _ := setupChatHandlerTest(t)
+
+	streamID := uuid.New()
+	moderatorID := uuid.New()
+
+	mockChatRepo.On("IsModerator", mock.Anything, streamID, moderatorID).Return(true, nil).Maybe()
+	mockStreamRepo.On("GetByID", mock.Anything, streamID).Return(&domain.LiveStream{ID: streamID}, nil).Maybe()
+
+	cases := map[string]int{
+		"negative": -1,
+		"too_big":  601,
+	}
+	for name, val := range cases {
+		t.Run(name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]int{"seconds": val})
+			req := httptest.NewRequest("PUT", "/api/v1/streams/"+streamID.String()+"/chat/slow-mode", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("streamId", streamID.String())
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req = req.WithContext(withUserContext(req.Context(), moderatorID))
+
+			handlers.SetSlowMode(w, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}

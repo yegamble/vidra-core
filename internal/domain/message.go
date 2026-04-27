@@ -67,6 +67,10 @@ type SendMessageRequest struct {
 	Content         string  `json:"content" validate:"required,max=2000"`
 	ParentMessageID *string `json:"parent_message_id,omitempty" validate:"omitempty,uuid"`
 	IsEncrypted     bool    `json:"is_encrypted,omitempty"`
+	// ClientMessageID lets callers pass a client-generated UUID that the realtime hub echoes
+	// back in `message_received.data.client_message_id`. Used by the frontend to match an
+	// optimistic message to its server-assigned counterpart deterministically.
+	ClientMessageID string `json:"client_message_id,omitempty" validate:"omitempty,uuid"`
 }
 
 type GetMessagesRequest struct {

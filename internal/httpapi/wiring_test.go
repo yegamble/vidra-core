@@ -309,6 +309,9 @@ func (s *stubLiveStreamRepo) GetScheduledStreams(ctx context.Context, limit, off
 func (s *stubLiveStreamRepo) GetUpcomingStreams(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.LiveStream, error) {
 	return nil, nil
 }
+func (s *stubLiveStreamRepo) SetSlowMode(_ context.Context, _ uuid.UUID, _ int) error {
+	return nil
+}
 
 func collectRoutes(r chi.Router) []string {
 	var routes []string

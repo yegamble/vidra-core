@@ -83,6 +83,9 @@ func (m *mockStreamRepoForHLS) GetScheduledStreams(_ context.Context, _, _ int) 
 func (m *mockStreamRepoForHLS) GetUpcomingStreams(_ context.Context, _ uuid.UUID, _ int) ([]*domain.LiveStream, error) {
 	return nil, nil
 }
+func (m *mockStreamRepoForHLS) SetSlowMode(_ context.Context, _ uuid.UUID, _ int) error {
+	return nil
+}
 
 type mockHLSTranscoder struct {
 	isTranscodingFunc func(streamID uuid.UUID) bool

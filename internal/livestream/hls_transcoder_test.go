@@ -103,6 +103,9 @@ func (m *MockLiveStreamRepository) GetScheduledStreams(_ context.Context, _, _ i
 func (m *MockLiveStreamRepository) GetUpcomingStreams(_ context.Context, _ uuid.UUID, _ int) ([]*domain.LiveStream, error) {
 	return nil, nil
 }
+func (m *MockLiveStreamRepository) SetSlowMode(_ context.Context, _ uuid.UUID, _ int) error {
+	return nil
+}
 
 func TestGetQualityVariants(t *testing.T) {
 	variants := GetQualityVariants()

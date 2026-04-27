@@ -408,6 +408,9 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		if deps.ChatServer != nil && deps.ChatRepo != nil {
 			slog.Info("Registering chat routes...")
 			chatHandlers := messaging.NewChatHandlers(deps.ChatServer, deps.ChatRepo, deps.LiveStreamRepo, deps.UserRepo, deps.SubRepo)
+			if deps.BTCPayInvoiceLookup != nil {
+				chatHandlers.SetInvoiceRepo(deps.BTCPayInvoiceLookup)
+			}
 			chatHandlers.RegisterRoutes(r, cfg.JWTSecret)
 		}
 
@@ -833,11 +836,21 @@ func registerCommunicationsAPIRoutes(
 	cfg *config.Config,
 ) {
 	r.Route("/messages", func(r chi.Router) {
-		r.Use(middleware.Auth(cfg.JWTSecret))
-		r.Post("/", messaging.SendMessageHandler(deps.MessageService))
-		r.Get("/", messaging.GetMessagesHandler(deps.MessageService))
-		r.Put("/{messageId}/read", messaging.MarkMessageReadHandler(deps.MessageService))
-		r.Delete("/{messageId}", messaging.DeleteMessageHandler(deps.MessageService))
+		// /ws is on a separate sub-route because it uses WSAuth (subprotocol/query token) while
+		// the rest of the messages routes use Auth (Authorization header). Mounted first so its
+		// router-specific middleware doesn't bleed into the parent group.
+		if deps.MessagesWSHub != nil {
+			wsHandler := messaging.NewMessagesWSHandler(deps.MessagesWSHub)
+			r.With(middleware.WSAuth(cfg.JWTSecret)).Get("/ws", wsHandler.ServeHTTP)
+		}
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Auth(cfg.JWTSecret))
+			r.Post("/", messaging.SendMessageHandler(deps.MessageService))
+			r.Get("/", messaging.GetMessagesHandler(deps.MessageService))
+			r.Put("/{messageId}/read", messaging.MarkMessageReadHandler(deps.MessageService))
+			r.Delete("/{messageId}", messaging.DeleteMessageHandler(deps.MessageService))
+		})
 	})
 
 	r.Route("/conversations", func(r chi.Router) {

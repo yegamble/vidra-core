@@ -52,7 +52,8 @@ type LiveStream struct {
 	ReminderSent       bool       `json:"reminder_sent" db:"reminder_sent"`
 
 	// Chat settings
-	ChatEnabled bool `json:"chat_enabled" db:"chat_enabled"`
+	ChatEnabled     bool `json:"chat_enabled" db:"chat_enabled"`
+	SlowModeSeconds int  `json:"slow_mode_seconds" db:"slow_mode_seconds"`
 
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`

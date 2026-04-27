@@ -50,6 +50,7 @@ import (
 	uccmt "vidra-core/internal/usecase/comment"
 	ucenc "vidra-core/internal/usecase/encoding"
 	ucipfs "vidra-core/internal/usecase/ipfs_streaming"
+	ucmessage "vidra-core/internal/usecase/message"
 	ucmigration "vidra-core/internal/usecase/migration_etl"
 	ucn "vidra-core/internal/usecase/notification"
 	ucpayments "vidra-core/internal/usecase/payments"
@@ -141,6 +142,7 @@ type Dependencies struct {
 	EmailService             email.EmailService
 	EmailVerificationService *usecase.EmailVerificationService
 	MessageService           *usecase.MessageService
+	MessagesWSHub            *ucmessage.WSHub
 	ViewsService             *ucviews.Service
 	NotificationService      ucn.Service
 	ChannelService           *ucchannel.Service
@@ -157,6 +159,7 @@ type Dependencies struct {
 	EncodingService          ucenc.Service
 	ImportService            any
 	BTCPayService            *ucpayments.BTCPayService
+	BTCPayInvoiceLookup      *repository.BTCPayRepository
 	LedgerService            *ucpayments.LedgerService
 	PaymentLedgerRepo        *repository.PaymentLedgerRepository
 	PayoutService            *ucpayments.PayoutService
@@ -417,6 +420,8 @@ func (app *Application) initializeDependencies() *Dependencies {
 
 	deps.UploadService = ucup.NewService(deps.UploadRepo, deps.EncodingRepo, deps.VideoRepo, app.Config.StorageDir, app.Config)
 	deps.MessageService = usecase.NewMessageService(deps.MessageRepo, deps.UserRepo)
+	deps.MessagesWSHub = ucmessage.NewWSHub(slog.Default(), nil)
+	deps.MessageService.SetPublisher(deps.MessagesWSHub)
 
 	cryptoRepo := repository.NewCryptoRepository(app.DB)
 	e2eeMessageRepo := repository.NewE2EEMessageRepository(app.DB)
@@ -635,6 +640,7 @@ func (app *Application) initializeDependencies() *Dependencies {
 			app.Config.BTCPayStoreID,
 		)
 		btcpayRepo := repository.NewBTCPayRepository(app.DB)
+		deps.BTCPayInvoiceLookup = btcpayRepo
 		deps.BTCPayService = ucpayments.NewBTCPayService(
 			btcpayRepo,
 			btcpayClient,
@@ -909,6 +915,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		ViewerSessionRepo:        deps.ViewerSessionRepo,
 		UploadService:            deps.UploadService,
 		MessageService:           deps.MessageService,
+		MessagesWSHub:            deps.MessagesWSHub,
 		E2EEService:              deps.E2EEService,
 		ViewsService:             deps.ViewsService,
 		NotificationService:      deps.NotificationService,
@@ -926,6 +933,7 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		EncodingService:          deps.EncodingService,
 		ImportService:            deps.ImportService,
 		BTCPayService:            deps.BTCPayService,
+		BTCPayInvoiceLookup:      deps.BTCPayInvoiceLookup,
 		StreamManager:            deps.StreamManager,
 		ChatServer:               deps.ChatServer,
 		ChatRepo:                 deps.ChatRepo,

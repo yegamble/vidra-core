@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -26,6 +27,14 @@ type ChatHandlers struct {
 	streamRepo       repository.LiveStreamRepository
 	userRepo         usecase.UserRepository
 	subscriptionRepo port.SubscriptionRepository
+	invoiceRepo      InvoiceLookup
+}
+
+// InvoiceLookup is the subset of BTCPayRepository the chat handler needs to validate a
+// tip-mediated system-message broadcast. Defined as an interface for test isolation.
+type InvoiceLookup interface {
+	GetInvoiceByID(ctx context.Context, id string) (*domain.BTCPayInvoice, error)
+	MarkInvoiceSystemMessageBroadcast(ctx context.Context, invoiceID string) error
 }
 
 func NewChatHandlers(
@@ -44,9 +53,13 @@ func NewChatHandlers(
 	}
 }
 
+// SetInvoiceRepo wires the BTCPay invoice repo. Optional — when nil, the tip-system-message
+// route is unavailable (handler returns 503 in that case).
+func (h *ChatHandlers) SetInvoiceRepo(repo InvoiceLookup) { h.invoiceRepo = repo }
+
 func (h *ChatHandlers) RegisterRoutes(r chi.Router, jwtSecret string) {
 	r.Route("/streams/{streamId}/chat", func(r chi.Router) {
-		r.With(middleware.Auth(jwtSecret)).Get("/ws", h.HandleWebSocketConnection)
+		r.With(middleware.WSAuth(jwtSecret)).Get("/ws", h.HandleWebSocketConnection)
 
 		r.Get("/messages", h.GetChatMessages)
 
@@ -62,6 +75,10 @@ func (h *ChatHandlers) RegisterRoutes(r chi.Router, jwtSecret string) {
 			r.Post("/bans", h.BanUser)
 			r.Delete("/bans/{userId}", h.UnbanUser)
 			r.Get("/bans", h.GetBans)
+
+			r.Put("/slow-mode", h.SetSlowMode)
+
+			r.Post("/system-message", h.BroadcastTipSystemMessage)
 
 			r.Get("/stats", h.GetChatStats)
 		})
@@ -505,6 +522,198 @@ func (h *ChatHandlers) GetChatStats(w http.ResponseWriter, r *http.Request) {
 		"stats":           stats,
 		"connected_users": connectedUsers,
 	})
+}
+
+// SlowModeRequest is the body for PUT /streams/{id}/chat/slow-mode.
+type SlowModeRequest struct {
+	Seconds int `json:"seconds"`
+}
+
+const slowModeMaxSeconds = 600
+
+// SetSlowMode updates the per-stream slow-mode interval. Mod-or-owner only.
+//   PUT /api/v1/streams/{streamId}/chat/slow-mode
+//   Body: {"seconds": int}    // 0 disables; capped at 600 (10 minutes).
+func (h *ChatHandlers) SetSlowMode(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid stream ID"))
+		return
+	}
+
+	moderatorID, ok := middleware.GetUserIDFromContext(ctx)
+	if !ok {
+		shared.WriteError(w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	if !h.verifyModeratorOrOwner(w, ctx, streamID, moderatorID) {
+		return
+	}
+
+	var req SlowModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	if req.Seconds < 0 {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("seconds must be >= 0"))
+		return
+	}
+	if req.Seconds > slowModeMaxSeconds {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("seconds must be <= 600"))
+		return
+	}
+
+	if err := h.streamRepo.SetSlowMode(ctx, streamID, req.Seconds); err != nil {
+		if err == domain.ErrNotFound || err == domain.ErrStreamNotFound {
+			shared.WriteError(w, http.StatusNotFound, errors.New("stream not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to set slow mode"))
+		return
+	}
+
+	h.chatServer.BroadcastSlowModeChange(streamID, req.Seconds)
+
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"slow_mode_seconds": req.Seconds,
+	})
+}
+
+// BroadcastTipSystemMessageRequest carries the invoice id whose successful settlement gives
+// the caller a one-shot right to publish a "💛 X tipped Y sat" system message into the live
+// chat of the stream identified in the URL.
+type BroadcastTipSystemMessageRequest struct {
+	InvoiceID string `json:"invoice_id"`
+}
+
+// BroadcastTipSystemMessage validates that the caller's invoice was settled, that it targeted
+// THIS stream's channel, and that it has not been previously used to broadcast a system
+// message. On success, marks the invoice and dispatches a system message to the chat hub.
+//   POST /api/v1/streams/{streamId}/chat/system-message
+//   Body: {"invoice_id": "<uuid>"}
+//   200 OK on success; 400/403/404/409/503 on validation failures.
+func (h *ChatHandlers) BroadcastTipSystemMessage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if h.invoiceRepo == nil {
+		shared.WriteError(w, http.StatusServiceUnavailable, errors.New("invoice repo not configured"))
+		return
+	}
+
+	streamIDStr := chi.URLParam(r, "streamId")
+	streamID, err := uuid.Parse(streamIDStr)
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid stream ID"))
+		return
+	}
+
+	callerID, ok := middleware.GetUserIDFromContext(ctx)
+	if !ok {
+		shared.WriteError(w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	var req BroadcastTipSystemMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.InvoiceID == "" {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+
+	invoice, err := h.invoiceRepo.GetInvoiceByID(ctx, req.InvoiceID)
+	if err != nil {
+		if err == domain.ErrInvoiceNotFound {
+			shared.WriteError(w, http.StatusNotFound, errors.New("invoice not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to look up invoice"))
+		return
+	}
+
+	// Trust check #1: invoice belongs to the caller.
+	if invoice.UserID != callerID.String() {
+		shared.WriteError(w, http.StatusForbidden, errors.New("invoice does not belong to caller"))
+		return
+	}
+
+	// Trust check #2: invoice is settled.
+	if invoice.Status != domain.InvoiceStatusSettled {
+		shared.WriteError(w, http.StatusConflict, domain.ErrInvoiceUnsettled)
+		return
+	}
+
+	// Trust check #3: invoice's destination channel matches this stream's channel. Pulled
+	// from the invoice metadata blob (where the tip flow records `{type:"tip",
+	// channel_id:"..."}`).
+	stream, err := h.streamRepo.GetByID(ctx, streamID)
+	if err != nil {
+		if err == domain.ErrNotFound || err == domain.ErrStreamNotFound {
+			shared.WriteError(w, http.StatusNotFound, errors.New("stream not found"))
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to look up stream"))
+		return
+	}
+
+	channelID, ok := tipChannelFromInvoice(invoice)
+	if !ok {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invoice metadata is not a tip"))
+		return
+	}
+	if channelID != stream.ChannelID.String() {
+		shared.WriteError(w, http.StatusBadRequest, errors.New("invoice channel does not match stream"))
+		return
+	}
+
+	// Trust check #4: single-use. The repo's conditional UPDATE returns
+	// ErrInvoiceAlreadyBroadcast when the marker is already set.
+	if err := h.invoiceRepo.MarkInvoiceSystemMessageBroadcast(ctx, invoice.ID); err != nil {
+		if err == domain.ErrInvoiceAlreadyBroadcast {
+			shared.WriteError(w, http.StatusConflict, err)
+			return
+		}
+		shared.WriteError(w, http.StatusInternalServerError, errors.New("failed to mark invoice broadcast"))
+		return
+	}
+
+	// Resolve the caller's username for the system-message text.
+	caller, err := h.userRepo.GetByID(ctx, callerID.String())
+	username := callerID.String()
+	if err == nil && caller != nil && caller.Username != "" {
+		username = caller.Username
+	}
+
+	formatted := fmt.Sprintf("💛 %s tipped %d sat", username, invoice.AmountSats)
+	h.chatServer.BroadcastSystemMessage(streamID, formatted)
+
+	shared.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"broadcast": true,
+		"message":   formatted,
+	})
+}
+
+// tipChannelFromInvoice extracts the destination channel id from a tip invoice's metadata
+// blob. Returns ok=false when the invoice is not a tip or the field is missing.
+func tipChannelFromInvoice(invoice *domain.BTCPayInvoice) (string, bool) {
+	if len(invoice.Metadata) == 0 {
+		return "", false
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal(invoice.Metadata, &meta); err != nil {
+		return "", false
+	}
+	if t, _ := meta["type"].(string); t != "tip" {
+		return "", false
+	}
+	channelID, _ := meta["channel_id"].(string)
+	if channelID == "" {
+		return "", false
+	}
+	return channelID, true
 }
 
 func (h *ChatHandlers) verifyModeratorOrOwner(w http.ResponseWriter, ctx context.Context, streamID, userID uuid.UUID) bool {

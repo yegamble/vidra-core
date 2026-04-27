@@ -82,6 +82,9 @@ func (m *mockLiveStreamRepo) GetScheduledStreams(ctx context.Context, limit, off
 func (m *mockLiveStreamRepo) GetUpcomingStreams(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.LiveStream, error) {
 	return nil, nil
 }
+func (m *mockLiveStreamRepo) SetSlowMode(_ context.Context, _ uuid.UUID, _ int) error {
+	return nil
+}
 
 func (m *mockLiveStreamRepo) addStream(s *domain.LiveStream) {
 	m.mu.Lock()

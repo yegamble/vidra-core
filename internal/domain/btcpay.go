@@ -37,8 +37,12 @@ type BTCPayInvoice struct {
 	Metadata           []byte         `json:"metadata,omitempty" db:"metadata"`
 	ExpiresAt          time.Time      `json:"expires_at" db:"expires_at"`
 	SettledAt          sql.NullTime   `json:"settled_at,omitempty" db:"settled_at"`
-	CreatedAt          time.Time      `json:"created_at" db:"created_at"`
-	UpdatedAt          time.Time      `json:"updated_at" db:"updated_at"`
+	// SystemMessageBroadcastAt is set when this invoice has been used to publish a tip
+	// system-message into a live-stream chat. Single-use guard against replay: a second
+	// attempt to broadcast with the same invoice is rejected with 409.
+	SystemMessageBroadcastAt sql.NullTime `json:"system_message_broadcast_at,omitempty" db:"system_message_broadcast_at"`
+	CreatedAt                time.Time    `json:"created_at" db:"created_at"`
+	UpdatedAt                time.Time    `json:"updated_at" db:"updated_at"`
 }
 
 // BTCPayPayment represents an individual payment received against an invoice.
@@ -63,8 +67,10 @@ type BTCPayWebhookEvent struct {
 
 // BTCPay-specific domain errors.
 var (
-	ErrInvoiceNotFound  = NewDomainError("INVOICE_NOT_FOUND", "Invoice not found")
-	ErrInvoiceExpired   = NewDomainError("INVOICE_EXPIRED", "Invoice has expired")
-	ErrInvalidAmount    = NewDomainError("INVALID_AMOUNT", "Invalid payment amount")
-	ErrBTCPayUnavailable = NewDomainError("BTCPAY_UNAVAILABLE", "BTCPay Server is unavailable")
+	ErrInvoiceNotFound        = NewDomainError("INVOICE_NOT_FOUND", "Invoice not found")
+	ErrInvoiceExpired         = NewDomainError("INVOICE_EXPIRED", "Invoice has expired")
+	ErrInvoiceUnsettled       = NewDomainError("INVOICE_UNSETTLED", "Invoice has not been settled")
+	ErrInvoiceAlreadyBroadcast = NewDomainError("INVOICE_ALREADY_BROADCAST", "Invoice has already been used to broadcast a system message")
+	ErrInvalidAmount          = NewDomainError("INVALID_AMOUNT", "Invalid payment amount")
+	ErrBTCPayUnavailable      = NewDomainError("BTCPAY_UNAVAILABLE", "BTCPay Server is unavailable")
 )

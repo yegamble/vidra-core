@@ -118,6 +118,10 @@ func (m *MockLiveStreamRepository) GetScheduledStreams(_ context.Context, _, _ i
 func (m *MockLiveStreamRepository) GetUpcomingStreams(_ context.Context, _ uuid.UUID, _ int) ([]*domain.LiveStream, error) {
 	return nil, nil
 }
+func (m *MockLiveStreamRepository) SetSlowMode(ctx context.Context, streamID uuid.UUID, seconds int) error {
+	args := m.Called(ctx, streamID, seconds)
+	return args.Error(0)
+}
 
 //nolint:unused // used in test files
 func createTestUser(t interface{}, userRepo interface{}, ctx context.Context, username, email string) *domain.User {

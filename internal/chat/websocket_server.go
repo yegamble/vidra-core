@@ -47,6 +47,8 @@ type ChatServer struct {
 
 	moderatorCache sync.Map
 
+	slowMode *slowModeLimiter
+
 	shutdownChan chan struct{}
 	wg           sync.WaitGroup
 }
@@ -92,7 +94,15 @@ func NewChatServer(
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		CheckOrigin:     s.checkWebSocketOrigin,
+		// Declared so the 101 response echoes "access_token" back when the client sent the
+		// JWT via the Sec-WebSocket-Protocol header (browsers cannot set Authorization on WS
+		// upgrades). The token itself is consumed and validated by middleware.WSAuth before
+		// reaching the upgrade — only the marker is echoed.
+		Subprotocols: []string{"access_token"},
 	}
+
+	s.slowMode = newSlowModeLimiter()
+	s.slowMode.startJanitor(context.Background(), slowModeJanitorInterval)
 
 	return s
 }
@@ -306,6 +316,26 @@ func (s *ChatServer) handleMessage(client *ChatClient, msg *ChatMessage) {
 		return
 	}
 
+	// Slow-mode: per-stream cooldown enforced server-side. Moderators bypass.
+	if s.slowMode != nil {
+		stream, err := s.streamRepo.GetByID(ctx, client.StreamID)
+		if err == nil && stream.SlowModeSeconds > 0 && !s.isModerator(ctx, client.StreamID, client.UserID) {
+			allowed, nextAt := s.slowMode.allow(client.StreamID, client.UserID, stream.SlowModeSeconds, time.Now())
+			if !allowed {
+				s.sendToClient(client, &ChatMessage{
+					Type:      "slow_mode_rejected",
+					StreamID:  client.StreamID,
+					Timestamp: time.Now(),
+					Metadata: map[string]interface{}{
+						"next_allowed_send_at": nextAt.UnixMilli(),
+						"slow_mode_seconds":    stream.SlowModeSeconds,
+					},
+				})
+				return
+			}
+		}
+	}
+
 	banned, err := s.chatRepo.IsUserBanned(ctx, client.StreamID, client.UserID)
 	if err != nil {
 		s.logger.With("error", err).Error("Failed to check ban status")
@@ -387,6 +417,25 @@ func (s *ChatServer) broadcastSystemMessage(streamID uuid.UUID, message string) 
 		Username:  "System",
 		Message:   message,
 		Timestamp: time.Now(),
+	}
+	s.broadcast(streamID, wsMsg)
+}
+
+// BroadcastSystemMessage is the exported wrapper around broadcastSystemMessage. External
+// callers (e.g. the tip-success endpoint) need to push system messages into a stream's chat
+// without holding internal references to ChatClient.
+func (s *ChatServer) BroadcastSystemMessage(streamID uuid.UUID, message string) {
+	s.broadcastSystemMessage(streamID, message)
+}
+
+// BroadcastSlowModeChange notifies all clients in a stream that slow-mode just changed. The
+// frontend uses this to refresh its compose-state without re-fetching the stream.
+func (s *ChatServer) BroadcastSlowModeChange(streamID uuid.UUID, seconds int) {
+	wsMsg := &ChatMessage{
+		Type:      "slow_mode_changed",
+		StreamID:  streamID,
+		Timestamp: time.Now(),
+		Metadata:  map[string]interface{}{"seconds": seconds},
 	}
 	s.broadcast(streamID, wsMsg)
 }

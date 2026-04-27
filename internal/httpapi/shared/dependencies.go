@@ -15,6 +15,7 @@ import (
 	"vidra-core/internal/scheduler"
 	"vidra-core/internal/usecase"
 	ucat "vidra-core/internal/usecase/auto_tags"
+	ucmessage "vidra-core/internal/usecase/message"
 	ucbackup "vidra-core/internal/usecase/backup"
 	"vidra-core/internal/usecase/captiongen"
 	ucchannel "vidra-core/internal/usecase/channel"
@@ -75,6 +76,7 @@ type HandlerDependencies struct {
 	EmailService             email.EmailService
 	EmailVerificationService *usecase.EmailVerificationService
 	MessageService           *usecase.MessageService
+	MessagesWSHub            *ucmessage.WSHub
 	E2EEService              *usecase.E2EEService
 	ViewsService             *ucviews.Service
 	NotificationService      ucn.Service
@@ -86,6 +88,7 @@ type HandlerDependencies struct {
 	CaptionGenService        captiongen.Service
 	TwoFAService             *usecase.TwoFAService
 	BTCPayService            *ucpayments.BTCPayService
+	BTCPayInvoiceLookup      *repository.BTCPayRepository
 	LedgerService            *ucpayments.LedgerService
 	PaymentLedgerRepo        *repository.PaymentLedgerRepository
 	PayoutService            *ucpayments.PayoutService
