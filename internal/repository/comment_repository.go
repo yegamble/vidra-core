@@ -144,13 +144,35 @@ func (r *commentRepository) Delete(ctx context.Context, id uuid.UUID) error {
 func (r *commentRepository) ListByVideo(ctx context.Context, opts domain.CommentListOptions) ([]*domain.CommentWithUser, error) {
 	comments := []*domain.CommentWithUser{}
 
+	// Phase 9: project the highest active Inner Circle tier the commenter
+	// holds for the video's channel. Single LEFT JOIN — no per-row subquery
+	// — keeps the comment list query at one statement. The CASE expression
+	// must match inner_circle.TierRank; the parity test in
+	// internal/usecase/inner_circle/sql_case_parity_test.go enforces it.
 	query := `
 		SELECT c.id, c.video_id, c.user_id, c.parent_id, c.body, c.status,
 		       c.flag_count, c.edited_at, c.created_at, c.updated_at,
-		       u.username, ua.webp_ipfs_cid as avatar
+		       u.username, ua.webp_ipfs_cid as avatar,
+		       icm.tier_id AS inner_circle_tier
 		FROM comments c
 		JOIN users u ON c.user_id = u.id
 		LEFT JOIN user_avatars ua ON u.id = ua.user_id
+		LEFT JOIN videos v ON c.video_id = v.id
+		LEFT JOIN LATERAL (
+			SELECT m.tier_id
+			FROM inner_circle_memberships m
+			WHERE m.user_id = c.user_id
+			  AND m.channel_id = v.channel_id
+			  AND m.status = 'active'
+			  AND m.expires_at > NOW()
+			ORDER BY CASE m.tier_id
+				WHEN 'elite' THEN 3
+				WHEN 'vip' THEN 2
+				WHEN 'supporter' THEN 1
+				ELSE 0
+			END DESC
+			LIMIT 1
+		) icm ON TRUE
 		WHERE c.video_id = $1 AND c.status = 'active'`
 
 	args := []interface{}{opts.VideoID}
@@ -189,13 +211,34 @@ func (r *commentRepository) ListByVideo(ctx context.Context, opts domain.Comment
 func (r *commentRepository) ListReplies(ctx context.Context, parentID uuid.UUID, limit, offset int) ([]*domain.CommentWithUser, error) {
 	comments := []*domain.CommentWithUser{}
 
+	// Phase 9: surface inner_circle_tier on replies too — without this, a
+	// VIP member's reply renders without the badge while their top-level
+	// comment shows it. CASE expression mirrors inner_circle.TierRank;
+	// SqlCaseMatchesTierHierarchy parity test guards against drift.
 	query := `
 		SELECT c.id, c.video_id, c.user_id, c.parent_id, c.body, c.status,
 		       c.flag_count, c.edited_at, c.created_at, c.updated_at,
-		       u.username, ua.webp_ipfs_cid as avatar
+		       u.username, ua.webp_ipfs_cid as avatar,
+		       icm.tier_id AS inner_circle_tier
 		FROM comments c
 		JOIN users u ON c.user_id = u.id
 		LEFT JOIN user_avatars ua ON u.id = ua.user_id
+		LEFT JOIN videos v ON c.video_id = v.id
+		LEFT JOIN LATERAL (
+			SELECT m.tier_id
+			FROM inner_circle_memberships m
+			WHERE m.user_id = c.user_id
+			  AND m.channel_id = v.channel_id
+			  AND m.status = 'active'
+			  AND m.expires_at > NOW()
+			ORDER BY CASE m.tier_id
+				WHEN 'elite' THEN 3
+				WHEN 'vip' THEN 2
+				WHEN 'supporter' THEN 1
+				ELSE 0
+			END DESC
+			LIMIT 1
+		) icm ON TRUE
 		WHERE c.parent_id = $1 AND c.status = 'active'
 		ORDER BY c.created_at ASC
 		LIMIT $2 OFFSET $3`
@@ -218,13 +261,31 @@ func (r *commentRepository) ListRepliesBatch(ctx context.Context, parentIDs []uu
 	for i, id := range parentIDs {
 		ids[i] = id
 	}
+	// Phase 9: include inner_circle_tier on each reply.
 	query, args, err := sqlx.In(`
 		SELECT c.id, c.video_id, c.user_id, c.parent_id, c.body, c.status,
 		       c.flag_count, c.edited_at, c.created_at, c.updated_at,
-		       u.username, ua.webp_ipfs_cid as avatar
+		       u.username, ua.webp_ipfs_cid as avatar,
+		       icm.tier_id AS inner_circle_tier
 		FROM comments c
 		JOIN users u ON c.user_id = u.id
 		LEFT JOIN user_avatars ua ON u.id = ua.user_id
+		LEFT JOIN videos v ON c.video_id = v.id
+		LEFT JOIN LATERAL (
+			SELECT m.tier_id
+			FROM inner_circle_memberships m
+			WHERE m.user_id = c.user_id
+			  AND m.channel_id = v.channel_id
+			  AND m.status = 'active'
+			  AND m.expires_at > NOW()
+			ORDER BY CASE m.tier_id
+				WHEN 'elite' THEN 3
+				WHEN 'vip' THEN 2
+				WHEN 'supporter' THEN 1
+				ELSE 0
+			END DESC
+			LIMIT 1
+		) icm ON TRUE
 		WHERE c.parent_id IN (?) AND c.status = 'active'
 		ORDER BY c.parent_id, c.created_at ASC
 		LIMIT ?`, append(ids, limit*len(parentIDs))...)

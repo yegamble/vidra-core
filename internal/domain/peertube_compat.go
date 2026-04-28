@@ -35,15 +35,50 @@ const (
 )
 
 type RemoteRunner struct {
-	ID          uuid.UUID          `json:"id" db:"id"`
-	Name        string             `json:"name" db:"name"`
-	Description string             `json:"description" db:"description"`
-	Token       string             `json:"token,omitempty" db:"token"`
-	Status      RemoteRunnerStatus `json:"status" db:"status"`
-	CreatedBy   *uuid.UUID         `json:"createdBy,omitempty" db:"created_by"`
-	LastSeenAt  *time.Time         `json:"lastSeenAt,omitempty" db:"last_seen_at"`
-	CreatedAt   time.Time          `json:"createdAt" db:"created_at"`
-	UpdatedAt   time.Time          `json:"updatedAt" db:"updated_at"`
+	ID            uuid.UUID          `json:"id" db:"id"`
+	Name          string             `json:"name" db:"name"`
+	Description   string             `json:"description" db:"description"`
+	Token         string             `json:"token,omitempty" db:"token"`
+	Status        RemoteRunnerStatus `json:"status" db:"status"`
+	CreatedBy     *uuid.UUID         `json:"createdBy,omitempty" db:"created_by"`
+	LastSeenAt    *time.Time         `json:"lastSeenAt,omitempty" db:"last_seen_at"`
+	CreatedAt     time.Time          `json:"createdAt" db:"created_at"`
+	UpdatedAt     time.Time          `json:"updatedAt" db:"updated_at"`
+	RunnerVersion string             `json:"runnerVersion,omitempty" db:"runner_version"`
+	IPAddress     string             `json:"ipAddress,omitempty" db:"ip_address"`
+	Capabilities  map[string]any     `json:"capabilities,omitempty" db:"-"`
+}
+
+// RemoteRunnerHealth is the aggregate dashboard payload returned by
+// GET /api/v1/runners/health. Online means lastSeenAt is within the last 5m.
+type RemoteRunnerHealth struct {
+	TotalRunners    int   `json:"totalRunners"`
+	OnlineRunners   int   `json:"onlineRunners"`
+	OfflineRunners  int   `json:"offlineRunners"`
+	JobsInFlight    int   `json:"jobsInFlight"`
+	JobsFailed24h   int   `json:"jobsFailed24h"`
+	AvgCompletionMs int64 `json:"avgCompletionMs"`
+}
+
+// RegisterRunnerInput captures every field a runner can announce when
+// self-registering. RegistrationToken/Name are required; the rest are optional
+// extensions captured at the HTTP boundary.
+type RegisterRunnerInput struct {
+	RegistrationToken string
+	Name              string
+	Description       string
+	RunnerVersion     string
+	IPAddress         string
+	Capabilities      map[string]any
+}
+
+// ListAssignmentsOpts filters the runner job assignments listing. Zero value
+// returns everything (back-compat with the original ListAssignments call).
+type ListAssignmentsOpts struct {
+	Start    int
+	Count    int
+	State    []RemoteRunnerJobState
+	RunnerID *uuid.UUID
 }
 
 type RemoteRunnerRegistrationToken struct {

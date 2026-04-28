@@ -445,6 +445,9 @@ func TestPeerTubeCanonicalRoutesRegistered_WhenDependenciesSet(t *testing.T) {
 	assert.True(t, hasRoute(routes, "GET /api/v1/video-channels/{channelHandle}/collaborators"))
 	assert.True(t, hasRoute(routes, "POST /api/v1/runners/register"))
 	assert.True(t, hasRoute(routes, "POST /api/v1/runners/jobs/request"))
+	// Phase 12: aggregate health endpoint for the admin dashboard. Registered
+	// in both the wired and 501-fallback branches so the FE never gets a 404.
+	assert.True(t, hasRoute(routes, "GET /api/v1/runners/health"))
 }
 
 func TestPeerTubeCanonicalRegistrationRoutesRegistered_WithoutRegistrationRepo(t *testing.T) {

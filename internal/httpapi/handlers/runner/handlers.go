@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"vidra-core/internal/domain"
@@ -26,13 +29,14 @@ type runnerRepository interface {
 	CreateRegistrationToken(ctx context.Context, createdBy *uuid.UUID, expiresAt *time.Time) (*domain.RemoteRunnerRegistrationToken, error)
 	ListRegistrationTokens(ctx context.Context) ([]*domain.RemoteRunnerRegistrationToken, error)
 	DeleteRegistrationToken(ctx context.Context, tokenID uuid.UUID) error
-	RegisterRunner(ctx context.Context, registrationToken, name, description string) (*domain.RemoteRunner, error)
+	RegisterRunner(ctx context.Context, input domain.RegisterRunnerInput) (*domain.RemoteRunner, error)
 	UnregisterRunnerByToken(ctx context.Context, token string) error
 	DeleteRunner(ctx context.Context, runnerID uuid.UUID) error
 	CreateAssignment(ctx context.Context, runnerID uuid.UUID, encodingJobID string) (*domain.RemoteRunnerJobAssignment, error)
 	GetAssignmentByJob(ctx context.Context, jobID string) (*domain.RemoteRunnerJobAssignment, error)
 	GetAssignmentForRunnerAndJob(ctx context.Context, runnerID uuid.UUID, jobID string) (*domain.RemoteRunnerJobAssignment, error)
-	ListAssignments(ctx context.Context) ([]*domain.RemoteRunnerJobAssignment, error)
+	ListAssignments(ctx context.Context, opts domain.ListAssignmentsOpts) ([]*domain.RemoteRunnerJobAssignment, int, error)
+	HealthMetrics(ctx context.Context) (*domain.RemoteRunnerHealth, error)
 	UpdateAssignment(ctx context.Context, assignment *domain.RemoteRunnerJobAssignment) error
 	RecordFileReceipt(ctx context.Context, assignment *domain.RemoteRunnerJobAssignment, fileKey string, details map[string]any) error
 	DeleteAssignment(ctx context.Context, jobID string) error
@@ -113,10 +117,12 @@ func (h *Handlers) DeleteRegistrationToken(w http.ResponseWriter, r *http.Reques
 
 func (h *Handlers) RegisterRunner(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RegistrationToken string `json:"registrationToken"`
-		Token             string `json:"token"`
-		Name              string `json:"name"`
-		Description       string `json:"description"`
+		RegistrationToken string         `json:"registrationToken"`
+		Token             string         `json:"token"`
+		Name              string         `json:"name"`
+		Description       string         `json:"description"`
+		RunnerVersion     string         `json:"runnerVersion"`
+		Capabilities      map[string]any `json:"capabilities"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		shared.WriteError(w, http.StatusBadRequest, domain.NewDomainError("INVALID_REQUEST", "Invalid request body"))
@@ -132,7 +138,14 @@ func (h *Handlers) RegisterRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runner, err := h.runnerRepo.RegisterRunner(r.Context(), token, req.Name, req.Description)
+	runner, err := h.runnerRepo.RegisterRunner(r.Context(), domain.RegisterRunnerInput{
+		RegistrationToken: token,
+		Name:              req.Name,
+		Description:       req.Description,
+		RunnerVersion:     req.RunnerVersion,
+		IPAddress:         clientIPFromRequest(r),
+		Capabilities:      req.Capabilities,
+	})
 	if err != nil {
 		status := http.StatusInternalServerError
 		switch err {
@@ -154,6 +167,28 @@ func (h *Handlers) RegisterRunner(w http.ResponseWriter, r *http.Request) {
 		"runnerToken": runner.Token,
 		"status":      runner.Status,
 	})
+}
+
+// clientIPFromRequest returns the first hop in X-Forwarded-For when present,
+// otherwise the host portion of r.RemoteAddr. Empty string when unparseable —
+// IP capture is best-effort.
+func clientIPFromRequest(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// First comma-separated value is the original client.
+		for i := 0; i < len(xff); i++ {
+			if xff[i] == ',' {
+				return strings.TrimSpace(xff[:i])
+			}
+		}
+		return strings.TrimSpace(xff)
+	}
+	if r.RemoteAddr == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 func (h *Handlers) UnregisterRunner(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +230,13 @@ func (h *Handlers) DeleteRunner(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) ListJobs(w http.ResponseWriter, r *http.Request) {
-	assignments, err := h.runnerRepo.ListAssignments(r.Context())
+	opts, err := parseListAssignmentsOpts(r)
+	if err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	assignments, total, err := h.runnerRepo.ListAssignments(r.Context(), opts)
 	if err != nil {
 		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("list runner jobs: %w", err))
 		return
@@ -215,7 +256,70 @@ func (h *Handlers) ListJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	shared.WriteJSON(w, http.StatusOK, map[string]any{"total": len(assignments), "data": assignments})
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"total": total, "data": assignments})
+}
+
+// RunnerHealth returns aggregate dashboard metrics for the admin UI.
+// GET /api/v1/runners/health (admin-gated by route).
+func (h *Handlers) RunnerHealth(w http.ResponseWriter, r *http.Request) {
+	health, err := h.runnerRepo.HealthMetrics(r.Context())
+	if err != nil {
+		shared.WriteError(w, http.StatusInternalServerError, fmt.Errorf("runner health: %w", err))
+		return
+	}
+	shared.WriteJSON(w, http.StatusOK, health)
+}
+
+// parseListAssignmentsOpts pulls filter/pagination params off the URL with
+// strict validation: state values must match the enum, runnerId must be a UUID,
+// start clamped to >= 0, count clamped to [0, 500] (0 means "no pagination —
+// return everything matching the filter"). 50 is a reasonable per-page default.
+func parseListAssignmentsOpts(r *http.Request) (domain.ListAssignmentsOpts, error) {
+	q := r.URL.Query()
+	opts := domain.ListAssignmentsOpts{}
+
+	if startStr := q.Get("start"); startStr != "" {
+		v, err := strconv.Atoi(startStr)
+		if err != nil || v < 0 {
+			return opts, domain.NewDomainError("INVALID_REQUEST", "start must be a non-negative integer")
+		}
+		opts.Start = v
+	}
+	if countStr := q.Get("count"); countStr != "" {
+		v, err := strconv.Atoi(countStr)
+		if err != nil || v < 0 {
+			return opts, domain.NewDomainError("INVALID_REQUEST", "count must be a non-negative integer")
+		}
+		if v > 500 {
+			v = 500
+		}
+		opts.Count = v
+	}
+
+	for _, raw := range q["state"] {
+		switch domain.RemoteRunnerJobState(raw) {
+		case domain.RemoteRunnerJobStateAssigned,
+			domain.RemoteRunnerJobStateAccepted,
+			domain.RemoteRunnerJobStateRunning,
+			domain.RemoteRunnerJobStateCompleted,
+			domain.RemoteRunnerJobStateFailed,
+			domain.RemoteRunnerJobStateAborted,
+			domain.RemoteRunnerJobStateCancelled:
+			opts.State = append(opts.State, domain.RemoteRunnerJobState(raw))
+		}
+		// Unknown states are silently dropped — clients should never see a 400
+		// from a typo'd filter chip; an empty result is the expected outcome.
+	}
+
+	if runnerIDStr := q.Get("runnerId"); runnerIDStr != "" {
+		id, err := uuid.Parse(runnerIDStr)
+		if err != nil {
+			return opts, domain.NewDomainError("INVALID_ID", "runnerId must be a UUID")
+		}
+		opts.RunnerID = &id
+	}
+
+	return opts, nil
 }
 
 func (h *Handlers) CancelJob(w http.ResponseWriter, r *http.Request) {

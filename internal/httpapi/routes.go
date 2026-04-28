@@ -303,6 +303,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 				r.Post("/unregister", runnerHandlers.UnregisterRunner)
 
 				adminRunners.Get("/", runnerHandlers.ListRunners)
+				adminRunners.Get("/health", runnerHandlers.RunnerHealth)
 				adminRunners.Get("/registration-tokens", runnerHandlers.ListRegistrationTokens)
 				adminRunners.Post("/registration-tokens/generate", runnerHandlers.CreateRegistrationToken)
 				adminRunners.Delete("/registration-tokens/{id}", runnerHandlers.DeleteRegistrationToken)
@@ -330,6 +331,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 				r.Post("/unregister", runnersNotImplemented)
 
 				adminRunners.Get("/", runnersNotImplemented)
+				adminRunners.Get("/health", runnersNotImplemented)
 				adminRunners.Get("/registration-tokens", runnersNotImplemented)
 				adminRunners.Post("/registration-tokens/generate", runnersNotImplemented)
 				adminRunners.Delete("/registration-tokens/{id}", runnersNotImplemented)
@@ -353,6 +355,25 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 		})
 
 		registerCommunicationsAPIRoutes(r, deps, cfg)
+
+		// Phase 11 — ATProto federation routes (per-user account linking, syndicate, feed,
+		// interactions). Mounted only when EnableATProto is on AND the per-user service
+		// is wired (both gates per the plan's deploy sequence).
+		if deps.UserAtprotoService != nil {
+			fedAtprotoHandlers := federation.NewAtprotoHandlers(
+				deps.UserAtprotoService,
+				&federationVideoStore{repo: deps.VideoRepo},
+				nil, // CommentStore not yet wired; falls back to live PDS getPostThread
+				func(v *domain.Video) string {
+					base := cfg.PublicBaseURL
+					if base == "" {
+						base = "https://vidra.local"
+					}
+					return strings.TrimRight(base, "/") + "/watch/" + v.ID
+				},
+			)
+			fedAtprotoHandlers.RegisterRoutes(r, cfg.JWTSecret)
+		}
 
 		r.Get("/trending", viewsHandler.GetTrendingVideos)
 
@@ -1517,3 +1538,41 @@ func registerPlaylistRoutes(r chi.Router, jwtSecret string, playlistHandlers *so
 	r.With(middleware.Auth(jwtSecret)).Delete(itemPath, playlistHandlers.RemoveVideoFromPlaylist)
 	r.With(middleware.Auth(jwtSecret)).Put(reorderPath, playlistHandlers.ReorderPlaylistItem)
 }
+
+// videoStoreForFederation is the minimal subset of usecase.VideoRepository the federation
+// adapter needs. Inline interface keeps routes.go from importing the heavy usecase package.
+type videoStoreForFederation interface {
+	GetByID(ctx context.Context, id string) (*domain.Video, error)
+	Update(ctx context.Context, video *domain.Video) error
+}
+
+// federationVideoStore satisfies federation.VideoStore. SetAtprotoURI uses the existing
+// Update() — focused mutation across atproto_uri only would require a new repo method;
+// since Update is idempotent on the rest of the row, this is safe enough for v1.
+type federationVideoStore struct {
+	repo videoStoreForFederation
+}
+
+func (s *federationVideoStore) Get(ctx context.Context, id string) (*domain.Video, error) {
+	return s.repo.GetByID(ctx, id)
+}
+
+func (s *federationVideoStore) SetAtprotoURI(ctx context.Context, videoID string, uri *string, ownerUserID string) error {
+	v, err := s.repo.GetByID(ctx, videoID)
+	if err != nil {
+		return err
+	}
+	if v.UserID != ownerUserID {
+		return federationOwnerMismatch
+	}
+	v.AtprotoURI = uri
+	return s.repo.Update(ctx, v)
+}
+
+// federationOwnerMismatch is the sentinel for non-owner SetAtprotoURI attempts. Defined as
+// a package var to avoid importing errors.New into a file that doesn't use it elsewhere.
+var federationOwnerMismatch = errFedOwnerMismatch{}
+
+type errFedOwnerMismatch struct{}
+
+func (errFedOwnerMismatch) Error() string { return "not the owner of the video" }

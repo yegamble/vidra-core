@@ -21,7 +21,28 @@ var (
 	schedulerIntervalSeconds int64
 	schedulerBurst           int64
 	schedulerLastTickUnix    int64
+
+	// Phase 9 Inner Circle metrics — split by reason so operators can tell
+	// active-expired (success path) from pending-timeout (stale checkout).
+	innerCircleMembershipsExpiredActive  int64
+	innerCircleMembershipsExpiredPending int64
 )
+
+// IncInnerCircleExpiredActive bumps the counter for active memberships whose
+// expires_at has elapsed.
+func IncInnerCircleExpiredActive(n int) {
+	if n > 0 {
+		atomic.AddInt64(&innerCircleMembershipsExpiredActive, int64(n))
+	}
+}
+
+// IncInnerCircleExpiredPending bumps the counter for pending memberships
+// timed out by the expiry job (webhook never arrived).
+func IncInnerCircleExpiredPending(n int) {
+	if n > 0 {
+		atomic.AddInt64(&innerCircleMembershipsExpiredPending, int64(n))
+	}
+}
 
 func IncProcessed() { atomic.AddInt64(&encoderJobsProcessed, 1) }
 func IncFailed()    { atomic.AddInt64(&encoderJobsFailed, 1) }
@@ -55,6 +76,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "vidra_scheduler_burst %d\n", atomic.LoadInt64(&schedulerBurst))
 	_, _ = fmt.Fprintf(w, "# TYPE vidra_scheduler_last_tick_unixtime gauge\n")
 	_, _ = fmt.Fprintf(w, "vidra_scheduler_last_tick_unixtime %d\n", atomic.LoadInt64(&schedulerLastTickUnix))
+
+	// Phase 9 Inner Circle expiry sweep metrics.
+	_, _ = fmt.Fprintf(w, "# TYPE vidra_inner_circle_memberships_expired_total counter\n")
+	_, _ = fmt.Fprintf(w, "vidra_inner_circle_memberships_expired_total{reason=\"active_expired\"} %d\n", atomic.LoadInt64(&innerCircleMembershipsExpiredActive))
+	_, _ = fmt.Fprintf(w, "vidra_inner_circle_memberships_expired_total{reason=\"pending_timeout\"} %d\n", atomic.LoadInt64(&innerCircleMembershipsExpiredPending))
 }
 
 func IncFedJobsProcessed()      { atomic.AddInt64(&federationJobsProcessed, 1) }

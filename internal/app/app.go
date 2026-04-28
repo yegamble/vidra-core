@@ -160,6 +160,8 @@ type Dependencies struct {
 	ImportService            any
 	BTCPayService            *ucpayments.BTCPayService
 	BTCPayInvoiceLookup      *repository.BTCPayRepository
+	UserAtprotoRepo          *repository.UserAtprotoRepository
+	UserAtprotoService       *usecase.UserAtprotoService
 	LedgerService            *ucpayments.LedgerService
 	PaymentLedgerRepo        *repository.PaymentLedgerRepository
 	PayoutService            *ucpayments.PayoutService
@@ -453,6 +455,16 @@ func (app *Application) initializeDependencies() *Dependencies {
 		deps.AtprotoService = usecase.NewAtprotoService(deps.ModerationRepo, app.Config, atprotoRepo, encKey)
 		deps.AtprotoService.StartBackgroundRefresh(context.Background(), time.Duration(app.Config.ATProtoRefreshIntervalSeconds)*time.Second)
 		app.atprotoService = deps.AtprotoService
+
+		// Phase 11 — per-user ATProto. Reuses the same encKey master key the singleton
+		// session store uses. Adapter satisfies usecase.UserAtprotoStore over the
+		// repo (the cycle break per Phase 11 plan F5 — repo type identical to usecase
+		// type, adapted at wire-time).
+		userAtprotoRepo := repository.NewUserAtprotoRepository(app.DB)
+		deps.UserAtprotoRepo = userAtprotoRepo
+		deps.UserAtprotoService = usecase.NewUserAtprotoService(
+			&userAtprotoStoreAdapter{repo: userAtprotoRepo}, encKey,
+		)
 	}
 
 	deps.IPFSClient = ipfs.NewClient(
@@ -934,6 +946,8 @@ func (app *Application) registerRoutes(deps *Dependencies) {
 		ImportService:            deps.ImportService,
 		BTCPayService:            deps.BTCPayService,
 		BTCPayInvoiceLookup:      deps.BTCPayInvoiceLookup,
+		UserAtprotoService:       deps.UserAtprotoService,
+		UserAtprotoRepo:          deps.UserAtprotoRepo,
 		StreamManager:            deps.StreamManager,
 		ChatServer:               deps.ChatServer,
 		ChatRepo:                 deps.ChatRepo,
@@ -1139,3 +1153,37 @@ type activityPubPublisherAdapter struct {
 func (a *activityPubPublisherAdapter) PublishVideo(ctx context.Context, v *domain.Video) error {
 	return a.svc.PublishVideo(ctx, v.ID)
 }
+
+// userAtprotoStoreAdapter satisfies usecase.UserAtprotoStore over the repository's
+// UserAtprotoRepository. The two packages cannot share a type directly (cycle), so this
+// adapter copies field-for-field at the boundary.
+type userAtprotoStoreAdapter struct {
+	repo *repository.UserAtprotoRepository
+}
+
+func (a *userAtprotoStoreAdapter) Save(ctx context.Context, key []byte, acct *usecase.UserAtprotoAccount) error {
+	return a.repo.Save(ctx, key, &repository.UserAtprotoAccount{
+		UserID: acct.UserID, DID: acct.DID, Handle: acct.Handle, PDSURL: acct.PDSURL,
+		AccessJWT: acct.AccessJWT, RefreshJWT: acct.RefreshJWT,
+	})
+}
+
+func (a *userAtprotoStoreAdapter) Get(ctx context.Context, key []byte, userID string) (*usecase.UserAtprotoAccount, error) {
+	r, err := a.repo.Get(ctx, key, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &usecase.UserAtprotoAccount{
+		UserID: r.UserID, DID: r.DID, Handle: r.Handle, PDSURL: r.PDSURL,
+		AccessJWT: r.AccessJWT, RefreshJWT: r.RefreshJWT, LastRefreshedAt: r.LastRefreshedAt,
+	}, nil
+}
+
+func (a *userAtprotoStoreAdapter) Delete(ctx context.Context, userID string) error {
+	return a.repo.Delete(ctx, userID)
+}
+
+func (a *userAtprotoStoreAdapter) UpdateTokens(ctx context.Context, key []byte, userID, access, refresh string) error {
+	return a.repo.UpdateTokens(ctx, key, userID, access, refresh)
+}
+

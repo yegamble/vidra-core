@@ -89,6 +89,8 @@ type HandlerDependencies struct {
 	TwoFAService             *usecase.TwoFAService
 	BTCPayService            *ucpayments.BTCPayService
 	BTCPayInvoiceLookup      *repository.BTCPayRepository
+	UserAtprotoService       *usecase.UserAtprotoService
+	UserAtprotoRepo          *repository.UserAtprotoRepository
 	LedgerService            *ucpayments.LedgerService
 	PaymentLedgerRepo        *repository.PaymentLedgerRepository
 	PayoutService            *ucpayments.PayoutService

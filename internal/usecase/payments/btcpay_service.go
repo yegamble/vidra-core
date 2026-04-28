@@ -17,12 +17,18 @@ import (
 	"github.com/google/uuid"
 )
 
+// SettlementHook is called after an invoice settles. Phase 9 uses it to wire
+// Inner Circle membership creation without making the payments package depend
+// on the inner_circle package. Safe to leave nil — the webhook still works.
+type SettlementHook func(ctx context.Context, invoice *domain.BTCPayInvoice) error
+
 // BTCPayService implements the business logic for BTCPay Server payment operations.
 type BTCPayService struct {
-	repo          *repository.BTCPayRepository
-	client        *payments.BTCPayClient
-	webhookSecret string
-	ledger        *LedgerService // optional — nil when ledger feature disabled
+	repo            *repository.BTCPayRepository
+	client          *payments.BTCPayClient
+	webhookSecret   string
+	ledger          *LedgerService   // optional — nil when ledger feature disabled
+	settlementHooks []SettlementHook // optional — invoked on settle in registration order
 }
 
 // NewBTCPayService creates a new BTCPay service.
@@ -38,6 +44,17 @@ func NewBTCPayService(repo *repository.BTCPayRepository, client *payments.BTCPay
 // webhooks write tip_in/tip_out ledger entries. Called once at startup in app.go.
 func (s *BTCPayService) SetLedgerService(l *LedgerService) {
 	s.ledger = l
+}
+
+// AddSettlementHook registers a callback invoked once per settled invoice.
+// Hook errors are logged but do not fail the webhook (the invoice status
+// update has already succeeded; bubbling up would cause BTCPay to retry and
+// risk double-processing).
+func (s *BTCPayService) AddSettlementHook(hook SettlementHook) {
+	if hook == nil {
+		return
+	}
+	s.settlementHooks = append(s.settlementHooks, hook)
 }
 
 // CreateInvoice creates a new payment invoice via BTCPay Server and stores it locally.
@@ -173,16 +190,24 @@ func (s *BTCPayService) ProcessWebhook(ctx context.Context, event *domain.BTCPay
 
 	slog.Info(fmt.Sprintf("BTCPay invoice %s updated to %s", event.InvoiceID, newStatus))
 
-	// On settlement, write ledger entries (tip_out / tip_in) via the ledger service.
-	// Idempotent via UNIQUE idempotency_key — webhook retries are safe.
-	if newStatus == domain.InvoiceStatusSettled && s.ledger != nil {
+	// On settlement, write ledger entries (tip_out / tip_in) via the ledger service
+	// and invoke any registered settlement hooks (e.g. Inner Circle membership
+	// activation). Idempotent via UNIQUE idempotency_key — webhook retries safe.
+	if newStatus == domain.InvoiceStatusSettled {
 		invoice, err := s.repo.GetInvoiceByBTCPayID(ctx, event.InvoiceID)
 		if err != nil {
-			slog.Error("ledger write: fetch invoice failed", "btcpay_id", event.InvoiceID, "err", err)
+			slog.Error("settlement: fetch invoice failed", "btcpay_id", event.InvoiceID, "err", err)
 			return nil // don't fail the webhook — status update already succeeded
 		}
-		if lerr := s.ledger.RecordInvoiceSettlement(ctx, invoice); lerr != nil {
-			slog.Error("ledger write: settlement recording failed", "invoice_id", invoice.ID, "err", lerr)
+		if s.ledger != nil {
+			if lerr := s.ledger.RecordInvoiceSettlement(ctx, invoice); lerr != nil {
+				slog.Error("ledger write: settlement recording failed", "invoice_id", invoice.ID, "err", lerr)
+			}
+		}
+		for _, hook := range s.settlementHooks {
+			if hookErr := hook(ctx, invoice); hookErr != nil {
+				slog.Error("settlement hook failed", "invoice_id", invoice.ID, "err", hookErr)
+			}
 		}
 	}
 

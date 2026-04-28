@@ -56,16 +56,19 @@ func (s *stubRunnerRepo) ListRegistrationTokens(context.Context) ([]*domain.Remo
 	return []*domain.RemoteRunnerRegistrationToken{s.createdToken}, nil
 }
 func (s *stubRunnerRepo) DeleteRegistrationToken(context.Context, uuid.UUID) error { return nil }
-func (s *stubRunnerRepo) RegisterRunner(_ context.Context, registrationToken, name, description string) (*domain.RemoteRunner, error) {
-	if registrationToken != "reg-token" {
+func (s *stubRunnerRepo) RegisterRunner(_ context.Context, input domain.RegisterRunnerInput) (*domain.RemoteRunner, error) {
+	if input.RegistrationToken != "reg-token" {
 		return nil, domain.ErrNotFound
 	}
 	s.runner = &domain.RemoteRunner{
-		ID:          uuid.New(),
-		Name:        name,
-		Description: description,
-		Token:       "runner-token",
-		Status:      domain.RemoteRunnerStatusRegistered,
+		ID:            uuid.New(),
+		Name:          input.Name,
+		Description:   input.Description,
+		Token:         "runner-token",
+		Status:        domain.RemoteRunnerStatusRegistered,
+		RunnerVersion: input.RunnerVersion,
+		IPAddress:     input.IPAddress,
+		Capabilities:  input.Capabilities,
 	}
 	return s.runner, nil
 }
@@ -88,12 +91,59 @@ func (s *stubRunnerRepo) GetAssignmentForRunnerAndJob(_ context.Context, runnerI
 	}
 	return nil, domain.ErrNotFound
 }
-func (s *stubRunnerRepo) ListAssignments(context.Context) ([]*domain.RemoteRunnerJobAssignment, error) {
+func (s *stubRunnerRepo) ListAssignments(_ context.Context, opts domain.ListAssignmentsOpts) ([]*domain.RemoteRunnerJobAssignment, int, error) {
 	items := []*domain.RemoteRunnerJobAssignment{}
 	for _, assignment := range s.assignments {
+		if opts.RunnerID != nil && assignment.RunnerID != *opts.RunnerID {
+			continue
+		}
+		if len(opts.State) > 0 {
+			match := false
+			for _, st := range opts.State {
+				if assignment.State == st {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
 		items = append(items, assignment)
 	}
-	return items, nil
+	total := len(items)
+	if opts.Count > 0 {
+		end := opts.Start + opts.Count
+		if opts.Start > total {
+			items = []*domain.RemoteRunnerJobAssignment{}
+		} else if end > total {
+			items = items[opts.Start:]
+		} else {
+			items = items[opts.Start:end]
+		}
+	}
+	return items, total, nil
+}
+
+func (s *stubRunnerRepo) HealthMetrics(context.Context) (*domain.RemoteRunnerHealth, error) {
+	h := &domain.RemoteRunnerHealth{}
+	if s.runner != nil {
+		h.TotalRunners = 1
+		if s.runner.LastSeenAt != nil && time.Since(*s.runner.LastSeenAt) <= 5*time.Minute {
+			h.OnlineRunners = 1
+		} else {
+			h.OfflineRunners = 1
+		}
+	}
+	for _, a := range s.assignments {
+		switch a.State {
+		case domain.RemoteRunnerJobStateAccepted, domain.RemoteRunnerJobStateRunning:
+			h.JobsInFlight++
+		case domain.RemoteRunnerJobStateFailed, domain.RemoteRunnerJobStateAborted:
+			h.JobsFailed24h++
+		}
+	}
+	return h, nil
 }
 func (s *stubRunnerRepo) UpdateAssignment(_ context.Context, assignment *domain.RemoteRunnerJobAssignment) error {
 	s.assignments[assignment.EncodingJob] = assignment
@@ -607,4 +657,174 @@ func TestHandlers_FullLifecycle_RegisterToCompletion(t *testing.T) {
 		"assignment state must be completed after success")
 	require.Equal(t, 100, assignment.Progress, "progress must be 100 after success")
 	require.NotNil(t, assignment.CompletedAt, "completed_at must be set")
+}
+
+// ─── Phase 12: ListJobs query-param filtering ────────────────────────────────
+
+func TestParseListAssignmentsOpts_Defaults(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/jobs", nil)
+	opts, err := parseListAssignmentsOpts(req)
+	require.NoError(t, err)
+	require.Equal(t, 0, opts.Start)
+	require.Equal(t, 0, opts.Count)
+	require.Empty(t, opts.State)
+	require.Nil(t, opts.RunnerID)
+}
+
+func TestParseListAssignmentsOpts_StartCount(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/jobs?start=20&count=10", nil)
+	opts, err := parseListAssignmentsOpts(req)
+	require.NoError(t, err)
+	require.Equal(t, 20, opts.Start)
+	require.Equal(t, 10, opts.Count)
+}
+
+func TestParseListAssignmentsOpts_CountClamp(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/jobs?count=9999", nil)
+	opts, err := parseListAssignmentsOpts(req)
+	require.NoError(t, err)
+	require.Equal(t, 500, opts.Count, "count must clamp to 500")
+}
+
+func TestParseListAssignmentsOpts_NegativeStart(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/jobs?start=-1", nil)
+	_, err := parseListAssignmentsOpts(req)
+	require.Error(t, err)
+}
+
+func TestParseListAssignmentsOpts_StateMultiSelect(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/jobs?state=failed&state=aborted", nil)
+	opts, err := parseListAssignmentsOpts(req)
+	require.NoError(t, err)
+	require.Equal(t, []domain.RemoteRunnerJobState{
+		domain.RemoteRunnerJobStateFailed,
+		domain.RemoteRunnerJobStateAborted,
+	}, opts.State)
+}
+
+func TestParseListAssignmentsOpts_UnknownStateDropped(t *testing.T) {
+	// A typo'd filter chip should produce an empty result, not a 400. The
+	// handler decides how to render no-matches; rejecting at parse-time is the
+	// wrong layer.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/jobs?state=bogus&state=running", nil)
+	opts, err := parseListAssignmentsOpts(req)
+	require.NoError(t, err)
+	require.Equal(t, []domain.RemoteRunnerJobState{
+		domain.RemoteRunnerJobStateRunning,
+	}, opts.State)
+}
+
+func TestParseListAssignmentsOpts_RunnerIDValid(t *testing.T) {
+	id := uuid.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/jobs?runnerId="+id.String(), nil)
+	opts, err := parseListAssignmentsOpts(req)
+	require.NoError(t, err)
+	require.NotNil(t, opts.RunnerID)
+	require.Equal(t, id, *opts.RunnerID)
+}
+
+func TestParseListAssignmentsOpts_RunnerIDInvalid(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/jobs?runnerId=not-a-uuid", nil)
+	_, err := parseListAssignmentsOpts(req)
+	require.Error(t, err)
+}
+
+func TestHandlers_ListJobs_FilterRespectsTotal(t *testing.T) {
+	// Two assignments — one running, one completed. Filter for running should
+	// yield total=1 in the response envelope, not the unfiltered count.
+	h, repo, _ := newHandlers()
+	repo.runner = &domain.RemoteRunner{ID: uuid.New(), Token: "t"}
+	repo.assignments["a"] = &domain.RemoteRunnerJobAssignment{ID: uuid.New(), EncodingJob: "a", State: domain.RemoteRunnerJobStateRunning}
+	repo.assignments["b"] = &domain.RemoteRunnerJobAssignment{ID: uuid.New(), EncodingJob: "b", State: domain.RemoteRunnerJobStateCompleted}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/jobs?state=running", nil)
+	rr := httptest.NewRecorder()
+	h.ListJobs(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var env listEnvelope
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &env))
+	require.Equal(t, 1, env.Data.Total)
+	require.Len(t, env.Data.Data, 1)
+}
+
+// ─── Phase 12: RunnerHealth handler ───────────────────────────────────────────
+
+func TestHandlers_RunnerHealth_Empty(t *testing.T) {
+	h, _, _ := newHandlers()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/health", nil)
+	rr := httptest.NewRecorder()
+	h.RunnerHealth(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var env struct {
+		Data domain.RemoteRunnerHealth `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &env))
+	require.Equal(t, 0, env.Data.TotalRunners)
+	require.Equal(t, 0, env.Data.JobsInFlight)
+}
+
+func TestHandlers_RunnerHealth_WithRunningJobs(t *testing.T) {
+	h, repo, _ := newHandlers()
+	now := time.Now().UTC()
+	repo.runner = &domain.RemoteRunner{ID: uuid.New(), Token: "t", LastSeenAt: &now}
+	repo.assignments["a"] = &domain.RemoteRunnerJobAssignment{ID: uuid.New(), EncodingJob: "a", State: domain.RemoteRunnerJobStateRunning}
+	repo.assignments["b"] = &domain.RemoteRunnerJobAssignment{ID: uuid.New(), EncodingJob: "b", State: domain.RemoteRunnerJobStateFailed}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners/health", nil)
+	rr := httptest.NewRecorder()
+	h.RunnerHealth(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var env struct {
+		Data domain.RemoteRunnerHealth `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &env))
+	require.Equal(t, 1, env.Data.TotalRunners)
+	require.Equal(t, 1, env.Data.OnlineRunners)
+	require.Equal(t, 1, env.Data.JobsInFlight)
+	require.Equal(t, 1, env.Data.JobsFailed24h)
+}
+
+// ─── Phase 12: clientIPFromRequest ────────────────────────────────────────────
+
+func TestClientIPFromRequest_XForwardedFor(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.42, 10.0.0.1")
+	req.RemoteAddr = "10.0.0.1:54321"
+	require.Equal(t, "203.0.113.42", clientIPFromRequest(req))
+}
+
+func TestClientIPFromRequest_RemoteAddr(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.RemoteAddr = "192.0.2.5:8080"
+	require.Equal(t, "192.0.2.5", clientIPFromRequest(req))
+}
+
+func TestClientIPFromRequest_Empty(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.RemoteAddr = ""
+	require.Equal(t, "", clientIPFromRequest(req))
+}
+
+// ─── Phase 12: RegisterRunner captures new fields ─────────────────────────────
+
+func TestHandlers_RegisterRunner_CapturesNewFields(t *testing.T) {
+	repo := &stubRunnerRepo{assignments: map[string]*domain.RemoteRunnerJobAssignment{}}
+	handler := NewHandlers(repo, &stubEncodingRepo{})
+
+	body := `{"registrationToken":"reg-token","name":"runner-x","runnerVersion":"1.4.2","capabilities":{"gpu":"nvidia","ffmpeg":"6.0"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/register", strings.NewReader(body))
+	req.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.1")
+	rr := httptest.NewRecorder()
+
+	handler.RegisterRunner(rr, req)
+
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+	require.NotNil(t, repo.runner)
+	require.Equal(t, "1.4.2", repo.runner.RunnerVersion)
+	require.Equal(t, "198.51.100.7", repo.runner.IPAddress)
+	require.Equal(t, "nvidia", repo.runner.Capabilities["gpu"])
+	require.Equal(t, "6.0", repo.runner.Capabilities["ffmpeg"])
 }

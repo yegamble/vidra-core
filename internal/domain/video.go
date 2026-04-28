@@ -79,8 +79,11 @@ type Video struct {
 	RemoteThumbnailURL   *string    `json:"remote_thumbnail_url,omitempty" db:"remote_thumbnail_url"`
 	RemoteLastSyncedAt   *time.Time `json:"remote_last_synced_at,omitempty" db:"remote_last_synced_at"`
 	WaitTranscoding      bool       `json:"wait_transcoding" db:"wait_transcoding"`
-	CreatedAt            time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at" db:"updated_at"`
+	// AtprotoURI holds the at:// URI of the Bluesky post that mirrors this video, when the
+	// owner has cross-posted. NULL/empty means not syndicated. Set by Phase 11 syndicate flow.
+	AtprotoURI *string   `json:"atproto_uri,omitempty" db:"atproto_uri"`
+	CreatedAt  time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
 	// Computed field for PeerTube v8.1 compat — populated by ComputeThumbnails()
 	Thumbnails []VideoThumbnail `json:"thumbnails,omitempty" db:"-"`
 }

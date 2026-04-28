@@ -56,6 +56,11 @@ type Config struct {
 	BTCPayStoreID      string
 	BTCPayWebhookSecret string
 
+	// Phase 9 Polar webhook signing secret. When empty, the receiver rejects
+	// every incoming webhook (no dev-mode bypass — Polar's sandbox provides a
+	// secret to use in non-prod).
+	PolarWebhookSecret string
+
 	FFMPEGPath string
 
 	JWTSecret         string

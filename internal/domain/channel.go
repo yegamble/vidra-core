@@ -20,6 +20,9 @@ type Channel struct {
 	IsLocal        bool      `json:"isLocal" db:"is_local"`
 	AtprotoDID     *string   `json:"atprotoDid,omitempty" db:"atproto_did"`        // ATProto DID for federation
 	AtprotoPDSURL  *string   `json:"atprotoPdsUrl,omitempty" db:"atproto_pds_url"` // Optional PDS base URL for the DID
+	// AtprotoCrossPostMode controls Phase 11 auto-posting on upload: "always" / "never" / "ask".
+	// Defaults to "ask" (opt-in per upload). Channel owner can flip in settings.
+	AtprotoCrossPostMode string `json:"atprotoCrossPostMode" db:"atproto_cross_post_mode"`
 	AvatarFilename *string   `json:"avatarFilename,omitempty" db:"avatar_filename"`
 	AvatarIPFSCID  *string   `json:"avatarIpfsCid,omitempty" db:"avatar_ipfs_cid"`
 	BannerFilename *string   `json:"bannerFilename,omitempty" db:"banner_filename"`

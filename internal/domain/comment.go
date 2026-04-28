@@ -30,6 +30,10 @@ type Comment struct {
 	UpdatedAt     time.Time     `json:"updated_at" db:"updated_at"`
 	User          *User         `json:"user,omitempty"`
 	Replies       []*Comment    `json:"replies,omitempty"`
+	// Phase 9: highest active Inner Circle tier the commenter holds for the
+	// video's channel. Resolved at read time via LEFT JOIN — null when the
+	// commenter is not a member or membership has expired/cancelled.
+	InnerCircleTier *string `json:"inner_circle_tier,omitempty" db:"inner_circle_tier"`
 }
 
 type CommentFlag struct {

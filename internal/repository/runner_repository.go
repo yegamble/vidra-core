@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"vidra-core/internal/domain"
@@ -21,44 +22,77 @@ func NewRunnerRepository(db *sqlx.DB) *RunnerRepository {
 	return &RunnerRepository{db: db}
 }
 
+const runnerSelectColumns = `id, name, description, token, status, created_by, last_seen_at, created_at, updated_at, runner_version, ip_address, capabilities`
+
 func (r *RunnerRepository) ListRunners(ctx context.Context) ([]*domain.RemoteRunner, error) {
-	var runners []*domain.RemoteRunner
-	err := r.db.SelectContext(ctx, &runners, `
-		SELECT id, name, description, token, status, created_by, last_seen_at, created_at, updated_at
+	rows, err := r.db.QueryxContext(ctx, `
+		SELECT `+runnerSelectColumns+`
 		FROM remote_runners
 		ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list runners: %w", err)
 	}
-	return runners, nil
+	defer func() { _ = rows.Close() }()
+
+	runners := []*domain.RemoteRunner{}
+	for rows.Next() {
+		runner, scanErr := scanRunner(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		runners = append(runners, runner)
+	}
+	return runners, rows.Err()
 }
 
 func (r *RunnerRepository) GetRunner(ctx context.Context, runnerID uuid.UUID) (*domain.RemoteRunner, error) {
-	var runner domain.RemoteRunner
-	err := r.db.GetContext(ctx, &runner, `
-		SELECT id, name, description, token, status, created_by, last_seen_at, created_at, updated_at
-		FROM remote_runners
-		WHERE id = $1`, runnerID)
-	if err == sql.ErrNoRows {
-		return nil, domain.ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get runner: %w", err)
-	}
-	return &runner, nil
+	return r.getRunner(ctx, `SELECT `+runnerSelectColumns+` FROM remote_runners WHERE id = $1`, runnerID)
 }
 
 func (r *RunnerRepository) GetRunnerByToken(ctx context.Context, token string) (*domain.RemoteRunner, error) {
-	var runner domain.RemoteRunner
-	err := r.db.GetContext(ctx, &runner, `
-		SELECT id, name, description, token, status, created_by, last_seen_at, created_at, updated_at
-		FROM remote_runners
-		WHERE token = $1`, token)
-	if err == sql.ErrNoRows {
+	return r.getRunner(ctx, `SELECT `+runnerSelectColumns+` FROM remote_runners WHERE token = $1`, token)
+}
+
+func (r *RunnerRepository) getRunner(ctx context.Context, query string, args ...any) (*domain.RemoteRunner, error) {
+	rows, err := r.db.QueryxContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get runner: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
 		return nil, domain.ErrNotFound
 	}
+	return scanRunner(rows)
+}
+
+func scanRunner(rows *sqlx.Rows) (*domain.RemoteRunner, error) {
+	var runner domain.RemoteRunner
+	var capabilitiesJSON []byte
+	err := rows.Scan(
+		&runner.ID,
+		&runner.Name,
+		&runner.Description,
+		&runner.Token,
+		&runner.Status,
+		&runner.CreatedBy,
+		&runner.LastSeenAt,
+		&runner.CreatedAt,
+		&runner.UpdatedAt,
+		&runner.RunnerVersion,
+		&runner.IPAddress,
+		&capabilitiesJSON,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("get runner by token: %w", err)
+		return nil, fmt.Errorf("scan runner: %w", err)
+	}
+	if len(capabilitiesJSON) > 0 {
+		if unmarshalErr := json.Unmarshal(capabilitiesJSON, &runner.Capabilities); unmarshalErr != nil {
+			return nil, fmt.Errorf("unmarshal runner capabilities: %w", unmarshalErr)
+		}
+	}
+	if runner.Capabilities == nil {
+		runner.Capabilities = map[string]any{}
 	}
 	return &runner, nil
 }
@@ -122,7 +156,7 @@ func (r *RunnerRepository) DeleteRegistrationToken(ctx context.Context, tokenID 
 	return nil
 }
 
-func (r *RunnerRepository) RegisterRunner(ctx context.Context, registrationToken, name, description string) (*domain.RemoteRunner, error) {
+func (r *RunnerRepository) RegisterRunner(ctx context.Context, input domain.RegisterRunnerInput) (*domain.RemoteRunner, error) {
 	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin runner registration transaction: %w", err)
@@ -134,7 +168,7 @@ func (r *RunnerRepository) RegisterRunner(ctx context.Context, registrationToken
 		SELECT id, token, created_by, expires_at, used_at, used_by_runner_id, created_at
 		FROM remote_runner_registration_tokens
 		WHERE token = $1
-		FOR UPDATE`, registrationToken)
+		FOR UPDATE`, input.RegistrationToken)
 	if err == sql.ErrNoRows {
 		return nil, domain.ErrNotFound
 	}
@@ -149,21 +183,34 @@ func (r *RunnerRepository) RegisterRunner(ctx context.Context, registrationToken
 		return nil, domain.ErrForbidden
 	}
 
+	capabilities := input.Capabilities
+	if capabilities == nil {
+		capabilities = map[string]any{}
+	}
+	capabilitiesJSON, err := json.Marshal(capabilities)
+	if err != nil {
+		return nil, fmt.Errorf("marshal runner capabilities: %w", err)
+	}
+
 	runner := &domain.RemoteRunner{
-		ID:          uuid.New(),
-		Name:        name,
-		Description: description,
-		Token:       uuid.NewString(),
-		Status:      domain.RemoteRunnerStatusRegistered,
-		CreatedBy:   token.CreatedBy,
-		CreatedAt:   time.Now().UTC(),
-		UpdatedAt:   time.Now().UTC(),
+		ID:            uuid.New(),
+		Name:          input.Name,
+		Description:   input.Description,
+		Token:         uuid.NewString(),
+		Status:        domain.RemoteRunnerStatusRegistered,
+		CreatedBy:     token.CreatedBy,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+		RunnerVersion: input.RunnerVersion,
+		IPAddress:     input.IPAddress,
+		Capabilities:  capabilities,
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO remote_runners (id, name, description, token, status, created_by, last_seen_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8)`,
+		INSERT INTO remote_runners (id, name, description, token, status, created_by, last_seen_at, created_at, updated_at, runner_version, ip_address, capabilities)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10, $11)`,
 		runner.ID, runner.Name, runner.Description, runner.Token, runner.Status, runner.CreatedBy, runner.CreatedAt, runner.UpdatedAt,
+		runner.RunnerVersion, runner.IPAddress, capabilitiesJSON,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create runner: %w", err)
@@ -255,13 +302,29 @@ func (r *RunnerRepository) GetAssignmentForRunnerAndJob(ctx context.Context, run
 	return r.getAssignment(ctx, `SELECT id, runner_id, encoding_job_id, state, progress, last_error, metadata, accepted_at, completed_at, created_at, updated_at FROM remote_runner_job_assignments WHERE runner_id = $1 AND encoding_job_id = $2`, runnerID, jobID)
 }
 
-func (r *RunnerRepository) ListAssignments(ctx context.Context) ([]*domain.RemoteRunnerJobAssignment, error) {
-	rows, err := r.db.QueryxContext(ctx, `
-		SELECT id, runner_id, encoding_job_id, state, progress, last_error, metadata, accepted_at, completed_at, created_at, updated_at
-		FROM remote_runner_job_assignments
-		ORDER BY created_at ASC`)
+// ListAssignments returns paginated/filtered job assignments along with the
+// total count matching the same filter (without pagination). Zero opts returns
+// everything ordered by created_at ASC.
+func (r *RunnerRepository) ListAssignments(ctx context.Context, opts domain.ListAssignmentsOpts) ([]*domain.RemoteRunnerJobAssignment, int, error) {
+	whereSQL, args := buildAssignmentFilter(opts)
+
+	var total int
+	if err := r.db.GetContext(ctx, &total,
+		`SELECT COUNT(*) FROM remote_runner_job_assignments`+whereSQL, args...); err != nil {
+		return nil, 0, fmt.Errorf("count runner assignments: %w", err)
+	}
+
+	query := `SELECT id, runner_id, encoding_job_id, state, progress, last_error, metadata, accepted_at, completed_at, created_at, updated_at
+		FROM remote_runner_job_assignments` + whereSQL + ` ORDER BY created_at DESC`
+
+	if opts.Count > 0 {
+		query += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
+		args = append(args, opts.Count, opts.Start)
+	}
+
+	rows, err := r.db.QueryxContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list runner assignments: %w", err)
+		return nil, 0, fmt.Errorf("list runner assignments: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -269,11 +332,83 @@ func (r *RunnerRepository) ListAssignments(ctx context.Context) ([]*domain.Remot
 	for rows.Next() {
 		assignment, err := scanRunnerAssignment(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		assignments = append(assignments, assignment)
 	}
-	return assignments, rows.Err()
+	return assignments, total, rows.Err()
+}
+
+// buildAssignmentFilter returns the WHERE clause (with leading space) and the
+// positional args for a ListAssignmentsOpts filter.
+func buildAssignmentFilter(opts domain.ListAssignmentsOpts) (string, []any) {
+	clauses := []string{}
+	args := []any{}
+
+	if opts.RunnerID != nil {
+		args = append(args, *opts.RunnerID)
+		clauses = append(clauses, fmt.Sprintf("runner_id = $%d", len(args)))
+	}
+	if len(opts.State) > 0 {
+		placeholders := make([]string, 0, len(opts.State))
+		for _, s := range opts.State {
+			args = append(args, string(s))
+			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+		}
+		clauses = append(clauses, "state IN ("+strings.Join(placeholders, ",")+")")
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+// HealthMetrics aggregates runner-subsystem signals for the admin dashboard.
+// Online = last_seen_at within the last 5 minutes. Failed24h covers
+// state IN (failed, aborted) within the last 24 hours. AvgCompletionMs is the
+// mean (completed_at - accepted_at) in milliseconds for assignments completed
+// in the last 24 hours; 0 when no completions in that window.
+func (r *RunnerRepository) HealthMetrics(ctx context.Context) (*domain.RemoteRunnerHealth, error) {
+	var h domain.RemoteRunnerHealth
+	// avg_completion_ms is computed as a Postgres NUMERIC (AVG over EXTRACT
+	// EPOCH * 1000) which lib/pq returns as a string-encoded []byte. We scan
+	// into a float64 then truncate to int64 — sub-millisecond precision is
+	// not interesting for an admin dashboard.
+	var avgCompletionMs float64
+	err := r.db.QueryRowxContext(ctx, `
+		WITH runner_counts AS (
+			SELECT
+				COUNT(*) AS total,
+				COUNT(*) FILTER (WHERE last_seen_at >= NOW() - INTERVAL '5 minutes') AS online
+			FROM remote_runners
+		),
+		job_counts AS (
+			SELECT
+				COUNT(*) FILTER (WHERE state IN ('accepted','running')) AS in_flight,
+				COUNT(*) FILTER (WHERE state IN ('failed','aborted') AND updated_at >= NOW() - INTERVAL '24 hours') AS failed_24h,
+				COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - accepted_at)) * 1000) FILTER (WHERE state = 'completed' AND completed_at >= NOW() - INTERVAL '24 hours' AND accepted_at IS NOT NULL), 0)::float8 AS avg_completion_ms
+			FROM remote_runner_job_assignments
+		)
+		SELECT
+			runner_counts.total,
+			runner_counts.online,
+			runner_counts.total - runner_counts.online AS offline,
+			job_counts.in_flight,
+			job_counts.failed_24h,
+			job_counts.avg_completion_ms
+		FROM runner_counts, job_counts`).Scan(
+		&h.TotalRunners,
+		&h.OnlineRunners,
+		&h.OfflineRunners,
+		&h.JobsInFlight,
+		&h.JobsFailed24h,
+		&avgCompletionMs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("runner health metrics: %w", err)
+	}
+	h.AvgCompletionMs = int64(avgCompletionMs)
+	return &h, nil
 }
 
 func (r *RunnerRepository) UpdateAssignment(ctx context.Context, assignment *domain.RemoteRunnerJobAssignment) error {

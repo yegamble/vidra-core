@@ -26,6 +26,30 @@ func TestVideoWaitTranscodingField(t *testing.T) {
 	assert.False(t, v2.WaitTranscoding)
 }
 
+func TestVideoAtprotoURIRoundTrip(t *testing.T) {
+	// Phase 11: AtprotoURI is nullable; omitempty when nil, present when set.
+	t.Run("nil omitted from JSON", func(t *testing.T) {
+		v := Video{ID: "x"}
+		data, err := json.Marshal(v)
+		assert.NoError(t, err)
+		assert.NotContains(t, string(data), "atproto_uri")
+	})
+
+	t.Run("set value round-trips", func(t *testing.T) {
+		uri := "at://did:plc:abc123/app.bsky.feed.post/3jzfcijpj2z2a"
+		v := Video{ID: "x", AtprotoURI: &uri}
+		data, err := json.Marshal(v)
+		assert.NoError(t, err)
+		assert.Contains(t, string(data), `"atproto_uri":"at://did:plc:abc123/app.bsky.feed.post/3jzfcijpj2z2a"`)
+
+		var v2 Video
+		err = json.Unmarshal(data, &v2)
+		assert.NoError(t, err)
+		assert.NotNil(t, v2.AtprotoURI)
+		assert.Equal(t, uri, *v2.AtprotoURI)
+	})
+}
+
 func TestVideoFileStruct(t *testing.T) {
 	vf := VideoFile{
 		Resolution: VideoResolution{ID: 720, Label: "720p"},

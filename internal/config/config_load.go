@@ -41,6 +41,7 @@ func loadCommonFields(cfg *Config, setupMode bool) {
 	cfg.BTCPayAPIKey = GetEnvOrDefault("BTCPAY_API_KEY", "")
 	cfg.BTCPayStoreID = GetEnvOrDefault("BTCPAY_STORE_ID", "")
 	cfg.BTCPayWebhookSecret = GetEnvOrDefault("BTCPAY_WEBHOOK_SECRET", "")
+	cfg.PolarWebhookSecret = GetEnvOrDefault("POLAR_WEBHOOK_SECRET", "")
 	cfg.FFMPEGPath = GetEnvOrDefault("FFMPEG_PATH", "ffmpeg")
 	cfg.JWTSecret = GetEnvOrDefault("JWT_SECRET", "")
 	cfg.PeerTubeJWTSecret = GetEnvOrDefault("PEERTUBE_JWT_SECRET", "")
