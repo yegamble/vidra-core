@@ -642,6 +642,9 @@ func registerVideoAPIRoutes(
 		r.Get("/languages", video.GetVideoLanguages)
 		r.Get("/privacies", video.GetVideoPrivacies)
 		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/top", viewsHandler.GetTopVideos)
+		// Trending: static segment registered before /{id} so chi routes
+		// /videos/trending to GetTrendingVideos. Frontend calls /api/v1/videos/trending.
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/trending", viewsHandler.GetTrendingVideos)
 		r.With(middleware.Auth(cfg.JWTSecret)).Post("/upload", video.UploadVideoFileHandler(deps.VideoRepo, cfg))
 
 		// PeerTube-compatible resumable upload alias
@@ -1004,6 +1007,10 @@ func registerLiveStreamAPIRoutes(r chi.Router, deps *shared.HandlerDependencies,
 		if deps.HLSTranscoder != nil {
 			hlsHandlers = video.NewHLSHandlers(cfg, deps.LiveStreamRepo, deps.HLSTranscoder, deps.IPFSStreamingService)
 		}
+
+		// Public live discovery list — frontend calls GET /api/v1/streams/.
+		// Reuses GetActiveStreams (currently-live + recent ended).
+		r.With(middleware.OptionalAuth(cfg.JWTSecret)).Get("/", liveStreamHandlers.GetActiveStreams)
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.JWTSecret))

@@ -2,6 +2,7 @@ package payments
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -59,6 +60,17 @@ func (h *BTCPayHandler) CreateInvoice(w http.ResponseWriter, r *http.Request) {
 
 	invoice, err := h.service.CreateInvoice(r.Context(), userID, req.AmountSats, req.Currency, req.PaymentMethod, req.Metadata)
 	if err != nil {
+		// Distinguish "BTCPay backend unreachable / not configured" from generic
+		// failures so the frontend can surface a typed gating message instead of
+		// a generic 500. ErrBTCPayUnavailable is wrapped on transport errors
+		// and on missing config (no baseURL/storeID).
+		if errors.Is(err, domain.ErrBTCPayUnavailable) {
+			shared.WriteError(w, http.StatusServiceUnavailable, domain.NewDomainError(
+				"BTCPAY_UNAVAILABLE",
+				"Bitcoin payments are temporarily unavailable on this server.",
+			))
+			return
+		}
 		shared.WriteError(w, http.StatusInternalServerError, domain.NewDomainError("CREATE_INVOICE_FAILED", "Failed to create invoice"))
 		return
 	}
