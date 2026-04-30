@@ -400,7 +400,7 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 				r.Delete("/{id}/subscribe", channelHandlers.UnsubscribeFromChannel)
 
 				if deps.ChannelRepo != nil {
-					channelMediaHandlers := channel.NewChannelMediaHandlers(deps.ChannelRepo)
+					channelMediaHandlers := channel.NewChannelMediaHandlers(deps.ChannelRepo, cfg)
 					r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/avatar", channelMediaHandlers.UploadAvatar)
 					r.With(middleware.Auth(cfg.JWTSecret)).Delete("/{id}/avatar", channelMediaHandlers.DeleteAvatar)
 					r.With(middleware.Auth(cfg.JWTSecret)).Post("/{id}/banner", channelMediaHandlers.UploadBanner)
@@ -598,6 +598,16 @@ func RegisterRoutesWithDependencies(r chi.Router, cfg *config.Config, rlManager 
 
 	registerExternalFeatureRoutes(r, deps, cfg.JWTSecret)
 	registerPeerTubeCompatRoutes(r, deps, cfg)
+
+	// Channel avatar/banner static serving — pairs with the upload handlers in
+	// /api/v1/channels/{id}/{avatar,banner}. Frontend reads `avatarUrl` /
+	// `bannerUrl` (resolved by `coerceChannelMediaUrls` in channels.ts) which
+	// point at these /lazy-static/* paths.
+	if deps.ChannelRepo != nil {
+		channelMediaSrv := channel.NewChannelMediaHandlers(deps.ChannelRepo, cfg)
+		r.Get("/lazy-static/avatars/{filename}", channelMediaSrv.ServeAvatar)
+		r.Get("/lazy-static/banners/{filename}", channelMediaSrv.ServeBanner)
+	}
 
 	r.Get("/oembed", admin.NewInstanceHandlers(deps.ModerationRepo, deps.UserRepo, deps.VideoRepo).OEmbed)
 

@@ -8,12 +8,18 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"vidra-core/internal/config"
 	"vidra-core/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
+
+func testConfig(t *testing.T) *config.Config {
+	t.Helper()
+	return &config.Config{StorageDir: t.TempDir()}
+}
 
 type mockChannelMediaRepo struct {
 	ownerID       string
@@ -56,7 +62,7 @@ func TestDeleteChannelAvatar_NoContent(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := channelReqWithUser(http.MethodDelete, "/channels/"+chID.String()+"/avatar", chID.String(), userID)
 	w := httptest.NewRecorder()
@@ -70,7 +76,7 @@ func TestDeleteChannelBanner_NoContent(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := channelReqWithUser(http.MethodDelete, "/channels/"+chID.String()+"/banner", chID.String(), userID)
 	w := httptest.NewRecorder()
@@ -83,7 +89,7 @@ func TestDeleteChannelBanner_NoContent(t *testing.T) {
 func TestDeleteChannelAvatar_Forbidden(t *testing.T) {
 	chID := uuid.New()
 	repo := &mockChannelMediaRepo{ownerID: "other-user"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := channelReqWithUser(http.MethodDelete, "/channels/"+chID.String()+"/avatar", chID.String(), "user-1")
 	w := httptest.NewRecorder()
@@ -120,7 +126,7 @@ func TestUploadChannelAvatar_OK(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, chID.String(), userID, "avatarfile", "avatar.png")
 	w := httptest.NewRecorder()
@@ -133,7 +139,7 @@ func TestUploadChannelAvatar_OK(t *testing.T) {
 func TestUploadChannelAvatar_Forbidden(t *testing.T) {
 	chID := uuid.New()
 	repo := &mockChannelMediaRepo{ownerID: "other-user"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, chID.String(), "user-1", "avatarfile", "avatar.png")
 	w := httptest.NewRecorder()
@@ -147,7 +153,7 @@ func TestUploadChannelBanner_OK(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, chID.String(), userID, "bannerfile", "banner.png")
 	w := httptest.NewRecorder()
@@ -160,7 +166,7 @@ func TestUploadChannelBanner_OK(t *testing.T) {
 func TestUploadChannelBanner_Forbidden(t *testing.T) {
 	chID := uuid.New()
 	repo := &mockChannelMediaRepo{ownerID: "other-user"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, chID.String(), "user-1", "bannerfile", "banner.png")
 	w := httptest.NewRecorder()
@@ -174,7 +180,7 @@ func TestUploadChannelBanner_Forbidden(t *testing.T) {
 func TestDeleteChannelBanner_Forbidden(t *testing.T) {
 	chID := uuid.New()
 	repo := &mockChannelMediaRepo{ownerID: "other-user"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := channelReqWithUser(http.MethodDelete, "/channels/"+chID.String()+"/banner", chID.String(), "user-1")
 	w := httptest.NewRecorder()
@@ -188,7 +194,7 @@ func TestDeleteChannelBanner_Forbidden(t *testing.T) {
 func TestDeleteChannelAvatar_Unauthenticated(t *testing.T) {
 	chID := uuid.New()
 	repo := &mockChannelMediaRepo{ownerID: "user-1"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := httptest.NewRequest(http.MethodDelete, "/channels/"+chID.String()+"/avatar", nil)
 	chiCtx := chi.NewRouteContext()
@@ -204,7 +210,7 @@ func TestDeleteChannelAvatar_Unauthenticated(t *testing.T) {
 func TestDeleteChannelBanner_Unauthenticated(t *testing.T) {
 	chID := uuid.New()
 	repo := &mockChannelMediaRepo{ownerID: "user-1"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := httptest.NewRequest(http.MethodDelete, "/channels/"+chID.String()+"/banner", nil)
 	chiCtx := chi.NewRouteContext()
@@ -219,7 +225,7 @@ func TestDeleteChannelBanner_Unauthenticated(t *testing.T) {
 // TestDeleteChannelAvatar_InvalidID verifies 400 for malformed channel UUID.
 func TestDeleteChannelAvatar_InvalidID(t *testing.T) {
 	repo := &mockChannelMediaRepo{ownerID: "user-1"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := channelReqWithUser(http.MethodDelete, "/channels/bad-uuid/avatar", "bad-uuid", "user-1")
 	w := httptest.NewRecorder()
@@ -232,7 +238,7 @@ func TestDeleteChannelAvatar_InvalidID(t *testing.T) {
 func TestUploadChannelAvatar_Unauthenticated(t *testing.T) {
 	chID := uuid.New()
 	repo := &mockChannelMediaRepo{ownerID: "user-1"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -256,7 +262,7 @@ func TestUploadChannelAvatar_InvalidFileType(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -282,7 +288,7 @@ func TestUploadChannelAvatar_MissingFormField(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -306,7 +312,7 @@ func TestUploadChannelAvatar_MissingFormField(t *testing.T) {
 func TestUploadChannelBanner_Unauthenticated(t *testing.T) {
 	chID := uuid.New()
 	repo := &mockChannelMediaRepo{ownerID: "user-1"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -328,7 +334,7 @@ func TestUploadChannelBanner_Unauthenticated(t *testing.T) {
 // TestUploadChannelBanner_InvalidID verifies 400 for invalid channel UUID.
 func TestUploadChannelBanner_InvalidID(t *testing.T) {
 	repo := &mockChannelMediaRepo{ownerID: "user-1"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, "not-a-uuid", "user-1", "bannerfile", "banner.png")
 	w := httptest.NewRecorder()
@@ -340,7 +346,7 @@ func TestUploadChannelBanner_InvalidID(t *testing.T) {
 // TestUploadChannelAvatar_InvalidID verifies 400 for invalid channel UUID.
 func TestUploadChannelAvatar_InvalidID(t *testing.T) {
 	repo := &mockChannelMediaRepo{ownerID: "user-1"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, "not-a-uuid", "user-1", "avatarfile", "avatar.png")
 	w := httptest.NewRecorder()
@@ -352,7 +358,7 @@ func TestUploadChannelAvatar_InvalidID(t *testing.T) {
 // TestDeleteChannelBanner_InvalidID verifies 400 for invalid channel UUID.
 func TestDeleteChannelBanner_InvalidID(t *testing.T) {
 	repo := &mockChannelMediaRepo{ownerID: "user-1"}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := channelReqWithUser(http.MethodDelete, "/channels/bad-uuid/banner", "bad-uuid", "user-1")
 	w := httptest.NewRecorder()
@@ -366,7 +372,7 @@ func TestUploadChannelBanner_MissingFormField(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -391,7 +397,7 @@ func TestUploadChannelAvatar_ResponseShape(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, chID.String(), userID, "avatarfile", "avatar.png")
 	w := httptest.NewRecorder()
@@ -406,7 +412,7 @@ func TestUploadChannelBanner_ResponseShape(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, chID.String(), userID, "bannerfile", "banner.png")
 	w := httptest.NewRecorder()
@@ -421,7 +427,7 @@ func TestDeleteChannelAvatar_SetsFlag(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-2"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := channelReqWithUser(http.MethodDelete, "/channels/"+chID.String()+"/avatar", chID.String(), userID)
 	w := httptest.NewRecorder()
@@ -437,7 +443,7 @@ func TestDeleteChannelBanner_SetsFlag(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-2"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := channelReqWithUser(http.MethodDelete, "/channels/"+chID.String()+"/banner", chID.String(), userID)
 	w := httptest.NewRecorder()
@@ -453,7 +459,7 @@ func TestUploadChannelAvatar_OwnerCanUpload(t *testing.T) {
 	chID := uuid.New()
 	userID := "owner-user"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, chID.String(), userID, "avatarfile", "photo.png")
 	w := httptest.NewRecorder()
@@ -468,7 +474,7 @@ func TestUploadChannelBanner_OwnerCanUpload(t *testing.T) {
 	chID := uuid.New()
 	userID := "owner-user"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, chID.String(), userID, "bannerfile", "banner.png")
 	w := httptest.NewRecorder()
@@ -478,34 +484,38 @@ func TestUploadChannelBanner_OwnerCanUpload(t *testing.T) {
 	assert.True(t, repo.bannerSet)
 }
 
-// TestUploadChannelAvatar_PathContainsFilename verifies the response path includes the filename.
-func TestUploadChannelAvatar_PathContainsFilename(t *testing.T) {
+// TestUploadChannelAvatar_PathContainsStaticDir verifies the response path is under
+// /lazy-static/avatars/. Filename is now a random ID (security: avoids path traversal,
+// caller-controlled collisions) — assert the static prefix and the canonical extension.
+func TestUploadChannelAvatar_PathContainsStaticDir(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, chID.String(), userID, "avatarfile", "myavatar.png")
 	w := httptest.NewRecorder()
 	h.UploadAvatar(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "myavatar.png")
+	assert.Contains(t, w.Body.String(), "/lazy-static/avatars/")
+	assert.Contains(t, w.Body.String(), ".png")
 }
 
-// TestUploadChannelBanner_PathContainsFilename verifies banner response includes filename.
-func TestUploadChannelBanner_PathContainsFilename(t *testing.T) {
+// TestUploadChannelBanner_PathContainsStaticDir mirrors the avatar variant for banners.
+func TestUploadChannelBanner_PathContainsStaticDir(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := buildMultipartRequest(t, chID.String(), userID, "bannerfile", "mybanner.png")
 	w := httptest.NewRecorder()
 	h.UploadBanner(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "mybanner.png")
+	assert.Contains(t, w.Body.String(), "/lazy-static/banners/")
+	assert.Contains(t, w.Body.String(), ".png")
 }
 
 // TestDeleteChannelAvatar_AvatarNotBannerCleared verifies only avatar is cleared on avatar delete.
@@ -513,7 +523,7 @@ func TestDeleteChannelAvatar_AvatarNotBannerCleared(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-3"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := channelReqWithUser(http.MethodDelete, "/channels/"+chID.String()+"/avatar", chID.String(), userID)
 	w := httptest.NewRecorder()
@@ -528,7 +538,7 @@ func TestDeleteChannelBanner_BannerNotAvatarCleared(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-3"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	req := channelReqWithUser(http.MethodDelete, "/channels/"+chID.String()+"/banner", chID.String(), userID)
 	w := httptest.NewRecorder()
@@ -543,7 +553,7 @@ func TestUploadChannelBanner_InvalidFileType(t *testing.T) {
 	chID := uuid.New()
 	userID := "user-1"
 	repo := &mockChannelMediaRepo{ownerID: userID}
-	h := NewChannelMediaHandlers(repo)
+	h := NewChannelMediaHandlers(repo, testConfig(t))
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)

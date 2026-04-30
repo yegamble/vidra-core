@@ -556,8 +556,15 @@ func (r *ViewsRepository) GetViewsByDateRange(ctx context.Context, filter *domai
 	var builder strings.Builder
 	builder.WriteString(`SELECT * FROM user_views WHERE 1=1`)
 
-	args := make([]interface{}, 0, 5) // Preallocate for up to 5 parameters
+	args := make([]interface{}, 0, 6) // Preallocate for up to 6 parameters
 	argIndex := 1
+
+	if filter.UserID != "" {
+		builder.WriteString(" AND user_id = $")
+		builder.WriteString(strconv.Itoa(argIndex))
+		args = append(args, filter.UserID)
+		argIndex++
+	}
 
 	if filter.VideoID != "" {
 		builder.WriteString(" AND video_id = $")

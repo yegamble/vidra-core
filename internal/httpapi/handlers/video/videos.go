@@ -439,7 +439,9 @@ func UpdateVideoHandler(repo usecase.VideoRepository, auditLogger ...*obs.AuditL
 			return
 		}
 
-		if existingVideo.UserID != userID {
+		userRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+		isStaff := userRole == string(domain.RoleAdmin) || userRole == string(domain.RoleMod)
+		if existingVideo.UserID != userID && !isStaff {
 			shared.WriteError(w, http.StatusForbidden, domain.NewDomainError("UNAUTHORIZED", "You don't have permission to update this video"))
 			return
 		}
@@ -483,7 +485,9 @@ func UpdateVideoHandler(repo usecase.VideoRepository, auditLogger ...*obs.AuditL
 		video.Title = sanitizedTitle
 		video.Description = sanitizedDescription
 		video.Privacy = req.Privacy
-		video.UserID = userID
+		// Preserve original owner — staff (admin/mod) edits must not transfer
+		// ownership to themselves, and self-edits don't need this assignment
+		// (existingVideo.UserID is already the caller's id).
 		video.Tags = tags
 		video.CategoryID = categoryID
 		video.Language = language
@@ -551,10 +555,20 @@ func DeleteVideoHandler(repo usecase.VideoRepository, auditLogger ...*obs.AuditL
 			return
 		}
 
-		// Fetch before delete for audit
+		// Fetch before delete for audit + staff check
 		existingForDelete, _ := repo.GetByID(r.Context(), videoID)
 
-		if err := repo.Delete(r.Context(), videoID, userID); err != nil {
+		// Staff (admin/moderator) can delete any user's video. The repository's
+		// Delete uses `user_id = $2` as part of the WHERE clause for ownership;
+		// pass the actual owner's user_id so the SQL still matches.
+		userRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+		isStaff := userRole == string(domain.RoleAdmin) || userRole == string(domain.RoleMod)
+		deleteAs := userID
+		if isStaff && existingForDelete != nil {
+			deleteAs = existingForDelete.UserID
+		}
+
+		if err := repo.Delete(r.Context(), videoID, deleteAs); err != nil {
 			var domainErr domain.DomainError
 			if errors.As(err, &domainErr) {
 				shared.WriteError(w, http.StatusNotFound, domainErr)

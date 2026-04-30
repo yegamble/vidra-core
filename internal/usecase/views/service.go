@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -140,6 +141,8 @@ func (s *Service) processViewTask(task viewTask) {
 	if existingView == nil {
 		existingView, err = s.viewsRepo.GetUserViewBySessionAndVideo(ctx, request.SessionID, request.VideoID)
 		if err != nil {
+			slog.Error("processViewTask: GetUserViewBySessionAndVideo failed",
+				"video_id", request.VideoID, "session_id", request.SessionID, "err", err)
 			return
 		}
 	}
@@ -218,6 +221,8 @@ func (s *Service) processViewTask(task viewTask) {
 	}
 
 	if err := s.viewsRepo.CreateUserView(ctx, view); err != nil {
+		slog.Error("processViewTask: CreateUserView failed",
+			"video_id", request.VideoID, "session_id", request.SessionID, "err", err)
 		return
 	}
 

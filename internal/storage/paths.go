@@ -61,6 +61,9 @@ func (p Paths) AvatarWebPPath(fileID string) string {
 	return filepath.Join(p.AvatarsDir(), fileID+".webp")
 }
 
+// BannersDir returns the directory where channel banner images are stored.
+func (p Paths) BannersDir() string { return filepath.Join(p.Root, "banners") }
+
 // ThumbnailPath returns the path for a video's thumbnail image (default JPEG).
 func (p Paths) ThumbnailsDir() string { return filepath.Join(p.Root, "thumbnails") }
 func (p Paths) ThumbnailPath(videoID string) string {
