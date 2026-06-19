@@ -58,6 +58,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadinessResponse"
+  /version:
+    get:
+      operationId: getVersion
+      summary: Build version metadata
+      description: >-
+        Reports the running build's version, git commit, build date, and Go
+        toolchain. Exposes build information only — never secrets or config.
+      tags: [system]
+      responses:
+        "200":
+          description: Build metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionResponse"
   /api/v1/nodeinfo:
     get:
       operationId: getNodeInfo
@@ -103,13 +118,58 @@ components:
           type: object
           additionalProperties:
             $ref: "#/components/schemas/ComponentStatus"
+    VersionResponse:
+      type: object
+      required: [name, version, commit, build_date, go]
+      properties:
+        name:
+          type: string
+          example: vidra
+        version:
+          type: string
+          example: 0.1.0
+        commit:
+          type: string
+          description: Short git SHA, or "unknown" when not built with ldflags.
+          example: a1b2c3d
+        build_date:
+          type: string
+          description: UTC build timestamp (RFC 3339), or "unknown".
+          example: 2026-06-19T00:00:00Z
+        go:
+          type: string
+          example: go1.26
+    ErrorResponse:
+      type: object
+      description: >-
+        The single, consistent error envelope returned by every endpoint for
+        non-2xx responses (except the readiness probe, which returns
+        ReadinessResponse on 503).
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable snake_case identifier for the error class.
+              example: not_found
+            message:
+              type: string
+              description: Human-readable description; never leaks internal detail on 5xx.
+              example: resource not found
+            request_id:
+              type: string
+              description: Correlates the response with server logs. Omitted when unknown.
     NodeInfoResponse:
       type: object
       required: [version, software, instance]
       properties:
         version:
           type: string
-          example: 0.1.0
+          description: NodeInfo schema version.
+          example: "2.0"
         software:
           type: object
           required: [name, version]

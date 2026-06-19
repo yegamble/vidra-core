@@ -5,6 +5,14 @@ SHELL := /bin/bash
 
 DATABASE_URL ?= postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
 
+# Build metadata injected into internal/version via -ldflags. Falls back to
+# safe defaults outside a git checkout.
+VERSION    ?= 0.1.0
+COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+VERSION_PKG := github.com/vidra/vidra-core/internal/version
+LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(BUILD_DATE)
+
 .PHONY: help
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -35,8 +43,8 @@ cover: ## Run tests with coverage summary
 	go test -cover ./...
 
 .PHONY: build
-build: ## Build the api binary into ./bin
-	go build -o bin/api ./cmd/api
+build: ## Build the api binary into ./bin (injects version metadata)
+	go build -ldflags "$(LDFLAGS)" -o bin/api ./cmd/api
 
 .PHONY: run
 run: ## Run the api server locally (needs Postgres + Redis)

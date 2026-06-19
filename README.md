@@ -21,8 +21,14 @@ Then:
 ```bash
 curl localhost:8080/healthz          # liveness
 curl localhost:8080/readyz           # readiness (postgres + redis)
+curl localhost:8080/version          # build version / commit / date
 curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
 ```
+
+All non-2xx responses share one envelope: `{"error":{"code","message","request_id"}}`
+(see `api/openapi.yaml` → `ErrorResponse`). The readiness probe returns its own
+`ReadinessResponse` on 503. `make build` injects version/commit/date into `/version`
+via `-ldflags`.
 
 ## Local development (without Docker for the app)
 

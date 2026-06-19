@@ -29,8 +29,12 @@ Verify a running instance:
 ```bash
 curl localhost:8080/healthz          # liveness
 curl localhost:8080/readyz           # readiness (postgres + redis)
+curl localhost:8080/version          # build version / commit / date
 curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
 ```
+All non-2xx responses use the `ErrorResponse` envelope
+(`{"error":{"code","message","request_id"}}`). `make build` injects version
+metadata into `/version` via `-ldflags`.
 
 ## Build / run
 ```bash

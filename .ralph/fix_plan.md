@@ -225,7 +225,7 @@
 
 - [ ] Add Echo server setup.
 - [ ] Add request ID middleware.
-- [ ] Add structured logging middleware.
+- [x] Add structured logging middleware. (slog request logger, `server.go requestLogger`; level escalates by status class)
 - [ ] Add panic recovery middleware.
 - [ ] Add CORS middleware with config allowlist.
 - [ ] Add body size limits.
@@ -233,7 +233,7 @@
 - [ ] Add rate limit middleware using Redis.
 - [ ] Add JWT auth middleware.
 - [ ] Add role/permission middleware.
-- [ ] Add consistent JSON error envelope.
+- [x] Add consistent JSON error envelope. (`errors.go` — `ErrorResponse {error:{code,message,request_id}}` via custom `echo.HTTPErrorHandler`; 5xx detail hidden; documented as `ErrorResponse` in `api/openapi.yaml`; tested)
 - [ ] Add validation layer.
 - [x] Maintain an OpenAPI contract at `api/openapi.yaml` as the source of truth for the HTTP API (seeded for the system endpoints).
 - [x] Add a route↔spec drift stop guard (`TestOpenAPIContract` in `internal/httpapi`) that fails the build when routes and `api/openapi.yaml` diverge.
@@ -247,7 +247,7 @@
 
 - [x] `GET /healthz`. (`internal/httpapi/health.go`, tested)
 - [x] `GET /readyz`. (postgres + redis readiness, 503 when degraded, tested)
-- [ ] `GET /version`.
+- [x] `GET /version`. (`version.go` + `internal/version` package, ldflags-injected via `make build`; documented + tested)
 - [ ] `GET /nodeinfo/2.0.json` or documented intentional difference. (minimal
       `GET /api/v1/nodeinfo` exists; canonical NodeInfo path still TODO)
 - [ ] `GET /.well-known/nodeinfo` or documented intentional difference.

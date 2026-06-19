@@ -5,6 +5,7 @@ package httpapi
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -19,34 +20,76 @@ type Pinger interface {
 
 // Server holds the Echo instance and its dependencies.
 type Server struct {
-	echo *echo.Echo
-	cfg  *config.Config
-	db   Pinger
-	rdb  Pinger
+	echo   *echo.Echo
+	cfg    *config.Config
+	db     Pinger
+	rdb    Pinger
+	logger *slog.Logger
 }
 
 // New constructs the HTTP server with middleware and routes registered. db and
 // rdb may be nil (e.g. in unit tests); readiness reports them as unconfigured.
+// It uses the process-wide slog default logger for request and error logging.
 func New(cfg *config.Config, db, rdb Pinger) *Server {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
 
+	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, logger: slog.Default()}
+	e.HTTPErrorHandler = s.httpErrorHandler
+
 	e.Use(middleware.Recover())
 	e.Use(middleware.RequestID())
+	e.Use(s.requestLogger())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: cfg.CORSAllowedOrigins,
 		AllowMethods: []string{echo.GET, echo.POST, echo.PUT, echo.PATCH, echo.DELETE, echo.OPTIONS},
 	}))
 
-	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb}
 	s.routes()
 	return s
+}
+
+// requestLogger emits one structured slog line per request via Echo's
+// RequestLogger middleware. Level escalates with status class so 5xx responses
+// surface as errors. Request bodies and headers are never logged.
+func (s *Server) requestLogger() echo.MiddlewareFunc {
+	return middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
+		LogStatus:    true,
+		LogMethod:    true,
+		LogURI:       true,
+		LogLatency:   true,
+		LogRequestID: true,
+		LogError:     true,
+		HandleError:  true,
+		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
+			level := slog.LevelInfo
+			switch {
+			case v.Status >= 500:
+				level = slog.LevelError
+			case v.Status >= 400:
+				level = slog.LevelWarn
+			}
+			attrs := []any{
+				"method", v.Method,
+				"uri", v.URI,
+				"status", v.Status,
+				"latency_ms", v.Latency.Milliseconds(),
+				"request_id", v.RequestID,
+			}
+			if v.Error != nil {
+				attrs = append(attrs, "error", v.Error)
+			}
+			s.logger.Log(c.Request().Context(), level, "request", attrs...)
+			return nil
+		},
+	})
 }
 
 func (s *Server) routes() {
 	s.echo.GET("/healthz", s.handleLive)
 	s.echo.GET("/readyz", s.handleReady)
+	s.echo.GET("/version", s.handleVersion)
 
 	api := s.echo.Group("/api/v1")
 	api.GET("/nodeinfo", s.handleNodeInfo)

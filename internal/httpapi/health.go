@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/vidra/vidra-core/internal/version"
 )
 
 // livenessResponse is returned by GET /healthz.
@@ -78,9 +80,9 @@ type nodeInfoResponse struct {
 // handleNodeInfo returns basic instance discovery metadata.
 func (s *Server) handleNodeInfo(c echo.Context) error {
 	var resp nodeInfoResponse
-	resp.Version = "0.1.0"
+	resp.Version = "2.0"
 	resp.Software.Name = "vidra"
-	resp.Software.Version = "0.1.0"
+	resp.Software.Version = version.Version
 	resp.Instance.Name = s.cfg.InstanceName
 	return c.JSON(http.StatusOK, resp)
 }
