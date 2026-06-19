@@ -245,13 +245,14 @@
 
 ## P3.2 System Endpoints
 
-- [ ] `GET /healthz`.
-- [ ] `GET /readyz`.
+- [x] `GET /healthz`. (`internal/httpapi/health.go`, tested)
+- [x] `GET /readyz`. (postgres + redis readiness, 503 when degraded, tested)
 - [ ] `GET /version`.
-- [ ] `GET /nodeinfo/2.0.json` or documented intentional difference.
+- [ ] `GET /nodeinfo/2.0.json` or documented intentional difference. (minimal
+      `GET /api/v1/nodeinfo` exists; canonical NodeInfo path still TODO)
 - [ ] `GET /.well-known/nodeinfo` or documented intentional difference.
 - [ ] `GET /.well-known/webfinger` for federation identity lookup when ActivityPub is enabled.
-- [ ] Add tests for all system endpoints.
+- [x] Add tests for currently-registered system endpoints. (`internal/httpapi/health_test.go`)
 
 ---
 
