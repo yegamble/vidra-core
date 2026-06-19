@@ -261,6 +261,90 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels:
+    post:
+      operationId: createChannel
+      summary: Create a channel
+      description: Creates a channel owned by the authenticated user.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChannelRequest"
+      responses:
+        "201":
+          description: Channel created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Handle already taken.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}:
+    get:
+      operationId: getChannel
+      summary: Get a channel by handle
+      description: Public channel page data, looked up by case-insensitive handle.
+      tags: [channels]
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/channels:
+    get:
+      operationId: listMyChannels
+      summary: List the authenticated user's channels
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The user's channels (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -402,6 +486,53 @@ components:
         created_at:
           type: string
           format: date-time
+    Channel:
+      type: object
+      required: [id, owner_id, handle, display_name, description, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_id:
+          type: string
+          format: uuid
+        handle:
+          type: string
+          example: ada_makes
+        display_name:
+          type: string
+          example: Ada Makes
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateChannelRequest:
+      type: object
+      required: [handle, display_name]
+      properties:
+        handle:
+          type: string
+          minLength: 3
+          maxLength: 30
+          description: 3–30 chars; letters, digits, or underscore.
+          example: ada_makes
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          example: Ada Makes
+        description:
+          type: string
+          maxLength: 1000
+    ChannelListResponse:
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/Channel"
     RegisterRequest:
       type: object
       required: [username, email, password]

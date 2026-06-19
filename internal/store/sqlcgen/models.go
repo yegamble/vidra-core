@@ -12,6 +12,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Channel struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerID     uuid.UUID `json:"owner_id"`
+	Handle      string    `json:"handle"`
+	DisplayName string    `json:"display_name"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type Session struct {
 	ID          uuid.UUID          `json:"id"`
 	UserID      uuid.UUID          `json:"user_id"`

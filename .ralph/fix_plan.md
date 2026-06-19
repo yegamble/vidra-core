@@ -171,7 +171,7 @@
 - [x] Add sessions/refresh tokens table if not Redis-only. (`sessions` table in 0002; sqlc queries in `internal/store/queries/sessions.sql` — Create/Get-by-hash/Revoke/RevokeAll/DeleteExpired)
 - [ ] Add OAuth identities table.
 - [ ] Add TOTP/MFA settings table.
-- [ ] Add channels table.
+- [x] Add channels table. (migration `0003_channels`; owner FK → users, unique `lower(handle)`, trigram index; integration test asserts the table exists)
 - [ ] Add videos table.
 - [ ] Add video files/renditions table.
 - [ ] Add streaming playlists/HLS assets table.
@@ -208,7 +208,7 @@
 - [ ] Add `sqlc.yaml`.
 - [ ] Generate typed queries for health/readiness.
 - [ ] Generate typed queries for users/accounts.
-- [ ] Generate typed queries for channels.
+- [x] Generate typed queries for channels. (`internal/store/queries/channels.sql` — Create / GetByID / GetByHandle / ListByOwner / CountByOwner)
 - [ ] Generate typed queries for videos.
 - [ ] Generate typed queries for playlists.
 - [ ] Generate typed queries for messaging.
@@ -287,15 +287,15 @@
 - [ ] Implement account profile read/update.
 - [ ] Implement avatar upload/storage.
 - [ ] Implement banner upload/storage.
-- [ ] Implement channel create/read/update/delete.
+- [~] Implement channel create/read/update/delete. (create + read done: `POST /api/v1/channels`, `GET /api/v1/me/channels`, `GET /api/v1/channels/:handle`, `internal/channel`; update/delete still TODO)
 - [ ] Implement channel avatar/banner.
-- [ ] Implement channel ownership and permissions.
-- [ ] Implement public channel page data endpoint.
+- [x] Implement channel ownership and permissions. (channels created under the authed principal's `owner_id`; create/list behind `requireAuth`; handle uniqueness → 409; tested)
+- [x] Implement public channel page data endpoint. (`GET /api/v1/channels/:handle`, case-insensitive, no auth; 404 envelope when absent; tested)
 - [ ] Implement account/channel follow model.
 - [ ] Implement channel sync placeholder/foundation for remote channels.
 - [ ] Implement instance about/config endpoint for frontend.
 - [ ] Implement terms/privacy/about/contact instance metadata.
-- [ ] Add tests for channel/profile permissions.
+- [~] Add tests for channel/profile permissions. (channel: create-requires-auth, validation, duplicate-409, create→list→public-get, get-404, plus service unit tests; profile tests pending the profile slice)
 
 ---
 

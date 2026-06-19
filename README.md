@@ -53,6 +53,11 @@ Authorization: routes are gated by `requireAuth` (valid bearer token) and, where
 role-restricted, `requireRole(...)` off the JWT's `role` claim — an authenticated
 principal lacking an allowed role gets `403`.
 
+Channels: a channel is a publishing identity owned by a user. `POST /api/v1/channels`
+(auth) creates one (`handle` 3–30 chars `[A-Za-z0-9_]`, unique case-insensitively →
+`409`); `GET /api/v1/me/channels` (auth) lists the caller's channels;
+`GET /api/v1/channels/{handle}` is the public channel page lookup (`404` when absent).
+
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects
 live role/verification state. A missing, malformed, invalid, or expired token yields

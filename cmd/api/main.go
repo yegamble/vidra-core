@@ -15,6 +15,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/cache"
+	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/ratelimit"
@@ -71,6 +72,9 @@ func run(logger *slog.Logger) error {
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
 	authsvc := auth.NewService(db.Queries(), issuer, cfg.JWTRefreshTTL)
 	opts = append(opts, httpapi.WithAuthService(authsvc, cfg.JWTAccessTTL))
+
+	channelsvc := channel.NewService(db.Queries())
+	opts = append(opts, httpapi.WithChannelService(channelsvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

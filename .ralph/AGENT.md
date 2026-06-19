@@ -50,6 +50,13 @@ curl -sX POST localhost:8080/api/v1/auth/logout \
   -H 'content-type: application/json' -d '{"refresh_token":"<refresh>"}'
 # Sign out everywhere (revokes all sessions for the bearer's account):
 curl -sX POST localhost:8080/api/v1/auth/logout-all -H 'authorization: Bearer <token>'
+
+# Channels:
+curl -sX POST localhost:8080/api/v1/channels -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' \
+  -d '{"handle":"ada_makes","display_name":"Ada Makes","description":"things"}'
+curl -s localhost:8080/api/v1/me/channels -H 'authorization: Bearer <token>'  # list own
+curl -s localhost:8080/api/v1/channels/ada_makes                              # public page
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`
@@ -120,8 +127,10 @@ migration; add a new one.
 3. migration test against a fresh DB
 4. integration smoke profile up
 5. Newman/Postman API suite when API behavior changed
-6. observability guards pass (banned-logging + secrets-in-logs); structured logs,
-   audit events for sensitive actions, and OTel follow `.ralph/specs/observability.md`
+6. observability: structured logs, audit events for sensitive actions, and OTel
+   follow `.ralph/specs/observability.md`. NOTE: the banned-logging + secrets-in-logs
+   guard tests do NOT exist yet and are NOT in `make ci` — building them is a
+   fix_plan P17.2 task, not a check to run today.
 7. branch CI is green (same `make ci`); `ci-guard.yml` passes — a local green alone
    is not done
 

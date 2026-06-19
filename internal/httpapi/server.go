@@ -12,6 +12,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
@@ -23,14 +24,15 @@ type Pinger interface {
 
 // Server holds the Echo instance and its dependencies.
 type Server struct {
-	echo    *echo.Echo
-	cfg     *config.Config
-	db      Pinger
-	rdb     Pinger
-	logger  *slog.Logger
-	limiter *ratelimit.Limiter
-	authsvc *auth.Service
-	authTTL time.Duration
+	echo       *echo.Echo
+	cfg        *config.Config
+	db         Pinger
+	rdb        Pinger
+	logger     *slog.Logger
+	limiter    *ratelimit.Limiter
+	authsvc    *auth.Service
+	authTTL    time.Duration
+	channelsvc *channel.Service
 }
 
 // Option customises the Server during construction.
@@ -50,6 +52,12 @@ func WithAuthService(svc *auth.Service, ttl time.Duration) Option {
 		s.authsvc = svc
 		s.authTTL = ttl
 	}
+}
+
+// WithChannelService mounts the channel endpoints (create/list-own/get-by-handle).
+// When unset, the channel routes are not registered.
+func WithChannelService(svc *channel.Service) Option {
+	return func(s *Server) { s.channelsvc = svc }
 }
 
 // New constructs the HTTP server with middleware and routes registered. db and
@@ -154,6 +162,12 @@ func (s *Server) routes() {
 		authGroup.POST("/logout", s.handleLogout)
 		authGroup.GET("/me", s.handleMe, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
+	}
+
+	if s.channelsvc != nil {
+		api.POST("/channels", s.handleCreateChannel, s.requireAuth)
+		api.GET("/channels/:handle", s.handleGetChannel)
+		api.GET("/me/channels", s.handleListMyChannels, s.requireAuth)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/channel"
 )
 
 // fullRouteOptions mounts every optional feature so the contract test enumerates
@@ -19,6 +20,7 @@ func fullRouteOptions() []Option {
 	issuer := auth.NewTokenIssuer("contract-test-secret-contract-test-0", "vidra", "vidra", time.Minute)
 	return []Option{
 		WithAuthService(auth.NewService(nil, issuer, time.Hour), time.Minute),
+		WithChannelService(channel.NewService(nil)),
 	}
 }
 
