@@ -153,6 +153,7 @@ func (s *Server) routes() {
 		api.Use(s.rateLimit(s.limiter))
 	}
 	api.GET("/nodeinfo", s.handleNodeInfo)
+	api.GET("/instance", s.handleInstance)
 
 	if s.authsvc != nil {
 		authGroup := api.Group("/auth")

@@ -119,6 +119,9 @@ func (s *Server) authResponse(status int, c echo.Context, user sqlcgen.User, tok
 
 // handleRegister creates an account and returns it with an access + refresh token.
 func (s *Server) handleRegister(c echo.Context) error {
+	if !s.cfg.RegistrationEnabled {
+		return echo.NewHTTPError(http.StatusForbidden, "registration is disabled on this instance")
+	}
 	var in registerRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err

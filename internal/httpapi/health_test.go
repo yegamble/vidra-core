@@ -19,13 +19,14 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 
 func testConfig() *config.Config {
 	return &config.Config{
-		Environment:        "test",
-		HTTPHost:           "127.0.0.1",
-		HTTPPort:           8080,
-		CORSAllowedOrigins: []string{"http://localhost:3000"},
-		InstanceName:       "Vidra Test",
-		HTTPRequestTimeout: 30 * time.Second,
-		HTTPBodyLimit:      "8M",
+		Environment:         "test",
+		HTTPHost:            "127.0.0.1",
+		HTTPPort:            8080,
+		CORSAllowedOrigins:  []string{"http://localhost:3000"},
+		InstanceName:        "Vidra Test",
+		RegistrationEnabled: true,
+		HTTPRequestTimeout:  30 * time.Second,
+		HTTPBodyLimit:       "8M",
 	}
 }
 

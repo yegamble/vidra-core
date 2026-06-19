@@ -43,6 +43,9 @@ type Config struct {
 	// InstanceName is the human-facing name of this Vidra instance.
 	InstanceName string
 
+	// RegistrationEnabled controls whether public account signup is accepted.
+	RegistrationEnabled bool
+
 	// Rate limiting (Redis fixed-window) applied to the /api surface.
 	RateLimitEnabled  bool
 	RateLimitRequests int
@@ -73,6 +76,7 @@ func Load() (*Config, error) {
 		Environment:         env,
 		HTTPHost:            getEnv("HTTP_HOST", "0.0.0.0"),
 		InstanceName:        getEnv("INSTANCE_NAME", "Vidra (dev)"),
+		RegistrationEnabled: getEnvBool("REGISTRATION_ENABLED", true),
 		DatabaseURL:         getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
 		RedisURL:            getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		CORSAllowedOrigins:  splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),

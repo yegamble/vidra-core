@@ -258,7 +258,7 @@
 
 # P4 — Auth, Accounts, and Identity
 
-- [ ] Implement registration enable/disable setting.
+- [x] Implement registration enable/disable setting. (`REGISTRATION_ENABLED` config, default true; `POST /api/v1/auth/register` → 403 when disabled; surfaced in `GET /api/v1/instance`; tested)
 - [x] Implement account signup. (`POST /api/v1/auth/register`, `internal/auth.Service.Register`; first account → admin; unique violation → 409; tested)
 - [ ] Implement email verification token flow placeholder or adapter boundary.
 - [x] Implement login. (`POST /api/v1/auth/login`, `internal/auth.Service.Login`; enumeration-safe 401; disabled → 403; tested)
@@ -293,7 +293,7 @@
 - [x] Implement public channel page data endpoint. (`GET /api/v1/channels/:handle`, case-insensitive, no auth; 404 envelope when absent; tested)
 - [ ] Implement account/channel follow model.
 - [ ] Implement channel sync placeholder/foundation for remote channels.
-- [ ] Implement instance about/config endpoint for frontend.
+- [x] Implement instance about/config endpoint for frontend. (`GET /api/v1/instance` (public) → name, software{name,version}, registration_enabled; `internal/httpapi/instance.go`; documented + tested)
 - [ ] Implement terms/privacy/about/contact instance metadata.
 - [~] Add tests for channel/profile permissions. (channel: create-requires-auth, validation, duplicate-409, create→list→public-get, get-404, owner/non-owner update-403, delete-403/204, plus service unit tests; profile tests pending the profile slice)
 

@@ -23,7 +23,12 @@ curl localhost:8080/healthz          # liveness
 curl localhost:8080/readyz           # readiness (postgres + redis)
 curl localhost:8080/version          # build version / commit / date
 curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
+curl localhost:8080/api/v1/instance  # public about/config (name, software, registration_enabled)
 ```
+
+Registration can be closed per-instance with `REGISTRATION_ENABLED=false`: signup then
+returns `403` and `GET /api/v1/instance` reports `registration_enabled: false` so the
+frontend can hide the form.
 
 All non-2xx responses share one envelope: `{"error":{"code","message","request_id"}}`
 (see `api/openapi.yaml` → `ErrorResponse`). The readiness probe returns its own
