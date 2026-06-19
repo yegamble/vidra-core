@@ -42,6 +42,12 @@ curl -sX POST localhost:8080/api/v1/auth/login \
 
 # Authenticated request (current account):
 curl -s localhost:8080/api/v1/auth/me -H 'authorization: Bearer <token>'
+
+# Rotate / revoke a refresh token:
+curl -sX POST localhost:8080/api/v1/auth/refresh \
+  -H 'content-type: application/json' -d '{"refresh_token":"<refresh>"}'
+curl -sX POST localhost:8080/api/v1/auth/logout \
+  -H 'content-type: application/json' -d '{"refresh_token":"<refresh>"}'
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

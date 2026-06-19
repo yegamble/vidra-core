@@ -96,39 +96,41 @@ func newUserView(u sqlcgen.User) userView {
 
 // authResponse is returned by register and login.
 type authResponse struct {
-	Token     string   `json:"token"`
-	TokenType string   `json:"token_type"`
-	ExpiresIn int      `json:"expires_in"`
-	User      userView `json:"user"`
+	Token        string   `json:"token"`
+	RefreshToken string   `json:"refresh_token"`
+	TokenType    string   `json:"token_type"`
+	ExpiresIn    int      `json:"expires_in"`
+	User         userView `json:"user"`
 }
 
-func (s *Server) authResponse(status int, c echo.Context, user sqlcgen.User, token string) error {
+func (s *Server) authResponse(status int, c echo.Context, user sqlcgen.User, tokens auth.Tokens) error {
 	return c.JSON(status, authResponse{
-		Token:     token,
-		TokenType: "Bearer",
-		ExpiresIn: int(s.authTTL.Seconds()),
-		User:      newUserView(user),
+		Token:        tokens.AccessToken,
+		RefreshToken: tokens.RefreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(s.authTTL.Seconds()),
+		User:         newUserView(user),
 	})
 }
 
-// handleRegister creates an account and returns it with an access token.
+// handleRegister creates an account and returns it with an access + refresh token.
 func (s *Server) handleRegister(c echo.Context) error {
 	var in registerRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	user, token, err := s.authsvc.Register(c.Request().Context(), auth.RegisterInput{
+	user, tokens, err := s.authsvc.Register(c.Request().Context(), auth.RegisterInput{
 		Username: in.Username,
 		Email:    in.Email,
 		Password: in.Password,
-	})
+	}, c.Request().UserAgent())
 	if err != nil {
 		if errors.Is(err, auth.ErrConflict) {
 			return echo.NewHTTPError(http.StatusConflict, "username or email already taken")
 		}
 		return err
 	}
-	return s.authResponse(http.StatusCreated, c, user, token)
+	return s.authResponse(http.StatusCreated, c, user, tokens)
 }
 
 // handleMe returns the authenticated account. It runs behind requireAuth, so the
@@ -149,16 +151,16 @@ func (s *Server) handleMe(c echo.Context) error {
 	return c.JSON(http.StatusOK, newUserView(user))
 }
 
-// handleLogin verifies credentials and returns an access token.
+// handleLogin verifies credentials and returns an access + refresh token.
 func (s *Server) handleLogin(c echo.Context) error {
 	var in loginRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	user, token, err := s.authsvc.Login(c.Request().Context(), auth.LoginInput{
+	user, tokens, err := s.authsvc.Login(c.Request().Context(), auth.LoginInput{
 		Email:    in.Email,
 		Password: in.Password,
-	})
+	}, c.Request().UserAgent())
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInvalidCredentials):
@@ -168,5 +170,46 @@ func (s *Server) handleLogin(c echo.Context) error {
 		}
 		return err
 	}
-	return s.authResponse(http.StatusOK, c, user, token)
+	return s.authResponse(http.StatusOK, c, user, tokens)
+}
+
+// refreshRequest is the POST /api/v1/auth/refresh and /logout body.
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+func (r refreshRequest) Validate() []FieldError {
+	if strings.TrimSpace(r.RefreshToken) == "" {
+		return []FieldError{{Field: "refresh_token", Message: "is required"}}
+	}
+	return nil
+}
+
+// handleRefresh rotates a refresh token, returning a new access + refresh pair.
+func (s *Server) handleRefresh(c echo.Context) error {
+	var in refreshRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	user, tokens, err := s.authsvc.Refresh(c.Request().Context(), in.RefreshToken, c.Request().UserAgent())
+	if err != nil {
+		if errors.Is(err, auth.ErrInvalidRefresh) {
+			return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired refresh token")
+		}
+		return err
+	}
+	return s.authResponse(http.StatusOK, c, user, tokens)
+}
+
+// handleLogout revokes the session for the presented refresh token. It is
+// idempotent and always returns 204, never revealing whether the token existed.
+func (s *Server) handleLogout(c echo.Context) error {
+	var in refreshRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := s.authsvc.Logout(c.Request().Context(), in.RefreshToken); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
 }

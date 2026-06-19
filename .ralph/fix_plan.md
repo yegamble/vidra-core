@@ -168,7 +168,7 @@
 
 - [ ] Add accounts/users table.
 - [ ] Add roles/permissions table or enum strategy.
-- [ ] Add sessions/refresh tokens table if not Redis-only.
+- [x] Add sessions/refresh tokens table if not Redis-only. (`sessions` table in 0002; sqlc queries in `internal/store/queries/sessions.sql` — Create/Get-by-hash/Revoke/RevokeAll/DeleteExpired)
 - [ ] Add OAuth identities table.
 - [ ] Add TOTP/MFA settings table.
 - [ ] Add channels table.
@@ -262,9 +262,9 @@
 - [x] Implement account signup. (`POST /api/v1/auth/register`, `internal/auth.Service.Register`; first account → admin; unique violation → 409; tested)
 - [ ] Implement email verification token flow placeholder or adapter boundary.
 - [x] Implement login. (`POST /api/v1/auth/login`, `internal/auth.Service.Login`; enumeration-safe 401; disabled → 403; tested)
-- [ ] Implement refresh token/session rotation. (sessions table exists; next slice)
-- [ ] Implement logout current session.
-- [ ] Implement logout all sessions.
+- [x] Implement refresh token/session rotation. (`POST /api/v1/auth/refresh`; register/login persist a hashed refresh token in `sessions`, refresh rotates (revoke old + issue new); rotated-token reuse → revoke all sessions; opaque 256-bit token, SHA-256 stored; `JWT_REFRESH_TTL` default 720h; tested)
+- [x] Implement logout current session. (`POST /api/v1/auth/logout` revokes the presented refresh token; idempotent 204; tested)
+- [x] Implement logout all sessions. (`Service.LogoutAll` revokes every active session for a user; wired for reuse-detection; HTTP endpoint pending an authenticated "sign out everywhere" control)
 - [ ] Implement password reset request/complete flow.
 - [x] Implement password hashing with modern algorithm. (bcrypt cost 12, `internal/auth/password.go`; salted, tested)
 - [x] Implement JWT claims and validation. (`internal/auth/jwt.go` HS256 via golang-jwt/v5; sub+role+iss+aud+exp, alg pinned; issue/parse tested incl. tamper/expiry/audience)
@@ -597,7 +597,45 @@
 
 ---
 
-# P18 — Release Gates
+# P18 — PeerTube Import and Migration
+
+> Import an existing PeerTube instance (its PostgreSQL DB + media storage) into
+> Vidra. Follow `.ralph/specs/peertube-import.md`. Read-only on the source;
+> idempotent, resumable, dry-runnable, admin-only, audited. Depends on the data
+> models from P4–P10 existing; build incrementally as those land.
+
+## P18.1 Preflight and source connection
+
+- [ ] Add read-only source-DB config (DSN) and source-storage config (local/S3) to `internal/config` + `.env.example` (off by default; source creds are secrets, never committed/logged).
+- [ ] Detect PeerTube schema/version on preflight; pin supported version range in `.ralph/specs/peertube-reference.md`; refuse unverified versions without `--force`.
+- [ ] Verify source DB reachability, storage reachability, and free disk space before any write.
+
+## P18.2 Mapping ledger and dry-run
+
+- [ ] Fill in the entity mapping ledger (PeerTube entity → Vidra model → status → notes) per the spec.
+- [ ] Implement a durable import ledger mapping source UUID/id → Vidra id with per-row status (enables idempotency + resume).
+- [ ] Implement `--dry-run`: report counts, mapping plan, conflicts, and unsupported/partial entities; write nothing.
+
+## P18.3 Entity import (incremental, idempotent)
+
+- [ ] Import users/accounts/actors, including identity; bcrypt password-hash strategy (keep if compatible, else disable + force reset). Never log hashes.
+- [ ] Import channels (+ ActivityPub actor handles/keypairs for federation continuity; see P10).
+- [ ] Import videos + `videoFile`/`videoStreamingPlaylist` (HLS) + thumbnails + captions, with media copy/re-probe (streaming, checksummed, resumable).
+- [ ] Import comments (threaded), playlists + elements, tags/categories/metadata.
+- [ ] Import follows/subscriptions; moderation data (blacklists/blocklists/abuse) where in scope, else mark `deferred`.
+- [ ] Apply the configured conflict policy (skip|rename|merge|fail) for username/handle/email/slug collisions.
+
+## P18.4 Surface, safety, tests, docs
+
+- [ ] Add the `cmd/peertube-import` CLI (source DSN, storage, conflict policy, `--dry-run`, `--resume`).
+- [ ] Optional admin API endpoint to launch/monitor an import — if added, document it in `api/openapi.yaml` (drift guard) as the contract for the `vidra-user` admin import UI.
+- [ ] Emit audit events for import start/finish/summary (no secrets); apply SSRF + path-traversal + file-type/size protections on source storage reads.
+- [ ] Add import tests: seed a known-version PeerTube schema + fixtures, assert mapping/idempotency (re-run is a no-op)/dry-run/conflict handling and that no secret is logged.
+- [ ] Write an operator migration guide (prereqs, read-only source setup, dry-run, run/resume, what is imported vs deferred, post-import verification).
+
+---
+
+# P19 — Release Gates
 
 - [ ] All P0 tracking files exist and are current.
 - [ ] All backend required sections above are either complete or explicitly deferred by user.

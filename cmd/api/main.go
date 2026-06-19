@@ -69,7 +69,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
-	authsvc := auth.NewService(db.Queries(), issuer)
+	authsvc := auth.NewService(db.Queries(), issuer, cfg.JWTRefreshTTL)
 	opts = append(opts, httpapi.WithAuthService(authsvc, cfg.JWTAccessTTL))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)

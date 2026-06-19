@@ -184,6 +184,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshSession
+      summary: Rotate a refresh token
+      description: >-
+        Exchanges a valid refresh token for a new access + refresh token pair and
+        revokes the presented token (rotation). Reusing an already-rotated token
+        is treated as compromise: all of the user's sessions are revoked.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: A new token pair.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Unknown, expired, or already-rotated refresh token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke a refresh-token session
+      description: >-
+        Revokes the session for the presented refresh token. Idempotent — an
+        unknown or already-revoked token still returns 204 and never reveals
+        whether the token existed.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "204":
+          description: The session is revoked (or was already not active).
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -352,13 +410,23 @@ components:
         password:
           type: string
           format: password
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+          description: The opaque refresh token returned by register/login/refresh.
     AuthResponse:
       type: object
-      required: [token, token_type, expires_in, user]
+      required: [token, refresh_token, token_type, expires_in, user]
       properties:
         token:
           type: string
           description: Signed HS256 JWT access token.
+        refresh_token:
+          type: string
+          description: Opaque rotating refresh token; store securely, send to /auth/refresh.
         token_type:
           type: string
           example: Bearer

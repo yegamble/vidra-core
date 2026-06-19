@@ -35,11 +35,18 @@ bodies get `400 bad_request`; failed validation gets `422 unprocessable_entity` 
 `fields` array (`{field, message}`) so forms can highlight the offending inputs.
 
 Auth: `POST /api/v1/auth/register` and `POST /api/v1/auth/login` create an account /
-verify credentials and return an HS256 JWT access token (`{token, token_type,
-expires_in, user}`). Passwords are bcrypt-hashed; the first account on a fresh instance
-is granted the `admin` role. Login reports unknown-account and wrong-password
-identically (`401`) to prevent enumeration. Configure signing via `JWT_SECRET`
-(required in production), `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_ACCESS_TTL`.
+verify credentials and return an HS256 JWT access token plus a rotating refresh token
+(`{token, refresh_token, token_type, expires_in, user}`). Passwords are bcrypt-hashed;
+the first account on a fresh instance is granted the `admin` role. Login reports
+unknown-account and wrong-password identically (`401`) to prevent enumeration. Configure
+signing via `JWT_SECRET` (required in production), `JWT_ISSUER`, `JWT_AUDIENCE`,
+`JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`.
+
+Sessions: `POST /api/v1/auth/refresh` exchanges a refresh token for a new pair and
+revokes the old one (rotation); reusing an already-rotated token is treated as
+compromise and revokes all of that user's sessions. `POST /api/v1/auth/logout` revokes
+the presented refresh token (idempotent `204`). Refresh tokens are opaque 256-bit
+values; only their SHA-256 hash is stored in the `sessions` table.
 
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects

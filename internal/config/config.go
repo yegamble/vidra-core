@@ -53,6 +53,8 @@ type Config struct {
 	JWTIssuer    string
 	JWTAudience  string
 	JWTAccessTTL time.Duration
+	// JWTRefreshTTL is the lifetime of an opaque refresh-token session.
+	JWTRefreshTTL time.Duration
 }
 
 // devJWTSecret is the obviously-fake signing key used only for local dev/test.
@@ -85,6 +87,7 @@ func Load() (*Config, error) {
 		JWTIssuer:           getEnv("JWT_ISSUER", "vidra"),
 		JWTAudience:         getEnv("JWT_AUDIENCE", "vidra"),
 		JWTAccessTTL:        getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
+		JWTRefreshTTL:       getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
 	}
 
 	port, err := getEnvInt("HTTP_PORT", 8080)
@@ -136,6 +139,9 @@ func (c *Config) validate() error {
 	}
 	if c.JWTAccessTTL <= 0 {
 		return fmt.Errorf("config: JWT_ACCESS_TTL must be positive")
+	}
+	if c.JWTRefreshTTL <= 0 {
+		return fmt.Errorf("config: JWT_REFRESH_TTL must be positive")
 	}
 	if c.Environment == "production" {
 		if c.JWTSecret == devJWTSecret {

@@ -150,6 +150,8 @@ func (s *Server) routes() {
 		authGroup := api.Group("/auth")
 		authGroup.POST("/register", s.handleRegister)
 		authGroup.POST("/login", s.handleLogin)
+		authGroup.POST("/refresh", s.handleRefresh)
+		authGroup.POST("/logout", s.handleLogout)
 		authGroup.GET("/me", s.handleMe, s.requireAuth)
 	}
 }
