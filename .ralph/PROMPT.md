@@ -166,7 +166,7 @@ At the start of every loop:
 3. Identify the highest priority task that unblocks the most future work.
 4. Implement **one coherent vertical slice** per loop.
 5. Run focused tests/lint for changed areas.
-6. Update docs and `.ralph/fix_plan.md` with what changed, what remains, and what was learned.
+6. Update docs and `.ralph/fix_plan.md` with what changed, what remains, and what was learned. If the slice touched the HTTP API, update `api/openapi.yaml` and run `make openapi-verify` so the documentation stop guard stays green (see "Documentation Requirements").
 7. Commit working changes with a descriptive message when the repository is in a good state.
 
 Do not wander. Do not perform cosmetic refactors unless required for the current task. Do not create busywork after all specs are complete.
@@ -546,6 +546,9 @@ Principles:
 Suggested workflows:
 
 - `backend-ci.yml`: format, lint, unit, integration, migration, API smoke.
+- `openapi.yml`: lint `vidra-core/api/openapi.yaml` (Redocly) and run the
+  route↔spec drift guard (`make openapi-verify` / `TestOpenAPIContract`). This is
+  the CI half of the documentation stop guard — see "Documentation Requirements".
 - `frontend-ci.yml`: typecheck, lint, unit, build, Playwright smoke.
 - `contract-ci.yml`: OpenAPI diff, generated client check, frontend/backend compatibility.
 - `docker-ci.yml`: build images and run Compose smoke.
@@ -619,17 +622,42 @@ Before adding a dependency, check:
 Frontend component/UI libraries are forbidden unless the user explicitly approves them.
 
 ## Documentation Requirements
-Keep these updated:
+Documentation is part of the definition of done, not a follow-up. Keep these
+current **in the same slice** that changes the behavior they describe:
 
-- `README.md` for human setup.
-- `.ralph/AGENT.md` for Ralph build/run/test commands.
-- `.ralph/fix_plan.md` for priorities and status.
-- OpenAPI specs for backend API behavior.
+- `README.md` — human setup, the current endpoint list, env vars, and `make` commands.
+- `api/openapi.yaml` — the **authoritative HTTP API contract** (source of truth
+  consumed by `vidra-user`). Every public endpoint lives here.
+- `.ralph/AGENT.md` — Ralph build/run/test commands.
+- `.ralph/fix_plan.md` — priorities and status.
 - Architecture docs when major patterns are introduced.
 - Security docs for auth, SSRF, E2EE, storage, and admin actions.
 - Testing docs for Docker profiles, integration tests, Postman/Newman, and Playwright.
 
 Docs should say what works, what is partial, what is deferred, and how to verify it.
+
+### Documentation stop guard (drift = build failure)
+The OpenAPI contract must stay in lock-step with the code. A slice that changes
+the API surface but not the docs is **not done**.
+
+- When you **add** an HTTP route, add its operation to `api/openapi.yaml` in the
+  same change. When you **remove or rename** a route, delete/update its operation
+  in the same change. When a request/response shape changes, update its schema.
+- Enforcement is mechanical, not honor-system:
+  - `TestOpenAPIContract` (in `internal/httpapi`) compares the live Echo router
+    against `api/openapi.yaml` in **both directions** and fails the build on any
+    drift (undocumented route, or documented path with no route). It runs in
+    `go test ./...` and the `openapi.yml` workflow.
+  - Run it locally with `make openapi-verify` (or `make docs-check`); lint the
+    spec with `make openapi-lint`.
+  - The repo `.githooks/pre-commit` hook also warns when you stage changes to
+    `internal/httpapi/**` or `migrations/**` without touching the docs.
+- If a route genuinely should not be in the public contract, it must still be
+  declared in the spec (e.g. tagged internal) so the drift guard stays green —
+  do not bypass the guard with `--no-verify` to dodge documentation.
+- The same rule applies beyond OpenAPI: when you add/remove an env var, a `make`
+  target, a migration, or a Docker service, update `README.md` / `.env.example`
+  / `.ralph/AGENT.md` so the docs reflect the current codebase.
 
 ## Status Reporting: Required Ralph Block
 At the end of every loop response, include exactly one status block in this format:

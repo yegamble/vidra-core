@@ -59,6 +59,16 @@ golangci-lint run  # if installed
 staticcheck ./...  # if installed
 ```
 
+## API documentation / drift guard
+```bash
+make openapi-verify  # route<->api/openapi.yaml drift guard (TestOpenAPIContract)
+make openapi-lint    # lint the OpenAPI contract with Redocly (needs npx)
+make docs-check      # documentation stop guard (runs openapi-verify)
+```
+`api/openapi.yaml` is the source of truth for the HTTP API. Add/remove/rename a
+route and you MUST update the spec in the same change, or `go test ./...` and the
+`openapi.yml` workflow fail. See "Documentation Requirements" in `.ralph/PROMPT.md`.
+
 ## Migrations
 ```bash
 make migrate-up    # apply migrations against DATABASE_URL (requires migrate CLI)
@@ -75,6 +85,7 @@ migration; add a new one.
 5. migration test against a fresh DB
 6. integration smoke profile up
 7. Newman/Postman API suite when API behavior changed
+8. `make openapi-verify` — OpenAPI contract matches the router (no doc drift)
 
 Run `make help` for the full target list.
 

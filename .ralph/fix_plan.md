@@ -235,7 +235,11 @@
 - [ ] Add role/permission middleware.
 - [ ] Add consistent JSON error envelope.
 - [ ] Add validation layer.
-- [ ] Add OpenAPI generation or maintained OpenAPI spec.
+- [x] Maintain an OpenAPI contract at `api/openapi.yaml` as the source of truth for the HTTP API (seeded for the system endpoints).
+- [x] Add a route↔spec drift stop guard (`TestOpenAPIContract` in `internal/httpapi`) that fails the build when routes and `api/openapi.yaml` diverge.
+- [x] Add the `openapi.yml` GitHub Actions workflow (Redocly lint + `make openapi-verify`) and `make openapi-lint` / `openapi-verify` / `docs-check` targets.
+- [ ] Extend `api/openapi.yaml` (and its schemas) as each new endpoint family lands, keeping the drift guard green every slice.
+- [ ] Generate or validate TypeScript client/types for `vidra-user` from `api/openapi.yaml`.
 - [ ] Add Postman collection scaffold.
 - [ ] Add API smoke tests against live Docker database.
 
@@ -571,7 +575,8 @@
 - [ ] PeerTube endpoint inventory has no unclassified endpoints.
 - [ ] PeerTube feature ledger has no unclassified in-scope backend items.
 - [ ] Vidra extensions ledger has no unclassified in-scope backend items.
-- [ ] OpenAPI contract is current.
+- [ ] OpenAPI contract (`api/openapi.yaml`) is current: lints clean (`make openapi-lint`) and the route↔spec drift guard passes (`make openapi-verify` / `TestOpenAPIContract`).
+- [ ] `README.md`, `.env.example`, and `.ralph/AGENT.md` reflect the current endpoints, env vars, and commands (no documentation drift).
 - [ ] Migrations apply cleanly to empty database.
 - [ ] Migrations apply cleanly to existing database fixture.
 - [ ] Docker Compose can start required local services.

@@ -46,6 +46,19 @@ run: ## Run the api server locally (needs Postgres + Redis)
 sqlc: ## Generate typed query code (requires sqlc installed)
 	sqlc generate
 
+.PHONY: openapi-lint
+openapi-lint: ## Lint the OpenAPI contract (requires npx; uses Redocly CLI)
+	npx --yes @redocly/cli@latest lint api/openapi.yaml
+
+.PHONY: openapi-verify
+openapi-verify: ## Verify routes match api/openapi.yaml (documentation drift guard)
+	go test ./internal/httpapi/ -run TestOpenAPIContract
+
+.PHONY: docs-check
+docs-check: openapi-verify ## Run the documentation stop guard (route<->spec drift)
+	@echo "docs-check: OpenAPI contract is in sync with the router."
+	@echo "Reminder: confirm README.md and .ralph/specs/ reflect this change too."
+
 .PHONY: migrate-up
 migrate-up: ## Apply migrations against DATABASE_URL (requires migrate CLI)
 	migrate -path migrations -database "$(DATABASE_URL)" up
