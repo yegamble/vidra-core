@@ -92,6 +92,48 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 	return i, err
 }
 
+const listPublicVideos = `-- name: ListPublicVideos :many
+SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
+FROM videos
+WHERE privacy = 'public'
+ORDER BY created_at DESC, id DESC
+LIMIT $1 OFFSET $2
+`
+
+type ListPublicVideosParams struct {
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
+}
+
+func (q *Queries) ListPublicVideos(ctx context.Context, arg ListPublicVideosParams) ([]Video, error) {
+	rows, err := q.db.Query(ctx, listPublicVideos, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Video
+	for rows.Next() {
+		var i Video
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Description,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublicVideosByChannel = `-- name: ListPublicVideosByChannel :many
 SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
 FROM videos

@@ -29,6 +29,7 @@ type Repository interface {
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
 	ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error)
 	ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error)
+	ListPublicVideos(ctx context.Context, arg sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error)
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
 }
@@ -120,6 +121,13 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]sql
 // view), newest first.
 func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
 	return s.repo.ListPublicVideosByChannel(ctx, channelID)
+}
+
+// ListPublic returns the cross-channel public video feed, newest first, with
+// limit/offset pagination. The caller is responsible for clamping limit/offset
+// to sane bounds.
+func (s *Service) ListPublic(ctx context.Context, limit, offset int32) ([]sqlcgen.Video, error) {
+	return s.repo.ListPublicVideos(ctx, sqlcgen.ListPublicVideosParams{Limit: limit, Offset: offset})
 }
 
 // trimPtr trims a non-nil string pointer's value, leaving nil untouched so a

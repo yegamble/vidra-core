@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 
@@ -100,6 +101,25 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 func (f *videoFakeRepo) DeleteVideo(_ context.Context, id uuid.UUID) error {
 	delete(f.videos, id)
 	return nil
+}
+
+func (f *videoFakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error) {
+	var all []sqlcgen.Video
+	for _, r := range f.videos {
+		if r.Privacy == "public" {
+			all = append(all, vidRowToVideo(r))
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	lo := int(a.Offset)
+	if lo > len(all) {
+		lo = len(all)
+	}
+	hi := lo + int(a.Limit)
+	if hi > len(all) {
+		hi = len(all)
+	}
+	return all[lo:hi], nil
 }
 
 func videoServer(t *testing.T) *Server {
@@ -308,6 +328,58 @@ func TestListChannelVideosOwnerVsPublic(t *testing.T) {
 	}
 	if other := list(otherTok); len(other.Videos) != 1 {
 		t.Errorf("non-owner list = %d, want 1 (public only)", len(other.Videos))
+	}
+}
+
+func TestPublicVideoFeed(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	_ = createVideo(t, srv, tok, "ada", `{"title":"p1","privacy":"public"}`)
+	_ = createVideo(t, srv, tok, "ada", `{"title":"p2","privacy":"public"}`)
+	_ = createVideo(t, srv, tok, "ada", `{"title":"secret","privacy":"private"}`)
+
+	feed := func(query string) videoFeedResponse {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/videos"+query, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("feed%s = %d, want 200; body=%s", query, rec.Code, rec.Body.String())
+		}
+		var body videoFeedResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return body
+	}
+
+	// Anonymous feed shows only the 2 public videos.
+	all := feed("")
+	if len(all.Videos) != 2 || all.Limit != 20 || all.Offset != 0 {
+		t.Fatalf("default feed = %+v, want 2 videos, limit 20, offset 0", all)
+	}
+	for _, v := range all.Videos {
+		if v.Privacy != "public" {
+			t.Errorf("feed leaked non-public video: %+v", v)
+		}
+	}
+
+	// Pagination: limit clamps, offset advances.
+	page1 := feed("?limit=1&offset=0")
+	page2 := feed("?limit=1&offset=1")
+	page3 := feed("?limit=1&offset=2")
+	if len(page1.Videos) != 1 || page1.Limit != 1 {
+		t.Errorf("page1 = %+v, want 1 video, limit 1", page1)
+	}
+	if len(page2.Videos) != 1 {
+		t.Errorf("page2 = %d videos, want 1", len(page2.Videos))
+	}
+	if len(page3.Videos) != 0 {
+		t.Errorf("page3 = %d videos, want 0 (only 2 public)", len(page3.Videos))
+	}
+	if page1.Videos[0].ID == page2.Videos[0].ID {
+		t.Error("pages returned the same video")
+	}
+
+	// Over-max limit is clamped to 100.
+	if huge := feed("?limit=99999"); huge.Limit != 100 {
+		t.Errorf("limit clamp = %d, want 100", huge.Limit)
 	}
 }
 

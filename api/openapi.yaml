@@ -625,6 +625,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos:
+    get:
+      operationId: listPublicVideos
+      summary: Public video feed
+      description: >-
+        The cross-channel public video feed, newest first. No auth required.
+        Paginated with limit (1–100, default 20) and offset (>= 0).
+      tags: [videos]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of public videos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoFeedResponse"
   /api/v1/videos/{id}:
     get:
       operationId: getVideo
@@ -1048,6 +1079,20 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Video"
+    VideoFeedResponse:
+      type: object
+      required: [videos, limit, offset]
+      properties:
+        videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/Video"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
     RegisterRequest:
       type: object
       required: [username, email, password]

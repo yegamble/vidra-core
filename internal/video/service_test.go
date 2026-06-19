@@ -3,6 +3,7 @@ package video
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -95,6 +96,25 @@ func (f *fakeRepo) DeleteVideo(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (f *fakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error) {
+	var all []sqlcgen.Video
+	for _, r := range f.videos {
+		if r.Privacy == "public" {
+			all = append(all, rowToVideo(r))
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	lo := int(a.Offset)
+	if lo > len(all) {
+		lo = len(all)
+	}
+	hi := lo + int(a.Limit)
+	if hi > len(all) {
+		hi = len(all)
+	}
+	return all[lo:hi], nil
+}
+
 func TestCreateDraftDefaultsToDraftState(t *testing.T) {
 	owner := uuid.New()
 	svc := NewService(newFakeRepo(owner))
@@ -172,6 +192,35 @@ func TestDeleteVideoOwnerAndNonOwner(t *testing.T) {
 	}
 	if _, err := svc.GetByID(ctx, v.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("after delete err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListPublicPaginates(t *testing.T) {
+	owner := uuid.New()
+	svc := NewService(newFakeRepo(owner))
+	ctx := context.Background()
+	ch := uuid.New()
+	// 3 public + 1 private across (logically) the instance.
+	for i := 0; i < 3; i++ {
+		_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "pub", Privacy: "public"})
+	}
+	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "priv", Privacy: "private"})
+
+	page1, err := svc.ListPublic(ctx, 2, 0)
+	if err != nil {
+		t.Fatalf("ListPublic: %v", err)
+	}
+	if len(page1) != 2 {
+		t.Errorf("page1 = %d, want 2", len(page1))
+	}
+	page2, _ := svc.ListPublic(ctx, 2, 2)
+	if len(page2) != 1 { // only 3 public total
+		t.Errorf("page2 = %d, want 1", len(page2))
+	}
+	for _, v := range append(page1, page2...) {
+		if v.Privacy != "public" {
+			t.Errorf("feed contained non-public video: %+v", v)
+		}
 	}
 }
 

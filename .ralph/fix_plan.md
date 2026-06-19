@@ -354,9 +354,9 @@
 
 # P7 — Playback, Discovery, and Public Video API
 
-- [ ] Implement public video list endpoint.
+- [x] Implement public video list endpoint. (`GET /api/v1/videos` (public, paginated limit≤100/offset) → cross-channel public videos newest-first; sqlc `ListPublicVideos`; `internal/video.ListPublic`; tested. State filtering (published-only) joins once the publish pipeline exists.)
 - [ ] Implement local videos endpoint.
-- [ ] Implement trending/recent/popular sort modes or documented staged rollout.
+- [~] Implement trending/recent/popular sort modes or documented staged rollout. (recent (newest-first) shipped via `GET /api/v1/videos`; trending/popular need view counts — staged after the views slice)
 - [ ] Implement video detail endpoint.
 - [ ] Implement video playback manifest endpoint.
 - [ ] Implement captions endpoint.

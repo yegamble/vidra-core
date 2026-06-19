@@ -22,6 +22,13 @@ FROM videos
 WHERE channel_id = $1 AND privacy = 'public'
 ORDER BY created_at DESC;
 
+-- name: ListPublicVideos :many
+SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
+FROM videos
+WHERE privacy = 'public'
+ORDER BY created_at DESC, id DESC
+LIMIT $1 OFFSET $2;
+
 -- name: UpdateVideo :one
 UPDATE videos
 SET title       = COALESCE(sqlc.narg('title'), title),

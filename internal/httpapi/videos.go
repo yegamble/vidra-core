@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,6 +139,61 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 // videoListResponse wraps a list of videos.
 type videoListResponse struct {
 	Videos []videoView `json:"videos"`
+}
+
+// videoFeedResponse is the paginated cross-channel public feed.
+type videoFeedResponse struct {
+	Videos []videoView `json:"videos"`
+	Limit  int         `json:"limit"`
+	Offset int         `json:"offset"`
+}
+
+const (
+	defaultVideoFeedLimit = 20
+	maxVideoFeedLimit     = 100
+)
+
+// handleListPublicVideos returns the public, newest-first cross-channel feed.
+// No auth required. Pagination via ?limit (1–100, default 20) and ?offset (>=0).
+func (s *Server) handleListPublicVideos(c echo.Context) error {
+	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
+	offset := queryInt(c, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+	vids, err := s.videosvc.ListPublic(c.Request().Context(), int32(limit), int32(offset))
+	if err != nil {
+		return err
+	}
+	views := make([]videoView, 0, len(vids))
+	for _, v := range vids {
+		views = append(views, newVideoView(v))
+	}
+	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Limit: limit, Offset: offset})
+}
+
+// queryInt reads an integer query param, returning def when absent or malformed.
+func queryInt(c echo.Context, name string, def int) int {
+	raw := c.QueryParam(name)
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// clampInt bounds v to [lo, hi].
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // handleListChannelVideos lists a channel's videos. Behind optionalAuth: the
