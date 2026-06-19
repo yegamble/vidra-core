@@ -641,11 +641,14 @@ components:
                     example: must be a valid email
     InstanceResponse:
       type: object
-      required: [name, software, registration_enabled]
+      required: [name, description, software, registration_enabled, terms_url, privacy_url, contact_email]
       properties:
         name:
           type: string
           example: Vidra
+        description:
+          type: string
+          description: Operator-provided short description; may be empty.
         software:
           type: object
           required: [name, version]
@@ -659,6 +662,15 @@ components:
         registration_enabled:
           type: boolean
           description: Whether public account signup is currently accepted.
+        terms_url:
+          type: string
+          description: Link to the instance terms of service; may be empty.
+        privacy_url:
+          type: string
+          description: Link to the instance privacy policy; may be empty.
+        contact_email:
+          type: string
+          description: Operator contact email; may be empty.
     NodeInfoResponse:
       type: object
       required: [version, software, instance]

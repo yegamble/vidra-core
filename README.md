@@ -28,7 +28,9 @@ curl localhost:8080/api/v1/instance  # public about/config (name, software, regi
 
 Registration can be closed per-instance with `REGISTRATION_ENABLED=false`: signup then
 returns `403` and `GET /api/v1/instance` reports `registration_enabled: false` so the
-frontend can hide the form.
+frontend can hide the form. The instance endpoint also surfaces optional about/legal
+metadata — `description`, `terms_url`, `privacy_url`, `contact_email` (from the matching
+`INSTANCE_*` env vars; empty when unset) — for the frontend's footer/about pages.
 
 All non-2xx responses share one envelope: `{"error":{"code","message","request_id"}}`
 (see `api/openapi.yaml` → `ErrorResponse`). The readiness probe returns its own

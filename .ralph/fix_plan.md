@@ -294,7 +294,7 @@
 - [x] Implement account/channel follow model. (`POST`/`DELETE /api/v1/channels/:handle/follow` behind `requireAuth`, idempotent 204; `follower_count` on the channel view; `internal/channel` Follow/Unfollow/FollowerCount; tested)
 - [ ] Implement channel sync placeholder/foundation for remote channels.
 - [x] Implement instance about/config endpoint for frontend. (`GET /api/v1/instance` (public) → name, software{name,version}, registration_enabled; `internal/httpapi/instance.go`; documented + tested)
-- [ ] Implement terms/privacy/about/contact instance metadata.
+- [x] Implement terms/privacy/about/contact instance metadata. (`GET /api/v1/instance` now returns description, terms_url, privacy_url, contact_email from `INSTANCE_DESCRIPTION`/`INSTANCE_TERMS_URL`/`INSTANCE_PRIVACY_URL`/`INSTANCE_CONTACT_EMAIL`; documented + tested)
 - [~] Add tests for channel/profile permissions. (channel: create-requires-auth, validation, duplicate-409, create→list→public-get, get-404, owner/non-owner update-403, delete-403/204, plus service unit tests; profile tests pending the profile slice)
 
 ---

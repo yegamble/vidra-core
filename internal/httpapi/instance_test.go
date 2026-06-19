@@ -32,6 +32,29 @@ func TestInstanceEndpoint(t *testing.T) {
 	}
 }
 
+func TestInstanceAboutMetadata(t *testing.T) {
+	cfg := testConfig()
+	cfg.InstanceDescription = "A friendly instance"
+	cfg.InstanceTermsURL = "https://example.test/terms"
+	cfg.InstancePrivacyURL = "https://example.test/privacy"
+	cfg.InstanceContactEmail = "admin@example.test"
+	srv := New(cfg, nil, nil)
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body instanceResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Description != "A friendly instance" || body.TermsURL != "https://example.test/terms" ||
+		body.PrivacyURL != "https://example.test/privacy" || body.ContactEmail != "admin@example.test" {
+		t.Errorf("unexpected about metadata: %+v", body)
+	}
+}
+
 // registrationDisabledServer wires auth over the fake repo with registration off.
 func registrationDisabledServer(t *testing.T) *Server {
 	t.Helper()

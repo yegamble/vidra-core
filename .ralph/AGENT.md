@@ -31,7 +31,7 @@ curl localhost:8080/healthz          # liveness
 curl localhost:8080/readyz           # readiness (postgres + redis)
 curl localhost:8080/version          # build version / commit / date
 curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
-curl localhost:8080/api/v1/instance  # public about/config (name, software, registration_enabled)
+curl localhost:8080/api/v1/instance  # public about/config (name, description, software, registration_enabled, terms/privacy/contact)
 
 # Auth (returns {token, token_type, expires_in, user}):
 curl -sX POST localhost:8080/api/v1/auth/register \
