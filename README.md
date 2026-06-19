@@ -45,8 +45,13 @@ signing via `JWT_SECRET` (required in production), `JWT_ISSUER`, `JWT_AUDIENCE`,
 Sessions: `POST /api/v1/auth/refresh` exchanges a refresh token for a new pair and
 revokes the old one (rotation); reusing an already-rotated token is treated as
 compromise and revokes all of that user's sessions. `POST /api/v1/auth/logout` revokes
-the presented refresh token (idempotent `204`). Refresh tokens are opaque 256-bit
-values; only their SHA-256 hash is stored in the `sessions` table.
+the presented refresh token (idempotent `204`); `POST /api/v1/auth/logout-all`
+(bearer-authenticated) signs the account out everywhere. Refresh tokens are opaque
+256-bit values; only their SHA-256 hash is stored in the `sessions` table.
+
+Authorization: routes are gated by `requireAuth` (valid bearer token) and, where
+role-restricted, `requireRole(...)` off the JWT's `role` claim — an authenticated
+principal lacking an allowed role gets `403`.
 
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects

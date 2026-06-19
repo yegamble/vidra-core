@@ -48,6 +48,8 @@ curl -sX POST localhost:8080/api/v1/auth/refresh \
   -H 'content-type: application/json' -d '{"refresh_token":"<refresh>"}'
 curl -sX POST localhost:8080/api/v1/auth/logout \
   -H 'content-type: application/json' -d '{"refresh_token":"<refresh>"}'
+# Sign out everywhere (revokes all sessions for the bearer's account):
+curl -sX POST localhost:8080/api/v1/auth/logout-all -H 'authorization: Bearer <token>'
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

@@ -242,6 +242,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/logout-all:
+    post:
+      operationId: logoutAll
+      summary: Revoke all of the current user's sessions
+      description: >-
+        "Sign out everywhere" — revokes every active refresh-token session for
+        the authenticated account. Requires a bearer access token.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: All of the user's sessions are revoked.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:

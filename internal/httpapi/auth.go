@@ -201,6 +201,20 @@ func (s *Server) handleRefresh(c echo.Context) error {
 	return s.authResponse(http.StatusOK, c, user, tokens)
 }
 
+// handleLogoutAll revokes every active session for the authenticated user
+// ("sign out everywhere"). It runs behind requireAuth, so the principal is
+// always present, and returns 204.
+func (s *Server) handleLogoutAll(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	if err := s.authsvc.LogoutAll(c.Request().Context(), userID); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 // handleLogout revokes the session for the presented refresh token. It is
 // idempotent and always returns 204, never revealing whether the token existed.
 func (s *Server) handleLogout(c echo.Context) error {

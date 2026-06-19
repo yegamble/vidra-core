@@ -232,7 +232,7 @@
 - [x] Add timeout middleware. (`requestDeadline` propagates a per-request context deadline, `HTTP_REQUEST_TIMEOUT` default 30s; ctx-deadline → 503 `request_timeout` envelope; server WriteTimeout is the hard backstop; tested)
 - [x] Add rate limit middleware using Redis. (`internal/ratelimit` fixed-window via Redis INCR+ExpireNX+PTTL behind a `Counter` interface; `httpapi` middleware on `/api` per client IP, `X-RateLimit-*` headers, `429 rate_limited` envelope + `Retry-After`, fails open if Redis down, system probes exempt; unit-tested with a fake counter + Redis-gated integration test)
 - [x] Add JWT auth middleware. (`auth_middleware.go requireAuth` — Bearer → `auth.Service.Parse` → principal (user ID + role) in context; any failure → 401 without revealing which check failed; `bearerToken` parser unit-tested; powers `GET /api/v1/auth/me`)
-- [ ] Add role/permission middleware. (principal carries role; role-gate middleware is the next slice)
+- [x] Add role/permission middleware. (`auth_middleware.go requireRole(...roles)` — chains after `requireAuth`; principal lacking an allowed role → 403, no principal → 401; tested. Ready for P9 admin routes to mount.)
 - [x] Add consistent JSON error envelope. (`errors.go` — `ErrorResponse {error:{code,message,request_id}}` via custom `echo.HTTPErrorHandler`; 5xx detail hidden; documented as `ErrorResponse` in `api/openapi.yaml`; tested)
 - [x] Add validation layer. (`validation.go` — `bindAndValidate` + `Validatable` interface; malformed body → 400 `bad_request`, failed validation → 422 `unprocessable_entity` with a `fields` array; dependency-free, documented in `api/openapi.yaml ErrorResponse`; tested)
 - [x] Maintain an OpenAPI contract at `api/openapi.yaml` as the source of truth for the HTTP API (seeded for the system endpoints).
@@ -264,7 +264,7 @@
 - [x] Implement login. (`POST /api/v1/auth/login`, `internal/auth.Service.Login`; enumeration-safe 401; disabled → 403; tested)
 - [x] Implement refresh token/session rotation. (`POST /api/v1/auth/refresh`; register/login persist a hashed refresh token in `sessions`, refresh rotates (revoke old + issue new); rotated-token reuse → revoke all sessions; opaque 256-bit token, SHA-256 stored; `JWT_REFRESH_TTL` default 720h; tested)
 - [x] Implement logout current session. (`POST /api/v1/auth/logout` revokes the presented refresh token; idempotent 204; tested)
-- [x] Implement logout all sessions. (`Service.LogoutAll` revokes every active session for a user; wired for reuse-detection; HTTP endpoint pending an authenticated "sign out everywhere" control)
+- [x] Implement logout all sessions. (`POST /api/v1/auth/logout-all` behind `requireAuth` → `Service.LogoutAll` revokes every active session for the principal; 204; tested)
 - [ ] Implement password reset request/complete flow.
 - [x] Implement password hashing with modern algorithm. (bcrypt cost 12, `internal/auth/password.go`; salted, tested)
 - [x] Implement JWT claims and validation. (`internal/auth/jwt.go` HS256 via golang-jwt/v5; sub+role+iss+aud+exp, alg pinned; issue/parse tested incl. tamper/expiry/audience)

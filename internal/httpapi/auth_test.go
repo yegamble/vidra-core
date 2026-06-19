@@ -188,6 +188,39 @@ func getWithAuth(srv *Server, path, token string) *httptest.ResponseRecorder {
 	return rec
 }
 
+func postWithAuth(srv *Server, path, token string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	if token != "" {
+		req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// TestRequireRole exercises the role gate via a test-only route (no admin route
+// exists in the public surface yet; P9 admin endpoints will mount this).
+func TestRequireRole(t *testing.T) {
+	srv := authServer(t)
+	srv.echo.GET("/api/v1/_test/admin-only", func(c echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	}, srv.requireAuth, srv.requireRole("admin"))
+
+	adminTok := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`).Token
+	userTok := registerTokens(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`).Token
+
+	if rec := getWithAuth(srv, "/api/v1/_test/admin-only", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("no token = %d, want 401", rec.Code)
+	}
+	if rec := getWithAuth(srv, "/api/v1/_test/admin-only", userTok); rec.Code != http.StatusForbidden {
+		t.Errorf("user token = %d, want 403", rec.Code)
+	}
+	if rec := getWithAuth(srv, "/api/v1/_test/admin-only", adminTok); rec.Code != http.StatusOK {
+		t.Errorf("admin token = %d, want 200", rec.Code)
+	}
+}
+
 func TestMeRequiresAuth(t *testing.T) {
 	srv := authServer(t)
 	rec := getWithAuth(srv, "/api/v1/auth/me", "")
@@ -306,6 +339,37 @@ func TestRefreshEndpointValidation(t *testing.T) {
 	rec := postTo(srv, "/api/v1/auth/refresh", `{}`)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+}
+
+func TestLogoutAllRequiresAuth(t *testing.T) {
+	srv := authServer(t)
+	rec := postTo(srv, "/api/v1/auth/logout-all", `{}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestLogoutAllRevokesEverySession(t *testing.T) {
+	srv := authServer(t)
+	first := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	// A second login creates a second session for the same account.
+	loginRec := postTo(srv, "/api/v1/auth/login", `{"email":"ada@example.test","password":"supersecret"}`)
+	var second authResponse
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &second); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	out := postWithAuth(srv, "/api/v1/auth/logout-all", first.Token)
+	if out.Code != http.StatusNoContent {
+		t.Fatalf("logout-all status = %d, want 204; body=%s", out.Code, out.Body.String())
+	}
+
+	for name, tok := range map[string]string{"first": first.RefreshToken, "second": second.RefreshToken} {
+		rec := postTo(srv, "/api/v1/auth/refresh", `{"refresh_token":"`+tok+`"}`)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s refresh after logout-all = %d, want 401", name, rec.Code)
+		}
 	}
 }
 

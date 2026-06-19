@@ -39,6 +39,29 @@ func (s *Server) requireAuth(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+// requireRole restricts a route to principals holding one of the allowed roles.
+// It must be chained AFTER requireAuth (which populates the principal). A request
+// with no principal yields 401; an authenticated principal lacking an allowed
+// role yields 403 forbidden. The role set is small and explicit per route.
+func (s *Server) requireRole(allowed ...string) echo.MiddlewareFunc {
+	allow := make(map[string]bool, len(allowed))
+	for _, r := range allowed {
+		allow[r] = true
+	}
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			_, role, ok := principalFromContext(c)
+			if !ok {
+				return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+			}
+			if !allow[role] {
+				return echo.NewHTTPError(http.StatusForbidden, "insufficient permissions")
+			}
+			return next(c)
+		}
+	}
+}
+
 // bearerToken extracts the token from an "Authorization: Bearer <token>" header.
 // The scheme match is case-insensitive per RFC 7235; the token must be non-empty.
 func bearerToken(header string) (string, bool) {
