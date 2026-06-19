@@ -12,6 +12,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/ratelimit"
 )
 
 // Pinger is satisfied by dependencies that can report liveness (store, cache).
@@ -21,22 +22,35 @@ type Pinger interface {
 
 // Server holds the Echo instance and its dependencies.
 type Server struct {
-	echo   *echo.Echo
-	cfg    *config.Config
-	db     Pinger
-	rdb    Pinger
-	logger *slog.Logger
+	echo    *echo.Echo
+	cfg     *config.Config
+	db      Pinger
+	rdb     Pinger
+	logger  *slog.Logger
+	limiter *ratelimit.Limiter
+}
+
+// Option customises the Server during construction.
+type Option func(*Server)
+
+// WithRateLimiter mounts fixed-window rate limiting (per client IP) on the API
+// surface. When nil or unset, no rate limiting is applied — handy for unit tests.
+func WithRateLimiter(l *ratelimit.Limiter) Option {
+	return func(s *Server) { s.limiter = l }
 }
 
 // New constructs the HTTP server with middleware and routes registered. db and
 // rdb may be nil (e.g. in unit tests); readiness reports them as unconfigured.
 // It uses the process-wide slog default logger for request and error logging.
-func New(cfg *config.Config, db, rdb Pinger) *Server {
+func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
 
 	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, logger: slog.Default()}
+	for _, opt := range opts {
+		opt(s)
+	}
 	e.HTTPErrorHandler = s.httpErrorHandler
 
 	e.Use(middleware.Recover())
@@ -112,6 +126,11 @@ func (s *Server) routes() {
 	s.echo.GET("/version", s.handleVersion)
 
 	api := s.echo.Group("/api/v1")
+	// Rate limiting guards the API surface only; liveness/readiness/version are
+	// exempt so orchestrator probes are never throttled.
+	if s.limiter != nil {
+		api.Use(s.rateLimit(s.limiter))
+	}
 	api.GET("/nodeinfo", s.handleNodeInfo)
 }
 

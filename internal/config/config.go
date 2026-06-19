@@ -42,6 +42,11 @@ type Config struct {
 
 	// InstanceName is the human-facing name of this Vidra instance.
 	InstanceName string
+
+	// Rate limiting (Redis fixed-window) applied to the /api surface.
+	RateLimitEnabled  bool
+	RateLimitRequests int
+	RateLimitWindow   time.Duration
 }
 
 // Load reads configuration from the environment, applying safe development
@@ -64,6 +69,8 @@ func Load() (*Config, error) {
 		HTTPShutdownTimeout: getEnvDuration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
 		HTTPRequestTimeout:  getEnvDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
 		HTTPBodyLimit:       getEnv("HTTP_BODY_LIMIT", "8M"),
+		RateLimitEnabled:    getEnvBool("RATE_LIMIT_ENABLED", true),
+		RateLimitWindow:     getEnvDuration("RATE_LIMIT_WINDOW", time.Minute),
 	}
 
 	port, err := getEnvInt("HTTP_PORT", 8080)
@@ -71,6 +78,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.HTTPPort = port
+
+	reqs, err := getEnvInt("RATE_LIMIT_REQUESTS", 120)
+	if err != nil {
+		return nil, err
+	}
+	cfg.RateLimitRequests = reqs
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -98,6 +111,14 @@ func (c *Config) validate() error {
 	}
 	if _, err := bytes.Parse(c.HTTPBodyLimit); err != nil {
 		return fmt.Errorf("config: invalid HTTP_BODY_LIMIT %q: %w", c.HTTPBodyLimit, err)
+	}
+	if c.RateLimitEnabled {
+		if c.RateLimitRequests <= 0 {
+			return fmt.Errorf("config: RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
+		}
+		if c.RateLimitWindow <= 0 {
+			return fmt.Errorf("config: RATE_LIMIT_WINDOW must be positive when rate limiting is enabled")
+		}
 	}
 	if c.Environment == "production" {
 		for _, o := range c.CORSAllowedOrigins {
@@ -131,6 +152,18 @@ func getEnvInt(key string, def int) (int, error) {
 		return 0, fmt.Errorf("config: %s must be an integer: %w", key, err)
 	}
 	return n, nil
+}
+
+func getEnvBool(key string, def bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
 }
 
 func getEnvDuration(key string, def time.Duration) time.Duration {

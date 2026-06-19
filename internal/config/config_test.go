@@ -34,6 +34,45 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestRateLimitDefaults(t *testing.T) {
+	for _, k := range []string{"RATE_LIMIT_ENABLED", "RATE_LIMIT_REQUESTS", "RATE_LIMIT_WINDOW"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.RateLimitEnabled {
+		t.Error("RateLimitEnabled = false, want true by default")
+	}
+	if cfg.RateLimitRequests != 120 {
+		t.Errorf("RateLimitRequests = %d, want 120", cfg.RateLimitRequests)
+	}
+	if cfg.RateLimitWindow != time.Minute {
+		t.Errorf("RateLimitWindow = %v, want 1m", cfg.RateLimitWindow)
+	}
+}
+
+func TestRateLimitDisabledSkipsValidation(t *testing.T) {
+	t.Setenv("RATE_LIMIT_ENABLED", "false")
+	t.Setenv("RATE_LIMIT_REQUESTS", "0") // invalid, but ignored when disabled
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.RateLimitEnabled {
+		t.Error("RateLimitEnabled = true, want false")
+	}
+}
+
+func TestRateLimitRejectsNonPositiveWhenEnabled(t *testing.T) {
+	t.Setenv("RATE_LIMIT_ENABLED", "true")
+	t.Setenv("RATE_LIMIT_REQUESTS", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for non-positive RATE_LIMIT_REQUESTS, got nil")
+	}
+}
+
 func TestLoadInvalidBodyLimit(t *testing.T) {
 	t.Setenv("HTTP_BODY_LIMIT", "not-a-size")
 	if _, err := Load(); err == nil {

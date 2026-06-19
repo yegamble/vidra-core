@@ -106,7 +106,7 @@
 - [ ] Add config for OAuth2 providers, disabled by default.
 - [ ] Add config for TOTP issuer.
 - [ ] Add config for CORS allowlist.
-- [ ] Add config for rate limiting.
+- [x] Add config for rate limiting. (`RATE_LIMIT_ENABLED`/`RATE_LIMIT_REQUESTS`/`RATE_LIMIT_WINDOW`, validated when enabled)
 - [ ] Add config for SSRF allow/deny behavior.
 - [ ] Add config for storage backend: local, S3-compatible, IPFS.
 - [ ] Add config for FFmpeg paths and transcoding options.
@@ -230,7 +230,7 @@
 - [ ] Add CORS middleware with config allowlist.
 - [x] Add body size limits. (`middleware.BodyLimit(cfg.HTTPBodyLimit)`, default 8M, configurable via `HTTP_BODY_LIMIT`; oversized → 413 `request_entity_too_large` envelope; tested)
 - [x] Add timeout middleware. (`requestDeadline` propagates a per-request context deadline, `HTTP_REQUEST_TIMEOUT` default 30s; ctx-deadline → 503 `request_timeout` envelope; server WriteTimeout is the hard backstop; tested)
-- [ ] Add rate limit middleware using Redis.
+- [x] Add rate limit middleware using Redis. (`internal/ratelimit` fixed-window via Redis INCR+ExpireNX+PTTL behind a `Counter` interface; `httpapi` middleware on `/api` per client IP, `X-RateLimit-*` headers, `429 rate_limited` envelope + `Retry-After`, fails open if Redis down, system probes exempt; unit-tested with a fake counter + Redis-gated integration test)
 - [ ] Add JWT auth middleware.
 - [ ] Add role/permission middleware.
 - [x] Add consistent JSON error envelope. (`errors.go` — `ErrorResponse {error:{code,message,request_id}}` via custom `echo.HTTPErrorHandler`; 5xx detail hidden; documented as `ErrorResponse` in `api/openapi.yaml`; tested)
@@ -530,7 +530,8 @@
 - [ ] Add JWT key rotation plan or documented defer.
 - [ ] Add OAuth redirect validation.
 - [ ] Add secure headers.
-- [ ] Add audit logging for sensitive actions.
+- [ ] Add audit logging for sensitive actions (typed audit events, no secrets; see P17.2 and `.ralph/specs/observability.md`).
+- [ ] Enforce no-secrets-in-logs via the secrets-in-logs guard test (P17.2).
 - [ ] Add fuzz tests for URL parsing.
 - [ ] Add fuzz tests for metadata parsing.
 - [ ] Add fuzz tests for ActivityPub parsing when implemented.
@@ -557,10 +558,37 @@
 
 # P17 — Observability and Operations
 
-- [ ] Add structured logs.
-- [ ] Add request IDs.
-- [ ] Add metrics endpoint or documented defer.
-- [ ] Add health/readiness for dependencies.
+> Follow `.ralph/specs/observability.md`. Logging/tracing ship with the code they
+> describe, not in a later phase.
+
+## P17.1 Developer-friendly logging
+
+- [x] Add structured logs (slog JSON to stdout).
+- [x] Add request IDs (Echo RequestID + per-request slog line).
+- [ ] Centralize logger construction in `internal/observability` and inject it.
+- [ ] Add `LOG_LEVEL` and `LOG_FORMAT` (json/text) config + `.env.example` + tests.
+- [ ] Propagate the request-scoped logger (request_id/trace_id) through service and store layers via `context.Context`.
+
+## P17.2 Security-friendly logging
+
+- [ ] Add a redaction helper + denylist of sensitive field names in `internal/observability`; route struct/config logging through it (never log `cfg` whole).
+- [ ] Add the banned-logging guard test (`TestNoForbiddenLogging`): no `fmt.Print*`/`log.Print*`/`println` diagnostics outside `main`/tests.
+- [ ] Add the secrets-in-logs guard test: fail when a denylisted key is used as an slog/span/metric key.
+- [ ] Implement typed audit events for auth/admin/moderation actions (durable, no secrets); add per-action audit tests asserting no denylisted field. (See P15.)
+
+## P17.3 OpenTelemetry (traces + metrics)
+
+- [ ] Add OTel Go SDK setup + graceful shutdown in `internal/observability`, wired in `cmd/api` (and worker), no-op when disabled.
+- [ ] Add config `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_SERVICE_NAME`, `METRICS_ENABLED` + `.env.example` + validation.
+- [ ] Instrument HTTP (otelecho), datastore (pgx/Redis spans), and outbound HTTP calls.
+- [ ] Accept inbound W3C `traceparent` from `vidra-user`; inject context on outbound calls.
+- [ ] Export RED metrics with bounded label cardinality (no IDs/tokens/raw URLs as labels); gate the metrics surface behind `METRICS_ENABLED` and document any route in `api/openapi.yaml`.
+- [ ] Stamp `trace_id`/`span_id` into slog output when OTel is enabled.
+- [ ] Add optional Docker Compose profile for a local OTel Collector / Jaeger.
+
+## P17.4 Operations
+
+- [ ] Add health/readiness for dependencies. (done for postgres/redis)
 - [ ] Add worker status reporting.
 - [ ] Add job retry/dead-letter visibility.
 - [ ] Add admin-facing system status endpoint.
@@ -578,6 +606,9 @@
 - [ ] Vidra extensions ledger has no unclassified in-scope backend items.
 - [ ] OpenAPI contract (`api/openapi.yaml`) is current: lints clean (`make openapi-lint`) and the route↔spec drift guard passes (`make openapi-verify` / `TestOpenAPIContract`).
 - [ ] `README.md`, `.env.example`, and `.ralph/AGENT.md` reflect the current endpoints, env vars, and commands (no documentation drift).
+- [ ] Logging is structured and configurable (`LOG_LEVEL`/`LOG_FORMAT`); the banned-logging and secrets-in-logs guard tests pass; no denylisted data in logs/spans/metric labels.
+- [ ] Audit events exist and are tested for in-scope sensitive actions.
+- [ ] OpenTelemetry traces/metrics follow `.ralph/specs/observability.md` (behind config flags; logs carry `trace_id` when enabled).
 - [ ] Migrations apply cleanly to empty database.
 - [ ] Migrations apply cleanly to existing database fixture.
 - [ ] Docker Compose can start required local services.
@@ -585,7 +616,7 @@
 - [ ] Integration tests pass or documented external dependency is unavailable.
 - [ ] Smoke tests pass.
 - [ ] Lint/static analysis passes.
-- [ ] CI passes.
+- [ ] `make ci` passes locally and CI is green running the same `make ci` gate (local↔CI parity); `ci-guard.yml` passes (no hidden failures, workflows invoke the canonical gate).
 - [ ] `.ralph/AGENT.md` is accurate.
 - [ ] No secrets are committed.
 

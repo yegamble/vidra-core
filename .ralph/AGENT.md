@@ -34,7 +34,12 @@ curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`). `make build` injects version
-metadata into `/version` via `-ldflags`.
+metadata into `/version` via `-ldflags`. The `/api` surface is rate limited
+(Redis fixed-window, per IP, `RATE_LIMIT_*` env, default 120/min) with
+`X-RateLimit-*` headers and a `429 rate_limited` envelope; system probes are
+exempt and the limiter fails open if Redis is down. The Redis limiter has a
+gated integration test:
+`REDIS_URL=redis://localhost:6379/0 go test -tags=integration ./internal/ratelimit/...`.
 
 ## Build / run
 ```bash
@@ -56,12 +61,18 @@ Compose profile). Migration tests must apply cleanly against a fresh database.
 ## Lint / format / generate
 ```bash
 make fmt           # gofmt / go fmt ./...
+make fmt-check     # fail if not gofmt-clean (non-mutating, used by make ci)
 make vet           # go vet ./...
-make check         # fmt + vet + test (standard local gate)
+make check         # fmt + vet + test (quick local gate)
+make ci            # CANONICAL gate: fmt-check + vet + openapi-verify + test-race
 make sqlc          # regenerate typed SQL access code (requires sqlc)
 golangci-lint run  # if installed
 staticcheck ./...  # if installed
 ```
+`make ci` is the single source of truth for the gate — `backend-ci.yml` runs this
+exact target, so a local pass and a GitHub pass are the same fact. Add any new
+required check to `make ci`, never only to the workflow (`ci-guard.yml` enforces
+this and forbids `continue-on-error` cheating).
 
 ## API documentation / drift guard
 ```bash
@@ -82,14 +93,16 @@ Migrations live in `migrations/`, numbered and ordered. Never edit an applied
 migration; add a new one.
 
 ## Backend quality gate (run before declaring completion)
-1. `make fmt` / `gofmt -l .` is clean
-2. `go vet ./...`
-3. `go test ./...` (and `go test -race ./...` where practical)
-4. `staticcheck` / `golangci-lint` if available
-5. migration test against a fresh DB
-6. integration smoke profile up
-7. Newman/Postman API suite when API behavior changed
-8. `make openapi-verify` — OpenAPI contract matches the router (no doc drift)
+1. `make ci` is green — fmt-check + vet + openapi-verify + test-race (the exact
+   gate CI runs; "passes locally" must equal "passes in GitHub")
+2. `staticcheck` / `golangci-lint` if available
+3. migration test against a fresh DB
+4. integration smoke profile up
+5. Newman/Postman API suite when API behavior changed
+6. observability guards pass (banned-logging + secrets-in-logs); structured logs,
+   audit events for sensitive actions, and OTel follow `.ralph/specs/observability.md`
+7. branch CI is green (same `make ci`); `ci-guard.yml` passes — a local green alone
+   is not done
 
 Run `make help` for the full target list.
 

@@ -16,6 +16,7 @@ import (
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/httpapi"
+	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/store"
 )
 
@@ -55,7 +56,18 @@ func run(logger *slog.Logger) error {
 	defer func() { _ = rdb.Close() }()
 	logger.Info("connected to redis")
 
-	srv := httpapi.New(cfg, db, rdb)
+	var opts []httpapi.Option
+	if cfg.RateLimitEnabled {
+		limiter := ratelimit.NewLimiter(
+			ratelimit.NewRedisCounter(rdb.Client),
+			cfg.RateLimitRequests,
+			cfg.RateLimitWindow,
+		)
+		opts = append(opts, httpapi.WithRateLimiter(limiter))
+		logger.Info("rate limiting enabled", "requests", cfg.RateLimitRequests, "window", cfg.RateLimitWindow)
+	}
+
+	srv := httpapi.New(cfg, db, rdb, opts...)
 
 	// Run the server in the background so we can wait for a shutdown signal.
 	serverErr := make(chan error, 1)

@@ -35,6 +35,14 @@ each request carries a `HTTP_REQUEST_TIMEOUT` (default `30s`) context deadline t
 handlers and DB/Redis calls observe (a fired deadline renders as a `503`
 `request_timeout`), with the server `WriteTimeout` as the hard backstop.
 
+Rate limiting: the `/api` surface is rate limited per client IP with a Redis
+fixed-window limiter (`RATE_LIMIT_REQUESTS` per `RATE_LIMIT_WINDOW`, default 120/min;
+disable with `RATE_LIMIT_ENABLED=false`). Responses carry `X-RateLimit-Limit`,
+`X-RateLimit-Remaining`, and `X-RateLimit-Reset`; over-budget requests get `429`
+`rate_limited` with `Retry-After`. System probes (`/healthz`, `/readyz`, `/version`)
+are exempt. If Redis is unreachable the limiter fails open (logs a warning) so a
+Redis blip degrades protection, not availability.
+
 ## Local development (without Docker for the app)
 
 ```bash
