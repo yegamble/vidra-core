@@ -596,6 +596,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: listChannelVideos
+      summary: List a channel's videos
+      description: >-
+        The channel owner (bearer token) sees all of their videos; everyone else
+        sees only public ones.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The channel's videos (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoListResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}:
     get:
       operationId: getVideo
@@ -624,6 +653,83 @@ paths:
                 $ref: "#/components/schemas/Video"
         "404":
           description: No video with that id (or it is private and not yours).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateVideo
+      summary: Update a video
+      description: >-
+        Partial update of a video's metadata (title, description, privacy), owner
+        only. A non-owner or unknown id is reported as 404 so a private video's
+        existence is not leaked. The handle is immutable.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVideoRequest"
+      responses:
+        "200":
+          description: The updated video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteVideo
+      summary: Delete a video
+      description: Deletes a video (owner only). Non-owner/unknown → 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The video was deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
           content:
             application/json:
               schema:
@@ -920,6 +1026,28 @@ components:
           type: string
           enum: [public, unlisted, private]
           description: Defaults to "private" when omitted.
+    UpdateVideoRequest:
+      type: object
+      description: Partial update; provide at least one field.
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+    VideoListResponse:
+      type: object
+      required: [videos]
+      properties:
+        videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/Video"
     RegisterRequest:
       type: object
       required: [username, email, password]

@@ -209,7 +209,7 @@
 - [ ] Generate typed queries for health/readiness.
 - [ ] Generate typed queries for users/accounts.
 - [x] Generate typed queries for channels. (`internal/store/queries/channels.sql` — Create / GetByID / GetByHandle / ListByOwner / CountByOwner)
-- [x] Generate typed queries for videos. (`internal/store/queries/videos.sql` — CreateVideo / GetVideoByID (joined owner_id) / ListVideosByChannel)
+- [x] Generate typed queries for videos. (`internal/store/queries/videos.sql` — CreateVideo / GetVideoByID (joined owner_id) / ListVideosByChannel / ListPublicVideosByChannel / UpdateVideo / DeleteVideo)
 - [ ] Generate typed queries for playlists.
 - [ ] Generate typed queries for messaging.
 - [ ] Generate typed queries for moderation.
@@ -303,7 +303,7 @@
 
 ## P6.1 Upload and Import
 
-- [x] Implement create video draft/upload session. (`POST /api/v1/channels/:handle/videos` (requireAuth, owner-only) creates a draft; `GET /api/v1/videos/:id` (optionalAuth) public/unlisted to anyone, private owner-only (else 404); `internal/video`; tested. File upload itself is a later slice.)
+- [x] Implement create video draft/upload session. (`POST /api/v1/channels/:handle/videos` (requireAuth, owner-only) creates a draft; `GET /api/v1/videos/:id` (optionalAuth) public/unlisted to anyone, private owner-only (else 404); `PATCH`/`DELETE /api/v1/videos/:id` owner-only (non-owner/unknown → 404); `GET /api/v1/channels/:handle/videos` (optionalAuth) lists all for the owner, public-only otherwise; `internal/video`; tested. File upload itself is a later slice.)
 - [ ] Implement local file upload.
 - [ ] Implement resumable upload strategy or documented initial limitation.
 - [ ] Implement upload progress/status in Redis and database.

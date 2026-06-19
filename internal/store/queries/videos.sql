@@ -15,3 +15,21 @@ SELECT id, channel_id, title, description, privacy, state, created_at, updated_a
 FROM videos
 WHERE channel_id = $1
 ORDER BY created_at DESC;
+
+-- name: ListPublicVideosByChannel :many
+SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
+FROM videos
+WHERE channel_id = $1 AND privacy = 'public'
+ORDER BY created_at DESC;
+
+-- name: UpdateVideo :one
+UPDATE videos
+SET title       = COALESCE(sqlc.narg('title'), title),
+    description = COALESCE(sqlc.narg('description'), description),
+    privacy     = COALESCE(sqlc.narg('privacy'), privacy),
+    updated_at  = now()
+WHERE id = sqlc.arg('id')
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at;
+
+-- name: DeleteVideo :exec
+DELETE FROM videos WHERE id = $1;

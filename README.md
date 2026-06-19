@@ -74,7 +74,10 @@ Videos: `POST /api/v1/channels/{handle}/videos` (owner-only) creates a draft vid
 (`title`, optional `description`/`privacy`; starts `state: draft`, `privacy` defaults
 `private`). `GET /api/v1/videos/{id}` returns public/unlisted videos to anyone with the
 id; a `private` video is returned only to its owner (bearer token) and is `404` to
-everyone else so its existence is not leaked. Files/transcoding/playback are later slices.
+everyone else so its existence is not leaked. `PATCH`/`DELETE /api/v1/videos/{id}`
+(owner-only; non-owner/unknown → `404`) edit/remove it. `GET /api/v1/channels/{handle}/videos`
+lists a channel's videos — all of them for the owner, public-only for everyone else.
+Files/transcoding/playback are later slices.
 
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects

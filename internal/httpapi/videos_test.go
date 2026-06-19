@@ -52,6 +52,56 @@ func (f *videoFakeRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.G
 	return v, nil
 }
 
+func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
+	return sqlcgen.Video{
+		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}
+}
+
+func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
+	var out []sqlcgen.Video
+	for _, r := range f.videos {
+		if r.ChannelID == channelID {
+			out = append(out, vidRowToVideo(r))
+		}
+	}
+	return out, nil
+}
+
+func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
+	var out []sqlcgen.Video
+	for _, r := range f.videos {
+		if r.ChannelID == channelID && r.Privacy == "public" {
+			out = append(out, vidRowToVideo(r))
+		}
+	}
+	return out, nil
+}
+
+func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoParams) (sqlcgen.Video, error) {
+	r, ok := f.videos[a.ID]
+	if !ok {
+		return sqlcgen.Video{}, errors.New("not found")
+	}
+	if a.Title != nil {
+		r.Title = *a.Title
+	}
+	if a.Description != nil {
+		r.Description = *a.Description
+	}
+	if a.Privacy != nil {
+		r.Privacy = *a.Privacy
+	}
+	f.videos[a.ID] = r
+	return vidRowToVideo(r), nil
+}
+
+func (f *videoFakeRepo) DeleteVideo(_ context.Context, id uuid.UUID) error {
+	delete(f.videos, id)
+	return nil
+}
+
 func videoServer(t *testing.T) *Server {
 	t.Helper()
 	chRepo := newChannelFakeRepo()
@@ -182,5 +232,90 @@ func TestGetVideoNotFoundAndMalformed(t *testing.T) {
 	}
 	if rec := getVideo(srv, "not-a-uuid", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("malformed id = %d, want 404", rec.Code)
+	}
+}
+
+func TestUpdateVideoOwnerAndNonOwner(t *testing.T) {
+	srv := videoServer(t)
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	id := createVideo(t, srv, ownerTok, "ada", `{"title":"old","privacy":"private"}`)
+
+	// Owner update.
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id, `{"title":"new","privacy":"public"}`, ownerTok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner update = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var v videoView
+	_ = json.Unmarshal(rec.Body.Bytes(), &v)
+	if v.Title != "new" || v.Privacy != "public" {
+		t.Errorf("unexpected video: %+v", v)
+	}
+	// Non-owner -> 404 (existence not leaked).
+	if bad := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id, `{"title":"hax"}`, otherTok); bad.Code != http.StatusNotFound {
+		t.Fatalf("non-owner update = %d, want 404", bad.Code)
+	}
+	// Empty patch -> 422.
+	if empty := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id, `{}`, ownerTok); empty.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("empty patch = %d, want 422", empty.Code)
+	}
+}
+
+func TestDeleteVideoOwnerAndNonOwner(t *testing.T) {
+	srv := videoServer(t)
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	id := createVideo(t, srv, ownerTok, "ada", `{"title":"t","privacy":"public"}`)
+
+	if bad := sendJSONAuth(srv, http.MethodDelete, "/api/v1/videos/"+id, "", otherTok); bad.Code != http.StatusNotFound {
+		t.Fatalf("non-owner delete = %d, want 404", bad.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/videos/"+id, "", ownerTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("owner delete = %d, want 204", rec.Code)
+	}
+	if get := getVideo(srv, id, ownerTok); get.Code != http.StatusNotFound {
+		t.Fatalf("get after delete = %d, want 404", get.Code)
+	}
+}
+
+func TestListChannelVideosOwnerVsPublic(t *testing.T) {
+	srv := videoServer(t)
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	_ = createVideo(t, srv, ownerTok, "ada", `{"title":"pub","privacy":"public"}`)
+	_ = createVideo(t, srv, ownerTok, "ada", `{"title":"priv","privacy":"private"}`)
+
+	list := func(tok string) videoListResponse {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/ada/videos", nil)
+		if tok != "" {
+			req.Header.Set("authorization", "Bearer "+tok)
+		}
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		var body videoListResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return body
+	}
+
+	if owner := list(ownerTok); len(owner.Videos) != 2 {
+		t.Errorf("owner list = %d, want 2", len(owner.Videos))
+	}
+	if anon := list(""); len(anon.Videos) != 1 || anon.Videos[0].Privacy != "public" {
+		t.Errorf("anon list = %+v, want 1 public", anon.Videos)
+	}
+	if other := list(otherTok); len(other.Videos) != 1 {
+		t.Errorf("non-owner list = %d, want 1 (public only)", len(other.Videos))
+	}
+}
+
+func TestListChannelVideosUnknownChannel404(t *testing.T) {
+	srv := videoServer(t)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/channels/ghost/videos", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }

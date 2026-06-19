@@ -46,6 +46,15 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 	return i, err
 }
 
+const deleteVideo = `-- name: DeleteVideo :exec
+DELETE FROM videos WHERE id = $1
+`
+
+func (q *Queries) DeleteVideo(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteVideo, id)
+	return err
+}
+
 const getVideoByID = `-- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        c.owner_id
@@ -83,6 +92,42 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 	return i, err
 }
 
+const listPublicVideosByChannel = `-- name: ListPublicVideosByChannel :many
+SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
+FROM videos
+WHERE channel_id = $1 AND privacy = 'public'
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]Video, error) {
+	rows, err := q.db.Query(ctx, listPublicVideosByChannel, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Video
+	for rows.Next() {
+		var i Video
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Description,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVideosByChannel = `-- name: ListVideosByChannel :many
 SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
 FROM videos
@@ -117,4 +162,42 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateVideo = `-- name: UpdateVideo :one
+UPDATE videos
+SET title       = COALESCE($1, title),
+    description = COALESCE($2, description),
+    privacy     = COALESCE($3, privacy),
+    updated_at  = now()
+WHERE id = $4
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at
+`
+
+type UpdateVideoParams struct {
+	Title       *string   `json:"title"`
+	Description *string   `json:"description"`
+	Privacy     *string   `json:"privacy"`
+	ID          uuid.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video, error) {
+	row := q.db.QueryRow(ctx, updateVideo,
+		arg.Title,
+		arg.Description,
+		arg.Privacy,
+		arg.ID,
+	)
+	var i Video
+	err := row.Scan(
+		&i.ID,
+		&i.ChannelID,
+		&i.Title,
+		&i.Description,
+		&i.Privacy,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

@@ -134,3 +134,118 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, videoViewFromRow(v))
 }
+
+// videoListResponse wraps a list of videos.
+type videoListResponse struct {
+	Videos []videoView `json:"videos"`
+}
+
+// handleListChannelVideos lists a channel's videos. Behind optionalAuth: the
+// channel owner sees all of their videos; everyone else sees only public ones.
+func (s *Server) handleListChannelVideos(c echo.Context) error {
+	ctx := c.Request().Context()
+	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
+	if err != nil {
+		return channelError(err) // ErrNotFound -> 404
+	}
+
+	var vids []sqlcgen.Video
+	if userID, _, ok := principalFromContext(c); ok && userID == ch.OwnerID {
+		vids, err = s.videosvc.ListByChannel(ctx, ch.ID)
+	} else {
+		vids, err = s.videosvc.ListPublicByChannel(ctx, ch.ID)
+	}
+	if err != nil {
+		return err
+	}
+	views := make([]videoView, 0, len(vids))
+	for _, v := range vids {
+		views = append(views, newVideoView(v))
+	}
+	return c.JSON(http.StatusOK, videoListResponse{Videos: views})
+}
+
+// updateVideoRequest is the PATCH /api/v1/videos/{id} body. Fields are optional;
+// only those present are changed.
+type updateVideoRequest struct {
+	Title       *string `json:"title"`
+	Description *string `json:"description"`
+	Privacy     *string `json:"privacy"`
+}
+
+func (r updateVideoRequest) Validate() []FieldError {
+	if r.Title == nil && r.Description == nil && r.Privacy == nil {
+		return []FieldError{{Field: "title", Message: "at least one of title, description, privacy is required"}}
+	}
+	var fes []FieldError
+	if r.Title != nil {
+		switch n := len(strings.TrimSpace(*r.Title)); {
+		case n == 0:
+			fes = append(fes, FieldError{Field: "title", Message: "must not be blank"})
+		case n > 200:
+			fes = append(fes, FieldError{Field: "title", Message: "must be at most 200 characters"})
+		}
+	}
+	if r.Description != nil && len(*r.Description) > 5000 {
+		fes = append(fes, FieldError{Field: "description", Message: "must be at most 5000 characters"})
+	}
+	if r.Privacy != nil && !validVideoPrivacy[*r.Privacy] {
+		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private"})
+	}
+	return fes
+}
+
+// handleUpdateVideo updates a video owned by the authenticated user.
+func (s *Server) handleUpdateVideo(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	var in updateVideoRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	v, err := s.videosvc.Update(c.Request().Context(), userID, id, video.UpdateInput{
+		Title:       in.Title,
+		Description: in.Description,
+		Privacy:     in.Privacy,
+	})
+	if err != nil {
+		return videoError(err)
+	}
+	return c.JSON(http.StatusOK, newVideoView(v))
+}
+
+// handleDeleteVideo deletes a video owned by the authenticated user.
+func (s *Server) handleDeleteVideo(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if err := s.videosvc.Delete(c.Request().Context(), userID, id); err != nil {
+		return videoError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// videoError maps video service sentinels to HTTP error envelopes. A non-owner
+// sees 404 (not 403) so a private video's existence is not leaked; an owned but
+// missing video is also 404.
+func videoError(err error) error {
+	switch {
+	case errors.Is(err, video.ErrNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	case errors.Is(err, video.ErrForbidden):
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	default:
+		return err
+	}
+}
