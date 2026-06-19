@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -28,6 +29,7 @@ var (
 type Repository interface {
 	CreateUser(ctx context.Context, arg sqlcgen.CreateUserParams) (sqlcgen.User, error)
 	GetUserByEmail(ctx context.Context, lowerEmail string) (sqlcgen.User, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	CountUsers(ctx context.Context) (int64, error)
 }
 
@@ -112,6 +114,30 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (sqlcgen.User, strin
 		return sqlcgen.User{}, "", err
 	}
 	return user, token, nil
+}
+
+// ErrAccountNotFound means no active account matches the authenticated subject
+// (e.g. a still-valid token for a since-deleted user).
+var ErrAccountNotFound = errors.New("auth: account not found")
+
+// Parse validates an access token and returns its claims. It is the entry point
+// the HTTP auth middleware uses to authenticate a request.
+func (s *Service) Parse(token string) (*Claims, error) {
+	return s.issuer.Parse(token)
+}
+
+// UserByID loads the current account for an authenticated subject. A disabled
+// account is treated as not found so a deactivated user cannot keep acting on a
+// still-valid token.
+func (s *Service) UserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error) {
+	user, err := s.repo.GetUserByID(ctx, id)
+	if err != nil {
+		return sqlcgen.User{}, ErrAccountNotFound
+	}
+	if !user.IsActive {
+		return sqlcgen.User{}, ErrAccountNotFound
+	}
+	return user, nil
 }
 
 // isUniqueViolation reports whether err is a PostgreSQL unique-constraint

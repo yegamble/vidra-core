@@ -41,6 +41,11 @@ is granted the `admin` role. Login reports unknown-account and wrong-password
 identically (`401`) to prevent enumeration. Configure signing via `JWT_SECRET`
 (required in production), `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_ACCESS_TTL`.
 
+Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
+(protected) returns the current account, reloaded from the database so it reflects
+live role/verification state. A missing, malformed, invalid, or expired token yields
+`401` without revealing which check failed; a deactivated account is treated as `401`.
+
 Request guards: bodies over `HTTP_BODY_LIMIT` (default `8M`) are rejected with `413`;
 each request carries a `HTTP_REQUEST_TIMEOUT` (default `30s`) context deadline that
 handlers and DB/Redis calls observe (a fired deadline renders as a `503`

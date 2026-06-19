@@ -46,6 +46,15 @@ func (f *authFakeRepo) GetUserByEmail(_ context.Context, lowerEmail string) (sql
 	return u, nil
 }
 
+func (f *authFakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.User, error) {
+	for _, u := range f.users {
+		if u.ID == id {
+			return u, nil
+		}
+	}
+	return sqlcgen.User{}, errors.New("not found")
+}
+
 func authServer(t *testing.T) *Server {
 	t.Helper()
 	repo := &authFakeRepo{users: map[string]sqlcgen.User{}}
@@ -109,6 +118,71 @@ func TestRegisterEndpointDuplicateConflict(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &er)
 	if er.Error.Code != "conflict" {
 		t.Errorf("code = %q, want conflict", er.Error.Code)
+	}
+}
+
+// registerAndToken registers an account and returns its access token.
+func registerAndToken(t *testing.T, srv *Server, body string) string {
+	t.Helper()
+	rec := postTo(srv, "/api/v1/auth/register", body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var ar authResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &ar); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return ar.Token
+}
+
+func getWithAuth(srv *Server, path, token string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if token != "" {
+		req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestMeRequiresAuth(t *testing.T) {
+	srv := authServer(t)
+	rec := getWithAuth(srv, "/api/v1/auth/me", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	var er ErrorResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &er)
+	if er.Error.Code != "unauthorized" {
+		t.Errorf("code = %q, want unauthorized", er.Error.Code)
+	}
+}
+
+func TestMeRejectsBadToken(t *testing.T) {
+	srv := authServer(t)
+	rec := getWithAuth(srv, "/api/v1/auth/me", "not-a-real-token")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestMeReturnsCurrentUser(t *testing.T) {
+	srv := authServer(t)
+	token := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	rec := getWithAuth(srv, "/api/v1/auth/me", token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var u userView
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if u.Username != "ada" || u.Email != "ada@example.test" {
+		t.Errorf("unexpected user: %+v", u)
+	}
+	if strings.Contains(rec.Body.String(), "password_hash") {
+		t.Error("response leaked password_hash")
 	}
 }
 

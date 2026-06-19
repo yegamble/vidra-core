@@ -39,6 +39,9 @@ curl -sX POST localhost:8080/api/v1/auth/register \
 curl -sX POST localhost:8080/api/v1/auth/login \
   -H 'content-type: application/json' \
   -d '{"email":"ada@example.test","password":"supersecret"}'
+
+# Authenticated request (current account):
+curl -s localhost:8080/api/v1/auth/me -H 'authorization: Bearer <token>'
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

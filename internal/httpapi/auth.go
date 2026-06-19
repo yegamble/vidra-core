@@ -131,6 +131,24 @@ func (s *Server) handleRegister(c echo.Context) error {
 	return s.authResponse(http.StatusCreated, c, user, token)
 }
 
+// handleMe returns the authenticated account. It runs behind requireAuth, so the
+// principal is always present; it reloads the user so the response reflects the
+// current database state (role, email_verified, …) rather than stale token claims.
+func (s *Server) handleMe(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	user, err := s.authsvc.UserByID(c.Request().Context(), userID)
+	if err != nil {
+		if errors.Is(err, auth.ErrAccountNotFound) {
+			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
+		}
+		return err
+	}
+	return c.JSON(http.StatusOK, newUserView(user))
+}
+
 // handleLogin verifies credentials and returns an access token.
 func (s *Server) handleLogin(c echo.Context) error {
 	var in loginRequest

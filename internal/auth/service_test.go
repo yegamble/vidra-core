@@ -54,6 +54,15 @@ func (f *fakeRepo) GetUserByEmail(_ context.Context, lowerEmail string) (sqlcgen
 	return u, nil
 }
 
+func (f *fakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.User, error) {
+	for _, u := range f.byEmail {
+		if u.ID == id {
+			return u, nil
+		}
+	}
+	return sqlcgen.User{}, errors.New("not found")
+}
+
 func lower(s string) string {
 	b := []byte(s)
 	for i, c := range b {
