@@ -11,6 +11,13 @@ import "golang.org/x/crypto/bcrypt"
 // it for speed; production code never reassigns it.
 var bcryptCost = 12
 
+// UseFastPasswordHashingForTests lowers the password-hashing cost to bcrypt's
+// minimum. It exists ONLY so test binaries that perform many registrations run
+// quickly (bcrypt at production cost dominates such suites); production code
+// never calls it. Tests in other packages invoke this from an init() in a
+// *_test.go file, so the override never reaches the server binary.
+func UseFastPasswordHashingForTests() { bcryptCost = bcrypt.MinCost }
+
 // HashPassword returns a bcrypt hash of the plaintext password. The cost and
 // salt are embedded in the returned string, so it is self-describing for
 // verification.

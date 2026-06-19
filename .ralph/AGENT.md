@@ -93,6 +93,12 @@ go test ./internal/config/...   # focused package run
 Integration tests expect a live PostgreSQL + Redis (use `make up` or the `core`
 Compose profile). Migration tests must apply cleanly against a fresh database.
 
+Password hashing: production uses bcrypt cost 12, but test binaries call
+`auth.UseFastPasswordHashingForTests()` (from an `init()` in `internal/auth` and
+`internal/httpapi` `*_test.go` files) to drop to bcrypt's min cost — keeping
+suites that register many accounts fast. Add the same `init()` to any new package
+whose tests register users. Production never lowers the cost.
+
 ## Lint / format / generate
 ```bash
 make fmt           # gofmt / go fmt ./...
