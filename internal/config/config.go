@@ -65,6 +65,11 @@ type Config struct {
 	JWTAccessTTL time.Duration
 	// JWTRefreshTTL is the lifetime of an opaque refresh-token session.
 	JWTRefreshTTL time.Duration
+
+	// Media storage. StorageBackend selects the blob backend ("local" today;
+	// "s3"/"ipfs" later). StorageLocalRoot is the directory for the local backend.
+	StorageBackend   string
+	StorageLocalRoot string
 }
 
 // devJWTSecret is the obviously-fake signing key used only for local dev/test.
@@ -103,6 +108,8 @@ func Load() (*Config, error) {
 		JWTAudience:          getEnv("JWT_AUDIENCE", "vidra"),
 		JWTAccessTTL:         getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
 		JWTRefreshTTL:        getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
+		StorageBackend:       getEnv("STORAGE_BACKEND", "local"),
+		StorageLocalRoot:     getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
 	}
 
 	port, err := getEnvInt("HTTP_PORT", 8080)
@@ -157,6 +164,14 @@ func (c *Config) validate() error {
 	}
 	if c.JWTRefreshTTL <= 0 {
 		return fmt.Errorf("config: JWT_REFRESH_TTL must be positive")
+	}
+	switch c.StorageBackend {
+	case "local":
+		if strings.TrimSpace(c.StorageLocalRoot) == "" {
+			return fmt.Errorf("config: STORAGE_LOCAL_ROOT is required for the local storage backend")
+		}
+	default:
+		return fmt.Errorf("config: unsupported STORAGE_BACKEND %q (want local)", c.StorageBackend)
 	}
 	if c.Environment == "production" {
 		if c.JWTSecret == devJWTSecret {

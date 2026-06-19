@@ -53,6 +53,29 @@ func TestRateLimitDefaults(t *testing.T) {
 	}
 }
 
+func TestStorageDefaults(t *testing.T) {
+	for _, k := range []string{"STORAGE_BACKEND", "STORAGE_LOCAL_ROOT"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.StorageBackend != "local" {
+		t.Errorf("StorageBackend = %q, want local", cfg.StorageBackend)
+	}
+	if cfg.StorageLocalRoot == "" {
+		t.Error("StorageLocalRoot is empty, want a default")
+	}
+}
+
+func TestStorageRejectsUnsupportedBackend(t *testing.T) {
+	t.Setenv("STORAGE_BACKEND", "s3")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for unsupported STORAGE_BACKEND, got nil")
+	}
+}
+
 func TestRateLimitDisabledSkipsValidation(t *testing.T) {
 	t.Setenv("RATE_LIMIT_ENABLED", "false")
 	t.Setenv("RATE_LIMIT_REQUESTS", "0") // invalid, but ignored when disabled

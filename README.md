@@ -102,6 +102,12 @@ disable with `RATE_LIMIT_ENABLED=false`). Responses carry `X-RateLimit-Limit`,
 are exempt. If Redis is unreachable the limiter fails open (logs a warning) so a
 Redis blip degrades protection, not availability.
 
+Media storage goes through a small `internal/storage.Backend` interface
+(Put/Open/Delete/Exists over forward-slash object keys). The default `local` backend
+(`STORAGE_BACKEND=local`, `STORAGE_LOCAL_ROOT`) writes under a root directory with
+path-traversal-safe key resolution; S3-compatible and IPFS backends land later behind
+the same interface. (The upload endpoint that uses it is a later slice.)
+
 ## Local development (without Docker for the app)
 
 ```bash

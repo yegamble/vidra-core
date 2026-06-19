@@ -108,7 +108,7 @@
 - [ ] Add config for CORS allowlist.
 - [x] Add config for rate limiting. (`RATE_LIMIT_ENABLED`/`RATE_LIMIT_REQUESTS`/`RATE_LIMIT_WINDOW`, validated when enabled)
 - [ ] Add config for SSRF allow/deny behavior.
-- [ ] Add config for storage backend: local, S3-compatible, IPFS.
+- [x] Add config for storage backend: local, S3-compatible, IPFS. (`STORAGE_BACKEND` (local; s3/ipfs rejected until implemented) + `STORAGE_LOCAL_ROOT`, validated)
 - [ ] Add config for FFmpeg paths and transcoding options.
 - [ ] Add config for ClamAV and fallback mode.
 - [ ] Add config for RTMP/HLS.
@@ -321,8 +321,8 @@
 
 ## P6.2 Storage
 
-- [ ] Implement storage interface.
-- [ ] Implement local storage backend.
+- [x] Implement storage interface. (`internal/storage.Backend` — Put/Open/Delete/Exists over forward-slash object keys; `ErrInvalidKey`/`ErrNotFound`)
+- [x] Implement local storage backend. (`internal/storage.Local` rooted dir, creates parent dirs, idempotent delete; path-traversal-safe key resolution — tested incl. an escape-attempt that cannot write outside root)
 - [ ] Implement S3-compatible backend.
 - [ ] Implement Backblaze B2-compatible configuration.
 - [ ] Implement DigitalOcean Spaces-compatible configuration.
