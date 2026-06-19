@@ -64,7 +64,9 @@ Channels: a channel is a publishing identity owned by a user. `POST /api/v1/chan
 `GET /api/v1/channels/{handle}` is the public channel page lookup (`404` when absent).
 `PATCH /api/v1/channels/{handle}` (owner-only, partial: `display_name`/`description`)
 and `DELETE /api/v1/channels/{handle}` (owner-only) manage it — a non-owner gets `403`.
-The handle is immutable after creation.
+The handle is immutable after creation. `POST`/`DELETE /api/v1/channels/{handle}/follow`
+(auth, idempotent `204`) follow/unfollow a channel; every channel view carries a
+`follower_count`.
 
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects

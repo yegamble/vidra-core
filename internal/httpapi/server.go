@@ -171,6 +171,8 @@ func (s *Server) routes() {
 		api.GET("/channels/:handle", s.handleGetChannel)
 		api.PATCH("/channels/:handle", s.handleUpdateChannel, s.requireAuth)
 		api.DELETE("/channels/:handle", s.handleDeleteChannel, s.requireAuth)
+		api.POST("/channels/:handle/follow", s.handleFollowChannel, s.requireAuth)
+		api.DELETE("/channels/:handle/follow", s.handleUnfollowChannel, s.requireAuth)
 		api.GET("/me/channels", s.handleListMyChannels, s.requireAuth)
 	}
 }

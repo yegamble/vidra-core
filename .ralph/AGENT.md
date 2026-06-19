@@ -64,6 +64,8 @@ curl -s localhost:8080/api/v1/channels/ada_makes                              # 
 curl -sX PATCH localhost:8080/api/v1/channels/ada_makes -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"description":"updated"}'          # owner-only
 curl -sX DELETE localhost:8080/api/v1/channels/ada_makes -H 'authorization: Bearer <token>'  # owner-only
+curl -sX POST   localhost:8080/api/v1/channels/ada_makes/follow -H 'authorization: Bearer <token>'  # follow
+curl -sX DELETE localhost:8080/api/v1/channels/ada_makes/follow -H 'authorization: Bearer <token>'  # unfollow
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

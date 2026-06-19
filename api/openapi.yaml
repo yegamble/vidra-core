@@ -466,6 +466,63 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/follow:
+    post:
+      operationId: followChannel
+      summary: Follow a channel
+      description: The authenticated user follows the channel. Idempotent.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Now following (or already was).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unfollowChannel
+      summary: Unfollow a channel
+      description: The authenticated user stops following the channel. Idempotent.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No longer following (or already was not).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/channels:
     get:
       operationId: listMyChannels
@@ -666,8 +723,13 @@ components:
           maxLength: 1000
     Channel:
       type: object
-      required: [id, owner_id, handle, display_name, description, created_at]
+      required: [id, owner_id, handle, display_name, description, follower_count, created_at]
       properties:
+        follower_count:
+          type: integer
+          format: int64
+          description: Number of users following this channel.
+          example: 0
         id:
           type: string
           format: uuid

@@ -22,6 +22,12 @@ type Channel struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type ChannelFollow struct {
+	FollowerID uuid.UUID `json:"follower_id"`
+	ChannelID  uuid.UUID `json:"channel_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type Session struct {
 	ID          uuid.UUID          `json:"id"`
 	UserID      uuid.UUID          `json:"user_id"`

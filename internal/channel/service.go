@@ -32,6 +32,10 @@ type Repository interface {
 	ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.Channel, error)
 	UpdateChannel(ctx context.Context, arg sqlcgen.UpdateChannelParams) (sqlcgen.Channel, error)
 	DeleteChannel(ctx context.Context, id uuid.UUID) error
+
+	FollowChannel(ctx context.Context, arg sqlcgen.FollowChannelParams) error
+	UnfollowChannel(ctx context.Context, arg sqlcgen.UnfollowChannelParams) error
+	CountChannelFollowers(ctx context.Context, channelID uuid.UUID) (int64, error)
 }
 
 // Service holds the channel application logic.
@@ -118,6 +122,37 @@ func (s *Service) Delete(ctx context.Context, ownerID uuid.UUID, handle string) 
 		return ErrForbidden
 	}
 	return s.repo.DeleteChannel(ctx, ch.ID)
+}
+
+// Follow makes followerID follow the channel with the given handle. It is
+// idempotent (following twice is a no-op). An unknown handle → ErrNotFound.
+func (s *Service) Follow(ctx context.Context, followerID uuid.UUID, handle string) error {
+	ch, err := s.GetByHandle(ctx, handle)
+	if err != nil {
+		return err
+	}
+	return s.repo.FollowChannel(ctx, sqlcgen.FollowChannelParams{
+		FollowerID: followerID,
+		ChannelID:  ch.ID,
+	})
+}
+
+// Unfollow removes followerID's follow of the channel. Idempotent; unknown
+// handle → ErrNotFound.
+func (s *Service) Unfollow(ctx context.Context, followerID uuid.UUID, handle string) error {
+	ch, err := s.GetByHandle(ctx, handle)
+	if err != nil {
+		return err
+	}
+	return s.repo.UnfollowChannel(ctx, sqlcgen.UnfollowChannelParams{
+		FollowerID: followerID,
+		ChannelID:  ch.ID,
+	})
+}
+
+// FollowerCount returns how many followers a channel has.
+func (s *Service) FollowerCount(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	return s.repo.CountChannelFollowers(ctx, channelID)
 }
 
 // trimPtr trims a non-nil string pointer's value, leaving nil untouched so a

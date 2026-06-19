@@ -185,7 +185,7 @@
 - [ ] Add likes/dislikes or reactions table according to spec.
 - [ ] Add watch history table.
 - [ ] Add watch later/private library tables.
-- [ ] Add follows/subscriptions table.
+- [x] Add follows/subscriptions table. (migration `0005_channel_follows`: `channel_follows` (follower_id, channel_id) composite PK + channel_id index; sqlc Follow/Unfollow/CountFollowers/IsFollowing)
 - [ ] Add notifications table.
 - [ ] Add abuse reports table.
 - [ ] Add video blocks/quarantine table.
@@ -291,7 +291,7 @@
 - [ ] Implement channel avatar/banner.
 - [x] Implement channel ownership and permissions. (channels created under the authed principal's `owner_id`; create/list/update/delete behind `requireAuth`; update/delete enforce owner == principal → 403 otherwise; handle uniqueness → 409; tested)
 - [x] Implement public channel page data endpoint. (`GET /api/v1/channels/:handle`, case-insensitive, no auth; 404 envelope when absent; tested)
-- [ ] Implement account/channel follow model.
+- [x] Implement account/channel follow model. (`POST`/`DELETE /api/v1/channels/:handle/follow` behind `requireAuth`, idempotent 204; `follower_count` on the channel view; `internal/channel` Follow/Unfollow/FollowerCount; tested)
 - [ ] Implement channel sync placeholder/foundation for remote channels.
 - [x] Implement instance about/config endpoint for frontend. (`GET /api/v1/instance` (public) → name, software{name,version}, registration_enabled; `internal/httpapi/instance.go`; documented + tested)
 - [ ] Implement terms/privacy/about/contact instance metadata.

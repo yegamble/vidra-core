@@ -22,6 +22,32 @@ import (
 // channelFakeRepo is an in-memory channel.Repository for handler tests.
 type channelFakeRepo struct {
 	byHandle map[string]sqlcgen.Channel
+	follows  map[string]bool // "followerID|channelID"
+}
+
+func newChannelFakeRepo() *channelFakeRepo {
+	return &channelFakeRepo{byHandle: map[string]sqlcgen.Channel{}, follows: map[string]bool{}}
+}
+
+func (f *channelFakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChannelParams) error {
+	f.follows[a.FollowerID.String()+"|"+a.ChannelID.String()] = true
+	return nil
+}
+
+func (f *channelFakeRepo) UnfollowChannel(_ context.Context, a sqlcgen.UnfollowChannelParams) error {
+	delete(f.follows, a.FollowerID.String()+"|"+a.ChannelID.String())
+	return nil
+}
+
+func (f *channelFakeRepo) CountChannelFollowers(_ context.Context, channelID uuid.UUID) (int64, error) {
+	var n int64
+	suffix := "|" + channelID.String()
+	for k := range f.follows {
+		if strings.HasSuffix(k, suffix) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (f *channelFakeRepo) CreateChannel(_ context.Context, a sqlcgen.CreateChannelParams) (sqlcgen.Channel, error) {
@@ -88,7 +114,7 @@ func channelServer(t *testing.T) *Server {
 	t.Helper()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	authsvc := auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour)
-	chansvc := channel.NewService(&channelFakeRepo{byHandle: map[string]sqlcgen.Channel{}})
+	chansvc := channel.NewService(newChannelFakeRepo())
 	return New(testConfig(), nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(chansvc),
@@ -258,6 +284,61 @@ func TestDeleteChannelOwnerAndNonOwner(t *testing.T) {
 	srv.Handler().ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/channels/ada_makes", nil))
 	if get.Code != http.StatusNotFound {
 		t.Fatalf("get after delete = %d, want 404", get.Code)
+	}
+}
+
+func TestFollowFlowAndFollowerCount(t *testing.T) {
+	srv := channelServer(t)
+	ownerTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	followerTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	_ = postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada_makes","display_name":"Ada Makes"}`, ownerTok)
+
+	getCount := func() int64 {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/channels/ada_makes", nil))
+		var v channelView
+		_ = json.Unmarshal(rec.Body.Bytes(), &v)
+		return v.FollowerCount
+	}
+
+	if c := getCount(); c != 0 {
+		t.Fatalf("initial follower_count = %d, want 0", c)
+	}
+
+	// Follow requires auth.
+	if anon := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/ada_makes/follow", "", ""); anon.Code != http.StatusUnauthorized {
+		t.Fatalf("anon follow = %d, want 401", anon.Code)
+	}
+
+	// Follow (idempotent: twice → still 1).
+	for i := 0; i < 2; i++ {
+		rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/ada_makes/follow", "", followerTok)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("follow #%d = %d, want 204", i, rec.Code)
+		}
+	}
+	if c := getCount(); c != 1 {
+		t.Fatalf("follower_count after follow = %d, want 1", c)
+	}
+
+	// Unfollow (idempotent).
+	for i := 0; i < 2; i++ {
+		rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/channels/ada_makes/follow", "", followerTok)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("unfollow #%d = %d, want 204", i, rec.Code)
+		}
+	}
+	if c := getCount(); c != 0 {
+		t.Fatalf("follower_count after unfollow = %d, want 0", c)
+	}
+}
+
+func TestFollowUnknownChannel404(t *testing.T) {
+	srv := channelServer(t)
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/ghost/follow", "", tok)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
 

@@ -43,22 +43,24 @@ func (r createChannelRequest) Validate() []FieldError {
 
 // channelView is the public projection of a channel.
 type channelView struct {
-	ID          string    `json:"id"`
-	OwnerID     string    `json:"owner_id"`
-	Handle      string    `json:"handle"`
-	DisplayName string    `json:"display_name"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	OwnerID       string    `json:"owner_id"`
+	Handle        string    `json:"handle"`
+	DisplayName   string    `json:"display_name"`
+	Description   string    `json:"description"`
+	FollowerCount int64     `json:"follower_count"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
-func newChannelView(c sqlcgen.Channel) channelView {
+func newChannelView(c sqlcgen.Channel, followerCount int64) channelView {
 	return channelView{
-		ID:          c.ID.String(),
-		OwnerID:     c.OwnerID.String(),
-		Handle:      c.Handle,
-		DisplayName: c.DisplayName,
-		Description: c.Description,
-		CreatedAt:   c.CreatedAt,
+		ID:            c.ID.String(),
+		OwnerID:       c.OwnerID.String(),
+		Handle:        c.Handle,
+		DisplayName:   c.DisplayName,
+		Description:   c.Description,
+		FollowerCount: followerCount,
+		CreatedAt:     c.CreatedAt,
 	}
 }
 
@@ -88,7 +90,8 @@ func (s *Server) handleCreateChannel(c echo.Context) error {
 		}
 		return err
 	}
-	return c.JSON(http.StatusCreated, newChannelView(ch))
+	// A just-created channel has no followers yet.
+	return c.JSON(http.StatusCreated, newChannelView(ch, 0))
 }
 
 // handleListMyChannels lists the authenticated user's channels.
@@ -97,13 +100,18 @@ func (s *Server) handleListMyChannels(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	chans, err := s.channelsvc.ListOwn(c.Request().Context(), userID)
+	ctx := c.Request().Context()
+	chans, err := s.channelsvc.ListOwn(ctx, userID)
 	if err != nil {
 		return err
 	}
 	views := make([]channelView, 0, len(chans))
 	for _, ch := range chans {
-		views = append(views, newChannelView(ch))
+		count, err := s.channelsvc.FollowerCount(ctx, ch.ID)
+		if err != nil {
+			return err
+		}
+		views = append(views, newChannelView(ch, count))
 	}
 	return c.JSON(http.StatusOK, channelListResponse{Channels: views})
 }
@@ -145,14 +153,19 @@ func (s *Server) handleUpdateChannel(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	ch, err := s.channelsvc.Update(c.Request().Context(), userID, c.Param("handle"), channel.UpdateInput{
+	ctx := c.Request().Context()
+	ch, err := s.channelsvc.Update(ctx, userID, c.Param("handle"), channel.UpdateInput{
 		DisplayName: in.DisplayName,
 		Description: in.Description,
 	})
 	if err != nil {
 		return channelError(err)
 	}
-	return c.JSON(http.StatusOK, newChannelView(ch))
+	count, err := s.channelsvc.FollowerCount(ctx, ch.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, newChannelView(ch, count))
 }
 
 // handleDeleteChannel deletes a channel owned by the authenticated user.
@@ -183,12 +196,41 @@ func channelError(err error) error {
 
 // handleGetChannel returns a channel by its public handle. No auth required.
 func (s *Server) handleGetChannel(c echo.Context) error {
-	ch, err := s.channelsvc.GetByHandle(c.Request().Context(), c.Param("handle"))
+	ctx := c.Request().Context()
+	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
 	if err != nil {
 		if errors.Is(err, channel.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "channel not found")
 		}
 		return err
 	}
-	return c.JSON(http.StatusOK, newChannelView(ch))
+	count, err := s.channelsvc.FollowerCount(ctx, ch.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, newChannelView(ch, count))
+}
+
+// handleFollowChannel makes the authenticated user follow a channel. Idempotent.
+func (s *Server) handleFollowChannel(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	if err := s.channelsvc.Follow(c.Request().Context(), userID, c.Param("handle")); err != nil {
+		return channelError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// handleUnfollowChannel removes the authenticated user's follow. Idempotent.
+func (s *Server) handleUnfollowChannel(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	if err := s.channelsvc.Unfollow(c.Request().Context(), userID, c.Param("handle")); err != nil {
+		return channelError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }
