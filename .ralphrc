@@ -1,0 +1,40 @@
+# .ralphrc - Ralph configuration for vidra-core (Go backend)
+# Run Ralph from THIS directory:  cd vidra-core && ralph --live
+# Documentation: https://github.com/frankbria/ralph-claude-code
+
+# Project identification
+PROJECT_NAME="vidra-core"
+PROJECT_TYPE="go"
+
+# Claude Code CLI command
+CLAUDE_CODE_CMD="claude"
+
+# Loop settings
+MAX_CALLS_PER_HOUR=100
+CLAUDE_TIMEOUT_MINUTES=15
+CLAUDE_OUTPUT_FORMAT="json"
+#MAX_TOKENS_PER_HOUR=0
+
+# Tool permissions
+# Safe git subcommands only + Go/Docker/make tooling needed for backend work.
+ALLOWED_TOOLS="Write,Read,Edit,Bash(git add *),Bash(git commit *),Bash(git diff *),Bash(git log *),Bash(git status),Bash(git status *),Bash(git push *),Bash(git pull *),Bash(git fetch *),Bash(git checkout *),Bash(git branch *),Bash(git stash *),Bash(git merge *),Bash(git tag *),Bash(go *),Bash(gofmt *),Bash(golangci-lint *),Bash(staticcheck *),Bash(sqlc *),Bash(make *),Bash(docker *),Bash(docker-compose *),Bash(migrate *),Bash(newman *),Bash(curl *)"
+
+# Sections in fix_plan.md whose unchecked items do NOT block Ralph exit.
+OPTIONAL_SECTIONS="Optional / Deferred / Non-Blocking,Optional,Future,Future Enhancements,Nice to Have"
+
+# Session management
+SESSION_CONTINUITY=true
+SESSION_EXPIRY_HOURS=24
+
+# Task sources
+TASK_SOURCES="local"
+GITHUB_TASK_LABEL="ralph-task"
+BEADS_FILTER="status:open"
+
+# Circuit breaker thresholds
+CB_NO_PROGRESS_THRESHOLD=3
+CB_SAME_ERROR_THRESHOLD=5
+CB_OUTPUT_DECLINE_THRESHOLD=70
+
+# Auto-update Claude CLI at startup
+CLAUDE_AUTO_UPDATE=true

@@ -1,0 +1,79 @@
+# Vidra core local development stack.
+#
+# Profiles let you run subsets of the stack:
+#   core  -> postgres, redis, migrate, api  (default for `docker compose up`)
+#
+# Usage:
+#   cp .env.example .env
+#   docker compose --profile core up --build
+#
+# Additional profiles (media, storage, federation) will be added as those
+# subsystems land.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["core"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vidra}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vidra}
+      POSTGRES_DB: ${POSTGRES_DB:-vidra}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vidra} -d ${POSTGRES_DB:-vidra}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["core"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: migrate/migrate:v4.17.1
+    profiles: ["core"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${POSTGRES_USER:-vidra}:${POSTGRES_PASSWORD:-vidra}@postgres:5432/${POSTGRES_DB:-vidra}?sslmode=disable"
+      - "up"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["core"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      VIDRA_ENV: ${VIDRA_ENV:-development}
+      HTTP_PORT: "8080"
+      DATABASE_URL: postgres://${POSTGRES_USER:-vidra}:${POSTGRES_PASSWORD:-vidra}@postgres:5432/${POSTGRES_DB:-vidra}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      INSTANCE_NAME: ${INSTANCE_NAME:-Vidra (dev)}
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+
+volumes:
+  postgres_data:

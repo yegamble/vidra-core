@@ -1,0 +1,4 @@
+-- 0001 down: extensions are left in place intentionally. Dropping shared
+-- extensions can break other objects; this is a no-op rollback.
+-- DROP EXTENSION IF EXISTS pg_trgm;
+-- DROP EXTENSION IF EXISTS "uuid-ossp";

@@ -1,0 +1,619 @@
+# Vidra Core Ralph Fix Plan
+
+> Repo target: `vidra-core` only.
+> Ralph must not modify `vidra-user` from this repo. Frontend tasks belong in the frontend repository and are tracked here only when a backend contract is needed.
+
+## Operating Rules
+
+- [ ] Before every loop, read `.ralph/PROMPT.md`, this `fix_plan.md`, `.ralph/AGENT.md`, and all files in `.ralph/specs/`.
+- [ ] Work on one coherent vertical slice per loop.
+- [ ] Search the codebase before adding new packages, types, tables, endpoints, workers, or config.
+- [ ] Keep PeerTube parity evidence current: feature ledger, UI/control inventory, endpoint inventory, acceptance notes, and test evidence.
+- [ ] Never mark a feature `VERIFIED` without evidence: tests, screenshots/logs, endpoint contract, migration, or manual QA notes.
+- [ ] Never set `EXIT_SIGNAL: true` until every in-scope parity item and Vidra extension is `VERIFIED`, `INTENTIONAL_DIFFERENCE`, or explicitly deferred by the user.
+- [ ] Keep commits small and descriptive.
+- [ ] Do not store secrets, production credentials, stream keys, JWT signing keys, OAuth secrets, or wallet private keys in the repo.
+- [ ] Do not copy PeerTube source code, assets, branding, screenshots, or exact styling. Use PeerTube only as behavioral reference.
+
+## Definition of Done for Any Feature
+
+- [ ] Requirement is listed in the correct ledger.
+- [ ] Data model or contract is documented.
+- [ ] Implementation is complete with no placeholder behavior.
+- [ ] Authz/authn behavior is explicit.
+- [ ] Error responses are typed and documented.
+- [ ] Unit tests cover core logic.
+- [ ] Integration tests cover database/cache/external boundary where applicable.
+- [ ] Smoke/API tests cover the happy path.
+- [ ] Security impact is considered.
+- [ ] Observability/logging is adequate.
+- [ ] `.ralph/fix_plan.md`, relevant ledger rows, and `.ralph/AGENT.md` are updated.
+- [ ] Focused checks pass locally or the failure is documented as a blocker.
+
+---
+
+# P0 — Ralph Control Plane and Parity Tracking
+
+## P0.1 Required Ralph Files
+
+- [ ] Verify `.ralph/PROMPT.md` exists and includes Vidra-specific rules.
+- [ ] Verify `.ralph/AGENT.md` exists and has accurate backend commands.
+- [ ] Verify `.ralph/specs/` exists.
+- [ ] Verify `.ralph/specs/peertube-reference.md` exists.
+- [ ] Verify `.ralph/specs/peertube-feature-ledger.md` exists.
+- [ ] Verify `.ralph/specs/peertube-ui-inventory.md` exists.
+- [ ] Verify `.ralph/specs/vidra-extensions-ledger.md` exists.
+- [ ] Verify `.ralph/specs/parity-acceptance.md` exists.
+- [ ] Add or update ledger status vocabulary: `TODO`, `IN_PROGRESS`, `IMPLEMENTED`, `TESTED`, `VERIFIED`, `INTENTIONAL_DIFFERENCE`, `DEFERRED`.
+- [ ] Add evidence fields to ledgers: owner repo, files, tests, API endpoints, UI controls, notes, verification date.
+
+## P0.2 PeerTube Reference Inventory
+
+- [ ] Pin PeerTube reference version/date used for parity analysis.
+- [ ] Record official documentation URLs used for watch, account, library, publish/live, studio, stats, channel sync, search, mute, report, accessibility, admin, REST API, ActivityPub, embed player, plugins/themes, and storage behavior.
+- [ ] Download or inspect PeerTube OpenAPI reference and generate an initial endpoint inventory.
+- [ ] Create an endpoint mapping table: PeerTube endpoint → Vidra endpoint → status → tests → intentional difference.
+- [ ] Create a backend model mapping table: PeerTube concept → Vidra table/type → status → notes.
+- [ ] Create a background job mapping table: PeerTube job/task → Vidra worker/job → status → tests.
+- [ ] Create a config mapping table: PeerTube setting → Vidra config key/env var/admin setting → status.
+- [ ] Create a moderation mapping table: PeerTube moderation behavior → Vidra behavior → status.
+- [ ] Create federation protocol mapping: ActivityPub behavior → Vidra implementation → status.
+- [ ] Add ATProto/Bluesky as a Vidra extension, not PeerTube parity.
+
+## P0.3 Route and Button-Level Parity Discipline
+
+- [ ] For each feature family, require a route/control inventory before coding broad UI/API changes.
+- [ ] For each user-visible control, capture: label/icon, route, role visibility, enabled/disabled states, backend endpoint, errors, tests, and status.
+- [ ] For each backend-only feature, capture: endpoint, method, request/response schema, auth rule, rate limit, validation, and tests.
+- [ ] Add a rule that broad items like “upload complete” are not complete until all buttons, tabs, dropdowns, modals, errors, and background states are inventoried and verified.
+
+---
+
+# P1 — Backend Project Foundation
+
+## P1.1 Go Project Scaffold
+
+- [ ] Initialize or verify Go module.
+- [ ] Choose stable package layout: `cmd/`, `internal/`, `pkg/` only where justified.
+- [ ] Add `cmd/api` entrypoint.
+- [ ] Add `cmd/worker` entrypoint.
+- [ ] Add `cmd/migrate` or document migration command.
+- [ ] Add `internal/config`.
+- [ ] Add `internal/http`.
+- [ ] Add `internal/db`.
+- [ ] Add `internal/cache`.
+- [ ] Add `internal/auth`.
+- [ ] Add `internal/media`.
+- [ ] Add `internal/storage`.
+- [ ] Add `internal/federation`.
+- [ ] Add `internal/messaging`.
+- [ ] Add `internal/moderation`.
+- [ ] Add `internal/observability`.
+- [ ] Add `internal/testutil`.
+- [ ] Ensure `go test ./...` runs, even if most packages are empty foundations.
+
+## P1.2 Configuration
+
+- [ ] Add typed configuration struct.
+- [ ] Support `.env`, environment variables, and Docker Compose defaults.
+- [ ] Add `.env.example`.
+- [ ] Validate required config on startup.
+- [ ] Add safe defaults for local development.
+- [ ] Add config for HTTP server address/port.
+- [ ] Add config for PostgreSQL DSN/pool.
+- [ ] Add config for Redis URL/pool.
+- [ ] Add config for JWT keys/issuer/audience/expiry.
+- [ ] Add config for OAuth2 providers, disabled by default.
+- [ ] Add config for TOTP issuer.
+- [ ] Add config for CORS allowlist.
+- [ ] Add config for rate limiting.
+- [ ] Add config for SSRF allow/deny behavior.
+- [ ] Add config for storage backend: local, S3-compatible, IPFS.
+- [ ] Add config for FFmpeg paths and transcoding options.
+- [ ] Add config for ClamAV and fallback mode.
+- [ ] Add config for RTMP/HLS.
+- [ ] Add config for Whisper captions, disabled by default.
+- [ ] Add config for ActivityPub, disabled/enabled per instance.
+- [ ] Add config for ATProto/Bluesky, disabled by default.
+- [ ] Add config tests for defaults, env override, validation failure, and secret redaction.
+
+## P1.3 Docker-First Development
+
+- [ ] Add `Dockerfile` for API.
+- [ ] Add `Dockerfile.worker` or multi-target Dockerfile.
+- [ ] Add `docker-compose.yml` for API, worker, PostgreSQL, Redis.
+- [ ] Add optional Compose profile for ClamAV.
+- [ ] Add optional Compose profile for MinIO/S3-compatible storage.
+- [ ] Add optional Compose profile for IPFS/Kubo.
+- [ ] Add optional Compose profile for RTMP/HLS.
+- [ ] Add optional Compose profile for Whisper.
+- [ ] Add named volumes for PostgreSQL, Redis, media, and object-storage emulator.
+- [ ] Add health checks for all first-party containers.
+- [ ] Add Makefile or task runner commands: `dev`, `up`, `down`, `logs`, `test`, `lint`, `migrate`, `seed`.
+- [ ] Document how to run only API, only worker, only dependencies, and all services.
+
+## P1.4 CI Skeleton
+
+> NOTE (monorepo): GitHub Actions workflows live at the repository root in
+> `../.github/workflows/` (GitHub does not read workflows from subdirectories).
+> Backend workflows must use `vidra-core/**` path filters and a `vidra-core`
+> working directory. This is the one allowed cross-boundary edit from this repo.
+
+- [ ] Add GitHub Actions workflow for Go tests.
+- [ ] Add GitHub Actions workflow for lint/static analysis.
+- [ ] Add GitHub Actions workflow for Docker build.
+- [ ] Add shared/reusable workflow or composite action for dependency setup.
+- [ ] Add Go module cache.
+- [ ] Add Docker layer cache.
+- [ ] Add PostgreSQL and Redis service containers for integration tests.
+- [ ] Add artifact upload for test reports/logs.
+- [ ] Keep CI under reasonable runtime by splitting smoke, unit, integration, fuzz, and benchmark jobs.
+
+---
+
+# P2 — Database, Migrations, and sqlc
+
+## P2.1 Database Foundation
+
+- [ ] Choose migration tool and document why.
+- [ ] Add initial migration for required PostgreSQL extensions: `pg_trgm`, `uuid-ossp`.
+- [ ] Add migration for schema version tracking if not provided by tool.
+- [ ] Add connection pooling with sane limits and timeouts.
+- [ ] Add database readiness check.
+- [ ] Add transactional test helper.
+- [ ] Add migration up/down smoke test against live PostgreSQL.
+- [ ] Add rollback test for initial migrations where feasible.
+
+## P2.2 Core Tables
+
+- [ ] Add accounts/users table.
+- [ ] Add roles/permissions table or enum strategy.
+- [ ] Add sessions/refresh tokens table if not Redis-only.
+- [ ] Add OAuth identities table.
+- [ ] Add TOTP/MFA settings table.
+- [ ] Add channels table.
+- [ ] Add videos table.
+- [ ] Add video files/renditions table.
+- [ ] Add streaming playlists/HLS assets table.
+- [ ] Add thumbnails/previews/storyboards table.
+- [ ] Add captions/subtitles table.
+- [ ] Add video imports table.
+- [ ] Add live streams table.
+- [ ] Add playlists table.
+- [ ] Add playlist items table.
+- [ ] Add comments table.
+- [ ] Add likes/dislikes or reactions table according to spec.
+- [ ] Add watch history table.
+- [ ] Add watch later/private library tables.
+- [ ] Add follows/subscriptions table.
+- [ ] Add notifications table.
+- [ ] Add abuse reports table.
+- [ ] Add video blocks/quarantine table.
+- [ ] Add watched words lists and matches tables.
+- [ ] Add muted accounts/instances table.
+- [ ] Add admin audit log table.
+- [ ] Add federation actors table.
+- [ ] Add federation activities/inbox/outbox table.
+- [ ] Add ATProto identities/events tables.
+- [ ] Add direct messages conversations table.
+- [ ] Add direct messages table.
+- [ ] Add encrypted message device/prekey/session tables if E2EE is enabled.
+- [ ] Add attachments table.
+- [ ] Add link previews table.
+- [ ] Add crypto donation addresses table.
+- [ ] Add verification challenges for donation addresses.
+
+## P2.3 sqlc
+
+- [ ] Add `sqlc.yaml`.
+- [ ] Generate typed queries for health/readiness.
+- [ ] Generate typed queries for users/accounts.
+- [ ] Generate typed queries for channels.
+- [ ] Generate typed queries for videos.
+- [ ] Generate typed queries for playlists.
+- [ ] Generate typed queries for messaging.
+- [ ] Generate typed queries for moderation.
+- [ ] Add sqlc generation command to Makefile/task runner.
+- [ ] Add CI check that generated sqlc output is current.
+- [ ] Add tests for critical query behavior.
+
+---
+
+# P3 — HTTP API and Contracts
+
+## P3.1 API Foundation
+
+- [ ] Add Echo server setup.
+- [ ] Add request ID middleware.
+- [ ] Add structured logging middleware.
+- [ ] Add panic recovery middleware.
+- [ ] Add CORS middleware with config allowlist.
+- [ ] Add body size limits.
+- [ ] Add timeout middleware.
+- [ ] Add rate limit middleware using Redis.
+- [ ] Add JWT auth middleware.
+- [ ] Add role/permission middleware.
+- [ ] Add consistent JSON error envelope.
+- [ ] Add validation layer.
+- [ ] Add OpenAPI generation or maintained OpenAPI spec.
+- [ ] Add Postman collection scaffold.
+- [ ] Add API smoke tests against live Docker database.
+
+## P3.2 System Endpoints
+
+- [ ] `GET /healthz`.
+- [ ] `GET /readyz`.
+- [ ] `GET /version`.
+- [ ] `GET /nodeinfo/2.0.json` or documented intentional difference.
+- [ ] `GET /.well-known/nodeinfo` or documented intentional difference.
+- [ ] `GET /.well-known/webfinger` for federation identity lookup when ActivityPub is enabled.
+- [ ] Add tests for all system endpoints.
+
+---
+
+# P4 — Auth, Accounts, and Identity
+
+- [ ] Implement registration enable/disable setting.
+- [ ] Implement account signup.
+- [ ] Implement email verification token flow placeholder or adapter boundary.
+- [ ] Implement login.
+- [ ] Implement refresh token/session rotation.
+- [ ] Implement logout current session.
+- [ ] Implement logout all sessions.
+- [ ] Implement password reset request/complete flow.
+- [ ] Implement password hashing with modern algorithm.
+- [ ] Implement JWT claims and validation.
+- [ ] Implement OAuth2 provider abstraction.
+- [ ] Implement TOTP enrollment.
+- [ ] Implement TOTP verification.
+- [ ] Implement recovery codes.
+- [ ] Implement account export request/status/download foundation.
+- [ ] Implement account import foundation.
+- [ ] Implement account deletion/deactivation.
+- [ ] Add auth rate limits.
+- [ ] Add auth audit logs.
+- [ ] Add unit/integration tests for signup/login/session/MFA.
+- [ ] Add Postman tests for auth happy/error paths.
+
+---
+
+# P5 — Channels, Profiles, and Instance Metadata
+
+- [ ] Implement account profile read/update.
+- [ ] Implement avatar upload/storage.
+- [ ] Implement banner upload/storage.
+- [ ] Implement channel create/read/update/delete.
+- [ ] Implement channel avatar/banner.
+- [ ] Implement channel ownership and permissions.
+- [ ] Implement public channel page data endpoint.
+- [ ] Implement account/channel follow model.
+- [ ] Implement channel sync placeholder/foundation for remote channels.
+- [ ] Implement instance about/config endpoint for frontend.
+- [ ] Implement terms/privacy/about/contact instance metadata.
+- [ ] Add tests for channel/profile permissions.
+
+---
+
+# P6 — Video Publishing and Media Pipeline
+
+## P6.1 Upload and Import
+
+- [ ] Implement create video draft/upload session.
+- [ ] Implement local file upload.
+- [ ] Implement resumable upload strategy or documented initial limitation.
+- [ ] Implement upload progress/status in Redis and database.
+- [ ] Implement video metadata validation: title, description, tags, category, language, license, privacy, channel.
+- [ ] Implement privacy levels.
+- [ ] Implement publish date/scheduled publish.
+- [ ] Implement file validation.
+- [ ] Implement ClamAV scan integration.
+- [ ] Implement ClamAV fallback modes: fail-closed, fail-open, quarantine.
+- [ ] Implement URL import with SSRF protection.
+- [ ] Implement torrent/magnet import placeholder or adapter boundary.
+- [ ] Implement upload cancellation.
+- [ ] Implement failed upload cleanup.
+- [ ] Add API tests for file upload, URL import, validation errors, and scan failure.
+
+## P6.2 Storage
+
+- [ ] Implement storage interface.
+- [ ] Implement local storage backend.
+- [ ] Implement S3-compatible backend.
+- [ ] Implement Backblaze B2-compatible configuration.
+- [ ] Implement DigitalOcean Spaces-compatible configuration.
+- [ ] Implement IPFS backend adapter or deferred spec.
+- [ ] Implement object key naming strategy.
+- [ ] Implement private/public object handling.
+- [ ] Implement signed URL or proxy strategy.
+- [ ] Implement media deletion/garbage collection.
+- [ ] Add integration tests using local filesystem and MinIO.
+
+## P6.3 Transcoding
+
+- [ ] Implement FFmpeg probe.
+- [ ] Implement media metadata extraction.
+- [ ] Implement H.264 profile.
+- [ ] Implement VP9 profile.
+- [ ] Implement AV1 profile.
+- [ ] Implement HLS output.
+- [ ] Implement thumbnail generation.
+- [ ] Implement preview generation.
+- [ ] Implement storyboard generation or documented defer.
+- [ ] Implement worker queue for transcode jobs.
+- [ ] Implement retry/backoff/dead-letter behavior.
+- [ ] Implement status updates in Redis and PostgreSQL.
+- [ ] Add unit tests for job planning.
+- [ ] Add smoke test with tiny fixture video.
+
+---
+
+# P7 — Playback, Discovery, and Public Video API
+
+- [ ] Implement public video list endpoint.
+- [ ] Implement local videos endpoint.
+- [ ] Implement trending/recent/popular sort modes or documented staged rollout.
+- [ ] Implement video detail endpoint.
+- [ ] Implement video playback manifest endpoint.
+- [ ] Implement captions endpoint.
+- [ ] Implement download metadata endpoint.
+- [ ] Implement share/embed metadata endpoint.
+- [ ] Implement oEmbed or documented difference.
+- [ ] Implement OpenGraph metadata.
+- [ ] Implement search endpoint with PostgreSQL trigram search.
+- [ ] Implement tags/categories/languages/licenses config endpoints.
+- [ ] Implement view count recording with abuse/rate-limit protection.
+- [ ] Implement watch progress endpoint.
+- [ ] Add tests for public visibility/privacy rules.
+
+---
+
+# P8 — Library, Playlists, Comments, and Notifications
+
+- [ ] Implement watch history.
+- [ ] Implement resume progress.
+- [ ] Implement watch later playlist.
+- [ ] Implement playlist create/read/update/delete.
+- [ ] Implement playlist visibility rules.
+- [ ] Implement playlist item add/remove/reorder.
+- [ ] Implement quick-add to playlist API.
+- [ ] Implement comments create/read/update/delete.
+- [ ] Implement comment threading if in-scope.
+- [ ] Implement comment moderation hooks.
+- [ ] Implement video like/dislike or reaction behavior according to spec.
+- [ ] Implement subscriptions/follows.
+- [ ] Implement notification creation/read/mark-read.
+- [ ] Add tests for playlist permissions, history privacy, and comment moderation.
+
+---
+
+# P9 — Moderation, Admin, and Safety
+
+- [ ] Implement roles: user, moderator, admin, owner.
+- [ ] Implement admin users list/search/filter.
+- [ ] Implement user edit: role, quota, enabled/disabled, bypass quarantine, email verified.
+- [ ] Implement registration approval queue.
+- [ ] Implement abuse reports for videos/comments/accounts.
+- [ ] Implement report accept/reject/delete/internal note.
+- [ ] Implement notifications to reporter where applicable.
+- [ ] Implement video block manual flow.
+- [ ] Implement video unblock flow.
+- [ ] Implement auto-block/quarantine setting.
+- [ ] Implement video quarantine approve/reject.
+- [ ] Implement muted accounts.
+- [ ] Implement muted instances.
+- [ ] Implement watched words lists.
+- [ ] Implement watched words tagging for videos/comments.
+- [ ] Implement admin comments overview.
+- [ ] Implement admin videos overview.
+- [ ] Implement admin audit log.
+- [ ] Implement rate-limit management endpoints or config-only decision.
+- [ ] Add moderation integration tests.
+- [ ] Add Postman admin collection tests.
+
+---
+
+# P10 — Federation
+
+## P10.1 ActivityPub
+
+- [ ] Implement local actor model for accounts.
+- [ ] Implement local actor model for channels.
+- [ ] Implement WebFinger.
+- [ ] Implement ActivityPub actor endpoints.
+- [ ] Implement inbox endpoint.
+- [ ] Implement outbox endpoint.
+- [ ] Implement HTTP signatures.
+- [ ] Implement JSON-LD signature strategy or documented compatibility plan.
+- [ ] Implement follow remote instance/channel/account.
+- [ ] Implement receive remote video activity.
+- [ ] Implement announce video from channel.
+- [ ] Implement federated comments if in-scope.
+- [ ] Implement federated deletes/updates.
+- [ ] Implement federation queue/retry/dead-letter.
+- [ ] Implement remote media cache strategy.
+- [ ] Add federation contract tests using fixtures.
+
+## P10.2 ATProto / Bluesky Extension
+
+- [ ] Add ATProto settings table/config.
+- [ ] Document ActivityPub and ATProto can be enabled independently.
+- [ ] Implement identity linking placeholder or first slice.
+- [ ] Implement posting/syndication strategy spec before code.
+- [ ] Implement tests only after protocol behavior is specified.
+
+---
+
+# P11 — Messaging
+
+## P11.1 Normal Secure Messaging
+
+- [ ] Implement conversations.
+- [ ] Implement conversation participants.
+- [ ] Implement message send/list/read.
+- [ ] Implement message attachments.
+- [ ] Implement attachment virus scanning.
+- [ ] Implement link preview extraction with SSRF protection.
+- [ ] Implement read receipts.
+- [ ] Implement typing presence or explicitly defer.
+- [ ] Implement blocking/reporting integration.
+- [ ] Add messaging API tests.
+
+## P11.2 Encrypted Messaging
+
+- [ ] Write E2EE threat model before implementation.
+- [ ] Choose audited protocol/library; do not invent crypto.
+- [ ] Implement device registration model.
+- [ ] Implement public identity/prekey endpoints.
+- [ ] Store ciphertext only for encrypted messages.
+- [ ] Implement disappearing message expiry metadata.
+- [ ] Implement deletion/expiry worker.
+- [ ] Ensure backend cannot decrypt encrypted messages.
+- [ ] Add tests for storage invariants and expiry behavior.
+- [ ] Block completion if no acceptable audited crypto approach is selected.
+
+---
+
+# P12 — Live Streaming
+
+- [ ] Implement live stream create endpoint.
+- [ ] Implement normal live vs permanent/recurring live model.
+- [ ] Generate private stream key.
+- [ ] Store stream key hashed or encrypted.
+- [ ] Implement RTMP ingestion integration boundary.
+- [ ] Implement HLS output path.
+- [ ] Implement live status updates.
+- [ ] Implement live replay conversion.
+- [ ] Implement live stream delete/archive.
+- [ ] Add smoke test for live metadata and HLS path without requiring full RTMP in CI.
+- [ ] Add optional integration test profile for RTMP.
+
+---
+
+# P13 — Captions and Whisper
+
+- [ ] Implement caption upload.
+- [ ] Implement caption list/download/delete.
+- [ ] Implement VTT validation.
+- [ ] Implement optional Whisper job adapter.
+- [ ] Implement auto-caption request/status.
+- [ ] Implement language metadata.
+- [ ] Add tests for manual captions.
+- [ ] Add Whisper mocked integration tests.
+
+---
+
+# P14 — Simple Crypto Donations
+
+- [ ] Add user/channel donation address fields.
+- [ ] Support address type/network metadata.
+- [ ] Add signed challenge flow to verify address ownership where feasible.
+- [ ] Display verified/unverified status via API.
+- [ ] Do not custody funds.
+- [ ] Do not implement premium subscriptions, payouts, balances, escrow, or payment processing.
+- [ ] Add tests for wallet validation and verification state.
+
+---
+
+# P15 — Security Hardening
+
+- [ ] Add SSRF protection package/policy for URL imports and link previews.
+- [ ] Add upload file type allowlist.
+- [ ] Add malware scan hooks.
+- [ ] Add path traversal protections for local storage.
+- [ ] Add CORS tests.
+- [ ] Add rate-limit tests.
+- [ ] Add JWT key rotation plan or documented defer.
+- [ ] Add OAuth redirect validation.
+- [ ] Add secure headers.
+- [ ] Add audit logging for sensitive actions.
+- [ ] Add fuzz tests for URL parsing.
+- [ ] Add fuzz tests for metadata parsing.
+- [ ] Add fuzz tests for ActivityPub parsing when implemented.
+
+---
+
+# P16 — Testing Strategy
+
+- [ ] Add unit test pattern and examples.
+- [ ] Add integration test pattern with PostgreSQL and Redis.
+- [ ] Add smoke test for API startup.
+- [ ] Add Postman collection and environment for live DB tests.
+- [ ] Add fuzz test target list.
+- [ ] Add benchmark target list.
+- [ ] Add tiny media fixtures.
+- [ ] Add testcontainers or Compose-based test runner.
+- [ ] Add CI jobs for unit tests.
+- [ ] Add CI jobs for integration tests.
+- [ ] Add CI jobs for smoke tests.
+- [ ] Add scheduled or manual fuzz/benchmark workflows.
+- [ ] Document when Ralph should run focused vs full test suites.
+
+---
+
+# P17 — Observability and Operations
+
+- [ ] Add structured logs.
+- [ ] Add request IDs.
+- [ ] Add metrics endpoint or documented defer.
+- [ ] Add health/readiness for dependencies.
+- [ ] Add worker status reporting.
+- [ ] Add job retry/dead-letter visibility.
+- [ ] Add admin-facing system status endpoint.
+- [ ] Add backup/restore docs for PostgreSQL, media storage, and Redis assumptions.
+- [ ] Add production deployment notes.
+
+---
+
+# P18 — Release Gates
+
+- [ ] All P0 tracking files exist and are current.
+- [ ] All backend required sections above are either complete or explicitly deferred by user.
+- [ ] PeerTube endpoint inventory has no unclassified endpoints.
+- [ ] PeerTube feature ledger has no unclassified in-scope backend items.
+- [ ] Vidra extensions ledger has no unclassified in-scope backend items.
+- [ ] OpenAPI contract is current.
+- [ ] Migrations apply cleanly to empty database.
+- [ ] Migrations apply cleanly to existing database fixture.
+- [ ] Docker Compose can start required local services.
+- [ ] Unit tests pass.
+- [ ] Integration tests pass or documented external dependency is unavailable.
+- [ ] Smoke tests pass.
+- [ ] Lint/static analysis passes.
+- [ ] CI passes.
+- [ ] `.ralph/AGENT.md` is accurate.
+- [ ] No secrets are committed.
+
+---
+
+# Optional / Deferred / Non-Blocking
+
+These items do not block Ralph exit if configured as optional in `.ralphrc` and explicitly kept in this section.
+
+- [ ] Premium subscriptions.
+- [ ] Creator payouts.
+- [ ] Custodial crypto payments.
+- [ ] Mobile native apps.
+- [ ] Full plugin/theme API parity.
+- [ ] Advanced recommendation engine.
+- [ ] Full multi-region deployment automation.
+- [ ] Enterprise SSO.
+- [ ] Advanced analytics warehouse.
+- [ ] AI moderation beyond basic hooks.
+- [ ] WebTorrent/P2P playback if intentionally replaced by IPFS/S3/HLS architecture.
+
+---
+
+# Completed
+
+- [x] Project initialization.
+- [x] Repo split: backend lives in `vidra-core/` (monorepo subdir) with its own Ralph control plane.
+
+---
+
+# Notes for Ralph
+
+- Prefer backend contracts before frontend assumptions.
+- Build boring foundations before flashy features.
+- Keep parity ledgers brutally honest.
+- If a feature cannot be implemented safely, mark it `BLOCKED` with reason and continue to the next safe foundational task.
+- If the same failure repeats for multiple loops, stop and report `BLOCKED`.
