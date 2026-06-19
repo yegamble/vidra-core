@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -37,8 +39,13 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 
 	status := http.StatusInternalServerError
 	message := "an unexpected error occurred"
+	// code, when set here, is a known-safe override that survives the 5xx
+	// message-scrubbing below (e.g. a request timeout).
+	code := ""
 
-	if he, ok := err.(*echo.HTTPError); ok {
+	var he *echo.HTTPError
+	switch {
+	case errors.As(err, &he):
 		status = he.Code
 		if he.Message != nil {
 			message = fmt.Sprintf("%v", he.Message)
@@ -46,12 +53,17 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		if he.Internal != nil {
 			err = he.Internal
 		}
+	case errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusServiceUnavailable
+		message = "the request timed out"
+		code = "request_timeout"
 	}
 
 	reqID := c.Response().Header().Get(echo.HeaderXRequestID)
 
-	// 5xx errors are operator-facing: log them with context and do not leak the
-	// underlying message to the client.
+	// 5xx errors are operator-facing: log them with context and never leak a
+	// handler-provided message to the client — unless we already chose a
+	// known-safe code/message above.
 	if status >= http.StatusInternalServerError {
 		s.logger.Error("request failed",
 			"error", err,
@@ -60,11 +72,17 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 			"status", status,
 			"request_id", reqID,
 		)
-		message = "an unexpected error occurred"
+		if code == "" {
+			message = "an unexpected error occurred"
+		}
+	}
+
+	if code == "" {
+		code = codeForStatus(status)
 	}
 
 	resp := ErrorResponse{Error: ErrorBody{
-		Code:      codeForStatus(status),
+		Code:      code,
 		Message:   message,
 		RequestID: reqID,
 	}}
@@ -96,6 +114,8 @@ func codeForStatus(status int) string {
 		return "method_not_allowed"
 	case http.StatusConflict:
 		return "conflict"
+	case http.StatusRequestEntityTooLarge:
+		return "request_entity_too_large"
 	case http.StatusUnprocessableEntity:
 		return "unprocessable_entity"
 	case http.StatusTooManyRequests:

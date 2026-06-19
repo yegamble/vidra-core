@@ -26,6 +26,30 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.HTTPShutdownTimeout != 20*time.Second {
 		t.Errorf("HTTPShutdownTimeout = %v, want 20s", cfg.HTTPShutdownTimeout)
 	}
+	if cfg.HTTPRequestTimeout != 30*time.Second {
+		t.Errorf("HTTPRequestTimeout = %v, want 30s", cfg.HTTPRequestTimeout)
+	}
+	if cfg.HTTPBodyLimit != "8M" {
+		t.Errorf("HTTPBodyLimit = %q, want 8M", cfg.HTTPBodyLimit)
+	}
+}
+
+func TestLoadInvalidBodyLimit(t *testing.T) {
+	t.Setenv("HTTP_BODY_LIMIT", "not-a-size")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for invalid HTTP_BODY_LIMIT, got nil")
+	}
+}
+
+func TestLoadBodyLimitOverride(t *testing.T) {
+	t.Setenv("HTTP_BODY_LIMIT", "512K")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.HTTPBodyLimit != "512K" {
+		t.Errorf("HTTPBodyLimit = %q, want 512K", cfg.HTTPBodyLimit)
+	}
 }
 
 func TestLoadInvalidPort(t *testing.T) {

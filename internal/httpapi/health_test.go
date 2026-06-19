@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/vidra/vidra-core/internal/config"
 )
@@ -23,6 +24,8 @@ func testConfig() *config.Config {
 		HTTPPort:           8080,
 		CORSAllowedOrigins: []string{"http://localhost:3000"},
 		InstanceName:       "Vidra Test",
+		HTTPRequestTimeout: 30 * time.Second,
+		HTTPBodyLimit:      "8M",
 	}
 }
 

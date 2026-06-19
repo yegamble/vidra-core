@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/labstack/gommon/bytes"
 )
 
 // Config holds all runtime configuration for the vidra-core API service.
@@ -22,6 +24,12 @@ type Config struct {
 	HTTPReadTimeout     time.Duration
 	HTTPWriteTimeout    time.Duration
 	HTTPShutdownTimeout time.Duration
+	// HTTPRequestTimeout bounds per-request handler work via a context deadline
+	// (DB/Redis/outbound calls observe it). HTTPWriteTimeout is the hard backstop.
+	HTTPRequestTimeout time.Duration
+	// HTTPBodyLimit is the maximum accepted request body size, as an Echo size
+	// string (e.g. "8M", "512K"). Oversized requests are rejected with 413.
+	HTTPBodyLimit string
 
 	// PostgreSQL connection (DSN form, e.g. postgres://user:pass@host:5432/db).
 	DatabaseURL string
@@ -54,6 +62,8 @@ func Load() (*Config, error) {
 		HTTPReadTimeout:     getEnvDuration("HTTP_READ_TIMEOUT", 15*time.Second),
 		HTTPWriteTimeout:    getEnvDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
 		HTTPShutdownTimeout: getEnvDuration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
+		HTTPRequestTimeout:  getEnvDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+		HTTPBodyLimit:       getEnv("HTTP_BODY_LIMIT", "8M"),
 	}
 
 	port, err := getEnvInt("HTTP_PORT", 8080)
@@ -82,6 +92,12 @@ func (c *Config) validate() error {
 	}
 	if strings.TrimSpace(c.RedisURL) == "" {
 		return fmt.Errorf("config: REDIS_URL is required")
+	}
+	if c.HTTPRequestTimeout <= 0 {
+		return fmt.Errorf("config: HTTP_REQUEST_TIMEOUT must be positive")
+	}
+	if _, err := bytes.Parse(c.HTTPBodyLimit); err != nil {
+		return fmt.Errorf("config: invalid HTTP_BODY_LIMIT %q: %w", c.HTTPBodyLimit, err)
 	}
 	if c.Environment == "production" {
 		for _, o := range c.CORSAllowedOrigins {

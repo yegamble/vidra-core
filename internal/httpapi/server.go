@@ -6,6 +6,7 @@ package httpapi
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -45,6 +46,8 @@ func New(cfg *config.Config, db, rdb Pinger) *Server {
 		AllowOrigins: cfg.CORSAllowedOrigins,
 		AllowMethods: []string{echo.GET, echo.POST, echo.PUT, echo.PATCH, echo.DELETE, echo.OPTIONS},
 	}))
+	e.Use(requestDeadline(cfg.HTTPRequestTimeout))
+	e.Use(middleware.BodyLimit(cfg.HTTPBodyLimit))
 
 	s.routes()
 	return s
@@ -84,6 +87,23 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 			return nil
 		},
 	})
+}
+
+// requestDeadline attaches a timeout to each request's context so handlers and
+// the DB/Redis/outbound calls they make observe a deadline and abort cleanly.
+// It does not forcibly interrupt a handler that ignores its context — the
+// server's WriteTimeout is the hard backstop for that. Handlers that honour the
+// context should return ctx.Err() (or a wrapped error), which the central error
+// handler renders as a 503 envelope.
+func requestDeadline(d time.Duration) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx, cancel := context.WithTimeout(c.Request().Context(), d)
+			defer cancel()
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	}
 }
 
 func (s *Server) routes() {

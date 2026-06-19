@@ -228,8 +228,8 @@
 - [x] Add structured logging middleware. (slog request logger, `server.go requestLogger`; level escalates by status class)
 - [ ] Add panic recovery middleware.
 - [ ] Add CORS middleware with config allowlist.
-- [ ] Add body size limits.
-- [ ] Add timeout middleware.
+- [x] Add body size limits. (`middleware.BodyLimit(cfg.HTTPBodyLimit)`, default 8M, configurable via `HTTP_BODY_LIMIT`; oversized → 413 `request_entity_too_large` envelope; tested)
+- [x] Add timeout middleware. (`requestDeadline` propagates a per-request context deadline, `HTTP_REQUEST_TIMEOUT` default 30s; ctx-deadline → 503 `request_timeout` envelope; server WriteTimeout is the hard backstop; tested)
 - [ ] Add rate limit middleware using Redis.
 - [ ] Add JWT auth middleware.
 - [ ] Add role/permission middleware.

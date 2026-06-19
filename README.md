@@ -30,6 +30,11 @@ All non-2xx responses share one envelope: `{"error":{"code","message","request_i
 `ReadinessResponse` on 503. `make build` injects version/commit/date into `/version`
 via `-ldflags`.
 
+Request guards: bodies over `HTTP_BODY_LIMIT` (default `8M`) are rejected with `413`;
+each request carries a `HTTP_REQUEST_TIMEOUT` (default `30s`) context deadline that
+handlers and DB/Redis calls observe (a fired deadline renders as a `503`
+`request_timeout`), with the server `WriteTimeout` as the hard backstop.
+
 ## Local development (without Docker for the app)
 
 ```bash
