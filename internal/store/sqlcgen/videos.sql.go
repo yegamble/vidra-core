@@ -206,6 +206,49 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) 
 	return items, nil
 }
 
+const searchPublicVideos = `-- name: SearchPublicVideos :many
+SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
+FROM videos
+WHERE privacy = 'public' AND title ILIKE '%' || $1 || '%'
+ORDER BY similarity(title, $1) DESC, created_at DESC, id DESC
+LIMIT $3 OFFSET $2
+`
+
+type SearchPublicVideosParams struct {
+	Query        *string `json:"query"`
+	ResultOffset int32   `json:"result_offset"`
+	ResultLimit  int32   `json:"result_limit"`
+}
+
+func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideosParams) ([]Video, error) {
+	rows, err := q.db.Query(ctx, searchPublicVideos, arg.Query, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Video
+	for rows.Next() {
+		var i Video
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Description,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateVideo = `-- name: UpdateVideo :one
 UPDATE videos
 SET title       = COALESCE($1, title),

@@ -78,7 +78,9 @@ everyone else so its existence is not leaked. `PATCH`/`DELETE /api/v1/videos/{id
 (owner-only; non-owner/unknown → `404`) edit/remove it. `GET /api/v1/channels/{handle}/videos`
 lists a channel's videos — all of them for the owner, public-only for everyone else.
 `GET /api/v1/videos` is the public cross-channel feed (newest-first; paginated with
-`?limit` 1–100 default 20 and `?offset`). Files/transcoding/playback are later slices.
+`?limit` 1–100 default 20 and `?offset`). `GET /api/v1/videos/search?q=` fuzzy-searches
+public titles (pg_trgm, ranked by similarity then recency; same pagination).
+Files/transcoding/playback are later slices.
 
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects

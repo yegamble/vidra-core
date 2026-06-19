@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +102,29 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 func (f *videoFakeRepo) DeleteVideo(_ context.Context, id uuid.UUID) error {
 	delete(f.videos, id)
 	return nil
+}
+
+func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.Video, error) {
+	q := ""
+	if a.Query != nil {
+		q = strings.ToLower(*a.Query)
+	}
+	var all []sqlcgen.Video
+	for _, r := range f.videos {
+		if r.Privacy == "public" && strings.Contains(strings.ToLower(r.Title), q) {
+			all = append(all, vidRowToVideo(r))
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	lo := int(a.ResultOffset)
+	if lo > len(all) {
+		lo = len(all)
+	}
+	hi := lo + int(a.ResultLimit)
+	if hi > len(all) {
+		hi = len(all)
+	}
+	return all[lo:hi], nil
 }
 
 func (f *videoFakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error) {
@@ -380,6 +404,44 @@ func TestPublicVideoFeed(t *testing.T) {
 	// Over-max limit is clamped to 100.
 	if huge := feed("?limit=99999"); huge.Limit != 100 {
 		t.Errorf("limit clamp = %d, want 100", huge.Limit)
+	}
+}
+
+func TestSearchVideos(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	_ = createVideo(t, srv, tok, "ada", `{"title":"Go concurrency patterns","privacy":"public"}`)
+	_ = createVideo(t, srv, tok, "ada", `{"title":"Rust ownership","privacy":"public"}`)
+	_ = createVideo(t, srv, tok, "ada", `{"title":"Go generics secret","privacy":"private"}`)
+
+	search := func(query string) (int, videoSearchResponse) {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/videos/search"+query, nil))
+		var body videoSearchResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return rec.Code, body
+	}
+
+	// Missing q -> 400.
+	if code, _ := search(""); code != http.StatusBadRequest {
+		t.Fatalf("missing q = %d, want 400", code)
+	}
+
+	// "go" matches the public Go video but not the private one.
+	code, body := search("?q=go")
+	if code != http.StatusOK {
+		t.Fatalf("search = %d, want 200", code)
+	}
+	if body.Query != "go" || len(body.Videos) != 1 {
+		t.Fatalf("search result = %+v, want 1 public match", body)
+	}
+	if body.Videos[0].Title != "Go concurrency patterns" {
+		t.Errorf("matched %q, want the public Go video", body.Videos[0].Title)
+	}
+
+	// No matches -> empty.
+	if _, none := search("?q=kubernetes"); len(none.Videos) != 0 {
+		t.Errorf("no-match search = %+v, want empty", none.Videos)
 	}
 }
 

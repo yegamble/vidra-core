@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,29 @@ func (f *fakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoParams) (
 func (f *fakeRepo) DeleteVideo(_ context.Context, id uuid.UUID) error {
 	delete(f.videos, id)
 	return nil
+}
+
+func (f *fakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.Video, error) {
+	q := ""
+	if a.Query != nil {
+		q = strings.ToLower(*a.Query)
+	}
+	var all []sqlcgen.Video
+	for _, r := range f.videos {
+		if r.Privacy == "public" && strings.Contains(strings.ToLower(r.Title), q) {
+			all = append(all, rowToVideo(r))
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	lo := int(a.ResultOffset)
+	if lo > len(all) {
+		lo = len(all)
+	}
+	hi := lo + int(a.ResultLimit)
+	if hi > len(all) {
+		hi = len(all)
+	}
+	return all[lo:hi], nil
 }
 
 func (f *fakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error) {
@@ -221,6 +245,24 @@ func TestListPublicPaginates(t *testing.T) {
 		if v.Privacy != "public" {
 			t.Errorf("feed contained non-public video: %+v", v)
 		}
+	}
+}
+
+func TestSearchPublicMatchesTitleAndExcludesPrivate(t *testing.T) {
+	owner := uuid.New()
+	svc := NewService(newFakeRepo(owner))
+	ctx := context.Background()
+	ch := uuid.New()
+	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "Go concurrency", Privacy: "public"})
+	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "Rust basics", Privacy: "public"})
+	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "Go internals", Privacy: "private"})
+
+	res, err := svc.SearchPublic(ctx, "go", 20, 0)
+	if err != nil {
+		t.Fatalf("SearchPublic: %v", err)
+	}
+	if len(res) != 1 || res[0].Title != "Go concurrency" {
+		t.Errorf("search = %+v, want only the public Go video", res)
 	}
 }
 

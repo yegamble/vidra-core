@@ -192,6 +192,7 @@ func (s *Server) routes() {
 		api.POST("/channels/:handle/videos", s.handleCreateVideo, s.requireAuth)
 		api.GET("/channels/:handle/videos", s.handleListChannelVideos, s.optionalAuth)
 		api.GET("/videos", s.handleListPublicVideos)
+		api.GET("/videos/search", s.handleSearchVideos)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)

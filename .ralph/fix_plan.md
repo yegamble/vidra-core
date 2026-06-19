@@ -364,7 +364,7 @@
 - [ ] Implement share/embed metadata endpoint.
 - [ ] Implement oEmbed or documented difference.
 - [ ] Implement OpenGraph metadata.
-- [ ] Implement search endpoint with PostgreSQL trigram search.
+- [x] Implement search endpoint with PostgreSQL trigram search. (`GET /api/v1/videos/search?q=` (public, paginated) over public video titles; ILIKE filter ranked by `similarity()`; migration `0007` adds a `gin_trgm_ops` index on `videos.title`; sqlc `SearchPublicVideos`; `internal/video.SearchPublic`; tested. Channel/account search still TODO.)
 - [ ] Implement tags/categories/languages/licenses config endpoints.
 - [ ] Implement view count recording with abuse/rate-limit protection.
 - [ ] Implement watch progress endpoint.

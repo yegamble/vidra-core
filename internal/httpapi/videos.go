@@ -172,6 +172,43 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Limit: limit, Offset: offset})
 }
 
+// maxSearchQueryLen bounds the search term to keep queries cheap.
+const maxSearchQueryLen = 100
+
+// videoSearchResponse is the paginated result of a public title search.
+type videoSearchResponse struct {
+	Query  string      `json:"query"`
+	Videos []videoView `json:"videos"`
+	Limit  int         `json:"limit"`
+	Offset int         `json:"offset"`
+}
+
+// handleSearchVideos searches public video titles. No auth required. Requires a
+// non-empty ?q (<=100 chars); paginated via ?limit (1–100, default 20)/?offset.
+func (s *Server) handleSearchVideos(c echo.Context) error {
+	q := strings.TrimSpace(c.QueryParam("q"))
+	if q == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "query parameter q is required")
+	}
+	if len(q) > maxSearchQueryLen {
+		return echo.NewHTTPError(http.StatusBadRequest, "query parameter q is too long")
+	}
+	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
+	offset := queryInt(c, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+	vids, err := s.videosvc.SearchPublic(c.Request().Context(), q, int32(limit), int32(offset))
+	if err != nil {
+		return err
+	}
+	views := make([]videoView, 0, len(vids))
+	for _, v := range vids {
+		views = append(views, newVideoView(v))
+	}
+	return c.JSON(http.StatusOK, videoSearchResponse{Query: q, Videos: views, Limit: limit, Offset: offset})
+}
+
 // queryInt reads an integer query param, returning def when absent or malformed.
 func queryInt(c echo.Context, name string, def int) int {
 	raw := c.QueryParam(name)

@@ -29,6 +29,13 @@ WHERE privacy = 'public'
 ORDER BY created_at DESC, id DESC
 LIMIT $1 OFFSET $2;
 
+-- name: SearchPublicVideos :many
+SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
+FROM videos
+WHERE privacy = 'public' AND title ILIKE '%' || sqlc.arg('query') || '%'
+ORDER BY similarity(title, sqlc.arg('query')) DESC, created_at DESC, id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
 -- name: UpdateVideo :one
 UPDATE videos
 SET title       = COALESCE(sqlc.narg('title'), title),

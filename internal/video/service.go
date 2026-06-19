@@ -30,6 +30,7 @@ type Repository interface {
 	ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error)
 	ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error)
 	ListPublicVideos(ctx context.Context, arg sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error)
+	SearchPublicVideos(ctx context.Context, arg sqlcgen.SearchPublicVideosParams) ([]sqlcgen.Video, error)
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
 }
@@ -128,6 +129,18 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID) 
 // to sane bounds.
 func (s *Service) ListPublic(ctx context.Context, limit, offset int32) ([]sqlcgen.Video, error) {
 	return s.repo.ListPublicVideos(ctx, sqlcgen.ListPublicVideosParams{Limit: limit, Offset: offset})
+}
+
+// SearchPublic returns public videos whose title matches query (case-insensitive
+// substring, ranked by trigram similarity then recency), paginated. The caller
+// validates/clamps query, limit, and offset.
+func (s *Service) SearchPublic(ctx context.Context, query string, limit, offset int32) ([]sqlcgen.Video, error) {
+	q := query
+	return s.repo.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
+		Query:        &q,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
 }
 
 // trimPtr trims a non-nil string pointer's value, leaving nil untouched so a
