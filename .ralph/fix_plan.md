@@ -284,7 +284,7 @@
 
 # P5 — Channels, Profiles, and Instance Metadata
 
-- [ ] Implement account profile read/update.
+- [x] Implement account profile read/update. (migration `0004_user_profile` adds `display_name`+`bio`; read via `GET /api/v1/auth/me`, update via `PATCH /api/v1/auth/me` (partial, behind `requireAuth`); identity fields username/email deferred to a dedicated re-verification flow; `userView` exposes the new fields; tested)
 - [ ] Implement avatar upload/storage.
 - [ ] Implement banner upload/storage.
 - [x] Implement channel create/read/update/delete. (`POST /api/v1/channels`, `GET /api/v1/me/channels`, `GET /api/v1/channels/:handle`, `PATCH`/`DELETE /api/v1/channels/:handle` (owner-only, partial PATCH via COALESCE); `internal/channel`; tested)

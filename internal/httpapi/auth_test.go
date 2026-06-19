@@ -98,6 +98,23 @@ func (f *authFakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.Use
 	return sqlcgen.User{}, errors.New("not found")
 }
 
+func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error) {
+	for k, u := range f.users {
+		if u.ID == a.ID {
+			if a.DisplayName != nil {
+				u.DisplayName = *a.DisplayName
+			}
+			if a.Bio != nil {
+				u.Bio = *a.Bio
+			}
+			u.UpdatedAt = time.Now()
+			f.users[k] = u
+			return u, nil
+		}
+	}
+	return sqlcgen.User{}, errors.New("not found")
+}
+
 func authServer(t *testing.T) *Server {
 	t.Helper()
 	repo := newAuthFakeRepo()
@@ -259,6 +276,44 @@ func TestMeReturnsCurrentUser(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "password_hash") {
 		t.Error("response leaked password_hash")
+	}
+}
+
+func TestUpdateMeProfile(t *testing.T) {
+	srv := authServer(t)
+	token := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	// Partial update: set display_name and bio.
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"display_name":"Ada L.","bio":"hi"}`, token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var u userView
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if u.DisplayName != "Ada L." || u.Bio != "hi" {
+		t.Errorf("unexpected profile: %+v", u)
+	}
+
+	// GET /me reflects the change after a fresh read.
+	me := getWithAuth(srv, "/api/v1/auth/me", token)
+	var got userView
+	_ = json.Unmarshal(me.Body.Bytes(), &got)
+	if got.DisplayName != "Ada L." || got.Bio != "hi" {
+		t.Errorf("me did not reflect update: %+v", got)
+	}
+}
+
+func TestUpdateMeValidationAndAuth(t *testing.T) {
+	srv := authServer(t)
+	token := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	if empty := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{}`, token); empty.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("empty patch = %d, want 422", empty.Code)
+	}
+	if anon := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"bio":"x"}`, ""); anon.Code != http.StatusUnauthorized {
+		t.Fatalf("anon patch = %d, want 401", anon.Code)
 	}
 }
 

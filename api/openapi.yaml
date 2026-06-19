@@ -184,6 +184,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateCurrentUser
+      summary: Update the authenticated account's profile
+      description: >-
+        Partial update of profile fields (display_name, bio). Identity fields
+        (username, email) are not editable here. Provide at least one field.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: The updated account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/auth/refresh:
     post:
       operationId: refreshSession
@@ -553,7 +587,7 @@ components:
               type: string
     User:
       type: object
-      required: [id, username, email, role, email_verified, created_at]
+      required: [id, username, email, role, email_verified, display_name, bio, created_at]
       properties:
         id:
           type: string
@@ -569,9 +603,26 @@ components:
           enum: [user, moderator, admin]
         email_verified:
           type: boolean
+        display_name:
+          type: string
+          description: Human-facing name; may be empty.
+          example: Ada L.
+        bio:
+          type: string
+          description: Short free-text description; may be empty.
         created_at:
           type: string
           format: date-time
+    UpdateProfileRequest:
+      type: object
+      description: Partial profile update; provide at least one field.
+      properties:
+        display_name:
+          type: string
+          maxLength: 50
+        bio:
+          type: string
+          maxLength: 1000
     Channel:
       type: object
       required: [id, owner_id, handle, display_name, description, created_at]

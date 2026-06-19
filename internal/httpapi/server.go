@@ -161,6 +161,7 @@ func (s *Server) routes() {
 		authGroup.POST("/refresh", s.handleRefresh)
 		authGroup.POST("/logout", s.handleLogout)
 		authGroup.GET("/me", s.handleMe, s.requireAuth)
+		authGroup.PATCH("/me", s.handleUpdateMe, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
 	}
 

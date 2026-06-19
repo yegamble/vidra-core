@@ -65,6 +65,8 @@ Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/m
 (protected) returns the current account, reloaded from the database so it reflects
 live role/verification state. A missing, malformed, invalid, or expired token yields
 `401` without revealing which check failed; a deactivated account is treated as `401`.
+`PATCH /api/v1/auth/me` updates the profile (`display_name`, `bio`; partial); identity
+fields (username/email) are not editable there pending a re-verification flow.
 
 Request guards: bodies over `HTTP_BODY_LIMIT` (default `8M`) are rejected with `413`;
 each request carries a `HTTP_REQUEST_TIMEOUT` (default `30s`) context deadline that

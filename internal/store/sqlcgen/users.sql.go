@@ -25,7 +25,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
 `
 
 type CreateUserParams struct {
@@ -53,12 +53,14 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DisplayName,
+		&i.Bio,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -76,12 +78,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DisplayName,
+		&i.Bio,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
 FROM users
 WHERE id = $1
 `
@@ -99,6 +103,42 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DisplayName,
+		&i.Bio,
+	)
+	return i, err
+}
+
+const updateUserProfile = `-- name: UpdateUserProfile :one
+UPDATE users
+SET display_name = COALESCE($1, display_name),
+    bio          = COALESCE($2, bio),
+    updated_at   = now()
+WHERE id = $3
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
+`
+
+type UpdateUserProfileParams struct {
+	DisplayName *string   `json:"display_name"`
+	Bio         *string   `json:"bio"`
+	ID          uuid.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserProfile, arg.DisplayName, arg.Bio, arg.ID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Role,
+		&i.EmailVerified,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisplayName,
+		&i.Bio,
 	)
 	return i, err
 }

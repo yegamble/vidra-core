@@ -42,6 +42,9 @@ curl -sX POST localhost:8080/api/v1/auth/login \
 
 # Authenticated request (current account):
 curl -s localhost:8080/api/v1/auth/me -H 'authorization: Bearer <token>'
+# Update profile (partial: display_name, bio):
+curl -sX PATCH localhost:8080/api/v1/auth/me -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"display_name":"Ada L.","bio":"builder"}'
 
 # Rotate / revoke a refresh token:
 curl -sX POST localhost:8080/api/v1/auth/refresh \

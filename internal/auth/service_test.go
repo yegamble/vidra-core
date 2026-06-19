@@ -62,6 +62,23 @@ func (f *fakeRepo) RevokeAllUserSessions(_ context.Context, userID uuid.UUID) er
 	return nil
 }
 
+func (f *fakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error) {
+	for k, u := range f.byEmail {
+		if u.ID == a.ID {
+			if a.DisplayName != nil {
+				u.DisplayName = *a.DisplayName
+			}
+			if a.Bio != nil {
+				u.Bio = *a.Bio
+			}
+			u.UpdatedAt = time.Now()
+			f.byEmail[k] = u
+			return u, nil
+		}
+	}
+	return sqlcgen.User{}, errors.New("not found")
+}
+
 func (f *fakeRepo) CountUsers(context.Context) (int64, error) {
 	return int64(len(f.byEmail)), nil
 }
@@ -238,6 +255,25 @@ func TestLogoutRevokesRefreshToken(t *testing.T) {
 	}
 	if _, _, err := svc.Refresh(ctx, tok.RefreshToken, "a"); !errors.Is(err, ErrInvalidRefresh) {
 		t.Fatalf("refresh after logout err = %v, want ErrInvalidRefresh", err)
+	}
+}
+
+func TestUpdateProfilePartial(t *testing.T) {
+	svc := newTestService(newFakeRepo())
+	ctx := context.Background()
+	user, _ := register(t, svc, "ada", "ada@example.test")
+
+	bio := "builder"
+	updated, err := svc.UpdateProfile(ctx, user.ID, ProfileInput{Bio: &bio})
+	if err != nil {
+		t.Fatalf("UpdateProfile: %v", err)
+	}
+	if updated.Bio != "builder" {
+		t.Errorf("bio = %q, want builder", updated.Bio)
+	}
+	// display_name left unchanged (nil) — still empty from registration.
+	if updated.DisplayName != "" {
+		t.Errorf("display_name = %q, want empty (unchanged)", updated.DisplayName)
 	}
 }
 

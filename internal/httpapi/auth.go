@@ -80,6 +80,8 @@ type userView struct {
 	Email         string    `json:"email"`
 	Role          string    `json:"role"`
 	EmailVerified bool      `json:"email_verified"`
+	DisplayName   string    `json:"display_name"`
+	Bio           string    `json:"bio"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -90,6 +92,8 @@ func newUserView(u sqlcgen.User) userView {
 		Email:         u.Email,
 		Role:          u.Role,
 		EmailVerified: u.EmailVerified,
+		DisplayName:   u.DisplayName,
+		Bio:           u.Bio,
 		CreatedAt:     u.CreatedAt,
 	}
 }
@@ -142,6 +146,51 @@ func (s *Server) handleMe(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	user, err := s.authsvc.UserByID(c.Request().Context(), userID)
+	if err != nil {
+		if errors.Is(err, auth.ErrAccountNotFound) {
+			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
+		}
+		return err
+	}
+	return c.JSON(http.StatusOK, newUserView(user))
+}
+
+// updateProfileRequest is the PATCH /api/v1/auth/me body. Fields are optional;
+// only those present are changed. Identity fields (username, email) are not
+// editable here.
+type updateProfileRequest struct {
+	DisplayName *string `json:"display_name"`
+	Bio         *string `json:"bio"`
+}
+
+func (r updateProfileRequest) Validate() []FieldError {
+	var fes []FieldError
+	if r.DisplayName == nil && r.Bio == nil {
+		return []FieldError{{Field: "display_name", Message: "at least one of display_name, bio is required"}}
+	}
+	if r.DisplayName != nil && len(strings.TrimSpace(*r.DisplayName)) > 50 {
+		fes = append(fes, FieldError{Field: "display_name", Message: "must be at most 50 characters"})
+	}
+	if r.Bio != nil && len(*r.Bio) > 1000 {
+		fes = append(fes, FieldError{Field: "bio", Message: "must be at most 1000 characters"})
+	}
+	return fes
+}
+
+// handleUpdateMe updates the authenticated account's profile (display name, bio).
+func (s *Server) handleUpdateMe(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	var in updateProfileRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	user, err := s.authsvc.UpdateProfile(c.Request().Context(), userID, auth.ProfileInput{
+		DisplayName: in.DisplayName,
+		Bio:         in.Bio,
+	})
 	if err != nil {
 		if errors.Is(err, auth.ErrAccountNotFound) {
 			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")

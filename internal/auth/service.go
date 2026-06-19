@@ -34,6 +34,7 @@ type Repository interface {
 	GetUserByEmail(ctx context.Context, lowerEmail string) (sqlcgen.User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	CountUsers(ctx context.Context) (int64, error)
+	UpdateUserProfile(ctx context.Context, arg sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error)
 
 	CreateSession(ctx context.Context, arg sqlcgen.CreateSessionParams) (sqlcgen.CreateSessionRow, error)
 	GetSessionByRefreshHash(ctx context.Context, refreshHash string) (sqlcgen.GetSessionByRefreshHashRow, error)
@@ -227,6 +228,37 @@ func (s *Service) UserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, err
 		return sqlcgen.User{}, ErrAccountNotFound
 	}
 	return user, nil
+}
+
+// ProfileInput is a partial account-profile update: nil fields are unchanged.
+type ProfileInput struct {
+	DisplayName *string
+	Bio         *string
+}
+
+// UpdateProfile updates the authenticated account's presentation fields
+// (display name, bio). Identity fields (username, email) are intentionally not
+// changed here — those need their own re-verification flow.
+func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in ProfileInput) (sqlcgen.User, error) {
+	user, err := s.repo.UpdateUserProfile(ctx, sqlcgen.UpdateUserProfileParams{
+		ID:          id,
+		DisplayName: trimPtr(in.DisplayName),
+		Bio:         trimPtr(in.Bio),
+	})
+	if err != nil {
+		return sqlcgen.User{}, ErrAccountNotFound
+	}
+	return user, nil
+}
+
+// trimPtr trims a non-nil string pointer's value, leaving nil untouched so a
+// COALESCE update skips the column.
+func trimPtr(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	t := strings.TrimSpace(*p)
+	return &t
 }
 
 // isUniqueViolation reports whether err is a PostgreSQL unique-constraint
