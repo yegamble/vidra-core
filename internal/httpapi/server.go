@@ -15,6 +15,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/ratelimit"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // Pinger is satisfied by dependencies that can report liveness (store, cache).
@@ -33,6 +34,7 @@ type Server struct {
 	authsvc    *auth.Service
 	authTTL    time.Duration
 	channelsvc *channel.Service
+	videosvc   *video.Service
 }
 
 // Option customises the Server during construction.
@@ -58,6 +60,13 @@ func WithAuthService(svc *auth.Service, ttl time.Duration) Option {
 // When unset, the channel routes are not registered.
 func WithChannelService(svc *channel.Service) Option {
 	return func(s *Server) { s.channelsvc = svc }
+}
+
+// WithVideoService mounts the video endpoints (create draft, get by id). Video
+// creation also needs the channel service (for ownership); when either is unset
+// the video routes are not registered.
+func WithVideoService(svc *video.Service) Option {
+	return func(s *Server) { s.videosvc = svc }
 }
 
 // New constructs the HTTP server with middleware and routes registered. db and
@@ -174,6 +183,14 @@ func (s *Server) routes() {
 		api.POST("/channels/:handle/follow", s.handleFollowChannel, s.requireAuth)
 		api.DELETE("/channels/:handle/follow", s.handleUnfollowChannel, s.requireAuth)
 		api.GET("/me/channels", s.handleListMyChannels, s.requireAuth)
+	}
+
+	// Video creation needs both the video and channel services (channel for
+	// ownership); the public get applies optional auth so owners can see their
+	// own private drafts.
+	if s.videosvc != nil && s.channelsvc != nil {
+		api.POST("/channels/:handle/videos", s.handleCreateVideo, s.requireAuth)
+		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 	}
 }
 

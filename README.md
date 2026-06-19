@@ -70,6 +70,12 @@ The handle is immutable after creation. `POST`/`DELETE /api/v1/channels/{handle}
 (auth, idempotent `204`) follow/unfollow a channel; every channel view carries a
 `follower_count`.
 
+Videos: `POST /api/v1/channels/{handle}/videos` (owner-only) creates a draft video
+(`title`, optional `description`/`privacy`; starts `state: draft`, `privacy` defaults
+`private`). `GET /api/v1/videos/{id}` returns public/unlisted videos to anyone with the
+id; a `private` video is returned only to its owner (bearer token) and is `404` to
+everyone else so its existence is not leaked. Files/transcoding/playback are later slices.
+
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects
 live role/verification state. A missing, malformed, invalid, or expired token yields

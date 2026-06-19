@@ -11,6 +11,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // fullRouteOptions mounts every optional feature so the contract test enumerates
@@ -21,6 +22,7 @@ func fullRouteOptions() []Option {
 	return []Option{
 		WithAuthService(auth.NewService(nil, issuer, time.Hour), time.Minute),
 		WithChannelService(channel.NewService(nil)),
+		WithVideoService(video.NewService(nil)),
 	}
 }
 

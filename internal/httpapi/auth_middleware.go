@@ -62,6 +62,27 @@ func (s *Server) requireRole(allowed ...string) echo.MiddlewareFunc {
 	}
 }
 
+// optionalAuth populates the principal when a valid Bearer token is present but,
+// unlike requireAuth, never rejects: anonymous and badly-authenticated requests
+// proceed without a principal. Handlers use principalFromContext to vary
+// behaviour (e.g. an owner seeing their own private resource). It is a no-op
+// when no auth service is configured.
+func (s *Server) optionalAuth(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if s.authsvc != nil {
+			if token, ok := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization)); ok {
+				if claims, err := s.authsvc.Parse(token); err == nil {
+					if userID, err := uuid.Parse(claims.Subject); err == nil {
+						c.Set(ctxKeyUserID, userID)
+						c.Set(ctxKeyRole, claims.Role)
+					}
+				}
+			}
+		}
+		return next(c)
+	}
+}
+
 // bearerToken extracts the token from an "Authorization: Bearer <token>" header.
 // The scheme match is case-insensitive per RFC 7235; the token must be non-empty.
 func bearerToken(header string) (string, bool) {

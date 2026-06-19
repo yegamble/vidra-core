@@ -20,6 +20,7 @@ import (
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/store"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 func main() {
@@ -75,6 +76,9 @@ func run(logger *slog.Logger) error {
 
 	channelsvc := channel.NewService(db.Queries())
 	opts = append(opts, httpapi.WithChannelService(channelsvc))
+
+	videosvc := video.NewService(db.Queries())
+	opts = append(opts, httpapi.WithVideoService(videosvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

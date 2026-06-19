@@ -172,7 +172,7 @@
 - [ ] Add OAuth identities table.
 - [ ] Add TOTP/MFA settings table.
 - [x] Add channels table. (migration `0003_channels`; owner FK → users, unique `lower(handle)`, trigram index; integration test asserts the table exists)
-- [ ] Add videos table.
+- [x] Add videos table. (migration `0006_videos`: channel FK, title/description, privacy + state CHECK enums, channel + partial public-published indexes; integration test asserts table)
 - [ ] Add video files/renditions table.
 - [ ] Add streaming playlists/HLS assets table.
 - [ ] Add thumbnails/previews/storyboards table.
@@ -209,7 +209,7 @@
 - [ ] Generate typed queries for health/readiness.
 - [ ] Generate typed queries for users/accounts.
 - [x] Generate typed queries for channels. (`internal/store/queries/channels.sql` — Create / GetByID / GetByHandle / ListByOwner / CountByOwner)
-- [ ] Generate typed queries for videos.
+- [x] Generate typed queries for videos. (`internal/store/queries/videos.sql` — CreateVideo / GetVideoByID (joined owner_id) / ListVideosByChannel)
 - [ ] Generate typed queries for playlists.
 - [ ] Generate typed queries for messaging.
 - [ ] Generate typed queries for moderation.
@@ -303,12 +303,12 @@
 
 ## P6.1 Upload and Import
 
-- [ ] Implement create video draft/upload session.
+- [x] Implement create video draft/upload session. (`POST /api/v1/channels/:handle/videos` (requireAuth, owner-only) creates a draft; `GET /api/v1/videos/:id` (optionalAuth) public/unlisted to anyone, private owner-only (else 404); `internal/video`; tested. File upload itself is a later slice.)
 - [ ] Implement local file upload.
 - [ ] Implement resumable upload strategy or documented initial limitation.
 - [ ] Implement upload progress/status in Redis and database.
 - [ ] Implement video metadata validation: title, description, tags, category, language, license, privacy, channel.
-- [ ] Implement privacy levels.
+- [~] Implement privacy levels. (videos: public/unlisted/private enforced on read — private hidden as 404 to non-owners; account/channel-level privacy still TODO)
 - [ ] Implement publish date/scheduled publish.
 - [ ] Implement file validation.
 - [ ] Implement ClamAV scan integration.

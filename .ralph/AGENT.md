@@ -66,6 +66,11 @@ curl -sX PATCH localhost:8080/api/v1/channels/ada_makes -H 'authorization: Beare
 curl -sX DELETE localhost:8080/api/v1/channels/ada_makes -H 'authorization: Bearer <token>'  # owner-only
 curl -sX POST   localhost:8080/api/v1/channels/ada_makes/follow -H 'authorization: Bearer <token>'  # follow
 curl -sX DELETE localhost:8080/api/v1/channels/ada_makes/follow -H 'authorization: Bearer <token>'  # unfollow
+
+# Videos:
+curl -sX POST localhost:8080/api/v1/channels/ada_makes/videos -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"title":"My upload","privacy":"public"}'  # create draft (owner-only)
+curl -s localhost:8080/api/v1/videos/<id>                                            # public/unlisted; private => owner only
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

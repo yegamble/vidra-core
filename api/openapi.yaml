@@ -543,6 +543,91 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/videos:
+    post:
+      operationId: createVideo
+      summary: Create a draft video
+      description: >-
+        Creates a draft video under a channel the caller owns. The video starts
+        in the "draft" state; privacy defaults to "private" when omitted.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVideoRequest"
+      responses:
+        "201":
+          description: Draft created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller does not own this channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}:
+    get:
+      operationId: getVideo
+      summary: Get a video by id
+      description: >-
+        Public and unlisted videos are returned to anyone with the id. A private
+        video is returned only to its owner (with a bearer token); to everyone
+        else it is reported as 404 so its existence is not revealed.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+        "404":
+          description: No video with that id (or it is private and not yours).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -796,6 +881,45 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Channel"
+    Video:
+      type: object
+      required: [id, channel_id, title, description, privacy, state, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: My first upload
+        description:
+          type: string
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        state:
+          type: string
+          enum: [draft, processing, published, failed]
+        created_at:
+          type: string
+          format: date-time
+    CreateVideoRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+          description: Defaults to "private" when omitted.
     RegisterRequest:
       type: object
       required: [username, email, password]

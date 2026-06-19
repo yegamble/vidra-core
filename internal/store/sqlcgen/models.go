@@ -52,3 +52,14 @@ type User struct {
 	DisplayName   string    `json:"display_name"`
 	Bio           string    `json:"bio"`
 }
+
+type Video struct {
+	ID          uuid.UUID `json:"id"`
+	ChannelID   uuid.UUID `json:"channel_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Privacy     string    `json:"privacy"`
+	State       string    `json:"state"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}

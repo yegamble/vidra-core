@@ -38,7 +38,7 @@ func TestFreshDatabaseHasFoundationTables(t *testing.T) {
 	}
 	defer st.Close()
 
-	for _, table := range []string{"users", "sessions", "channels", "channel_follows"} {
+	for _, table := range []string{"users", "sessions", "channels", "channel_follows", "videos"} {
 		var exists bool
 		err := st.Pool.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)`,
