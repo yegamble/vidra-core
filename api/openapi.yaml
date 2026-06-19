@@ -162,6 +162,21 @@ components:
             request_id:
               type: string
               description: Correlates the response with server logs. Omitted when unknown.
+            fields:
+              type: array
+              description: >-
+                Field-level validation problems. Present only on validation
+                failures (422 unprocessable_entity).
+              items:
+                type: object
+                required: [field, message]
+                properties:
+                  field:
+                    type: string
+                    example: email
+                  message:
+                    type: string
+                    example: must be a valid email
     NodeInfoResponse:
       type: object
       required: [version, software, instance]

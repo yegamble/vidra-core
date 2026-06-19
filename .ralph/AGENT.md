@@ -33,7 +33,9 @@ curl localhost:8080/version          # build version / commit / date
 curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
 ```
 All non-2xx responses use the `ErrorResponse` envelope
-(`{"error":{"code","message","request_id"}}`). `make build` injects version
+(`{"error":{"code","message","request_id"}}`; validation failures add a `fields`
+array). Handlers decode+validate input with `bindAndValidate` (400 on malformed
+body, 422 with field errors on failed `Validate()`). `make build` injects version
 metadata into `/version` via `-ldflags`. The `/api` surface is rate limited
 (Redis fixed-window, per IP, `RATE_LIMIT_*` env, default 120/min) with
 `X-RateLimit-*` headers and a `429 rate_limited` envelope; system probes are

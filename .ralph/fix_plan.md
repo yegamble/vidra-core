@@ -234,7 +234,7 @@
 - [ ] Add JWT auth middleware.
 - [ ] Add role/permission middleware.
 - [x] Add consistent JSON error envelope. (`errors.go` — `ErrorResponse {error:{code,message,request_id}}` via custom `echo.HTTPErrorHandler`; 5xx detail hidden; documented as `ErrorResponse` in `api/openapi.yaml`; tested)
-- [ ] Add validation layer.
+- [x] Add validation layer. (`validation.go` — `bindAndValidate` + `Validatable` interface; malformed body → 400 `bad_request`, failed validation → 422 `unprocessable_entity` with a `fields` array; dependency-free, documented in `api/openapi.yaml ErrorResponse`; tested)
 - [x] Maintain an OpenAPI contract at `api/openapi.yaml` as the source of truth for the HTTP API (seeded for the system endpoints).
 - [x] Add a route↔spec drift stop guard (`TestOpenAPIContract` in `internal/httpapi`) that fails the build when routes and `api/openapi.yaml` diverge.
 - [x] Add the `openapi.yml` GitHub Actions workflow (Redocly lint + `make openapi-verify`) and `make openapi-lint` / `openapi-verify` / `docs-check` targets.

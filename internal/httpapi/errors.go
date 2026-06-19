@@ -26,6 +26,9 @@ type ErrorBody struct {
 	Message string `json:"message"`
 	// RequestID correlates the response with server logs. Omitted when unknown.
 	RequestID string `json:"request_id,omitempty"`
+	// Fields lists field-level validation problems. Present only on validation
+	// failures (422 unprocessable_entity).
+	Fields []FieldError `json:"fields,omitempty"`
 }
 
 // httpErrorHandler is Echo's central error handler. It converts any error
@@ -42,9 +45,17 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	// code, when set here, is a known-safe override that survives the 5xx
 	// message-scrubbing below (e.g. a request timeout).
 	code := ""
+	// fields carries field-level validation errors when present.
+	var fields []FieldError
 
 	var he *echo.HTTPError
+	var ve *ValidationError
 	switch {
+	case errors.As(err, &ve):
+		status = http.StatusUnprocessableEntity
+		message = "validation failed"
+		code = "unprocessable_entity"
+		fields = ve.Fields
 	case errors.As(err, &he):
 		status = he.Code
 		if he.Message != nil {
@@ -85,6 +96,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		Code:      code,
 		Message:   message,
 		RequestID: reqID,
+		Fields:    fields,
 	}}
 
 	var writeErr error
