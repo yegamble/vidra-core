@@ -55,6 +55,15 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 	return i, err
 }
 
+const deleteChannel = `-- name: DeleteChannel :exec
+DELETE FROM channels WHERE id = $1
+`
+
+func (q *Queries) DeleteChannel(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteChannel, id)
+	return err
+}
+
 const getChannelByHandle = `-- name: GetChannelByHandle :one
 SELECT id, owner_id, handle, display_name, description, created_at, updated_at
 FROM channels
@@ -130,4 +139,34 @@ func (q *Queries) ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateChannel = `-- name: UpdateChannel :one
+UPDATE channels
+SET display_name = COALESCE($1, display_name),
+    description  = COALESCE($2, description),
+    updated_at   = now()
+WHERE id = $3
+RETURNING id, owner_id, handle, display_name, description, created_at, updated_at
+`
+
+type UpdateChannelParams struct {
+	DisplayName *string   `json:"display_name"`
+	Description *string   `json:"description"`
+	ID          uuid.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (Channel, error) {
+	row := q.db.QueryRow(ctx, updateChannel, arg.DisplayName, arg.Description, arg.ID)
+	var i Channel
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Handle,
+		&i.DisplayName,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

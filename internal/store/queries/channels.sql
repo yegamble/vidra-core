@@ -21,3 +21,14 @@ ORDER BY created_at;
 
 -- name: CountChannelsByOwner :one
 SELECT count(*) FROM channels WHERE owner_id = $1;
+
+-- name: UpdateChannel :one
+UPDATE channels
+SET display_name = COALESCE(sqlc.narg('display_name'), display_name),
+    description  = COALESCE(sqlc.narg('description'), description),
+    updated_at   = now()
+WHERE id = sqlc.arg('id')
+RETURNING id, owner_id, handle, display_name, description, created_at, updated_at;
+
+-- name: DeleteChannel :exec
+DELETE FROM channels WHERE id = $1;

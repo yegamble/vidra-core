@@ -287,15 +287,15 @@
 - [ ] Implement account profile read/update.
 - [ ] Implement avatar upload/storage.
 - [ ] Implement banner upload/storage.
-- [~] Implement channel create/read/update/delete. (create + read done: `POST /api/v1/channels`, `GET /api/v1/me/channels`, `GET /api/v1/channels/:handle`, `internal/channel`; update/delete still TODO)
+- [x] Implement channel create/read/update/delete. (`POST /api/v1/channels`, `GET /api/v1/me/channels`, `GET /api/v1/channels/:handle`, `PATCH`/`DELETE /api/v1/channels/:handle` (owner-only, partial PATCH via COALESCE); `internal/channel`; tested)
 - [ ] Implement channel avatar/banner.
-- [x] Implement channel ownership and permissions. (channels created under the authed principal's `owner_id`; create/list behind `requireAuth`; handle uniqueness → 409; tested)
+- [x] Implement channel ownership and permissions. (channels created under the authed principal's `owner_id`; create/list/update/delete behind `requireAuth`; update/delete enforce owner == principal → 403 otherwise; handle uniqueness → 409; tested)
 - [x] Implement public channel page data endpoint. (`GET /api/v1/channels/:handle`, case-insensitive, no auth; 404 envelope when absent; tested)
 - [ ] Implement account/channel follow model.
 - [ ] Implement channel sync placeholder/foundation for remote channels.
 - [ ] Implement instance about/config endpoint for frontend.
 - [ ] Implement terms/privacy/about/contact instance metadata.
-- [~] Add tests for channel/profile permissions. (channel: create-requires-auth, validation, duplicate-409, create→list→public-get, get-404, plus service unit tests; profile tests pending the profile slice)
+- [~] Add tests for channel/profile permissions. (channel: create-requires-auth, validation, duplicate-409, create→list→public-get, get-404, owner/non-owner update-403, delete-403/204, plus service unit tests; profile tests pending the profile slice)
 
 ---
 

@@ -325,6 +325,92 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateChannel
+      summary: Update a channel
+      description: >-
+        Updates a channel's mutable fields (owner only). Partial — only the
+        fields present in the body are changed; the handle is immutable.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateChannelRequest"
+      responses:
+        "200":
+          description: The updated channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller does not own this channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteChannel
+      summary: Delete a channel
+      description: Deletes a channel (owner only).
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The channel was deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller does not own this channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/channels:
     get:
       operationId: listMyChannels
@@ -522,6 +608,17 @@ components:
           minLength: 1
           maxLength: 50
           example: Ada Makes
+        description:
+          type: string
+          maxLength: 1000
+    UpdateChannelRequest:
+      type: object
+      description: Partial update; provide at least one field. Handle is immutable.
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 50
         description:
           type: string
           maxLength: 1000

@@ -56,6 +56,33 @@ func (f *channelFakeRepo) ListChannelsByOwner(_ context.Context, ownerID uuid.UU
 	return out, nil
 }
 
+func (f *channelFakeRepo) UpdateChannel(_ context.Context, a sqlcgen.UpdateChannelParams) (sqlcgen.Channel, error) {
+	for k, ch := range f.byHandle {
+		if ch.ID == a.ID {
+			if a.DisplayName != nil {
+				ch.DisplayName = *a.DisplayName
+			}
+			if a.Description != nil {
+				ch.Description = *a.Description
+			}
+			ch.UpdatedAt = time.Now()
+			f.byHandle[k] = ch
+			return ch, nil
+		}
+	}
+	return sqlcgen.Channel{}, errors.New("not found")
+}
+
+func (f *channelFakeRepo) DeleteChannel(_ context.Context, id uuid.UUID) error {
+	for k, ch := range f.byHandle {
+		if ch.ID == id {
+			delete(f.byHandle, k)
+			return nil
+		}
+	}
+	return nil
+}
+
 // channelServer wires real auth + channel services over in-memory fakes.
 func channelServer(t *testing.T) *Server {
 	t.Helper()
@@ -159,6 +186,78 @@ func TestGetChannelNotFound(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &er)
 	if er.Error.Code != "not_found" {
 		t.Errorf("code = %q, want not_found", er.Error.Code)
+	}
+}
+
+func sendJSONAuth(srv *Server, method, path, body, token string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	if token != "" {
+		req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestUpdateChannelOwnerAndNonOwner(t *testing.T) {
+	srv := channelServer(t)
+	ownerTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	_ = postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada_makes","display_name":"Ada Makes","description":"old"}`, ownerTok)
+
+	// Owner partial update succeeds.
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/channels/ada_makes", `{"description":"new"}`, ownerTok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner update = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var ch channelView
+	_ = json.Unmarshal(rec.Body.Bytes(), &ch)
+	if ch.Description != "new" || ch.DisplayName != "Ada Makes" {
+		t.Errorf("unexpected channel after update: %+v", ch)
+	}
+
+	// Non-owner is forbidden.
+	bad := sendJSONAuth(srv, http.MethodPatch, "/api/v1/channels/ada_makes", `{"description":"hax"}`, otherTok)
+	if bad.Code != http.StatusForbidden {
+		t.Fatalf("non-owner update = %d, want 403", bad.Code)
+	}
+
+	// Unauthenticated is 401.
+	if anon := sendJSONAuth(srv, http.MethodPatch, "/api/v1/channels/ada_makes", `{"description":"x"}`, ""); anon.Code != http.StatusUnauthorized {
+		t.Fatalf("anon update = %d, want 401", anon.Code)
+	}
+}
+
+func TestUpdateChannelValidation(t *testing.T) {
+	srv := channelServer(t)
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	_ = postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada_makes","display_name":"Ada Makes"}`, tok)
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/channels/ada_makes", `{}`, tok)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("empty patch = %d, want 422", rec.Code)
+	}
+}
+
+func TestDeleteChannelOwnerAndNonOwner(t *testing.T) {
+	srv := channelServer(t)
+	ownerTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	_ = postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada_makes","display_name":"Ada Makes"}`, ownerTok)
+
+	// Non-owner cannot delete.
+	if bad := sendJSONAuth(srv, http.MethodDelete, "/api/v1/channels/ada_makes", "", otherTok); bad.Code != http.StatusForbidden {
+		t.Fatalf("non-owner delete = %d, want 403", bad.Code)
+	}
+
+	// Owner deletes; then it is gone (public get 404).
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/channels/ada_makes", "", ownerTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("owner delete = %d, want 204", rec.Code)
+	}
+	get := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/channels/ada_makes", nil))
+	if get.Code != http.StatusNotFound {
+		t.Fatalf("get after delete = %d, want 404", get.Code)
 	}
 }
 

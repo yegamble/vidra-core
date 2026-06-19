@@ -20,6 +20,8 @@ var (
 	ErrConflict = errors.New("channel: handle already taken")
 	// ErrNotFound means no channel matches the lookup.
 	ErrNotFound = errors.New("channel: not found")
+	// ErrForbidden means the caller does not own the channel.
+	ErrForbidden = errors.New("channel: not owner")
 )
 
 // Repository is the data access the channel service needs. *sqlcgen.Queries
@@ -28,6 +30,8 @@ type Repository interface {
 	CreateChannel(ctx context.Context, arg sqlcgen.CreateChannelParams) (sqlcgen.Channel, error)
 	GetChannelByHandle(ctx context.Context, lowerHandle string) (sqlcgen.Channel, error)
 	ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.Channel, error)
+	UpdateChannel(ctx context.Context, arg sqlcgen.UpdateChannelParams) (sqlcgen.Channel, error)
+	DeleteChannel(ctx context.Context, id uuid.UUID) error
 }
 
 // Service holds the channel application logic.
@@ -77,6 +81,53 @@ func (s *Service) GetByHandle(ctx context.Context, handle string) (sqlcgen.Chann
 // ListOwn returns all channels owned by the given user, oldest first.
 func (s *Service) ListOwn(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.Channel, error) {
 	return s.repo.ListChannelsByOwner(ctx, ownerID)
+}
+
+// UpdateInput is a partial channel update: nil fields are left unchanged.
+type UpdateInput struct {
+	DisplayName *string
+	Description *string
+}
+
+// Update changes a channel's mutable fields. Only the owner may update; a
+// non-owner gets ErrForbidden and an unknown handle gets ErrNotFound. The handle
+// itself is immutable.
+func (s *Service) Update(ctx context.Context, ownerID uuid.UUID, handle string, in UpdateInput) (sqlcgen.Channel, error) {
+	ch, err := s.GetByHandle(ctx, handle)
+	if err != nil {
+		return sqlcgen.Channel{}, err
+	}
+	if ch.OwnerID != ownerID {
+		return sqlcgen.Channel{}, ErrForbidden
+	}
+	return s.repo.UpdateChannel(ctx, sqlcgen.UpdateChannelParams{
+		ID:          ch.ID,
+		DisplayName: trimPtr(in.DisplayName),
+		Description: trimPtr(in.Description),
+	})
+}
+
+// Delete removes a channel. Only the owner may delete; non-owner → ErrForbidden,
+// unknown handle → ErrNotFound.
+func (s *Service) Delete(ctx context.Context, ownerID uuid.UUID, handle string) error {
+	ch, err := s.GetByHandle(ctx, handle)
+	if err != nil {
+		return err
+	}
+	if ch.OwnerID != ownerID {
+		return ErrForbidden
+	}
+	return s.repo.DeleteChannel(ctx, ch.ID)
+}
+
+// trimPtr trims a non-nil string pointer's value, leaving nil untouched so a
+// COALESCE update skips the column.
+func trimPtr(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	t := strings.TrimSpace(*p)
+	return &t
 }
 
 // isUniqueViolation reports whether err is a PostgreSQL unique-constraint

@@ -57,6 +57,9 @@ curl -sX POST localhost:8080/api/v1/channels -H 'authorization: Bearer <token>' 
   -d '{"handle":"ada_makes","display_name":"Ada Makes","description":"things"}'
 curl -s localhost:8080/api/v1/me/channels -H 'authorization: Bearer <token>'  # list own
 curl -s localhost:8080/api/v1/channels/ada_makes                              # public page
+curl -sX PATCH localhost:8080/api/v1/channels/ada_makes -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"description":"updated"}'          # owner-only
+curl -sX DELETE localhost:8080/api/v1/channels/ada_makes -H 'authorization: Bearer <token>'  # owner-only
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

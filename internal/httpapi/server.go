@@ -167,6 +167,8 @@ func (s *Server) routes() {
 	if s.channelsvc != nil {
 		api.POST("/channels", s.handleCreateChannel, s.requireAuth)
 		api.GET("/channels/:handle", s.handleGetChannel)
+		api.PATCH("/channels/:handle", s.handleUpdateChannel, s.requireAuth)
+		api.DELETE("/channels/:handle", s.handleDeleteChannel, s.requireAuth)
 		api.GET("/me/channels", s.handleListMyChannels, s.requireAuth)
 	}
 }

@@ -52,6 +52,33 @@ func (f *fakeRepo) ListChannelsByOwner(_ context.Context, ownerID uuid.UUID) ([]
 	return out, nil
 }
 
+func (f *fakeRepo) UpdateChannel(_ context.Context, a sqlcgen.UpdateChannelParams) (sqlcgen.Channel, error) {
+	for k, ch := range f.byHandle {
+		if ch.ID == a.ID {
+			if a.DisplayName != nil {
+				ch.DisplayName = *a.DisplayName
+			}
+			if a.Description != nil {
+				ch.Description = *a.Description
+			}
+			ch.UpdatedAt = time.Now()
+			f.byHandle[k] = ch
+			return ch, nil
+		}
+	}
+	return sqlcgen.Channel{}, errors.New("not found")
+}
+
+func (f *fakeRepo) DeleteChannel(_ context.Context, id uuid.UUID) error {
+	for k, ch := range f.byHandle {
+		if ch.ID == id {
+			delete(f.byHandle, k)
+			return nil
+		}
+	}
+	return nil
+}
+
 func TestCreateChannel(t *testing.T) {
 	svc := NewService(newFakeRepo())
 	owner := uuid.New()
@@ -92,6 +119,64 @@ func TestGetByHandle(t *testing.T) {
 
 	if _, err := svc.GetByHandle(context.Background(), "ghost"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func strptr(s string) *string { return &s }
+
+func TestUpdateChannel(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	owner := uuid.New()
+	_, _ = svc.Create(context.Background(), owner, CreateInput{Handle: "ada", DisplayName: "Ada", Description: "old"})
+
+	// Partial update: only description changes.
+	ch, err := svc.Update(context.Background(), owner, "ada", UpdateInput{Description: strptr("new")})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if ch.Description != "new" || ch.DisplayName != "Ada" {
+		t.Errorf("unexpected update: %+v", ch)
+	}
+}
+
+func TestUpdateChannelNonOwnerForbidden(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	owner := uuid.New()
+	_, _ = svc.Create(context.Background(), owner, CreateInput{Handle: "ada", DisplayName: "Ada"})
+
+	_, err := svc.Update(context.Background(), uuid.New(), "ada", UpdateInput{DisplayName: strptr("Hax")})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("err = %v, want ErrForbidden", err)
+	}
+}
+
+func TestUpdateChannelNotFound(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	if _, err := svc.Update(context.Background(), uuid.New(), "ghost", UpdateInput{DisplayName: strptr("x")}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteChannel(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	owner := uuid.New()
+	_, _ = svc.Create(context.Background(), owner, CreateInput{Handle: "ada", DisplayName: "Ada"})
+
+	if err := svc.Delete(context.Background(), owner, "ada"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := svc.GetByHandle(context.Background(), "ada"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after delete err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteChannelNonOwnerForbidden(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	owner := uuid.New()
+	_, _ = svc.Create(context.Background(), owner, CreateInput{Handle: "ada", DisplayName: "Ada"})
+
+	if err := svc.Delete(context.Background(), uuid.New(), "ada"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("err = %v, want ErrForbidden", err)
 	}
 }
 

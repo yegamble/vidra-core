@@ -57,6 +57,9 @@ Channels: a channel is a publishing identity owned by a user. `POST /api/v1/chan
 (auth) creates one (`handle` 3–30 chars `[A-Za-z0-9_]`, unique case-insensitively →
 `409`); `GET /api/v1/me/channels` (auth) lists the caller's channels;
 `GET /api/v1/channels/{handle}` is the public channel page lookup (`404` when absent).
+`PATCH /api/v1/channels/{handle}` (owner-only, partial: `display_name`/`description`)
+and `DELETE /api/v1/channels/{handle}` (owner-only) manage it — a non-owner gets `403`.
+The handle is immutable after creation.
 
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects
