@@ -86,6 +86,80 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NodeInfoResponse"
+  /api/v1/auth/register:
+    post:
+      operationId: register
+      summary: Register a new account
+      description: >-
+        Creates an account and returns it with an access token. The first
+        account created on a fresh instance is granted the admin role. Rate
+        limited; subject to the standard request guards.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Account created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Malformed request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Username or email already taken.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: Log in
+      description: >-
+        Verifies credentials and returns an access token. Unknown account and
+        wrong password are reported identically (401) to prevent account
+        enumeration.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid email or password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account is disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     LivenessResponse:
@@ -201,3 +275,67 @@ components:
           properties:
             name:
               type: string
+    User:
+      type: object
+      required: [id, username, email, role, email_verified, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          example: ada
+        email:
+          type: string
+          example: ada@example.test
+        role:
+          type: string
+          enum: [user, moderator, admin]
+        email_verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 30
+          example: ada
+        email:
+          type: string
+          example: ada@example.test
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          format: password
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          example: ada@example.test
+        password:
+          type: string
+          format: password
+    AuthResponse:
+      type: object
+      required: [token, token_type, expires_in, user]
+      properties:
+        token:
+          type: string
+          description: Signed HS256 JWT access token.
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Access-token lifetime in seconds.
+          example: 900
+        user:
+          $ref: "#/components/schemas/User"

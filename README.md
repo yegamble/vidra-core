@@ -34,6 +34,13 @@ Request validation: handlers decode+validate input via `bindAndValidate`. Malfor
 bodies get `400 bad_request`; failed validation gets `422 unprocessable_entity` with a
 `fields` array (`{field, message}`) so forms can highlight the offending inputs.
 
+Auth: `POST /api/v1/auth/register` and `POST /api/v1/auth/login` create an account /
+verify credentials and return an HS256 JWT access token (`{token, token_type,
+expires_in, user}`). Passwords are bcrypt-hashed; the first account on a fresh instance
+is granted the `admin` role. Login reports unknown-account and wrong-password
+identically (`401`) to prevent enumeration. Configure signing via `JWT_SECRET`
+(required in production), `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_ACCESS_TTL`.
+
 Request guards: bodies over `HTTP_BODY_LIMIT` (default `8M`) are rejected with `413`;
 each request carries a `HTTP_REQUEST_TIMEOUT` (default `30s`) context deadline that
 handlers and DB/Redis calls observe (a fired deadline renders as a `503`

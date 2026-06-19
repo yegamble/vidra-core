@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // Store wraps a pgx connection pool.
@@ -40,6 +42,12 @@ func New(ctx context.Context, databaseURL string) (*Store, error) {
 		return nil, fmt.Errorf("store: ping: %w", err)
 	}
 	return &Store{Pool: pool}, nil
+}
+
+// Queries returns a typed sqlc query set bound to the pool. pgxpool.Pool
+// satisfies sqlcgen.DBTX, so callers get connection-per-query pooling for free.
+func (s *Store) Queries() *sqlcgen.Queries {
+	return sqlcgen.New(s.Pool)
 }
 
 // Ping checks database connectivity, bounded by ctx. Used by readiness probes.

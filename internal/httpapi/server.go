@@ -11,6 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
+	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
@@ -28,6 +29,8 @@ type Server struct {
 	rdb     Pinger
 	logger  *slog.Logger
 	limiter *ratelimit.Limiter
+	authsvc *auth.Service
+	authTTL time.Duration
 }
 
 // Option customises the Server during construction.
@@ -37,6 +40,16 @@ type Option func(*Server)
 // surface. When nil or unset, no rate limiting is applied — handy for unit tests.
 func WithRateLimiter(l *ratelimit.Limiter) Option {
 	return func(s *Server) { s.limiter = l }
+}
+
+// WithAuthService mounts the auth endpoints (register/login). ttl is the access
+// token lifetime, reported to clients as expires_in. When unset, the auth routes
+// are not registered.
+func WithAuthService(svc *auth.Service, ttl time.Duration) Option {
+	return func(s *Server) {
+		s.authsvc = svc
+		s.authTTL = ttl
+	}
 }
 
 // New constructs the HTTP server with middleware and routes registered. db and
@@ -132,6 +145,12 @@ func (s *Server) routes() {
 		api.Use(s.rateLimit(s.limiter))
 	}
 	api.GET("/nodeinfo", s.handleNodeInfo)
+
+	if s.authsvc != nil {
+		authGroup := api.Group("/auth")
+		authGroup.POST("/register", s.handleRegister)
+		authGroup.POST("/login", s.handleLogin)
+	}
 }
 
 // Handler exposes the underlying http.Handler for tests.

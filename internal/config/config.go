@@ -47,7 +47,17 @@ type Config struct {
 	RateLimitEnabled  bool
 	RateLimitRequests int
 	RateLimitWindow   time.Duration
+
+	// JWT signing for access tokens (HS256).
+	JWTSecret    string
+	JWTIssuer    string
+	JWTAudience  string
+	JWTAccessTTL time.Duration
 }
+
+// devJWTSecret is the obviously-fake signing key used only for local dev/test.
+// Production must override JWT_SECRET; validate() rejects this value in prod.
+const devJWTSecret = "dev-insecure-jwt-secret-change-me-0000000000000000"
 
 // Load reads configuration from the environment, applying safe development
 // defaults. It returns an error if a required value is missing or malformed.
@@ -71,6 +81,10 @@ func Load() (*Config, error) {
 		HTTPBodyLimit:       getEnv("HTTP_BODY_LIMIT", "8M"),
 		RateLimitEnabled:    getEnvBool("RATE_LIMIT_ENABLED", true),
 		RateLimitWindow:     getEnvDuration("RATE_LIMIT_WINDOW", time.Minute),
+		JWTSecret:           getEnv("JWT_SECRET", devJWTSecret),
+		JWTIssuer:           getEnv("JWT_ISSUER", "vidra"),
+		JWTAudience:         getEnv("JWT_AUDIENCE", "vidra"),
+		JWTAccessTTL:        getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
 	}
 
 	port, err := getEnvInt("HTTP_PORT", 8080)
@@ -118,6 +132,17 @@ func (c *Config) validate() error {
 		}
 		if c.RateLimitWindow <= 0 {
 			return fmt.Errorf("config: RATE_LIMIT_WINDOW must be positive when rate limiting is enabled")
+		}
+	}
+	if c.JWTAccessTTL <= 0 {
+		return fmt.Errorf("config: JWT_ACCESS_TTL must be positive")
+	}
+	if c.Environment == "production" {
+		if c.JWTSecret == devJWTSecret {
+			return fmt.Errorf("config: JWT_SECRET must be set in production (the dev default is not allowed)")
+		}
+		if len(c.JWTSecret) < 32 {
+			return fmt.Errorf("config: JWT_SECRET must be at least 32 bytes in production")
 		}
 	}
 	if c.Environment == "production" {

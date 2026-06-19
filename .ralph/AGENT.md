@@ -31,6 +31,14 @@ curl localhost:8080/healthz          # liveness
 curl localhost:8080/readyz           # readiness (postgres + redis)
 curl localhost:8080/version          # build version / commit / date
 curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
+
+# Auth (returns {token, token_type, expires_in, user}):
+curl -sX POST localhost:8080/api/v1/auth/register \
+  -H 'content-type: application/json' \
+  -d '{"username":"ada","email":"ada@example.test","password":"supersecret"}'
+curl -sX POST localhost:8080/api/v1/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"ada@example.test","password":"supersecret"}'
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

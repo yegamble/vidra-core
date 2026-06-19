@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/httpapi"
@@ -66,6 +67,10 @@ func run(logger *slog.Logger) error {
 		opts = append(opts, httpapi.WithRateLimiter(limiter))
 		logger.Info("rate limiting enabled", "requests", cfg.RateLimitRequests, "window", cfg.RateLimitWindow)
 	}
+
+	issuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
+	authsvc := auth.NewService(db.Queries(), issuer)
+	opts = append(opts, httpapi.WithAuthService(authsvc, cfg.JWTAccessTTL))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

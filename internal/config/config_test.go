@@ -73,6 +73,44 @@ func TestRateLimitRejectsNonPositiveWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestJWTDefaults(t *testing.T) {
+	for _, k := range []string{"JWT_SECRET", "JWT_ISSUER", "JWT_AUDIENCE", "JWT_ACCESS_TTL"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.JWTIssuer != "vidra" || cfg.JWTAudience != "vidra" {
+		t.Errorf("issuer/audience = %q/%q, want vidra/vidra", cfg.JWTIssuer, cfg.JWTAudience)
+	}
+	if cfg.JWTAccessTTL != 15*time.Minute {
+		t.Errorf("JWTAccessTTL = %v, want 15m", cfg.JWTAccessTTL)
+	}
+}
+
+func TestProductionRejectsDevJWTSecret(t *testing.T) {
+	t.Setenv("VIDRA_ENV", "production")
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("REDIS_URL", "redis://x")
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.test")
+	t.Setenv("JWT_SECRET", "") // falls back to the dev default
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for dev JWT secret in production, got nil")
+	}
+}
+
+func TestProductionAcceptsStrongJWTSecret(t *testing.T) {
+	t.Setenv("VIDRA_ENV", "production")
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("REDIS_URL", "redis://x")
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.test")
+	t.Setenv("JWT_SECRET", "a-sufficiently-long-production-secret-0001")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+}
+
 func TestLoadInvalidBodyLimit(t *testing.T) {
 	t.Setenv("HTTP_BODY_LIMIT", "not-a-size")
 	if _, err := Load(); err == nil {

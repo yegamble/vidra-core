@@ -102,7 +102,7 @@
 - [ ] Add config for HTTP server address/port.
 - [ ] Add config for PostgreSQL DSN/pool.
 - [ ] Add config for Redis URL/pool.
-- [ ] Add config for JWT keys/issuer/audience/expiry.
+- [x] Add config for JWT keys/issuer/audience/expiry. (`JWT_SECRET`/`JWT_ISSUER`/`JWT_AUDIENCE`/`JWT_ACCESS_TTL`; prod rejects the dev default and short secrets)
 - [ ] Add config for OAuth2 providers, disabled by default.
 - [ ] Add config for TOTP issuer.
 - [ ] Add config for CORS allowlist.
@@ -259,15 +259,15 @@
 # P4 — Auth, Accounts, and Identity
 
 - [ ] Implement registration enable/disable setting.
-- [ ] Implement account signup.
+- [x] Implement account signup. (`POST /api/v1/auth/register`, `internal/auth.Service.Register`; first account → admin; unique violation → 409; tested)
 - [ ] Implement email verification token flow placeholder or adapter boundary.
-- [ ] Implement login.
-- [ ] Implement refresh token/session rotation.
+- [x] Implement login. (`POST /api/v1/auth/login`, `internal/auth.Service.Login`; enumeration-safe 401; disabled → 403; tested)
+- [ ] Implement refresh token/session rotation. (sessions table exists; next slice)
 - [ ] Implement logout current session.
 - [ ] Implement logout all sessions.
 - [ ] Implement password reset request/complete flow.
-- [ ] Implement password hashing with modern algorithm.
-- [ ] Implement JWT claims and validation.
+- [x] Implement password hashing with modern algorithm. (bcrypt cost 12, `internal/auth/password.go`; salted, tested)
+- [x] Implement JWT claims and validation. (`internal/auth/jwt.go` HS256 via golang-jwt/v5; sub+role+iss+aud+exp, alg pinned; issue/parse tested incl. tamper/expiry/audience)
 - [ ] Implement OAuth2 provider abstraction.
 - [ ] Implement TOTP enrollment.
 - [ ] Implement TOTP verification.

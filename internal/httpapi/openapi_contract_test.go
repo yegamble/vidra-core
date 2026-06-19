@@ -7,7 +7,20 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/vidra/vidra-core/internal/auth"
 )
+
+// fullRouteOptions mounts every optional feature so the contract test enumerates
+// the complete route surface. The wired dependencies are never invoked — only
+// the routing table is inspected — so nil/zero collaborators are fine.
+func fullRouteOptions() []Option {
+	issuer := auth.NewTokenIssuer("contract-test-secret-contract-test-0", "vidra", "vidra", time.Minute)
+	return []Option{
+		WithAuthService(auth.NewService(nil, issuer), time.Minute),
+	}
+}
 
 // TestOpenAPIContract is the documentation stop guard: it fails the build when
 // the routes registered on the Echo router diverge from the operations declared
@@ -48,7 +61,10 @@ var echoParam = regexp.MustCompile(`:([^/]+)`)
 // the Echo router, with path parameters normalised to OpenAPI braces.
 func registeredOperations(t *testing.T) map[string]bool {
 	t.Helper()
-	srv := New(testConfig(), nil, nil)
+	// Construct the server with every optional feature mounted so the test sees
+	// the full route surface (auth routes are conditional on an auth service).
+	// The dependencies are never invoked — only the routing table is read.
+	srv := New(testConfig(), nil, nil, fullRouteOptions()...)
 	httpMethods := map[string]bool{
 		"GET": true, "POST": true, "PUT": true, "PATCH": true,
 		"DELETE": true, "HEAD": true, "OPTIONS": true,
