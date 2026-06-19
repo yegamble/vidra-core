@@ -1,0 +1,128 @@
+# Vidra Core — OpenAPI contract (source of truth for the HTTP API).
+#
+# DRIFT STOP GUARD: this file MUST stay in lock-step with the routes registered
+# in internal/httpapi. The TestOpenAPIContract test (internal/httpapi) fails the
+# build when a route is added, removed, or renamed without a matching edit here,
+# and the openapi.yml GitHub Actions workflow lints this file on every change.
+#
+# Editing rules for the drift guard's parser:
+#   - `paths:` at column 0.
+#   - each path item key indented 2 spaces (e.g. `  /healthz:`).
+#   - each operation (get/post/put/patch/delete) indented 4 spaces.
+# Keep that shape so the contract test can compare declared paths against the
+# live Echo router. When you add an endpoint in code, document it here in the
+# same change; when you remove one, delete its entry here in the same change.
+openapi: 3.1.0
+info:
+  title: Vidra Core API
+  version: 0.1.0
+  description: >-
+    HTTP API for Vidra — a clean-room, PeerTube-inspired federated video
+    platform. This document is the authoritative contract consumed by the
+    vidra-user frontend and validated in CI.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+paths:
+  /healthz:
+    get:
+      operationId: getLiveness
+      summary: Liveness probe
+      description: Reports that the process is up. Performs no dependency checks.
+      tags: [system]
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessResponse"
+  /readyz:
+    get:
+      operationId: getReadiness
+      summary: Readiness probe
+      description: >-
+        Reports whether all critical dependencies (PostgreSQL, Redis) are
+        reachable. Returns 503 when any configured dependency is unhealthy.
+      tags: [system]
+      responses:
+        "200":
+          description: All configured dependencies are reachable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: At least one configured dependency is unhealthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+  /api/v1/nodeinfo:
+    get:
+      operationId: getNodeInfo
+      summary: Instance discovery metadata
+      description: Minimal NodeInfo-style document describing this instance.
+      tags: [system]
+      responses:
+        "200":
+          description: Instance metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeInfoResponse"
+components:
+  schemas:
+    LivenessResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+    ComponentStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          description: One of ok, down, not_configured.
+          example: ok
+        error:
+          type: string
+          description: Present only when the component is down.
+    ReadinessResponse:
+      type: object
+      required: [status, components]
+      properties:
+        status:
+          type: string
+          description: ok when all dependencies are reachable, otherwise degraded.
+          example: ok
+        components:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ComponentStatus"
+    NodeInfoResponse:
+      type: object
+      required: [version, software, instance]
+      properties:
+        version:
+          type: string
+          example: 0.1.0
+        software:
+          type: object
+          required: [name, version]
+          properties:
+            name:
+              type: string
+              example: vidra
+            version:
+              type: string
+              example: 0.1.0
+        instance:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
