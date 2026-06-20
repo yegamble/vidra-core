@@ -96,23 +96,33 @@ func rowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 	}
 }
 
-func (f *fakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
-	var out []sqlcgen.Video
+func (f *fakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListVideosByChannelRow, error) {
+	var out []sqlcgen.ListVideosByChannelRow
 	for _, r := range f.videos {
 		if r.ChannelID == channelID {
-			out = append(out, rowToVideo(r))
+			out = append(out, sqlcgen.ListVideosByChannelRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
 }
 
-func (f *fakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
-	var out []sqlcgen.Video
+func (f *fakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error) {
+	var out []sqlcgen.ListPublicVideosByChannelRow
 	for _, r := range f.videos {
 		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
-			out = append(out, rowToVideo(r))
+			out = append(out, sqlcgen.ListPublicVideosByChannelRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
 }
 
@@ -186,15 +196,19 @@ func (f *fakeRepo) SetVideoState(_ context.Context, a sqlcgen.SetVideoStateParam
 	return rowToVideo(r), nil
 }
 
-func (f *fakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.Video, error) {
+func (f *fakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error) {
 	q := ""
 	if a.Query != nil {
 		q = strings.ToLower(*a.Query)
 	}
-	var all []sqlcgen.Video
+	var all []sqlcgen.SearchPublicVideosRow
 	for _, r := range f.videos {
 		if r.Privacy == "public" && r.State == "published" && strings.Contains(strings.ToLower(r.Title), q) {
-			all = append(all, rowToVideo(r))
+			all = append(all, sqlcgen.SearchPublicVideosRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
 		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
@@ -418,7 +432,7 @@ func TestSearchPublicMatchesTitleAndExcludesPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchPublic: %v", err)
 	}
-	if len(res) != 1 || res[0].Title != "Go concurrency" {
+	if len(res) != 1 || res[0].Video.Title != "Go concurrency" {
 		t.Errorf("search = %+v, want only the public Go video", res)
 	}
 }
@@ -436,7 +450,7 @@ func TestListByChannelVsPublic(t *testing.T) {
 		t.Errorf("ListByChannel = %d, want 2 (owner sees all states)", len(all))
 	}
 	pub, _ := svc.ListPublicByChannel(ctx, ch)
-	if len(pub) != 1 || pub[0].Privacy != "public" {
+	if len(pub) != 1 || pub[0].Video.Privacy != "public" {
 		t.Errorf("ListPublicByChannel = %+v, want 1 public", pub)
 	}
 }

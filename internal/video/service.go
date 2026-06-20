@@ -50,10 +50,10 @@ var acceptedVideoExts = map[string]bool{
 type Repository interface {
 	CreateVideo(ctx context.Context, arg sqlcgen.CreateVideoParams) (sqlcgen.Video, error)
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
-	ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error)
-	ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error)
+	ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListVideosByChannelRow, error)
+	ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
-	SearchPublicVideos(ctx context.Context, arg sqlcgen.SearchPublicVideosParams) ([]sqlcgen.Video, error)
+	SearchPublicVideos(ctx context.Context, arg sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error)
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
 	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
@@ -437,23 +437,54 @@ func (s *Service) Delete(ctx context.Context, ownerID, id uuid.UUID) error {
 	return s.repo.DeleteVideo(ctx, id)
 }
 
-// ListByChannel returns every video in a channel (the owner's view), newest first.
-func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
-	return s.repo.ListVideosByChannel(ctx, channelID)
+// ListByChannel returns every video in a channel (the owner's view), newest
+// first, with discovery-card data.
+func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]FeedItem, error) {
+	rows, err := s.repo.ListVideosByChannel(ctx, channelID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail))
+	}
+	return items, nil
 }
 
-// ListPublicByChannel returns only the channel's public videos (the anonymous
-// view), newest first.
-func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
-	return s.repo.ListPublicVideosByChannel(ctx, channelID)
+// ListPublicByChannel returns only the channel's public, published videos (the
+// anonymous view), newest first, with discovery-card data.
+func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID) ([]FeedItem, error) {
+	rows, err := s.repo.ListPublicVideosByChannel(ctx, channelID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail))
+	}
+	return items, nil
 }
 
-// FeedItem is a public video plus discovery-card data: its view count and
-// whether a poster image is available.
+// FeedItem is a video plus discovery-card data: its view count and whether a
+// poster image is available.
 type FeedItem struct {
 	Video        sqlcgen.Video
 	Views        int64
 	HasThumbnail bool
+}
+
+// newFeedItem packages a video's columns and card data into a FeedItem. It lets
+// the (structurally identical but distinct) sqlc row types from the feed,
+// search, and channel-list queries share one conversion.
+func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state string, createdAt, updatedAt time.Time, views int64, hasThumbnail bool) FeedItem {
+	return FeedItem{
+		Video: sqlcgen.Video{
+			ID: id, ChannelID: channelID, Title: title, Description: description,
+			Privacy: privacy, State: state, CreatedAt: createdAt, UpdatedAt: updatedAt,
+		},
+		Views:        views,
+		HasThumbnail: hasThumbnail,
+	}
 }
 
 // feedSorts are the accepted feed ordering modes.
@@ -481,28 +512,30 @@ func (s *Service) ListPublic(ctx context.Context, sort string, limit, offset int
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, FeedItem{
-			Video: sqlcgen.Video{
-				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
-				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-			},
-			Views:        r.Views,
-			HasThumbnail: r.HasThumbnail,
-		})
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail))
 	}
 	return items, nil
 }
 
-// SearchPublic returns public videos whose title matches query (case-insensitive
-// substring, ranked by trigram similarity then recency), paginated. The caller
-// validates/clamps query, limit, and offset.
-func (s *Service) SearchPublic(ctx context.Context, query string, limit, offset int32) ([]sqlcgen.Video, error) {
+// SearchPublic returns public, published videos whose title matches query
+// (case-insensitive substring, ranked by trigram similarity then recency),
+// paginated, with discovery-card data. The caller validates/clamps query,
+// limit, and offset.
+func (s *Service) SearchPublic(ctx context.Context, query string, limit, offset int32) ([]FeedItem, error) {
 	q := query
-	return s.repo.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
+	rows, err := s.repo.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
 		Query:        &q,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail))
+	}
+	return items, nil
 }
 
 // trimPtr trims a non-nil string pointer's value, leaving nil untouched so a

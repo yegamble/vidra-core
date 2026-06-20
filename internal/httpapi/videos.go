@@ -240,13 +240,13 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	if offset < 0 {
 		offset = 0
 	}
-	vids, err := s.videosvc.SearchPublic(c.Request().Context(), q, int32(limit), int32(offset))
+	items, err := s.videosvc.SearchPublic(c.Request().Context(), q, int32(limit), int32(offset))
 	if err != nil {
 		return err
 	}
-	views := make([]videoView, 0, len(vids))
-	for _, v := range vids {
-		views = append(views, newVideoView(v))
+	views := make([]videoView, 0, len(items))
+	for _, it := range items {
+		views = append(views, feedItemView(it))
 	}
 	return c.JSON(http.StatusOK, videoSearchResponse{Query: q, Videos: views, Limit: limit, Offset: offset})
 }
@@ -284,18 +284,18 @@ func (s *Server) handleListChannelVideos(c echo.Context) error {
 		return channelError(err) // ErrNotFound -> 404
 	}
 
-	var vids []sqlcgen.Video
+	var items []video.FeedItem
 	if userID, _, ok := principalFromContext(c); ok && userID == ch.OwnerID {
-		vids, err = s.videosvc.ListByChannel(ctx, ch.ID)
+		items, err = s.videosvc.ListByChannel(ctx, ch.ID)
 	} else {
-		vids, err = s.videosvc.ListPublicByChannel(ctx, ch.ID)
+		items, err = s.videosvc.ListPublicByChannel(ctx, ch.ID)
 	}
 	if err != nil {
 		return err
 	}
-	views := make([]videoView, 0, len(vids))
-	for _, v := range vids {
-		views = append(views, newVideoView(v))
+	views := make([]videoView, 0, len(items))
+	for _, it := range items {
+		views = append(views, feedItemView(it))
 	}
 	return c.JSON(http.StatusOK, videoListResponse{Videos: views})
 }

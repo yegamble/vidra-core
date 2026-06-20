@@ -372,7 +372,8 @@
 - [ ] Implement share/embed metadata endpoint.
 - [ ] Implement oEmbed or documented difference.
 - [ ] Implement OpenGraph metadata.
-- [x] Implement search endpoint with PostgreSQL trigram search. (`GET /api/v1/videos/search?q=` (public, paginated) over public video titles; ILIKE filter ranked by `similarity()`; migration `0007` adds a `gin_trgm_ops` index on `videos.title`; sqlc `SearchPublicVideos`; `internal/video.SearchPublic`; tested. Channel/account search still TODO.)
+- [x] Implement search endpoint with PostgreSQL trigram search. (`GET /api/v1/videos/search?q=` (public, paginated) over public video titles; ILIKE filter ranked by `similarity()`; migration `0007` adds a `gin_trgm_ops` index on `videos.title`; sqlc `SearchPublicVideos`; `internal/video.SearchPublic`; tested. Results carry `views`/`has_thumbnail` cards. Channel/account search still TODO.)
+- [x] Discovery-card consistency: search results and channel video lists (`GET /api/v1/channels/:handle/videos`, owner + public views) now LEFT JOIN view counts + thumbnail availability like the feed, so every video grid returns `views` + `has_thumbnail`. (`internal/video.FeedItem` reused; enriched `SearchPublicVideos`/`ListVideosByChannel`/`ListPublicVideosByChannel`; tested.)
 - [ ] Implement tags/categories/languages/licenses config endpoints.
 - [x] Implement view count recording with abuse/rate-limit protection. (`POST /api/v1/videos/:id/view` (optionalAuth) records a view in a `video_view_counts` side table (migration 0011), deduped per viewer per hour via Redis SETNX (`cache.Deduper`, injected `video.ViewDeduper` seam; hashed user-id/IP key — no raw PII). Visibility mirrors detail; only published videos count; always 204. `views` exposed on detail. Surfacing on feed + trending sort still TODO.)
 - [ ] Implement watch progress endpoint.

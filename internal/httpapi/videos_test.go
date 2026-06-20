@@ -106,23 +106,33 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 	}
 }
 
-func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
-	var out []sqlcgen.Video
+func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListVideosByChannelRow, error) {
+	var out []sqlcgen.ListVideosByChannelRow
 	for _, r := range f.videos {
 		if r.ChannelID == channelID {
-			out = append(out, vidRowToVideo(r))
+			out = append(out, sqlcgen.ListVideosByChannelRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
 }
 
-func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
-	var out []sqlcgen.Video
+func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error) {
+	var out []sqlcgen.ListPublicVideosByChannelRow
 	for _, r := range f.videos {
 		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
-			out = append(out, vidRowToVideo(r))
+			out = append(out, sqlcgen.ListPublicVideosByChannelRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
 }
 
@@ -198,15 +208,19 @@ func (f *videoFakeRepo) SetVideoState(_ context.Context, a sqlcgen.SetVideoState
 	return vidRowToVideo(r), nil
 }
 
-func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.Video, error) {
+func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error) {
 	q := ""
 	if a.Query != nil {
 		q = strings.ToLower(*a.Query)
 	}
-	var all []sqlcgen.Video
+	var all []sqlcgen.SearchPublicVideosRow
 	for _, r := range f.videos {
 		if r.Privacy == "public" && r.State == "published" && strings.Contains(strings.ToLower(r.Title), q) {
-			all = append(all, vidRowToVideo(r))
+			all = append(all, sqlcgen.SearchPublicVideosRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
 		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
@@ -1084,5 +1098,41 @@ func TestPublicFeedSortAndCards(t *testing.T) {
 
 	if got := feed("?sort=bogus").Sort; got != "recent" {
 		t.Errorf("unknown sort echoed %q, want recent (fallback)", got)
+	}
+}
+
+func TestSearchAndChannelListCarryCards(t *testing.T) {
+	srv := videoServerCfg(t, testConfig(), video.WithThumbnailer(fakeThumbnailer{jpg: []byte("\xff\xd8jpg")}))
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Go rocks","privacy":"public"}`)
+	_ = postView(srv, id, "")
+
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d; body=%s", path, rec.Code, rec.Body.String())
+		}
+		return rec
+	}
+
+	// Search results carry view count + poster availability.
+	var sr videoSearchResponse
+	_ = json.Unmarshal(get("/api/v1/videos/search?q=go").Body.Bytes(), &sr)
+	if len(sr.Videos) != 1 {
+		t.Fatalf("search = %+v, want 1 result", sr.Videos)
+	}
+	if c := sr.Videos[0]; c.Views == nil || *c.Views != 1 || c.HasThumbnail == nil || !*c.HasThumbnail {
+		t.Errorf("search card missing data: views=%v has_thumbnail=%v", c.Views, c.HasThumbnail)
+	}
+
+	// Channel video list carries them too.
+	var lr videoListResponse
+	_ = json.Unmarshal(get("/api/v1/channels/ada/videos").Body.Bytes(), &lr)
+	if len(lr.Videos) != 1 {
+		t.Fatalf("channel list = %+v, want 1", lr.Videos)
+	}
+	if c := lr.Videos[0]; c.Views == nil || *c.Views != 1 || c.HasThumbnail == nil || !*c.HasThumbnail {
+		t.Errorf("channel card missing data: views=%v has_thumbnail=%v", c.Views, c.HasThumbnail)
 	}
 }

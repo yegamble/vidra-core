@@ -93,21 +93,42 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 }
 
 const listPublicVideosByChannel = `-- name: ListPublicVideosByChannel :many
-SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
-FROM videos
-WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
-ORDER BY created_at DESC
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail
+FROM videos v
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+ORDER BY v.created_at DESC
 `
 
-func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]Video, error) {
+type ListPublicVideosByChannelRow struct {
+	ID           uuid.UUID `json:"id"`
+	ChannelID    uuid.UUID `json:"channel_id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Privacy      string    `json:"privacy"`
+	State        string    `json:"state"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Views        int64     `json:"views"`
+	HasThumbnail bool      `json:"has_thumbnail"`
+}
+
+// A channel's public, published videos with discovery-card data.
+func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]ListPublicVideosByChannelRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosByChannel, channelID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Video
+	var items []ListPublicVideosByChannelRow
 	for rows.Next() {
-		var i Video
+		var i ListPublicVideosByChannelRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ChannelID,
@@ -117,6 +138,8 @@ func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Views,
+			&i.HasThumbnail,
 		); err != nil {
 			return nil, err
 		}
@@ -206,21 +229,42 @@ func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVide
 }
 
 const listVideosByChannel = `-- name: ListVideosByChannel :many
-SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
-FROM videos
-WHERE channel_id = $1
-ORDER BY created_at DESC
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail
+FROM videos v
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE v.channel_id = $1
+ORDER BY v.created_at DESC
 `
 
-func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]Video, error) {
+type ListVideosByChannelRow struct {
+	ID           uuid.UUID `json:"id"`
+	ChannelID    uuid.UUID `json:"channel_id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Privacy      string    `json:"privacy"`
+	State        string    `json:"state"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Views        int64     `json:"views"`
+	HasThumbnail bool      `json:"has_thumbnail"`
+}
+
+// A channel's videos (owner view, all states) with discovery-card data.
+func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]ListVideosByChannelRow, error) {
 	rows, err := q.db.Query(ctx, listVideosByChannel, channelID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Video
+	var items []ListVideosByChannelRow
 	for rows.Next() {
-		var i Video
+		var i ListVideosByChannelRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ChannelID,
@@ -230,6 +274,8 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) 
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Views,
+			&i.HasThumbnail,
 		); err != nil {
 			return nil, err
 		}
@@ -242,10 +288,18 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) 
 }
 
 const searchPublicVideos = `-- name: SearchPublicVideos :many
-SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
-FROM videos
-WHERE privacy = 'public' AND state = 'published' AND title ILIKE '%' || $1 || '%'
-ORDER BY similarity(title, $1) DESC, created_at DESC, id DESC
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail
+FROM videos v
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE v.privacy = 'public' AND v.state = 'published'
+  AND v.title ILIKE '%' || $1 || '%'
+ORDER BY similarity(v.title, $1) DESC, v.created_at DESC, v.id DESC
 LIMIT $3 OFFSET $2
 `
 
@@ -255,15 +309,29 @@ type SearchPublicVideosParams struct {
 	ResultLimit  int32   `json:"result_limit"`
 }
 
-func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideosParams) ([]Video, error) {
+type SearchPublicVideosRow struct {
+	ID           uuid.UUID `json:"id"`
+	ChannelID    uuid.UUID `json:"channel_id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Privacy      string    `json:"privacy"`
+	State        string    `json:"state"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Views        int64     `json:"views"`
+	HasThumbnail bool      `json:"has_thumbnail"`
+}
+
+// Public, published title search with discovery-card data.
+func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideosParams) ([]SearchPublicVideosRow, error) {
 	rows, err := q.db.Query(ctx, searchPublicVideos, arg.Query, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Video
+	var items []SearchPublicVideosRow
 	for rows.Next() {
-		var i Video
+		var i SearchPublicVideosRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ChannelID,
@@ -273,6 +341,8 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Views,
+			&i.HasThumbnail,
 		); err != nil {
 			return nil, err
 		}

@@ -601,7 +601,8 @@ paths:
       summary: List a channel's videos
       description: >-
         The channel owner (bearer token) sees all of their videos (any state);
-        everyone else sees only public, published ones.
+        everyone else sees only public, published ones. Each item carries its
+        view count and whether a poster image exists.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -674,8 +675,9 @@ paths:
       summary: Search public videos by title
       description: >-
         Fuzzy (trigram) search over public, published video titles, ranked by
-        similarity then recency. No auth required. Requires a non-empty q
-        (<= 100 chars); paginated with limit (1–100, default 20) and offset (>= 0).
+        similarity then recency. Each result carries its view count and whether a
+        poster image exists. No auth required. Requires a non-empty q (<= 100
+        chars); paginated with limit (1–100, default 20) and offset (>= 0).
       tags: [videos]
       parameters:
         - name: q

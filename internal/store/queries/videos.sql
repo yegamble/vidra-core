@@ -11,16 +11,32 @@ JOIN channels c ON c.id = v.channel_id
 WHERE v.id = $1;
 
 -- name: ListVideosByChannel :many
-SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
-FROM videos
-WHERE channel_id = $1
-ORDER BY created_at DESC;
+-- A channel's videos (owner view, all states) with discovery-card data.
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail
+FROM videos v
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE v.channel_id = $1
+ORDER BY v.created_at DESC;
 
 -- name: ListPublicVideosByChannel :many
-SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
-FROM videos
-WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
-ORDER BY created_at DESC;
+-- A channel's public, published videos with discovery-card data.
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail
+FROM videos v
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+ORDER BY v.created_at DESC;
 
 -- name: ListPublicVideosSorted :many
 -- The public feed, joined with view counts and thumbnail availability so cards
@@ -48,10 +64,19 @@ ORDER BY
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: SearchPublicVideos :many
-SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
-FROM videos
-WHERE privacy = 'public' AND state = 'published' AND title ILIKE '%' || sqlc.arg('query') || '%'
-ORDER BY similarity(title, sqlc.arg('query')) DESC, created_at DESC, id DESC
+-- Public, published title search with discovery-card data.
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail
+FROM videos v
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE v.privacy = 'public' AND v.state = 'published'
+  AND v.title ILIKE '%' || sqlc.arg('query') || '%'
+ORDER BY similarity(v.title, sqlc.arg('query')) DESC, v.created_at DESC, v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: UpdateVideo :one

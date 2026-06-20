@@ -83,7 +83,9 @@ age; unknown → recent) and paginated with `?limit` 1–100 default 20 and `?of
 Each feed item carries its `views` and `has_thumbnail` so cards have what they
 need (the query LEFT JOINs `video_view_counts` and checks for a stored poster).
 `GET /api/v1/videos/search?q=` fuzzy-searches
-public titles (pg_trgm, ranked by similarity then recency; same pagination).
+public titles (pg_trgm, ranked by similarity then recency; same pagination). Search
+results and the channel video lists (`GET /api/v1/channels/{handle}/videos`) carry the
+same `views`/`has_thumbnail` card data as the feed, so every video grid is consistent.
 `POST /api/v1/videos/{id}/file` (owner-only, `multipart/form-data` with a single
 `file` part) stores the original through the storage backend, then finalises the
 video: `draft → processing → published` (or `failed` if a configured media probe
