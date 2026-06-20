@@ -23,3 +23,9 @@ SET display_name = COALESCE(sqlc.narg('display_name'), display_name),
     updated_at   = now()
 WHERE id = sqlc.arg('id')
 RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio;
+
+-- name: DeactivateUser :exec
+UPDATE users
+SET is_active  = FALSE,
+    updated_at = now()
+WHERE id = $1;

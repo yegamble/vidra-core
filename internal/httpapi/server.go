@@ -209,6 +209,7 @@ func (s *Server) routes() {
 		authGroup.POST("/verify-email/confirm", s.handleConfirmEmailVerification)
 		authGroup.GET("/me", s.handleMe, s.requireAuth)
 		authGroup.PATCH("/me", s.handleUpdateMe, s.requireAuth)
+		authGroup.POST("/me/deactivate", s.handleDeactivateAccount, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
 	}
 

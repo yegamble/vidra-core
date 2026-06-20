@@ -393,6 +393,52 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/me/deactivate:
+    post:
+      operationId: deactivateAccount
+      summary: Deactivate the current account
+      description: >-
+        Disables the authenticated account after confirming its password, and
+        revokes all of its sessions (signs out everywhere). A disabled account
+        cannot log in and its tokens stop resolving; deactivation is reversible
+        by an administrator. Requires a bearer access token. Hard deletion is a
+        separate, policy-gated flow.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  format: password
+                  description: The account's current password, for confirmation.
+      responses:
+        "204":
+          description: The account is deactivated and all sessions are revoked.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The supplied password is incorrect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/auth/verify-email:
     post:
       operationId: requestEmailVerification

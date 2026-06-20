@@ -59,6 +59,18 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const deactivateUser = `-- name: DeactivateUser :exec
+UPDATE users
+SET is_active  = FALSE,
+    updated_at = now()
+WHERE id = $1
+`
+
+func (q *Queries) DeactivateUser(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deactivateUser, id)
+	return err
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
 FROM users

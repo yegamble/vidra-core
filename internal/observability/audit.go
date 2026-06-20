@@ -25,6 +25,7 @@ const (
 	ActionPasswordResetComplete = "auth.password_reset.complete"
 	ActionEmailVerifyRequest    = "auth.email_verify.request"
 	ActionEmailVerifyConfirm    = "auth.email_verify.confirm"
+	ActionAccountDeactivate     = "auth.account.deactivate"
 )
 
 // sensitiveKeys is the canonical denylist of structured-log field names that

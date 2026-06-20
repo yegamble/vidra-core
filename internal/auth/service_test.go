@@ -78,6 +78,18 @@ func (f *fakeRepo) SetUserEmailVerified(_ context.Context, id uuid.UUID) error {
 	return errors.New("not found")
 }
 
+func (f *fakeRepo) DeactivateUser(_ context.Context, id uuid.UUID) error {
+	for k, u := range f.byEmail {
+		if u.ID == id {
+			u.IsActive = false
+			u.UpdatedAt = time.Now()
+			f.byEmail[k] = u
+			return nil
+		}
+	}
+	return errors.New("not found")
+}
+
 func (f *fakeRepo) CreatePasswordResetToken(_ context.Context, a sqlcgen.CreatePasswordResetTokenParams) (sqlcgen.PasswordResetToken, error) {
 	t := sqlcgen.PasswordResetToken{
 		ID: uuid.New(), UserID: a.UserID, TokenHash: a.TokenHash,

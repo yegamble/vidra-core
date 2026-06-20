@@ -421,3 +421,44 @@ func (s *Server) handleConfirmEmailVerification(c echo.Context) error {
 	s.audit(c, observability.ActionEmailVerifyConfirm, observability.ResultSuccess, "", "")
 	return c.NoContent(http.StatusNoContent)
 }
+
+// deactivateAccountRequest is the POST /api/v1/auth/me/deactivate body. The
+// current password is required to confirm a sensitive self-service action (so a
+// stolen access token alone cannot disable the account).
+type deactivateAccountRequest struct {
+	Password string `json:"password"`
+}
+
+func (r deactivateAccountRequest) Validate() []FieldError {
+	if r.Password == "" {
+		return []FieldError{{Field: "password", Message: "is required"}}
+	}
+	return nil
+}
+
+// handleDeactivateAccount disables the authenticated account after confirming
+// its password, signing it out everywhere. Behind requireAuth. 204 on success;
+// a wrong password is 403. Deactivation is reversible by an administrator; hard
+// deletion is a separate, policy-gated flow.
+func (s *Server) handleDeactivateAccount(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	var in deactivateAccountRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := s.authsvc.DeactivateAccount(c.Request().Context(), userID, in.Password); err != nil {
+		switch {
+		case errors.Is(err, auth.ErrInvalidPassword):
+			s.audit(c, observability.ActionAccountDeactivate, observability.ResultFailure, userID.String(), "invalid_password")
+			return echo.NewHTTPError(http.StatusForbidden, "incorrect password")
+		case errors.Is(err, auth.ErrAccountNotFound):
+			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
+		}
+		return err
+	}
+	s.audit(c, observability.ActionAccountDeactivate, observability.ResultSuccess, userID.String(), "")
+	return c.NoContent(http.StatusNoContent)
+}

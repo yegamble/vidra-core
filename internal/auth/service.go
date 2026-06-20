@@ -24,6 +24,9 @@ var (
 	ErrAccountDisabled = errors.New("auth: account is disabled")
 	// ErrInvalidRefresh means the refresh token is unknown, revoked, or expired.
 	ErrInvalidRefresh = errors.New("auth: invalid or expired refresh token")
+	// ErrInvalidPassword means a password confirmation (e.g. for a sensitive
+	// self-service action) did not match the account's password.
+	ErrInvalidPassword = errors.New("auth: incorrect password")
 )
 
 // Repository is the data access the auth service needs. *sqlcgen.Queries
@@ -35,6 +38,7 @@ type Repository interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	CountUsers(ctx context.Context) (int64, error)
 	UpdateUserProfile(ctx context.Context, arg sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error)
+	DeactivateUser(ctx context.Context, id uuid.UUID) error
 
 	CreateSession(ctx context.Context, arg sqlcgen.CreateSessionParams) (sqlcgen.CreateSessionRow, error)
 	GetSessionByRefreshHash(ctx context.Context, refreshHash string) (sqlcgen.GetSessionByRefreshHashRow, error)

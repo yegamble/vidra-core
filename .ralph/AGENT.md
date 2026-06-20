@@ -55,6 +55,11 @@ curl -sX POST localhost:8080/api/v1/auth/logout \
 # Sign out everywhere (revokes all sessions for the bearer's account):
 curl -sX POST localhost:8080/api/v1/auth/logout-all -H 'authorization: Bearer <token>'
 
+# Deactivate the current account (re-confirms password; disables + signs out
+# everywhere; reversible by an admin):
+curl -sX POST localhost:8080/api/v1/auth/me/deactivate -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"password":"<current-password>"}'
+
 # Password reset (request is always 202 — never reveals if the email exists; the
 # raw token is delivered by the mailer adapter, a no-op until a provider is wired):
 curl -sX POST localhost:8080/api/v1/auth/password-reset \

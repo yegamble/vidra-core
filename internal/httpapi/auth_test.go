@@ -82,6 +82,18 @@ func (f *authFakeRepo) SetUserEmailVerified(_ context.Context, id uuid.UUID) err
 	return errors.New("not found")
 }
 
+func (f *authFakeRepo) DeactivateUser(_ context.Context, id uuid.UUID) error {
+	for k, u := range f.users {
+		if u.ID == id {
+			u.IsActive = false
+			u.UpdatedAt = time.Now()
+			f.users[k] = u
+			return nil
+		}
+	}
+	return errors.New("not found")
+}
+
 func (f *authFakeRepo) CreatePasswordResetToken(_ context.Context, a sqlcgen.CreatePasswordResetTokenParams) (sqlcgen.PasswordResetToken, error) {
 	t := sqlcgen.PasswordResetToken{
 		ID: uuid.New(), UserID: a.UserID, TokenHash: a.TokenHash,
@@ -686,6 +698,51 @@ func TestEmailVerificationConfirmRejectsBadToken(t *testing.T) {
 func TestEmailVerificationConfirmValidatesToken(t *testing.T) {
 	srv, _ := authServerWithMailer(t)
 	rec := postTo(srv, "/api/v1/auth/verify-email/confirm", `{}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
+	}
+}
+
+func TestDeactivateAccountFlow(t *testing.T) {
+	srv := authServer(t)
+	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	// Wrong password is rejected and leaves the account active.
+	bad := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/deactivate", `{"password":"wrong"}`, reg.Token)
+	if bad.Code != http.StatusForbidden {
+		t.Fatalf("wrong-password status = %d, want 403", bad.Code)
+	}
+	if me := getWithAuth(srv, "/api/v1/auth/me", reg.Token); me.Code != http.StatusOK {
+		t.Fatalf("account should still be usable after a failed deactivate: /me = %d", me.Code)
+	}
+
+	// Correct password deactivates → 204.
+	ok := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/deactivate", `{"password":"supersecret"}`, reg.Token)
+	if ok.Code != http.StatusNoContent {
+		t.Fatalf("deactivate status = %d, want 204; body=%s", ok.Code, ok.Body.String())
+	}
+
+	// Login is now refused (account disabled), and the access token stops resolving.
+	if login := postTo(srv, "/api/v1/auth/login", `{"email":"ada@example.test","password":"supersecret"}`); login.Code != http.StatusForbidden {
+		t.Errorf("login after deactivate = %d, want 403", login.Code)
+	}
+	if me := getWithAuth(srv, "/api/v1/auth/me", reg.Token); me.Code != http.StatusUnauthorized {
+		t.Errorf("/me after deactivate = %d, want 401", me.Code)
+	}
+}
+
+func TestDeactivateAccountRequiresAuth(t *testing.T) {
+	srv := authServer(t)
+	rec := postTo(srv, "/api/v1/auth/me/deactivate", `{"password":"supersecret"}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 without a token", rec.Code)
+	}
+}
+
+func TestDeactivateAccountValidatesPassword(t *testing.T) {
+	srv := authServer(t)
+	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/deactivate", `{}`, reg.Token)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want 422", rec.Code)
 	}
