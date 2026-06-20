@@ -171,6 +171,7 @@ type videoListResponse struct {
 // videoFeedResponse is the paginated cross-channel public feed.
 type videoFeedResponse struct {
 	Videos []videoView `json:"videos"`
+	Sort   string      `json:"sort"`
 	Limit  int         `json:"limit"`
 	Offset int         `json:"offset"`
 }
@@ -180,23 +181,37 @@ const (
 	maxVideoFeedLimit     = 100
 )
 
-// handleListPublicVideos returns the public, newest-first cross-channel feed.
-// No auth required. Pagination via ?limit (1–100, default 20) and ?offset (>=0).
+// feedItemView projects a feed item, including its discovery-card data (view
+// count and poster availability).
+func feedItemView(it video.FeedItem) videoView {
+	v := newVideoView(it.Video)
+	views := it.Views
+	v.Views = &views
+	has := it.HasThumbnail
+	v.HasThumbnail = &has
+	return v
+}
+
+// handleListPublicVideos returns the public cross-channel feed. No auth
+// required. Ordered by ?sort (recent|popular|trending, default recent; unknown
+// values fall back to recent). Each item carries its view count and whether a
+// poster image exists. Pagination via ?limit (1–100, default 20) and ?offset (>=0).
 func (s *Server) handleListPublicVideos(c echo.Context) error {
+	sort := video.NormalizeFeedSort(c.QueryParam("sort"))
 	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
 	offset := queryInt(c, "offset", 0)
 	if offset < 0 {
 		offset = 0
 	}
-	vids, err := s.videosvc.ListPublic(c.Request().Context(), int32(limit), int32(offset))
+	items, err := s.videosvc.ListPublic(c.Request().Context(), sort, int32(limit), int32(offset))
 	if err != nil {
 		return err
 	}
-	views := make([]videoView, 0, len(vids))
-	for _, v := range vids {
-		views = append(views, newVideoView(v))
+	views := make([]videoView, 0, len(items))
+	for _, it := range items {
+		views = append(views, feedItemView(it))
 	}
-	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: sort, Limit: limit, Offset: offset})
 }
 
 // maxSearchQueryLen bounds the search term to keep queries cheap.

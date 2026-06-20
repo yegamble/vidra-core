@@ -77,8 +77,12 @@ id; a `private` video is returned only to its owner (bearer token) and is `404` 
 everyone else so its existence is not leaked. `PATCH`/`DELETE /api/v1/videos/{id}`
 (owner-only; non-owner/unknown → `404`) edit/remove it. `GET /api/v1/channels/{handle}/videos`
 lists a channel's videos — all of them for the owner, public-only for everyone else.
-`GET /api/v1/videos` is the public cross-channel feed (newest-first; paginated with
-`?limit` 1–100 default 20 and `?offset`). `GET /api/v1/videos/search?q=` fuzzy-searches
+`GET /api/v1/videos` is the public cross-channel feed, ordered by `?sort`
+(`recent` default, `popular` = most all-time views, `trending` = views decayed by
+age; unknown → recent) and paginated with `?limit` 1–100 default 20 and `?offset`.
+Each feed item carries its `views` and `has_thumbnail` so cards have what they
+need (the query LEFT JOINs `video_view_counts` and checks for a stored poster).
+`GET /api/v1/videos/search?q=` fuzzy-searches
 public titles (pg_trgm, ranked by similarity then recency; same pagination).
 `POST /api/v1/videos/{id}/file` (owner-only, `multipart/form-data` with a single
 `file` part) stores the original through the storage backend, then finalises the

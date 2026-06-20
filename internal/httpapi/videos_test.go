@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -220,23 +221,50 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 	return all[lo:hi], nil
 }
 
-func (f *videoFakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error) {
-	var all []sqlcgen.Video
-	for _, r := range f.videos {
-		if r.Privacy == "public" && r.State == "published" {
-			all = append(all, vidRowToVideo(r))
+func (f *videoFakeRepo) hasThumb(id uuid.UUID) bool {
+	for _, vf := range f.files[id] {
+		if vf.Kind == "thumbnail" {
+			return true
 		}
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
-	lo := int(a.Offset)
-	if lo > len(all) {
-		lo = len(all)
+	return false
+}
+
+func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error) {
+	var rows []sqlcgen.ListPublicVideosSortedRow
+	for _, r := range f.videos {
+		if r.Privacy == "public" && r.State == "published" {
+			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
+		}
 	}
-	hi := lo + int(a.Limit)
-	if hi > len(all) {
-		hi = len(all)
+	sort.SliceStable(rows, func(i, j int) bool {
+		switch a.Sort {
+		case "popular":
+			if rows[i].Views != rows[j].Views {
+				return rows[i].Views > rows[j].Views
+			}
+		case "trending":
+			si := float64(rows[i].Views) / math.Pow(time.Since(rows[i].CreatedAt).Hours()+2, 1.5)
+			sj := float64(rows[j].Views) / math.Pow(time.Since(rows[j].CreatedAt).Hours()+2, 1.5)
+			if si != sj {
+				return si > sj
+			}
+		}
+		return rows[i].CreatedAt.After(rows[j].CreatedAt)
+	})
+	lo := int(a.ResultOffset)
+	if lo > len(rows) {
+		lo = len(rows)
 	}
-	return all[lo:hi], nil
+	hi := lo + int(a.ResultLimit)
+	if hi > len(rows) {
+		hi = len(rows)
+	}
+	return rows[lo:hi], nil
 }
 
 func videoServer(t *testing.T) *Server { return videoServerCfg(t, testConfig()) }
@@ -1017,5 +1045,44 @@ func TestRecordViewDedupedAcrossRequests(t *testing.T) {
 	_ = postView(srv, id, "")
 	if v := detailVideo(t, srv, id); v.Views == nil || *v.Views != 1 {
 		t.Errorf("deduped views = %v, want 1", v.Views)
+	}
+}
+
+func TestPublicFeedSortAndCards(t *testing.T) {
+	srv := videoServerCfg(t, testConfig(), video.WithThumbnailer(fakeThumbnailer{jpg: []byte("\xff\xd8jpg")}))
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	_ = createPublishedVideo(t, srv, tok, "ada", `{"title":"a","privacy":"public"}`)
+	b := createPublishedVideo(t, srv, tok, "ada", `{"title":"b","privacy":"public"}`)
+	// b gets two views (no deduper in this harness -> each counts); a gets none.
+	_ = postView(srv, b, "")
+	_ = postView(srv, b, "")
+
+	feed := func(q string) videoFeedResponse {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/videos"+q, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("feed%s = %d; body=%s", q, rec.Code, rec.Body.String())
+		}
+		var body videoFeedResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return body
+	}
+
+	pop := feed("?sort=popular")
+	if pop.Sort != "popular" {
+		t.Errorf("sort echo = %q, want popular", pop.Sort)
+	}
+	if len(pop.Videos) != 2 || pop.Videos[0].ID != b {
+		t.Fatalf("popular[0] = %+v, want b (%s) first", pop.Videos, b)
+	}
+	if pop.Videos[0].Views == nil || *pop.Videos[0].Views != 2 {
+		t.Errorf("b views = %v, want 2", pop.Videos[0].Views)
+	}
+	if pop.Videos[0].HasThumbnail == nil || !*pop.Videos[0].HasThumbnail {
+		t.Errorf("card has_thumbnail = %v, want true", pop.Videos[0].HasThumbnail)
+	}
+
+	if got := feed("?sort=bogus").Sort; got != "recent" {
+		t.Errorf("unknown sort echoed %q, want recent (fallback)", got)
 	}
 }

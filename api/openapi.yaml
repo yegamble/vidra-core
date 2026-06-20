@@ -630,11 +630,22 @@ paths:
       operationId: listPublicVideos
       summary: Public video feed
       description: >-
-        The cross-channel public video feed, newest first. Only public,
-        published videos appear (drafts/processing/failed are excluded). No auth
-        required. Paginated with limit (1–100, default 20) and offset (>= 0).
+        The cross-channel public video feed. Only public, published videos appear
+        (drafts/processing/failed are excluded). Each item carries its view count
+        and whether a poster image exists. No auth required. Ordered by sort and
+        paginated with limit (1–100, default 20) and offset (>= 0).
       tags: [videos]
       parameters:
+        - name: sort
+          in: query
+          required: false
+          description: >-
+            Ordering: recent (newest first), popular (most all-time views), or
+            trending (views decayed by age). Unknown values fall back to recent.
+          schema:
+            type: string
+            enum: [recent, popular, trending]
+            default: recent
         - name: limit
           in: query
           required: false
@@ -1341,12 +1352,16 @@ components:
             $ref: "#/components/schemas/Video"
     VideoFeedResponse:
       type: object
-      required: [videos, limit, offset]
+      required: [videos, sort, limit, offset]
       properties:
         videos:
           type: array
           items:
             $ref: "#/components/schemas/Video"
+        sort:
+          type: string
+          enum: [recent, popular, trending]
+          description: The ordering actually applied (normalised from the request).
         limit:
           type: integer
           example: 20

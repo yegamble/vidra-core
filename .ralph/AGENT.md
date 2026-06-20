@@ -72,7 +72,7 @@ curl -sX POST localhost:8080/api/v1/channels/ada_makes/videos -H 'authorization:
   -H 'content-type: application/json' -d '{"title":"My upload","privacy":"public"}'  # create draft (owner-only)
 curl -s localhost:8080/api/v1/videos/<id>                                            # public/unlisted; private => owner only
 curl -s localhost:8080/api/v1/channels/ada_makes/videos                              # owner: all; else public-only
-curl -s 'localhost:8080/api/v1/videos?limit=20&offset=0'                             # public feed (newest-first)
+curl -s 'localhost:8080/api/v1/videos?sort=trending&limit=20&offset=0'               # public feed (sort: recent|popular|trending; cards carry views + has_thumbnail)
 curl -s 'localhost:8080/api/v1/videos/search?q=go'                                   # fuzzy title search (public)
 curl -sX PATCH  localhost:8080/api/v1/videos/<id> -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"privacy":"public"}'                       # owner-only

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"sort"
 	"strings"
 	"testing"
@@ -208,23 +209,54 @@ func (f *fakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicV
 	return all[lo:hi], nil
 }
 
-func (f *fakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error) {
-	var all []sqlcgen.Video
-	for _, r := range f.videos {
-		if r.Privacy == "public" && r.State == "published" {
-			all = append(all, rowToVideo(r))
+func (f *fakeRepo) hasThumb(id uuid.UUID) bool {
+	for _, vf := range f.files[id] {
+		if vf.Kind == "thumbnail" {
+			return true
 		}
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
-	lo := int(a.Offset)
-	if lo > len(all) {
-		lo = len(all)
+	return false
+}
+
+func (f *fakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error) {
+	var rows []sqlcgen.ListPublicVideosSortedRow
+	for _, r := range f.videos {
+		if r.Privacy == "public" && r.State == "published" {
+			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
+		}
 	}
-	hi := lo + int(a.Limit)
-	if hi > len(all) {
-		hi = len(all)
+	sort.SliceStable(rows, func(i, j int) bool {
+		switch a.Sort {
+		case "popular":
+			if rows[i].Views != rows[j].Views {
+				return rows[i].Views > rows[j].Views
+			}
+		case "trending":
+			si, sj := trendingScore(rows[i]), trendingScore(rows[j])
+			if si != sj {
+				return si > sj
+			}
+		}
+		return rows[i].CreatedAt.After(rows[j].CreatedAt)
+	})
+	lo := int(a.ResultOffset)
+	if lo > len(rows) {
+		lo = len(rows)
 	}
-	return all[lo:hi], nil
+	hi := lo + int(a.ResultLimit)
+	if hi > len(rows) {
+		hi = len(rows)
+	}
+	return rows[lo:hi], nil
+}
+
+func trendingScore(r sqlcgen.ListPublicVideosSortedRow) float64 {
+	hours := time.Since(r.CreatedAt).Hours()
+	return float64(r.Views) / math.Pow(hours+2, 1.5)
 }
 
 func TestCreateDraftDefaultsToDraftState(t *testing.T) {
@@ -319,22 +351,58 @@ func TestListPublicPaginates(t *testing.T) {
 	}
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "priv", Privacy: "private"})
 
-	page1, err := svc.ListPublic(ctx, 2, 0)
+	page1, err := svc.ListPublic(ctx, "recent", 2, 0)
 	if err != nil {
 		t.Fatalf("ListPublic: %v", err)
 	}
 	if len(page1) != 2 {
 		t.Errorf("page1 = %d, want 2", len(page1))
 	}
-	page2, _ := svc.ListPublic(ctx, 2, 2)
+	page2, _ := svc.ListPublic(ctx, "recent", 2, 2)
 	if len(page2) != 1 { // only 3 public total
 		t.Errorf("page2 = %d, want 1", len(page2))
 	}
-	for _, v := range append(page1, page2...) {
-		if v.Privacy != "public" {
-			t.Errorf("feed contained non-public video: %+v", v)
+	for _, it := range append(page1, page2...) {
+		if it.Video.Privacy != "public" {
+			t.Errorf("feed contained non-public video: %+v", it)
 		}
 	}
+}
+
+func TestListPublicSortModes(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	svc := NewService(repo, nil)
+	ctx := context.Background()
+	ch := uuid.New()
+	a := publishDraft(t, svc, ctx, ch, CreateInput{Title: "a", Privacy: "public"})
+	b := publishDraft(t, svc, ctx, ch, CreateInput{Title: "b", Privacy: "public"})
+	// b has more views than a.
+	for i := 0; i < 5; i++ {
+		_, _ = repo.IncrementVideoViews(ctx, b.ID)
+	}
+	_, _ = repo.IncrementVideoViews(ctx, a.ID)
+
+	popular, _ := svc.ListPublic(ctx, "popular", 20, 0)
+	if len(popular) != 2 || popular[0].Video.ID != b.ID {
+		t.Errorf("popular order = %v, want most-viewed (b) first", feedIDs(popular))
+	}
+	if popular[0].Views != 5 {
+		t.Errorf("top item views = %d, want 5", popular[0].Views)
+	}
+	// Unknown sort falls back to recent (newest first -> b created after a).
+	recent, _ := svc.ListPublic(ctx, "bogus", 20, 0)
+	if len(recent) != 2 || recent[0].Video.ID != b.ID {
+		t.Errorf("fallback order = %v, want recent (b first)", feedIDs(recent))
+	}
+}
+
+func feedIDs(items []FeedItem) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.Video.ID)
+	}
+	return out
 }
 
 func TestSearchPublicMatchesTitleAndExcludesPrivate(t *testing.T) {

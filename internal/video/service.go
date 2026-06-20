@@ -52,7 +52,7 @@ type Repository interface {
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
 	ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error)
 	ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error)
-	ListPublicVideos(ctx context.Context, arg sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error)
+	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
 	SearchPublicVideos(ctx context.Context, arg sqlcgen.SearchPublicVideosParams) ([]sqlcgen.Video, error)
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
@@ -448,11 +448,49 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID) 
 	return s.repo.ListPublicVideosByChannel(ctx, channelID)
 }
 
-// ListPublic returns the cross-channel public video feed, newest first, with
-// limit/offset pagination. The caller is responsible for clamping limit/offset
-// to sane bounds.
-func (s *Service) ListPublic(ctx context.Context, limit, offset int32) ([]sqlcgen.Video, error) {
-	return s.repo.ListPublicVideos(ctx, sqlcgen.ListPublicVideosParams{Limit: limit, Offset: offset})
+// FeedItem is a public video plus discovery-card data: its view count and
+// whether a poster image is available.
+type FeedItem struct {
+	Video        sqlcgen.Video
+	Views        int64
+	HasThumbnail bool
+}
+
+// feedSorts are the accepted feed ordering modes.
+var feedSorts = map[string]bool{"recent": true, "popular": true, "trending": true}
+
+// NormalizeFeedSort returns sort when it is a recognised mode, else "recent".
+func NormalizeFeedSort(sort string) string {
+	if feedSorts[sort] {
+		return sort
+	}
+	return "recent"
+}
+
+// ListPublic returns the cross-channel public feed in the requested order
+// (recent|popular|trending; unknown → recent), each item carrying its view
+// count and poster availability. The caller clamps limit/offset.
+func (s *Service) ListPublic(ctx context.Context, sort string, limit, offset int32) ([]FeedItem, error) {
+	rows, err := s.repo.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
+		Sort:         NormalizeFeedSort(sort),
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, FeedItem{
+			Video: sqlcgen.Video{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			},
+			Views:        r.Views,
+			HasThumbnail: r.HasThumbnail,
+		})
+	}
+	return items, nil
 }
 
 // SearchPublic returns public videos whose title matches query (case-insensitive

@@ -92,21 +92,15 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 	return i, err
 }
 
-const listPublicVideos = `-- name: ListPublicVideos :many
+const listPublicVideosByChannel = `-- name: ListPublicVideosByChannel :many
 SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
 FROM videos
-WHERE privacy = 'public' AND state = 'published'
-ORDER BY created_at DESC, id DESC
-LIMIT $1 OFFSET $2
+WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
+ORDER BY created_at DESC
 `
 
-type ListPublicVideosParams struct {
-	Limit  int32 `json:"limit"`
-	Offset int32 `json:"offset"`
-}
-
-func (q *Queries) ListPublicVideos(ctx context.Context, arg ListPublicVideosParams) ([]Video, error) {
-	rows, err := q.db.Query(ctx, listPublicVideos, arg.Limit, arg.Offset)
+func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]Video, error) {
+	rows, err := q.db.Query(ctx, listPublicVideosByChannel, channelID)
 	if err != nil {
 		return nil, err
 	}
@@ -134,22 +128,61 @@ func (q *Queries) ListPublicVideos(ctx context.Context, arg ListPublicVideosPara
 	return items, nil
 }
 
-const listPublicVideosByChannel = `-- name: ListPublicVideosByChannel :many
-SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
-FROM videos
-WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
-ORDER BY created_at DESC
+const listPublicVideosSorted = `-- name: ListPublicVideosSorted :many
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail
+FROM videos v
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE v.privacy = 'public' AND v.state = 'published'
+ORDER BY
+    CASE WHEN $1::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
+    CASE WHEN $1::text = 'trending'
+         THEN COALESCE(vc.views, 0)::float8
+              / power(EXTRACT(EPOCH FROM (now() - v.created_at)) / 3600.0 + 2.0, 1.5)
+    END DESC,
+    v.created_at DESC, v.id DESC
+LIMIT $3 OFFSET $2
 `
 
-func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]Video, error) {
-	rows, err := q.db.Query(ctx, listPublicVideosByChannel, channelID)
+type ListPublicVideosSortedParams struct {
+	Sort         string `json:"sort"`
+	ResultOffset int32  `json:"result_offset"`
+	ResultLimit  int32  `json:"result_limit"`
+}
+
+type ListPublicVideosSortedRow struct {
+	ID           uuid.UUID `json:"id"`
+	ChannelID    uuid.UUID `json:"channel_id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Privacy      string    `json:"privacy"`
+	State        string    `json:"state"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Views        int64     `json:"views"`
+	HasThumbnail bool      `json:"has_thumbnail"`
+}
+
+// The public feed, joined with view counts and thumbnail availability so cards
+// have what they need, ordered by the requested mode:
+//
+//	recent   -> newest first (the NULL CASE terms fall through to created_at)
+//	popular  -> most all-time views first
+//	trending -> views decayed by age (Hacker-News-style gravity)
+func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVideosSortedParams) ([]ListPublicVideosSortedRow, error) {
+	rows, err := q.db.Query(ctx, listPublicVideosSorted, arg.Sort, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Video
+	var items []ListPublicVideosSortedRow
 	for rows.Next() {
-		var i Video
+		var i ListPublicVideosSortedRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ChannelID,
@@ -159,6 +192,8 @@ func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Views,
+			&i.HasThumbnail,
 		); err != nil {
 			return nil, err
 		}

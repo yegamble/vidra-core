@@ -364,7 +364,7 @@
 
 - [x] Implement public video list endpoint. (`GET /api/v1/videos` (public, paginated limit≤100/offset) → cross-channel public videos newest-first; sqlc `ListPublicVideos`; `internal/video.ListPublic`; tested. Now filters `state='published'` — the publish pipeline landed, so feed/search/channel-public surfaces exclude draft/processing/failed.)
 - [ ] Implement local videos endpoint.
-- [~] Implement trending/recent/popular sort modes or documented staged rollout. (recent (newest-first) shipped via `GET /api/v1/videos`; trending/popular need view counts — staged after the views slice)
+- [x] Implement trending/recent/popular sort modes or documented staged rollout. (`GET /api/v1/videos?sort=recent|popular|trending` (unknown → recent, echoed back in the response). `ListPublicVideosSorted` LEFT JOINs `video_view_counts` and orders by a CASE on the sort param: popular = all-time views, trending = views decayed by age (HN-style `views / (age_hours+2)^1.5`). Feed items now also carry `views` + `has_thumbnail` for cards. `internal/video.FeedItem`; tested incl. popular ordering + sort fallback.)
 - [ ] Implement video detail endpoint.
 - [~] Implement video playback manifest endpoint. (`GET /api/v1/videos/:id/original` streams the stored original with HTTP Range/206 support via `http.ServeContent` + the `storage.PathProvider` capability; visibility mirrors detail (private→owner-only/404, no-original→404). Progressive playback of the original works now; HLS/DASH manifest + renditions need the transcode pipeline.)
 - [ ] Implement captions endpoint.
