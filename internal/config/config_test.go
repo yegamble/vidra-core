@@ -51,6 +51,9 @@ func TestRateLimitDefaults(t *testing.T) {
 	if cfg.RateLimitWindow != time.Minute {
 		t.Errorf("RateLimitWindow = %v, want 1m", cfg.RateLimitWindow)
 	}
+	if cfg.AuthRateLimitRequests != 10 {
+		t.Errorf("AuthRateLimitRequests = %d, want 10", cfg.AuthRateLimitRequests)
+	}
 }
 
 func TestStorageDefaults(t *testing.T) {

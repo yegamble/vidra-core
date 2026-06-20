@@ -64,13 +64,18 @@ func run(logger *slog.Logger) error {
 
 	var opts []httpapi.Option
 	if cfg.RateLimitEnabled {
-		limiter := ratelimit.NewLimiter(
-			ratelimit.NewRedisCounter(rdb.Client),
-			cfg.RateLimitRequests,
-			cfg.RateLimitWindow,
+		counter := ratelimit.NewRedisCounter(rdb.Client)
+		limiter := ratelimit.NewLimiter(counter, cfg.RateLimitRequests, cfg.RateLimitWindow)
+		authLimiter := ratelimit.NewLimiter(counter, cfg.AuthRateLimitRequests, cfg.RateLimitWindow)
+		opts = append(opts,
+			httpapi.WithRateLimiter(limiter),
+			httpapi.WithAuthRateLimiter(authLimiter),
 		)
-		opts = append(opts, httpapi.WithRateLimiter(limiter))
-		logger.Info("rate limiting enabled", "requests", cfg.RateLimitRequests, "window", cfg.RateLimitWindow)
+		logger.Info("rate limiting enabled",
+			"requests", cfg.RateLimitRequests,
+			"auth_requests", cfg.AuthRateLimitRequests,
+			"window", cfg.RateLimitWindow,
+		)
 	}
 
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)

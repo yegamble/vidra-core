@@ -33,6 +33,7 @@ type Server struct {
 	rdb        Pinger
 	logger     *slog.Logger
 	limiter    *ratelimit.Limiter
+	authLimit  *ratelimit.Limiter
 	authsvc    *auth.Service
 	authTTL    time.Duration
 	channelsvc *channel.Service
@@ -61,6 +62,14 @@ func WithAuthService(svc *auth.Service, ttl time.Duration) Option {
 		s.authsvc = svc
 		s.authTTL = ttl
 	}
+}
+
+// WithAuthRateLimiter mounts a stricter, dedicated limiter on the sensitive auth
+// endpoints (login, register, password-reset/verify confirmations). It is keyed
+// independently of the general API limiter and emits an audit event on denial.
+// When nil/unset, those routes fall back to the general limiter only.
+func WithAuthRateLimiter(l *ratelimit.Limiter) Option {
+	return func(s *Server) { s.authLimit = l }
 }
 
 // WithChannelService mounts the channel endpoints (create/list-own/get-by-handle).
@@ -199,14 +208,21 @@ func (s *Server) routes() {
 
 	if s.authsvc != nil {
 		authGroup := api.Group("/auth")
-		authGroup.POST("/register", s.handleRegister)
-		authGroup.POST("/login", s.handleLogin)
+		// A stricter limiter throttles credential stuffing / token guessing on the
+		// sensitive endpoints, layered over the general per-IP limiter. Optional:
+		// when unset (e.g. unit tests), these behave like any other route.
+		var authMW []echo.MiddlewareFunc
+		if s.authLimit != nil {
+			authMW = append(authMW, s.authRateLimit(s.authLimit))
+		}
+		authGroup.POST("/register", s.handleRegister, authMW...)
+		authGroup.POST("/login", s.handleLogin, authMW...)
 		authGroup.POST("/refresh", s.handleRefresh)
 		authGroup.POST("/logout", s.handleLogout)
-		authGroup.POST("/password-reset", s.handleRequestPasswordReset)
-		authGroup.POST("/password-reset/confirm", s.handleConfirmPasswordReset)
+		authGroup.POST("/password-reset", s.handleRequestPasswordReset, authMW...)
+		authGroup.POST("/password-reset/confirm", s.handleConfirmPasswordReset, authMW...)
 		authGroup.POST("/verify-email", s.handleRequestEmailVerification, s.requireAuth)
-		authGroup.POST("/verify-email/confirm", s.handleConfirmEmailVerification)
+		authGroup.POST("/verify-email/confirm", s.handleConfirmEmailVerification, authMW...)
 		authGroup.GET("/me", s.handleMe, s.requireAuth)
 		authGroup.PATCH("/me", s.handleUpdateMe, s.requireAuth)
 		authGroup.POST("/me/deactivate", s.handleDeactivateAccount, s.requireAuth)

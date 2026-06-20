@@ -57,6 +57,11 @@ type Config struct {
 	RateLimitEnabled  bool
 	RateLimitRequests int
 	RateLimitWindow   time.Duration
+	// AuthRateLimitRequests is a stricter per-IP budget applied (over the same
+	// RateLimitWindow) to the sensitive auth endpoints — login, register, and the
+	// password-reset / email-verify confirmations — to throttle credential
+	// stuffing and token guessing. Gated by RateLimitEnabled.
+	AuthRateLimitRequests int
 
 	// JWT signing for access tokens (HS256).
 	JWTSecret    string
@@ -131,6 +136,12 @@ func Load() (*Config, error) {
 	}
 	cfg.RateLimitRequests = reqs
 
+	authReqs, err := getEnvInt("AUTH_RATE_LIMIT_REQUESTS", 10)
+	if err != nil {
+		return nil, err
+	}
+	cfg.AuthRateLimitRequests = authReqs
+
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -164,6 +175,9 @@ func (c *Config) validate() error {
 		}
 		if c.RateLimitWindow <= 0 {
 			return fmt.Errorf("config: RATE_LIMIT_WINDOW must be positive when rate limiting is enabled")
+		}
+		if c.AuthRateLimitRequests <= 0 {
+			return fmt.Errorf("config: AUTH_RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
 		}
 	}
 	if c.JWTAccessTTL <= 0 {
