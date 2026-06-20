@@ -55,6 +55,7 @@ type Repository interface {
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
 	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
+	GetVideoFileByKind(ctx context.Context, arg sqlcgen.GetVideoFileByKindParams) (sqlcgen.VideoFile, error)
 	DeleteVideoFilesByVideoAndKind(ctx context.Context, arg sqlcgen.DeleteVideoFilesByVideoAndKindParams) error
 	SetVideoState(ctx context.Context, arg sqlcgen.SetVideoStateParams) (sqlcgen.Video, error)
 	UpsertVideoMetadata(ctx context.Context, arg sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error)
@@ -197,6 +198,25 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		}
 	}
 	return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
+}
+
+// OriginalForStream authorises a video for byte streaming and returns its stored
+// original file. Visibility mirrors GetByID: public/unlisted to anyone, private
+// only to its owner; everyone else — and any video without a stored original
+// (e.g. a draft) — gets ErrNotFound so existence is not leaked.
+func (s *Service) OriginalForStream(ctx context.Context, videoID, viewerID uuid.UUID, authed bool) (sqlcgen.VideoFile, error) {
+	v, err := s.GetByID(ctx, videoID)
+	if err != nil {
+		return sqlcgen.VideoFile{}, err // ErrNotFound
+	}
+	if v.Privacy == "private" && (!authed || viewerID != v.OwnerID) {
+		return sqlcgen.VideoFile{}, ErrNotFound
+	}
+	f, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "original"})
+	if err != nil {
+		return sqlcgen.VideoFile{}, ErrNotFound
+	}
+	return f, nil
 }
 
 // GetMetadata returns a video's stored technical metadata. The bool is false

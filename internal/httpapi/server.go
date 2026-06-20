@@ -16,6 +16,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/ratelimit"
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -36,6 +37,7 @@ type Server struct {
 	authTTL    time.Duration
 	channelsvc *channel.Service
 	videosvc   *video.Service
+	media      storage.Backend
 }
 
 // uploadRoutePath is the Echo route template for the original-file upload. It is
@@ -72,6 +74,13 @@ func WithChannelService(svc *channel.Service) Option {
 // the video routes are not registered.
 func WithVideoService(svc *video.Service) Option {
 	return func(s *Server) { s.videosvc = svc }
+}
+
+// WithMediaStorage gives the server the blob backend used to stream stored media
+// (the original-file endpoint). It should be the same backend the video service
+// writes uploads to. When unset, the streaming route serves 503.
+func WithMediaStorage(b storage.Backend) Option {
+	return func(s *Server) { s.media = b }
 }
 
 // New constructs the HTTP server with middleware and routes registered. db and
@@ -207,6 +216,7 @@ func (s *Server) routes() {
 		api.GET("/videos", s.handleListPublicVideos)
 		api.GET("/videos/search", s.handleSearchVideos)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
+		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
 		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, middleware.BodyLimit(s.cfg.UploadMaxSize))

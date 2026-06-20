@@ -144,6 +144,20 @@ func (f *videoFakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideo
 	return vf, nil
 }
 
+func (f *videoFakeRepo) GetVideoFileByKind(_ context.Context, a sqlcgen.GetVideoFileByKindParams) (sqlcgen.VideoFile, error) {
+	var newest sqlcgen.VideoFile
+	found := false
+	for _, vf := range f.files[a.VideoID] {
+		if vf.Kind == a.Kind && (!found || vf.CreatedAt.After(newest.CreatedAt)) {
+			newest, found = vf, true
+		}
+	}
+	if !found {
+		return sqlcgen.VideoFile{}, errors.New("not found")
+	}
+	return newest, nil
+}
+
 func (f *videoFakeRepo) DeleteVideoFilesByVideoAndKind(_ context.Context, a sqlcgen.DeleteVideoFilesByVideoAndKindParams) error {
 	kept := f.files[a.VideoID][:0]
 	for _, vf := range f.files[a.VideoID] {
@@ -229,6 +243,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
 		WithVideoService(video.NewService(repo, blobs, opts...)),
+		WithMediaStorage(blobs),
 	)
 }
 
@@ -751,5 +766,93 @@ func TestUploadRouteBypassesJSONBodyLimit(t *testing.T) {
 	rec = postJSONAuth(srv, "/api/v1/channels/ada/videos", bigJSON, tok)
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized JSON = %d, want 413; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// streamOriginal GETs a video's original-file stream, optionally authed and/or
+// with a Range header.
+func streamOriginal(srv *Server, id, token, rangeHdr string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/original", nil)
+	if token != "" {
+		req.Header.Set("authorization", "Bearer "+token)
+	}
+	if rangeHdr != "" {
+		req.Header.Set("Range", rangeHdr)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestStreamOriginalPublic(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	rec := streamOriginal(srv, id, "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stream = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "tiny" {
+		t.Errorf("body = %q, want %q", rec.Body.String(), "tiny")
+	}
+	if got := rec.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Errorf("Accept-Ranges = %q, want bytes", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "video/mp4" {
+		t.Errorf("Content-Type = %q, want video/mp4", ct)
+	}
+}
+
+func TestStreamOriginalRange(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	rec := streamOriginal(srv, id, "", "bytes=0-1")
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("range stream = %d, want 206; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "ti" {
+		t.Errorf("range body = %q, want %q", rec.Body.String(), "ti")
+	}
+	if cr := rec.Header().Get("Content-Range"); cr != "bytes 0-1/4" {
+		t.Errorf("Content-Range = %q, want bytes 0-1/4", cr)
+	}
+}
+
+func TestStreamOriginalPrivateVisibility(t *testing.T) {
+	srv := videoServer(t)
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, ownerTok, "ada", `{"title":"Secret","privacy":"private"}`)
+	if rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", "tiny", ownerTok); rec.Code != http.StatusCreated {
+		t.Fatalf("upload = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	if rec := streamOriginal(srv, id, "", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("anon stream of private = %d, want 404", rec.Code)
+	}
+	if rec := streamOriginal(srv, id, otherTok, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("non-owner stream of private = %d, want 404", rec.Code)
+	}
+	if rec := streamOriginal(srv, id, ownerTok, ""); rec.Code != http.StatusOK {
+		t.Errorf("owner stream of private = %d, want 200", rec.Code)
+	}
+}
+
+func TestStreamOriginalNoFile404(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Draft","privacy":"public"}`) // never uploaded
+	if rec := streamOriginal(srv, id, "", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("stream of fileless video = %d, want 404", rec.Code)
+	}
+}
+
+func TestStreamOriginalUnknown404(t *testing.T) {
+	srv := videoServer(t)
+	if rec := streamOriginal(srv, uuid.New().String(), "", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("stream of unknown video = %d, want 404", rec.Code)
 	}
 }

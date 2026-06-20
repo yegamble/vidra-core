@@ -97,7 +97,7 @@ func run(logger *slog.Logger) error {
 		logger.Warn("media probe disabled (ffprobe not on PATH); originals are published unprobed")
 	}
 	videosvc := video.NewService(db.Queries(), blobs, vopts...)
-	opts = append(opts, httpapi.WithVideoService(videosvc))
+	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(blobs))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

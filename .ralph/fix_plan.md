@@ -366,7 +366,7 @@
 - [ ] Implement local videos endpoint.
 - [~] Implement trending/recent/popular sort modes or documented staged rollout. (recent (newest-first) shipped via `GET /api/v1/videos`; trending/popular need view counts — staged after the views slice)
 - [ ] Implement video detail endpoint.
-- [ ] Implement video playback manifest endpoint.
+- [~] Implement video playback manifest endpoint. (`GET /api/v1/videos/:id/original` streams the stored original with HTTP Range/206 support via `http.ServeContent` + the `storage.PathProvider` capability; visibility mirrors detail (private→owner-only/404, no-original→404). Progressive playback of the original works now; HLS/DASH manifest + renditions need the transcode pipeline.)
 - [ ] Implement captions endpoint.
 - [ ] Implement download metadata endpoint.
 - [ ] Implement share/embed metadata endpoint.

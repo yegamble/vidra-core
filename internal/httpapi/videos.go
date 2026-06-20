@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -410,6 +413,67 @@ func (s *Server) handleUploadVideoFile(c echo.Context) error {
 		Video: newVideoView(v),
 		File:  newVideoFileView(file),
 	})
+}
+
+// handleStreamVideoOriginal serves a video's stored original file. Behind
+// optionalAuth: visibility mirrors the detail endpoint (public/unlisted to
+// anyone, private only to the owner; otherwise 404), and a video without a
+// stored original is 404. Range requests are honoured for seeking when the
+// backend exposes a filesystem path.
+func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	viewerID, _, authed := principalFromContext(c)
+	f, err := s.videosvc.OriginalForStream(c.Request().Context(), id, viewerID, authed)
+	if err != nil {
+		return videoError(err)
+	}
+	return s.serveStoredObject(c, f.StorageKey, f.ContentType)
+}
+
+// serveStoredObject streams the object at key. When the backend exposes a local
+// path (storage.PathProvider) it uses http.ServeContent so Range, conditional,
+// and 206 handling come for free; otherwise it streams the whole object as 200.
+func (s *Server) serveStoredObject(c echo.Context, key, contentType string) error {
+	if s.media == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
+	}
+	if contentType != "" {
+		c.Response().Header().Set("Content-Type", contentType)
+	}
+	if pp, ok := s.media.(storage.PathProvider); ok {
+		path, err := pp.Path(key)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return echo.NewHTTPError(http.StatusNotFound, "video not found")
+			}
+			return err
+		}
+		defer func() { _ = file.Close() }()
+		info, err := file.Stat()
+		if err != nil {
+			return err
+		}
+		http.ServeContent(c.Response(), c.Request(), info.Name(), info.ModTime(), file)
+		return nil
+	}
+	rc, err := s.media.Open(c.Request().Context(), key)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return err
+	}
+	defer func() { _ = rc.Close() }()
+	c.Response().WriteHeader(http.StatusOK)
+	_, err = io.Copy(c.Response(), rc)
+	return err
 }
 
 // videoError maps video service sentinels to HTTP error envelopes. A non-owner

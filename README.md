@@ -97,6 +97,13 @@ exposes and persisting it to `video_metadata`; a probe error marks the video
 `published` videos. (Real transcoding into multiple renditions reuses this same
 seam in a later slice.)
 
+`GET /api/v1/videos/{id}/original` streams the stored original bytes for direct
+playback — same visibility as the detail endpoint (private → owner only, else
+`404`; a video with no stored original is `404`). It honours HTTP `Range`
+requests (`206 Partial Content`) so a `<video>` element can seek; the local
+backend serves via `http.ServeContent`. HLS/rendition manifests come with
+transcoding later.
+
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects
 live role/verification state. A missing, malformed, invalid, or expired token yields

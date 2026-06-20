@@ -134,6 +134,20 @@ func (f *fakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideoFileP
 	return vf, nil
 }
 
+func (f *fakeRepo) GetVideoFileByKind(_ context.Context, a sqlcgen.GetVideoFileByKindParams) (sqlcgen.VideoFile, error) {
+	var newest sqlcgen.VideoFile
+	found := false
+	for _, vf := range f.files[a.VideoID] {
+		if vf.Kind == a.Kind && (!found || vf.CreatedAt.After(newest.CreatedAt)) {
+			newest, found = vf, true
+		}
+	}
+	if !found {
+		return sqlcgen.VideoFile{}, errors.New("not found")
+	}
+	return newest, nil
+}
+
 func (f *fakeRepo) DeleteVideoFilesByVideoAndKind(_ context.Context, a sqlcgen.DeleteVideoFilesByVideoAndKindParams) error {
 	kept := f.files[a.VideoID][:0]
 	for _, vf := range f.files[a.VideoID] {

@@ -812,6 +812,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/original:
+    get:
+      operationId: streamVideoOriginal
+      summary: Stream a video's original file
+      description: >-
+        Streams the stored original media bytes for direct playback. Visibility
+        mirrors the detail endpoint: public/unlisted to anyone, private only to
+        its owner; otherwise 404. A video without a stored original (e.g. a
+        draft) is 404. HTTP Range requests are honoured (206 Partial Content)
+        for seeking. The response body is the raw media, not JSON.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: Range
+          in: header
+          required: false
+          description: Optional byte range, e.g. "bytes=0-1023".
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The full original file.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: A requested byte range of the original file.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No such video (or private and not yours), or no stored original.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/file:
     post:
       operationId: uploadVideoFile

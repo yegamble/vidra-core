@@ -63,6 +63,35 @@ func (q *Queries) DeleteVideoFilesByVideoAndKind(ctx context.Context, arg Delete
 	return err
 }
 
+const getVideoFileByKind = `-- name: GetVideoFileByKind :one
+SELECT id, video_id, kind, storage_key, content_type, original_name, size_bytes, created_at
+FROM video_files
+WHERE video_id = $1 AND kind = $2
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetVideoFileByKindParams struct {
+	VideoID uuid.UUID `json:"video_id"`
+	Kind    string    `json:"kind"`
+}
+
+func (q *Queries) GetVideoFileByKind(ctx context.Context, arg GetVideoFileByKindParams) (VideoFile, error) {
+	row := q.db.QueryRow(ctx, getVideoFileByKind, arg.VideoID, arg.Kind)
+	var i VideoFile
+	err := row.Scan(
+		&i.ID,
+		&i.VideoID,
+		&i.Kind,
+		&i.StorageKey,
+		&i.ContentType,
+		&i.OriginalName,
+		&i.SizeBytes,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listVideoFiles = `-- name: ListVideoFiles :many
 SELECT id, video_id, kind, storage_key, content_type, original_name, size_bytes, created_at
 FROM video_files
