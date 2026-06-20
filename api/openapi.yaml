@@ -320,6 +320,79 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/password-reset:
+    post:
+      operationId: requestPasswordReset
+      summary: Request a password-reset link
+      description: >-
+        Starts the password-reset flow. Always returns 202 — it never reveals
+        whether the email belongs to an account (enumeration-safe). A matching,
+        active account is sent a single-use, expiring reset token out-of-band.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: The account's email address.
+      responses:
+        "202":
+          description: >-
+            Accepted. If the email matches an active account, a reset token has
+            been sent. Returned regardless, so registered emails cannot be probed.
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/password-reset/confirm:
+    post:
+      operationId: confirmPasswordReset
+      summary: Complete a password reset
+      description: >-
+        Completes the reset using the token from the reset message: sets a new
+        password and revokes all of the account's sessions (signs out
+        everywhere). An unknown, used, or expired token returns 400.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token:
+                  type: string
+                  description: The single-use token from the reset message.
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  maxLength: 72
+                  description: The new password.
+      responses:
+        "204":
+          description: The password is updated and existing sessions are revoked.
+        "400":
+          description: The reset token is invalid, used, or expired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/channels:
     post:
       operationId: createChannel

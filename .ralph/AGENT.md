@@ -55,6 +55,13 @@ curl -sX POST localhost:8080/api/v1/auth/logout \
 # Sign out everywhere (revokes all sessions for the bearer's account):
 curl -sX POST localhost:8080/api/v1/auth/logout-all -H 'authorization: Bearer <token>'
 
+# Password reset (request is always 202 — never reveals if the email exists; the
+# raw token is delivered by the mailer adapter, a no-op until a provider is wired):
+curl -sX POST localhost:8080/api/v1/auth/password-reset \
+  -H 'content-type: application/json' -d '{"email":"ada@example.test"}'
+curl -sX POST localhost:8080/api/v1/auth/password-reset/confirm \
+  -H 'content-type: application/json' -d '{"token":"<reset-token>","password":"<new-password>"}'
+
 # Channels:
 curl -sX POST localhost:8080/api/v1/channels -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' \

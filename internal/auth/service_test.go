@@ -18,6 +18,7 @@ type fakeRepo struct {
 	byEmail  map[string]sqlcgen.User
 	names    map[string]bool
 	sessions map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
+	resets   map[string]*sqlcgen.PasswordResetToken // keyed by token hash
 }
 
 func newFakeRepo() *fakeRepo {
@@ -25,7 +26,54 @@ func newFakeRepo() *fakeRepo {
 		byEmail:  map[string]sqlcgen.User{},
 		names:    map[string]bool{},
 		sessions: map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow{},
+		resets:   map[string]*sqlcgen.PasswordResetToken{},
 	}
+}
+
+func (f *fakeRepo) CreatePasswordResetToken(_ context.Context, a sqlcgen.CreatePasswordResetTokenParams) (sqlcgen.PasswordResetToken, error) {
+	t := sqlcgen.PasswordResetToken{
+		ID: uuid.New(), UserID: a.UserID, TokenHash: a.TokenHash,
+		ExpiresAt: a.ExpiresAt, CreatedAt: time.Now(),
+	}
+	f.resets[a.TokenHash] = &t
+	return t, nil
+}
+
+func (f *fakeRepo) GetPasswordResetToken(_ context.Context, hash string) (sqlcgen.PasswordResetToken, error) {
+	if t, ok := f.resets[hash]; ok {
+		return *t, nil
+	}
+	return sqlcgen.PasswordResetToken{}, errors.New("not found")
+}
+
+func (f *fakeRepo) MarkPasswordResetTokenUsed(_ context.Context, id uuid.UUID) error {
+	for _, t := range f.resets {
+		if t.ID == id {
+			t.UsedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		}
+	}
+	return nil
+}
+
+func (f *fakeRepo) DeleteUnusedPasswordResetTokens(_ context.Context, userID uuid.UUID) error {
+	for h, t := range f.resets {
+		if t.UserID == userID && !t.UsedAt.Valid {
+			delete(f.resets, h)
+		}
+	}
+	return nil
+}
+
+func (f *fakeRepo) UpdateUserPassword(_ context.Context, a sqlcgen.UpdateUserPasswordParams) error {
+	for k, u := range f.byEmail {
+		if u.ID == a.ID {
+			u.PasswordHash = a.PasswordHash
+			u.UpdatedAt = time.Now()
+			f.byEmail[k] = u
+			return nil
+		}
+	}
+	return errors.New("not found")
 }
 
 func (f *fakeRepo) CreateSession(_ context.Context, a sqlcgen.CreateSessionParams) (sqlcgen.CreateSessionRow, error) {

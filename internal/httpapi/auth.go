@@ -279,3 +279,67 @@ func (s *Server) handleLogout(c echo.Context) error {
 	}
 	return c.NoContent(http.StatusNoContent)
 }
+
+// passwordResetRequest is the POST /api/v1/auth/password-reset body.
+type passwordResetRequest struct {
+	Email string `json:"email"`
+}
+
+func (r passwordResetRequest) Validate() []FieldError {
+	if !looksLikeEmail(r.Email) {
+		return []FieldError{{Field: "email", Message: "must be a valid email"}}
+	}
+	return nil
+}
+
+// handleRequestPasswordReset starts the password-reset flow. It always returns
+// 202 Accepted — it never reveals whether the email belongs to an account, so it
+// cannot be used to enumerate registered users. A matching, active account is
+// issued a single-use reset token delivered by the mailer adapter.
+func (s *Server) handleRequestPasswordReset(c echo.Context) error {
+	var in passwordResetRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := s.authsvc.RequestPasswordReset(c.Request().Context(), in.Email); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusAccepted)
+}
+
+// passwordResetConfirmRequest is the POST /api/v1/auth/password-reset/confirm body.
+type passwordResetConfirmRequest struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
+func (r passwordResetConfirmRequest) Validate() []FieldError {
+	var fes []FieldError
+	if strings.TrimSpace(r.Token) == "" {
+		fes = append(fes, FieldError{Field: "token", Message: "is required"})
+	}
+	switch {
+	case len(r.Password) < 8:
+		fes = append(fes, FieldError{Field: "password", Message: "must be at least 8 characters"})
+	case len(r.Password) > maxPasswordLen:
+		fes = append(fes, FieldError{Field: "password", Message: "must be at most 72 characters"})
+	}
+	return fes
+}
+
+// handleConfirmPasswordReset completes the reset: a valid token sets the new
+// password and signs the account out everywhere (all sessions revoked). An
+// unknown, used, or expired token is a 400; the token is never echoed back.
+func (s *Server) handleConfirmPasswordReset(c echo.Context) error {
+	var in passwordResetConfirmRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := s.authsvc.ResetPassword(c.Request().Context(), in.Token, in.Password); err != nil {
+		if errors.Is(err, auth.ErrInvalidResetToken) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid or expired reset token")
+		}
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}

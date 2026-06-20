@@ -40,19 +40,66 @@ type Repository interface {
 	GetSessionByRefreshHash(ctx context.Context, refreshHash string) (sqlcgen.GetSessionByRefreshHashRow, error)
 	RevokeSession(ctx context.Context, id uuid.UUID) error
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
+
+	CreatePasswordResetToken(ctx context.Context, arg sqlcgen.CreatePasswordResetTokenParams) (sqlcgen.PasswordResetToken, error)
+	GetPasswordResetToken(ctx context.Context, tokenHash string) (sqlcgen.PasswordResetToken, error)
+	MarkPasswordResetTokenUsed(ctx context.Context, id uuid.UUID) error
+	DeleteUnusedPasswordResetTokens(ctx context.Context, userID uuid.UUID) error
+	UpdateUserPassword(ctx context.Context, arg sqlcgen.UpdateUserPasswordParams) error
 }
+
+// defaultResetTTL is how long a password-reset token stays valid.
+const defaultResetTTL = time.Hour
 
 // Service holds the auth application logic.
 type Service struct {
 	repo       Repository
 	issuer     *TokenIssuer
 	refreshTTL time.Duration
+	resetTTL   time.Duration
+	mailer     PasswordResetMailer
 	now        func() time.Time // injectable clock for tests
 }
 
 // NewService builds the auth service. refreshTTL is the refresh-token lifetime.
-func NewService(repo Repository, issuer *TokenIssuer, refreshTTL time.Duration) *Service {
-	return &Service{repo: repo, issuer: issuer, refreshTTL: refreshTTL, now: time.Now}
+// Optional behavior (a real password-reset mailer, a custom reset-token TTL) is
+// supplied via Options; the defaults are a no-op mailer and a 1h reset TTL.
+func NewService(repo Repository, issuer *TokenIssuer, refreshTTL time.Duration, opts ...Option) *Service {
+	s := &Service{
+		repo:       repo,
+		issuer:     issuer,
+		refreshTTL: refreshTTL,
+		resetTTL:   defaultResetTTL,
+		mailer:     noopMailer{},
+		now:        time.Now,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// Option configures optional Service behavior at construction time.
+type Option func(*Service)
+
+// WithMailer injects a concrete password-reset mailer (default: a no-op that
+// drops the message). A nil mailer is ignored.
+func WithMailer(m PasswordResetMailer) Option {
+	return func(s *Service) {
+		if m != nil {
+			s.mailer = m
+		}
+	}
+}
+
+// WithResetTTL overrides the password-reset token lifetime (default 1h). A
+// non-positive duration is ignored.
+func WithResetTTL(d time.Duration) Option {
+	return func(s *Service) {
+		if d > 0 {
+			s.resetTTL = d
+		}
+	}
 }
 
 // Tokens is the access + refresh pair returned by register/login/refresh.

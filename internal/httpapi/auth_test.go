@@ -23,13 +23,61 @@ import (
 type authFakeRepo struct {
 	users    map[string]sqlcgen.User // keyed by lowercased email
 	sessions map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
+	resets   map[string]*sqlcgen.PasswordResetToken // keyed by token hash
 }
 
 func newAuthFakeRepo() *authFakeRepo {
 	return &authFakeRepo{
 		users:    map[string]sqlcgen.User{},
 		sessions: map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow{},
+		resets:   map[string]*sqlcgen.PasswordResetToken{},
 	}
+}
+
+func (f *authFakeRepo) CreatePasswordResetToken(_ context.Context, a sqlcgen.CreatePasswordResetTokenParams) (sqlcgen.PasswordResetToken, error) {
+	t := sqlcgen.PasswordResetToken{
+		ID: uuid.New(), UserID: a.UserID, TokenHash: a.TokenHash,
+		ExpiresAt: a.ExpiresAt, CreatedAt: time.Now(),
+	}
+	f.resets[a.TokenHash] = &t
+	return t, nil
+}
+
+func (f *authFakeRepo) GetPasswordResetToken(_ context.Context, hash string) (sqlcgen.PasswordResetToken, error) {
+	if t, ok := f.resets[hash]; ok {
+		return *t, nil
+	}
+	return sqlcgen.PasswordResetToken{}, errors.New("not found")
+}
+
+func (f *authFakeRepo) MarkPasswordResetTokenUsed(_ context.Context, id uuid.UUID) error {
+	for _, t := range f.resets {
+		if t.ID == id {
+			t.UsedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		}
+	}
+	return nil
+}
+
+func (f *authFakeRepo) DeleteUnusedPasswordResetTokens(_ context.Context, userID uuid.UUID) error {
+	for h, t := range f.resets {
+		if t.UserID == userID && !t.UsedAt.Valid {
+			delete(f.resets, h)
+		}
+	}
+	return nil
+}
+
+func (f *authFakeRepo) UpdateUserPassword(_ context.Context, a sqlcgen.UpdateUserPasswordParams) error {
+	for k, u := range f.users {
+		if u.ID == a.ID {
+			u.PasswordHash = a.PasswordHash
+			u.UpdatedAt = time.Now()
+			f.users[k] = u
+			return nil
+		}
+	}
+	return errors.New("not found")
 }
 
 func (f *authFakeRepo) CountUsers(context.Context) (int64, error) { return int64(len(f.users)), nil }
@@ -441,5 +489,88 @@ func TestLogoutEndpointRevokes(t *testing.T) {
 	rec := postTo(srv, "/api/v1/auth/refresh", `{"refresh_token":"`+ar.RefreshToken+`"}`)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("refresh-after-logout status = %d, want 401", rec.Code)
+	}
+}
+
+// captureResetMailer records the delivered reset token so the handler tests can
+// drive the confirm step.
+type captureResetMailer struct {
+	calls int
+	token string
+}
+
+func (m *captureResetMailer) SendPasswordReset(_ context.Context, _, token string) error {
+	m.calls++
+	m.token = token
+	return nil
+}
+
+func authServerWithMailer(t *testing.T) (*Server, *captureResetMailer) {
+	t.Helper()
+	repo := newAuthFakeRepo()
+	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
+	mailer := &captureResetMailer{}
+	svc := auth.NewService(repo, issuer, 720*time.Hour, auth.WithMailer(mailer))
+	return New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute)), mailer
+}
+
+func TestPasswordResetFlow(t *testing.T) {
+	srv, mailer := authServerWithMailer(t)
+	_ = postTo(srv, "/api/v1/auth/register", `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	rec := postTo(srv, "/api/v1/auth/password-reset", `{"email":"ada@example.test"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("request status = %d, want 202", rec.Code)
+	}
+	if mailer.token == "" {
+		t.Fatal("expected a reset token to be delivered")
+	}
+
+	rec = postTo(srv, "/api/v1/auth/password-reset/confirm", `{"token":"`+mailer.token+`","password":"brand-new-pass"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("confirm status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// The new password logs in; the old one is rejected.
+	if ok := postTo(srv, "/api/v1/auth/login", `{"email":"ada@example.test","password":"brand-new-pass"}`); ok.Code != http.StatusOK {
+		t.Errorf("login with new password = %d, want 200", ok.Code)
+	}
+	if bad := postTo(srv, "/api/v1/auth/login", `{"email":"ada@example.test","password":"supersecret"}`); bad.Code != http.StatusUnauthorized {
+		t.Errorf("login with old password = %d, want 401", bad.Code)
+	}
+}
+
+func TestPasswordResetRequestIsEnumerationSafe(t *testing.T) {
+	srv, mailer := authServerWithMailer(t)
+	rec := postTo(srv, "/api/v1/auth/password-reset", `{"email":"nobody@example.test"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 even for an unknown email", rec.Code)
+	}
+	if mailer.calls != 0 {
+		t.Errorf("mailer called %d times for an unknown email, want 0", mailer.calls)
+	}
+}
+
+func TestPasswordResetRequestValidatesEmail(t *testing.T) {
+	srv, _ := authServerWithMailer(t)
+	rec := postTo(srv, "/api/v1/auth/password-reset", `{"email":"not-an-email"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
+	}
+}
+
+func TestPasswordResetConfirmRejectsBadToken(t *testing.T) {
+	srv, _ := authServerWithMailer(t)
+	rec := postTo(srv, "/api/v1/auth/password-reset/confirm", `{"token":"not-a-real-token","password":"brand-new-pass"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestPasswordResetConfirmValidatesPassword(t *testing.T) {
+	srv, _ := authServerWithMailer(t)
+	rec := postTo(srv, "/api/v1/auth/password-reset/confirm", `{"token":"x","password":"short"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
 	}
 }
