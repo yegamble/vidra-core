@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -18,17 +19,36 @@ import (
 // fakeRepo is an in-memory video.Repository. Each video remembers its channel's
 // owner so GetVideoByID can return the joined owner_id.
 type fakeRepo struct {
-	videos map[uuid.UUID]sqlcgen.GetVideoByIDRow
-	files  map[uuid.UUID][]sqlcgen.VideoFile
-	owner  uuid.UUID
+	videos   map[uuid.UUID]sqlcgen.GetVideoByIDRow
+	files    map[uuid.UUID][]sqlcgen.VideoFile
+	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
+	owner    uuid.UUID
 }
 
 func newFakeRepo(owner uuid.UUID) *fakeRepo {
 	return &fakeRepo{
-		videos: map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
-		files:  map[uuid.UUID][]sqlcgen.VideoFile{},
-		owner:  owner,
+		videos:   map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
+		files:    map[uuid.UUID][]sqlcgen.VideoFile{},
+		metadata: map[uuid.UUID]sqlcgen.VideoMetadatum{},
+		owner:    owner,
 	}
+}
+
+func (f *fakeRepo) UpsertVideoMetadata(_ context.Context, a sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error) {
+	m := sqlcgen.VideoMetadatum{
+		VideoID: a.VideoID, DurationSeconds: a.DurationSeconds, Width: a.Width, Height: a.Height,
+		UpdatedAt: time.Now(),
+	}
+	f.metadata[a.VideoID] = m
+	return m, nil
+}
+
+func (f *fakeRepo) GetVideoMetadata(_ context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error) {
+	m, ok := f.metadata[videoID]
+	if !ok {
+		return sqlcgen.VideoMetadatum{}, errors.New("not found")
+	}
+	return m, nil
 }
 
 func (f *fakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (sqlcgen.Video, error) {
@@ -471,9 +491,12 @@ func TestAttachOriginalRejectsUnsupportedExtension(t *testing.T) {
 	}
 }
 
-type fakeProber struct{ err error }
+type fakeProber struct {
+	md  media.Metadata
+	err error
+}
 
-func (p fakeProber) Probe(_ context.Context, _ string) error { return p.err }
+func (p fakeProber) Probe(_ context.Context, _ string) (media.Metadata, error) { return p.md, p.err }
 
 func TestProcessPublishesWithoutProber(t *testing.T) {
 	svc := NewService(newFakeRepo(uuid.New()), nil)
@@ -499,7 +522,8 @@ func TestProcessPublishesWhenProberSucceeds(t *testing.T) {
 }
 
 func TestProcessFailsWhenProberErrors(t *testing.T) {
-	svc := NewService(newFakeRepo(uuid.New()), nil, WithProber(fakeProber{err: errors.New("not media")}))
+	repo := newFakeRepo(uuid.New())
+	svc := NewService(repo, nil, WithProber(fakeProber{err: errors.New("not media")}))
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
 	got, err := svc.Process(ctx, v.ID, "k")
@@ -508,5 +532,46 @@ func TestProcessFailsWhenProberErrors(t *testing.T) {
 	}
 	if got.State != "failed" {
 		t.Errorf("state = %q, want failed", got.State)
+	}
+	if _, ok, _ := svc.GetMetadata(ctx, v.ID); ok {
+		t.Error("metadata stored for a failed probe, want none")
+	}
+}
+
+func TestProcessPersistsProbeMetadata(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	svc := NewService(repo, nil, WithProber(fakeProber{md: media.Metadata{DurationSeconds: 42, Width: 1280, Height: 720}}))
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	if _, err := svc.Process(ctx, v.ID, "k"); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	md, ok, err := svc.GetMetadata(ctx, v.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetMetadata ok=%v err=%v, want found", ok, err)
+	}
+	if md.DurationSeconds == nil || *md.DurationSeconds != 42 {
+		t.Errorf("duration = %v, want 42", md.DurationSeconds)
+	}
+	if md.Width == nil || *md.Width != 1280 || md.Height == nil || *md.Height != 720 {
+		t.Errorf("dimensions = %v x %v, want 1280x720", md.Width, md.Height)
+	}
+}
+
+func TestProcessLeavesUnknownMetadataNull(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	// Audio-only style probe: duration known, dimensions zero (unknown).
+	svc := NewService(repo, nil, WithProber(fakeProber{md: media.Metadata{DurationSeconds: 10}}))
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	if _, err := svc.Process(ctx, v.ID, "k"); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	md, _, _ := svc.GetMetadata(ctx, v.ID)
+	if md.DurationSeconds == nil || *md.DurationSeconds != 10 {
+		t.Errorf("duration = %v, want 10", md.DurationSeconds)
+	}
+	if md.Width != nil || md.Height != nil {
+		t.Errorf("dimensions = %v x %v, want NULL/NULL", md.Width, md.Height)
 	}
 }

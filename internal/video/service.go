@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -56,6 +57,8 @@ type Repository interface {
 	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
 	DeleteVideoFilesByVideoAndKind(ctx context.Context, arg sqlcgen.DeleteVideoFilesByVideoAndKindParams) error
 	SetVideoState(ctx context.Context, arg sqlcgen.SetVideoStateParams) (sqlcgen.Video, error)
+	UpsertVideoMetadata(ctx context.Context, arg sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error)
+	GetVideoMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error)
 }
 
 // Prober inspects a stored original file and reports whether it is valid,
@@ -64,9 +67,9 @@ type Repository interface {
 // extension allow-list) and the video is published directly. The real probe is
 // wired once FFmpeg is provisioned in the runtime image.
 type Prober interface {
-	// Probe validates the object at the given storage key, returning a non-nil
-	// error when it is not usable media.
-	Probe(ctx context.Context, storageKey string) error
+	// Probe validates the object at the given storage key and returns its
+	// technical metadata, or a non-nil error when it is not usable media.
+	Probe(ctx context.Context, storageKey string) (media.Metadata, error)
 }
 
 // Service holds the video application logic.
@@ -186,11 +189,45 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey string) (sqlcgen.Video, error) {
 	state := "published"
 	if s.prober != nil {
-		if err := s.prober.Probe(ctx, originalKey); err != nil {
+		md, err := s.prober.Probe(ctx, originalKey)
+		if err != nil {
 			state = "failed"
+		} else if _, err := s.repo.UpsertVideoMetadata(ctx, metadataParams(videoID, md)); err != nil {
+			return sqlcgen.Video{}, err
 		}
 	}
 	return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
+}
+
+// GetMetadata returns a video's stored technical metadata. The bool is false
+// when none has been recorded (e.g. published without a prober, or not yet
+// processed); a lookup miss is reported as absent, not an error.
+func (s *Service) GetMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, bool, error) {
+	m, err := s.repo.GetVideoMetadata(ctx, videoID)
+	if err != nil {
+		return sqlcgen.VideoMetadatum{}, false, nil
+	}
+	return m, true, nil
+}
+
+// metadataParams maps probe Metadata to upsert params, leaving unknown (zero)
+// measures NULL so the API can distinguish "not determined" from a real value.
+func metadataParams(videoID uuid.UUID, md media.Metadata) sqlcgen.UpsertVideoMetadataParams {
+	return sqlcgen.UpsertVideoMetadataParams{
+		VideoID:         videoID,
+		DurationSeconds: posInt32(md.DurationSeconds),
+		Width:           posInt32(md.Width),
+		Height:          posInt32(md.Height),
+	}
+}
+
+// posInt32 returns a pointer to n as int32 when n is positive, else nil (NULL).
+func posInt32(n int) *int32 {
+	if n <= 0 {
+		return nil
+	}
+	v := int32(n)
+	return &v
 }
 
 // acceptedExt returns the normalized (lowercased) extension of filename when it

@@ -19,6 +19,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/httpapi"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
@@ -85,11 +86,17 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("media storage configured", "backend", cfg.StorageBackend)
 
-	// No media prober is wired yet: uploads finalise by publishing the original
-	// directly. Once FFmpeg is provisioned in the runtime image, add
-	// video.WithProber(<ffprobe-backed prober>) here to validate (and later
-	// transcode) before publishing.
-	videosvc := video.NewService(db.Queries(), blobs)
+	// Wire the FFprobe media prober when ffprobe is on PATH; otherwise uploads
+	// finalise by publishing the original unprobed (no metadata) so a host
+	// without ffmpeg still works.
+	var vopts []video.Option
+	if probe, ok := media.DetectFFProbe(blobs); ok {
+		vopts = append(vopts, video.WithProber(probe))
+		logger.Info("media probe enabled (ffprobe found)")
+	} else {
+		logger.Warn("media probe disabled (ffprobe not on PATH); originals are published unprobed")
+	}
+	videosvc := video.NewService(db.Queries(), blobs, vopts...)
 	opts = append(opts, httpapi.WithVideoService(videosvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)

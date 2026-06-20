@@ -708,7 +708,9 @@ paths:
       description: >-
         Public and unlisted videos are returned to anyone with the id. A private
         video is returned only to its owner (with a bearer token); to everyone
-        else it is reported as 404 so its existence is not revealed.
+        else it is reported as 404 so its existence is not revealed. The response
+        includes probed technical metadata (duration_seconds, width, height) when
+        a media probe has recorded it.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -1162,6 +1164,20 @@ components:
         created_at:
           type: string
           format: date-time
+        duration_seconds:
+          type: integer
+          nullable: true
+          description: >-
+            Probed duration in whole seconds. Present on the detail endpoint once
+            a media probe has recorded it; omitted when unknown.
+        width:
+          type: integer
+          nullable: true
+          description: Probed pixel width; omitted when unknown (e.g. audio-only).
+        height:
+          type: integer
+          nullable: true
+          description: Probed pixel height; omitted when unknown (e.g. audio-only).
     CreateVideoRequest:
       type: object
       required: [title]

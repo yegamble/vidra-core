@@ -48,6 +48,13 @@ func (l *Local) resolve(key string) (string, error) {
 	return full, nil
 }
 
+// Path returns the resolved local filesystem path for key, implementing
+// storage.PathProvider. It applies the same traversal-safe resolution as the
+// read/write methods and does not require the object to exist.
+func (l *Local) Path(key string) (string, error) {
+	return l.resolve(key)
+}
+
 // Put writes r to the object at key, creating parent directories.
 func (l *Local) Put(_ context.Context, key string, r io.Reader) (int64, error) {
 	full, err := l.resolve(key)

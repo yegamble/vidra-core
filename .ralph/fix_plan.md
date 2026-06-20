@@ -343,8 +343,8 @@
 > `video.WithProber(...)` in `cmd/api` once FFmpeg is in the runtime image. The
 > public surfaces already filter `state='published'`.
 
-- [ ] Implement FFmpeg probe. (seam ready — `video.Prober`; needs the real ffprobe impl + FFmpeg in the image)
-- [ ] Implement media metadata extraction.
+- [x] Implement FFmpeg probe. (`internal/media.FFProbe` shells out to `ffprobe -print_format json`; pure JSON parser unit-tested with fixtures, exec path in a `//go:build integration` test excluded from `make ci`; wired via `media.DetectFFProbe` in `cmd/api` only when ffprobe is on PATH — graceful publish-unprobed fallback otherwise; ffmpeg added to the runtime image. Reads originals via the new `storage.PathProvider` capability, temp-download fallback for non-path backends.)
+- [x] Implement media metadata extraction. (probe extracts duration_seconds/width/height into `video_metadata` (migration 0009, 1:1 side table) during `Process`; unknown measures stored NULL; `GET /api/v1/videos/:id` exposes them, omitted when absent.)
 - [ ] Implement H.264 profile.
 - [ ] Implement VP9 profile.
 - [ ] Implement AV1 profile.

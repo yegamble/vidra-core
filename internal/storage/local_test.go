@@ -114,3 +114,31 @@ func TestNestedKeysCreateDirs(t *testing.T) {
 		t.Fatal("nested object not found after Put")
 	}
 }
+
+func TestLocalPathResolvesAndRejects(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLocal(dir)
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	// A valid key resolves under the root and matches where Put writes.
+	if _, err := l.Put(context.Background(), "videos/v1/original.mp4", strings.NewReader("data")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	p, err := l.Path("videos/v1/original.mp4")
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if !strings.HasPrefix(p, dir) {
+		t.Errorf("path %q is not under root %q", p, dir)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Errorf("stat resolved path: %v", err)
+	}
+	// Implements the PathProvider capability.
+	var _ PathProvider = l
+	// Traversal keys are rejected, just like the read/write methods.
+	if _, err := l.Path("../escape"); err != ErrInvalidKey {
+		t.Errorf("Path(traversal) err = %v, want ErrInvalidKey", err)
+	}
+}

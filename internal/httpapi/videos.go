@@ -41,15 +41,20 @@ func (r createVideoRequest) Validate() []FieldError {
 	return fes
 }
 
-// videoView is the public projection of a video.
+// videoView is the public projection of a video. The technical metadata fields
+// are populated on the detail endpoint once a probe has recorded them; they are
+// omitted when unknown.
 type videoView struct {
-	ID          string    `json:"id"`
-	ChannelID   string    `json:"channel_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Privacy     string    `json:"privacy"`
-	State       string    `json:"state"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID              string    `json:"id"`
+	ChannelID       string    `json:"channel_id"`
+	Title           string    `json:"title"`
+	Description     string    `json:"description"`
+	Privacy         string    `json:"privacy"`
+	State           string    `json:"state"`
+	CreatedAt       time.Time `json:"created_at"`
+	DurationSeconds *int32    `json:"duration_seconds,omitempty"`
+	Width           *int32    `json:"width,omitempty"`
+	Height          *int32    `json:"height,omitempty"`
 }
 
 func newVideoView(v sqlcgen.Video) videoView {
@@ -133,7 +138,13 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "video not found")
 		}
 	}
-	return c.JSON(http.StatusOK, videoViewFromRow(v))
+	view := videoViewFromRow(v)
+	if md, ok, err := s.videosvc.GetMetadata(c.Request().Context(), id); err == nil && ok {
+		view.DurationSeconds = md.DurationSeconds
+		view.Width = md.Width
+		view.Height = md.Height
+	}
+	return c.JSON(http.StatusOK, view)
 }
 
 // videoListResponse wraps a list of videos.

@@ -74,3 +74,11 @@ type VideoFile struct {
 	SizeBytes    int64     `json:"size_bytes"`
 	CreatedAt    time.Time `json:"created_at"`
 }
+
+type VideoMetadatum struct {
+	VideoID         uuid.UUID `json:"video_id"`
+	DurationSeconds *int32    `json:"duration_seconds"`
+	Width           *int32    `json:"width"`
+	Height          *int32    `json:"height"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}

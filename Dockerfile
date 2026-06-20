@@ -14,7 +14,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./c
 
 # ---- runtime stage ----
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates wget && adduser -D -u 10001 vidra
+# ffmpeg provides ffprobe, used to extract media metadata on upload.
+RUN apk add --no-cache ca-certificates wget ffmpeg && adduser -D -u 10001 vidra
 USER vidra
 WORKDIR /app
 COPY --from=build /out/api /app/api

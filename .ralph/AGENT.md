@@ -90,6 +90,9 @@ metadata into `/version` via `-ldflags`. The `/api` surface is rate limited
 exempt and the limiter fails open if Redis is down. The Redis limiter has a
 gated integration test:
 `REDIS_URL=redis://localhost:6379/0 go test -tags=integration ./internal/ratelimit/...`.
+Media metadata is extracted by `internal/media.FFProbe` (ffprobe); its pure JSON
+parser is unit-tested in `make ci`, while the real-ffprobe test is gated behind
+`-tags=integration` (needs ffmpeg): `go test -tags=integration ./internal/media/...`.
 
 ## Build / run
 ```bash

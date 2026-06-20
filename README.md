@@ -87,11 +87,15 @@ rejects it). Re-uploading replaces the prior original, and non-owner/unknown →
 The file extension must be an accepted video container (else `415`) and the body must
 be within `UPLOAD_MAX_SIZE` (else `413`; this route is exempt from the small
 `HTTP_BODY_LIMIT` that guards the JSON API). The stored file is tracked in
-`video_files`. Finalisation runs through an injected `Prober` seam: with none
-configured the original is trusted and published directly; the real FFprobe/transcode
-prober wires in once FFmpeg is provisioned. The public discovery surfaces —
-`GET /api/v1/videos`, `/videos/search`, and the public view of a channel's videos —
-return only `published` videos.
+`video_files`. Finalisation runs through an injected `Prober` seam: at startup the server uses
+the FFprobe-backed prober when `ffprobe` is on `PATH` (it is in the Docker image),
+extracting technical metadata (duration, width, height) that the detail endpoint
+exposes and persisting it to `video_metadata`; a probe error marks the video
+`failed`. Where `ffprobe` is absent the original is trusted and published unprobed
+(no metadata). The public discovery surfaces — `GET /api/v1/videos`,
+`/videos/search`, and the public view of a channel's videos — return only
+`published` videos. (Real transcoding into multiple renditions reuses this same
+seam in a later slice.)
 
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects

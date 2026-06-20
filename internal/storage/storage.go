@@ -36,3 +36,14 @@ type Backend interface {
 	// Exists reports whether an object is stored at key.
 	Exists(ctx context.Context, key string) (bool, error)
 }
+
+// PathProvider is an optional capability implemented by backends that can expose
+// a local filesystem path for an object (the local backend does). Tools that
+// need a seekable file on disk — e.g. ffprobe — use it; backends without it
+// require the caller to stream the object to a temporary file first.
+type PathProvider interface {
+	// Path returns the local filesystem path for key. It resolves the key (and
+	// rejects unsafe ones with ErrInvalidKey) but does not require the object to
+	// exist.
+	Path(key string) (string, error)
+}

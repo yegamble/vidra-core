@@ -18,6 +18,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -29,6 +30,27 @@ type videoFakeRepo struct {
 	channels *channelFakeRepo
 	videos   map[uuid.UUID]sqlcgen.GetVideoByIDRow
 	files    map[uuid.UUID][]sqlcgen.VideoFile
+	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
+}
+
+func (f *videoFakeRepo) UpsertVideoMetadata(_ context.Context, a sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error) {
+	if f.metadata == nil {
+		f.metadata = map[uuid.UUID]sqlcgen.VideoMetadatum{}
+	}
+	m := sqlcgen.VideoMetadatum{
+		VideoID: a.VideoID, DurationSeconds: a.DurationSeconds, Width: a.Width, Height: a.Height,
+		UpdatedAt: time.Now(),
+	}
+	f.metadata[a.VideoID] = m
+	return m, nil
+}
+
+func (f *videoFakeRepo) GetVideoMetadata(_ context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error) {
+	m, ok := f.metadata[videoID]
+	if !ok {
+		return sqlcgen.VideoMetadatum{}, errors.New("not found")
+	}
+	return m, nil
 }
 
 func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (sqlcgen.Video, error) {
@@ -201,6 +223,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 		channels: chRepo,
 		videos:   map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
 		files:    map[uuid.UUID][]sqlcgen.VideoFile{},
+		metadata: map[uuid.UUID]sqlcgen.VideoMetadatum{},
 	}
 	return New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
@@ -209,10 +232,14 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 	)
 }
 
-// fakeProber lets handler tests drive the publish/fail outcome of an upload.
-type fakeProber struct{ err error }
+// fakeProber lets handler tests drive the publish/fail outcome and metadata of
+// an upload.
+type fakeProber struct {
+	md  media.Metadata
+	err error
+}
 
-func (p fakeProber) Probe(_ context.Context, _ string) error { return p.err }
+func (p fakeProber) Probe(_ context.Context, _ string) (media.Metadata, error) { return p.md, p.err }
 
 // createChannelFor registers a user, creates a channel, and returns (token, handle).
 func createChannelFor(t *testing.T, srv *Server, username, email, handle string) string {
@@ -600,6 +627,49 @@ func TestUploadVideoFileProbeFailureMarksFailed(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if resp.Video.State != "failed" {
 		t.Errorf("state = %q, want failed (probe rejected the file)", resp.Video.State)
+	}
+}
+
+func TestUploadProbeMetadataOnDetail(t *testing.T) {
+	srv := videoServerCfg(t, testConfig(), video.WithProber(fakeProber{
+		md: media.Metadata{DurationSeconds: 95, Width: 1280, Height: 720},
+	}))
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
+	if rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", "data", tok); rec.Code != http.StatusCreated {
+		t.Fatalf("upload = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// The detail endpoint exposes the probed metadata.
+	rec := getVideo(srv, id, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get = %d, want 200", rec.Code)
+	}
+	var v videoView
+	_ = json.Unmarshal(rec.Body.Bytes(), &v)
+	if v.State != "published" {
+		t.Errorf("state = %q, want published", v.State)
+	}
+	if v.DurationSeconds == nil || *v.DurationSeconds != 95 {
+		t.Errorf("duration_seconds = %v, want 95", v.DurationSeconds)
+	}
+	if v.Width == nil || *v.Width != 1280 || v.Height == nil || *v.Height != 720 {
+		t.Errorf("dimensions = %v x %v, want 1280x720", v.Width, v.Height)
+	}
+}
+
+func TestDetailHasNoMetadataWithoutProber(t *testing.T) {
+	srv := videoServer(t) // no prober -> no metadata recorded
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
+	if rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", "data", tok); rec.Code != http.StatusCreated {
+		t.Fatalf("upload = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	rec := getVideo(srv, id, "")
+	var v videoView
+	_ = json.Unmarshal(rec.Body.Bytes(), &v)
+	if v.DurationSeconds != nil || v.Width != nil || v.Height != nil {
+		t.Errorf("metadata present without a prober: %+v", v)
 	}
 }
 
