@@ -83,8 +83,11 @@ public titles (pg_trgm, ranked by similarity then recency; same pagination).
 `POST /api/v1/videos/{id}/file` (owner-only, `multipart/form-data` with a single
 `file` part) stores the original through the storage backend and moves the video
 `draft → processing`; re-uploading replaces the prior original, and non-owner/unknown
-→ `404`. The stored file is tracked in `video_files`; the response returns the video
-(now `processing`) plus the file's metadata. Transcoding/playback are later slices.
+→ `404`. The file extension must be an accepted video container (else `415`) and the
+body must be within `UPLOAD_MAX_SIZE` (else `413`; this route is exempt from the small
+`HTTP_BODY_LIMIT` that guards the JSON API). The stored file is tracked in
+`video_files`; the response returns the video (now `processing`) plus the file's
+metadata. Authoritative content validation (FFprobe) and transcoding are later slices.
 
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects

@@ -70,6 +70,12 @@ type Config struct {
 	// "s3"/"ipfs" later). StorageLocalRoot is the directory for the local backend.
 	StorageBackend   string
 	StorageLocalRoot string
+
+	// UploadMaxSize caps a single original-file upload, as an Echo size string
+	// (e.g. "2G", "512M"). It overrides HTTPBodyLimit for the upload route only,
+	// so the JSON API stays small while media uploads get headroom. Oversized
+	// uploads are rejected with 413.
+	UploadMaxSize string
 }
 
 // devJWTSecret is the obviously-fake signing key used only for local dev/test.
@@ -110,6 +116,7 @@ func Load() (*Config, error) {
 		JWTRefreshTTL:        getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
 		StorageBackend:       getEnv("STORAGE_BACKEND", "local"),
 		StorageLocalRoot:     getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
+		UploadMaxSize:        getEnv("UPLOAD_MAX_SIZE", "2G"),
 	}
 
 	port, err := getEnvInt("HTTP_PORT", 8080)
@@ -172,6 +179,9 @@ func (c *Config) validate() error {
 		}
 	default:
 		return fmt.Errorf("config: unsupported STORAGE_BACKEND %q (want local)", c.StorageBackend)
+	}
+	if _, err := bytes.Parse(c.UploadMaxSize); err != nil {
+		return fmt.Errorf("config: invalid UPLOAD_MAX_SIZE %q: %w", c.UploadMaxSize, err)
 	}
 	if c.Environment == "production" {
 		if c.JWTSecret == devJWTSecret {

@@ -27,6 +27,7 @@ func testConfig() *config.Config {
 		RegistrationEnabled: true,
 		HTTPRequestTimeout:  30 * time.Second,
 		HTTPBodyLimit:       "8M",
+		UploadMaxSize:       "64K",
 	}
 }
 

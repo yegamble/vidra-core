@@ -310,7 +310,7 @@
 - [ ] Implement video metadata validation: title, description, tags, category, language, license, privacy, channel.
 - [~] Implement privacy levels. (videos: public/unlisted/private enforced on read — private hidden as 404 to non-owners; account/channel-level privacy still TODO)
 - [ ] Implement publish date/scheduled publish.
-- [ ] Implement file validation.
+- [~] Implement file validation. (upload enforces a size cap — `UPLOAD_MAX_SIZE`, default 2G, via a per-route body limit so the upload route is exempt from the small JSON `HTTP_BODY_LIMIT`; oversize → 413 — and an extension allowlist of video containers; unaccepted → 415, checked after ownership so non-owners still see 404. Authoritative content/codec validation is FFprobe's job in the transcode slice; magic-byte sniffing is unreliable for video containers in Go's detector.)
 - [ ] Implement ClamAV scan integration.
 - [ ] Implement ClamAV fallback modes: fail-closed, fail-open, quarantine.
 - [ ] Implement URL import with SSRF protection.
@@ -522,7 +522,7 @@
 # P15 — Security Hardening
 
 - [ ] Add SSRF protection package/policy for URL imports and link previews.
-- [ ] Add upload file type allowlist.
+- [x] Add upload file type allowlist. (original-file upload accepts only known video-container extensions — mp4/m4v/mov/webm/mkv/avi/ogv/ogg/mpg/mpeg/ts/flv/wmv/3gp; others → 415. See `internal/video.acceptedVideoExts`.)
 - [ ] Add malware scan hooks.
 - [ ] Add path traversal protections for local storage.
 - [ ] Add CORS tests.

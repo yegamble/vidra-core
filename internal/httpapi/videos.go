@@ -403,6 +403,8 @@ func videoError(err error) error {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	case errors.Is(err, video.ErrForbidden):
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	case errors.Is(err, video.ErrUnsupportedMedia):
+		return echo.NewHTTPError(http.StatusUnsupportedMediaType, "unsupported media type")
 	default:
 		return err
 	}

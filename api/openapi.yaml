@@ -818,8 +818,10 @@ paths:
         form with a single "file" part, stores it via the configured storage
         backend, and moves the video from draft to processing. Re-uploading
         replaces the previous original. A non-owner or unknown id is reported as
-        404 so a private video's existence is not leaked. Transcoding into
-        playable renditions happens asynchronously in a later stage.
+        404 so a private video's existence is not leaked. The file extension must
+        be an accepted video container (otherwise 415); the body must be within
+        UPLOAD_MAX_SIZE (otherwise 413). Transcoding into playable renditions
+        happens asynchronously in a later stage.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -863,6 +865,18 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: The uploaded file exceeds UPLOAD_MAX_SIZE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: The file extension is not an accepted video container.
           content:
             application/json:
               schema:

@@ -76,6 +76,32 @@ func TestStorageRejectsUnsupportedBackend(t *testing.T) {
 	}
 }
 
+func TestUploadMaxSizeDefaultAndOverride(t *testing.T) {
+	t.Setenv("UPLOAD_MAX_SIZE", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.UploadMaxSize != "2G" {
+		t.Errorf("UploadMaxSize = %q, want 2G", cfg.UploadMaxSize)
+	}
+	t.Setenv("UPLOAD_MAX_SIZE", "512M")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() override error = %v", err)
+	}
+	if cfg.UploadMaxSize != "512M" {
+		t.Errorf("UploadMaxSize = %q, want 512M", cfg.UploadMaxSize)
+	}
+}
+
+func TestUploadMaxSizeRejectsInvalid(t *testing.T) {
+	t.Setenv("UPLOAD_MAX_SIZE", "not-a-size")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for invalid UPLOAD_MAX_SIZE, got nil")
+	}
+}
+
 func TestRateLimitDisabledSkipsValidation(t *testing.T) {
 	t.Setenv("RATE_LIMIT_ENABLED", "false")
 	t.Setenv("RATE_LIMIT_REQUESTS", "0") // invalid, but ignored when disabled

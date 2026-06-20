@@ -17,6 +17,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -185,7 +186,9 @@ func (f *videoFakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublic
 	return all[lo:hi], nil
 }
 
-func videoServer(t *testing.T) *Server {
+func videoServer(t *testing.T) *Server { return videoServerCfg(t, testConfig()) }
+
+func videoServerCfg(t *testing.T, cfg *config.Config) *Server {
 	t.Helper()
 	chRepo := newChannelFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
@@ -199,7 +202,7 @@ func videoServer(t *testing.T) *Server {
 		videos:   map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
 		files:    map[uuid.UUID][]sqlcgen.VideoFile{},
 	}
-	return New(testConfig(), nil, nil,
+	return New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
 		WithVideoService(video.NewService(repo, blobs)),
@@ -599,5 +602,50 @@ func TestUploadVideoFileUnknownVideo404(t *testing.T) {
 	rec := uploadVideoFile(srv, uuid.New().String(), "clip.mp4", "video/mp4", "bytes", tok)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown video upload = %d, want 404", rec.Code)
+	}
+}
+
+func TestUploadVideoFileUnsupportedExtension(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"My Draft"}`)
+	rec := uploadVideoFile(srv, id, "notes.pdf", "application/pdf", "not a video", tok)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status = %d, want 415; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUploadVideoFileTooLarge(t *testing.T) {
+	srv := videoServer(t) // UploadMaxSize is 64K in testConfig
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"My Draft"}`)
+	big := strings.Repeat("x", 80*1024) // 80K > 64K cap
+	rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", big, tok)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUploadRouteBypassesJSONBodyLimit(t *testing.T) {
+	cfg := testConfig()
+	cfg.HTTPBodyLimit = "2K"   // tiny JSON cap
+	cfg.UploadMaxSize = "256K" // generous upload cap
+	srv := videoServerCfg(t, cfg)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"My Draft"}`)
+
+	// An upload above the JSON limit but under the upload cap succeeds — proving
+	// the upload route is exempt from the small default body limit.
+	body := strings.Repeat("x", 8*1024) // 8K > 2K JSON cap, < 256K upload cap
+	rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", body, tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("large upload = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// ...and the JSON API is still capped by the small default limit.
+	bigJSON := `{"title":"` + strings.Repeat("a", 3*1024) + `"}`
+	rec = postJSONAuth(srv, "/api/v1/channels/ada/videos", bigJSON, tok)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized JSON = %d, want 413; body=%s", rec.Code, rec.Body.String())
 	}
 }

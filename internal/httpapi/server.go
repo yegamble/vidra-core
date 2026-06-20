@@ -6,6 +6,7 @@ package httpapi
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -36,6 +37,10 @@ type Server struct {
 	channelsvc *channel.Service
 	videosvc   *video.Service
 }
+
+// uploadRoutePath is the Echo route template for the original-file upload. It is
+// exempted from the default body limit (which gets its own larger one).
+const uploadRoutePath = "/api/v1/videos/:id/file"
 
 // Option customises the Server during construction.
 type Option func(*Server)
@@ -91,7 +96,15 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 		AllowMethods: []string{echo.GET, echo.POST, echo.PUT, echo.PATCH, echo.DELETE, echo.OPTIONS},
 	}))
 	e.Use(requestDeadline(cfg.HTTPRequestTimeout))
-	e.Use(middleware.BodyLimit(cfg.HTTPBodyLimit))
+	// The default body limit keeps the JSON API small. The original-file upload
+	// route is exempted here and gets its own (larger) UploadMaxSize limit at
+	// registration, so media uploads have headroom without widening the rest.
+	e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{
+		Skipper: func(c echo.Context) bool {
+			return c.Request().Method == http.MethodPost && c.Path() == uploadRoutePath
+		},
+		Limit: cfg.HTTPBodyLimit,
+	}))
 
 	s.routes()
 	return s
@@ -196,7 +209,7 @@ func (s *Server) routes() {
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
-		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth)
+		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, middleware.BodyLimit(s.cfg.UploadMaxSize))
 	}
 }
 

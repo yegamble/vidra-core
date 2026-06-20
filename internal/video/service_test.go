@@ -408,18 +408,50 @@ func TestAttachOriginalWithoutStorage(t *testing.T) {
 	}
 }
 
-func TestSafeExtFallback(t *testing.T) {
+func TestAcceptedExtAndOriginalKey(t *testing.T) {
 	id := uuid.New()
-	cases := map[string]string{
-		"clip.mp4":      "videos/" + id.String() + "/original.mp4",
-		"clip.WEBM":     "videos/" + id.String() + "/original.webm",
-		"noext":         "videos/" + id.String() + "/original.bin",
-		"weird.tar.gz":  "videos/" + id.String() + "/original.gz",
-		"evil.../x.m p": "videos/" + id.String() + "/original.bin",
+	accepted := map[string]string{ // filename -> normalized extension
+		"clip.mp4":  ".mp4",
+		"clip.WEBM": ".webm",
+		"a.MOV":     ".mov",
+		"x.mkv":     ".mkv",
 	}
-	for filename, want := range cases {
-		if got := originalKey(id, filename); got != want {
-			t.Errorf("originalKey(%q) = %q, want %q", filename, got, want)
+	for filename, wantExt := range accepted {
+		ext, ok := acceptedExt(filename)
+		if !ok || ext != wantExt {
+			t.Errorf("acceptedExt(%q) = (%q, %v), want (%q, true)", filename, ext, ok, wantExt)
 		}
+		if got, want := originalKey(id, ext), "videos/"+id.String()+"/original"+wantExt; got != want {
+			t.Errorf("originalKey(%q) = %q, want %q", ext, got, want)
+		}
+	}
+	for _, filename := range []string{"noext", "weird.tar.gz", "evil.../x.m p", "doc.pdf", "image.png", "a.exe", ""} {
+		if ext, ok := acceptedExt(filename); ok {
+			t.Errorf("acceptedExt(%q) = (%q, true), want false (not a video container)", filename, ext)
+		}
+	}
+}
+
+func TestAttachOriginalRejectsUnsupportedExtension(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	blobs, _ := storage.NewLocal(t.TempDir())
+	svc := NewService(repo, blobs)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "private"})
+
+	if _, _, err := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{Filename: "notes.pdf", Reader: strings.NewReader("x")}); !errors.Is(err, ErrUnsupportedMedia) {
+		t.Fatalf("err = %v, want ErrUnsupportedMedia", err)
+	}
+	// A rejected upload stores nothing and leaves the video a draft.
+	if n := len(repo.files[v.ID]); n != 0 {
+		t.Errorf("file rows = %d, want 0", n)
+	}
+	if got, _ := svc.GetByID(ctx, v.ID); got.State != "draft" {
+		t.Errorf("state = %q, want draft (unchanged)", got.State)
+	}
+	// Ownership is still checked before media type: a non-owner gets ErrForbidden.
+	if _, _, err := svc.AttachOriginal(ctx, uuid.New(), v.ID, UploadInput{Filename: "notes.pdf", Reader: strings.NewReader("x")}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-owner err = %v, want ErrForbidden", err)
 	}
 }

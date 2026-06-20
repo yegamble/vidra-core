@@ -26,7 +26,21 @@ var (
 	// ErrStorageUnavailable means no blob backend is configured (upload routes
 	// are only mounted when one is, so this is a guard, not a normal path).
 	ErrStorageUnavailable = errors.New("video: storage backend not configured")
+	// ErrUnsupportedMedia means the uploaded file's extension is not an accepted
+	// video container. This is a cheap first gate; authoritative validation
+	// (FFprobe) comes with the transcode pipeline.
+	ErrUnsupportedMedia = errors.New("video: unsupported media type")
 )
+
+// acceptedVideoExts is the allow-list of original-upload file extensions. It is
+// deliberately a container/extension gate only — the declared content type is
+// client-controlled and not trusted; real content validation is FFprobe's job
+// in a later slice.
+var acceptedVideoExts = map[string]bool{
+	".mp4": true, ".m4v": true, ".mov": true, ".webm": true, ".mkv": true,
+	".avi": true, ".ogv": true, ".ogg": true, ".mpg": true, ".mpeg": true,
+	".ts": true, ".flv": true, ".wmv": true, ".3gp": true,
+}
 
 // Repository is the data access the video service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
@@ -101,8 +115,12 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	if v.OwnerID != ownerID {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrForbidden
 	}
+	ext, ok := acceptedExt(in.Filename)
+	if !ok {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrUnsupportedMedia
+	}
 
-	key := originalKey(videoID, in.Filename)
+	key := originalKey(videoID, ext)
 	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
 		VideoID: videoID,
 		Kind:    "original",
@@ -131,30 +149,21 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	return updated, file, nil
 }
 
-// originalKey builds the storage key for a video's original file. The extension
-// is derived from the (untrusted) filename, lowercased and restricted to a small
-// safe charset; anything unusable falls back to ".bin". The video id namespaces
-// the key so files never collide across videos, and the storage backend itself
-// rejects any traversal.
-func originalKey(videoID uuid.UUID, filename string) string {
+// acceptedExt returns the normalized (lowercased) extension of filename when it
+// is an accepted video container, and false otherwise. It is the upload type gate.
+func acceptedExt(filename string) (string, bool) {
 	ext := strings.ToLower(filepath.Ext(filename))
-	if !safeExt(ext) {
-		ext = ".bin"
+	if acceptedVideoExts[ext] {
+		return ext, true
 	}
-	return "videos/" + videoID.String() + "/original" + ext
+	return "", false
 }
 
-// safeExt reports whether ext is a dot followed by 1–11 ASCII alphanumerics.
-func safeExt(ext string) bool {
-	if len(ext) < 2 || len(ext) > 12 || ext[0] != '.' {
-		return false
-	}
-	for _, r := range ext[1:] {
-		if !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') {
-			return false
-		}
-	}
-	return true
+// originalKey builds the storage key for a video's original file from an already
+// validated extension. The video id namespaces the key so files never collide
+// across videos, and the storage backend itself rejects any traversal.
+func originalKey(videoID uuid.UUID, ext string) string {
+	return "videos/" + videoID.String() + "/original" + ext
 }
 
 // GetByID returns a video joined with its owning account's id (for the caller's
