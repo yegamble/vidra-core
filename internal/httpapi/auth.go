@@ -9,8 +9,22 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
+
+// audit emits a security audit event for the current request, pulling the
+// request ID from the response headers. See internal/observability and
+// .ralph/specs/observability.md. actorID/reason may be empty.
+func (s *Server) audit(c echo.Context, action, result, actorID, reason string) {
+	observability.Audit(c.Request().Context(), s.logger, observability.AuditEvent{
+		Action:    action,
+		Result:    result,
+		ActorID:   actorID,
+		RequestID: c.Response().Header().Get(echo.HeaderXRequestID),
+		Reason:    reason,
+	})
+}
 
 // registerRequest is the POST /api/v1/auth/register body.
 type registerRequest struct {
@@ -137,6 +151,7 @@ func (s *Server) handleRegister(c echo.Context) error {
 		}
 		return err
 	}
+	s.audit(c, observability.ActionRegister, observability.ResultSuccess, user.ID.String(), "")
 	return s.authResponse(http.StatusCreated, c, user, tokens)
 }
 
@@ -216,12 +231,18 @@ func (s *Server) handleLogin(c echo.Context) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInvalidCredentials):
+			// No actor_id: the account is unknown or the password was wrong, and
+			// we must not leak which (or the attempted email — it is PII).
+			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "invalid_credentials")
 			return echo.NewHTTPError(http.StatusUnauthorized, "invalid email or password")
 		case errors.Is(err, auth.ErrAccountDisabled):
+			// Login returns an empty user on this path, so no actor_id is available.
+			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "account_disabled")
 			return echo.NewHTTPError(http.StatusForbidden, "account is disabled")
 		}
 		return err
 	}
+	s.audit(c, observability.ActionLogin, observability.ResultSuccess, user.ID.String(), "")
 	return s.authResponse(http.StatusOK, c, user, tokens)
 }
 
@@ -264,6 +285,7 @@ func (s *Server) handleLogoutAll(c echo.Context) error {
 	if err := s.authsvc.LogoutAll(c.Request().Context(), userID); err != nil {
 		return err
 	}
+	s.audit(c, observability.ActionLogoutAll, observability.ResultSuccess, userID.String(), "")
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -277,6 +299,8 @@ func (s *Server) handleLogout(c echo.Context) error {
 	if err := s.authsvc.Logout(c.Request().Context(), in.RefreshToken); err != nil {
 		return err
 	}
+	// Idempotent: no actor_id, since the token may be unknown/already-revoked.
+	s.audit(c, observability.ActionLogout, observability.ResultSuccess, "", "")
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -304,6 +328,9 @@ func (s *Server) handleRequestPasswordReset(c echo.Context) error {
 	if err := s.authsvc.RequestPasswordReset(c.Request().Context(), in.Email); err != nil {
 		return err
 	}
+	// No actor_id/email: enumeration-safe, so the event records only that a reset
+	// was requested, not for whom.
+	s.audit(c, observability.ActionPasswordResetRequest, observability.ResultSuccess, "", "")
 	return c.NoContent(http.StatusAccepted)
 }
 
@@ -337,10 +364,12 @@ func (s *Server) handleConfirmPasswordReset(c echo.Context) error {
 	}
 	if err := s.authsvc.ResetPassword(c.Request().Context(), in.Token, in.Password); err != nil {
 		if errors.Is(err, auth.ErrInvalidResetToken) {
+			s.audit(c, observability.ActionPasswordResetComplete, observability.ResultFailure, "", "invalid_token")
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid or expired reset token")
 		}
 		return err
 	}
+	s.audit(c, observability.ActionPasswordResetComplete, observability.ResultSuccess, "", "")
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -358,6 +387,7 @@ func (s *Server) handleRequestEmailVerification(c echo.Context) error {
 		}
 		return err
 	}
+	s.audit(c, observability.ActionEmailVerifyRequest, observability.ResultSuccess, userID.String(), "")
 	return c.NoContent(http.StatusAccepted)
 }
 
@@ -383,9 +413,11 @@ func (s *Server) handleConfirmEmailVerification(c echo.Context) error {
 	}
 	if err := s.authsvc.VerifyEmail(c.Request().Context(), in.Token); err != nil {
 		if errors.Is(err, auth.ErrInvalidVerificationToken) {
+			s.audit(c, observability.ActionEmailVerifyConfirm, observability.ResultFailure, "", "invalid_token")
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid or expired verification token")
 		}
 		return err
 	}
+	s.audit(c, observability.ActionEmailVerifyConfirm, observability.ResultSuccess, "", "")
 	return c.NoContent(http.StatusNoContent)
 }

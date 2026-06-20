@@ -276,7 +276,7 @@
 - [ ] Implement account import foundation.
 - [ ] Implement account deletion/deactivation.
 - [ ] Add auth rate limits.
-- [ ] Add auth audit logs.
+- [x] Add auth audit logs. (New `internal/observability` package: typed `AuditEvent` (action/result/actor_id/request_id/reason + slog timestamp as occurred_at), `Audit()` emitter, and the canonical `IsSensitiveKey` denylist from the observability spec. Wired into the auth handlers via `Server.audit` (`internal/httpapi/auth.go`): register, login success/failure (failure carries no actor_id/email — enumeration-safe), logout, logout-all, password-reset request + complete (success/failure), email-verify request + confirm (success/failure). Events are marked `audit=true`, distinct from request logs; never carry secrets/PII. `WithLogger` server option added as a capture seam. Tested: 4 observability unit (required fields, omit-empty, no-denylisted-key, IsSensitiveKey) + 2 httpapi handler (login emits success+failure with correct actor_id presence and reason; logout/reset events; asserts no denylisted key and the password never appears in logs). Partially advances P17.1/P17.2 observability.)
 - [ ] Add unit/integration tests for signup/login/session/MFA.
 - [ ] Add Postman tests for auth happy/error paths.
 

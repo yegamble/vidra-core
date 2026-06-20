@@ -83,6 +83,17 @@ func WithMediaStorage(b storage.Backend) Option {
 	return func(s *Server) { s.media = b }
 }
 
+// WithLogger overrides the structured logger (default: slog.Default()). Used to
+// route request/error/audit logs to a specific destination — and by tests to
+// capture audit events.
+func WithLogger(l *slog.Logger) Option {
+	return func(s *Server) {
+		if l != nil {
+			s.logger = l
+		}
+	}
+}
+
 // New constructs the HTTP server with middleware and routes registered. db and
 // rdb may be nil (e.g. in unit tests); readiness reports them as unconfigured.
 // It uses the process-wide slog default logger for request and error logging.
