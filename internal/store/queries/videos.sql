@@ -45,5 +45,12 @@ SET title       = COALESCE(sqlc.narg('title'), title),
 WHERE id = sqlc.arg('id')
 RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at;
 
+-- name: SetVideoState :one
+UPDATE videos
+SET state      = sqlc.arg('state'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at;
+
 -- name: DeleteVideo :exec
 DELETE FROM videos WHERE id = $1;

@@ -22,7 +22,7 @@ func fullRouteOptions() []Option {
 	return []Option{
 		WithAuthService(auth.NewService(nil, issuer, time.Hour), time.Minute),
 		WithChannelService(channel.NewService(nil)),
-		WithVideoService(video.NewService(nil)),
+		WithVideoService(video.NewService(nil, nil)),
 	}
 }
 

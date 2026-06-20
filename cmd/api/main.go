@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/ratelimit"
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -77,7 +79,13 @@ func run(logger *slog.Logger) error {
 	channelsvc := channel.NewService(db.Queries())
 	opts = append(opts, httpapi.WithChannelService(channelsvc))
 
-	videosvc := video.NewService(db.Queries())
+	blobs, err := newStorageBackend(cfg)
+	if err != nil {
+		return err
+	}
+	logger.Info("media storage configured", "backend", cfg.StorageBackend)
+
+	videosvc := video.NewService(db.Queries(), blobs)
 	opts = append(opts, httpapi.WithVideoService(videosvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
@@ -108,4 +116,16 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("shutdown complete")
 	return nil
+}
+
+// newStorageBackend builds the media blob backend selected by config. Config
+// validation already restricts StorageBackend to the supported set, so the
+// default branch is a defensive guard.
+func newStorageBackend(cfg *config.Config) (storage.Backend, error) {
+	switch cfg.StorageBackend {
+	case "local":
+		return storage.NewLocal(cfg.StorageLocalRoot)
+	default:
+		return nil, fmt.Errorf("unsupported storage backend %q", cfg.StorageBackend)
+	}
 }

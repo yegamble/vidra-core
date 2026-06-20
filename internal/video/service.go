@@ -7,10 +7,13 @@ package video
 import (
 	"context"
 	"errors"
+	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -20,6 +23,9 @@ var (
 	ErrNotFound = errors.New("video: not found")
 	// ErrForbidden means the caller does not own the video.
 	ErrForbidden = errors.New("video: not owner")
+	// ErrStorageUnavailable means no blob backend is configured (upload routes
+	// are only mounted when one is, so this is a guard, not a normal path).
+	ErrStorageUnavailable = errors.New("video: storage backend not configured")
 )
 
 // Repository is the data access the video service needs. *sqlcgen.Queries
@@ -33,16 +39,21 @@ type Repository interface {
 	SearchPublicVideos(ctx context.Context, arg sqlcgen.SearchPublicVideosParams) ([]sqlcgen.Video, error)
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
+	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
+	DeleteVideoFilesByVideoAndKind(ctx context.Context, arg sqlcgen.DeleteVideoFilesByVideoAndKindParams) error
+	SetVideoState(ctx context.Context, arg sqlcgen.SetVideoStateParams) (sqlcgen.Video, error)
 }
 
 // Service holds the video application logic.
 type Service struct {
-	repo Repository
+	repo  Repository
+	blobs storage.Backend
 }
 
-// NewService builds the video service.
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+// NewService builds the video service. blobs is the media storage backend used
+// by uploads; it may be nil when uploads are not wired (e.g. some tests).
+func NewService(repo Repository, blobs storage.Backend) *Service {
+	return &Service{repo: repo, blobs: blobs}
 }
 
 // CreateInput is validated, normalized video-creation data. Privacy must already
@@ -62,6 +73,88 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 		Description: strings.TrimSpace(in.Description),
 		Privacy:     in.Privacy,
 	})
+}
+
+// UploadInput is a video's original file as read from the request: the declared
+// filename and content type (both untrusted, stored for display only) and the
+// byte stream itself.
+type UploadInput struct {
+	Filename    string
+	ContentType string
+	Reader      io.Reader
+}
+
+// AttachOriginal stores the original file for a video and moves it from draft to
+// processing. Only the owner may upload (non-owner → ErrForbidden, unknown id →
+// ErrNotFound). It is a full replace: any previously stored original record for
+// the video is removed first and the blob is overwritten at a deterministic key,
+// so a re-upload leaves exactly one original. Transcoding into renditions is a
+// later slice; this only lands the source bytes and flips state.
+func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID, in UploadInput) (sqlcgen.Video, sqlcgen.VideoFile, error) {
+	if s.blobs == nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrStorageUnavailable
+	}
+	v, err := s.GetByID(ctx, videoID)
+	if err != nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	if v.OwnerID != ownerID {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrForbidden
+	}
+
+	key := originalKey(videoID, in.Filename)
+	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
+		VideoID: videoID,
+		Kind:    "original",
+	}); err != nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	size, err := s.blobs.Put(ctx, key, in.Reader)
+	if err != nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	file, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+		VideoID:      videoID,
+		Kind:         "original",
+		StorageKey:   key,
+		ContentType:  strings.TrimSpace(in.ContentType),
+		OriginalName: strings.TrimSpace(in.Filename),
+		SizeBytes:    size,
+	})
+	if err != nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	updated, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "processing"})
+	if err != nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	return updated, file, nil
+}
+
+// originalKey builds the storage key for a video's original file. The extension
+// is derived from the (untrusted) filename, lowercased and restricted to a small
+// safe charset; anything unusable falls back to ".bin". The video id namespaces
+// the key so files never collide across videos, and the storage backend itself
+// rejects any traversal.
+func originalKey(videoID uuid.UUID, filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if !safeExt(ext) {
+		ext = ".bin"
+	}
+	return "videos/" + videoID.String() + "/original" + ext
+}
+
+// safeExt reports whether ext is a dot followed by 1–11 ASCII alphanumerics.
+func safeExt(ext string) bool {
+	if len(ext) < 2 || len(ext) > 12 || ext[0] != '.' {
+		return false
+	}
+	for _, r := range ext[1:] {
+		if !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 // GetByID returns a video joined with its owning account's id (for the caller's

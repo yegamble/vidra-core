@@ -3,6 +3,7 @@ package video
 import (
 	"context"
 	"errors"
+	"io"
 	"sort"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -17,11 +19,16 @@ import (
 // owner so GetVideoByID can return the joined owner_id.
 type fakeRepo struct {
 	videos map[uuid.UUID]sqlcgen.GetVideoByIDRow
+	files  map[uuid.UUID][]sqlcgen.VideoFile
 	owner  uuid.UUID
 }
 
 func newFakeRepo(owner uuid.UUID) *fakeRepo {
-	return &fakeRepo{videos: map[uuid.UUID]sqlcgen.GetVideoByIDRow{}, owner: owner}
+	return &fakeRepo{
+		videos: map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
+		files:  map[uuid.UUID][]sqlcgen.VideoFile{},
+		owner:  owner,
+	}
 }
 
 func (f *fakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (sqlcgen.Video, error) {
@@ -97,6 +104,38 @@ func (f *fakeRepo) DeleteVideo(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (f *fakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error) {
+	vf := sqlcgen.VideoFile{
+		ID: uuid.New(), VideoID: a.VideoID, Kind: a.Kind, StorageKey: a.StorageKey,
+		ContentType: a.ContentType, OriginalName: a.OriginalName, SizeBytes: a.SizeBytes,
+		CreatedAt: time.Now(),
+	}
+	f.files[a.VideoID] = append(f.files[a.VideoID], vf)
+	return vf, nil
+}
+
+func (f *fakeRepo) DeleteVideoFilesByVideoAndKind(_ context.Context, a sqlcgen.DeleteVideoFilesByVideoAndKindParams) error {
+	kept := f.files[a.VideoID][:0]
+	for _, vf := range f.files[a.VideoID] {
+		if vf.Kind != a.Kind {
+			kept = append(kept, vf)
+		}
+	}
+	f.files[a.VideoID] = kept
+	return nil
+}
+
+func (f *fakeRepo) SetVideoState(_ context.Context, a sqlcgen.SetVideoStateParams) (sqlcgen.Video, error) {
+	r, ok := f.videos[a.ID]
+	if !ok {
+		return sqlcgen.Video{}, errors.New("not found")
+	}
+	r.State = a.State
+	r.UpdatedAt = time.Now()
+	f.videos[a.ID] = r
+	return rowToVideo(r), nil
+}
+
 func (f *fakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.Video, error) {
 	q := ""
 	if a.Query != nil {
@@ -141,7 +180,7 @@ func (f *fakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublicVideo
 
 func TestCreateDraftDefaultsToDraftState(t *testing.T) {
 	owner := uuid.New()
-	svc := NewService(newFakeRepo(owner))
+	svc := NewService(newFakeRepo(owner), nil)
 	ch := uuid.New()
 	v, err := svc.CreateDraft(context.Background(), ch, CreateInput{Title: "Hello", Privacy: "private"})
 	if err != nil {
@@ -157,7 +196,7 @@ func TestCreateDraftDefaultsToDraftState(t *testing.T) {
 
 func TestGetByIDReturnsOwner(t *testing.T) {
 	owner := uuid.New()
-	svc := NewService(newFakeRepo(owner))
+	svc := NewService(newFakeRepo(owner), nil)
 	created, _ := svc.CreateDraft(context.Background(), uuid.New(), CreateInput{Title: "T", Privacy: "public"})
 
 	got, err := svc.GetByID(context.Background(), created.ID)
@@ -170,7 +209,7 @@ func TestGetByIDReturnsOwner(t *testing.T) {
 }
 
 func TestGetByIDNotFound(t *testing.T) {
-	svc := NewService(newFakeRepo(uuid.New()))
+	svc := NewService(newFakeRepo(uuid.New()), nil)
 	if _, err := svc.GetByID(context.Background(), uuid.New()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -180,7 +219,7 @@ func strptr(s string) *string { return &s }
 
 func TestUpdateVideoOwnerNonOwnerNotFound(t *testing.T) {
 	owner := uuid.New()
-	svc := NewService(newFakeRepo(owner))
+	svc := NewService(newFakeRepo(owner), nil)
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "old", Privacy: "private"})
 
@@ -204,7 +243,7 @@ func TestUpdateVideoOwnerNonOwnerNotFound(t *testing.T) {
 
 func TestDeleteVideoOwnerAndNonOwner(t *testing.T) {
 	owner := uuid.New()
-	svc := NewService(newFakeRepo(owner))
+	svc := NewService(newFakeRepo(owner), nil)
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "private"})
 
@@ -221,7 +260,7 @@ func TestDeleteVideoOwnerAndNonOwner(t *testing.T) {
 
 func TestListPublicPaginates(t *testing.T) {
 	owner := uuid.New()
-	svc := NewService(newFakeRepo(owner))
+	svc := NewService(newFakeRepo(owner), nil)
 	ctx := context.Background()
 	ch := uuid.New()
 	// 3 public + 1 private across (logically) the instance.
@@ -250,7 +289,7 @@ func TestListPublicPaginates(t *testing.T) {
 
 func TestSearchPublicMatchesTitleAndExcludesPrivate(t *testing.T) {
 	owner := uuid.New()
-	svc := NewService(newFakeRepo(owner))
+	svc := NewService(newFakeRepo(owner), nil)
 	ctx := context.Background()
 	ch := uuid.New()
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "Go concurrency", Privacy: "public"})
@@ -268,7 +307,7 @@ func TestSearchPublicMatchesTitleAndExcludesPrivate(t *testing.T) {
 
 func TestListByChannelVsPublic(t *testing.T) {
 	owner := uuid.New()
-	svc := NewService(newFakeRepo(owner))
+	svc := NewService(newFakeRepo(owner), nil)
 	ctx := context.Background()
 	ch := uuid.New()
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "pub", Privacy: "public"})
@@ -281,5 +320,106 @@ func TestListByChannelVsPublic(t *testing.T) {
 	pub, _ := svc.ListPublicByChannel(ctx, ch)
 	if len(pub) != 1 || pub[0].Privacy != "public" {
 		t.Errorf("ListPublicByChannel = %+v, want 1 public", pub)
+	}
+}
+
+func TestAttachOriginalStoresBytesAndFlipsToProcessing(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	svc := NewService(repo, blobs)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "private"})
+
+	const content = "fake original video bytes"
+	updated, file, err := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{
+		Filename: "Clip.MP4", ContentType: "video/mp4", Reader: strings.NewReader(content),
+	})
+	if err != nil {
+		t.Fatalf("AttachOriginal: %v", err)
+	}
+	if updated.State != "processing" {
+		t.Errorf("state = %q, want processing", updated.State)
+	}
+	if file.Kind != "original" || file.ContentType != "video/mp4" || file.OriginalName != "Clip.MP4" {
+		t.Errorf("unexpected file metadata: %+v", file)
+	}
+	if file.SizeBytes != int64(len(content)) {
+		t.Errorf("size = %d, want %d", file.SizeBytes, len(content))
+	}
+	if want := "videos/" + v.ID.String() + "/original.mp4"; file.StorageKey != want {
+		t.Errorf("key = %q, want %q", file.StorageKey, want)
+	}
+	rc, err := blobs.Open(ctx, file.StorageKey)
+	if err != nil {
+		t.Fatalf("Open stored blob: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, _ := io.ReadAll(rc)
+	if string(got) != content {
+		t.Errorf("stored bytes = %q, want %q", got, content)
+	}
+}
+
+func TestAttachOriginalRejectsNonOwnerAndUnknown(t *testing.T) {
+	owner := uuid.New()
+	blobs, _ := storage.NewLocal(t.TempDir())
+	svc := NewService(newFakeRepo(owner), blobs)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "private"})
+
+	if _, _, err := svc.AttachOriginal(ctx, uuid.New(), v.ID, UploadInput{Filename: "a.mp4", Reader: strings.NewReader("x")}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-owner err = %v, want ErrForbidden", err)
+	}
+	if _, _, err := svc.AttachOriginal(ctx, owner, uuid.New(), UploadInput{Filename: "a.mp4", Reader: strings.NewReader("x")}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAttachOriginalReplacesPreviousOriginal(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	blobs, _ := storage.NewLocal(t.TempDir())
+	svc := NewService(repo, blobs)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "private"})
+
+	if _, _, err := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{Filename: "a.mp4", Reader: strings.NewReader("first")}); err != nil {
+		t.Fatalf("first upload: %v", err)
+	}
+	if _, _, err := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{Filename: "b.mp4", Reader: strings.NewReader("second-take")}); err != nil {
+		t.Fatalf("second upload: %v", err)
+	}
+	if got := len(repo.files[v.ID]); got != 1 {
+		t.Errorf("original rows = %d, want 1 (re-upload replaces)", got)
+	}
+}
+
+func TestAttachOriginalWithoutStorage(t *testing.T) {
+	owner := uuid.New()
+	svc := NewService(newFakeRepo(owner), nil)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "private"})
+	if _, _, err := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{Filename: "a.mp4", Reader: strings.NewReader("x")}); !errors.Is(err, ErrStorageUnavailable) {
+		t.Fatalf("err = %v, want ErrStorageUnavailable", err)
+	}
+}
+
+func TestSafeExtFallback(t *testing.T) {
+	id := uuid.New()
+	cases := map[string]string{
+		"clip.mp4":      "videos/" + id.String() + "/original.mp4",
+		"clip.WEBM":     "videos/" + id.String() + "/original.webm",
+		"noext":         "videos/" + id.String() + "/original.bin",
+		"weird.tar.gz":  "videos/" + id.String() + "/original.gz",
+		"evil.../x.m p": "videos/" + id.String() + "/original.bin",
+	}
+	for filename, want := range cases {
+		if got := originalKey(id, filename); got != want {
+			t.Errorf("originalKey(%q) = %q, want %q", filename, got, want)
+		}
 	}
 }

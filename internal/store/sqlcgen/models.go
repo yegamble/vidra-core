@@ -63,3 +63,14 @@ type Video struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+type VideoFile struct {
+	ID           uuid.UUID `json:"id"`
+	VideoID      uuid.UUID `json:"video_id"`
+	Kind         string    `json:"kind"`
+	StorageKey   string    `json:"storage_key"`
+	ContentType  string    `json:"content_type"`
+	OriginalName string    `json:"original_name"`
+	SizeBytes    int64     `json:"size_bytes"`
+	CreatedAt    time.Time `json:"created_at"`
+}

@@ -249,6 +249,35 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 	return items, nil
 }
 
+const setVideoState = `-- name: SetVideoState :one
+UPDATE videos
+SET state      = $1,
+    updated_at = now()
+WHERE id = $2
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at
+`
+
+type SetVideoStateParams struct {
+	State string    `json:"state"`
+	ID    uuid.UUID `json:"id"`
+}
+
+func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (Video, error) {
+	row := q.db.QueryRow(ctx, setVideoState, arg.State, arg.ID)
+	var i Video
+	err := row.Scan(
+		&i.ID,
+		&i.ChannelID,
+		&i.Title,
+		&i.Description,
+		&i.Privacy,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateVideo = `-- name: UpdateVideo :one
 UPDATE videos
 SET title       = COALESCE($1, title),

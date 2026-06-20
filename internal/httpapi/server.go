@@ -196,6 +196,7 @@ func (s *Server) routes() {
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
+		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth)
 	}
 }
 

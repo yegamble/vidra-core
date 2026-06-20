@@ -329,6 +329,71 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// videoFileView is the public projection of a stored video file. The storage
+// key is internal and deliberately not exposed.
+type videoFileView struct {
+	ID           string    `json:"id"`
+	Kind         string    `json:"kind"`
+	ContentType  string    `json:"content_type"`
+	OriginalName string    `json:"original_name"`
+	SizeBytes    int64     `json:"size_bytes"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func newVideoFileView(f sqlcgen.VideoFile) videoFileView {
+	return videoFileView{
+		ID:           f.ID.String(),
+		Kind:         f.Kind,
+		ContentType:  f.ContentType,
+		OriginalName: f.OriginalName,
+		SizeBytes:    f.SizeBytes,
+		CreatedAt:    f.CreatedAt,
+	}
+}
+
+// uploadVideoFileResponse is returned by the original-file upload: the video in
+// its new (processing) state plus the stored file's metadata.
+type uploadVideoFileResponse struct {
+	Video videoView     `json:"video"`
+	File  videoFileView `json:"file"`
+}
+
+// handleUploadVideoFile stores the original file for a video owned by the
+// authenticated user (multipart form field "file") and moves the video to
+// processing. Non-owner/unknown video → 404 (existence is not leaked).
+func (s *Server) handleUploadVideoFile(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	fh, err := c.FormFile("file")
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, `multipart form field "file" is required`)
+	}
+	f, err := fh.Open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	v, file, err := s.videosvc.AttachOriginal(c.Request().Context(), userID, id, video.UploadInput{
+		Filename:    fh.Filename,
+		ContentType: fh.Header.Get("Content-Type"),
+		Reader:      f,
+	})
+	if err != nil {
+		return videoError(err)
+	}
+	return c.JSON(http.StatusCreated, uploadVideoFileResponse{
+		Video: newVideoView(v),
+		File:  newVideoFileView(file),
+	})
+}
+
 // videoError maps video service sentinels to HTTP error envelopes. A non-owner
 // sees 404 (not 403) so a private video's existence is not leaked; an owned but
 // missing video is also 404.

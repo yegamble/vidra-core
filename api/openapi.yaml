@@ -809,6 +809,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/file:
+    post:
+      operationId: uploadVideoFile
+      summary: Upload a video's original file
+      description: >-
+        Uploads the original media file for a video (owner only) as a multipart
+        form with a single "file" part, stores it via the configured storage
+        backend, and moves the video from draft to processing. Re-uploading
+        replaces the previous original. A non-owner or unknown id is reported as
+        404 so a private video's existence is not leaked. Transcoding into
+        playable renditions happens asynchronously in a later stage.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The original media file.
+      responses:
+        "201":
+          description: The file was stored; the video is now processing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadVideoFileResponse"
+        "400":
+          description: The multipart "file" field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -1154,6 +1212,43 @@ components:
         offset:
           type: integer
           example: 0
+    VideoFile:
+      type: object
+      description: >-
+        A stored file backing a video. The storage key is internal and not
+        exposed.
+      required: [id, kind, content_type, original_name, size_bytes, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [original, rendition]
+        content_type:
+          type: string
+          description: The client-declared MIME type (untrusted, for display only).
+          example: video/mp4
+        original_name:
+          type: string
+          description: The client-declared filename (untrusted, for display only).
+          example: Clip.MP4
+        size_bytes:
+          type: integer
+          format: int64
+          description: Number of bytes actually stored.
+          example: 10485760
+        created_at:
+          type: string
+          format: date-time
+    UploadVideoFileResponse:
+      type: object
+      required: [video, file]
+      properties:
+        video:
+          $ref: "#/components/schemas/Video"
+        file:
+          $ref: "#/components/schemas/VideoFile"
     RegisterRequest:
       type: object
       required: [username, email, password]

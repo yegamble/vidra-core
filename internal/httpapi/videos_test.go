@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -24,6 +27,7 @@ import (
 type videoFakeRepo struct {
 	channels *channelFakeRepo
 	videos   map[uuid.UUID]sqlcgen.GetVideoByIDRow
+	files    map[uuid.UUID][]sqlcgen.VideoFile
 }
 
 func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (sqlcgen.Video, error) {
@@ -104,6 +108,41 @@ func (f *videoFakeRepo) DeleteVideo(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (f *videoFakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error) {
+	if f.files == nil {
+		f.files = map[uuid.UUID][]sqlcgen.VideoFile{}
+	}
+	vf := sqlcgen.VideoFile{
+		ID: uuid.New(), VideoID: a.VideoID, Kind: a.Kind, StorageKey: a.StorageKey,
+		ContentType: a.ContentType, OriginalName: a.OriginalName, SizeBytes: a.SizeBytes,
+		CreatedAt: time.Now(),
+	}
+	f.files[a.VideoID] = append(f.files[a.VideoID], vf)
+	return vf, nil
+}
+
+func (f *videoFakeRepo) DeleteVideoFilesByVideoAndKind(_ context.Context, a sqlcgen.DeleteVideoFilesByVideoAndKindParams) error {
+	kept := f.files[a.VideoID][:0]
+	for _, vf := range f.files[a.VideoID] {
+		if vf.Kind != a.Kind {
+			kept = append(kept, vf)
+		}
+	}
+	f.files[a.VideoID] = kept
+	return nil
+}
+
+func (f *videoFakeRepo) SetVideoState(_ context.Context, a sqlcgen.SetVideoStateParams) (sqlcgen.Video, error) {
+	r, ok := f.videos[a.ID]
+	if !ok {
+		return sqlcgen.Video{}, errors.New("not found")
+	}
+	r.State = a.State
+	r.UpdatedAt = time.Now()
+	f.videos[a.ID] = r
+	return vidRowToVideo(r), nil
+}
+
 func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.Video, error) {
 	q := ""
 	if a.Query != nil {
@@ -151,10 +190,19 @@ func videoServer(t *testing.T) *Server {
 	chRepo := newChannelFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	authsvc := auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour)
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("storage.NewLocal: %v", err)
+	}
+	repo := &videoFakeRepo{
+		channels: chRepo,
+		videos:   map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
+		files:    map[uuid.UUID][]sqlcgen.VideoFile{},
+	}
 	return New(testConfig(), nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
-		WithVideoService(video.NewService(&videoFakeRepo{channels: chRepo, videos: map[uuid.UUID]sqlcgen.GetVideoByIDRow{}})),
+		WithVideoService(video.NewService(repo, blobs)),
 	)
 }
 
@@ -451,5 +499,105 @@ func TestListChannelVideosUnknownChannel404(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/channels/ghost/videos", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// uploadVideoFile POSTs a multipart "file" field to the upload endpoint.
+func uploadVideoFile(srv *Server, id, filename, contentType, content, token string) *httptest.ResponseRecorder {
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	hdr := make(map[string][]string)
+	hdr["Content-Disposition"] = []string{`form-data; name="file"; filename="` + filename + `"`}
+	if contentType != "" {
+		hdr["Content-Type"] = []string{contentType}
+	}
+	part, _ := w.CreatePart(hdr)
+	_, _ = part.Write([]byte(content))
+	_ = w.Close()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/"+id+"/file", &body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if token != "" {
+		req.Header.Set("authorization", "Bearer "+token)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestUploadVideoFileRequiresAuth(t *testing.T) {
+	srv := videoServer(t)
+	rec := uploadVideoFile(srv, uuid.New().String(), "clip.mp4", "video/mp4", "bytes", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestUploadVideoFileStoresAndProcessing(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"My Draft"}`)
+
+	const content = "pretend this is an mp4"
+	rec := uploadVideoFile(srv, id, "Clip.MP4", "video/mp4", content, tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp uploadVideoFileResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Video.State != "processing" {
+		t.Errorf("state = %q, want processing", resp.Video.State)
+	}
+	if resp.File.SizeBytes != int64(len(content)) {
+		t.Errorf("size = %d, want %d", resp.File.SizeBytes, len(content))
+	}
+	if resp.File.Kind != "original" || resp.File.ContentType != "video/mp4" || resp.File.OriginalName != "Clip.MP4" {
+		t.Errorf("unexpected file: %+v", resp.File)
+	}
+
+	// The video now reports processing on a fresh read, too.
+	got := getVideo(srv, id, tok)
+	var v videoView
+	_ = json.Unmarshal(got.Body.Bytes(), &v)
+	if v.State != "processing" {
+		t.Errorf("refetched state = %q, want processing", v.State)
+	}
+}
+
+func TestUploadVideoFileMissingField(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"My Draft"}`)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/"+id+"/file", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("authorization", "Bearer "+tok)
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUploadVideoFileNonOwner404(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"My Draft"}`)
+	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", "bytes", otherTok)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("non-owner upload = %d, want 404", rec.Code)
+	}
+}
+
+func TestUploadVideoFileUnknownVideo404(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	rec := uploadVideoFile(srv, uuid.New().String(), "clip.mp4", "video/mp4", "bytes", tok)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown video upload = %d, want 404", rec.Code)
 	}
 }

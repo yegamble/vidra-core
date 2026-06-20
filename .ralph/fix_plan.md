@@ -304,8 +304,8 @@
 ## P6.1 Upload and Import
 
 - [x] Implement create video draft/upload session. (`POST /api/v1/channels/:handle/videos` (requireAuth, owner-only) creates a draft; `GET /api/v1/videos/:id` (optionalAuth) public/unlisted to anyone, private owner-only (else 404); `PATCH`/`DELETE /api/v1/videos/:id` owner-only (non-owner/unknown → 404); `GET /api/v1/channels/:handle/videos` (optionalAuth) lists all for the owner, public-only otherwise; `internal/video`; tested. File upload itself is a later slice.)
-- [ ] Implement local file upload.
-- [ ] Implement resumable upload strategy or documented initial limitation.
+- [x] Implement local file upload. (`POST /api/v1/videos/:id/file` (requireAuth, owner-only, multipart `file`) streams the original through `internal/storage` to key `videos/<id>/original.<ext>`, records a `video_files` row (kind=original, size, content_type, original_name), and flips the video draft→processing; re-upload replaces the prior original; non-owner/unknown → 404. Backend wired from config in `cmd/api`. `video_files` table = migration 0008. Transcode/probe/scan are later slices.)
+- [ ] Implement resumable upload strategy or documented initial limitation. (Note: the original upload is a single multipart request bounded by `HTTP_BODY_LIMIT`; chunked/resumable upload is still TODO.)
 - [ ] Implement upload progress/status in Redis and database.
 - [ ] Implement video metadata validation: title, description, tags, category, language, license, privacy, channel.
 - [~] Implement privacy levels. (videos: public/unlisted/private enforced on read — private hidden as 404 to non-owners; account/channel-level privacy still TODO)
@@ -317,7 +317,7 @@
 - [ ] Implement torrent/magnet import placeholder or adapter boundary.
 - [ ] Implement upload cancellation.
 - [ ] Implement failed upload cleanup.
-- [ ] Add API tests for file upload, URL import, validation errors, and scan failure.
+- [~] Add API tests for file upload, URL import, validation errors, and scan failure. (file upload covered: success→processing, refetch, missing-field 400, non-owner/unknown 404, plus service-level store/replace/key tests; URL import and ClamAV scan-failure still TODO.)
 
 ## P6.2 Storage
 
@@ -327,7 +327,7 @@
 - [ ] Implement Backblaze B2-compatible configuration.
 - [ ] Implement DigitalOcean Spaces-compatible configuration.
 - [ ] Implement IPFS backend adapter or deferred spec.
-- [ ] Implement object key naming strategy.
+- [~] Implement object key naming strategy. (originals use `videos/<video_id>/original.<safe-ext>`; rendition/thumbnail key scheme still TODO.)
 - [ ] Implement private/public object handling.
 - [ ] Implement signed URL or proxy strategy.
 - [ ] Implement media deletion/garbage collection.

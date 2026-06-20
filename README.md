@@ -80,7 +80,11 @@ lists a channel's videos — all of them for the owner, public-only for everyone
 `GET /api/v1/videos` is the public cross-channel feed (newest-first; paginated with
 `?limit` 1–100 default 20 and `?offset`). `GET /api/v1/videos/search?q=` fuzzy-searches
 public titles (pg_trgm, ranked by similarity then recency; same pagination).
-Files/transcoding/playback are later slices.
+`POST /api/v1/videos/{id}/file` (owner-only, `multipart/form-data` with a single
+`file` part) stores the original through the storage backend and moves the video
+`draft → processing`; re-uploading replaces the prior original, and non-owner/unknown
+→ `404`. The stored file is tracked in `video_files`; the response returns the video
+(now `processing`) plus the file's metadata. Transcoding/playback are later slices.
 
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects
@@ -106,7 +110,7 @@ Media storage goes through a small `internal/storage.Backend` interface
 (Put/Open/Delete/Exists over forward-slash object keys). The default `local` backend
 (`STORAGE_BACKEND=local`, `STORAGE_LOCAL_ROOT`) writes under a root directory with
 path-traversal-safe key resolution; S3-compatible and IPFS backends land later behind
-the same interface. (The upload endpoint that uses it is a later slice.)
+the same interface. The video original-file upload endpoint writes through it.
 
 ## Local development (without Docker for the app)
 
