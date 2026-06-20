@@ -102,6 +102,7 @@ func run(logger *slog.Logger) error {
 	} else {
 		logger.Warn("thumbnail generation disabled (ffmpeg not on PATH); videos publish without a poster")
 	}
+	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
 	videosvc := video.NewService(db.Queries(), blobs, vopts...)
 	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(blobs))
 

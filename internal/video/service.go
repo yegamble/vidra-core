@@ -11,6 +11,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -61,6 +62,8 @@ type Repository interface {
 	SetVideoState(ctx context.Context, arg sqlcgen.SetVideoStateParams) (sqlcgen.Video, error)
 	UpsertVideoMetadata(ctx context.Context, arg sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error)
 	GetVideoMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error)
+	IncrementVideoViews(ctx context.Context, videoID uuid.UUID) (int64, error)
+	GetVideoViews(ctx context.Context, videoID uuid.UUID) (int64, error)
 }
 
 // Prober inspects a stored original file and reports whether it is valid,
@@ -82,12 +85,26 @@ type Thumbnailer interface {
 	Thumbnail(ctx context.Context, storageKey string, durationSeconds int) ([]byte, error)
 }
 
+// viewDedupeWindow is how long a single viewer's repeated views of a video are
+// collapsed into one counted view.
+const viewDedupeWindow = time.Hour
+
+// ViewDeduper collapses repeated views from the same viewer within a window. It
+// is the abuse-protection seam for view counting (Redis-backed in production);
+// when none is configured every recorded view counts.
+type ViewDeduper interface {
+	// First reports whether key is seen for the first time within window (i.e.
+	// the view should be counted).
+	First(ctx context.Context, key string, window time.Duration) (bool, error)
+}
+
 // Service holds the video application logic.
 type Service struct {
 	repo        Repository
 	blobs       storage.Backend
 	prober      Prober
 	thumbnailer Thumbnailer
+	viewDeduper ViewDeduper
 }
 
 // Option customises the Service.
@@ -103,6 +120,12 @@ func WithProber(p Prober) Option {
 // videos publish without a thumbnail.
 func WithThumbnailer(t Thumbnailer) Option {
 	return func(s *Service) { s.thumbnailer = t }
+}
+
+// WithViewDeduper wires per-viewer view de-duplication. Without it, every
+// recorded view counts.
+func WithViewDeduper(d ViewDeduper) Option {
+	return func(s *Service) { s.viewDeduper = d }
 }
 
 // NewService builds the video service. blobs is the media storage backend used
@@ -242,6 +265,42 @@ func (s *Service) FileForView(ctx context.Context, videoID, viewerID uuid.UUID, 
 		return sqlcgen.VideoFile{}, ErrNotFound
 	}
 	return f, nil
+}
+
+// RecordView counts a view of a published video, deduping per viewer within a
+// window when a deduper is configured. Visibility mirrors GetByID (private →
+// owner only, else ErrNotFound). viewerKey identifies the viewer (already
+// hashed by the caller). Non-published videos are a silent no-op (no error) so
+// owner previews do not inflate counts. The deduper is best-effort: an error is
+// treated as "count it".
+func (s *Service) RecordView(ctx context.Context, videoID, viewerID uuid.UUID, authed bool, viewerKey string) error {
+	v, err := s.GetByID(ctx, videoID)
+	if err != nil {
+		return err // ErrNotFound
+	}
+	if v.Privacy == "private" && (!authed || viewerID != v.OwnerID) {
+		return ErrNotFound
+	}
+	if v.State != "published" {
+		return nil
+	}
+	if s.viewDeduper != nil {
+		key := "view:" + videoID.String() + ":" + viewerKey
+		if first, derr := s.viewDeduper.First(ctx, key, viewDedupeWindow); derr == nil && !first {
+			return nil // already counted this viewer in the window
+		}
+	}
+	_, err = s.repo.IncrementVideoViews(ctx, videoID)
+	return err
+}
+
+// Views returns a video's current view count (0 when none recorded).
+func (s *Service) Views(ctx context.Context, videoID uuid.UUID) int64 {
+	n, err := s.repo.GetVideoViews(ctx, videoID)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // HasThumbnail reports whether a poster image has been stored for the video.

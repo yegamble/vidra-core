@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
@@ -62,6 +64,9 @@ type videoView struct {
 	// which do not look it up); when set it reports whether a poster image is
 	// available at GET /videos/{id}/thumbnail.
 	HasThumbnail *bool `json:"has_thumbnail,omitempty"`
+	// Views is the recorded view count, set on the detail endpoint (omitted on
+	// list/feed views, which do not look it up).
+	Views *int64 `json:"views,omitempty"`
 }
 
 func newVideoView(v sqlcgen.Video) videoView {
@@ -153,6 +158,8 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	}
 	has := s.videosvc.HasThumbnail(c.Request().Context(), id)
 	view.HasThumbnail = &has
+	views := s.videosvc.Views(c.Request().Context(), id)
+	view.Views = &views
 	return c.JSON(http.StatusOK, view)
 }
 
@@ -495,6 +502,35 @@ func (s *Server) serveStoredObject(c echo.Context, key, contentType string) erro
 	c.Response().WriteHeader(http.StatusOK)
 	_, err = io.Copy(c.Response(), rc)
 	return err
+}
+
+// handleRecordVideoView records a view of a video (deduped per viewer per window
+// when Redis is wired). Behind optionalAuth: visibility mirrors the detail
+// endpoint. Always 204 on success — whether or not the view was newly counted.
+func (s *Server) handleRecordVideoView(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	viewerID, _, authed := principalFromContext(c)
+	if err := s.videosvc.RecordView(c.Request().Context(), id, viewerID, authed, viewerKey(c, viewerID, authed)); err != nil {
+		return videoError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// viewerKey derives a stable, non-identifying key for the viewer: the user id
+// when authenticated, else the client IP. It is hashed so raw IPs/ids are not
+// used as Redis keys (PII minimisation).
+func viewerKey(c echo.Context, viewerID uuid.UUID, authed bool) string {
+	var raw string
+	if authed {
+		raw = "u:" + viewerID.String()
+	} else {
+		raw = "ip:" + c.RealIP()
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }
 
 // videoError maps video service sentinels to HTTP error envelopes. A non-owner

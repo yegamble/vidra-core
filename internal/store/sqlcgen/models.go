@@ -82,3 +82,9 @@ type VideoMetadatum struct {
 	Height          *int32    `json:"height"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
+
+type VideoViewCount struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	Views     int64     `json:"views"`
+	UpdatedAt time.Time `json:"updated_at"`
+}

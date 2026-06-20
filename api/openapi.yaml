@@ -894,6 +894,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/view:
+    post:
+      operationId: recordVideoView
+      summary: Record a view of a video
+      description: >-
+        Records a view for the video, de-duplicated per viewer within a window
+        (Redis SETNX over the user id when authenticated, else the client IP,
+        hashed). Visibility mirrors the detail endpoint (private → owner only,
+        else 404); non-published videos are accepted but not counted. Always
+        returns 204 whether or not the view was newly counted. The running total
+        is exposed as `views` on the detail endpoint.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The view ping was accepted.
+        "404":
+          description: No such video, or private and not yours.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/file:
     post:
       operationId: uploadVideoFile
@@ -1265,6 +1296,12 @@ components:
           description: >-
             Whether a poster image is available at GET /videos/{id}/thumbnail.
             Present on the detail endpoint; omitted on list/feed views.
+        views:
+          type: integer
+          format: int64
+          description: >-
+            Recorded view count. Present on the detail endpoint; omitted on
+            list/feed views.
     CreateVideoRequest:
       type: object
       required: [title]

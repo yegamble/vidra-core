@@ -22,6 +22,7 @@ type fakeRepo struct {
 	videos   map[uuid.UUID]sqlcgen.GetVideoByIDRow
 	files    map[uuid.UUID][]sqlcgen.VideoFile
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
+	views    map[uuid.UUID]int64
 	owner    uuid.UUID
 }
 
@@ -30,8 +31,22 @@ func newFakeRepo(owner uuid.UUID) *fakeRepo {
 		videos:   map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
 		files:    map[uuid.UUID][]sqlcgen.VideoFile{},
 		metadata: map[uuid.UUID]sqlcgen.VideoMetadatum{},
+		views:    map[uuid.UUID]int64{},
 		owner:    owner,
 	}
+}
+
+func (f *fakeRepo) IncrementVideoViews(_ context.Context, videoID uuid.UUID) (int64, error) {
+	f.views[videoID]++
+	return f.views[videoID], nil
+}
+
+func (f *fakeRepo) GetVideoViews(_ context.Context, videoID uuid.UUID) (int64, error) {
+	n, ok := f.views[videoID]
+	if !ok {
+		return 0, errors.New("not found")
+	}
+	return n, nil
 }
 
 func (f *fakeRepo) UpsertVideoMetadata(_ context.Context, a sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error) {
@@ -666,5 +681,81 @@ func TestProcessFailedProbeSkipsThumbnail(t *testing.T) {
 	}
 	if svc.HasThumbnail(ctx, v.ID) {
 		t.Error("thumbnail generated for a failed video")
+	}
+}
+
+type fakeDeduper struct{ seen map[string]bool }
+
+func newFakeDeduper() *fakeDeduper { return &fakeDeduper{seen: map[string]bool{}} }
+
+func (d *fakeDeduper) First(_ context.Context, key string, _ time.Duration) (bool, error) {
+	if d.seen[key] {
+		return false, nil
+	}
+	d.seen[key] = true
+	return true, nil
+}
+
+func TestRecordViewDedupesPerViewer(t *testing.T) {
+	owner := uuid.New()
+	svc := NewService(newFakeRepo(owner), nil, WithViewDeduper(newFakeDeduper()))
+	ctx := context.Background()
+	v := publishDraft(t, svc, ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+
+	for i := 0; i < 3; i++ { // viewer A pings 3x -> counts once
+		if err := svc.RecordView(ctx, v.ID, uuid.Nil, false, "viewerA"); err != nil {
+			t.Fatalf("RecordView A: %v", err)
+		}
+	}
+	if err := svc.RecordView(ctx, v.ID, uuid.Nil, false, "viewerB"); err != nil { // distinct viewer -> +1
+		t.Fatalf("RecordView B: %v", err)
+	}
+	if got := svc.Views(ctx, v.ID); got != 2 {
+		t.Errorf("views = %d, want 2 (one per distinct viewer)", got)
+	}
+}
+
+func TestRecordViewWithoutDeduperCountsEach(t *testing.T) {
+	owner := uuid.New()
+	svc := NewService(newFakeRepo(owner), nil)
+	ctx := context.Background()
+	v := publishDraft(t, svc, ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	_ = svc.RecordView(ctx, v.ID, uuid.Nil, false, "x")
+	_ = svc.RecordView(ctx, v.ID, uuid.Nil, false, "x")
+	if got := svc.Views(ctx, v.ID); got != 2 {
+		t.Errorf("views = %d, want 2 (no dedupe)", got)
+	}
+}
+
+func TestRecordViewUnpublishedIsNoOp(t *testing.T) {
+	owner := uuid.New()
+	svc := NewService(newFakeRepo(owner), nil)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"}) // draft, not processed
+	if err := svc.RecordView(ctx, v.ID, uuid.Nil, false, "x"); err != nil {
+		t.Fatalf("RecordView: %v", err)
+	}
+	if got := svc.Views(ctx, v.ID); got != 0 {
+		t.Errorf("views = %d, want 0 (drafts do not accrue views)", got)
+	}
+}
+
+func TestRecordViewVisibilityAndUnknown(t *testing.T) {
+	owner := uuid.New()
+	svc := NewService(newFakeRepo(owner), nil)
+	ctx := context.Background()
+	v := publishDraft(t, svc, ctx, uuid.New(), CreateInput{Title: "t", Privacy: "private"})
+
+	if err := svc.RecordView(ctx, v.ID, uuid.Nil, false, "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("anon view of private = %v, want ErrNotFound", err)
+	}
+	if err := svc.RecordView(ctx, v.ID, owner, true, "owner"); err != nil {
+		t.Fatalf("owner view of own private: %v", err)
+	}
+	if got := svc.Views(ctx, v.ID); got != 1 {
+		t.Errorf("views = %d, want 1", got)
+	}
+	if err := svc.RecordView(ctx, uuid.New(), uuid.Nil, false, "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("view of unknown = %v, want ErrNotFound", err)
 	}
 }

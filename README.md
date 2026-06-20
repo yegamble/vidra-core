@@ -110,6 +110,13 @@ extracts a poster frame and stores it as a `thumbnail` file;
 detail endpoint), and the detail response carries a `has_thumbnail` flag.
 Thumbnail generation is best-effort — a failure never blocks publishing.
 
+`POST /api/v1/videos/{id}/view` records a view (same visibility as detail; only
+published videos accrue views), de-duplicated per viewer per hour in Redis
+(`SETNX` over the authenticated user id, else the client IP, hashed — raw
+ids/IPs are never used as keys). It always returns `204`; the running `views`
+total is exposed on the detail endpoint. (View counts live in a `video_view_counts`
+side table; surfacing them on feed cards and a trending sort are later slices.)
+
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects
 live role/verification state. A missing, malformed, invalid, or expired token yields

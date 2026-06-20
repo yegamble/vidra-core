@@ -31,6 +31,23 @@ type videoFakeRepo struct {
 	videos   map[uuid.UUID]sqlcgen.GetVideoByIDRow
 	files    map[uuid.UUID][]sqlcgen.VideoFile
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
+	views    map[uuid.UUID]int64
+}
+
+func (f *videoFakeRepo) IncrementVideoViews(_ context.Context, videoID uuid.UUID) (int64, error) {
+	if f.views == nil {
+		f.views = map[uuid.UUID]int64{}
+	}
+	f.views[videoID]++
+	return f.views[videoID], nil
+}
+
+func (f *videoFakeRepo) GetVideoViews(_ context.Context, videoID uuid.UUID) (int64, error) {
+	n, ok := f.views[videoID]
+	if !ok {
+		return 0, errors.New("not found")
+	}
+	return n, nil
 }
 
 func (f *videoFakeRepo) UpsertVideoMetadata(_ context.Context, a sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error) {
@@ -238,6 +255,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 		videos:   map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
 		files:    map[uuid.UUID][]sqlcgen.VideoFile{},
 		metadata: map[uuid.UUID]sqlcgen.VideoMetadatum{},
+		views:    map[uuid.UUID]int64{},
 	}
 	return New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
@@ -933,5 +951,71 @@ func TestThumbnailPrivateVisibility(t *testing.T) {
 	}
 	if rec := getThumbnail(srv, id, ownerTok); rec.Code != http.StatusOK {
 		t.Errorf("owner thumbnail of private = %d, want 200", rec.Code)
+	}
+}
+
+type fakeDeduper struct{ seen map[string]bool }
+
+func (d *fakeDeduper) First(_ context.Context, key string, _ time.Duration) (bool, error) {
+	if d.seen == nil {
+		d.seen = map[string]bool{}
+	}
+	if d.seen[key] {
+		return false, nil
+	}
+	d.seen[key] = true
+	return true, nil
+}
+
+func postView(srv *Server, id, token string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/videos/"+id+"/view", nil)
+	if token != "" {
+		req.Header.Set("authorization", "Bearer "+token)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+func detailVideo(t *testing.T, srv *Server, id string) videoView {
+	t.Helper()
+	var v videoView
+	_ = json.Unmarshal(getVideo(srv, id, "").Body.Bytes(), &v)
+	return v
+}
+
+func TestRecordViewIncrementsDetailCount(t *testing.T) {
+	srv := videoServer(t) // no deduper -> each ping counts
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	if v := detailVideo(t, srv, id); v.Views == nil || *v.Views != 0 {
+		t.Fatalf("initial views = %v, want 0 (present)", v.Views)
+	}
+	if rec := postView(srv, id, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("view = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if v := detailVideo(t, srv, id); v.Views == nil || *v.Views != 1 {
+		t.Errorf("after one view = %v, want 1", v.Views)
+	}
+}
+
+func TestRecordViewUnknown404(t *testing.T) {
+	srv := videoServer(t)
+	if rec := postView(srv, uuid.New().String(), ""); rec.Code != http.StatusNotFound {
+		t.Errorf("view of unknown = %d, want 404", rec.Code)
+	}
+}
+
+func TestRecordViewDedupedAcrossRequests(t *testing.T) {
+	srv := videoServerCfg(t, testConfig(), video.WithViewDeduper(&fakeDeduper{}))
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	// Two pings from the same client (same RemoteAddr -> same viewer key).
+	_ = postView(srv, id, "")
+	_ = postView(srv, id, "")
+	if v := detailVideo(t, srv, id); v.Views == nil || *v.Views != 1 {
+		t.Errorf("deduped views = %v, want 1", v.Views)
 	}
 }

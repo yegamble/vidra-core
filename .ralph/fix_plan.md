@@ -374,7 +374,7 @@
 - [ ] Implement OpenGraph metadata.
 - [x] Implement search endpoint with PostgreSQL trigram search. (`GET /api/v1/videos/search?q=` (public, paginated) over public video titles; ILIKE filter ranked by `similarity()`; migration `0007` adds a `gin_trgm_ops` index on `videos.title`; sqlc `SearchPublicVideos`; `internal/video.SearchPublic`; tested. Channel/account search still TODO.)
 - [ ] Implement tags/categories/languages/licenses config endpoints.
-- [ ] Implement view count recording with abuse/rate-limit protection.
+- [x] Implement view count recording with abuse/rate-limit protection. (`POST /api/v1/videos/:id/view` (optionalAuth) records a view in a `video_view_counts` side table (migration 0011), deduped per viewer per hour via Redis SETNX (`cache.Deduper`, injected `video.ViewDeduper` seam; hashed user-id/IP key — no raw PII). Visibility mirrors detail; only published videos count; always 204. `views` exposed on detail. Surfacing on feed + trending sort still TODO.)
 - [ ] Implement watch progress endpoint.
 - [ ] Add tests for public visibility/privacy rules.
 

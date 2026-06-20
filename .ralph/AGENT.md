@@ -81,6 +81,7 @@ curl -sX POST localhost:8080/api/v1/videos/<id>/file -H 'authorization: Bearer <
   -F 'file=@clip.mp4'                                                                 # upload original (owner-only) -> published (no prober yet)
 curl -s localhost:8080/api/v1/videos/<id>/original -o out.mp4                         # stream original (Range-capable); private => owner only
 curl -s localhost:8080/api/v1/videos/<id>/thumbnail -o poster.jpg                     # poster image (if ffmpeg generated one)
+curl -sX POST localhost:8080/api/v1/videos/<id>/view                                  # record a view (deduped per viewer/hour) -> 204
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`
