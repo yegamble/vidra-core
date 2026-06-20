@@ -79,7 +79,7 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UU
 func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
 	var out []sqlcgen.Video
 	for _, r := range f.videos {
-		if r.ChannelID == channelID && r.Privacy == "public" {
+		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
 			out = append(out, vidRowToVideo(r))
 		}
 	}
@@ -151,7 +151,7 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 	}
 	var all []sqlcgen.Video
 	for _, r := range f.videos {
-		if r.Privacy == "public" && strings.Contains(strings.ToLower(r.Title), q) {
+		if r.Privacy == "public" && r.State == "published" && strings.Contains(strings.ToLower(r.Title), q) {
 			all = append(all, vidRowToVideo(r))
 		}
 	}
@@ -170,7 +170,7 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 func (f *videoFakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error) {
 	var all []sqlcgen.Video
 	for _, r := range f.videos {
-		if r.Privacy == "public" {
+		if r.Privacy == "public" && r.State == "published" {
 			all = append(all, vidRowToVideo(r))
 		}
 	}
@@ -188,7 +188,7 @@ func (f *videoFakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublic
 
 func videoServer(t *testing.T) *Server { return videoServerCfg(t, testConfig()) }
 
-func videoServerCfg(t *testing.T, cfg *config.Config) *Server {
+func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Server {
 	t.Helper()
 	chRepo := newChannelFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
@@ -205,9 +205,14 @@ func videoServerCfg(t *testing.T, cfg *config.Config) *Server {
 	return New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
-		WithVideoService(video.NewService(repo, blobs)),
+		WithVideoService(video.NewService(repo, blobs, opts...)),
 	)
 }
+
+// fakeProber lets handler tests drive the publish/fail outcome of an upload.
+type fakeProber struct{ err error }
+
+func (p fakeProber) Probe(_ context.Context, _ string) error { return p.err }
 
 // createChannelFor registers a user, creates a channel, and returns (token, handle).
 func createChannelFor(t *testing.T, srv *Server, username, email, handle string) string {
@@ -280,6 +285,19 @@ func createVideo(t *testing.T, srv *Server, token, handle, body string) string {
 	var v videoView
 	_ = json.Unmarshal(rec.Body.Bytes(), &v)
 	return v.ID
+}
+
+// createPublishedVideo creates a video and uploads a tiny original so it lands
+// published (the default harness has no prober, so Process publishes directly).
+// Only published videos appear on the public discovery surfaces.
+func createPublishedVideo(t *testing.T, srv *Server, token, handle, body string) string {
+	t.Helper()
+	id := createVideo(t, srv, token, handle, body)
+	rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", "tiny", token)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("publish upload = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	return id
 }
 
 func getVideo(srv *Server, id, token string) *httptest.ResponseRecorder {
@@ -377,7 +395,7 @@ func TestListChannelVideosOwnerVsPublic(t *testing.T) {
 	srv := videoServer(t)
 	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
-	_ = createVideo(t, srv, ownerTok, "ada", `{"title":"pub","privacy":"public"}`)
+	_ = createPublishedVideo(t, srv, ownerTok, "ada", `{"title":"pub","privacy":"public"}`)
 	_ = createVideo(t, srv, ownerTok, "ada", `{"title":"priv","privacy":"private"}`)
 
 	list := func(tok string) videoListResponse {
@@ -409,8 +427,8 @@ func TestListChannelVideosOwnerVsPublic(t *testing.T) {
 func TestPublicVideoFeed(t *testing.T) {
 	srv := videoServer(t)
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
-	_ = createVideo(t, srv, tok, "ada", `{"title":"p1","privacy":"public"}`)
-	_ = createVideo(t, srv, tok, "ada", `{"title":"p2","privacy":"public"}`)
+	_ = createPublishedVideo(t, srv, tok, "ada", `{"title":"p1","privacy":"public"}`)
+	_ = createPublishedVideo(t, srv, tok, "ada", `{"title":"p2","privacy":"public"}`)
 	_ = createVideo(t, srv, tok, "ada", `{"title":"secret","privacy":"private"}`)
 
 	feed := func(query string) videoFeedResponse {
@@ -461,8 +479,8 @@ func TestPublicVideoFeed(t *testing.T) {
 func TestSearchVideos(t *testing.T) {
 	srv := videoServer(t)
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
-	_ = createVideo(t, srv, tok, "ada", `{"title":"Go concurrency patterns","privacy":"public"}`)
-	_ = createVideo(t, srv, tok, "ada", `{"title":"Rust ownership","privacy":"public"}`)
+	_ = createPublishedVideo(t, srv, tok, "ada", `{"title":"Go concurrency patterns","privacy":"public"}`)
+	_ = createPublishedVideo(t, srv, tok, "ada", `{"title":"Rust ownership","privacy":"public"}`)
 	_ = createVideo(t, srv, tok, "ada", `{"title":"Go generics secret","privacy":"private"}`)
 
 	search := func(query string) (int, videoSearchResponse) {
@@ -536,8 +554,8 @@ func TestUploadVideoFileRequiresAuth(t *testing.T) {
 	}
 }
 
-func TestUploadVideoFileStoresAndProcessing(t *testing.T) {
-	srv := videoServer(t)
+func TestUploadVideoFileStoresAndPublishes(t *testing.T) {
+	srv := videoServer(t) // no prober configured -> the original is published directly
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createVideo(t, srv, tok, "ada", `{"title":"My Draft"}`)
 
@@ -550,8 +568,8 @@ func TestUploadVideoFileStoresAndProcessing(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Video.State != "processing" {
-		t.Errorf("state = %q, want processing", resp.Video.State)
+	if resp.Video.State != "published" {
+		t.Errorf("state = %q, want published", resp.Video.State)
 	}
 	if resp.File.SizeBytes != int64(len(content)) {
 		t.Errorf("size = %d, want %d", resp.File.SizeBytes, len(content))
@@ -560,12 +578,28 @@ func TestUploadVideoFileStoresAndProcessing(t *testing.T) {
 		t.Errorf("unexpected file: %+v", resp.File)
 	}
 
-	// The video now reports processing on a fresh read, too.
+	// The video reports published on a fresh read, too.
 	got := getVideo(srv, id, tok)
 	var v videoView
 	_ = json.Unmarshal(got.Body.Bytes(), &v)
-	if v.State != "processing" {
-		t.Errorf("refetched state = %q, want processing", v.State)
+	if v.State != "published" {
+		t.Errorf("refetched state = %q, want published", v.State)
+	}
+}
+
+func TestUploadVideoFileProbeFailureMarksFailed(t *testing.T) {
+	srv := videoServerCfg(t, testConfig(), video.WithProber(fakeProber{err: errors.New("corrupt media")}))
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"My Draft"}`)
+
+	rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", "not really a video", tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp uploadVideoFileResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Video.State != "failed" {
+		t.Errorf("state = %q, want failed (probe rejected the file)", resp.Video.State)
 	}
 }
 

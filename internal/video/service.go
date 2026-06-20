@@ -58,16 +58,41 @@ type Repository interface {
 	SetVideoState(ctx context.Context, arg sqlcgen.SetVideoStateParams) (sqlcgen.Video, error)
 }
 
+// Prober inspects a stored original file and reports whether it is valid,
+// playable media. It is the seam for FFprobe/transcoding: when none is
+// configured the original is trusted as-is (the upload already passed the
+// extension allow-list) and the video is published directly. The real probe is
+// wired once FFmpeg is provisioned in the runtime image.
+type Prober interface {
+	// Probe validates the object at the given storage key, returning a non-nil
+	// error when it is not usable media.
+	Probe(ctx context.Context, storageKey string) error
+}
+
 // Service holds the video application logic.
 type Service struct {
-	repo  Repository
-	blobs storage.Backend
+	repo   Repository
+	blobs  storage.Backend
+	prober Prober
+}
+
+// Option customises the Service.
+type Option func(*Service)
+
+// WithProber wires a media prober used by Process to validate originals before
+// publishing. Without it, Process publishes the original unprobed.
+func WithProber(p Prober) Option {
+	return func(s *Service) { s.prober = p }
 }
 
 // NewService builds the video service. blobs is the media storage backend used
 // by uploads; it may be nil when uploads are not wired (e.g. some tests).
-func NewService(repo Repository, blobs storage.Backend) *Service {
-	return &Service{repo: repo, blobs: blobs}
+func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service {
+	s := &Service{repo: repo, blobs: blobs}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // CreateInput is validated, normalized video-creation data. Privacy must already
@@ -147,6 +172,25 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
 	}
 	return updated, file, nil
+}
+
+// Process finalises a processing video: it probes the stored original and moves
+// the video to published on success or failed on a probe error. When no prober
+// is configured the original is trusted (the extension allow-list already
+// gated the upload) and the video is published directly. This is the seam the
+// transcode pipeline grows into; for now it is the synchronous step the upload
+// handler runs after AttachOriginal. originalKey is the stored object's key.
+//
+// It does not re-check ownership — callers invoke it only after AttachOriginal
+// has authorised the upload.
+func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey string) (sqlcgen.Video, error) {
+	state := "published"
+	if s.prober != nil {
+		if err := s.prober.Probe(ctx, originalKey); err != nil {
+			state = "failed"
+		}
+	}
+	return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
 }
 
 // acceptedExt returns the normalized (lowercased) extension of filename when it

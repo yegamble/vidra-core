@@ -95,7 +95,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 const listPublicVideos = `-- name: ListPublicVideos :many
 SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
 FROM videos
-WHERE privacy = 'public'
+WHERE privacy = 'public' AND state = 'published'
 ORDER BY created_at DESC, id DESC
 LIMIT $1 OFFSET $2
 `
@@ -137,7 +137,7 @@ func (q *Queries) ListPublicVideos(ctx context.Context, arg ListPublicVideosPara
 const listPublicVideosByChannel = `-- name: ListPublicVideosByChannel :many
 SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
 FROM videos
-WHERE channel_id = $1 AND privacy = 'public'
+WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
 ORDER BY created_at DESC
 `
 
@@ -209,7 +209,7 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) 
 const searchPublicVideos = `-- name: SearchPublicVideos :many
 SELECT id, channel_id, title, description, privacy, state, created_at, updated_at
 FROM videos
-WHERE privacy = 'public' AND title ILIKE '%' || $1 || '%'
+WHERE privacy = 'public' AND state = 'published' AND title ILIKE '%' || $1 || '%'
 ORDER BY similarity(title, $1) DESC, created_at DESC, id DESC
 LIMIT $3 OFFSET $2
 `

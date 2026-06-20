@@ -81,13 +81,17 @@ lists a channel's videos — all of them for the owner, public-only for everyone
 `?limit` 1–100 default 20 and `?offset`). `GET /api/v1/videos/search?q=` fuzzy-searches
 public titles (pg_trgm, ranked by similarity then recency; same pagination).
 `POST /api/v1/videos/{id}/file` (owner-only, `multipart/form-data` with a single
-`file` part) stores the original through the storage backend and moves the video
-`draft → processing`; re-uploading replaces the prior original, and non-owner/unknown
-→ `404`. The file extension must be an accepted video container (else `415`) and the
-body must be within `UPLOAD_MAX_SIZE` (else `413`; this route is exempt from the small
+`file` part) stores the original through the storage backend, then finalises the
+video: `draft → processing → published` (or `failed` if a configured media probe
+rejects it). Re-uploading replaces the prior original, and non-owner/unknown → `404`.
+The file extension must be an accepted video container (else `415`) and the body must
+be within `UPLOAD_MAX_SIZE` (else `413`; this route is exempt from the small
 `HTTP_BODY_LIMIT` that guards the JSON API). The stored file is tracked in
-`video_files`; the response returns the video (now `processing`) plus the file's
-metadata. Authoritative content validation (FFprobe) and transcoding are later slices.
+`video_files`. Finalisation runs through an injected `Prober` seam: with none
+configured the original is trusted and published directly; the real FFprobe/transcode
+prober wires in once FFmpeg is provisioned. The public discovery surfaces —
+`GET /api/v1/videos`, `/videos/search`, and the public view of a channel's videos —
+return only `published` videos.
 
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects

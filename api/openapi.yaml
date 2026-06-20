@@ -600,8 +600,8 @@ paths:
       operationId: listChannelVideos
       summary: List a channel's videos
       description: >-
-        The channel owner (bearer token) sees all of their videos; everyone else
-        sees only public ones.
+        The channel owner (bearer token) sees all of their videos (any state);
+        everyone else sees only public, published ones.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -630,8 +630,9 @@ paths:
       operationId: listPublicVideos
       summary: Public video feed
       description: >-
-        The cross-channel public video feed, newest first. No auth required.
-        Paginated with limit (1–100, default 20) and offset (>= 0).
+        The cross-channel public video feed, newest first. Only public,
+        published videos appear (drafts/processing/failed are excluded). No auth
+        required. Paginated with limit (1–100, default 20) and offset (>= 0).
       tags: [videos]
       parameters:
         - name: limit
@@ -661,9 +662,9 @@ paths:
       operationId: searchVideos
       summary: Search public videos by title
       description: >-
-        Fuzzy (trigram) search over public video titles, ranked by similarity
-        then recency. No auth required. Requires a non-empty q (<= 100 chars);
-        paginated with limit (1–100, default 20) and offset (>= 0).
+        Fuzzy (trigram) search over public, published video titles, ranked by
+        similarity then recency. No auth required. Requires a non-empty q
+        (<= 100 chars); paginated with limit (1–100, default 20) and offset (>= 0).
       tags: [videos]
       parameters:
         - name: q
@@ -816,12 +817,13 @@ paths:
       description: >-
         Uploads the original media file for a video (owner only) as a multipart
         form with a single "file" part, stores it via the configured storage
-        backend, and moves the video from draft to processing. Re-uploading
-        replaces the previous original. A non-owner or unknown id is reported as
-        404 so a private video's existence is not leaked. The file extension must
-        be an accepted video container (otherwise 415); the body must be within
-        UPLOAD_MAX_SIZE (otherwise 413). Transcoding into playable renditions
-        happens asynchronously in a later stage.
+        backend, then finalises the video: it is published (or, if a configured
+        media probe rejects it, marked failed). Re-uploading replaces the previous
+        original. A non-owner or unknown id is reported as 404 so a private video's
+        existence is not leaked. The file extension must be an accepted video
+        container (otherwise 415); the body must be within UPLOAD_MAX_SIZE
+        (otherwise 413). Real transcoding into multiple renditions happens in a
+        later stage; for now the original is the playable source.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -846,7 +848,9 @@ paths:
                   description: The original media file.
       responses:
         "201":
-          description: The file was stored; the video is now processing.
+          description: >-
+            The file was stored and the video finalised. video.state is
+            "published" on success, or "failed" if the media probe rejected it.
           content:
             application/json:
               schema:

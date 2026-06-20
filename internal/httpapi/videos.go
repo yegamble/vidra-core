@@ -380,13 +380,20 @@ func (s *Server) handleUploadVideoFile(c echo.Context) error {
 	}
 	defer func() { _ = f.Close() }()
 
-	v, file, err := s.videosvc.AttachOriginal(c.Request().Context(), userID, id, video.UploadInput{
+	ctx := c.Request().Context()
+	_, file, err := s.videosvc.AttachOriginal(ctx, userID, id, video.UploadInput{
 		Filename:    fh.Filename,
 		ContentType: fh.Header.Get("Content-Type"),
 		Reader:      f,
 	})
 	if err != nil {
 		return videoError(err)
+	}
+	// Finalise synchronously: probe (if configured) and publish or fail. Real
+	// transcoding will move this off the request path; for now it is immediate.
+	v, err := s.videosvc.Process(ctx, id, file.StorageKey)
+	if err != nil {
+		return err
 	}
 	return c.JSON(http.StatusCreated, uploadVideoFileResponse{
 		Video: newVideoView(v),

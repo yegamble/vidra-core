@@ -73,7 +73,7 @@ func (f *fakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UUID) (
 func (f *fakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.Video, error) {
 	var out []sqlcgen.Video
 	for _, r := range f.videos {
-		if r.ChannelID == channelID && r.Privacy == "public" {
+		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
 			out = append(out, rowToVideo(r))
 		}
 	}
@@ -143,7 +143,7 @@ func (f *fakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicV
 	}
 	var all []sqlcgen.Video
 	for _, r := range f.videos {
-		if r.Privacy == "public" && strings.Contains(strings.ToLower(r.Title), q) {
+		if r.Privacy == "public" && r.State == "published" && strings.Contains(strings.ToLower(r.Title), q) {
 			all = append(all, rowToVideo(r))
 		}
 	}
@@ -162,7 +162,7 @@ func (f *fakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicV
 func (f *fakeRepo) ListPublicVideos(_ context.Context, a sqlcgen.ListPublicVideosParams) ([]sqlcgen.Video, error) {
 	var all []sqlcgen.Video
 	for _, r := range f.videos {
-		if r.Privacy == "public" {
+		if r.Privacy == "public" && r.State == "published" {
 			all = append(all, rowToVideo(r))
 		}
 	}
@@ -263,9 +263,10 @@ func TestListPublicPaginates(t *testing.T) {
 	svc := NewService(newFakeRepo(owner), nil)
 	ctx := context.Background()
 	ch := uuid.New()
-	// 3 public + 1 private across (logically) the instance.
+	// 3 public + 1 private across (logically) the instance. Only published
+	// videos surface in the public feed.
 	for i := 0; i < 3; i++ {
-		_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "pub", Privacy: "public"})
+		publishDraft(t, svc, ctx, ch, CreateInput{Title: "pub", Privacy: "public"})
 	}
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "priv", Privacy: "private"})
 
@@ -292,8 +293,8 @@ func TestSearchPublicMatchesTitleAndExcludesPrivate(t *testing.T) {
 	svc := NewService(newFakeRepo(owner), nil)
 	ctx := context.Background()
 	ch := uuid.New()
-	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "Go concurrency", Privacy: "public"})
-	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "Rust basics", Privacy: "public"})
+	publishDraft(t, svc, ctx, ch, CreateInput{Title: "Go concurrency", Privacy: "public"})
+	publishDraft(t, svc, ctx, ch, CreateInput{Title: "Rust basics", Privacy: "public"})
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "Go internals", Privacy: "private"})
 
 	res, err := svc.SearchPublic(ctx, "go", 20, 0)
@@ -310,17 +311,31 @@ func TestListByChannelVsPublic(t *testing.T) {
 	svc := NewService(newFakeRepo(owner), nil)
 	ctx := context.Background()
 	ch := uuid.New()
-	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "pub", Privacy: "public"})
+	publishDraft(t, svc, ctx, ch, CreateInput{Title: "pub", Privacy: "public"})
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "priv", Privacy: "private"})
 
 	all, _ := svc.ListByChannel(ctx, ch)
 	if len(all) != 2 {
-		t.Errorf("ListByChannel = %d, want 2", len(all))
+		t.Errorf("ListByChannel = %d, want 2 (owner sees all states)", len(all))
 	}
 	pub, _ := svc.ListPublicByChannel(ctx, ch)
 	if len(pub) != 1 || pub[0].Privacy != "public" {
 		t.Errorf("ListPublicByChannel = %+v, want 1 public", pub)
 	}
+}
+
+// publishDraft creates a draft and publishes it via Process (nil-prober path),
+// returning the created video. Used by feed/search tests that need published rows.
+func publishDraft(t *testing.T, svc *Service, ctx context.Context, ch uuid.UUID, in CreateInput) sqlcgen.Video {
+	t.Helper()
+	v, err := svc.CreateDraft(ctx, ch, in)
+	if err != nil {
+		t.Fatalf("CreateDraft: %v", err)
+	}
+	if _, err := svc.Process(ctx, v.ID, ""); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	return v
 }
 
 func TestAttachOriginalStoresBytesAndFlipsToProcessing(t *testing.T) {
@@ -453,5 +468,45 @@ func TestAttachOriginalRejectsUnsupportedExtension(t *testing.T) {
 	// Ownership is still checked before media type: a non-owner gets ErrForbidden.
 	if _, _, err := svc.AttachOriginal(ctx, uuid.New(), v.ID, UploadInput{Filename: "notes.pdf", Reader: strings.NewReader("x")}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("non-owner err = %v, want ErrForbidden", err)
+	}
+}
+
+type fakeProber struct{ err error }
+
+func (p fakeProber) Probe(_ context.Context, _ string) error { return p.err }
+
+func TestProcessPublishesWithoutProber(t *testing.T) {
+	svc := NewService(newFakeRepo(uuid.New()), nil)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	got, err := svc.Process(ctx, v.ID, "videos/x/original.mp4")
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if got.State != "published" {
+		t.Errorf("state = %q, want published (no prober trusts the original)", got.State)
+	}
+}
+
+func TestProcessPublishesWhenProberSucceeds(t *testing.T) {
+	svc := NewService(newFakeRepo(uuid.New()), nil, WithProber(fakeProber{}))
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	got, _ := svc.Process(ctx, v.ID, "k")
+	if got.State != "published" {
+		t.Errorf("state = %q, want published", got.State)
+	}
+}
+
+func TestProcessFailsWhenProberErrors(t *testing.T) {
+	svc := NewService(newFakeRepo(uuid.New()), nil, WithProber(fakeProber{err: errors.New("not media")}))
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	got, err := svc.Process(ctx, v.ID, "k")
+	if err != nil { // a probe failure is a state transition, not a call error
+		t.Fatalf("Process returned err: %v", err)
+	}
+	if got.State != "failed" {
+		t.Errorf("state = %q, want failed", got.State)
 	}
 }

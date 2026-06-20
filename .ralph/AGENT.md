@@ -78,7 +78,7 @@ curl -sX PATCH  localhost:8080/api/v1/videos/<id> -H 'authorization: Bearer <tok
   -H 'content-type: application/json' -d '{"privacy":"public"}'                       # owner-only
 curl -sX DELETE localhost:8080/api/v1/videos/<id> -H 'authorization: Bearer <token>' # owner-only
 curl -sX POST localhost:8080/api/v1/videos/<id>/file -H 'authorization: Bearer <token>' \
-  -F 'file=@clip.mp4'                                                                 # upload original (owner-only) -> processing
+  -F 'file=@clip.mp4'                                                                 # upload original (owner-only) -> published (no prober yet)
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

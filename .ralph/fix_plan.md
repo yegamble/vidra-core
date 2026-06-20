@@ -335,7 +335,15 @@
 
 ## P6.3 Transcoding
 
-- [ ] Implement FFmpeg probe.
+> Publish-pipeline seam landed: after upload, `video.Service.Process` finalises a
+> video `processing → published` (or `failed`) via an injected `Prober` interface
+> (`internal/video`). With no prober configured (current default) the original is
+> trusted and published directly — the extension allow-list already gated the
+> upload. The real FFprobe/transcode implementation slots into this seam via
+> `video.WithProber(...)` in `cmd/api` once FFmpeg is in the runtime image. The
+> public surfaces already filter `state='published'`.
+
+- [ ] Implement FFmpeg probe. (seam ready — `video.Prober`; needs the real ffprobe impl + FFmpeg in the image)
 - [ ] Implement media metadata extraction.
 - [ ] Implement H.264 profile.
 - [ ] Implement VP9 profile.
@@ -346,7 +354,7 @@
 - [ ] Implement storyboard generation or documented defer.
 - [ ] Implement worker queue for transcode jobs.
 - [ ] Implement retry/backoff/dead-letter behavior.
-- [ ] Implement status updates in Redis and PostgreSQL.
+- [~] Implement status updates in Redis and PostgreSQL. (PostgreSQL `videos.state` transitions draft→processing→published/failed via `SetVideoState`; live Redis progress for in-flight transcode jobs still TODO.)
 - [ ] Add unit tests for job planning.
 - [ ] Add smoke test with tiny fixture video.
 
@@ -354,7 +362,7 @@
 
 # P7 — Playback, Discovery, and Public Video API
 
-- [x] Implement public video list endpoint. (`GET /api/v1/videos` (public, paginated limit≤100/offset) → cross-channel public videos newest-first; sqlc `ListPublicVideos`; `internal/video.ListPublic`; tested. State filtering (published-only) joins once the publish pipeline exists.)
+- [x] Implement public video list endpoint. (`GET /api/v1/videos` (public, paginated limit≤100/offset) → cross-channel public videos newest-first; sqlc `ListPublicVideos`; `internal/video.ListPublic`; tested. Now filters `state='published'` — the publish pipeline landed, so feed/search/channel-public surfaces exclude draft/processing/failed.)
 - [ ] Implement local videos endpoint.
 - [~] Implement trending/recent/popular sort modes or documented staged rollout. (recent (newest-first) shipped via `GET /api/v1/videos`; trending/popular need view counts — staged after the views slice)
 - [ ] Implement video detail endpoint.

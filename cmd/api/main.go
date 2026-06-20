@@ -85,6 +85,10 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("media storage configured", "backend", cfg.StorageBackend)
 
+	// No media prober is wired yet: uploads finalise by publishing the original
+	// directly. Once FFmpeg is provisioned in the runtime image, add
+	// video.WithProber(<ffprobe-backed prober>) here to validate (and later
+	// transcode) before publishing.
 	videosvc := video.NewService(db.Queries(), blobs)
 	opts = append(opts, httpapi.WithVideoService(videosvc))
 
