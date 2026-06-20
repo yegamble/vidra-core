@@ -62,6 +62,12 @@ curl -sX POST localhost:8080/api/v1/auth/password-reset \
 curl -sX POST localhost:8080/api/v1/auth/password-reset/confirm \
   -H 'content-type: application/json' -d '{"token":"<reset-token>","password":"<new-password>"}'
 
+# Email verification (request is behind auth — sends to the bearer's own email,
+# 202 and a no-op if already verified; confirm is public and flips email_verified):
+curl -sX POST localhost:8080/api/v1/auth/verify-email -H 'authorization: Bearer <token>'
+curl -sX POST localhost:8080/api/v1/auth/verify-email/confirm \
+  -H 'content-type: application/json' -d '{"token":"<verification-token>"}'
+
 # Channels:
 curl -sX POST localhost:8080/api/v1/channels -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' \

@@ -23,7 +23,8 @@ import (
 type authFakeRepo struct {
 	users    map[string]sqlcgen.User // keyed by lowercased email
 	sessions map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
-	resets   map[string]*sqlcgen.PasswordResetToken // keyed by token hash
+	resets   map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
+	verifs   map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
 }
 
 func newAuthFakeRepo() *authFakeRepo {
@@ -31,7 +32,54 @@ func newAuthFakeRepo() *authFakeRepo {
 		users:    map[string]sqlcgen.User{},
 		sessions: map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow{},
 		resets:   map[string]*sqlcgen.PasswordResetToken{},
+		verifs:   map[string]*sqlcgen.EmailVerificationToken{},
 	}
+}
+
+func (f *authFakeRepo) CreateEmailVerificationToken(_ context.Context, a sqlcgen.CreateEmailVerificationTokenParams) (sqlcgen.EmailVerificationToken, error) {
+	t := sqlcgen.EmailVerificationToken{
+		ID: uuid.New(), UserID: a.UserID, TokenHash: a.TokenHash,
+		ExpiresAt: a.ExpiresAt, CreatedAt: time.Now(),
+	}
+	f.verifs[a.TokenHash] = &t
+	return t, nil
+}
+
+func (f *authFakeRepo) GetEmailVerificationToken(_ context.Context, hash string) (sqlcgen.EmailVerificationToken, error) {
+	if t, ok := f.verifs[hash]; ok {
+		return *t, nil
+	}
+	return sqlcgen.EmailVerificationToken{}, errors.New("not found")
+}
+
+func (f *authFakeRepo) MarkEmailVerificationTokenUsed(_ context.Context, id uuid.UUID) error {
+	for _, t := range f.verifs {
+		if t.ID == id {
+			t.UsedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		}
+	}
+	return nil
+}
+
+func (f *authFakeRepo) DeleteUnusedEmailVerificationTokens(_ context.Context, userID uuid.UUID) error {
+	for h, t := range f.verifs {
+		if t.UserID == userID && !t.UsedAt.Valid {
+			delete(f.verifs, h)
+		}
+	}
+	return nil
+}
+
+func (f *authFakeRepo) SetUserEmailVerified(_ context.Context, id uuid.UUID) error {
+	for k, u := range f.users {
+		if u.ID == id {
+			u.EmailVerified = true
+			u.UpdatedAt = time.Now()
+			f.users[k] = u
+			return nil
+		}
+	}
+	return errors.New("not found")
 }
 
 func (f *authFakeRepo) CreatePasswordResetToken(_ context.Context, a sqlcgen.CreatePasswordResetTokenParams) (sqlcgen.PasswordResetToken, error) {
@@ -492,14 +540,20 @@ func TestLogoutEndpointRevokes(t *testing.T) {
 	}
 }
 
-// captureResetMailer records the delivered reset token so the handler tests can
-// drive the confirm step.
+// captureResetMailer records the delivered token (reset or verification) so the
+// handler tests can drive the confirm step.
 type captureResetMailer struct {
 	calls int
 	token string
 }
 
 func (m *captureResetMailer) SendPasswordReset(_ context.Context, _, token string) error {
+	m.calls++
+	m.token = token
+	return nil
+}
+
+func (m *captureResetMailer) SendEmailVerification(_ context.Context, _, token string) error {
 	m.calls++
 	m.token = token
 	return nil
@@ -570,6 +624,68 @@ func TestPasswordResetConfirmRejectsBadToken(t *testing.T) {
 func TestPasswordResetConfirmValidatesPassword(t *testing.T) {
 	srv, _ := authServerWithMailer(t)
 	rec := postTo(srv, "/api/v1/auth/password-reset/confirm", `{"token":"x","password":"short"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
+	}
+}
+
+func TestEmailVerificationFlow(t *testing.T) {
+	srv, mailer := authServerWithMailer(t)
+	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	// A fresh account is not yet verified.
+	var before userView
+	if err := json.Unmarshal(getWithAuth(srv, "/api/v1/auth/me", reg.Token).Body.Bytes(), &before); err != nil {
+		t.Fatalf("unmarshal me: %v", err)
+	}
+	if before.EmailVerified {
+		t.Fatal("a fresh account should not be email-verified")
+	}
+
+	// Request verification (authed) → 202, token delivered.
+	rec := postWithAuth(srv, "/api/v1/auth/verify-email", reg.Token)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("request status = %d, want 202", rec.Code)
+	}
+	if mailer.token == "" {
+		t.Fatal("expected a verification token to be delivered")
+	}
+
+	// Confirm (public, with the token) → 204.
+	rec = postTo(srv, "/api/v1/auth/verify-email/confirm", `{"token":"`+mailer.token+`"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("confirm status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// /me now reflects the verified state.
+	var after userView
+	if err := json.Unmarshal(getWithAuth(srv, "/api/v1/auth/me", reg.Token).Body.Bytes(), &after); err != nil {
+		t.Fatalf("unmarshal me: %v", err)
+	}
+	if !after.EmailVerified {
+		t.Error("email_verified should be true after confirm")
+	}
+}
+
+func TestEmailVerificationRequestRequiresAuth(t *testing.T) {
+	srv, _ := authServerWithMailer(t)
+	rec := postTo(srv, "/api/v1/auth/verify-email", `{}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 without a token", rec.Code)
+	}
+}
+
+func TestEmailVerificationConfirmRejectsBadToken(t *testing.T) {
+	srv, _ := authServerWithMailer(t)
+	rec := postTo(srv, "/api/v1/auth/verify-email/confirm", `{"token":"not-a-real-token"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestEmailVerificationConfirmValidatesToken(t *testing.T) {
+	srv, _ := authServerWithMailer(t)
+	rec := postTo(srv, "/api/v1/auth/verify-email/confirm", `{}`)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want 422", rec.Code)
 	}

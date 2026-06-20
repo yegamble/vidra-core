@@ -343,3 +343,49 @@ func (s *Server) handleConfirmPasswordReset(c echo.Context) error {
 	}
 	return c.NoContent(http.StatusNoContent)
 }
+
+// handleRequestEmailVerification issues a verification message for the
+// authenticated account. It runs behind requireAuth, so the principal is always
+// present. It always returns 202, and is a no-op for an already-verified account.
+func (s *Server) handleRequestEmailVerification(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	if err := s.authsvc.RequestEmailVerification(c.Request().Context(), userID); err != nil {
+		if errors.Is(err, auth.ErrAccountNotFound) {
+			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
+		}
+		return err
+	}
+	return c.NoContent(http.StatusAccepted)
+}
+
+// emailVerificationConfirmRequest is the POST /api/v1/auth/verify-email/confirm body.
+type emailVerificationConfirmRequest struct {
+	Token string `json:"token"`
+}
+
+func (r emailVerificationConfirmRequest) Validate() []FieldError {
+	if strings.TrimSpace(r.Token) == "" {
+		return []FieldError{{Field: "token", Message: "is required"}}
+	}
+	return nil
+}
+
+// handleConfirmEmailVerification marks the account's email verified given a valid
+// token. It is public — the user may follow the link while logged out. 204 on
+// success; an unknown, used, or expired token is a 400.
+func (s *Server) handleConfirmEmailVerification(c echo.Context) error {
+	var in emailVerificationConfirmRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := s.authsvc.VerifyEmail(c.Request().Context(), in.Token); err != nil {
+		if errors.Is(err, auth.ErrInvalidVerificationToken) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid or expired verification token")
+		}
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}

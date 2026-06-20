@@ -46,10 +46,20 @@ type Repository interface {
 	MarkPasswordResetTokenUsed(ctx context.Context, id uuid.UUID) error
 	DeleteUnusedPasswordResetTokens(ctx context.Context, userID uuid.UUID) error
 	UpdateUserPassword(ctx context.Context, arg sqlcgen.UpdateUserPasswordParams) error
+
+	CreateEmailVerificationToken(ctx context.Context, arg sqlcgen.CreateEmailVerificationTokenParams) (sqlcgen.EmailVerificationToken, error)
+	GetEmailVerificationToken(ctx context.Context, tokenHash string) (sqlcgen.EmailVerificationToken, error)
+	MarkEmailVerificationTokenUsed(ctx context.Context, id uuid.UUID) error
+	DeleteUnusedEmailVerificationTokens(ctx context.Context, userID uuid.UUID) error
+	SetUserEmailVerified(ctx context.Context, id uuid.UUID) error
 }
 
 // defaultResetTTL is how long a password-reset token stays valid.
 const defaultResetTTL = time.Hour
+
+// defaultVerifyTTL is how long an email-verification token stays valid. It is
+// longer than a reset token because a new user may not check email immediately.
+const defaultVerifyTTL = 24 * time.Hour
 
 // Service holds the auth application logic.
 type Service struct {
@@ -57,7 +67,8 @@ type Service struct {
 	issuer     *TokenIssuer
 	refreshTTL time.Duration
 	resetTTL   time.Duration
-	mailer     PasswordResetMailer
+	verifyTTL  time.Duration
+	mailer     Mailer
 	now        func() time.Time // injectable clock for tests
 }
 
@@ -70,6 +81,7 @@ func NewService(repo Repository, issuer *TokenIssuer, refreshTTL time.Duration, 
 		issuer:     issuer,
 		refreshTTL: refreshTTL,
 		resetTTL:   defaultResetTTL,
+		verifyTTL:  defaultVerifyTTL,
 		mailer:     noopMailer{},
 		now:        time.Now,
 	}
@@ -82,9 +94,10 @@ func NewService(repo Repository, issuer *TokenIssuer, refreshTTL time.Duration, 
 // Option configures optional Service behavior at construction time.
 type Option func(*Service)
 
-// WithMailer injects a concrete password-reset mailer (default: a no-op that
-// drops the message). A nil mailer is ignored.
-func WithMailer(m PasswordResetMailer) Option {
+// WithMailer injects a concrete mailer for account-security messages
+// (password reset, email verification). Default: a no-op that drops the
+// message. A nil mailer is ignored.
+func WithMailer(m Mailer) Option {
 	return func(s *Service) {
 		if m != nil {
 			s.mailer = m

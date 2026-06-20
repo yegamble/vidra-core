@@ -393,6 +393,61 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/verify-email:
+    post:
+      operationId: requestEmailVerification
+      summary: Send an email-verification message
+      description: >-
+        Issues a single-use, expiring verification token for the authenticated
+        account and sends it out-of-band. Always 202, and a no-op if the account
+        is already verified. Requires a bearer access token.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "202":
+          description: Accepted. If the account was unverified, a token has been sent.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/verify-email/confirm:
+    post:
+      operationId: confirmEmailVerification
+      summary: Confirm an email address
+      description: >-
+        Marks the account's email verified using the token from the verification
+        message. Public — the link may be followed while logged out. An unknown,
+        used, or expired token returns 400.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: The single-use token from the verification message.
+      responses:
+        "204":
+          description: The account's email is now verified.
+        "400":
+          description: The verification token is invalid, used, or expired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/channels:
     post:
       operationId: createChannel

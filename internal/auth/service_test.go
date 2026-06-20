@@ -18,7 +18,8 @@ type fakeRepo struct {
 	byEmail  map[string]sqlcgen.User
 	names    map[string]bool
 	sessions map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
-	resets   map[string]*sqlcgen.PasswordResetToken // keyed by token hash
+	resets   map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
+	verifs   map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
 }
 
 func newFakeRepo() *fakeRepo {
@@ -27,7 +28,54 @@ func newFakeRepo() *fakeRepo {
 		names:    map[string]bool{},
 		sessions: map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow{},
 		resets:   map[string]*sqlcgen.PasswordResetToken{},
+		verifs:   map[string]*sqlcgen.EmailVerificationToken{},
 	}
+}
+
+func (f *fakeRepo) CreateEmailVerificationToken(_ context.Context, a sqlcgen.CreateEmailVerificationTokenParams) (sqlcgen.EmailVerificationToken, error) {
+	t := sqlcgen.EmailVerificationToken{
+		ID: uuid.New(), UserID: a.UserID, TokenHash: a.TokenHash,
+		ExpiresAt: a.ExpiresAt, CreatedAt: time.Now(),
+	}
+	f.verifs[a.TokenHash] = &t
+	return t, nil
+}
+
+func (f *fakeRepo) GetEmailVerificationToken(_ context.Context, hash string) (sqlcgen.EmailVerificationToken, error) {
+	if t, ok := f.verifs[hash]; ok {
+		return *t, nil
+	}
+	return sqlcgen.EmailVerificationToken{}, errors.New("not found")
+}
+
+func (f *fakeRepo) MarkEmailVerificationTokenUsed(_ context.Context, id uuid.UUID) error {
+	for _, t := range f.verifs {
+		if t.ID == id {
+			t.UsedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		}
+	}
+	return nil
+}
+
+func (f *fakeRepo) DeleteUnusedEmailVerificationTokens(_ context.Context, userID uuid.UUID) error {
+	for h, t := range f.verifs {
+		if t.UserID == userID && !t.UsedAt.Valid {
+			delete(f.verifs, h)
+		}
+	}
+	return nil
+}
+
+func (f *fakeRepo) SetUserEmailVerified(_ context.Context, id uuid.UUID) error {
+	for k, u := range f.byEmail {
+		if u.ID == id {
+			u.EmailVerified = true
+			u.UpdatedAt = time.Now()
+			f.byEmail[k] = u
+			return nil
+		}
+	}
+	return errors.New("not found")
 }
 
 func (f *fakeRepo) CreatePasswordResetToken(_ context.Context, a sqlcgen.CreatePasswordResetTokenParams) (sqlcgen.PasswordResetToken, error) {

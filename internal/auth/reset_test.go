@@ -21,7 +21,14 @@ func (m *captureMailer) SendPasswordReset(_ context.Context, email, token string
 	return nil
 }
 
-func newResetService(repo Repository, mailer PasswordResetMailer) *Service {
+func (m *captureMailer) SendEmailVerification(_ context.Context, email, token string) error {
+	m.calls++
+	m.email = email
+	m.token = token
+	return nil
+}
+
+func newResetService(repo Repository, mailer Mailer) *Service {
 	return NewService(repo, newTestIssuer(), time.Hour, WithMailer(mailer))
 }
 

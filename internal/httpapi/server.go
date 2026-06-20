@@ -194,6 +194,8 @@ func (s *Server) routes() {
 		authGroup.POST("/logout", s.handleLogout)
 		authGroup.POST("/password-reset", s.handleRequestPasswordReset)
 		authGroup.POST("/password-reset/confirm", s.handleConfirmPasswordReset)
+		authGroup.POST("/verify-email", s.handleRequestEmailVerification, s.requireAuth)
+		authGroup.POST("/verify-email/confirm", s.handleConfirmEmailVerification)
 		authGroup.GET("/me", s.handleMe, s.requireAuth)
 		authGroup.PATCH("/me", s.handleUpdateMe, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
