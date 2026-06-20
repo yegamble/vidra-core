@@ -23,6 +23,10 @@ info:
 servers:
   - url: http://localhost:8080
     description: Local development
+# Public by default: most read endpoints require no auth. Protected operations
+# override this with `security: [{ bearerAuth: [] }]`. Declaring an empty default
+# makes every operation's auth posture explicit (satisfies the security-defined rule).
+security: []
 paths:
   /healthz:
     get:
@@ -1291,18 +1295,21 @@ components:
           type: string
           format: date-time
         duration_seconds:
-          type: integer
-          nullable: true
+          type:
+            - integer
+            - "null"
           description: >-
             Probed duration in whole seconds. Present on the detail endpoint once
             a media probe has recorded it; omitted when unknown.
         width:
-          type: integer
-          nullable: true
+          type:
+            - integer
+            - "null"
           description: Probed pixel width; omitted when unknown (e.g. audio-only).
         height:
-          type: integer
-          nullable: true
+          type:
+            - integer
+            - "null"
           description: Probed pixel height; omitted when unknown (e.g. audio-only).
         has_thumbnail:
           type: boolean

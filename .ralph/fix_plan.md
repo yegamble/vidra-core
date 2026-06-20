@@ -651,7 +651,7 @@
 - [ ] PeerTube endpoint inventory has no unclassified endpoints.
 - [ ] PeerTube feature ledger has no unclassified in-scope backend items.
 - [ ] Vidra extensions ledger has no unclassified in-scope backend items.
-- [ ] OpenAPI contract (`api/openapi.yaml`) is current: lints clean (`make openapi-lint`) and the route↔spec drift guard passes (`make openapi-verify` / `TestOpenAPIContract`).
+- [x] OpenAPI contract (`api/openapi.yaml`) is current: lints clean (`make openapi-lint` — Redocly @1, 0 errors) and the route↔spec drift guard passes (`make openapi-verify` / `TestOpenAPIContract`). Fixed two 3.1 contract bugs that had reddened the `openapi` workflow for several commits: `nullable: true` (a 3.0-ism 3.1 removed) → JSON-Schema type-arrays on `Video.{duration_seconds,width,height}`, and undeclared per-op auth → a document-level `security: []` (public by default; protected ops override with `bearerAuth`). Remaining 8 advisory warnings (info-license [repo license TBD], no-server-example.com [localhost dev URL], operation-4xx-response ×6) are non-blocking; documenting 4xx bodies is a later completeness pass.
 - [ ] `README.md`, `.env.example`, and `.ralph/AGENT.md` reflect the current endpoints, env vars, and commands (no documentation drift).
 - [ ] Logging is structured and configurable (`LOG_LEVEL`/`LOG_FORMAT`); the banned-logging and secrets-in-logs guard tests pass; no denylisted data in logs/spans/metric labels.
 - [ ] Audit events exist and are tested for in-scope sensitive actions.
