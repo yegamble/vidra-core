@@ -1,5 +1,8 @@
 # .ralphrc - Ralph configuration for vidra-core (Go backend)
-# Run Ralph from THIS directory:  cd vidra-core && ralph --live
+# Used only by a STANDALONE per-subdir loop (cd vidra-core && ralph --live). The
+# usual way to run Ralph is the root orchestrator (cd ../ && ralph --live), which
+# reads the ROOT .ralphrc, not this one — but does read this project's .ralph/ docs
+# each loop. Never run a standalone subdir loop and the root orchestrator at once.
 # Documentation: https://github.com/frankbria/ralph-claude-code
 
 # Project identification
@@ -8,6 +11,13 @@ PROJECT_TYPE="go"
 
 # Claude Code CLI command
 CLAUDE_CODE_CMD="claude"
+
+# Model + reasoning effort applied to every Ralph invocation. ralph_loop.sh
+# appends `--model "$CLAUDE_MODEL"` and `--effort "$CLAUDE_EFFORT"` (Issue #228).
+# "opus" = latest Opus; "xhigh" = highest reasoning effort Opus 4.8 supports
+# (the headless equivalent of /effort ultracode). Restart Ralph after changing.
+CLAUDE_MODEL="opus"
+CLAUDE_EFFORT="xhigh"
 
 # Loop settings
 MAX_CALLS_PER_HOUR=100

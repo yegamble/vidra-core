@@ -167,7 +167,18 @@ At the start of every loop:
 4. Implement **one coherent vertical slice** per loop.
 5. Run focused tests/lint for changed areas.
 6. Update docs and `.ralph/fix_plan.md` with what changed, what remains, and what was learned. If the slice touched the HTTP API, update `api/openapi.yaml` and run `make openapi-verify` so the documentation stop guard stays green (see "Documentation Requirements").
-7. Commit working changes with a descriptive message when the repository is in a good state.
+7. **Commit AND push every loop that ends in a good state** (required, not optional).
+   "Good state" = `make ci` is green. Commit with a descriptive, scoped message
+   (`feat(core): …`), then `git push` the current branch — pushing runs CI, which
+   is how local↔CI parity is verified. Never commit/push a red gate, secrets, or
+   real personal data, and do not `--no-verify` past the stop guards. If `git push`
+   fails, `git pull --rebase` and retry once; if `git pull --rebase` reports a
+   conflict, run `git rebase --abort` (never resolve/commit conflict markers or
+   leave a rebase in progress) and mark the loop `BLOCKED` on the push. If push
+   still fails, mark `BLOCKED` and report it in the status block. A loop is not
+   complete until its work is committed and pushed (or the push failure is recorded).
+   Only ONE Ralph loop may run against this repo at a time (both projects share one
+   `main`; the pull-rebase-retry is not concurrency-safe).
 
 Do not wander. Do not perform cosmetic refactors unless required for the current task. Do not create busywork after all specs are complete.
 
@@ -543,13 +554,30 @@ Principles:
 - Keep security scans separate but visible.
 - Do not hide failing tests with `continue-on-error` unless the spec explicitly marks the job experimental.
 
+### Local↔CI parity (a green check must mean what it means)
+CI must run the **same gate developers run locally**, so "passes locally" is the
+same fact as "passes in GitHub". Enforce it:
+
+- The canonical gate is a single command — `make ci` (`fmt-check` + `vet` +
+  `openapi-verify` + `test-race`). `backend-ci.yml` runs **exactly** `make ci`;
+  it must not hand-duplicate or weaken those steps. Add a new required check to
+  `make ci`, never only to the workflow, or the two drift.
+- A feature is not done on a local green alone: the branch's CI must be green
+  too, running the same gate. Report CI state honestly in the status block.
+- `ci-guard.yml` is the integrity monitor: it fails when a workflow hides
+  failures with `continue-on-error: true` (unmarked) or when `backend-ci.yml`
+  stops invoking `make ci`. Do not bypass it to ship a fake-green pipeline.
+
 Suggested workflows:
 
-- `backend-ci.yml`: format, lint, unit, integration, migration, API smoke.
+- `backend-ci.yml`: install migrate, apply migrations to a fresh DB, then run
+  `make ci` (the canonical gate). This is the only place the backend gate lives.
 - `openapi.yml`: lint `vidra-core/api/openapi.yaml` (Redocly) and run the
   route↔spec drift guard (`make openapi-verify` / `TestOpenAPIContract`). This is
   the CI half of the documentation stop guard — see "Documentation Requirements".
-- `frontend-ci.yml`: typecheck, lint, unit, build, Playwright smoke.
+- `ci-guard.yml`: CI integrity/parity monitor (no `continue-on-error` cheating;
+  workflows must invoke the canonical per-project gate).
+- `frontend-ci.yml`: runs `vidra-user`'s canonical `npm run ci` gate.
 - `contract-ci.yml`: OpenAPI diff, generated client check, frontend/backend compatibility.
 - `docker-ci.yml`: build images and run Compose smoke.
 - `security-ci.yml`: dependency audit, secret scan, container scan, SAST where configured.
@@ -570,9 +598,39 @@ Prefer this broad order unless `.ralph/fix_plan.md` says otherwise:
 11. Encrypted messaging foundation after threat model and test vectors.
 12. Live streaming and Whisper integration.
 13. Simple crypto donation wallet display and verification.
-14. Performance, hardening, benchmarks, and broader e2e coverage.
+14. PeerTube import/migration — import an existing PeerTube DB + media + instance
+    identity once the relevant data models exist (see `.ralph/specs/peertube-import.md`,
+    fix_plan P18). Read-only on the source; idempotent, resumable, dry-runnable, audited.
+15. Performance, hardening, benchmarks, and broader e2e coverage.
 
 Do not implement deferred premium/payment systems unless the user explicitly changes scope.
+
+## Observability and Logging
+Logging and tracing are part of the definition of done, not a later phase. The
+authoritative rules live in `.ralph/specs/observability.md`; follow it exactly.
+Summary of what every slice must honor:
+
+- **Developer-friendly logging**: structured `log/slog` only (no `fmt.Print*`,
+  `log.Print*`, or `println` for diagnostics in non-`main`/non-test code).
+  Configurable `LOG_LEVEL` and `LOG_FORMAT` (json prod / text dev). Carry
+  `request_id`/`trace_id` through `context.Context` so service and store logs
+  correlate to the request.
+- **Security-friendly logging**: never log, span-tag, metric-label, or return to
+  a client any secret, token, password, auth/cookie header, full request body,
+  signing/stream/wallet key, or unnecessary PII. Route struct/config logging
+  through the redaction helper. Emit typed **audit events** for auth, admin, and
+  moderation actions, and test that they contain no denylisted field.
+- **OpenTelemetry**: instrument HTTP, datastore, and outbound calls with the OTel
+  Go SDK; export RED metrics; stamp `trace_id`/`span_id` into logs. Disabled by
+  default, opt-in via `OTEL_ENABLED`/`METRICS_ENABLED` so dev and unit tests pay
+  zero cost. Accept inbound W3C `traceparent` from `vidra-user` so frontend↔
+  backend traces correlate end to end.
+- **Enforcement (PLANNED — fix_plan P17.2, not yet built)**: the banned-logging
+  and secrets-in-logs guards (tests in `internal/observability`) do **not exist
+  yet** and are **not** in `make ci` today (`make ci` = fmt-check + vet +
+  openapi-verify + test-race). Once built under P17.2 they will run inside
+  `make ci` and fail the gate on violations. Until then, follow these logging
+  rules as honor-system and build the guards as part of P17.
 
 ## Quality Bar
 A feature is not done unless:
@@ -581,8 +639,11 @@ A feature is not done unless:
 - It follows the repo architecture.
 - It has relevant tests.
 - It is documented in user/developer docs where needed.
+- It has structured, security-safe logging (no secrets/PII) and, for sensitive
+  actions, audit events; tracing/metrics follow `.ralph/specs/observability.md`.
 - Docker/local dev instructions still work.
-- CI gates are updated if needed.
+- CI gates are updated if needed, and the branch's CI is green running the same
+  `make ci` gate as local (not just a local pass).
 - Security/privacy concerns are handled or explicitly documented as blocked.
 - `.ralph/fix_plan.md` reflects the new state.
 - The PeerTube/Vidra parity ledgers and UI inventory reflect the new state.
@@ -632,6 +693,8 @@ current **in the same slice** that changes the behavior they describe:
 - `.ralph/fix_plan.md` — priorities and status.
 - Architecture docs when major patterns are introduced.
 - Security docs for auth, SSRF, E2EE, storage, and admin actions.
+- `.ralph/specs/observability.md` — logging, audit, and OpenTelemetry rules; keep
+  it current when logging fields, redaction rules, or OTel config change.
 - Testing docs for Docker profiles, integration tests, Postman/Newman, and Playwright.
 
 Docs should say what works, what is partial, what is deferred, and how to verify it.

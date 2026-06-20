@@ -26,6 +26,11 @@ tidy: ## Sync go.mod/go.sum
 fmt: ## Format Go code
 	go fmt ./...
 
+.PHONY: fmt-check
+fmt-check: ## Fail if any Go file is not gofmt-clean (CI-safe, non-mutating)
+	@out=$$(gofmt -l .); if [ -n "$$out" ]; then \
+		echo "Not gofmt-clean:"; echo "$$out"; exit 1; fi
+
 .PHONY: vet
 vet: ## Run go vet
 	go vet ./...
@@ -56,7 +61,7 @@ sqlc: ## Generate typed query code (requires sqlc installed)
 
 .PHONY: openapi-lint
 openapi-lint: ## Lint the OpenAPI contract (requires npx; uses Redocly CLI)
-	npx --yes @redocly/cli@latest lint api/openapi.yaml
+	npx --yes @redocly/cli@1 lint api/openapi.yaml   # pinned 1.x; keep in lock-step with openapi.yml
 
 .PHONY: openapi-verify
 openapi-verify: ## Verify routes match api/openapi.yaml (documentation drift guard)
@@ -85,3 +90,11 @@ down: ## Stop the local Docker stack
 
 .PHONY: check
 check: fmt vet test ## Run the standard local gate (fmt, vet, test)
+
+# ci is the single source of truth for the gate. CI (backend-ci.yml) runs THIS
+# exact target, so "passes locally" == "passes in GitHub". Keep CI and local in
+# lock-step by adding any new required check here, never only in the workflow.
+# Assumes Postgres/Redis are reachable (run `make up` locally; CI provides them).
+.PHONY: ci
+ci: fmt-check vet openapi-verify test-race ## Canonical CI gate (run locally to mirror GitHub exactly)
+	@echo "ci: gate passed (fmt-check, vet, openapi-verify, test-race)."
