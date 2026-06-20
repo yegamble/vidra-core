@@ -5,6 +5,7 @@
 package video
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -73,11 +74,20 @@ type Prober interface {
 	Probe(ctx context.Context, storageKey string) (media.Metadata, error)
 }
 
+// Thumbnailer produces a poster image (JPEG bytes) for the media at storageKey.
+// durationSeconds (0 if unknown) hints which frame to grab. It is the seam for
+// FFmpeg thumbnail extraction; when none is configured videos publish without a
+// poster.
+type Thumbnailer interface {
+	Thumbnail(ctx context.Context, storageKey string, durationSeconds int) ([]byte, error)
+}
+
 // Service holds the video application logic.
 type Service struct {
-	repo   Repository
-	blobs  storage.Backend
-	prober Prober
+	repo        Repository
+	blobs       storage.Backend
+	prober      Prober
+	thumbnailer Thumbnailer
 }
 
 // Option customises the Service.
@@ -87,6 +97,12 @@ type Option func(*Service)
 // publishing. Without it, Process publishes the original unprobed.
 func WithProber(p Prober) Option {
 	return func(s *Service) { s.prober = p }
+}
+
+// WithThumbnailer wires a poster-image generator used by Process. Without it,
+// videos publish without a thumbnail.
+func WithThumbnailer(t Thumbnailer) Option {
+	return func(s *Service) { s.thumbnailer = t }
 }
 
 // NewService builds the video service. blobs is the media storage backend used
@@ -189,22 +205,31 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 // has authorised the upload.
 func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey string) (sqlcgen.Video, error) {
 	state := "published"
+	durationHint := 0
 	if s.prober != nil {
 		md, err := s.prober.Probe(ctx, originalKey)
 		if err != nil {
 			state = "failed"
-		} else if _, err := s.repo.UpsertVideoMetadata(ctx, metadataParams(videoID, md)); err != nil {
-			return sqlcgen.Video{}, err
+		} else {
+			durationHint = md.DurationSeconds
+			if _, err := s.repo.UpsertVideoMetadata(ctx, metadataParams(videoID, md)); err != nil {
+				return sqlcgen.Video{}, err
+			}
 		}
+	}
+	if state == "published" && s.thumbnailer != nil {
+		// Thumbnail generation is best-effort: a failure must not block publish.
+		s.generateThumbnail(ctx, videoID, originalKey, durationHint)
 	}
 	return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
 }
 
-// OriginalForStream authorises a video for byte streaming and returns its stored
-// original file. Visibility mirrors GetByID: public/unlisted to anyone, private
-// only to its owner; everyone else — and any video without a stored original
-// (e.g. a draft) — gets ErrNotFound so existence is not leaked.
-func (s *Service) OriginalForStream(ctx context.Context, videoID, viewerID uuid.UUID, authed bool) (sqlcgen.VideoFile, error) {
+// FileForView authorises serving a stored file of the given kind ("original",
+// "thumbnail", …) for a video and returns it. Visibility mirrors GetByID:
+// public/unlisted to anyone, private only to its owner; everyone else — and any
+// video without a stored file of that kind — gets ErrNotFound so existence is
+// not leaked.
+func (s *Service) FileForView(ctx context.Context, videoID, viewerID uuid.UUID, authed bool, kind string) (sqlcgen.VideoFile, error) {
 	v, err := s.GetByID(ctx, videoID)
 	if err != nil {
 		return sqlcgen.VideoFile{}, err // ErrNotFound
@@ -212,11 +237,48 @@ func (s *Service) OriginalForStream(ctx context.Context, videoID, viewerID uuid.
 	if v.Privacy == "private" && (!authed || viewerID != v.OwnerID) {
 		return sqlcgen.VideoFile{}, ErrNotFound
 	}
-	f, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "original"})
+	f, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: kind})
 	if err != nil {
 		return sqlcgen.VideoFile{}, ErrNotFound
 	}
 	return f, nil
+}
+
+// HasThumbnail reports whether a poster image has been stored for the video.
+func (s *Service) HasThumbnail(ctx context.Context, videoID uuid.UUID) bool {
+	_, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "thumbnail"})
+	return err == nil
+}
+
+// generateThumbnail extracts a poster for the video and stores it as a
+// kind="thumbnail" file, replacing any previous one. Best-effort: any failure
+// is swallowed so it never blocks publishing.
+func (s *Service) generateThumbnail(ctx context.Context, videoID uuid.UUID, originalKey string, durationHint int) {
+	if s.blobs == nil {
+		return
+	}
+	jpg, err := s.thumbnailer.Thumbnail(ctx, originalKey, durationHint)
+	if err != nil || len(jpg) == 0 {
+		return
+	}
+	key := thumbnailKey(videoID)
+	if _, err := s.blobs.Put(ctx, key, bytes.NewReader(jpg)); err != nil {
+		return
+	}
+	_ = s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{VideoID: videoID, Kind: "thumbnail"})
+	_, _ = s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+		VideoID:      videoID,
+		Kind:         "thumbnail",
+		StorageKey:   key,
+		ContentType:  "image/jpeg",
+		OriginalName: "thumbnail.jpg",
+		SizeBytes:    int64(len(jpg)),
+	})
+}
+
+// thumbnailKey is the deterministic storage key for a video's poster image.
+func thumbnailKey(videoID uuid.UUID) string {
+	return "videos/" + videoID.String() + "/thumbnail.jpg"
 }
 
 // GetMetadata returns a video's stored technical metadata. The bool is false

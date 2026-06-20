@@ -80,6 +80,7 @@ curl -sX DELETE localhost:8080/api/v1/videos/<id> -H 'authorization: Bearer <tok
 curl -sX POST localhost:8080/api/v1/videos/<id>/file -H 'authorization: Bearer <token>' \
   -F 'file=@clip.mp4'                                                                 # upload original (owner-only) -> published (no prober yet)
 curl -s localhost:8080/api/v1/videos/<id>/original -o out.mp4                         # stream original (Range-capable); private => owner only
+curl -s localhost:8080/api/v1/videos/<id>/thumbnail -o poster.jpg                     # poster image (if ffmpeg generated one)
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

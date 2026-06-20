@@ -104,6 +104,12 @@ requests (`206 Partial Content`) so a `<video>` element can seek; the local
 backend serves via `http.ServeContent`. HLS/rendition manifests come with
 transcoding later.
 
+During finalisation an FFmpeg-backed thumbnailer (when `ffmpeg` is on `PATH`)
+extracts a poster frame and stores it as a `thumbnail` file;
+`GET /api/v1/videos/{id}/thumbnail` serves the JPEG (same visibility as the
+detail endpoint), and the detail response carries a `has_thumbnail` flag.
+Thumbnail generation is best-effort — a failure never blocks publishing.
+
 Authenticated requests send `Authorization: Bearer <token>`. `GET /api/v1/auth/me`
 (protected) returns the current account, reloaded from the database so it reflects
 live role/verification state. A missing, malformed, invalid, or expired token yields

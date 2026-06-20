@@ -856,3 +856,82 @@ func TestStreamOriginalUnknown404(t *testing.T) {
 		t.Errorf("stream of unknown video = %d, want 404", rec.Code)
 	}
 }
+
+type fakeThumbnailer struct {
+	jpg []byte
+	err error
+}
+
+func (f fakeThumbnailer) Thumbnail(_ context.Context, _ string, _ int) ([]byte, error) {
+	return f.jpg, f.err
+}
+
+func getThumbnail(srv *Server, id, token string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/thumbnail", nil)
+	if token != "" {
+		req.Header.Set("authorization", "Bearer "+token)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestThumbnailServedAndFlaggedOnDetail(t *testing.T) {
+	jpg := []byte("\xff\xd8\xff\xe0fakejpegbytes")
+	srv := videoServerCfg(t, testConfig(), video.WithThumbnailer(fakeThumbnailer{jpg: jpg}))
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
+	if rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", "data", tok); rec.Code != http.StatusCreated {
+		t.Fatalf("upload = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec := getThumbnail(srv, id, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("thumbnail = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != string(jpg) {
+		t.Errorf("thumbnail body mismatch (%d bytes, want %d)", rec.Body.Len(), len(jpg))
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q, want image/jpeg", ct)
+	}
+
+	// Detail flags that a thumbnail exists.
+	drec := getVideo(srv, id, "")
+	var v videoView
+	_ = json.Unmarshal(drec.Body.Bytes(), &v)
+	if v.HasThumbnail == nil || !*v.HasThumbnail {
+		t.Errorf("has_thumbnail = %v, want true", v.HasThumbnail)
+	}
+}
+
+func TestNoThumbnailWithoutGenerator(t *testing.T) {
+	srv := videoServer(t) // no thumbnailer wired
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	if rec := getThumbnail(srv, id, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("thumbnail = %d, want 404 (none generated)", rec.Code)
+	}
+	drec := getVideo(srv, id, "")
+	var v videoView
+	_ = json.Unmarshal(drec.Body.Bytes(), &v)
+	if v.HasThumbnail == nil || *v.HasThumbnail {
+		t.Errorf("has_thumbnail = %v, want false (present, not omitted)", v.HasThumbnail)
+	}
+}
+
+func TestThumbnailPrivateVisibility(t *testing.T) {
+	srv := videoServerCfg(t, testConfig(), video.WithThumbnailer(fakeThumbnailer{jpg: []byte("\xff\xd8jpg")}))
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, ownerTok, "ada", `{"title":"Secret","privacy":"private"}`)
+	if rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", "data", ownerTok); rec.Code != http.StatusCreated {
+		t.Fatalf("upload = %d", rec.Code)
+	}
+	if rec := getThumbnail(srv, id, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("anon thumbnail of private = %d, want 404", rec.Code)
+	}
+	if rec := getThumbnail(srv, id, ownerTok); rec.Code != http.StatusOK {
+		t.Errorf("owner thumbnail of private = %d, want 200", rec.Code)
+	}
+}

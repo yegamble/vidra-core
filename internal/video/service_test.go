@@ -589,3 +589,82 @@ func TestProcessLeavesUnknownMetadataNull(t *testing.T) {
 		t.Errorf("dimensions = %v x %v, want NULL/NULL", md.Width, md.Height)
 	}
 }
+
+type fakeThumbnailer struct {
+	jpg []byte
+	err error
+}
+
+func (f fakeThumbnailer) Thumbnail(_ context.Context, _ string, _ int) ([]byte, error) {
+	return f.jpg, f.err
+}
+
+func TestProcessStoresThumbnail(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	jpg := []byte("\xff\xd8\xff\xe0fakejpeg")
+	svc := NewService(repo, blobs, WithThumbnailer(fakeThumbnailer{jpg: jpg}))
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	if _, err := svc.Process(ctx, v.ID, "videos/x/original.mp4"); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if !svc.HasThumbnail(ctx, v.ID) {
+		t.Fatal("HasThumbnail = false, want true")
+	}
+	f, err := svc.FileForView(ctx, v.ID, uuid.Nil, false, "thumbnail")
+	if err != nil {
+		t.Fatalf("FileForView thumbnail: %v", err)
+	}
+	if f.ContentType != "image/jpeg" || f.StorageKey != "videos/"+v.ID.String()+"/thumbnail.jpg" {
+		t.Errorf("unexpected thumbnail file: %+v", f)
+	}
+	rc, err := blobs.Open(ctx, f.StorageKey)
+	if err != nil {
+		t.Fatalf("open stored thumbnail: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, _ := io.ReadAll(rc)
+	if string(got) != string(jpg) {
+		t.Errorf("stored thumbnail bytes = %q, want %q", got, jpg)
+	}
+}
+
+func TestProcessThumbnailFailureStillPublishes(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	blobs, _ := storage.NewLocal(t.TempDir())
+	svc := NewService(repo, blobs, WithThumbnailer(fakeThumbnailer{err: errors.New("ffmpeg boom")}))
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	got, err := svc.Process(ctx, v.ID, "k")
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if got.State != "published" {
+		t.Errorf("state = %q, want published (thumbnail failure is non-fatal)", got.State)
+	}
+	if svc.HasThumbnail(ctx, v.ID) {
+		t.Error("thumbnail stored despite generator error")
+	}
+}
+
+func TestProcessFailedProbeSkipsThumbnail(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	blobs, _ := storage.NewLocal(t.TempDir())
+	svc := NewService(repo, blobs,
+		WithProber(fakeProber{err: errors.New("bad media")}),
+		WithThumbnailer(fakeThumbnailer{jpg: []byte("x")}),
+	)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	got, _ := svc.Process(ctx, v.ID, "k")
+	if got.State != "failed" {
+		t.Errorf("state = %q, want failed", got.State)
+	}
+	if svc.HasThumbnail(ctx, v.ID) {
+		t.Error("thumbnail generated for a failed video")
+	}
+}

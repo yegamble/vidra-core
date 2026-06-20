@@ -58,6 +58,10 @@ type videoView struct {
 	DurationSeconds *int32    `json:"duration_seconds,omitempty"`
 	Width           *int32    `json:"width,omitempty"`
 	Height          *int32    `json:"height,omitempty"`
+	// HasThumbnail is set on the detail endpoint (nil/omitted on list/feed views,
+	// which do not look it up); when set it reports whether a poster image is
+	// available at GET /videos/{id}/thumbnail.
+	HasThumbnail *bool `json:"has_thumbnail,omitempty"`
 }
 
 func newVideoView(v sqlcgen.Video) videoView {
@@ -147,6 +151,8 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 		view.Width = md.Width
 		view.Height = md.Height
 	}
+	has := s.videosvc.HasThumbnail(c.Request().Context(), id)
+	view.HasThumbnail = &has
 	return c.JSON(http.StatusOK, view)
 }
 
@@ -426,7 +432,22 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	viewerID, _, authed := principalFromContext(c)
-	f, err := s.videosvc.OriginalForStream(c.Request().Context(), id, viewerID, authed)
+	f, err := s.videosvc.FileForView(c.Request().Context(), id, viewerID, authed, "original")
+	if err != nil {
+		return videoError(err)
+	}
+	return s.serveStoredObject(c, f.StorageKey, f.ContentType)
+}
+
+// handleGetVideoThumbnail serves a video's generated poster image. Same
+// visibility as the detail endpoint; a video without a stored thumbnail is 404.
+func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	viewerID, _, authed := principalFromContext(c)
+	f, err := s.videosvc.FileForView(c.Request().Context(), id, viewerID, authed, "thumbnail")
 	if err != nil {
 		return videoError(err)
 	}

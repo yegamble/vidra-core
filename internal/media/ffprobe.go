@@ -39,7 +39,7 @@ func DetectFFProbe(blobs storage.Backend) (*FFProbe, bool) {
 
 // Probe runs ffprobe against the object at key and returns its metadata.
 func (f *FFProbe) Probe(ctx context.Context, key string) (Metadata, error) {
-	path, cleanup, err := f.localPath(ctx, key)
+	path, cleanup, err := objectPath(ctx, f.blobs, key)
 	if err != nil {
 		return Metadata{}, err
 	}
@@ -59,11 +59,11 @@ func (f *FFProbe) Probe(ctx context.Context, key string) (Metadata, error) {
 	return parseFFProbe(out)
 }
 
-// localPath returns a filesystem path ffprobe can read for key. When the backend
-// exposes paths directly (local) it is used in place; otherwise the object is
-// streamed to a temp file. The returned cleanup removes any temp file.
-func (f *FFProbe) localPath(ctx context.Context, key string) (string, func(), error) {
-	if pp, ok := f.blobs.(storage.PathProvider); ok {
+// objectPath returns a filesystem path an external tool can read for key. When
+// the backend exposes paths directly (local) it is used in place; otherwise the
+// object is streamed to a temp file. The returned cleanup removes any temp file.
+func objectPath(ctx context.Context, blobs storage.Backend, key string) (string, func(), error) {
+	if pp, ok := blobs.(storage.PathProvider); ok {
 		p, err := pp.Path(key)
 		if err != nil {
 			return "", func() {}, err
@@ -71,12 +71,12 @@ func (f *FFProbe) localPath(ctx context.Context, key string) (string, func(), er
 		return p, func() {}, nil
 	}
 
-	rc, err := f.blobs.Open(ctx, key)
+	rc, err := blobs.Open(ctx, key)
 	if err != nil {
 		return "", func() {}, err
 	}
 	defer func() { _ = rc.Close() }()
-	tmp, err := os.CreateTemp("", "vidra-probe-*")
+	tmp, err := os.CreateTemp("", "vidra-media-*")
 	if err != nil {
 		return "", func() {}, err
 	}

@@ -349,7 +349,7 @@
 - [ ] Implement VP9 profile.
 - [ ] Implement AV1 profile.
 - [ ] Implement HLS output.
-- [ ] Implement thumbnail generation.
+- [x] Implement thumbnail generation. (`internal/media.Thumbnailer` shells out to ffmpeg to grab one scaled JPEG poster frame; pure seek/arg builders unit-tested, exec behind `-tags=integration`. `Process` generates it best-effort after a successful probe (never blocks publish), stored as a `kind='thumbnail'` video_file (migration 0010 widens the kind CHECK) at `videos/<id>/thumbnail.jpg`. Served by `GET /api/v1/videos/:id/thumbnail` (same visibility as detail) reusing `serveStoredObject`; detail exposes `has_thumbnail`. Wired via `media.DetectThumbnailer` in `cmd/api` only when ffmpeg is present.)
 - [ ] Implement preview generation.
 - [ ] Implement storyboard generation or documented defer.
 - [ ] Implement worker queue for transcode jobs.

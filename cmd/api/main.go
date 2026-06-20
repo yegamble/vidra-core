@@ -96,6 +96,12 @@ func run(logger *slog.Logger) error {
 	} else {
 		logger.Warn("media probe disabled (ffprobe not on PATH); originals are published unprobed")
 	}
+	if thumb, ok := media.DetectThumbnailer(blobs); ok {
+		vopts = append(vopts, video.WithThumbnailer(thumb))
+		logger.Info("thumbnail generation enabled (ffmpeg found)")
+	} else {
+		logger.Warn("thumbnail generation disabled (ffmpeg not on PATH); videos publish without a poster")
+	}
 	videosvc := video.NewService(db.Queries(), blobs, vopts...)
 	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(blobs))
 

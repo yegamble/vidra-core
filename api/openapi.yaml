@@ -860,6 +860,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/thumbnail:
+    get:
+      operationId: getVideoThumbnail
+      summary: Get a video's poster image
+      description: >-
+        Returns the generated JPEG poster for the video. Same visibility as the
+        detail endpoint (private → owner only, else 404). A video without a
+        generated thumbnail is 404 — the detail response's has_thumbnail flag
+        tells clients whether one exists.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The poster image.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No such video (or private and not yours), or no thumbnail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/file:
     post:
       operationId: uploadVideoFile
@@ -1226,6 +1260,11 @@ components:
           type: integer
           nullable: true
           description: Probed pixel height; omitted when unknown (e.g. audio-only).
+        has_thumbnail:
+          type: boolean
+          description: >-
+            Whether a poster image is available at GET /videos/{id}/thumbnail.
+            Present on the detail endpoint; omitted on list/feed views.
     CreateVideoRequest:
       type: object
       required: [title]
