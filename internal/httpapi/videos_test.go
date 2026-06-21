@@ -35,6 +35,51 @@ type videoFakeRepo struct {
 	files    map[uuid.UUID][]sqlcgen.VideoFile
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
 	views    map[uuid.UUID]int64
+	saved    map[string]time.Time // "userID|videoID" -> saved-at
+}
+
+func (f *videoFakeRepo) SaveVideo(_ context.Context, a sqlcgen.SaveVideoParams) error {
+	if f.saved == nil {
+		f.saved = map[string]time.Time{}
+	}
+	key := a.UserID.String() + "|" + a.VideoID.String()
+	if _, ok := f.saved[key]; !ok {
+		f.saved[key] = time.Now()
+	}
+	return nil
+}
+
+func (f *videoFakeRepo) UnsaveVideo(_ context.Context, a sqlcgen.UnsaveVideoParams) error {
+	delete(f.saved, a.UserID.String()+"|"+a.VideoID.String())
+	return nil
+}
+
+func (f *videoFakeRepo) ListSavedVideos(_ context.Context, a sqlcgen.ListSavedVideosParams) ([]sqlcgen.ListSavedVideosRow, error) {
+	type saved struct {
+		vid uuid.UUID
+		at  time.Time
+	}
+	var list []saved
+	prefix := a.UserID.String() + "|"
+	for k, t := range f.saved {
+		if strings.HasPrefix(k, prefix) {
+			list = append(list, saved{uuid.MustParse(strings.TrimPrefix(k, prefix)), t})
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool { return list[i].at.After(list[j].at) })
+	var rows []sqlcgen.ListSavedVideosRow
+	for _, sv := range list {
+		r, ok := f.videos[sv.vid]
+		if !ok || r.Privacy != "public" || r.State != "published" {
+			continue
+		}
+		rows = append(rows, sqlcgen.ListSavedVideosRow{
+			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+		})
+	}
+	return rows, nil
 }
 
 // ListSubscriptionVideos mirrors the SQL by consulting the real follow data in

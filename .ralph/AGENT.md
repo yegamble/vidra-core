@@ -112,6 +112,11 @@ curl -s localhost:8080/api/v1/videos/<id>/rating                                
 curl -sX PUT localhost:8080/api/v1/videos/<id>/rating -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"rating":"like"}'                          # or "dislike"
 curl -sX DELETE localhost:8080/api/v1/videos/<id>/rating -H 'authorization: Bearer <token>'  # clear your rating
+
+# Saved videos / watch later (public, published videos):
+curl -sX POST localhost:8080/api/v1/videos/<id>/save -H 'authorization: Bearer <token>'    # save (idempotent)
+curl -sX DELETE localhost:8080/api/v1/videos/<id>/save -H 'authorization: Bearer <token>'  # unsave
+curl -s 'localhost:8080/api/v1/me/saved?limit=20' -H 'authorization: Bearer <token>'        # your library (cards, newest-saved first)
 curl -sX POST localhost:8080/api/v1/videos/<id>/view                                  # record a view (deduped per viewer/hour) -> 204
 ```
 All non-2xx responses use the `ErrorResponse` envelope

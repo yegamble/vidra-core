@@ -25,6 +25,7 @@ type fakeRepo struct {
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
 	views    map[uuid.UUID]int64
 	followed map[uuid.UUID]bool // channel IDs the test subject follows
+	saved    map[uuid.UUID]bool // video IDs the test subject has saved
 	owner    uuid.UUID
 }
 
@@ -35,8 +36,34 @@ func newFakeRepo(owner uuid.UUID) *fakeRepo {
 		metadata: map[uuid.UUID]sqlcgen.VideoMetadatum{},
 		views:    map[uuid.UUID]int64{},
 		followed: map[uuid.UUID]bool{},
+		saved:    map[uuid.UUID]bool{},
 		owner:    owner,
 	}
+}
+
+func (f *fakeRepo) SaveVideo(_ context.Context, a sqlcgen.SaveVideoParams) error {
+	f.saved[a.VideoID] = true
+	return nil
+}
+
+func (f *fakeRepo) UnsaveVideo(_ context.Context, a sqlcgen.UnsaveVideoParams) error {
+	delete(f.saved, a.VideoID)
+	return nil
+}
+
+func (f *fakeRepo) ListSavedVideos(_ context.Context, a sqlcgen.ListSavedVideosParams) ([]sqlcgen.ListSavedVideosRow, error) {
+	var rows []sqlcgen.ListSavedVideosRow
+	for _, r := range f.videos {
+		if f.saved[r.ID] && r.Privacy == "public" && r.State == "published" {
+			rows = append(rows, sqlcgen.ListSavedVideosRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	return rows, nil
 }
 
 func (f *fakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error) {

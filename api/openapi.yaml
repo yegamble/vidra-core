@@ -1473,6 +1473,101 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/saved:
+    get:
+      operationId: listSavedVideos
+      summary: List the caller's saved videos
+      description: >-
+        Returns the caller's saved ("watch later") videos as discovery cards,
+        newest-saved first. Only public, published saved videos are returned.
+        Paginated via limit (1–100, default 20) and offset.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of saved videos (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoFeedResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/save:
+    post:
+      operationId: saveVideo
+      summary: Save a video to your library
+      description: >-
+        Adds a public, published video to the caller's library (idempotent). A
+        non-public/unpublished or unknown video is 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The video is saved.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such public, published video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unsaveVideo
+      summary: Remove a video from your library
+      description: Removes a video from the caller's library (idempotent).
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The video is no longer saved.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:

@@ -55,6 +55,12 @@ type PasswordResetToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type SavedVideo struct {
+	UserID    uuid.UUID `json:"user_id"`
+	VideoID   uuid.UUID `json:"video_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Session struct {
 	ID          uuid.UUID          `json:"id"`
 	UserID      uuid.UUID          `json:"user_id"`

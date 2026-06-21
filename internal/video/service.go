@@ -54,6 +54,9 @@ type Repository interface {
 	ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
 	ListSubscriptionVideos(ctx context.Context, arg sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error)
+	ListSavedVideos(ctx context.Context, arg sqlcgen.ListSavedVideosParams) ([]sqlcgen.ListSavedVideosRow, error)
+	SaveVideo(ctx context.Context, arg sqlcgen.SaveVideoParams) error
+	UnsaveVideo(ctx context.Context, arg sqlcgen.UnsaveVideoParams) error
 	SearchPublicVideos(ctx context.Context, arg sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error)
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
@@ -528,6 +531,35 @@ func (s *Service) ListPublic(ctx context.Context, sort string, limit, offset int
 func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, error) {
 	rows, err := s.repo.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{
 		FollowerID:   userID,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName))
+	}
+	return items, nil
+}
+
+// Save adds videoID to userID's library (idempotent). The caller confirms the
+// video is saveable (exists + public + published) first.
+func (s *Service) Save(ctx context.Context, videoID, userID uuid.UUID) error {
+	return s.repo.SaveVideo(ctx, sqlcgen.SaveVideoParams{UserID: userID, VideoID: videoID})
+}
+
+// Unsave removes videoID from userID's library (idempotent).
+func (s *Service) Unsave(ctx context.Context, videoID, userID uuid.UUID) error {
+	return s.repo.UnsaveVideo(ctx, sqlcgen.UnsaveVideoParams{UserID: userID, VideoID: videoID})
+}
+
+// ListSaved returns userID's saved public, published videos as feed cards,
+// newest-saved first. The caller clamps limit/offset.
+func (s *Service) ListSaved(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, error) {
+	rows, err := s.repo.ListSavedVideos(ctx, sqlcgen.ListSavedVideosParams{
+		UserID:       userID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
