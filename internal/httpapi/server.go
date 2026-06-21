@@ -14,6 +14,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -38,6 +39,7 @@ type Server struct {
 	authTTL    time.Duration
 	channelsvc *channel.Service
 	videosvc   *video.Service
+	commentsvc *comment.Service
 	media      storage.Backend
 }
 
@@ -83,6 +85,12 @@ func WithChannelService(svc *channel.Service) Option {
 // the video routes are not registered.
 func WithVideoService(svc *video.Service) Option {
 	return func(s *Server) { s.videosvc = svc }
+}
+
+// WithCommentService mounts the comment endpoints. Comments are scoped to videos,
+// so the comment routes register only when the video service is also present.
+func WithCommentService(svc *comment.Service) Option {
+	return func(s *Server) { s.commentsvc = svc }
 }
 
 // WithMediaStorage gives the server the blob backend used to stream stored media
@@ -255,6 +263,13 @@ func (s *Server) routes() {
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
 		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, middleware.BodyLimit(s.cfg.UploadMaxSize))
+
+		// Comments are scoped to a (public, published) video.
+		if s.commentsvc != nil {
+			api.GET("/videos/:id/comments", s.handleListComments)
+			api.POST("/videos/:id/comments", s.handleCreateComment, s.requireAuth)
+			api.DELETE("/comments/:id", s.handleDeleteComment, s.requireAuth)
+		}
 	}
 }
 

@@ -28,6 +28,15 @@ type ChannelFollow struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+type Comment struct {
+	ID        uuid.UUID `json:"id"`
+	VideoID   uuid.UUID `json:"video_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type EmailVerificationToken struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`

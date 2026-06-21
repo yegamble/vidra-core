@@ -100,6 +100,12 @@ curl -sX POST localhost:8080/api/v1/videos/<id>/file -H 'authorization: Bearer <
   -F 'file=@clip.mp4'                                                                 # upload original (owner-only) -> published (no prober yet)
 curl -s localhost:8080/api/v1/videos/<id>/original -o out.mp4                         # stream original (Range-capable); private => owner only
 curl -s localhost:8080/api/v1/videos/<id>/thumbnail -o poster.jpg                     # poster image (if ffmpeg generated one)
+
+# Comments (on public, published videos):
+curl -s localhost:8080/api/v1/videos/<id>/comments                                   # list (public, newest-first, paginated)
+curl -sX POST localhost:8080/api/v1/videos/<id>/comments -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"body":"nice video"}'
+curl -sX DELETE localhost:8080/api/v1/comments/<comment-id> -H 'authorization: Bearer <token>'  # your own only
 curl -sX POST localhost:8080/api/v1/videos/<id>/view                                  # record a view (deduped per viewer/hour) -> 204
 ```
 All non-2xx responses use the `ErrorResponse` envelope

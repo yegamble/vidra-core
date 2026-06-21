@@ -18,6 +18,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -320,8 +321,9 @@ func videoServer(t *testing.T) *Server { return videoServerCfg(t, testConfig()) 
 func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Server {
 	t.Helper()
 	chRepo := newChannelFakeRepo()
+	authRepo := newAuthFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
-	authsvc := auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour)
+	authsvc := auth.NewService(authRepo, issuer, 720*time.Hour)
 	blobs, err := storage.NewLocal(t.TempDir())
 	if err != nil {
 		t.Fatalf("storage.NewLocal: %v", err)
@@ -337,6 +339,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
 		WithVideoService(video.NewService(repo, blobs, opts...)),
+		WithCommentService(comment.NewService(&commentFakeRepo{users: authRepo})),
 		WithMediaStorage(blobs),
 	)
 }

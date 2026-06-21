@@ -17,6 +17,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/media"
@@ -110,6 +111,9 @@ func run(logger *slog.Logger) error {
 	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
 	videosvc := video.NewService(db.Queries(), blobs, vopts...)
 	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(blobs))
+
+	commentsvc := comment.NewService(db.Queries())
+	opts = append(opts, httpapi.WithCommentService(commentsvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

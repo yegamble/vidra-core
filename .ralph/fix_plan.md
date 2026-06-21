@@ -390,7 +390,7 @@
 - [ ] Implement playlist visibility rules.
 - [ ] Implement playlist item add/remove/reorder.
 - [ ] Implement quick-add to playlist API.
-- [ ] Implement comments create/read/update/delete.
+- [~] Implement comments create/read/update/delete. (Flat comments (no threading yet): `POST /api/v1/videos/:id/comments` (auth) posts a comment on a **public, published** video; `GET /api/v1/videos/:id/comments` (public, paginated `limit`≤100/`offset`) lists them newest-first with the author's username + display name (sqlc `ListCommentsByVideo` JOINs users); `DELETE /api/v1/comments/:id` (auth) removes the caller's OWN comment (403 for another's, 404 unknown). Non-public/unpublished/unknown video → 404 (`commentableVideoID` guard). migration 0014 (`comments` table, `ON DELETE CASCADE` from videos+users); `internal/comment` service + `internal/httpapi/comments.go`; openapi documents all three + `Comment`/`CommentListResponse` schemas (drift guard extended via `fullRouteOptions`). Tested: 2 service + 3 handler (create→list→delete-by-author, non-author 403, non-public 404, blank-body 422). DEFERRED: edit (PATCH), threading (parent_id), moderation hooks (P9).)
 - [ ] Implement comment threading if in-scope.
 - [ ] Implement comment moderation hooks.
 - [ ] Implement video like/dislike or reaction behavior according to spec.
