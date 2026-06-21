@@ -394,7 +394,7 @@
 - [ ] Implement comment threading if in-scope.
 - [ ] Implement comment moderation hooks.
 - [ ] Implement video like/dislike or reaction behavior according to spec.
-- [ ] Implement subscriptions/follows.
+- [x] Implement subscriptions/follows. (The follow model landed in P5 (`POST`/`DELETE /api/v1/channels/:handle/follow`). This adds the **subscriptions feed**: `GET /api/v1/me/subscriptions/videos` (behind `requireAuth`, paginated `limit`≤100/`offset`) returns public, published videos from the channels the user follows, newest first, with the same discovery-card data (`views`, `has_thumbnail`) as the main feed. sqlc `ListSubscriptionVideos` (filters `channel_id IN (SELECT … FROM channel_follows WHERE follower_id = $1)`); `internal/video.ListSubscriptions`; openapi documented; tested — service-level (only-followed-channels) + handler-level using the real follow flow (anon→401, empty-before-follow, video-appears-after-follow).)
 - [ ] Implement notification creation/read/mark-read.
 - [ ] Add tests for playlist permissions, history privacy, and comment moderation.
 

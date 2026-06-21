@@ -53,6 +53,7 @@ type Repository interface {
 	ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListVideosByChannelRow, error)
 	ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
+	ListSubscriptionVideos(ctx context.Context, arg sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error)
 	SearchPublicVideos(ctx context.Context, arg sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error)
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
@@ -504,6 +505,25 @@ func NormalizeFeedSort(sort string) string {
 func (s *Service) ListPublic(ctx context.Context, sort string, limit, offset int32) ([]FeedItem, error) {
 	rows, err := s.repo.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
 		Sort:         NormalizeFeedSort(sort),
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail))
+	}
+	return items, nil
+}
+
+// ListSubscriptions returns public, published videos from the channels the user
+// follows, newest first, each carrying its view count and poster availability.
+// The caller clamps limit/offset.
+func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, error) {
+	rows, err := s.repo.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{
+		FollowerID:   userID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})

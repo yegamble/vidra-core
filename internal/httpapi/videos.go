@@ -214,6 +214,30 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: sort, Limit: limit, Offset: offset})
 }
 
+// handleListSubscriptionVideos returns the authenticated user's "subscriptions"
+// feed: public, published videos from the channels they follow, newest first,
+// with discovery-card data. Pagination via ?limit (1–100, default 20) and ?offset.
+func (s *Server) handleListSubscriptionVideos(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
+	offset := queryInt(c, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+	items, err := s.videosvc.ListSubscriptions(c.Request().Context(), userID, int32(limit), int32(offset))
+	if err != nil {
+		return err
+	}
+	views := make([]videoView, 0, len(items))
+	for _, it := range items {
+		views = append(views, feedItemView(it))
+	}
+	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: "recent", Limit: limit, Offset: offset})
+}
+
 // maxSearchQueryLen bounds the search term to keep queries cheap.
 const maxSearchQueryLen = 100
 

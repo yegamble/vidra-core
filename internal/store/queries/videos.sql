@@ -63,6 +63,25 @@ ORDER BY
     v.created_at DESC, v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: ListSubscriptionVideos :many
+-- The "subscriptions" feed: public, published videos from the channels the given
+-- user follows, newest first, with the same discovery-card data as the main feed.
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail
+FROM videos v
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE v.privacy = 'public' AND v.state = 'published'
+  AND v.channel_id IN (
+      SELECT channel_id FROM channel_follows WHERE follower_id = sqlc.arg('follower_id')
+  )
+ORDER BY v.created_at DESC, v.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
 -- name: SearchPublicVideos :many
 -- Public, published title search with discovery-card data.
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,

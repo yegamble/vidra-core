@@ -35,6 +35,24 @@ type videoFakeRepo struct {
 	views    map[uuid.UUID]int64
 }
 
+// ListSubscriptionVideos mirrors the SQL by consulting the real follow data in
+// the channel fake (videos whose channel the FollowerID follows).
+func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error) {
+	var rows []sqlcgen.ListSubscriptionVideosRow
+	for _, r := range f.videos {
+		follows := f.channels != nil && f.channels.follows[a.FollowerID.String()+"|"+r.ChannelID.String()]
+		if r.Privacy == "public" && r.State == "published" && follows {
+			rows = append(rows, sqlcgen.ListSubscriptionVideosRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	return rows, nil
+}
+
 func (f *videoFakeRepo) IncrementVideoViews(_ context.Context, videoID uuid.UUID) (int64, error) {
 	if f.views == nil {
 		f.views = map[uuid.UUID]int64{}
@@ -1134,5 +1152,42 @@ func TestSearchAndChannelListCarryCards(t *testing.T) {
 	}
 	if c := lr.Videos[0]; c.Views == nil || *c.Views != 1 || c.HasThumbnail == nil || !*c.HasThumbnail {
 		t.Errorf("channel card missing data: views=%v has_thumbnail=%v", c.Views, c.HasThumbnail)
+	}
+}
+
+func TestSubscriptionFeed(t *testing.T) {
+	srv := videoServer(t)
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	_ = createPublishedVideo(t, srv, adaTok, "ada", `{"title":"from ada","privacy":"public"}`)
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	sub := func(tok string) videoFeedResponse {
+		t.Helper()
+		rec := getWithAuth(srv, "/api/v1/me/subscriptions/videos", tok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("subscriptions = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		var body videoFeedResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return body
+	}
+
+	// Requires auth.
+	if anon := getWithAuth(srv, "/api/v1/me/subscriptions/videos", ""); anon.Code != http.StatusUnauthorized {
+		t.Fatalf("anon subscriptions = %d, want 401", anon.Code)
+	}
+
+	// Before following anyone, the feed is empty.
+	if before := sub(bobTok); len(before.Videos) != 0 {
+		t.Fatalf("feed before following = %d videos, want 0", len(before.Videos))
+	}
+
+	// Bob follows ada, then ada's published video appears in his feed.
+	if f := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/ada/follow", "", bobTok); f.Code != http.StatusNoContent {
+		t.Fatalf("follow = %d, want 204; body=%s", f.Code, f.Body.String())
+	}
+	after := sub(bobTok)
+	if len(after.Videos) != 1 || after.Videos[0].Title != "from ada" {
+		t.Fatalf("feed after following = %+v, want 1 video 'from ada'", after.Videos)
 	}
 }

@@ -246,6 +246,7 @@ func (s *Server) routes() {
 		api.POST("/channels/:handle/videos", s.handleCreateVideo, s.requireAuth)
 		api.GET("/channels/:handle/videos", s.handleListChannelVideos, s.optionalAuth)
 		api.GET("/videos", s.handleListPublicVideos)
+		api.GET("/me/subscriptions/videos", s.handleListSubscriptionVideos, s.requireAuth)
 		api.GET("/videos/search", s.handleSearchVideos)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)

@@ -721,6 +721,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/subscriptions/videos:
+    get:
+      operationId: listSubscriptionVideos
+      summary: List videos from the channels the user follows
+      description: >-
+        The authenticated user's "subscriptions" feed: public, published videos
+        from the channels they follow, newest first, with discovery-card data.
+        Paginated via limit (1–100, default 20) and offset.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of videos from followed channels (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoFeedResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/channels/{handle}/videos:
     post:
       operationId: createVideo

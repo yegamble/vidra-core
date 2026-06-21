@@ -24,6 +24,7 @@ type fakeRepo struct {
 	files    map[uuid.UUID][]sqlcgen.VideoFile
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
 	views    map[uuid.UUID]int64
+	followed map[uuid.UUID]bool // channel IDs the test subject follows
 	owner    uuid.UUID
 }
 
@@ -33,8 +34,24 @@ func newFakeRepo(owner uuid.UUID) *fakeRepo {
 		files:    map[uuid.UUID][]sqlcgen.VideoFile{},
 		metadata: map[uuid.UUID]sqlcgen.VideoMetadatum{},
 		views:    map[uuid.UUID]int64{},
+		followed: map[uuid.UUID]bool{},
 		owner:    owner,
 	}
+}
+
+func (f *fakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error) {
+	var rows []sqlcgen.ListSubscriptionVideosRow
+	for _, r := range f.videos {
+		if r.Privacy == "public" && r.State == "published" && f.followed[r.ChannelID] {
+			rows = append(rows, sqlcgen.ListSubscriptionVideosRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			})
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	return rows, nil
 }
 
 func (f *fakeRepo) IncrementVideoViews(_ context.Context, videoID uuid.UUID) (int64, error) {
@@ -307,6 +324,28 @@ func TestGetByIDNotFound(t *testing.T) {
 	svc := NewService(newFakeRepo(uuid.New()), nil)
 	if _, err := svc.GetByID(context.Background(), uuid.New()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListSubscriptionsOnlyFollowedChannels(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	followed, other := uuid.New(), uuid.New()
+	now := time.Now()
+	inFollowed, inOther := uuid.New(), uuid.New()
+	repo.videos[inFollowed] = sqlcgen.GetVideoByIDRow{
+		ID: inFollowed, ChannelID: followed, Title: "Followed", Privacy: "public", State: "published", CreatedAt: now, UpdatedAt: now,
+	}
+	repo.videos[inOther] = sqlcgen.GetVideoByIDRow{
+		ID: inOther, ChannelID: other, Title: "Other", Privacy: "public", State: "published", CreatedAt: now, UpdatedAt: now,
+	}
+	repo.followed[followed] = true
+
+	items, err := NewService(repo, nil).ListSubscriptions(context.Background(), uuid.New(), 20, 0)
+	if err != nil {
+		t.Fatalf("ListSubscriptions: %v", err)
+	}
+	if len(items) != 1 || items[0].Video.ID != inFollowed {
+		t.Fatalf("want only the followed-channel video, got %d items: %+v", len(items), items)
 	}
 }
 

@@ -228,6 +228,76 @@ func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVide
 	return items, nil
 }
 
+const listSubscriptionVideos = `-- name: ListSubscriptionVideos :many
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail
+FROM videos v
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE v.privacy = 'public' AND v.state = 'published'
+  AND v.channel_id IN (
+      SELECT channel_id FROM channel_follows WHERE follower_id = $1
+  )
+ORDER BY v.created_at DESC, v.id DESC
+LIMIT $3 OFFSET $2
+`
+
+type ListSubscriptionVideosParams struct {
+	FollowerID   uuid.UUID `json:"follower_id"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
+}
+
+type ListSubscriptionVideosRow struct {
+	ID           uuid.UUID `json:"id"`
+	ChannelID    uuid.UUID `json:"channel_id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Privacy      string    `json:"privacy"`
+	State        string    `json:"state"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Views        int64     `json:"views"`
+	HasThumbnail bool      `json:"has_thumbnail"`
+}
+
+// The "subscriptions" feed: public, published videos from the channels the given
+// user follows, newest first, with the same discovery-card data as the main feed.
+func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscriptionVideosParams) ([]ListSubscriptionVideosRow, error) {
+	rows, err := q.db.Query(ctx, listSubscriptionVideos, arg.FollowerID, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSubscriptionVideosRow
+	for rows.Next() {
+		var i ListSubscriptionVideosRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Description,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Views,
+			&i.HasThumbnail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVideosByChannel = `-- name: ListVideosByChannel :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,
