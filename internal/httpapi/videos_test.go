@@ -21,6 +21,7 @@ import (
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -340,6 +341,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 		WithChannelService(channel.NewService(chRepo)),
 		WithVideoService(video.NewService(repo, blobs, opts...)),
 		WithCommentService(comment.NewService(&commentFakeRepo{users: authRepo})),
+		WithRatingService(rating.NewService(newRatingFakeRepo())),
 		WithMediaStorage(blobs),
 	)
 }

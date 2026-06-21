@@ -12,6 +12,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
+	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -25,6 +26,7 @@ func fullRouteOptions() []Option {
 		WithChannelService(channel.NewService(nil)),
 		WithVideoService(video.NewService(nil, nil)),
 		WithCommentService(comment.NewService(nil)),
+		WithRatingService(rating.NewService(nil)),
 	}
 }
 

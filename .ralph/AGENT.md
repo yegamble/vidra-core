@@ -106,6 +106,12 @@ curl -s localhost:8080/api/v1/videos/<id>/comments                              
 curl -sX POST localhost:8080/api/v1/videos/<id>/comments -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"body":"nice video"}'
 curl -sX DELETE localhost:8080/api/v1/comments/<comment-id> -H 'authorization: Bearer <token>'  # your own only
+
+# Ratings (like/dislike on public, published videos):
+curl -s localhost:8080/api/v1/videos/<id>/rating                                     # counts (+ my_rating if authed)
+curl -sX PUT localhost:8080/api/v1/videos/<id>/rating -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"rating":"like"}'                          # or "dislike"
+curl -sX DELETE localhost:8080/api/v1/videos/<id>/rating -H 'authorization: Bearer <token>'  # clear your rating
 curl -sX POST localhost:8080/api/v1/videos/<id>/view                                  # record a view (deduped per viewer/hour) -> 204
 ```
 All non-2xx responses use the `ErrorResponse` envelope

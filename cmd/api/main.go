@@ -22,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/ratelimit"
+	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/video"
@@ -114,6 +115,9 @@ func run(logger *slog.Logger) error {
 
 	commentsvc := comment.NewService(db.Queries())
 	opts = append(opts, httpapi.WithCommentService(commentsvc))
+
+	ratingsvc := rating.NewService(db.Queries())
+	opts = append(opts, httpapi.WithRatingService(ratingsvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

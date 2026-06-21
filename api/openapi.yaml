@@ -1361,6 +1361,118 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/rating:
+    get:
+      operationId: getVideoRating
+      summary: Get a video's like/dislike summary
+      description: >-
+        Returns a public, published video's like and dislike counts, plus the
+        caller's own rating (like, dislike, or null) when signed in. A
+        non-public/unpublished or unknown video is 404.
+      tags: [ratings]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The rating summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoRating"
+        "404":
+          description: No such public, published video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: setVideoRating
+      summary: Set or change your rating for a video
+      description: Records the caller's like/dislike for a public, published video.
+      tags: [ratings]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating:
+                  type: string
+                  enum: [like, dislike]
+      responses:
+        "200":
+          description: The updated rating summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoRating"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such public, published video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The rating value is not 'like' or 'dislike'.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: clearVideoRating
+      summary: Clear your rating for a video
+      description: Removes the caller's like/dislike (idempotent); returns the updated summary.
+      tags: [ratings]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The updated rating summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoRating"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such public, published video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -1737,6 +1849,20 @@ components:
           type: integer
         offset:
           type: integer
+    VideoRating:
+      type: object
+      required: [like_count, dislike_count, my_rating]
+      properties:
+        like_count:
+          type: integer
+          format: int64
+        dislike_count:
+          type: integer
+          format: int64
+        my_rating:
+          type: [string, "null"]
+          enum: [like, dislike, null]
+          description: The caller's own rating, or null when anonymous or unrated.
     VideoListResponse:
       type: object
       required: [videos]

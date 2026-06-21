@@ -17,6 +17,7 @@ import (
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/ratelimit"
+	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -40,6 +41,7 @@ type Server struct {
 	channelsvc *channel.Service
 	videosvc   *video.Service
 	commentsvc *comment.Service
+	ratingsvc  *rating.Service
 	media      storage.Backend
 }
 
@@ -91,6 +93,12 @@ func WithVideoService(svc *video.Service) Option {
 // so the comment routes register only when the video service is also present.
 func WithCommentService(svc *comment.Service) Option {
 	return func(s *Server) { s.commentsvc = svc }
+}
+
+// WithRatingService mounts the video rating endpoints. Ratings are scoped to
+// videos, so the routes register only when the video service is also present.
+func WithRatingService(svc *rating.Service) Option {
+	return func(s *Server) { s.ratingsvc = svc }
 }
 
 // WithMediaStorage gives the server the blob backend used to stream stored media
@@ -269,6 +277,13 @@ func (s *Server) routes() {
 			api.GET("/videos/:id/comments", s.handleListComments)
 			api.POST("/videos/:id/comments", s.handleCreateComment, s.requireAuth)
 			api.DELETE("/comments/:id", s.handleDeleteComment, s.requireAuth)
+		}
+
+		// Ratings (like/dislike) are scoped to a (public, published) video.
+		if s.ratingsvc != nil {
+			api.GET("/videos/:id/rating", s.handleGetVideoRating, s.optionalAuth)
+			api.PUT("/videos/:id/rating", s.handlePutVideoRating, s.requireAuth)
+			api.DELETE("/videos/:id/rating", s.handleDeleteVideoRating, s.requireAuth)
 		}
 	}
 }

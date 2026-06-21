@@ -38,10 +38,11 @@ func newCommentView(c sqlcgen.Comment, authorUsername, authorDisplayName string)
 	}
 }
 
-// commentableVideoID parses the :id param and confirms the video exists and is
-// public + published, so it can carry publicly-visible comments. Anything else
-// (missing, draft, unlisted, private) is a 404 — comments on those are a later slice.
-func (s *Server) commentableVideoID(c echo.Context) (uuid.UUID, error) {
+// publicVideoID parses the :id param and confirms the video exists and is
+// public + published, so it can carry public interactions (comments, ratings).
+// Anything else (missing, draft, unlisted, private) is a 404 — interactions on
+// those are a later slice.
+func (s *Server) publicVideoID(c echo.Context) (uuid.UUID, error) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
@@ -75,7 +76,7 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	videoID, err := s.commentableVideoID(c)
+	videoID, err := s.publicVideoID(c)
 	if err != nil {
 		return err
 	}
@@ -105,7 +106,7 @@ type commentListResponse struct {
 // handleListComments returns a public+published video's comments, newest first.
 // No auth required. Pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListComments(c echo.Context) error {
-	videoID, err := s.commentableVideoID(c)
+	videoID, err := s.publicVideoID(c)
 	if err != nil {
 		return err
 	}

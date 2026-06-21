@@ -182,7 +182,7 @@
 - [ ] Add playlists table.
 - [ ] Add playlist items table.
 - [ ] Add comments table.
-- [ ] Add likes/dislikes or reactions table according to spec.
+- [x] Add likes/dislikes or reactions table according to spec. (migration 0015 `video_ratings` (PK `(user_id, video_id)`, `rating` CHECK like/dislike, `ON DELETE CASCADE` from videos+users, `video_id` index). A user has at most one rating per video, settable/changeable/clearable. Endpoints (on **public, published** videos via the shared `publicVideoID` guard, else 404): `GET /api/v1/videos/:id/rating` (optionalAuth → `{like_count, dislike_count, my_rating}`; `my_rating` null for anon/unrated), `PUT /api/v1/videos/:id/rating` (auth, body `{rating: like|dislike}`, upsert, 422 on bad value), `DELETE /api/v1/videos/:id/rating` (auth, idempotent clear). `internal/rating` service (Set/Clear/Get + Summary) + `internal/httpapi/ratings.go`; openapi documents all three + `VideoRating` schema (drift guard extended). sqlc `UpsertVideoRating`/`DeleteVideoRating`/`GetVideoRating`/`CountVideoRatings` (FILTER counts). Tested: 3 service + 3 handler (set→change→clear, anon hides my_rating, invalid 422, auth 401, non-public 404).)
 - [ ] Add watch history table.
 - [ ] Add watch later/private library tables.
 - [x] Add follows/subscriptions table. (migration `0005_channel_follows`: `channel_follows` (follower_id, channel_id) composite PK + channel_id index; sqlc Follow/Unfollow/CountFollowers/IsFollowing)

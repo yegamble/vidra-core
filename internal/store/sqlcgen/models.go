@@ -110,6 +110,14 @@ type VideoMetadatum struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type VideoRating struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Rating    string    `json:"rating"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type VideoViewCount struct {
 	VideoID   uuid.UUID `json:"video_id"`
 	Views     int64     `json:"views"`
