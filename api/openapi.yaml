@@ -1494,6 +1494,14 @@ components:
         channel_id:
           type: string
           format: uuid
+        channel_handle:
+          type: string
+          description: >-
+            The owning channel's handle, present on card/feed views so the client
+            can link to /channels/{handle}. Omitted on the detail view.
+        channel_display_name:
+          type: string
+          description: The owning channel's display name; present alongside channel_handle on card/feed views.
         title:
           type: string
           example: My first upload

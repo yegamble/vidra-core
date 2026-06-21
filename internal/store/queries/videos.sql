@@ -18,8 +18,10 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        EXISTS (
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name
 FROM videos v
+JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.channel_id = $1
 ORDER BY v.created_at DESC;
@@ -32,8 +34,10 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        EXISTS (
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name
 FROM videos v
+JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
 ORDER BY v.created_at DESC;
@@ -50,8 +54,10 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        EXISTS (
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name
 FROM videos v
+JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
 ORDER BY
@@ -72,8 +78,10 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        EXISTS (
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name
 FROM videos v
+JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND v.channel_id IN (
@@ -90,8 +98,10 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        EXISTS (
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name
 FROM videos v
+JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND v.title ILIKE '%' || sqlc.arg('query') || '%'

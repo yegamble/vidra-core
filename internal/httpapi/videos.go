@@ -67,6 +67,12 @@ type videoView struct {
 	// Views is the recorded view count, set on the detail endpoint (omitted on
 	// list/feed views, which do not look it up).
 	Views *int64 `json:"views,omitempty"`
+	// ChannelHandle and ChannelDisplayName identify the owning channel on
+	// card/feed views, so the client can link a card to /channels/{handle} and
+	// show the channel name. Omitted on the detail view (which does not join the
+	// channel).
+	ChannelHandle      *string `json:"channel_handle,omitempty"`
+	ChannelDisplayName *string `json:"channel_display_name,omitempty"`
 }
 
 func newVideoView(v sqlcgen.Video) videoView {
@@ -189,6 +195,10 @@ func feedItemView(it video.FeedItem) videoView {
 	v.Views = &views
 	has := it.HasThumbnail
 	v.HasThumbnail = &has
+	handle := it.ChannelHandle
+	v.ChannelHandle = &handle
+	name := it.ChannelDisplayName
+	v.ChannelDisplayName = &name
 	return v
 }
 

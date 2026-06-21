@@ -262,14 +262,30 @@ func (f *videoFakeRepo) hasThumb(id uuid.UUID) bool {
 	return false
 }
 
+// channelInfo reverse-looks-up a channel's handle + display name by id, mirroring
+// the JOIN the real feed/card queries do.
+func (f *videoFakeRepo) channelInfo(channelID uuid.UUID) (handle, displayName string) {
+	if f.channels == nil {
+		return "", ""
+	}
+	for _, c := range f.channels.byHandle {
+		if c.ID == channelID {
+			return c.Handle, c.DisplayName
+		}
+	}
+	return "", ""
+}
+
 func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error) {
 	var rows []sqlcgen.ListPublicVideosSortedRow
 	for _, r := range f.videos {
 		if r.Privacy == "public" && r.State == "published" {
+			ch, cn := f.channelInfo(r.ChannelID)
 			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				ChannelHandle: ch, ChannelDisplayName: cn,
 			})
 		}
 	}
@@ -1189,5 +1205,28 @@ func TestSubscriptionFeed(t *testing.T) {
 	after := sub(bobTok)
 	if len(after.Videos) != 1 || after.Videos[0].Title != "from ada" {
 		t.Fatalf("feed after following = %+v, want 1 video 'from ada'", after.Videos)
+	}
+}
+
+func TestFeedCardsCarryChannelInfo(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	_ = createPublishedVideo(t, srv, tok, "ada", `{"title":"hello","privacy":"public"}`)
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/videos", nil))
+	var body videoFeedResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(body.Videos) != 1 {
+		t.Fatalf("feed has %d videos, want 1", len(body.Videos))
+	}
+	c := body.Videos[0]
+	if c.ChannelHandle == nil || *c.ChannelHandle != "ada" {
+		t.Errorf("channel_handle = %v, want ada", c.ChannelHandle)
+	}
+	if c.ChannelDisplayName == nil || *c.ChannelDisplayName != "ada" {
+		t.Errorf("channel_display_name = %v, want ada", c.ChannelDisplayName)
 	}
 }
