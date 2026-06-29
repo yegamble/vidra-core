@@ -132,6 +132,18 @@ curl -s 'localhost:8080/api/v1/me/notifications?unread=true&limit=20' -H 'author
 curl -s localhost:8080/api/v1/me/notifications/unread-count -H 'authorization: Bearer <token>'   # {unread_count} (for a badge)
 curl -sX POST localhost:8080/api/v1/me/notifications/<id>/read -H 'authorization: Bearer <token>' # mark one read (idempotent; 404 if not yours)
 curl -sX POST localhost:8080/api/v1/me/notifications/read-all -H 'authorization: Bearer <token>'  # mark all read
+
+# Playlists (named collections; visibility public/unlisted/private, default private):
+curl -sX POST localhost:8080/api/v1/playlists -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"title":"Faves","visibility":"public"}'  # create -> Playlist
+curl -s localhost:8080/api/v1/me/playlists -H 'authorization: Bearer <token>'                  # own playlists (+ video_count)
+curl -s localhost:8080/api/v1/playlists/<id>                                                    # detail + ordered video cards (private => owner only)
+curl -sX PATCH  localhost:8080/api/v1/playlists/<id> -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"title":"Renamed"}'                                  # owner-only partial update
+curl -sX DELETE localhost:8080/api/v1/playlists/<id> -H 'authorization: Bearer <token>'         # owner-only
+curl -sX POST localhost:8080/api/v1/playlists/<id>/videos -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"video_id":"<vid>"}'                                 # add (public+published only; idempotent)
+curl -sX DELETE localhost:8080/api/v1/playlists/<id>/videos/<vid> -H 'authorization: Bearer <token>'  # remove (idempotent)
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

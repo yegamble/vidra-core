@@ -67,6 +67,24 @@ type PasswordResetToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type Playlist struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerID     uuid.UUID `json:"owner_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Visibility  string    `json:"visibility"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type PlaylistItem struct {
+	ID         uuid.UUID `json:"id"`
+	PlaylistID uuid.UUID `json:"playlist_id"`
+	VideoID    uuid.UUID `json:"video_id"`
+	Position   int32     `json:"position"`
+	AddedAt    time.Time `json:"added_at"`
+}
+
 type SavedVideo struct {
 	UserID    uuid.UUID `json:"user_id"`
 	VideoID   uuid.UUID `json:"video_id"`

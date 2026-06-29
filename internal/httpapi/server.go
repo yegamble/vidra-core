@@ -17,6 +17,7 @@ import (
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/notification"
+	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -30,21 +31,22 @@ type Pinger interface {
 
 // Server holds the Echo instance and its dependencies.
 type Server struct {
-	echo       *echo.Echo
-	cfg        *config.Config
-	db         Pinger
-	rdb        Pinger
-	logger     *slog.Logger
-	limiter    *ratelimit.Limiter
-	authLimit  *ratelimit.Limiter
-	authsvc    *auth.Service
-	authTTL    time.Duration
-	channelsvc *channel.Service
-	videosvc   *video.Service
-	commentsvc *comment.Service
-	ratingsvc  *rating.Service
-	notifsvc   *notification.Service
-	media      storage.Backend
+	echo        *echo.Echo
+	cfg         *config.Config
+	db          Pinger
+	rdb         Pinger
+	logger      *slog.Logger
+	limiter     *ratelimit.Limiter
+	authLimit   *ratelimit.Limiter
+	authsvc     *auth.Service
+	authTTL     time.Duration
+	channelsvc  *channel.Service
+	videosvc    *video.Service
+	commentsvc  *comment.Service
+	ratingsvc   *rating.Service
+	notifsvc    *notification.Service
+	playlistsvc *playlist.Service
+	media       storage.Backend
 }
 
 // uploadRoutePath is the Echo route template for the original-file upload. It is
@@ -108,6 +110,13 @@ func WithRatingService(svc *rating.Service) Option {
 // registered and no notifications are created.
 func WithNotificationService(svc *notification.Service) Option {
 	return func(s *Server) { s.notifsvc = svc }
+}
+
+// WithPlaylistService mounts the playlist endpoints (create/list/get/update/
+// delete + add/remove item). Adding an item validates the video via the video
+// service, so playlist routes register only when both are present.
+func WithPlaylistService(svc *playlist.Service) Option {
+	return func(s *Server) { s.playlistsvc = svc }
 }
 
 // WithMediaStorage gives the server the blob backend used to stream stored media
@@ -311,6 +320,18 @@ func (s *Server) routes() {
 		api.GET("/me/notifications/unread-count", s.handleUnreadNotificationCount, s.requireAuth)
 		api.POST("/me/notifications/read-all", s.handleMarkAllNotificationsRead, s.requireAuth)
 		api.POST("/me/notifications/:id/read", s.handleMarkNotificationRead, s.requireAuth)
+	}
+
+	// Named playlists. The public get applies optional auth so owners can see
+	// their own private playlists.
+	if s.playlistsvc != nil {
+		api.POST("/playlists", s.handleCreatePlaylist, s.requireAuth)
+		api.GET("/me/playlists", s.handleListMyPlaylists, s.requireAuth)
+		api.GET("/playlists/:id", s.handleGetPlaylist, s.optionalAuth)
+		api.PATCH("/playlists/:id", s.handleUpdatePlaylist, s.requireAuth)
+		api.DELETE("/playlists/:id", s.handleDeletePlaylist, s.requireAuth)
+		api.POST("/playlists/:id/videos", s.handleAddPlaylistItem, s.requireAuth)
+		api.DELETE("/playlists/:id/videos/:videoId", s.handleRemovePlaylistItem, s.requireAuth)
 	}
 }
 

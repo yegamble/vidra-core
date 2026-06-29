@@ -22,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/notification"
+	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -122,6 +123,9 @@ func run(logger *slog.Logger) error {
 
 	notifsvc := notification.NewService(db.Queries())
 	opts = append(opts, httpapi.WithNotificationService(notifsvc))
+
+	playlistsvc := playlist.NewService(db.Queries())
+	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

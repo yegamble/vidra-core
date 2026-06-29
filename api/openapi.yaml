@@ -1850,6 +1850,244 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/playlists:
+    post:
+      operationId: createPlaylist
+      summary: Create a playlist
+      description: Creates a named playlist owned by the caller. Visibility defaults to private.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlaylistRequest"
+      responses:
+        "201":
+          description: The created playlist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Playlist"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/playlists:
+    get:
+      operationId: listMyPlaylists
+      summary: List the caller's playlists
+      description: Returns the caller's playlists, newest first, each with its public video count.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's playlists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/playlists/{id}:
+    get:
+      operationId: getPlaylist
+      summary: Get a playlist and its videos
+      description: >-
+        Returns a playlist with its ordered public, published video cards.
+        Public/unlisted playlists are visible to anyone; a private playlist is
+        visible only to its owner (otherwise 404).
+      tags: [playlists]
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The playlist and its videos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistDetailResponse"
+        "404":
+          description: No such (visible) playlist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updatePlaylist
+      summary: Update a playlist
+      description: Partial update of a playlist owned by the caller; provide at least one field.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlaylistRequest"
+      responses:
+        "200":
+          description: The updated playlist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Playlist"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such playlist owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deletePlaylist
+      summary: Delete a playlist
+      description: Deletes a playlist owned by the caller.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The playlist is deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such playlist owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/playlists/{id}/videos:
+    post:
+      operationId: addPlaylistItem
+      summary: Add a video to a playlist
+      description: >-
+        Appends a public, published video to a playlist owned by the caller
+        (idempotent). A non-public/unpublished or unknown video is 404.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPlaylistItemRequest"
+      responses:
+        "204":
+          description: The video is in the playlist.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such playlist (owned by the caller) or video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/playlists/{id}/videos/{videoId}:
+    delete:
+      operationId: removePlaylistItem
+      summary: Remove a video from a playlist
+      description: Removes a video from a playlist owned by the caller (idempotent).
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The video is no longer in the playlist.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such playlist owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -2405,6 +2643,86 @@ components:
           type: integer
           format: int64
           example: 3
+    Playlist:
+      type: object
+      required: [id, title, description, visibility, video_count, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: Watch later picks
+        description:
+          type: string
+        visibility:
+          type: string
+          enum: [public, unlisted, private]
+        video_count:
+          type: integer
+          format: int64
+          description: Number of public, published videos in the playlist.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PlaylistListResponse:
+      type: object
+      required: [playlists]
+      properties:
+        playlists:
+          type: array
+          items:
+            $ref: "#/components/schemas/Playlist"
+    PlaylistDetailResponse:
+      description: A playlist's fields plus its ordered public, published video cards.
+      allOf:
+        - $ref: "#/components/schemas/Playlist"
+        - type: object
+          required: [videos]
+          properties:
+            videos:
+              type: array
+              items:
+                $ref: "#/components/schemas/Video"
+    CreatePlaylistRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        visibility:
+          type: string
+          enum: [public, unlisted, private]
+          description: Defaults to "private" when omitted.
+    UpdatePlaylistRequest:
+      type: object
+      description: Partial update; provide at least one field.
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        visibility:
+          type: string
+          enum: [public, unlisted, private]
+    AddPlaylistItemRequest:
+      type: object
+      required: [video_id]
+      properties:
+        video_id:
+          type: string
+          format: uuid
     VideoFile:
       type: object
       description: >-
