@@ -1568,6 +1568,171 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/history:
+    get:
+      operationId: listWatchHistory
+      summary: List the caller's watch history
+      description: >-
+        Returns the caller's watch history as discovery cards, most-recently
+        watched first, each carrying the saved resume position (position_seconds)
+        and the time last watched (watched_at). Only public, published videos are
+        returned. Paginated via limit (1–100, default 20) and offset.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of watch-history cards (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchHistoryResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: clearWatchHistory
+      summary: Clear the caller's entire watch history
+      description: Removes all of the caller's watch history (idempotent).
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: The watch history is cleared.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/history/{id}:
+    delete:
+      operationId: deleteWatchHistoryEntry
+      summary: Remove a single video from the caller's watch history
+      description: >-
+        Removes one video from the caller's watch history (idempotent). No
+        public-video check, so a user can always clean up an entry.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The video's id.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The entry is removed (or was already absent).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/watch-progress:
+    get:
+      operationId: getWatchProgress
+      summary: Get the caller's resume position for a video
+      description: >-
+        Returns the caller's saved resume position (position_seconds) for a
+        public, published video — 0 when none has been recorded. A
+        non-public/unpublished or unknown video is 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The caller's saved resume position.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchProgress"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such public, published video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: recordWatchProgress
+      summary: Record the caller's resume position for a video
+      description: >-
+        Records (upserts) the caller's playback position for a public, published
+        video and moves it to the top of their watch history. A
+        non-public/unpublished or unknown video is 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WatchProgressRequest"
+      responses:
+        "204":
+          description: The resume position is recorded.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such public, published video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (e.g. a negative position).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -1995,6 +2160,60 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Video"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    WatchProgressRequest:
+      type: object
+      required: [position_seconds]
+      properties:
+        position_seconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Playback position in whole seconds.
+          example: 42
+    WatchProgress:
+      type: object
+      required: [video_id, position_seconds]
+      properties:
+        video_id:
+          type: string
+          format: uuid
+        position_seconds:
+          type: integer
+          format: int32
+          description: The caller's saved resume position in whole seconds (0 when none).
+          example: 42
+    HistoryItem:
+      description: >-
+        A watch-history card: a video card plus the caller's saved resume
+        position and when they last watched it.
+      allOf:
+        - $ref: "#/components/schemas/Video"
+        - type: object
+          required: [position_seconds, watched_at]
+          properties:
+            position_seconds:
+              type: integer
+              format: int32
+              description: The caller's saved resume position in whole seconds.
+              example: 42
+            watched_at:
+              type: string
+              format: date-time
+              description: When the caller last watched this video.
+    WatchHistoryResponse:
+      type: object
+      required: [videos, limit, offset]
+      properties:
+        videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/HistoryItem"
         limit:
           type: integer
           example: 20

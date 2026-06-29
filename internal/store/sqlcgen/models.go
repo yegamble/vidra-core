@@ -129,3 +129,11 @@ type VideoViewCount struct {
 	Views     int64     `json:"views"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+type WatchHistory struct {
+	UserID          uuid.UUID `json:"user_id"`
+	VideoID         uuid.UUID `json:"video_id"`
+	PositionSeconds int32     `json:"position_seconds"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}

@@ -118,6 +118,14 @@ curl -sX POST localhost:8080/api/v1/videos/<id>/save -H 'authorization: Bearer <
 curl -sX DELETE localhost:8080/api/v1/videos/<id>/save -H 'authorization: Bearer <token>'  # unsave
 curl -s 'localhost:8080/api/v1/me/saved?limit=20' -H 'authorization: Bearer <token>'        # your library (cards, newest-saved first)
 curl -sX POST localhost:8080/api/v1/videos/<id>/view                                  # record a view (deduped per viewer/hour) -> 204
+
+# Watch history & resume position (public, published videos):
+curl -sX PUT localhost:8080/api/v1/videos/<id>/watch-progress -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"position_seconds":42}'                    # record resume position -> 204
+curl -s localhost:8080/api/v1/videos/<id>/watch-progress -H 'authorization: Bearer <token>'      # {video_id, position_seconds} (0 if none)
+curl -s 'localhost:8080/api/v1/me/history?limit=20' -H 'authorization: Bearer <token>'           # history (cards + position_seconds + watched_at, newest-watched first)
+curl -sX DELETE localhost:8080/api/v1/me/history/<id> -H 'authorization: Bearer <token>'         # remove one entry (idempotent)
+curl -sX DELETE localhost:8080/api/v1/me/history -H 'authorization: Bearer <token>'              # clear all history (idempotent)
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

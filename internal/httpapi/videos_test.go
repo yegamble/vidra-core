@@ -35,7 +35,14 @@ type videoFakeRepo struct {
 	files    map[uuid.UUID][]sqlcgen.VideoFile
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
 	views    map[uuid.UUID]int64
-	saved    map[string]time.Time // "userID|videoID" -> saved-at
+	saved    map[string]time.Time   // "userID|videoID" -> saved-at
+	history  map[string]historyMark // "userID|videoID" -> resume position + last-watched
+}
+
+// historyMark is the in-memory watch_history row for the fake repo.
+type historyMark struct {
+	position  int32
+	watchedAt time.Time
 }
 
 func (f *videoFakeRepo) SaveVideo(_ context.Context, a sqlcgen.SaveVideoParams) error {
@@ -80,6 +87,76 @@ func (f *videoFakeRepo) ListSavedVideos(_ context.Context, a sqlcgen.ListSavedVi
 		})
 	}
 	return rows, nil
+}
+
+func (f *videoFakeRepo) UpsertWatchProgress(_ context.Context, a sqlcgen.UpsertWatchProgressParams) (sqlcgen.WatchHistory, error) {
+	if f.history == nil {
+		f.history = map[string]historyMark{}
+	}
+	key := a.UserID.String() + "|" + a.VideoID.String()
+	now := time.Now()
+	f.history[key] = historyMark{position: a.PositionSeconds, watchedAt: now}
+	return sqlcgen.WatchHistory{
+		UserID: a.UserID, VideoID: a.VideoID, PositionSeconds: a.PositionSeconds,
+		CreatedAt: now, UpdatedAt: now,
+	}, nil
+}
+
+func (f *videoFakeRepo) GetWatchProgress(_ context.Context, a sqlcgen.GetWatchProgressParams) (sqlcgen.WatchHistory, error) {
+	m, ok := f.history[a.UserID.String()+"|"+a.VideoID.String()]
+	if !ok {
+		return sqlcgen.WatchHistory{}, errors.New("not found")
+	}
+	return sqlcgen.WatchHistory{
+		UserID: a.UserID, VideoID: a.VideoID, PositionSeconds: m.position,
+		CreatedAt: m.watchedAt, UpdatedAt: m.watchedAt,
+	}, nil
+}
+
+func (f *videoFakeRepo) ListWatchHistory(_ context.Context, a sqlcgen.ListWatchHistoryParams) ([]sqlcgen.ListWatchHistoryRow, error) {
+	type entry struct {
+		vid uuid.UUID
+		m   historyMark
+	}
+	var list []entry
+	prefix := a.UserID.String() + "|"
+	for k, m := range f.history {
+		if strings.HasPrefix(k, prefix) {
+			list = append(list, entry{uuid.MustParse(strings.TrimPrefix(k, prefix)), m})
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool { return list[i].m.watchedAt.After(list[j].m.watchedAt) })
+	var rows []sqlcgen.ListWatchHistoryRow
+	for _, e := range list {
+		r, ok := f.videos[e.vid]
+		if !ok || r.Privacy != "public" || r.State != "published" {
+			continue
+		}
+		handle, name := f.channelInfo(r.ChannelID)
+		rows = append(rows, sqlcgen.ListWatchHistoryRow{
+			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			ChannelHandle: handle, ChannelDisplayName: name,
+			PositionSeconds: e.m.position, WatchedAt: e.m.watchedAt,
+		})
+	}
+	return rows, nil
+}
+
+func (f *videoFakeRepo) DeleteWatchHistoryEntry(_ context.Context, a sqlcgen.DeleteWatchHistoryEntryParams) error {
+	delete(f.history, a.UserID.String()+"|"+a.VideoID.String())
+	return nil
+}
+
+func (f *videoFakeRepo) ClearWatchHistory(_ context.Context, userID uuid.UUID) error {
+	prefix := userID.String() + "|"
+	for k := range f.history {
+		if strings.HasPrefix(k, prefix) {
+			delete(f.history, k)
+		}
+	}
+	return nil
 }
 
 // ListSubscriptionVideos mirrors the SQL by consulting the real follow data in

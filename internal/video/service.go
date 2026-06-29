@@ -68,6 +68,11 @@ type Repository interface {
 	GetVideoMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error)
 	IncrementVideoViews(ctx context.Context, videoID uuid.UUID) (int64, error)
 	GetVideoViews(ctx context.Context, videoID uuid.UUID) (int64, error)
+	UpsertWatchProgress(ctx context.Context, arg sqlcgen.UpsertWatchProgressParams) (sqlcgen.WatchHistory, error)
+	GetWatchProgress(ctx context.Context, arg sqlcgen.GetWatchProgressParams) (sqlcgen.WatchHistory, error)
+	ListWatchHistory(ctx context.Context, arg sqlcgen.ListWatchHistoryParams) ([]sqlcgen.ListWatchHistoryRow, error)
+	DeleteWatchHistoryEntry(ctx context.Context, arg sqlcgen.DeleteWatchHistoryEntryParams) error
+	ClearWatchHistory(ctx context.Context, userID uuid.UUID) error
 }
 
 // Prober inspects a stored original file and reports whether it is valid,
@@ -571,6 +576,73 @@ func (s *Service) ListSaved(ctx context.Context, userID uuid.UUID, limit, offset
 		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName))
 	}
 	return items, nil
+}
+
+// HistoryItem is a watched video as a discovery card plus the viewer's saved
+// resume position (seconds) and when they last watched it.
+type HistoryItem struct {
+	FeedItem
+	PositionSeconds int32
+	WatchedAt       time.Time
+}
+
+// RecordProgress upserts the caller's resume position (seconds, clamped to >= 0)
+// for a video and moves it to the top of their watch history. The caller
+// confirms the video is watchable (exists + public + published) first.
+func (s *Service) RecordProgress(ctx context.Context, videoID, userID uuid.UUID, position int32) error {
+	if position < 0 {
+		position = 0
+	}
+	_, err := s.repo.UpsertWatchProgress(ctx, sqlcgen.UpsertWatchProgressParams{
+		UserID:          userID,
+		VideoID:         videoID,
+		PositionSeconds: position,
+	})
+	return err
+}
+
+// Progress returns the caller's saved resume position for a video. The bool is
+// false when no progress has been recorded (a miss is reported as absent — and a
+// position of 0 — not an error).
+func (s *Service) Progress(ctx context.Context, videoID, userID uuid.UUID) (int32, bool, error) {
+	row, err := s.repo.GetWatchProgress(ctx, sqlcgen.GetWatchProgressParams{UserID: userID, VideoID: videoID})
+	if err != nil {
+		return 0, false, nil
+	}
+	return row.PositionSeconds, true, nil
+}
+
+// ListHistory returns the user's watch history (public, published videos),
+// most-recently-watched first, as cards carrying the resume position and the
+// time last watched. The caller clamps limit/offset.
+func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]HistoryItem, error) {
+	rows, err := s.repo.ListWatchHistory(ctx, sqlcgen.ListWatchHistoryParams{
+		UserID:       userID,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]HistoryItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, HistoryItem{
+			FeedItem:        newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName),
+			PositionSeconds: r.PositionSeconds,
+			WatchedAt:       r.WatchedAt,
+		})
+	}
+	return items, nil
+}
+
+// RemoveHistoryEntry removes a single video from the user's history (idempotent).
+func (s *Service) RemoveHistoryEntry(ctx context.Context, videoID, userID uuid.UUID) error {
+	return s.repo.DeleteWatchHistoryEntry(ctx, sqlcgen.DeleteWatchHistoryEntryParams{UserID: userID, VideoID: videoID})
+}
+
+// ClearHistory removes all of the user's watch history (idempotent).
+func (s *Service) ClearHistory(ctx context.Context, userID uuid.UUID) error {
+	return s.repo.ClearWatchHistory(ctx, userID)
 }
 
 // SearchPublic returns public, published videos whose title matches query

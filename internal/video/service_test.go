@@ -24,9 +24,16 @@ type fakeRepo struct {
 	files    map[uuid.UUID][]sqlcgen.VideoFile
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
 	views    map[uuid.UUID]int64
-	followed map[uuid.UUID]bool // channel IDs the test subject follows
-	saved    map[uuid.UUID]bool // video IDs the test subject has saved
+	followed map[uuid.UUID]bool        // channel IDs the test subject follows
+	saved    map[uuid.UUID]bool        // video IDs the test subject has saved
+	history  map[uuid.UUID]historyMark // video ID -> resume position + last-watched
 	owner    uuid.UUID
+}
+
+// historyMark is the in-memory watch_history row for the fake repo.
+type historyMark struct {
+	position  int32
+	watchedAt time.Time
 }
 
 func newFakeRepo(owner uuid.UUID) *fakeRepo {
@@ -37,8 +44,57 @@ func newFakeRepo(owner uuid.UUID) *fakeRepo {
 		views:    map[uuid.UUID]int64{},
 		followed: map[uuid.UUID]bool{},
 		saved:    map[uuid.UUID]bool{},
+		history:  map[uuid.UUID]historyMark{},
 		owner:    owner,
 	}
+}
+
+func (f *fakeRepo) UpsertWatchProgress(_ context.Context, a sqlcgen.UpsertWatchProgressParams) (sqlcgen.WatchHistory, error) {
+	now := time.Now()
+	f.history[a.VideoID] = historyMark{position: a.PositionSeconds, watchedAt: now}
+	return sqlcgen.WatchHistory{
+		UserID: a.UserID, VideoID: a.VideoID, PositionSeconds: a.PositionSeconds,
+		CreatedAt: now, UpdatedAt: now,
+	}, nil
+}
+
+func (f *fakeRepo) GetWatchProgress(_ context.Context, a sqlcgen.GetWatchProgressParams) (sqlcgen.WatchHistory, error) {
+	m, ok := f.history[a.VideoID]
+	if !ok {
+		return sqlcgen.WatchHistory{}, errors.New("not found")
+	}
+	return sqlcgen.WatchHistory{
+		UserID: a.UserID, VideoID: a.VideoID, PositionSeconds: m.position,
+		CreatedAt: m.watchedAt, UpdatedAt: m.watchedAt,
+	}, nil
+}
+
+func (f *fakeRepo) ListWatchHistory(_ context.Context, a sqlcgen.ListWatchHistoryParams) ([]sqlcgen.ListWatchHistoryRow, error) {
+	var rows []sqlcgen.ListWatchHistoryRow
+	for vid, m := range f.history {
+		r, ok := f.videos[vid]
+		if !ok || r.Privacy != "public" || r.State != "published" {
+			continue
+		}
+		rows = append(rows, sqlcgen.ListWatchHistoryRow{
+			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			PositionSeconds: m.position, WatchedAt: m.watchedAt,
+		})
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].WatchedAt.After(rows[j].WatchedAt) })
+	return rows, nil
+}
+
+func (f *fakeRepo) DeleteWatchHistoryEntry(_ context.Context, a sqlcgen.DeleteWatchHistoryEntryParams) error {
+	delete(f.history, a.VideoID)
+	return nil
+}
+
+func (f *fakeRepo) ClearWatchHistory(_ context.Context, _ uuid.UUID) error {
+	f.history = map[uuid.UUID]historyMark{}
+	return nil
 }
 
 func (f *fakeRepo) SaveVideo(_ context.Context, a sqlcgen.SaveVideoParams) error {
@@ -373,6 +429,58 @@ func TestListSubscriptionsOnlyFollowedChannels(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Video.ID != inFollowed {
 		t.Fatalf("want only the followed-channel video, got %d items: %+v", len(items), items)
+	}
+}
+
+func TestWatchHistoryRecordListAndProgress(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	ch := uuid.New()
+	now := time.Now()
+	v1, v2 := uuid.New(), uuid.New()
+	repo.videos[v1] = sqlcgen.GetVideoByIDRow{ID: v1, ChannelID: ch, Title: "first", Privacy: "public", State: "published", CreatedAt: now, UpdatedAt: now}
+	repo.videos[v2] = sqlcgen.GetVideoByIDRow{ID: v2, ChannelID: ch, Title: "second", Privacy: "public", State: "published", CreatedAt: now, UpdatedAt: now}
+
+	svc := NewService(repo, nil)
+	ctx := context.Background()
+	user := uuid.New()
+
+	// A negative position is clamped to 0.
+	if err := svc.RecordProgress(ctx, v1, user, -3); err != nil {
+		t.Fatalf("RecordProgress v1: %v", err)
+	}
+	if pos, ok, _ := svc.Progress(ctx, v1, user); !ok || pos != 0 {
+		t.Fatalf("Progress v1 = (%d, %v), want (0, true)", pos, ok)
+	}
+
+	// Record v2 most recently → it sorts first in history.
+	if err := svc.RecordProgress(ctx, v2, user, 12); err != nil {
+		t.Fatalf("RecordProgress v2: %v", err)
+	}
+	items, err := svc.ListHistory(ctx, user, 20, 0)
+	if err != nil {
+		t.Fatalf("ListHistory: %v", err)
+	}
+	if len(items) != 2 || items[0].Video.ID != v2 || items[0].PositionSeconds != 12 {
+		t.Fatalf("history = %+v, want [v2 pos 12, v1]", items)
+	}
+
+	// No progress recorded → absent.
+	if _, ok, _ := svc.Progress(ctx, uuid.New(), user); ok {
+		t.Errorf("Progress for unwatched video reported present")
+	}
+
+	// Remove one entry, then clear.
+	if err := svc.RemoveHistoryEntry(ctx, v2, user); err != nil {
+		t.Fatalf("RemoveHistoryEntry: %v", err)
+	}
+	if items, _ := svc.ListHistory(ctx, user, 20, 0); len(items) != 1 || items[0].Video.ID != v1 {
+		t.Fatalf("after remove, history = %+v, want [v1]", items)
+	}
+	if err := svc.ClearHistory(ctx, user); err != nil {
+		t.Fatalf("ClearHistory: %v", err)
+	}
+	if items, _ := svc.ListHistory(ctx, user, 20, 0); len(items) != 0 {
+		t.Fatalf("after clear, history = %+v, want empty", items)
 	}
 }
 
