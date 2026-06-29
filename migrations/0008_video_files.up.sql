@@ -1,7 +1,8 @@
 -- 0008: video_files. The stored blobs backing a video. For now this is just the
 -- original uploaded file (kind='original'); transcoded renditions land with the
--- pipeline (kind='rendition'). storage_key is the backend object key
--- (e.g. videos/<video_id>/original.mp4) — opaque to the database.
+-- pipeline (kind='rendition'). storage_key is the backend object key, laid out
+-- PeerTube-style (one dir per asset kind, see .ralph/specs/storage-layout.md;
+-- e.g. web-videos/<video_id>.mp4) — opaque to the database.
 
 CREATE TABLE video_files (
     id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

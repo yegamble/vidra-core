@@ -345,8 +345,10 @@ func (s *Service) generateThumbnail(ctx context.Context, videoID uuid.UUID, orig
 }
 
 // thumbnailKey is the deterministic storage key for a video's poster image.
+// PeerTube-aligned layout: one top-level dir per asset kind (see
+// .ralph/specs/storage-layout.md), so thumbnails live under thumbnails/.
 func thumbnailKey(videoID uuid.UUID) string {
-	return "videos/" + videoID.String() + "/thumbnail.jpg"
+	return "thumbnails/" + videoID.String() + ".jpg"
 }
 
 // GetMetadata returns a video's stored technical metadata. The bool is false
@@ -390,11 +392,13 @@ func acceptedExt(filename string) (string, bool) {
 	return "", false
 }
 
-// originalKey builds the storage key for a video's original file from an already
-// validated extension. The video id namespaces the key so files never collide
-// across videos, and the storage backend itself rejects any traversal.
+// originalKey builds the storage key for the video file served for web playback.
+// PeerTube-aligned layout: it lives under web-videos/ (one top-level dir per asset
+// kind — see .ralph/specs/storage-layout.md), named by video id. With no transcode
+// pipeline yet this is the unmodified upload; when transcoding lands the archived
+// source moves to original-video-files/ and renditions stay here.
 func originalKey(videoID uuid.UUID, ext string) string {
-	return "videos/" + videoID.String() + "/original" + ext
+	return "web-videos/" + videoID.String() + ext
 }
 
 // GetByID returns a video joined with its owning account's id (for the caller's

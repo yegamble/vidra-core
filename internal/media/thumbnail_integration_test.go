@@ -22,7 +22,7 @@ func TestThumbnailerRealVideo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal: %v", err)
 	}
-	path, err := blobs.Path("videos/v1/original.mp4")
+	path, err := blobs.Path("web-videos/v1.mp4")
 	if err != nil {
 		t.Fatalf("Path: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestThumbnailerRealVideo(t *testing.T) {
 		t.Fatalf("ffmpeg generate: %v\n%s", err, out)
 	}
 
-	jpg, err := NewThumbnailer(blobs).Thumbnail(context.Background(), "videos/v1/original.mp4", 2)
+	jpg, err := NewThumbnailer(blobs).Thumbnail(context.Background(), "web-videos/v1.mp4", 2)
 	if err != nil {
 		t.Fatalf("Thumbnail: %v", err)
 	}

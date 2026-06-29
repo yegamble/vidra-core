@@ -25,7 +25,7 @@ func TestFFProbeRealVideo(t *testing.T) {
 		t.Fatalf("NewLocal: %v", err)
 	}
 	// Generate a 1-second 320x240 test video directly at the object's path.
-	path, err := blobs.Path("videos/v1/original.mp4")
+	path, err := blobs.Path("web-videos/v1.mp4")
 	if err != nil {
 		t.Fatalf("Path: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestFFProbeRealVideo(t *testing.T) {
 		t.Fatalf("ffmpeg generate: %v\n%s", err, out)
 	}
 
-	md, err := NewFFProbe(blobs).Probe(context.Background(), "videos/v1/original.mp4")
+	md, err := NewFFProbe(blobs).Probe(context.Background(), "web-videos/v1.mp4")
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}

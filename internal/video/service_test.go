@@ -670,7 +670,7 @@ func TestAttachOriginalStoresBytesAndFlipsToProcessing(t *testing.T) {
 	if file.SizeBytes != int64(len(content)) {
 		t.Errorf("size = %d, want %d", file.SizeBytes, len(content))
 	}
-	if want := "videos/" + v.ID.String() + "/original.mp4"; file.StorageKey != want {
+	if want := "web-videos/" + v.ID.String() + ".mp4"; file.StorageKey != want {
 		t.Errorf("key = %q, want %q", file.StorageKey, want)
 	}
 	rc, err := blobs.Open(ctx, file.StorageKey)
@@ -741,7 +741,7 @@ func TestAcceptedExtAndOriginalKey(t *testing.T) {
 		if !ok || ext != wantExt {
 			t.Errorf("acceptedExt(%q) = (%q, %v), want (%q, true)", filename, ext, ok, wantExt)
 		}
-		if got, want := originalKey(id, ext), "videos/"+id.String()+"/original"+wantExt; got != want {
+		if got, want := originalKey(id, ext), "web-videos/"+id.String()+wantExt; got != want {
 			t.Errorf("originalKey(%q) = %q, want %q", ext, got, want)
 		}
 	}
@@ -787,7 +787,7 @@ func TestProcessPublishesWithoutProber(t *testing.T) {
 	svc := NewService(newFakeRepo(uuid.New()), nil)
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "videos/x/original.mp4")
+	got, err := svc.Process(ctx, v.ID, "web-videos/x.mp4")
 	if err != nil {
 		t.Fatalf("Process: %v", err)
 	}
@@ -880,7 +880,7 @@ func TestProcessStoresThumbnail(t *testing.T) {
 	svc := NewService(repo, blobs, WithThumbnailer(fakeThumbnailer{jpg: jpg}))
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	if _, err := svc.Process(ctx, v.ID, "videos/x/original.mp4"); err != nil {
+	if _, err := svc.Process(ctx, v.ID, "web-videos/x.mp4"); err != nil {
 		t.Fatalf("Process: %v", err)
 	}
 	if !svc.HasThumbnail(ctx, v.ID) {
@@ -890,7 +890,7 @@ func TestProcessStoresThumbnail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FileForView thumbnail: %v", err)
 	}
-	if f.ContentType != "image/jpeg" || f.StorageKey != "videos/"+v.ID.String()+"/thumbnail.jpg" {
+	if f.ContentType != "image/jpeg" || f.StorageKey != "thumbnails/"+v.ID.String()+".jpg" {
 		t.Errorf("unexpected thumbnail file: %+v", f)
 	}
 	rc, err := blobs.Open(ctx, f.StorageKey)
