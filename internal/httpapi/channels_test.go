@@ -29,9 +29,13 @@ func newChannelFakeRepo() *channelFakeRepo {
 	return &channelFakeRepo{byHandle: map[string]sqlcgen.Channel{}, follows: map[string]bool{}}
 }
 
-func (f *channelFakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChannelParams) error {
-	f.follows[a.FollowerID.String()+"|"+a.ChannelID.String()] = true
-	return nil
+func (f *channelFakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChannelParams) (int64, error) {
+	key := a.FollowerID.String() + "|" + a.ChannelID.String()
+	if f.follows[key] {
+		return 0, nil // already following
+	}
+	f.follows[key] = true
+	return 1, nil
 }
 
 func (f *channelFakeRepo) UnfollowChannel(_ context.Context, a sqlcgen.UnfollowChannelParams) error {

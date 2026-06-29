@@ -1733,6 +1733,123 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/notifications:
+    get:
+      operationId: listNotifications
+      summary: List the caller's notifications
+      description: >-
+        Returns the caller's notifications, newest first, plus the current unread
+        count. Each carries the actor's identity and type-dependent context
+        (channel for follows, video for comments). Set unread=true to return only
+        unread notifications. Paginated via limit (1–100, default 20) and offset.
+      tags: [notifications]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: unread
+          in: query
+          required: false
+          description: When true, return only unread notifications.
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of notifications (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/notifications/unread-count:
+    get:
+      operationId: getUnreadNotificationCount
+      summary: Get the caller's unread notification count
+      description: Returns just the caller's unread notification count (for a badge).
+      tags: [notifications]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The unread count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnreadCountResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/notifications/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      summary: Mark all the caller's notifications read
+      description: Marks every unread notification read (idempotent).
+      tags: [notifications]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: All notifications are marked read.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/notifications/{id}/read:
+    post:
+      operationId: markNotificationRead
+      summary: Mark one notification read
+      description: >-
+        Marks one of the caller's notifications read (idempotent). An unknown id,
+        or one belonging to another user, is 404.
+      tags: [notifications]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The notification is marked read.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such notification for this user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -2220,6 +2337,74 @@ components:
         offset:
           type: integer
           example: 0
+    NotificationActor:
+      type: object
+      required: [username, display_name]
+      properties:
+        username:
+          type: string
+        display_name:
+          type: string
+    Notification:
+      type: object
+      required: [id, type, read, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [follow, comment]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video.
+        read:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        actor:
+          $ref: "#/components/schemas/NotificationActor"
+        channel_handle:
+          type: string
+          description: Followed channel's handle (follow notifications).
+        channel_display_name:
+          type: string
+          description: Followed channel's display name (follow notifications).
+        video_id:
+          type: string
+          format: uuid
+          description: Commented video's id (comment notifications).
+        video_title:
+          type: string
+          description: Commented video's title (comment notifications).
+        comment_id:
+          type: string
+          format: uuid
+          description: The comment's id (comment notifications).
+    NotificationListResponse:
+      type: object
+      required: [notifications, unread_count, limit, offset]
+      properties:
+        notifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/Notification"
+        unread_count:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    UnreadCountResponse:
+      type: object
+      required: [unread_count]
+      properties:
+        unread_count:
+          type: integer
+          format: int64
+          example: 3
     VideoFile:
       type: object
       description: >-

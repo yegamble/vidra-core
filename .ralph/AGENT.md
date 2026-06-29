@@ -126,6 +126,12 @@ curl -s localhost:8080/api/v1/videos/<id>/watch-progress -H 'authorization: Bear
 curl -s 'localhost:8080/api/v1/me/history?limit=20' -H 'authorization: Bearer <token>'           # history (cards + position_seconds + watched_at, newest-watched first)
 curl -sX DELETE localhost:8080/api/v1/me/history/<id> -H 'authorization: Bearer <token>'         # remove one entry (idempotent)
 curl -sX DELETE localhost:8080/api/v1/me/history -H 'authorization: Bearer <token>'              # clear all history (idempotent)
+
+# Notifications (created as a side effect of follow/comment; never self-notify):
+curl -s 'localhost:8080/api/v1/me/notifications?unread=true&limit=20' -H 'authorization: Bearer <token>'  # {notifications, unread_count, ...}
+curl -s localhost:8080/api/v1/me/notifications/unread-count -H 'authorization: Bearer <token>'   # {unread_count} (for a badge)
+curl -sX POST localhost:8080/api/v1/me/notifications/<id>/read -H 'authorization: Bearer <token>' # mark one read (idempotent; 404 if not yours)
+curl -sX POST localhost:8080/api/v1/me/notifications/read-all -H 'authorization: Bearer <token>'  # mark all read
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

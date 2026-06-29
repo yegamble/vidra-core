@@ -22,7 +22,7 @@ func (q *Queries) CountChannelFollowers(ctx context.Context, channelID uuid.UUID
 	return count, err
 }
 
-const followChannel = `-- name: FollowChannel :exec
+const followChannel = `-- name: FollowChannel :execrows
 INSERT INTO channel_follows (follower_id, channel_id)
 VALUES ($1, $2)
 ON CONFLICT (follower_id, channel_id) DO NOTHING
@@ -33,9 +33,14 @@ type FollowChannelParams struct {
 	ChannelID  uuid.UUID `json:"channel_id"`
 }
 
-func (q *Queries) FollowChannel(ctx context.Context, arg FollowChannelParams) error {
-	_, err := q.db.Exec(ctx, followChannel, arg.FollowerID, arg.ChannelID)
-	return err
+// Idempotent follow. Returns the number of rows inserted (1 = a new follow, 0 =
+// already following) so callers can fire a notification only on a new follow.
+func (q *Queries) FollowChannel(ctx context.Context, arg FollowChannelParams) (int64, error) {
+	result, err := q.db.Exec(ctx, followChannel, arg.FollowerID, arg.ChannelID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const isFollowingChannel = `-- name: IsFollowingChannel :one

@@ -84,14 +84,24 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	created, err := s.commentsvc.Create(c.Request().Context(), videoID, userID, strings.TrimSpace(in.Body))
+	ctx := c.Request().Context()
+	created, err := s.commentsvc.Create(ctx, videoID, userID, strings.TrimSpace(in.Body))
 	if err != nil {
 		return err
 	}
 	// The author is the authenticated user; load their identity for the response.
-	author, err := s.authsvc.UserByID(c.Request().Context(), userID)
+	author, err := s.authsvc.UserByID(ctx, userID)
 	if err != nil {
 		return err
+	}
+	// Notify the video owner of the new comment (best-effort; skipped when no
+	// notifier is wired or you comment on your own video).
+	if s.notifsvc != nil {
+		if v, verr := s.videosvc.GetByID(ctx, videoID); verr == nil {
+			if nerr := s.notifsvc.NotifyComment(ctx, v.OwnerID, userID, videoID, created.ID); nerr != nil {
+				s.logger.WarnContext(ctx, "notify comment failed", "error", nerr, "video_id", videoID)
+			}
+		}
 	}
 	return c.JSON(http.StatusCreated, newCommentView(created, author.Username, author.DisplayName))
 }

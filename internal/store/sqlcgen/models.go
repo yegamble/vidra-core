@@ -46,6 +46,18 @@ type EmailVerificationToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type Notification struct {
+	ID        uuid.UUID          `json:"id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	Type      string             `json:"type"`
+	ActorID   pgtype.UUID        `json:"actor_id"`
+	ChannelID pgtype.UUID        `json:"channel_id"`
+	VideoID   pgtype.UUID        `json:"video_id"`
+	CommentID pgtype.UUID        `json:"comment_id"`
+	ReadAt    pgtype.Timestamptz `json:"read_at"`
+	CreatedAt time.Time          `json:"created_at"`
+}
+
 type PasswordResetToken struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`

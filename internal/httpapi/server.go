@@ -16,6 +16,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -42,6 +43,7 @@ type Server struct {
 	videosvc   *video.Service
 	commentsvc *comment.Service
 	ratingsvc  *rating.Service
+	notifsvc   *notification.Service
 	media      storage.Backend
 }
 
@@ -99,6 +101,13 @@ func WithCommentService(svc *comment.Service) Option {
 // videos, so the routes register only when the video service is also present.
 func WithRatingService(svc *rating.Service) Option {
 	return func(s *Server) { s.ratingsvc = svc }
+}
+
+// WithNotificationService mounts the notification endpoints and enables the
+// follow/comment notification side effects. When unset, the routes are not
+// registered and no notifications are created.
+func WithNotificationService(svc *notification.Service) Option {
+	return func(s *Server) { s.notifsvc = svc }
 }
 
 // WithMediaStorage gives the server the blob backend used to stream stored media
@@ -293,6 +302,15 @@ func (s *Server) routes() {
 			api.PUT("/videos/:id/rating", s.handlePutVideoRating, s.requireAuth)
 			api.DELETE("/videos/:id/rating", s.handleDeleteVideoRating, s.requireAuth)
 		}
+	}
+
+	// Notifications are the caller's own inbox; independent of the other feature
+	// services (their rows are written as a side effect of the follow/comment flows).
+	if s.notifsvc != nil {
+		api.GET("/me/notifications", s.handleListNotifications, s.requireAuth)
+		api.GET("/me/notifications/unread-count", s.handleUnreadNotificationCount, s.requireAuth)
+		api.POST("/me/notifications/read-all", s.handleMarkAllNotificationsRead, s.requireAuth)
+		api.POST("/me/notifications/:id/read", s.handleMarkNotificationRead, s.requireAuth)
 	}
 }
 

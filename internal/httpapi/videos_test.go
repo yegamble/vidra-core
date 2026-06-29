@@ -21,6 +21,7 @@ import (
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -458,12 +459,14 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 		metadata: map[uuid.UUID]sqlcgen.VideoMetadatum{},
 		views:    map[uuid.UUID]int64{},
 	}
+	notifRepo := &notifFakeRepo{auth: authRepo, channels: chRepo, videos: repo}
 	return New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
 		WithVideoService(video.NewService(repo, blobs, opts...)),
 		WithCommentService(comment.NewService(&commentFakeRepo{users: authRepo})),
 		WithRatingService(rating.NewService(newRatingFakeRepo())),
+		WithNotificationService(notification.NewService(notifRepo)),
 		WithMediaStorage(blobs),
 	)
 }

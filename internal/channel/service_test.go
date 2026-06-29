@@ -25,9 +25,13 @@ func newFakeRepo() *fakeRepo {
 
 func followKey(follower, channel uuid.UUID) string { return follower.String() + "|" + channel.String() }
 
-func (f *fakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChannelParams) error {
-	f.follows[followKey(a.FollowerID, a.ChannelID)] = true
-	return nil
+func (f *fakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChannelParams) (int64, error) {
+	key := followKey(a.FollowerID, a.ChannelID)
+	if f.follows[key] {
+		return 0, nil // already following
+	}
+	f.follows[key] = true
+	return 1, nil
 }
 
 func (f *fakeRepo) UnfollowChannel(_ context.Context, a sqlcgen.UnfollowChannelParams) error {
@@ -213,15 +217,15 @@ func TestFollowUnfollowAndCount(t *testing.T) {
 	ch, _ := svc.GetByHandle(ctx, "ada")
 
 	f1, f2 := uuid.New(), uuid.New()
-	if err := svc.Follow(ctx, f1, "ada"); err != nil {
-		t.Fatalf("follow f1: %v", err)
+	if _, created, err := svc.Follow(ctx, f1, "ada"); err != nil || !created {
+		t.Fatalf("follow f1: created=%v err=%v, want created=true", created, err)
 	}
-	// Following twice is idempotent.
-	if err := svc.Follow(ctx, f1, "ada"); err != nil {
-		t.Fatalf("follow f1 again: %v", err)
+	// Following twice is idempotent and reports created=false.
+	if _, created, err := svc.Follow(ctx, f1, "ada"); err != nil || created {
+		t.Fatalf("follow f1 again: created=%v err=%v, want created=false", created, err)
 	}
-	if err := svc.Follow(ctx, f2, "ada"); err != nil {
-		t.Fatalf("follow f2: %v", err)
+	if _, created, err := svc.Follow(ctx, f2, "ada"); err != nil || !created {
+		t.Fatalf("follow f2: created=%v err=%v, want created=true", created, err)
 	}
 	if n, _ := svc.FollowerCount(ctx, ch.ID); n != 2 {
 		t.Errorf("follower count = %d, want 2", n)
@@ -240,7 +244,7 @@ func TestFollowUnfollowAndCount(t *testing.T) {
 
 func TestFollowUnknownChannelNotFound(t *testing.T) {
 	svc := NewService(newFakeRepo())
-	if err := svc.Follow(context.Background(), uuid.New(), "ghost"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := svc.Follow(context.Background(), uuid.New(), "ghost"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }

@@ -33,7 +33,7 @@ type Repository interface {
 	UpdateChannel(ctx context.Context, arg sqlcgen.UpdateChannelParams) (sqlcgen.Channel, error)
 	DeleteChannel(ctx context.Context, id uuid.UUID) error
 
-	FollowChannel(ctx context.Context, arg sqlcgen.FollowChannelParams) error
+	FollowChannel(ctx context.Context, arg sqlcgen.FollowChannelParams) (int64, error)
 	UnfollowChannel(ctx context.Context, arg sqlcgen.UnfollowChannelParams) error
 	CountChannelFollowers(ctx context.Context, channelID uuid.UUID) (int64, error)
 }
@@ -125,16 +125,23 @@ func (s *Service) Delete(ctx context.Context, ownerID uuid.UUID, handle string) 
 }
 
 // Follow makes followerID follow the channel with the given handle. It is
-// idempotent (following twice is a no-op). An unknown handle → ErrNotFound.
-func (s *Service) Follow(ctx context.Context, followerID uuid.UUID, handle string) error {
+// idempotent (following twice is a no-op). It returns the followed channel and
+// whether this was a new follow (false when already following), so callers can
+// fire a side effect — e.g. a notification — only on a new follow. An unknown
+// handle → ErrNotFound.
+func (s *Service) Follow(ctx context.Context, followerID uuid.UUID, handle string) (sqlcgen.Channel, bool, error) {
 	ch, err := s.GetByHandle(ctx, handle)
 	if err != nil {
-		return err
+		return sqlcgen.Channel{}, false, err
 	}
-	return s.repo.FollowChannel(ctx, sqlcgen.FollowChannelParams{
+	rows, err := s.repo.FollowChannel(ctx, sqlcgen.FollowChannelParams{
 		FollowerID: followerID,
 		ChannelID:  ch.ID,
 	})
+	if err != nil {
+		return sqlcgen.Channel{}, false, err
+	}
+	return ch, rows > 0, nil
 }
 
 // Unfollow removes followerID's follow of the channel. Idempotent; unknown
