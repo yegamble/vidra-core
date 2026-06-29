@@ -47,6 +47,10 @@ test-race: ## Run tests with the race detector
 cover: ## Run tests with coverage summary
 	go test -cover ./...
 
+.PHONY: test-integration
+test-integration: ## Run integration tests (-tags=integration); needs DATABASE_URL, REDIS_URL, ffmpeg — each test self-skips if its dependency is absent
+	go test -tags=integration -race ./...
+
 .PHONY: build
 build: ## Build the api binary into ./bin (injects version metadata)
 	go build -ldflags "$(LDFLAGS)" -o bin/api ./cmd/api

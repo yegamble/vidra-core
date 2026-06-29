@@ -5,7 +5,9 @@ package media
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/vidra/vidra-core/internal/storage"
@@ -23,6 +25,11 @@ func TestThumbnailerRealVideo(t *testing.T) {
 	path, err := blobs.Path("videos/v1/original.mp4")
 	if err != nil {
 		t.Fatalf("Path: %v", err)
+	}
+	// ffmpeg won't create missing parent dirs; in production the upload writes
+	// original.mp4 (creating videos/v1/) before any thumbnailing runs.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
 	}
 	gen := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=24", path)
 	if out, err := gen.CombinedOutput(); err != nil {
