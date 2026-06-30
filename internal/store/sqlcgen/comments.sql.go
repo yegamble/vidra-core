@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createComment = `-- name: CreateComment :one
@@ -74,14 +75,19 @@ SELECT c.id, c.video_id, c.user_id, c.body, c.created_at, c.updated_at,
 FROM comments c
 JOIN users u ON u.id = c.user_id
 WHERE c.video_id = $1
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = c.user_id
+  )
 ORDER BY c.created_at DESC, c.id DESC
-LIMIT $3 OFFSET $2
+LIMIT $4 OFFSET $3
 `
 
 type ListCommentsByVideoParams struct {
-	VideoID      uuid.UUID `json:"video_id"`
-	ResultOffset int32     `json:"result_offset"`
-	ResultLimit  int32     `json:"result_limit"`
+	VideoID      uuid.UUID   `json:"video_id"`
+	ViewerID     pgtype.UUID `json:"viewer_id"`
+	ResultOffset int32       `json:"result_offset"`
+	ResultLimit  int32       `json:"result_limit"`
 }
 
 type ListCommentsByVideoRow struct {
@@ -96,8 +102,16 @@ type ListCommentsByVideoRow struct {
 }
 
 // A video's comments, newest first, joined with author identity for display.
+// When viewer_id is provided (an authenticated viewer), comments authored by an
+// account that viewer has muted are hidden; when NULL (anonymous), nothing is
+// filtered — a NULL muter_id matches no muted_accounts row.
 func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVideoParams) ([]ListCommentsByVideoRow, error) {
-	rows, err := q.db.Query(ctx, listCommentsByVideo, arg.VideoID, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listCommentsByVideo,
+		arg.VideoID,
+		arg.ViewerID,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -16,9 +16,11 @@ import (
 )
 
 // commentFakeRepo is an in-memory comment.Repository. It resolves author identity
-// from the shared authFakeRepo (mirroring the ListCommentsByVideo JOIN on users).
+// from the shared authFakeRepo (mirroring the ListCommentsByVideo JOIN on users)
+// and, like the real query, hides comments from accounts the viewer has muted.
 type commentFakeRepo struct {
 	users    *authFakeRepo
+	mutes    *muteFakeRepo
 	comments map[uuid.UUID]sqlcgen.Comment
 }
 
@@ -46,14 +48,19 @@ func (f *commentFakeRepo) author(id uuid.UUID) (string, string) {
 func (f *commentFakeRepo) ListCommentsByVideo(_ context.Context, a sqlcgen.ListCommentsByVideoParams) ([]sqlcgen.ListCommentsByVideoRow, error) {
 	var rows []sqlcgen.ListCommentsByVideoRow
 	for _, c := range f.comments {
-		if c.VideoID == a.VideoID {
-			username, display := f.author(c.UserID)
-			rows = append(rows, sqlcgen.ListCommentsByVideoRow{
-				ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
-				CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
-				AuthorUsername: username, AuthorDisplayName: display,
-			})
+		if c.VideoID != a.VideoID {
+			continue
 		}
+		// Mirror the real query: an authenticated viewer's muted authors are hidden.
+		if a.ViewerID.Valid && f.mutes != nil && f.mutes.isMuted(uuid.UUID(a.ViewerID.Bytes), c.UserID) {
+			continue
+		}
+		username, display := f.author(c.UserID)
+		rows = append(rows, sqlcgen.ListCommentsByVideoRow{
+			ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
+			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+			AuthorUsername: username, AuthorDisplayName: display,
+		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
 	return rows, nil
@@ -142,6 +149,53 @@ func TestCommentsOnNonPublicVideoAre404(t *testing.T) {
 	}
 	if rec := listComments(srv, vid); rec.Code != http.StatusNotFound {
 		t.Errorf("list non-public video comments = %d, want 404", rec.Code)
+	}
+}
+
+func TestCommentsHideMutedAuthors(t *testing.T) {
+	srv := videoServer(t)
+	ada := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, ada, "ada", `{"title":"v","privacy":"public"}`)
+	bobTok, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	charlieTok, _ := registerAndUser(t, srv, `{"username":"charlie","email":"charlie@example.test","password":"supersecret"}`)
+
+	parse := func(rec *httptest.ResponseRecorder) []commentView {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		var body commentListResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return body.Comments
+	}
+
+	// bob and charlie each comment on ada's video.
+	for _, c := range []struct{ tok, body string }{{bobTok, "from bob"}, {charlieTok, "from charlie"}} {
+		if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/comments", `{"body":"`+c.body+`"}`, c.tok); rec.Code != http.StatusCreated {
+			t.Fatalf("comment %q = %d; body=%s", c.body, rec.Code, rec.Body.String())
+		}
+	}
+
+	// ada mutes bob.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/mutes/accounts/"+bobID, "", ada); rec.Code != http.StatusNoContent {
+		t.Fatalf("mute bob = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// ada (authenticated) no longer sees bob's comment; an anonymous viewer still does.
+	adaSees := parse(getWithAuth(srv, "/api/v1/videos/"+vid+"/comments", ada))
+	if len(adaSees) != 1 || adaSees[0].Body != "from charlie" {
+		t.Fatalf("ada (muted bob) sees %+v, want only [from charlie]", adaSees)
+	}
+	if anon := parse(listComments(srv, vid)); len(anon) != 2 {
+		t.Errorf("anon sees %d comments, want 2 (mutes are per-viewer)", len(anon))
+	}
+
+	// Unmuting restores bob's comment for ada.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/me/mutes/accounts/"+bobID, "", ada); rec.Code != http.StatusNoContent {
+		t.Fatalf("unmute bob = %d", rec.Code)
+	}
+	if got := parse(getWithAuth(srv, "/api/v1/videos/"+vid+"/comments", ada)); len(got) != 2 {
+		t.Errorf("ada after unmute sees %d comments, want 2", len(got))
 	}
 }
 

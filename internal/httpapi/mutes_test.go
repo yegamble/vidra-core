@@ -40,6 +40,17 @@ func (f *muteFakeRepo) MuteAccount(_ context.Context, a sqlcgen.MuteAccountParam
 	return 1, nil
 }
 
+// isMuted reports whether muter has muted muted (used by sibling fakes that
+// mirror the real query's mute-filtering join).
+func (f *muteFakeRepo) isMuted(muter, muted uuid.UUID) bool {
+	for _, m := range f.mutes {
+		if m.muter == muter && m.muted == muted {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *muteFakeRepo) UnmuteAccount(_ context.Context, a sqlcgen.UnmuteAccountParams) (int64, error) {
 	for i, m := range f.mutes {
 		if m.muter == a.MuterID && m.muted == a.MutedID {

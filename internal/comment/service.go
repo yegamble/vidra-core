@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -57,10 +58,13 @@ func (s *Service) Create(ctx context.Context, videoID, userID uuid.UUID, body st
 }
 
 // ListByVideo returns a video's comments newest-first, each with its author's
-// identity. The caller clamps limit/offset.
-func (s *Service) ListByVideo(ctx context.Context, videoID uuid.UUID, limit, offset int32) ([]WithAuthor, error) {
+// identity. The caller clamps limit/offset. When viewerAuthed is true, comments
+// from accounts viewerID has muted are hidden; for an anonymous viewer
+// (viewerAuthed false) nothing is filtered.
+func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]WithAuthor, error) {
 	rows, err := s.repo.ListCommentsByVideo(ctx, sqlcgen.ListCommentsByVideoParams{
 		VideoID:      videoID,
+		ViewerID:     pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})

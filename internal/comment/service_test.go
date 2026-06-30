@@ -70,7 +70,7 @@ func TestCreateAndListByVideo(t *testing.T) {
 	if _, err := svc.Create(context.Background(), video, user, "first!"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	items, err := svc.ListByVideo(context.Background(), video, 20, 0)
+	items, err := svc.ListByVideo(context.Background(), video, uuid.Nil, false, 20, 0)
 	if err != nil {
 		t.Fatalf("ListByVideo: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestDeleteOnlyByAuthor(t *testing.T) {
 	if err := svc.Delete(context.Background(), c.ID, authorID); err != nil {
 		t.Errorf("author delete = %v, want nil", err)
 	}
-	if items, _ := svc.ListByVideo(context.Background(), c.VideoID, 20, 0); len(items) != 0 {
+	if items, _ := svc.ListByVideo(context.Background(), c.VideoID, uuid.Nil, false, 20, 0); len(items) != 0 {
 		t.Errorf("comment should be deleted, still %d", len(items))
 	}
 }

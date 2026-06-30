@@ -122,7 +122,8 @@ type commentListResponse struct {
 }
 
 // handleListComments returns a public+published video's comments, newest first.
-// No auth required. Pagination via ?limit (1–100, default 20) and ?offset.
+// Auth is optional (optionalAuth): a signed-in viewer's muted accounts are hidden;
+// anonymous viewers see all. Pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListComments(c echo.Context) error {
 	videoID, err := s.publicVideoID(c)
 	if err != nil {
@@ -133,7 +134,8 @@ func (s *Server) handleListComments(c echo.Context) error {
 	if offset < 0 {
 		offset = 0
 	}
-	items, err := s.commentsvc.ListByVideo(c.Request().Context(), videoID, int32(limit), int32(offset))
+	viewerID, _, authed := principalFromContext(c)
+	items, err := s.commentsvc.ListByVideo(c.Request().Context(), videoID, viewerID, authed, int32(limit), int32(offset))
 	if err != nil {
 		return err
 	}

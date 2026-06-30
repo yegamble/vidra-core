@@ -162,7 +162,8 @@ curl -sX DELETE localhost:8080/api/v1/admin/videos/<id>/block -H 'authorization:
 curl -s 'localhost:8080/api/v1/admin/videos/blocked?limit=20' -H 'authorization: Bearer <admin-token>'  # block-list (newest first; channel, reason, who/when)
 
 # Account mutes (a signed-in user mutes another account by user id; the muted
-# account's content will be hidden from them — filtering effect is a later slice):
+# account's comments are hidden from them on the comment list — an authed GET
+# of /videos/:id/comments filters muted authors. Video/feed filtering is a later slice):
 curl -sX POST   localhost:8080/api/v1/me/mutes/accounts/<user-id> -H 'authorization: Bearer <token>'  # mute (idempotent; self -> 422, unknown -> 404)
 curl -sX DELETE localhost:8080/api/v1/me/mutes/accounts/<user-id> -H 'authorization: Bearer <token>'  # unmute (idempotent)
 curl -s 'localhost:8080/api/v1/me/mutes/accounts?limit=20' -H 'authorization: Bearer <token>'         # your muted accounts (newest first, with identity)

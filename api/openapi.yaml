@@ -1237,9 +1237,14 @@ paths:
       summary: List a video's comments
       description: >-
         Returns a public, published video's comments newest-first, each with its
-        author's identity. No auth required. A non-public/unpublished or unknown
+        author's identity. Auth is optional: an authenticated viewer's muted
+        accounts are hidden from the list (mutes are per-viewer), while an
+        anonymous viewer sees all comments. A non-public/unpublished or unknown
         video is 404. Paginated via limit (1–100, default 20) and offset.
       tags: [comments]
+      security:
+        - bearerAuth: []
+        - {}
       parameters:
         - name: id
           in: path

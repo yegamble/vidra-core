@@ -465,9 +465,9 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 	}
 	notifRepo := &notifFakeRepo{auth: authRepo, channels: chRepo, videos: repo}
 	plRepo := &playlistFakeRepo{videos: repo, playlists: map[uuid.UUID]sqlcgen.Playlist{}, items: map[uuid.UUID][]uuid.UUID{}}
-	cmRepo := &commentFakeRepo{users: authRepo}
-	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
 	muteRepo := &muteFakeRepo{auth: authRepo}
+	cmRepo := &commentFakeRepo{users: authRepo, mutes: muteRepo}
+	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
 	return New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),

@@ -326,7 +326,7 @@ func (s *Server) routes() {
 
 		// Comments are scoped to a (public, published) video.
 		if s.commentsvc != nil {
-			api.GET("/videos/:id/comments", s.handleListComments)
+			api.GET("/videos/:id/comments", s.handleListComments, s.optionalAuth)
 			api.POST("/videos/:id/comments", s.handleCreateComment, s.requireAuth)
 			api.DELETE("/comments/:id", s.handleDeleteComment, s.requireAuth)
 		}
