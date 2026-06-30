@@ -144,6 +144,15 @@ curl -sX DELETE localhost:8080/api/v1/playlists/<id> -H 'authorization: Bearer <
 curl -sX POST localhost:8080/api/v1/playlists/<id>/videos -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"video_id":"<vid>"}'                                 # add (public+published only; idempotent)
 curl -sX DELETE localhost:8080/api/v1/playlists/<id>/videos/<vid> -H 'authorization: Bearer <token>'  # remove (idempotent)
+
+# Abuse reports (any authed user files; the queue is moderator/admin-only):
+curl -sX POST localhost:8080/api/v1/videos/<id>/report -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"reason":"spam"}'                            # report a video -> 204 (idempotent)
+curl -sX POST localhost:8080/api/v1/comments/<id>/report -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"reason":"abuse"}'                           # report a comment -> 204
+curl -s 'localhost:8080/api/v1/admin/reports?status=open' -H 'authorization: Bearer <admin-token>'   # moderation queue (403 if not mod/admin)
+curl -sX POST localhost:8080/api/v1/admin/reports/<id>/resolve -H 'authorization: Bearer <admin-token>' \
+  -H 'content-type: application/json' -d '{"status":"accepted","note":"removed"}'      # accept|reject + internal note -> 204
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

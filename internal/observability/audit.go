@@ -27,6 +27,7 @@ const (
 	ActionEmailVerifyConfirm    = "auth.email_verify.confirm"
 	ActionAccountDeactivate     = "auth.account.deactivate"
 	ActionRateLimited           = "auth.rate_limited"
+	ActionReportResolve         = "moderation.report.resolve"
 )
 
 // sensitiveKeys is the canonical denylist of structured-log field names that

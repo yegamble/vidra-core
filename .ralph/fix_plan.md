@@ -187,7 +187,7 @@
 - [x] Add watch later/private library tables. (migration 0016 `saved_videos` (PK `(user_id, video_id)`, `created_at`, `ON DELETE CASCADE` from users+videos, `(user_id, created_at DESC)` index). A "watch later"/library: save a video once, list newest-saved first. Endpoints (all requireAuth): `POST /api/v1/videos/:id/save` (idempotent; only **public, published** videos via `publicVideoID`, else 404), `DELETE /api/v1/videos/:id/save` (idempotent; no public check so a user can always clean up), `GET /api/v1/me/saved` (paginated discovery cards, reuses `videoFeedResponse`, filters to public+published). Mirrors the subscriptions feed: `Save`/`Unsave`/`ListSaved` on the **video** service (sqlc `SaveVideo`/`UnsaveVideo`/`ListSavedVideos`) reusing `newFeedItem`/`feedItemView`. openapi documents all three (list → `VideoFeedResponse`); drift guard covers them (routes are under the existing video block). Tested: video-service round-trip + 3 handler (save→list newest-first→idempotent→unsave, non-public 404, auth 401). DEFERRED: named playlists + ordering (separate `playlists`/`playlist_items` slice).)
 - [x] Add follows/subscriptions table. (migration `0005_channel_follows`: `channel_follows` (follower_id, channel_id) composite PK + channel_id index; sqlc Follow/Unfollow/CountFollowers/IsFollowing)
 - [ ] Add notifications table.
-- [ ] Add abuse reports table.
+- [x] Add abuse reports table. (migration 0020 `reports`; see P9 abuse-reports.)
 - [ ] Add video blocks/quarantine table.
 - [ ] Add watched words lists and matches tables.
 - [ ] Add muted accounts/instances table.
@@ -407,8 +407,8 @@
 - [ ] Implement admin users list/search/filter.
 - [ ] Implement user edit: role, quota, enabled/disabled, bypass quarantine, email verified.
 - [ ] Implement registration approval queue.
-- [ ] Implement abuse reports for videos/comments/accounts.
-- [ ] Implement report accept/reject/delete/internal note.
+- [~] Implement abuse reports for videos/comments/accounts. (Video + comment reports DONE: migration 0020 `reports` (reporter FK, `target_type` CHECK video/comment, nullable `video_id`/`comment_id` cascade FKs, `reason`, `status` CHECK open/accepted/rejected, `moderator_note`, `resolved_by`/`resolved_at`; `(status, created_at DESC)` queue index + partial unique `(reporter_id, video_id)` / `(reporter_id, comment_id)` so a user reports a target at most once). Endpoints: `POST /api/v1/videos/:id/report` (requireAuth, `publicVideoID` guard, idempotent), `POST /api/v1/comments/:id/report` (requireAuth, FK→404 on unknown comment, idempotent). `internal/moderation` `ReportVideo`/`ReportComment` (maps FK violation 23503 → `ErrInvalidTarget`); `internal/httpapi/reports.go`. DEFERRED: account reports (needs an account-report target type).)
+- [~] Implement report accept/reject/delete/internal note. (Accept/reject + internal note DONE via the admin queue: `GET /api/v1/admin/reports?status=open` (requireRole admin/moderator, paginated, resolves reporter username + video title / comment body) + `POST /api/v1/admin/reports/:id/resolve` (requireRole, body `{status: accepted|rejected, note}`, sets `resolved_by`/`resolved_at`, emits a `moderation.report.resolve` audit event; unknown id → 404). `internal/moderation` `List`/`Resolve`. openapi documents all 4 ops + `Report`/`ReportReporter`/`ReportListResponse`/`CreateReportRequest`/`ResolveReportRequest` (drift guard extended). Tested: 3 service unit (report+list+dedup, comment-FK→invalid-target, resolve+not-found) + 3 handler (report→queue→resolve→leaves-open-queue, non-admin 403, report-comment + unknown-comment 404, validation 422 + auth 401 on all 4). DEFERRED: report delete (a hard-delete of a report row) + notifications to reporter.)
 - [ ] Implement notifications to reporter where applicable.
 - [ ] Implement video block manual flow.
 - [ ] Implement video unblock flow.

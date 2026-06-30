@@ -21,6 +21,7 @@ import (
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/rating"
@@ -462,14 +463,17 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 	}
 	notifRepo := &notifFakeRepo{auth: authRepo, channels: chRepo, videos: repo}
 	plRepo := &playlistFakeRepo{videos: repo, playlists: map[uuid.UUID]sqlcgen.Playlist{}, items: map[uuid.UUID][]uuid.UUID{}}
+	cmRepo := &commentFakeRepo{users: authRepo}
+	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
 	return New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
 		WithVideoService(video.NewService(repo, blobs, opts...)),
-		WithCommentService(comment.NewService(&commentFakeRepo{users: authRepo})),
+		WithCommentService(comment.NewService(cmRepo)),
 		WithRatingService(rating.NewService(newRatingFakeRepo())),
 		WithNotificationService(notification.NewService(notifRepo)),
 		WithPlaylistService(playlist.NewService(plRepo)),
+		WithModerationService(moderation.NewService(modRepo)),
 		WithMediaStorage(blobs),
 	)
 }

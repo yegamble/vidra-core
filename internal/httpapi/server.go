@@ -16,6 +16,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/ratelimit"
@@ -31,22 +32,23 @@ type Pinger interface {
 
 // Server holds the Echo instance and its dependencies.
 type Server struct {
-	echo        *echo.Echo
-	cfg         *config.Config
-	db          Pinger
-	rdb         Pinger
-	logger      *slog.Logger
-	limiter     *ratelimit.Limiter
-	authLimit   *ratelimit.Limiter
-	authsvc     *auth.Service
-	authTTL     time.Duration
-	channelsvc  *channel.Service
-	videosvc    *video.Service
-	commentsvc  *comment.Service
-	ratingsvc   *rating.Service
-	notifsvc    *notification.Service
-	playlistsvc *playlist.Service
-	media       storage.Backend
+	echo          *echo.Echo
+	cfg           *config.Config
+	db            Pinger
+	rdb           Pinger
+	logger        *slog.Logger
+	limiter       *ratelimit.Limiter
+	authLimit     *ratelimit.Limiter
+	authsvc       *auth.Service
+	authTTL       time.Duration
+	channelsvc    *channel.Service
+	videosvc      *video.Service
+	commentsvc    *comment.Service
+	ratingsvc     *rating.Service
+	notifsvc      *notification.Service
+	playlistsvc   *playlist.Service
+	moderationsvc *moderation.Service
+	media         storage.Backend
 }
 
 // uploadRoutePath is the Echo route template for the original-file upload. It is
@@ -117,6 +119,14 @@ func WithNotificationService(svc *notification.Service) Option {
 // service, so playlist routes register only when both are present.
 func WithPlaylistService(svc *playlist.Service) Option {
 	return func(s *Server) { s.playlistsvc = svc }
+}
+
+// WithModerationService mounts the abuse-report endpoints: reporting a video or
+// comment, and the admin/moderator queue (list + resolve). Reporting a video
+// needs the video service (for the public-video guard), so the report routes
+// register only when both are present.
+func WithModerationService(svc *moderation.Service) Option {
+	return func(s *Server) { s.moderationsvc = svc }
 }
 
 // WithMediaStorage gives the server the blob backend used to stream stored media
@@ -332,6 +342,15 @@ func (s *Server) routes() {
 		api.DELETE("/playlists/:id", s.handleDeletePlaylist, s.requireAuth)
 		api.POST("/playlists/:id/videos", s.handleAddPlaylistItem, s.requireAuth)
 		api.DELETE("/playlists/:id/videos/:videoId", s.handleRemovePlaylistItem, s.requireAuth)
+	}
+
+	// Abuse reports: any authed user can file one; the queue + resolution are
+	// restricted to moderators/admins. Reporting a video needs the video service.
+	if s.moderationsvc != nil && s.videosvc != nil {
+		api.POST("/videos/:id/report", s.handleReportVideo, s.requireAuth)
+		api.POST("/comments/:id/report", s.handleReportComment, s.requireAuth)
+		api.GET("/admin/reports", s.handleListReports, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.POST("/admin/reports/:id/resolve", s.handleResolveReport, s.requireAuth, s.requireRole("admin", "moderator"))
 	}
 }
 

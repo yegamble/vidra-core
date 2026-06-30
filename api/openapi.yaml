@@ -2088,6 +2088,195 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/report:
+    post:
+      operationId: reportVideo
+      summary: Report a video
+      description: >-
+        Files an abuse report against a public, published video (idempotent per
+        reporter). A non-public/unpublished or unknown video is 404.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportRequest"
+      responses:
+        "204":
+          description: The report was filed (or already existed).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such public, published video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/comments/{id}/report:
+    post:
+      operationId: reportComment
+      summary: Report a comment
+      description: Files an abuse report against a comment (idempotent per reporter).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportRequest"
+      responses:
+        "204":
+          description: The report was filed (or already existed).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/reports:
+    get:
+      operationId: listReports
+      summary: List the moderation queue
+      description: >-
+        Returns abuse reports, newest first, with the reporter and target
+        context. Restricted to moderators/admins. status=open returns only
+        unresolved reports. Paginated via limit (1–100, default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Set to "open" to return only unresolved reports.
+          schema:
+            type: string
+            enum: [open]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of reports (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/reports/{id}/resolve:
+    post:
+      operationId: resolveReport
+      summary: Resolve a report
+      description: >-
+        Marks a report accepted or rejected with an internal moderator note.
+        Restricted to moderators/admins. An unknown id is 404.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveReportRequest"
+      responses:
+        "204":
+          description: The report was resolved.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -2723,6 +2912,82 @@ components:
         video_id:
           type: string
           format: uuid
+    CreateReportRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    ResolveReportRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [accepted, rejected]
+        note:
+          type: string
+          maxLength: 2000
+          description: Internal moderator note (not shown to the reporter).
+    ReportReporter:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+    Report:
+      type: object
+      required: [id, target_type, reason, status, moderator_note, created_at, reporter]
+      properties:
+        id:
+          type: string
+          format: uuid
+        target_type:
+          type: string
+          enum: [video, comment]
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [open, accepted, rejected]
+        moderator_note:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+        reporter:
+          $ref: "#/components/schemas/ReportReporter"
+        video_id:
+          type: string
+          format: uuid
+          description: The reported video (video reports).
+        video_title:
+          type: string
+        comment_id:
+          type: string
+          format: uuid
+          description: The reported comment (comment reports).
+        comment_body:
+          type: string
+    ReportListResponse:
+      type: object
+      required: [reports, limit, offset]
+      properties:
+        reports:
+          type: array
+          items:
+            $ref: "#/components/schemas/Report"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
     VideoFile:
       type: object
       description: >-
