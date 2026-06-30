@@ -2277,6 +2277,113 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/users:
+    get:
+      operationId: listUsers
+      summary: List accounts (admin)
+      description: >-
+        Returns accounts, newest first, optionally filtered by a username/email
+        substring (q). Restricted to admins. Paginated via limit (1–100, default
+        20) and offset.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Username/email substring filter.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of accounts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/users/{id}:
+    patch:
+      operationId: updateUser
+      summary: Edit a user's role / active flag (admin)
+      description: >-
+        Updates a user's role and/or active flag (partial). Restricted to admins.
+        An admin cannot demote or deactivate their own account (422). An unknown
+        id is 404. Deactivating revokes the user's sessions.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: The updated account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed, or an attempt to self-demote/deactivate.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -2988,6 +3095,53 @@ components:
         offset:
           type: integer
           example: 0
+    AdminUser:
+      type: object
+      description: Admin projection of an account (never includes the password hash).
+      required: [id, username, email, role, is_active, email_verified, display_name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [user, moderator, admin]
+        is_active:
+          type: boolean
+        email_verified:
+          type: boolean
+        display_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    AdminUserListResponse:
+      type: object
+      required: [users, limit, offset]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminUser"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    UpdateUserRequest:
+      type: object
+      description: Partial update; provide at least one field.
+      properties:
+        role:
+          type: string
+          enum: [user, moderator, admin]
+        is_active:
+          type: boolean
     VideoFile:
       type: object
       description: >-

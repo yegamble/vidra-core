@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -214,6 +215,44 @@ func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUser
 			}
 			if a.Bio != nil {
 				u.Bio = *a.Bio
+			}
+			u.UpdatedAt = time.Now()
+			f.users[k] = u
+			return u, nil
+		}
+	}
+	return sqlcgen.User{}, errors.New("not found")
+}
+
+// ListUsers + AdminUpdateUser let authFakeRepo also satisfy admin.Repository.
+func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) ([]sqlcgen.User, error) {
+	var out []sqlcgen.User
+	q := strings.ToLower(a.Query)
+	for _, u := range f.users {
+		if q == "" || strings.Contains(strings.ToLower(u.Username), q) || strings.Contains(strings.ToLower(u.Email), q) {
+			out = append(out, u)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	lo := int(a.ResultOffset)
+	if lo > len(out) {
+		lo = len(out)
+	}
+	hi := lo + int(a.ResultLimit)
+	if hi > len(out) {
+		hi = len(out)
+	}
+	return out[lo:hi], nil
+}
+
+func (f *authFakeRepo) AdminUpdateUser(_ context.Context, a sqlcgen.AdminUpdateUserParams) (sqlcgen.User, error) {
+	for k, u := range f.users {
+		if u.ID == a.ID {
+			if a.Role != nil {
+				u.Role = *a.Role
+			}
+			if a.IsActive != nil {
+				u.IsActive = *a.IsActive
 			}
 			u.UpdatedAt = time.Now()
 			f.users[k] = u

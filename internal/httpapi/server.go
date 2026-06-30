@@ -12,6 +12,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
+	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
@@ -48,6 +49,7 @@ type Server struct {
 	notifsvc      *notification.Service
 	playlistsvc   *playlist.Service
 	moderationsvc *moderation.Service
+	adminsvc      *admin.Service
 	media         storage.Backend
 }
 
@@ -127,6 +129,12 @@ func WithPlaylistService(svc *playlist.Service) Option {
 // register only when both are present.
 func WithModerationService(svc *moderation.Service) Option {
 	return func(s *Server) { s.moderationsvc = svc }
+}
+
+// WithAdminService mounts the admin user-management endpoints (list/search users,
+// edit role + active flag). When unset, the routes are not registered.
+func WithAdminService(svc *admin.Service) Option {
+	return func(s *Server) { s.adminsvc = svc }
 }
 
 // WithMediaStorage gives the server the blob backend used to stream stored media
@@ -351,6 +359,12 @@ func (s *Server) routes() {
 		api.POST("/comments/:id/report", s.handleReportComment, s.requireAuth)
 		api.GET("/admin/reports", s.handleListReports, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.POST("/admin/reports/:id/resolve", s.handleResolveReport, s.requireAuth, s.requireRole("admin", "moderator"))
+	}
+
+	// Admin user management is admin-only (not moderators).
+	if s.adminsvc != nil {
+		api.GET("/admin/users", s.handleListUsers, s.requireAuth, s.requireRole("admin"))
+		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole("admin"))
 	}
 }
 

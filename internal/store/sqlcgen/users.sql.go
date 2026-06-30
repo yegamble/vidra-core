@@ -11,6 +11,41 @@ import (
 	"github.com/google/uuid"
 )
 
+const adminUpdateUser = `-- name: AdminUpdateUser :one
+UPDATE users
+SET role       = COALESCE($1, role),
+    is_active  = COALESCE($2, is_active),
+    updated_at = now()
+WHERE id = $3
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
+`
+
+type AdminUpdateUserParams struct {
+	Role     *string   `json:"role"`
+	IsActive *bool     `json:"is_active"`
+	ID       uuid.UUID `json:"id"`
+}
+
+// Admin edit of a user's role and/or active flag (partial: NULL args unchanged).
+func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, adminUpdateUser, arg.Role, arg.IsActive, arg.ID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Role,
+		&i.EmailVerified,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisplayName,
+		&i.Bio,
+	)
+	return i, err
+}
+
 const countUsers = `-- name: CountUsers :one
 SELECT count(*) FROM users
 `
@@ -119,6 +154,56 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.Bio,
 	)
 	return i, err
+}
+
+const listUsers = `-- name: ListUsers :many
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
+FROM users
+WHERE ($1::text = ''
+       OR username ILIKE '%' || $1 || '%'
+       OR email ILIKE '%' || $1 || '%')
+ORDER BY created_at DESC, id DESC
+LIMIT $3 OFFSET $2
+`
+
+type ListUsersParams struct {
+	Query        string `json:"query"`
+	ResultOffset int32  `json:"result_offset"`
+	ResultLimit  int32  `json:"result_limit"`
+}
+
+// Admin user list: newest first, optionally filtered by a username/email
+// substring (empty query returns all). Paginated.
+func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error) {
+	rows, err := q.db.Query(ctx, listUsers, arg.Query, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Username,
+			&i.Email,
+			&i.PasswordHash,
+			&i.Role,
+			&i.EmailVerified,
+			&i.IsActive,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DisplayName,
+			&i.Bio,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateUserProfile = `-- name: UpdateUserProfile :one

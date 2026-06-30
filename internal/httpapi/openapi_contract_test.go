@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
@@ -33,6 +34,7 @@ func fullRouteOptions() []Option {
 		WithNotificationService(notification.NewService(nil)),
 		WithPlaylistService(playlist.NewService(nil)),
 		WithModerationService(moderation.NewService(nil)),
+		WithAdminService(admin.NewService(nil)),
 	}
 }
 

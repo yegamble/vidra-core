@@ -153,6 +153,13 @@ curl -sX POST localhost:8080/api/v1/comments/<id>/report -H 'authorization: Bear
 curl -s 'localhost:8080/api/v1/admin/reports?status=open' -H 'authorization: Bearer <admin-token>'   # moderation queue (403 if not mod/admin)
 curl -sX POST localhost:8080/api/v1/admin/reports/<id>/resolve -H 'authorization: Bearer <admin-token>' \
   -H 'content-type: application/json' -d '{"status":"accepted","note":"removed"}'      # accept|reject + internal note -> 204
+
+# Admin user management (admin-only; the first registered account is admin):
+curl -s 'localhost:8080/api/v1/admin/users?q=ada&limit=20' -H 'authorization: Bearer <admin-token>'  # list/search accounts (no password hash)
+curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer <admin-token>' \
+  -H 'content-type: application/json' -d '{"role":"moderator"}'                        # change role (user|moderator|admin)
+curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer <admin-token>' \
+  -H 'content-type: application/json' -d '{"is_active":false}'                          # deactivate (revokes the user's sessions); self-demote/deactivate -> 422
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

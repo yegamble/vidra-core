@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
@@ -474,6 +475,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 		WithNotificationService(notification.NewService(notifRepo)),
 		WithPlaylistService(playlist.NewService(plRepo)),
 		WithModerationService(moderation.NewService(modRepo)),
+		WithAdminService(admin.NewService(authRepo)),
 		WithMediaStorage(blobs),
 	)
 }
