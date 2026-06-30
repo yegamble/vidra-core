@@ -51,6 +51,11 @@ func (s *Server) publicVideoID(c echo.Context) (uuid.UUID, error) {
 	if err != nil || v.State != "published" || v.Privacy != "public" {
 		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
+		return uuid.UUID{}, err
+	} else if hidden {
+		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
 	return id, nil
 }
 

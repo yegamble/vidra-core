@@ -36,6 +36,7 @@ type moderationFakeRepo struct {
 	videos   *videoFakeRepo
 	comments *commentFakeRepo
 	reports  []modReportRow
+	blocked  map[uuid.UUID]bool
 }
 
 func (f *moderationFakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (int64, error) {
@@ -109,6 +110,29 @@ func (f *moderationFakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveR
 		}
 	}
 	return 0, nil
+}
+
+func (f *moderationFakeRepo) BlockVideo(_ context.Context, a sqlcgen.BlockVideoParams) (int64, error) {
+	if _, ok := f.videos.videos[a.VideoID]; !ok {
+		return 0, &pgconn.PgError{Code: "23503"} // FK violation: no such video
+	}
+	if f.blocked == nil {
+		f.blocked = map[uuid.UUID]bool{}
+	}
+	f.blocked[a.VideoID] = true
+	return 1, nil
+}
+
+func (f *moderationFakeRepo) UnblockVideo(_ context.Context, videoID uuid.UUID) (int64, error) {
+	if f.blocked[videoID] {
+		delete(f.blocked, videoID)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f *moderationFakeRepo) IsVideoBlocked(_ context.Context, videoID uuid.UUID) (bool, error) {
+	return f.blocked[videoID], nil
 }
 
 func listReports(srv *Server, query, token string) *httptest.ResponseRecorder {

@@ -29,6 +29,8 @@ type reportRow struct {
 type fakeRepo struct {
 	reports    []reportRow
 	commentErr error // returned by CreateCommentReport when set
+	blocked    map[uuid.UUID]bool
+	blockErr   error // returned by BlockVideo when set (e.g. a FK violation)
 }
 
 func (f *fakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (int64, error) {
@@ -83,6 +85,29 @@ func (f *fakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveReportParam
 	return 0, nil
 }
 
+func (f *fakeRepo) BlockVideo(_ context.Context, a sqlcgen.BlockVideoParams) (int64, error) {
+	if f.blockErr != nil {
+		return 0, f.blockErr
+	}
+	if f.blocked == nil {
+		f.blocked = map[uuid.UUID]bool{}
+	}
+	f.blocked[a.VideoID] = true
+	return 1, nil
+}
+
+func (f *fakeRepo) UnblockVideo(_ context.Context, videoID uuid.UUID) (int64, error) {
+	if f.blocked[videoID] {
+		delete(f.blocked, videoID)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f *fakeRepo) IsVideoBlocked(_ context.Context, videoID uuid.UUID) (bool, error) {
+	return f.blocked[videoID], nil
+}
+
 func TestReportListAndDedup(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	ctx := context.Background()
@@ -115,6 +140,44 @@ func TestReportCommentInvalidTarget(t *testing.T) {
 	svc := NewService(&fakeRepo{commentErr: &pgconn.PgError{Code: "23503"}})
 	if err := svc.ReportComment(context.Background(), uuid.New(), uuid.New(), "x"); err != ErrInvalidTarget {
 		t.Errorf("err = %v, want ErrInvalidTarget", err)
+	}
+}
+
+func TestBlockUnblockVideo(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	ctx := context.Background()
+	mod, vid := uuid.New(), uuid.New()
+
+	if blocked, _ := svc.IsBlocked(ctx, vid); blocked {
+		t.Fatal("video should not be blocked initially")
+	}
+	if err := svc.BlockVideo(ctx, mod, vid, "spam"); err != nil {
+		t.Fatalf("BlockVideo: %v", err)
+	}
+	if blocked, _ := svc.IsBlocked(ctx, vid); !blocked {
+		t.Error("video should be blocked after BlockVideo")
+	}
+	// Re-blocking is idempotent.
+	if err := svc.BlockVideo(ctx, mod, vid, "still spam"); err != nil {
+		t.Fatalf("re-BlockVideo: %v", err)
+	}
+	if err := svc.UnblockVideo(ctx, vid); err != nil {
+		t.Fatalf("UnblockVideo: %v", err)
+	}
+	if blocked, _ := svc.IsBlocked(ctx, vid); blocked {
+		t.Error("video should not be blocked after UnblockVideo")
+	}
+	// Unblocking an already-unblocked video is a no-op (no error).
+	if err := svc.UnblockVideo(ctx, vid); err != nil {
+		t.Errorf("idempotent UnblockVideo: %v", err)
+	}
+}
+
+func TestBlockVideoNotFound(t *testing.T) {
+	svc := NewService(&fakeRepo{blockErr: &pgconn.PgError{Code: "23503"}})
+	if err := svc.BlockVideo(context.Background(), uuid.New(), uuid.New(), "x"); err != ErrVideoNotFound {
+		t.Errorf("err = %v, want ErrVideoNotFound", err)
 	}
 }
 

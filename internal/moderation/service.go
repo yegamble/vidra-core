@@ -32,6 +32,8 @@ var (
 	ErrNotFound = errors.New("moderation: report not found")
 	// ErrInvalidTarget means the reported target does not exist.
 	ErrInvalidTarget = errors.New("moderation: invalid report target")
+	// ErrVideoNotFound means a block targets a video that does not exist.
+	ErrVideoNotFound = errors.New("moderation: video not found")
 )
 
 // Repository is the data access the moderation service needs. *sqlcgen.Queries
@@ -41,6 +43,9 @@ type Repository interface {
 	CreateCommentReport(ctx context.Context, arg sqlcgen.CreateCommentReportParams) (int64, error)
 	ListReports(ctx context.Context, arg sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error)
 	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (int64, error)
+	BlockVideo(ctx context.Context, arg sqlcgen.BlockVideoParams) (int64, error)
+	UnblockVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
+	IsVideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, error)
 }
 
 // Service holds the moderation application logic.
@@ -143,6 +148,33 @@ func (s *Service) Resolve(ctx context.Context, moderatorID, reportID uuid.UUID, 
 		return ErrNotFound
 	}
 	return nil
+}
+
+// BlockVideo blocks a video so it is removed from public surfaces, recording the
+// reason and the acting moderator. Idempotent (re-blocking updates the reason). A
+// non-existent video → ErrVideoNotFound.
+func (s *Service) BlockVideo(ctx context.Context, moderatorID, videoID uuid.UUID, reason string) error {
+	_, err := s.repo.BlockVideo(ctx, sqlcgen.BlockVideoParams{
+		VideoID:   videoID,
+		Reason:    reason,
+		BlockedBy: pgUUID(moderatorID),
+	})
+	if isForeignKeyViolation(err) {
+		return ErrVideoNotFound
+	}
+	return err
+}
+
+// UnblockVideo lifts a video's block (idempotent: unblocking a video that is not
+// blocked is a no-op).
+func (s *Service) UnblockVideo(ctx context.Context, videoID uuid.UUID) error {
+	_, err := s.repo.UnblockVideo(ctx, videoID)
+	return err
+}
+
+// IsBlocked reports whether a video is currently blocked.
+func (s *Service) IsBlocked(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	return s.repo.IsVideoBlocked(ctx, videoID)
 }
 
 // pgUUID wraps a uuid.UUID as a non-null pgtype.UUID for a query parameter.

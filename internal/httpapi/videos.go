@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/moderation"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -155,6 +157,11 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 		if !ok || userID != v.OwnerID {
 			return echo.NewHTTPError(http.StatusNotFound, "video not found")
 		}
+	}
+	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
+		return err
+	} else if hidden {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	view := videoViewFromRow(v)
 	if md, ok, err := s.videosvc.GetMetadata(c.Request().Context(), id); err == nil && ok {
@@ -487,6 +494,11 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
+		return err
+	} else if hidden {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
 	viewerID, _, authed := principalFromContext(c)
 	f, err := s.videosvc.FileForView(c.Request().Context(), id, viewerID, authed, "original")
 	if err != nil {
@@ -500,6 +512,11 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
+		return err
+	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	viewerID, _, authed := principalFromContext(c)
@@ -580,6 +597,84 @@ func viewerKey(c echo.Context, viewerID uuid.UUID, authed bool) string {
 	}
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+// videoHiddenByBlock reports whether videoID is blocked and therefore hidden from
+// this caller. A blocked video is hidden from everyone except moderators/admins
+// (who may still view it, e.g. to confirm before unblocking). When no moderation
+// service is wired (some tests), nothing is blocked.
+func (s *Server) videoHiddenByBlock(c echo.Context, videoID uuid.UUID) (bool, error) {
+	if s.moderationsvc == nil {
+		return false, nil
+	}
+	blocked, err := s.moderationsvc.IsBlocked(c.Request().Context(), videoID)
+	if err != nil || !blocked {
+		return false, err
+	}
+	_, role, _ := principalFromContext(c)
+	if role == "admin" || role == "moderator" {
+		return false, nil
+	}
+	return true, nil
+}
+
+// blockVideoRequest is the optional POST /admin/videos/{id}/block body; the reason
+// is recorded for the audit trail (it may be empty).
+type blockVideoRequest struct {
+	Reason string `json:"reason"`
+}
+
+func (r blockVideoRequest) Validate() []FieldError {
+	if len(r.Reason) > maxReportReasonLen {
+		return []FieldError{{Field: "reason", Message: "must be at most 2000 characters"}}
+	}
+	return nil
+}
+
+// handleBlockVideo blocks a video so it disappears from public surfaces. Behind
+// requireRole(admin, moderator). An unknown video is 404. Idempotent. Emits an
+// audit event.
+func (s *Server) handleBlockVideo(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	var in blockVideoRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := s.moderationsvc.BlockVideo(c.Request().Context(), userID, id, strings.TrimSpace(in.Reason)); err != nil {
+		if errors.Is(err, moderation.ErrVideoNotFound) {
+			s.audit(c, observability.ActionVideoBlock, observability.ResultFailure, userID.String(), "not_found")
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return err
+	}
+	s.audit(c, observability.ActionVideoBlock, observability.ResultSuccess, userID.String(), "")
+	return c.NoContent(http.StatusNoContent)
+}
+
+// handleUnblockVideo lifts a video's block. Behind requireRole(admin, moderator).
+// Idempotent (unblocking a video that is not blocked still succeeds). Emits an
+// audit event.
+func (s *Server) handleUnblockVideo(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if err := s.moderationsvc.UnblockVideo(c.Request().Context(), id); err != nil {
+		return err
+	}
+	s.audit(c, observability.ActionVideoUnblock, observability.ResultSuccess, userID.String(), "")
+	return c.NoContent(http.StatusNoContent)
 }
 
 // videoError maps video service sentinels to HTTP error envelopes. A non-owner

@@ -142,6 +142,13 @@ type Video struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type VideoBlock struct {
+	VideoID   uuid.UUID   `json:"video_id"`
+	Reason    string      `json:"reason"`
+	BlockedBy pgtype.UUID `json:"blocked_by"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
 type VideoFile struct {
 	ID           uuid.UUID `json:"id"`
 	VideoID      uuid.UUID `json:"video_id"`

@@ -105,6 +105,7 @@ FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 ORDER BY v.created_at DESC
 `
 
@@ -170,6 +171,7 @@ FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 ORDER BY
     CASE WHEN $1::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
     CASE WHEN $1::text = 'trending'
@@ -253,6 +255,7 @@ FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND v.channel_id IN (
       SELECT channel_id FROM channel_follows WHERE follower_id = $1
   )
@@ -394,6 +397,7 @@ FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND v.title ILIKE '%' || $1 || '%'
 ORDER BY similarity(v.title, $1) DESC, v.created_at DESC, v.id DESC
 LIMIT $3 OFFSET $2

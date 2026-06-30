@@ -2277,6 +2277,91 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/videos/{id}/block:
+    post:
+      operationId: blockVideo
+      summary: Block a video
+      description: >-
+        Blocks a video so it is removed from all public surfaces (feed, search,
+        channel listings, subscriptions, the watch/detail endpoint, media
+        streaming, and public interactions). Moderators/admins can still view a
+        blocked video. Restricted to moderators/admins. Idempotent. An unknown id
+        is 404.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockVideoRequest"
+      responses:
+        "204":
+          description: The video was blocked.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unblockVideo
+      summary: Unblock a video
+      description: >-
+        Lifts a video's block, restoring it to public surfaces. Restricted to
+        moderators/admins. Idempotent (unblocking a video that is not blocked
+        still succeeds).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The video is not blocked (it was unblocked, or already was).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/users:
     get:
       operationId: listUsers
@@ -3038,6 +3123,13 @@ components:
           type: string
           maxLength: 2000
           description: Internal moderator note (not shown to the reporter).
+    BlockVideoRequest:
+      type: object
+      description: Optional body for blocking a video; the reason is recorded for the audit trail.
+      properties:
+        reason:
+          type: string
+          maxLength: 2000
     ReportReporter:
       type: object
       required: [username]
