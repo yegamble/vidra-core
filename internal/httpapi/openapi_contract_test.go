@@ -14,6 +14,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/moderation"
+	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/rating"
@@ -34,6 +35,7 @@ func fullRouteOptions() []Option {
 		WithNotificationService(notification.NewService(nil)),
 		WithPlaylistService(playlist.NewService(nil)),
 		WithModerationService(moderation.NewService(nil)),
+		WithMuteService(mute.NewService(nil)),
 		WithAdminService(admin.NewService(nil)),
 	}
 }

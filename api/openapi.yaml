@@ -2409,6 +2409,109 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/mutes/accounts:
+    get:
+      operationId: listMutedAccounts
+      summary: List muted accounts
+      description: >-
+        Returns the accounts the caller has muted, newest mute first. Requires
+        authentication. Paginated via limit (1–100, default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of muted accounts (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutedAccountListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/mutes/accounts/{id}:
+    post:
+      operationId: muteAccount
+      summary: Mute an account
+      description: >-
+        Mutes another account so its content becomes hidden from the caller.
+        Requires authentication. Idempotent. Muting yourself is 422; an unknown
+        target account is 404.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The account is muted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Cannot mute yourself.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unmuteAccount
+      summary: Unmute an account
+      description: >-
+        Lifts the caller's mute of another account. Requires authentication.
+        Idempotent (unmuting a not-muted account still succeeds).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The account is not muted (it was unmuted, or already was).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/users:
     get:
       operationId: listUsers
@@ -2860,7 +2963,7 @@ components:
           enum: [public, unlisted, private]
     Comment:
       type: object
-      required: [id, video_id, body, author_username, author_display_name, created_at, updated_at]
+      required: [id, video_id, body, author_id, author_username, author_display_name, created_at, updated_at]
       properties:
         id:
           type: string
@@ -2870,6 +2973,10 @@ components:
           format: uuid
         body:
           type: string
+        author_id:
+          type: string
+          format: uuid
+          description: The comment author's account id (so a signed-in viewer can mute them).
         author_username:
           type: string
         author_display_name:
@@ -2888,6 +2995,33 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Comment"
+        limit:
+          type: integer
+        offset:
+          type: integer
+    MutedAccount:
+      type: object
+      description: An account the caller has muted, with its display identity.
+      required: [user_id, username, display_name, muted_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        muted_at:
+          type: string
+          format: date-time
+    MutedAccountListResponse:
+      type: object
+      required: [accounts, limit, offset]
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/MutedAccount"
         limit:
           type: integer
         offset:

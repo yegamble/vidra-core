@@ -46,6 +46,12 @@ type EmailVerificationToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type MutedAccount struct {
+	MuterID   uuid.UUID `json:"muter_id"`
+	MutedID   uuid.UUID `json:"muted_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Notification struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`

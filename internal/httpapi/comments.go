@@ -16,10 +16,12 @@ import (
 const maxCommentLen = 2000
 
 // commentView is the public projection of a comment, with its author's identity.
+// AuthorID is the author's account id (so a signed-in viewer can mute them).
 type commentView struct {
 	ID                string    `json:"id"`
 	VideoID           string    `json:"video_id"`
 	Body              string    `json:"body"`
+	AuthorID          string    `json:"author_id"`
 	AuthorUsername    string    `json:"author_username"`
 	AuthorDisplayName string    `json:"author_display_name"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -31,6 +33,7 @@ func newCommentView(c sqlcgen.Comment, authorUsername, authorDisplayName string)
 		ID:                c.ID.String(),
 		VideoID:           c.VideoID.String(),
 		Body:              c.Body,
+		AuthorID:          c.UserID.String(),
 		AuthorUsername:    authorUsername,
 		AuthorDisplayName: authorDisplayName,
 		CreatedAt:         c.CreatedAt,

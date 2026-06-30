@@ -161,6 +161,12 @@ curl -sX POST localhost:8080/api/v1/admin/videos/<id>/block -H 'authorization: B
 curl -sX DELETE localhost:8080/api/v1/admin/videos/<id>/block -H 'authorization: Bearer <admin-token>'  # unblock (idempotent) -> 204
 curl -s 'localhost:8080/api/v1/admin/videos/blocked?limit=20' -H 'authorization: Bearer <admin-token>'  # block-list (newest first; channel, reason, who/when)
 
+# Account mutes (a signed-in user mutes another account by user id; the muted
+# account's content will be hidden from them — filtering effect is a later slice):
+curl -sX POST   localhost:8080/api/v1/me/mutes/accounts/<user-id> -H 'authorization: Bearer <token>'  # mute (idempotent; self -> 422, unknown -> 404)
+curl -sX DELETE localhost:8080/api/v1/me/mutes/accounts/<user-id> -H 'authorization: Bearer <token>'  # unmute (idempotent)
+curl -s 'localhost:8080/api/v1/me/mutes/accounts?limit=20' -H 'authorization: Bearer <token>'         # your muted accounts (newest first, with identity)
+
 # Admin user management (admin-only; the first registered account is admin):
 curl -s 'localhost:8080/api/v1/admin/users?q=ada&limit=20' -H 'authorization: Bearer <admin-token>'  # list/search accounts (no password hash)
 curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer <admin-token>' \

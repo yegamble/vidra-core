@@ -18,6 +18,7 @@ import (
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/moderation"
+	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/ratelimit"
@@ -49,6 +50,7 @@ type Server struct {
 	notifsvc      *notification.Service
 	playlistsvc   *playlist.Service
 	moderationsvc *moderation.Service
+	mutesvc       *mute.Service
 	adminsvc      *admin.Service
 	media         storage.Backend
 }
@@ -129,6 +131,12 @@ func WithPlaylistService(svc *playlist.Service) Option {
 // register only when both are present.
 func WithModerationService(svc *moderation.Service) Option {
 	return func(s *Server) { s.moderationsvc = svc }
+}
+
+// WithMuteService mounts the account-mute endpoints (mute / unmute / list the
+// accounts the caller has muted). When unset, the routes are not registered.
+func WithMuteService(svc *mute.Service) Option {
+	return func(s *Server) { s.mutesvc = svc }
 }
 
 // WithAdminService mounts the admin user-management endpoints (list/search users,
@@ -362,6 +370,14 @@ func (s *Server) routes() {
 		api.GET("/admin/videos/blocked", s.handleListBlockedVideos, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.POST("/admin/videos/:id/block", s.handleBlockVideo, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.DELETE("/admin/videos/:id/block", s.handleUnblockVideo, s.requireAuth, s.requireRole("admin", "moderator"))
+	}
+
+	// Account mutes: a signed-in user mutes/unmutes another account and lists
+	// the accounts they have muted.
+	if s.mutesvc != nil {
+		api.GET("/me/mutes/accounts", s.handleListMutedAccounts, s.requireAuth)
+		api.POST("/me/mutes/accounts/:id", s.handleMuteAccount, s.requireAuth)
+		api.DELETE("/me/mutes/accounts/:id", s.handleUnmuteAccount, s.requireAuth)
 	}
 
 	// Admin user management is admin-only (not moderators).

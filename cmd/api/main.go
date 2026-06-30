@@ -23,6 +23,7 @@ import (
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/moderation"
+	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/ratelimit"
@@ -131,6 +132,9 @@ func run(logger *slog.Logger) error {
 
 	moderationsvc := moderation.NewService(db.Queries())
 	opts = append(opts, httpapi.WithModerationService(moderationsvc))
+
+	mutesvc := mute.NewService(db.Queries())
+	opts = append(opts, httpapi.WithMuteService(mutesvc))
 
 	adminsvc := admin.NewService(db.Queries())
 	opts = append(opts, httpapi.WithAdminService(adminsvc))
