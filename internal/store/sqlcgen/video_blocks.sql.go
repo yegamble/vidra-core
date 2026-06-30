@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -46,6 +47,75 @@ func (q *Queries) IsVideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, 
 	var blocked bool
 	err := row.Scan(&blocked)
 	return blocked, err
+}
+
+const listBlockedVideos = `-- name: ListBlockedVideos :many
+SELECT
+    b.video_id,
+    v.title,
+    v.privacy,
+    v.state,
+    c.handle       AS channel_handle,
+    c.display_name AS channel_display_name,
+    b.reason,
+    u.username     AS blocked_by_username,
+    b.created_at   AS blocked_at
+FROM video_blocks b
+JOIN videos v   ON v.id = b.video_id
+JOIN channels c ON c.id = v.channel_id
+LEFT JOIN users u ON u.id = b.blocked_by
+ORDER BY b.created_at DESC, b.video_id
+LIMIT $2 OFFSET $1
+`
+
+type ListBlockedVideosParams struct {
+	ResultOffset int32 `json:"result_offset"`
+	ResultLimit  int32 `json:"result_limit"`
+}
+
+type ListBlockedVideosRow struct {
+	VideoID            uuid.UUID `json:"video_id"`
+	Title              string    `json:"title"`
+	Privacy            string    `json:"privacy"`
+	State              string    `json:"state"`
+	ChannelHandle      string    `json:"channel_handle"`
+	ChannelDisplayName string    `json:"channel_display_name"`
+	Reason             string    `json:"reason"`
+	BlockedByUsername  *string   `json:"blocked_by_username"`
+	BlockedAt          time.Time `json:"blocked_at"`
+}
+
+// Currently-blocked videos for the moderation block-list: newest block first,
+// with the video title + current privacy/state, the owning channel, the block
+// reason, who blocked it (NULL if that moderator's account was deleted), and when.
+func (q *Queries) ListBlockedVideos(ctx context.Context, arg ListBlockedVideosParams) ([]ListBlockedVideosRow, error) {
+	rows, err := q.db.Query(ctx, listBlockedVideos, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBlockedVideosRow
+	for rows.Next() {
+		var i ListBlockedVideosRow
+		if err := rows.Scan(
+			&i.VideoID,
+			&i.Title,
+			&i.Privacy,
+			&i.State,
+			&i.ChannelHandle,
+			&i.ChannelDisplayName,
+			&i.Reason,
+			&i.BlockedByUsername,
+			&i.BlockedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const unblockVideo = `-- name: UnblockVideo :execrows

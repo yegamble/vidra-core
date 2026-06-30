@@ -677,6 +677,56 @@ func (s *Server) handleUnblockVideo(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// blockedVideoView is the moderation block-list projection of a blocked video.
+type blockedVideoView struct {
+	VideoID            string    `json:"video_id"`
+	Title              string    `json:"title"`
+	Privacy            string    `json:"privacy"`
+	State              string    `json:"state"`
+	ChannelHandle      string    `json:"channel_handle"`
+	ChannelDisplayName string    `json:"channel_display_name"`
+	Reason             string    `json:"reason"`
+	BlockedBy          string    `json:"blocked_by,omitempty"`
+	BlockedAt          time.Time `json:"blocked_at"`
+}
+
+// blockedVideoListResponse is the paginated moderation block-list.
+type blockedVideoListResponse struct {
+	Videos []blockedVideoView `json:"videos"`
+	Limit  int                `json:"limit"`
+	Offset int                `json:"offset"`
+}
+
+// handleListBlockedVideos returns currently-blocked videos (newest block first)
+// for the moderation block-list. Behind requireRole(admin, moderator).
+// Pagination via ?limit (1–100, default 20) and ?offset.
+func (s *Server) handleListBlockedVideos(c echo.Context) error {
+	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
+	offset := queryInt(c, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+	items, err := s.moderationsvc.ListBlocked(c.Request().Context(), int32(limit), int32(offset))
+	if err != nil {
+		return err
+	}
+	views := make([]blockedVideoView, 0, len(items))
+	for _, it := range items {
+		views = append(views, blockedVideoView{
+			VideoID:            it.VideoID.String(),
+			Title:              it.Title,
+			Privacy:            it.Privacy,
+			State:              it.State,
+			ChannelHandle:      it.ChannelHandle,
+			ChannelDisplayName: it.ChannelDisplayName,
+			Reason:             it.Reason,
+			BlockedBy:          it.BlockedByUsername,
+			BlockedAt:          it.BlockedAt,
+		})
+	}
+	return c.JSON(http.StatusOK, blockedVideoListResponse{Videos: views, Limit: limit, Offset: offset})
+}
+
 // videoError maps video service sentinels to HTTP error envelopes. A non-owner
 // sees 404 (not 403) so a private video's existence is not leaked; an owned but
 // missing video is also 404.

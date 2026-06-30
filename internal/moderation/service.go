@@ -46,6 +46,7 @@ type Repository interface {
 	BlockVideo(ctx context.Context, arg sqlcgen.BlockVideoParams) (int64, error)
 	UnblockVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 	IsVideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, error)
+	ListBlockedVideos(ctx context.Context, arg sqlcgen.ListBlockedVideosParams) ([]sqlcgen.ListBlockedVideosRow, error)
 }
 
 // Service holds the moderation application logic.
@@ -175,6 +176,49 @@ func (s *Service) UnblockVideo(ctx context.Context, videoID uuid.UUID) error {
 // IsBlocked reports whether a video is currently blocked.
 func (s *Service) IsBlocked(ctx context.Context, videoID uuid.UUID) (bool, error) {
 	return s.repo.IsVideoBlocked(ctx, videoID)
+}
+
+// BlockedItem is a currently-blocked video with the context a moderator needs to
+// review the block-list: the video title + current privacy/state, the owning
+// channel, the block reason, who blocked it, and when. BlockedByUsername is ""
+// when that moderator's account was deleted.
+type BlockedItem struct {
+	VideoID            uuid.UUID
+	Title              string
+	Privacy            string
+	State              string
+	ChannelHandle      string
+	ChannelDisplayName string
+	Reason             string
+	BlockedByUsername  string
+	BlockedAt          time.Time
+}
+
+// ListBlocked returns currently-blocked videos, newest block first. The caller
+// clamps limit/offset.
+func (s *Service) ListBlocked(ctx context.Context, limit, offset int32) ([]BlockedItem, error) {
+	rows, err := s.repo.ListBlockedVideos(ctx, sqlcgen.ListBlockedVideosParams{
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]BlockedItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, BlockedItem{
+			VideoID:            r.VideoID,
+			Title:              r.Title,
+			Privacy:            r.Privacy,
+			State:              r.State,
+			ChannelHandle:      r.ChannelHandle,
+			ChannelDisplayName: r.ChannelDisplayName,
+			Reason:             r.Reason,
+			BlockedByUsername:  deref(r.BlockedByUsername),
+			BlockedAt:          r.BlockedAt,
+		})
+	}
+	return items, nil
 }
 
 // pgUUID wraps a uuid.UUID as a non-null pgtype.UUID for a query parameter.

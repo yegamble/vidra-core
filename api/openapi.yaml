@@ -2277,6 +2277,53 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/videos/blocked:
+    get:
+      operationId: listBlockedVideos
+      summary: List blocked videos
+      description: >-
+        Returns currently-blocked videos, newest block first, with the owning
+        channel, the block reason, who blocked it, and when — for the moderation
+        block-list. Restricted to moderators/admins. Paginated via limit (1–100,
+        default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of blocked videos (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockedVideoListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/videos/{id}/block:
     post:
       operationId: blockVideo
@@ -3181,6 +3228,49 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Report"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    BlockedVideo:
+      type: object
+      description: A currently-blocked video, for the moderation block-list.
+      required: [video_id, title, privacy, state, channel_handle, channel_display_name, reason, blocked_at]
+      properties:
+        video_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        state:
+          type: string
+          enum: [draft, processing, published, failed]
+        channel_handle:
+          type: string
+        channel_display_name:
+          type: string
+        reason:
+          type: string
+          description: The reason recorded when the video was blocked (may be empty).
+        blocked_by:
+          type: string
+          description: Username of the moderator who blocked it; omitted if that account was deleted.
+        blocked_at:
+          type: string
+          format: date-time
+    BlockedVideoListResponse:
+      type: object
+      required: [videos, limit, offset]
+      properties:
+        videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockedVideo"
         limit:
           type: integer
           example: 20

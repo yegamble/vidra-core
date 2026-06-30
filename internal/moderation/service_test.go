@@ -27,10 +27,12 @@ type reportRow struct {
 
 // fakeRepo is an in-memory moderation.Repository.
 type fakeRepo struct {
-	reports    []reportRow
-	commentErr error // returned by CreateCommentReport when set
-	blocked    map[uuid.UUID]bool
-	blockErr   error // returned by BlockVideo when set (e.g. a FK violation)
+	reports     []reportRow
+	commentErr  error // returned by CreateCommentReport when set
+	blocked     map[uuid.UUID]bool
+	blockReason map[uuid.UUID]string
+	blockOrder  []uuid.UUID // block order (oldest first)
+	blockErr    error       // returned by BlockVideo when set (e.g. a FK violation)
 }
 
 func (f *fakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (int64, error) {
@@ -91,14 +93,26 @@ func (f *fakeRepo) BlockVideo(_ context.Context, a sqlcgen.BlockVideoParams) (in
 	}
 	if f.blocked == nil {
 		f.blocked = map[uuid.UUID]bool{}
+		f.blockReason = map[uuid.UUID]string{}
+	}
+	if !f.blocked[a.VideoID] {
+		f.blockOrder = append(f.blockOrder, a.VideoID)
 	}
 	f.blocked[a.VideoID] = true
+	f.blockReason[a.VideoID] = a.Reason
 	return 1, nil
 }
 
 func (f *fakeRepo) UnblockVideo(_ context.Context, videoID uuid.UUID) (int64, error) {
 	if f.blocked[videoID] {
 		delete(f.blocked, videoID)
+		delete(f.blockReason, videoID)
+		for i, id := range f.blockOrder {
+			if id == videoID {
+				f.blockOrder = append(f.blockOrder[:i], f.blockOrder[i+1:]...)
+				break
+			}
+		}
 		return 1, nil
 	}
 	return 0, nil
@@ -106,6 +120,20 @@ func (f *fakeRepo) UnblockVideo(_ context.Context, videoID uuid.UUID) (int64, er
 
 func (f *fakeRepo) IsVideoBlocked(_ context.Context, videoID uuid.UUID) (bool, error) {
 	return f.blocked[videoID], nil
+}
+
+func (f *fakeRepo) ListBlockedVideos(_ context.Context, a sqlcgen.ListBlockedVideosParams) ([]sqlcgen.ListBlockedVideosRow, error) {
+	var rows []sqlcgen.ListBlockedVideosRow
+	for i := len(f.blockOrder) - 1; i >= 0; i-- { // newest block first
+		vid := f.blockOrder[i]
+		rows = append(rows, sqlcgen.ListBlockedVideosRow{VideoID: vid, Reason: f.blockReason[vid]})
+	}
+	off := min(int(a.ResultOffset), len(rows))
+	rows = rows[off:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(rows) {
+		rows = rows[:a.ResultLimit]
+	}
+	return rows, nil
 }
 
 func TestReportListAndDedup(t *testing.T) {
@@ -171,6 +199,46 @@ func TestBlockUnblockVideo(t *testing.T) {
 	// Unblocking an already-unblocked video is a no-op (no error).
 	if err := svc.UnblockVideo(ctx, vid); err != nil {
 		t.Errorf("idempotent UnblockVideo: %v", err)
+	}
+}
+
+func TestListBlocked(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	ctx := context.Background()
+	mod := uuid.New()
+	v1, v2 := uuid.New(), uuid.New()
+
+	if items, _ := svc.ListBlocked(ctx, 20, 0); len(items) != 0 {
+		t.Fatalf("blocked list before any block = %d, want 0", len(items))
+	}
+	if err := svc.BlockVideo(ctx, mod, v1, "spam"); err != nil {
+		t.Fatalf("block v1: %v", err)
+	}
+	if err := svc.BlockVideo(ctx, mod, v2, "abuse"); err != nil {
+		t.Fatalf("block v2: %v", err)
+	}
+	items, err := svc.ListBlocked(ctx, 20, 0)
+	if err != nil {
+		t.Fatalf("ListBlocked: %v", err)
+	}
+	// Newest block first: v2 then v1, each carrying its reason.
+	if len(items) != 2 {
+		t.Fatalf("blocked list = %d, want 2", len(items))
+	}
+	if items[0].VideoID != v2 || items[0].Reason != "abuse" {
+		t.Errorf("items[0] = {%s,%q}, want {v2,abuse}", items[0].VideoID, items[0].Reason)
+	}
+	if items[1].VideoID != v1 || items[1].Reason != "spam" {
+		t.Errorf("items[1] = {%s,%q}, want {v1,spam}", items[1].VideoID, items[1].Reason)
+	}
+	// Unblocking removes it from the list.
+	if err := svc.UnblockVideo(ctx, v1); err != nil {
+		t.Fatalf("unblock v1: %v", err)
+	}
+	items, _ = svc.ListBlocked(ctx, 20, 0)
+	if len(items) != 1 || items[0].VideoID != v2 {
+		t.Errorf("blocked list after unblock = %+v, want [v2]", items)
 	}
 }
 

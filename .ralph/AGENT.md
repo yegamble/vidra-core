@@ -154,6 +154,13 @@ curl -s 'localhost:8080/api/v1/admin/reports?status=open' -H 'authorization: Bea
 curl -sX POST localhost:8080/api/v1/admin/reports/<id>/resolve -H 'authorization: Bearer <admin-token>' \
   -H 'content-type: application/json' -d '{"status":"accepted","note":"removed"}'      # accept|reject + internal note -> 204
 
+# Video blocks (moderator/admin only; a blocked video disappears from all public
+# surfaces but stays visible to moderators/admins):
+curl -sX POST localhost:8080/api/v1/admin/videos/<id>/block -H 'authorization: Bearer <admin-token>' \
+  -H 'content-type: application/json' -d '{"reason":"copyright"}'                       # block (idempotent) -> 204
+curl -sX DELETE localhost:8080/api/v1/admin/videos/<id>/block -H 'authorization: Bearer <admin-token>'  # unblock (idempotent) -> 204
+curl -s 'localhost:8080/api/v1/admin/videos/blocked?limit=20' -H 'authorization: Bearer <admin-token>'  # block-list (newest first; channel, reason, who/when)
+
 # Admin user management (admin-only; the first registered account is admin):
 curl -s 'localhost:8080/api/v1/admin/users?q=ada&limit=20' -H 'authorization: Bearer <admin-token>'  # list/search accounts (no password hash)
 curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer <admin-token>' \

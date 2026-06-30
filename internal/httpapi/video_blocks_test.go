@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -57,6 +58,83 @@ func TestBlockVideoModeration(t *testing.T) {
 	}
 	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/videos/"+vid+"/block", "", admin); rec.Code != http.StatusNoContent {
 		t.Errorf("idempotent unblock = %d, want 204", rec.Code)
+	}
+}
+
+// blockedListBody parses GET /admin/videos/blocked.
+type blockedListBody struct {
+	Videos []struct {
+		VideoID            string `json:"video_id"`
+		Title              string `json:"title"`
+		ChannelHandle      string `json:"channel_handle"`
+		ChannelDisplayName string `json:"channel_display_name"`
+		Reason             string `json:"reason"`
+		BlockedBy          string `json:"blocked_by"`
+	} `json:"videos"`
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+}
+
+// TestListBlockedVideos covers the moderation block-list endpoint: it lists
+// currently-blocked videos newest-first with the channel + reason + who blocked
+// them, drops a video on unblock, and is restricted to moderators/admins.
+func TestListBlockedVideos(t *testing.T) {
+	srv := videoServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	v1 := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip one","privacy":"public"}`)
+	v2 := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip two","privacy":"public"}`)
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	// Empty before any block.
+	rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos/blocked", "", admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("blocked list = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var empty blockedListBody
+	_ = json.Unmarshal(rec.Body.Bytes(), &empty)
+	if len(empty.Videos) != 0 {
+		t.Fatalf("blocked before block = %d, want 0", len(empty.Videos))
+	}
+
+	// Block v1 then v2.
+	for _, b := range []struct{ id, reason string }{{v1, "spam"}, {v2, "abuse"}} {
+		if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+b.id+"/block", `{"reason":"`+b.reason+`"}`, admin); rec.Code != http.StatusNoContent {
+			t.Fatalf("block %s = %d; body=%s", b.id, rec.Code, rec.Body.String())
+		}
+	}
+
+	// A regular user cannot read the block-list.
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos/blocked", "", bob); rec.Code != http.StatusForbidden {
+		t.Errorf("non-mod blocked list = %d, want 403", rec.Code)
+	}
+	// Anonymous → 401.
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos/blocked", "", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anon blocked list = %d, want 401", rec.Code)
+	}
+
+	// The admin sees both, newest block first (v2, then v1), with full context.
+	var body blockedListBody
+	_ = json.Unmarshal(sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos/blocked", "", admin).Body.Bytes(), &body)
+	if len(body.Videos) != 2 {
+		t.Fatalf("blocked list = %d, want 2; body=%+v", len(body.Videos), body)
+	}
+	first := body.Videos[0]
+	if first.VideoID != v2 || first.Title != "Clip two" || first.Reason != "abuse" ||
+		first.ChannelHandle != "ada" || first.ChannelDisplayName == "" || first.BlockedBy != "ada" {
+		t.Errorf("first blocked = %+v, want v2/Clip two/abuse/ada/<name>/ada", first)
+	}
+	if body.Videos[1].VideoID != v1 || body.Videos[1].Reason != "spam" {
+		t.Errorf("second blocked = %+v, want v1/spam", body.Videos[1])
+	}
+
+	// Unblocking v1 drops it from the list.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/videos/"+v1+"/block", "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("unblock = %d", rec.Code)
+	}
+	var after blockedListBody
+	_ = json.Unmarshal(sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos/blocked", "", admin).Body.Bytes(), &after)
+	if len(after.Videos) != 1 || after.Videos[0].VideoID != v2 {
+		t.Errorf("blocked after unblock = %+v, want [v2]", after.Videos)
 	}
 }
 

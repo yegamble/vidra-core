@@ -32,11 +32,19 @@ type modReportRow struct {
 // reporter / target join columns from the sibling fakes, mirroring the real
 // query, and enforces the comment foreign key.
 type moderationFakeRepo struct {
-	auth     *authFakeRepo
-	videos   *videoFakeRepo
-	comments *commentFakeRepo
-	reports  []modReportRow
-	blocked  map[uuid.UUID]bool
+	auth       *authFakeRepo
+	videos     *videoFakeRepo
+	comments   *commentFakeRepo
+	reports    []modReportRow
+	blocks     map[uuid.UUID]modBlockMark
+	blockOrder []uuid.UUID // block order (oldest first)
+}
+
+// modBlockMark records a video_blocks row in the fake repo.
+type modBlockMark struct {
+	reason string
+	by     uuid.UUID
+	at     time.Time
 }
 
 func (f *moderationFakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (int64, error) {
@@ -116,23 +124,70 @@ func (f *moderationFakeRepo) BlockVideo(_ context.Context, a sqlcgen.BlockVideoP
 	if _, ok := f.videos.videos[a.VideoID]; !ok {
 		return 0, &pgconn.PgError{Code: "23503"} // FK violation: no such video
 	}
-	if f.blocked == nil {
-		f.blocked = map[uuid.UUID]bool{}
+	if f.blocks == nil {
+		f.blocks = map[uuid.UUID]modBlockMark{}
 	}
-	f.blocked[a.VideoID] = true
+	if _, exists := f.blocks[a.VideoID]; !exists {
+		f.blockOrder = append(f.blockOrder, a.VideoID)
+	}
+	f.blocks[a.VideoID] = modBlockMark{reason: a.Reason, by: uuid.UUID(a.BlockedBy.Bytes), at: time.Now()}
 	return 1, nil
 }
 
 func (f *moderationFakeRepo) UnblockVideo(_ context.Context, videoID uuid.UUID) (int64, error) {
-	if f.blocked[videoID] {
-		delete(f.blocked, videoID)
+	if _, ok := f.blocks[videoID]; ok {
+		delete(f.blocks, videoID)
+		for i, id := range f.blockOrder {
+			if id == videoID {
+				f.blockOrder = append(f.blockOrder[:i], f.blockOrder[i+1:]...)
+				break
+			}
+		}
 		return 1, nil
 	}
 	return 0, nil
 }
 
 func (f *moderationFakeRepo) IsVideoBlocked(_ context.Context, videoID uuid.UUID) (bool, error) {
-	return f.blocked[videoID], nil
+	_, ok := f.blocks[videoID]
+	return ok, nil
+}
+
+func (f *moderationFakeRepo) ListBlockedVideos(_ context.Context, a sqlcgen.ListBlockedVideosParams) ([]sqlcgen.ListBlockedVideosRow, error) {
+	var rows []sqlcgen.ListBlockedVideosRow
+	for i := len(f.blockOrder) - 1; i >= 0; i-- { // newest block first
+		vid := f.blockOrder[i]
+		mark, ok := f.blocks[vid]
+		if !ok {
+			continue
+		}
+		v, ok := f.videos.videos[vid]
+		if !ok {
+			continue
+		}
+		row := sqlcgen.ListBlockedVideosRow{
+			VideoID: vid, Title: v.Title, Privacy: v.Privacy, State: v.State,
+			Reason: mark.reason, BlockedAt: mark.at,
+		}
+		for _, ch := range f.videos.channels.byHandle { // resolve owning channel by id
+			if ch.ID == v.ChannelID {
+				row.ChannelHandle = ch.Handle
+				row.ChannelDisplayName = ch.DisplayName
+				break
+			}
+		}
+		if u, err := f.auth.GetUserByID(context.Background(), mark.by); err == nil { // resolve blocker
+			un := u.Username
+			row.BlockedByUsername = &un
+		}
+		rows = append(rows, row)
+	}
+	off := min(int(a.ResultOffset), len(rows))
+	rows = rows[off:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(rows) {
+		rows = rows[:a.ResultLimit]
+	}
+	return rows, nil
 }
 
 func listReports(srv *Server, query, token string) *httptest.ResponseRecorder {
