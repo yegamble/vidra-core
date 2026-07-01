@@ -215,6 +215,10 @@ curl -sX POST localhost:8080/api/v1/admin/registration-requests/<id>/reject  -H 
 # Security audit log (admin-only; durable, append-only trail of auth/moderation/
 # admin/registration actions; no secrets/PII). Optional action filter.
 curl -s 'localhost:8080/api/v1/admin/audit-log?action=auth.login&limit=20' -H 'authorization: Bearer <admin-token>'  # newest-first entries
+
+# Operational system status (admin-only; build info, environment, uptime, overall
+# health, and postgres/redis component status). Always 200 (shows degraded state).
+curl -s localhost:8080/api/v1/admin/system -H 'authorization: Bearer <admin-token>'
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

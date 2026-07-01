@@ -42,6 +42,7 @@ type Server struct {
 	cfg           *config.Config
 	db            Pinger
 	rdb           Pinger
+	startedAt     time.Time
 	logger        *slog.Logger
 	limiter       *ratelimit.Limiter
 	authLimit     *ratelimit.Limiter
@@ -205,7 +206,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	e.HideBanner = true
 	e.HidePort = true
 
-	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, logger: slog.Default()}
+	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, startedAt: time.Now(), logger: slog.Default()}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -473,6 +474,11 @@ func (s *Server) routes() {
 	// Durable audit trail (admin-only), when the audit-log service is wired.
 	if s.auditLog != nil {
 		api.GET("/admin/audit-log", s.handleListAuditLog, s.requireAuth, s.requireRole("admin"))
+	}
+
+	// Admin operational status. Depends only on core wiring; auth guards it.
+	if s.authsvc != nil {
+		api.GET("/admin/system", s.handleSystemStatus, s.requireAuth, s.requireRole("admin"))
 	}
 }
 

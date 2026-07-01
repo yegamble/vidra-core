@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -32,12 +33,12 @@ func (s *Server) handleLive(c echo.Context) error {
 	return c.JSON(http.StatusOK, livenessResponse{Status: "ok"})
 }
 
-// handleReady reports whether all critical dependencies are reachable. Returns
-// 503 if any configured dependency is unhealthy.
-func (s *Server) handleReady(c echo.Context) error {
-	ctx := c.Request().Context()
+// componentHealth pings the critical dependencies (postgres, redis) and reports
+// each one's status plus an overall "all healthy" flag. Shared by readiness and
+// the admin system-status endpoint. A nil Pinger reports "not_configured".
+func (s *Server) componentHealth(ctx context.Context) (map[string]componentStatus, bool) {
 	components := map[string]componentStatus{}
-	ready := true
+	healthy := true
 
 	check := func(name string, p Pinger) {
 		if p == nil {
@@ -45,7 +46,7 @@ func (s *Server) handleReady(c echo.Context) error {
 			return
 		}
 		if err := p.Ping(ctx); err != nil {
-			ready = false
+			healthy = false
 			components[name] = componentStatus{Status: "down", Error: err.Error()}
 			return
 		}
@@ -54,7 +55,13 @@ func (s *Server) handleReady(c echo.Context) error {
 
 	check("postgres", s.db)
 	check("redis", s.rdb)
+	return components, healthy
+}
 
+// handleReady reports whether all critical dependencies are reachable. Returns
+// 503 if any configured dependency is unhealthy.
+func (s *Server) handleReady(c echo.Context) error {
+	components, ready := s.componentHealth(c.Request().Context())
 	resp := readinessResponse{Components: components}
 	if ready {
 		resp.Status = "ok"

@@ -3054,6 +3054,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/system:
+    get:
+      operationId: systemStatus
+      summary: Operational system status (admin)
+      description: >-
+        Returns an operational snapshot for the admin dashboard: build info, the
+        runtime environment, process uptime, an overall health flag, and
+        per-dependency component status (postgres, redis). Restricted to admins.
+        Always 200 (even when degraded) so the admin can see the degraded state,
+        unlike /readyz which 503s. Reports only operational metadata.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The current operational status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/registration-requests:
     get:
       operationId: listRegistrationRequests
@@ -4405,6 +4437,47 @@ components:
         offset:
           type: integer
           example: 0
+    SystemStatus:
+      type: object
+      description: Operational snapshot for the admin dashboard. No secrets/PII.
+      required: [status, software, environment, uptime_seconds, components]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        software:
+          type: object
+          required: [name, version, commit, build_date, go_version]
+          properties:
+            name:
+              type: string
+              example: vidra
+            version:
+              type: string
+              example: 0.1.0
+            commit:
+              type: string
+            build_date:
+              type: string
+            go_version:
+              type: string
+        environment:
+          type: string
+          enum: [development, test, production]
+        uptime_seconds:
+          type: integer
+          format: int64
+        components:
+          type: object
+          additionalProperties:
+            type: object
+            required: [status]
+            properties:
+              status:
+                type: string
+                description: ok | down | not_configured
+              error:
+                type: string
     UpdateUserRequest:
       type: object
       description: Partial update; provide at least one field.

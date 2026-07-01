@@ -604,7 +604,7 @@
 - [ ] Add health/readiness for dependencies. (done for postgres/redis)
 - [ ] Add worker status reporting.
 - [ ] Add job retry/dead-letter visibility.
-- [ ] Add admin-facing system status endpoint.
+- [x] Add admin-facing system status endpoint. (`GET /api/v1/admin/system` (requireRole admin) → an operational snapshot: `software` (name/version/commit/build_date/go_version from `internal/version`), `environment`, `uptime_seconds` (from a `Server.startedAt` stamped at `New()`), an overall `status` (ok|degraded), and per-dependency `components` (postgres/redis). Reuses a new shared `Server.componentHealth(ctx)` helper (extracted from `handleReady`, so readiness + status stay in lock-step); a nil Pinger reports `not_configured`. Always **200** (even when degraded) so the admin dashboard can render the degraded state, unlike `/readyz` which 503s. Reports only operational metadata — no secrets/PII. `internal/httpapi/admin_system.go`; registered gated on `s.authsvc != nil` (auth guards it) + in `fullRouteOptions` so the drift guard enforces it. openapi documents the route + `SystemStatus` schema (drift guard green). Tested: `TestSystemStatus` (admin 200 with vidra/go_version/env=test/status=ok/components present → non-admin 403 → anon 401). **This unblocks the `vidra-user` P10 system-status page.**)
 - [ ] Add backup/restore docs for PostgreSQL, media storage, and Redis assumptions.
 - [ ] Add production deployment notes.
 
