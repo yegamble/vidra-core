@@ -541,7 +541,7 @@
 - [ ] Add rate-limit tests.
 - [ ] Add JWT key rotation plan or documented defer.
 - [ ] Add OAuth redirect validation.
-- [ ] Add secure headers.
+- [x] Add secure headers. (`internal/httpapi/secure_headers.go` — a middleware mounted right after `Recover` (so even recovered 5xx carry them) setting on every response: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Cross-Origin-Opener-Policy: same-origin`, `X-Permitted-Cross-Domain-Policies: none`, plus `Strict-Transport-Security` (2y, includeSubDomains) **in production only** (`cfg.Environment == "production"`; omitted on plain-HTTP localhost). No CSP is set — this service serves JSON/media, not HTML, so a page CSP belongs to `vidra-user`; CORS stays with the dedicated CORS middleware. Tested: `TestSecureHeadersPresent` (all base headers, HSTS absent outside prod) + `TestSecureHeadersHSTSInProduction` (HSTS present + base headers still apply). No route/contract change.)
 - [ ] Add audit logging for sensitive actions (typed audit events, no secrets; see P17.2 and `.ralph/specs/observability.md`).
 - [x] Enforce no-secrets-in-logs via the secrets-in-logs guard test (P17.2). (`TestNoSensitiveLogKeys` in `internal/observability/logging_guard_test.go`, runs under `make ci`.)
 - [ ] Add fuzz tests for URL parsing.

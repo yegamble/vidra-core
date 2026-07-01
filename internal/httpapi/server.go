@@ -200,6 +200,9 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	e.HTTPErrorHandler = s.httpErrorHandler
 
 	e.Use(middleware.Recover())
+	// Security response headers on every response (incl. recovered 5xx). HSTS is
+	// added only in production (meaningless/unwanted on plain-HTTP localhost).
+	e.Use(secureHeaders(cfg.Environment == "production"))
 	e.Use(middleware.RequestID())
 	// correlationID runs after RequestID (to mint from it) and before the request
 	// logger (so `correlation_id` is present on the emitted line).
