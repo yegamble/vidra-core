@@ -121,11 +121,14 @@ return to a client:
 ### Logs ↔ traces
 - When `OTEL_ENABLED`, every slog line emitted within a request must include
   `trace_id` and `span_id` from the active span context.
-- **Correlation header**: accept an inbound `X-Correlation-ID` request header from
-  `vidra-user`; if absent, mint one from the request ID. Echo it back on the
-  response and include it as `correlation_id` in request logs. This is the
-  OTel-off correlation contract that pairs with `vidra-user`'s spec — use this
-  exact header name on both sides.
+- **Correlation header (BUILT)**: `internal/httpapi/correlation.go` accepts an
+  inbound `X-Correlation-ID` request header from `vidra-user`, mints one from the
+  server request ID when absent, sanitises it (untrusted client input — only
+  URL-safe token chars, bounded to 128, so no CR/LF or log injection), echoes it
+  on the response, and threads it through the request context so the request
+  logger emits it as `correlation_id`. This is the OTel-off correlation contract
+  that pairs with `vidra-user`'s spec — same header name on both sides. Works with
+  OTel off; the `trace_id`/`span_id` correlation above layers on top when OTel lands.
 
 ---
 

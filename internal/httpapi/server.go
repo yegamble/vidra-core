@@ -201,6 +201,9 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 
 	e.Use(middleware.Recover())
 	e.Use(middleware.RequestID())
+	// correlationID runs after RequestID (to mint from it) and before the request
+	// logger (so `correlation_id` is present on the emitted line).
+	e.Use(correlationID())
 	e.Use(s.requestLogger())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: cfg.CORSAllowedOrigins,
@@ -247,6 +250,9 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 				"status", v.Status,
 				"latency_ms", v.Latency.Milliseconds(),
 				"request_id", v.RequestID,
+			}
+			if cid := correlationIDFromContext(c.Request().Context()); cid != "" {
+				attrs = append(attrs, "correlation_id", cid)
 			}
 			if v.Error != nil {
 				attrs = append(attrs, "error", v.Error)

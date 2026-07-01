@@ -204,8 +204,10 @@ curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer 
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`
 array). Handlers decode+validate input with `bindAndValidate` (400 on malformed
-body, 422 with field errors on failed `Validate()`). `make build` injects version
-metadata into `/version` via `-ldflags`. The `/api` surface is rate limited
+body, 422 with field errors on failed `Validate()`). Every response echoes an
+`X-Correlation-ID` header (the inbound one from `vidra-user`, sanitised, or a
+minted one) and the per-request log line carries it as `correlation_id`. `make
+build` injects version metadata into `/version` via `-ldflags`. The `/api` surface is rate limited
 (Redis fixed-window, per IP, `RATE_LIMIT_*` env, default 120/min) with
 `X-RateLimit-*` headers and a `429 rate_limited` envelope; system probes are
 exempt and the limiter fails open if Redis is down. The Redis limiter has a
