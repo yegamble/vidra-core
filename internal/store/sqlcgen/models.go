@@ -12,6 +12,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Caption struct {
+	ID         uuid.UUID `json:"id"`
+	VideoID    uuid.UUID `json:"video_id"`
+	Language   string    `json:"language"`
+	Label      string    `json:"label"`
+	StorageKey string    `json:"storage_key"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 type Channel struct {
 	ID          uuid.UUID `json:"id"`
 	OwnerID     uuid.UUID `json:"owner_id"`

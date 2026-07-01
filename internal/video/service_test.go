@@ -24,10 +24,53 @@ type fakeRepo struct {
 	files    map[uuid.UUID][]sqlcgen.VideoFile
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
 	views    map[uuid.UUID]int64
-	followed map[uuid.UUID]bool        // channel IDs the test subject follows
-	saved    map[uuid.UUID]bool        // video IDs the test subject has saved
-	history  map[uuid.UUID]historyMark // video ID -> resume position + last-watched
+	followed map[uuid.UUID]bool         // channel IDs the test subject follows
+	saved    map[uuid.UUID]bool         // video IDs the test subject has saved
+	history  map[uuid.UUID]historyMark  // video ID -> resume position + last-watched
+	captions map[string]sqlcgen.Caption // "videoID|lang" -> caption
 	owner    uuid.UUID
+}
+
+func captionKeyFor(videoID uuid.UUID, lang string) string { return videoID.String() + "|" + lang }
+
+func (f *fakeRepo) UpsertCaption(_ context.Context, a sqlcgen.UpsertCaptionParams) (sqlcgen.Caption, error) {
+	if f.captions == nil {
+		f.captions = map[string]sqlcgen.Caption{}
+	}
+	c := sqlcgen.Caption{
+		ID: uuid.New(), VideoID: a.VideoID, Language: a.Language, Label: a.Label,
+		StorageKey: a.StorageKey, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	f.captions[captionKeyFor(a.VideoID, a.Language)] = c
+	return c, nil
+}
+
+func (f *fakeRepo) ListCaptionsByVideo(_ context.Context, videoID uuid.UUID) ([]sqlcgen.Caption, error) {
+	var out []sqlcgen.Caption
+	for _, c := range f.captions {
+		if c.VideoID == videoID {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Language < out[j].Language })
+	return out, nil
+}
+
+func (f *fakeRepo) GetCaptionByLang(_ context.Context, a sqlcgen.GetCaptionByLangParams) (sqlcgen.Caption, error) {
+	c, ok := f.captions[captionKeyFor(a.VideoID, a.Language)]
+	if !ok {
+		return sqlcgen.Caption{}, errors.New("not found")
+	}
+	return c, nil
+}
+
+func (f *fakeRepo) DeleteCaption(_ context.Context, a sqlcgen.DeleteCaptionParams) (int64, error) {
+	k := captionKeyFor(a.VideoID, a.Language)
+	if _, ok := f.captions[k]; !ok {
+		return 0, nil
+	}
+	delete(f.captions, k)
+	return 1, nil
 }
 
 // historyMark is the in-memory watch_history row for the fake repo.

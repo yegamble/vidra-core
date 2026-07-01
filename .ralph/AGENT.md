@@ -101,6 +101,13 @@ curl -sX POST localhost:8080/api/v1/videos/<id>/file -H 'authorization: Bearer <
 curl -s localhost:8080/api/v1/videos/<id>/original -o out.mp4                         # stream original (Range-capable); private => owner only
 curl -s localhost:8080/api/v1/videos/<id>/thumbnail -o poster.jpg                     # poster image (if ffmpeg generated one)
 
+# Captions (WebVTT; owner uploads/removes, anyone lists/downloads on a public video):
+curl -sX POST localhost:8080/api/v1/videos/<id>/captions -H 'authorization: Bearer <token>' \
+  -F 'language=en' -F 'label=English' -F 'file=@subs.vtt'                             # upload a caption (owner-only; bad vtt/lang -> 422)
+curl -s localhost:8080/api/v1/videos/<id>/captions                                    # list caption tracks (public)
+curl -s localhost:8080/api/v1/videos/<id>/captions/en -o subs.vtt                     # download a track (text/vtt)
+curl -sX DELETE localhost:8080/api/v1/videos/<id>/captions/en -H 'authorization: Bearer <token>'  # remove a track (owner-only, idempotent)
+
 # Comments (on public, published videos):
 curl -s localhost:8080/api/v1/videos/<id>/comments                                   # list (public, newest-first, paginated)
 curl -sX POST localhost:8080/api/v1/videos/<id>/comments -H 'authorization: Bearer <token>' \

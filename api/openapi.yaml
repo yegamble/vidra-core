@@ -1242,6 +1242,168 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/captions:
+    get:
+      operationId: listCaptions
+      summary: List a video's caption tracks
+      description: >-
+        Returns the WebVTT caption tracks for a public, published video (metadata
+        only; fetch the file from the per-language endpoint). No auth required. A
+        non-public/unpublished or unknown video is 404.
+      tags: [captions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video's caption tracks (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptionListResponse"
+        "404":
+          description: No such public, published video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: uploadCaption
+      summary: Upload a caption track
+      description: >-
+        Uploads (or replaces) a WebVTT caption track for a video owned by the
+        caller. Multipart form with `file` (the .vtt), `language` (a BCP-47-ish
+        tag, e.g. en or pt-BR), and optional `label`. Non-owner/unknown video is
+        404; a bad language or non-WebVTT file is 422.
+      tags: [captions]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, language]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                language:
+                  type: string
+                label:
+                  type: string
+      responses:
+        "201":
+          description: The caption track was stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Caption"
+        "400":
+          description: The multipart file field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid language tag or non-WebVTT file.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/captions/{lang}:
+    get:
+      operationId: downloadCaption
+      summary: Download a caption track (WebVTT)
+      description: >-
+        Serves the WebVTT file for a public, published video's caption in the
+        given language. No auth required. An unknown video or language is 404.
+      tags: [captions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: lang
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The WebVTT caption file.
+          content:
+            text/vtt:
+              schema:
+                type: string
+        "404":
+          description: No such public video or caption.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteCaption
+      summary: Remove a caption track
+      description: >-
+        Removes a caption track for a language from a video owned by the caller.
+        Non-owner/unknown video is 404. Idempotent.
+      tags: [captions]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: lang
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The caption track is removed (or was already absent).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/comments:
     get:
       operationId: listComments
@@ -3211,6 +3373,27 @@ components:
         privacy:
           type: string
           enum: [public, unlisted, private]
+    Caption:
+      type: object
+      description: A WebVTT caption track's metadata (the file is fetched separately).
+      required: [language, label, created_at]
+      properties:
+        language:
+          type: string
+          description: BCP-47-ish language tag (e.g. en, pt-BR).
+        label:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CaptionListResponse:
+      type: object
+      required: [captions]
+      properties:
+        captions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Caption"
     Comment:
       type: object
       required: [id, video_id, body, author_id, author_username, author_display_name, created_at, updated_at]

@@ -34,6 +34,10 @@ var (
 	// video container. This is a cheap first gate; authoritative validation
 	// (FFprobe) comes with the transcode pipeline.
 	ErrUnsupportedMedia = errors.New("video: unsupported media type")
+	// ErrCaptionNotFound means the video has no caption for the requested language.
+	ErrCaptionNotFound = errors.New("video: caption not found")
+	// ErrInvalidCaption means the caption language or file is invalid (not WebVTT).
+	ErrInvalidCaption = errors.New("video: invalid caption")
 )
 
 // acceptedVideoExts is the allow-list of original-upload file extensions. It is
@@ -65,6 +69,10 @@ type Repository interface {
 	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
 	GetVideoFileByKind(ctx context.Context, arg sqlcgen.GetVideoFileByKindParams) (sqlcgen.VideoFile, error)
 	DeleteVideoFilesByVideoAndKind(ctx context.Context, arg sqlcgen.DeleteVideoFilesByVideoAndKindParams) error
+	UpsertCaption(ctx context.Context, arg sqlcgen.UpsertCaptionParams) (sqlcgen.Caption, error)
+	ListCaptionsByVideo(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.Caption, error)
+	GetCaptionByLang(ctx context.Context, arg sqlcgen.GetCaptionByLangParams) (sqlcgen.Caption, error)
+	DeleteCaption(ctx context.Context, arg sqlcgen.DeleteCaptionParams) (int64, error)
 	SetVideoState(ctx context.Context, arg sqlcgen.SetVideoStateParams) (sqlcgen.Video, error)
 	UpsertVideoMetadata(ctx context.Context, arg sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error)
 	GetVideoMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error)

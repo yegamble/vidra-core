@@ -332,6 +332,13 @@ func (s *Server) routes() {
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
 		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, middleware.BodyLimit(s.cfg.UploadMaxSize))
 
+		// Captions: the owner uploads/removes WebVTT tracks (any state); anyone
+		// lists/downloads them on a public, published video.
+		api.GET("/videos/:id/captions", s.handleListCaptions, s.optionalAuth)
+		api.GET("/videos/:id/captions/:lang", s.handleDownloadCaption, s.optionalAuth)
+		api.POST("/videos/:id/captions", s.handleUploadCaption, s.requireAuth)
+		api.DELETE("/videos/:id/captions/:lang", s.handleDeleteCaption, s.requireAuth)
+
 		// Comments are scoped to a (public, published) video.
 		if s.commentsvc != nil {
 			api.GET("/videos/:id/comments", s.handleListComments, s.optionalAuth)

@@ -176,7 +176,7 @@
 - [ ] Add video files/renditions table.
 - [ ] Add streaming playlists/HLS assets table.
 - [ ] Add thumbnails/previews/storyboards table.
-- [ ] Add captions/subtitles table.
+- [x] Add captions/subtitles table. (migration 0024 `captions` (id, `video_id` FK `ON DELETE CASCADE`, `language`, `label`, `storage_key`, timestamps, `UNIQUE(video_id, language)`); one WebVTT track per language per video, the .vtt bytes in the storage backend at `captions/<video_id>/<language>.vtt`.)
 - [ ] Add video imports table.
 - [ ] Add live streams table.
 - [x] Add playlists table. (migration 0019 `playlists` (id, owner FK `ON DELETE CASCADE`, title, description, `visibility` CHECK public/unlisted/private default private, created/updated; `(owner_id, created_at DESC)` index).)
@@ -507,13 +507,13 @@
 
 # P13 — Captions and Whisper
 
-- [ ] Implement caption upload.
-- [ ] Implement caption list/download/delete.
-- [ ] Implement VTT validation.
+- [x] Implement caption upload. (`POST /api/v1/videos/:id/captions` (requireAuth, owner-only, multipart `file` (.vtt) + `language` + optional `label`) validates the language tag + WebVTT signature, stores the .vtt via `internal/storage` at `captions/<id>/<lang>.vtt`, and upserts a `captions` row (re-uploading a language replaces it). Non-owner/unknown video → 404; bad language or non-WebVTT → 422; missing file → 400. `internal/video.AddCaption`; `internal/httpapi/captions.go`.)
+- [x] Implement caption list/download/delete. (`GET /api/v1/videos/:id/captions` (public, published+public video via `publicVideoID`) → track metadata (language, label); `GET /api/v1/videos/:id/captions/:lang` (public) → serves the WebVTT with `Content-Type: text/vtt` (unknown lang → 404); `DELETE /api/v1/videos/:id/captions/:lang` (requireAuth, owner-only, idempotent → 204, also deletes the blob best-effort). `video.ListCaptions`/`OpenCaption`/`DeleteCaption`.)
+- [x] Implement VTT validation. (`video.isWebVTT` requires the `WEBVTT` signature (optionally after a UTF-8 BOM) followed by EOF/newline/space/tab, per the WebVTT spec; upload is bounded to 4 MiB; the language tag must match a BCP-47-ish pattern (`^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$`). Bad input → `ErrInvalidCaption` → 422.)
 - [ ] Implement optional Whisper job adapter.
 - [ ] Implement auto-caption request/status.
-- [ ] Implement language metadata.
-- [ ] Add tests for manual captions.
+- [~] Implement language metadata. (Each caption carries its own `language` tag (validated) + `label`; a global tags/categories/languages config endpoint is still TODO — see P7.)
+- [x] Add tests for manual captions. (`internal/video` unit: `TestIsWebVTT` (signature/BOM/glued-suffix/lowercase edge cases) + `TestLangPattern` (valid/invalid tags). `internal/httpapi` handler: `TestCaptionsFlow` (upload→list→download-with-`text/vtt`→re-upload-replaces→second-language→delete→gone→download-404) + `TestCaptionsValidationAndAuth` (non-WebVTT 422, bad-lang 422, missing-file 400, non-owner 404, anon upload/delete 401, list on a private draft 404). Real storage exercised via the handler test's `storage.Local`.)
 - [ ] Add Whisper mocked integration tests.
 
 ---

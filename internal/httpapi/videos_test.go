@@ -44,8 +44,49 @@ type videoFakeRepo struct {
 	files    map[uuid.UUID][]sqlcgen.VideoFile
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
 	views    map[uuid.UUID]int64
-	saved    map[string]time.Time   // "userID|videoID" -> saved-at
-	history  map[string]historyMark // "userID|videoID" -> resume position + last-watched
+	saved    map[string]time.Time       // "userID|videoID" -> saved-at
+	history  map[string]historyMark     // "userID|videoID" -> resume position + last-watched
+	captions map[string]sqlcgen.Caption // "videoID|lang" -> caption
+}
+
+func (f *videoFakeRepo) UpsertCaption(_ context.Context, a sqlcgen.UpsertCaptionParams) (sqlcgen.Caption, error) {
+	if f.captions == nil {
+		f.captions = map[string]sqlcgen.Caption{}
+	}
+	c := sqlcgen.Caption{
+		ID: uuid.New(), VideoID: a.VideoID, Language: a.Language, Label: a.Label,
+		StorageKey: a.StorageKey, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	f.captions[a.VideoID.String()+"|"+a.Language] = c
+	return c, nil
+}
+
+func (f *videoFakeRepo) ListCaptionsByVideo(_ context.Context, videoID uuid.UUID) ([]sqlcgen.Caption, error) {
+	var out []sqlcgen.Caption
+	for _, c := range f.captions {
+		if c.VideoID == videoID {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Language < out[j].Language })
+	return out, nil
+}
+
+func (f *videoFakeRepo) GetCaptionByLang(_ context.Context, a sqlcgen.GetCaptionByLangParams) (sqlcgen.Caption, error) {
+	c, ok := f.captions[a.VideoID.String()+"|"+a.Language]
+	if !ok {
+		return sqlcgen.Caption{}, errors.New("not found")
+	}
+	return c, nil
+}
+
+func (f *videoFakeRepo) DeleteCaption(_ context.Context, a sqlcgen.DeleteCaptionParams) (int64, error) {
+	k := a.VideoID.String() + "|" + a.Language
+	if _, ok := f.captions[k]; !ok {
+		return 0, nil
+	}
+	delete(f.captions, k)
+	return 1, nil
 }
 
 // historyMark is the in-memory watch_history row for the fake repo.
