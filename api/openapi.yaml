@@ -893,6 +893,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VideoFeedResponse"
+  /api/v1/videos/config:
+    get:
+      operationId: getVideoConfig
+      summary: Video-metadata taxonomy (categories, licenses, languages, privacies)
+      description: >-
+        The static, public taxonomy the frontend reads to populate its
+        video-metadata dropdowns: subject categories and content licenses (ids
+        match PeerTube's for import compatibility), a curated set of content
+        languages (ISO 639-1 codes), and the privacy values. No auth; cacheable.
+      tags: [videos]
+      security:
+        - {}
+      responses:
+        "200":
+          description: The selectable video-metadata taxonomy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoConfigResponse"
   /api/v1/videos/search:
     get:
       operationId: searchVideos
@@ -3481,6 +3500,41 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Video"
+    VideoConfigOption:
+      type: object
+      required: [id, label]
+      properties:
+        id:
+          type: string
+          description: >-
+            Stable identifier persisted on a video (or used to validate input) —
+            not display text. Numeric for categories/licenses, ISO 639-1 for
+            languages, the privacy value for privacies.
+          example: "1"
+        label:
+          type: string
+          description: Human-readable display label.
+          example: Music
+    VideoConfigResponse:
+      type: object
+      required: [categories, licenses, languages, privacies]
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoConfigOption"
+        licenses:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoConfigOption"
+        languages:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoConfigOption"
+        privacies:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoConfigOption"
     VideoFeedResponse:
       type: object
       required: [videos, sort, limit, offset]

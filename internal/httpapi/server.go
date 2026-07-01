@@ -344,6 +344,7 @@ func (s *Server) routes() {
 		api.DELETE("/me/history/:id", s.handleDeleteHistoryEntry, s.requireAuth)
 		api.GET("/videos/:id/watch-progress", s.handleGetWatchProgress, s.requireAuth)
 		api.PUT("/videos/:id/watch-progress", s.handleRecordWatchProgress, s.requireAuth)
+		api.GET("/videos/config", s.handleVideoConfig)
 		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
