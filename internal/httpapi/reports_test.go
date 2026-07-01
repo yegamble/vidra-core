@@ -16,16 +16,17 @@ import (
 )
 
 type modReportRow struct {
-	id         uuid.UUID
-	reporterID uuid.UUID
-	targetType string
-	videoID    pgtype.UUID
-	commentID  pgtype.UUID
-	reason     string
-	status     string
-	note       string
-	createdAt  time.Time
-	resolvedAt pgtype.Timestamptz
+	id             uuid.UUID
+	reporterID     uuid.UUID
+	targetType     string
+	videoID        pgtype.UUID
+	commentID      pgtype.UUID
+	reportedUserID pgtype.UUID
+	reason         string
+	status         string
+	note           string
+	createdAt      time.Time
+	resolvedAt     pgtype.Timestamptz
 }
 
 // moderationFakeRepo is an in-memory moderation.Repository that resolves the
@@ -76,6 +77,22 @@ func (f *moderationFakeRepo) CreateCommentReport(_ context.Context, a sqlcgen.Cr
 	return 1, nil
 }
 
+func (f *moderationFakeRepo) CreateAccountReport(_ context.Context, a sqlcgen.CreateAccountReportParams) (int64, error) {
+	if _, err := f.auth.GetUserByID(context.Background(), uuid.UUID(a.ReportedUserID.Bytes)); err != nil {
+		return 0, &pgconn.PgError{Code: "23503"} // foreign-key violation: no such user
+	}
+	for _, r := range f.reports {
+		if r.reporterID == a.ReporterID && r.reportedUserID == a.ReportedUserID {
+			return 0, nil
+		}
+	}
+	f.reports = append(f.reports, modReportRow{
+		id: uuid.New(), reporterID: a.ReporterID, targetType: "account",
+		reportedUserID: a.ReportedUserID, reason: a.Reason, status: "open", createdAt: time.Now(),
+	})
+	return 1, nil
+}
+
 func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error) {
 	var rows []sqlcgen.ListReportsRow
 	for i := len(f.reports) - 1; i >= 0; i-- {
@@ -85,11 +102,17 @@ func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReport
 		}
 		row := sqlcgen.ListReportsRow{
 			ID: r.id, TargetType: r.targetType, VideoID: r.videoID, CommentID: r.commentID,
-			Reason: r.reason, Status: r.status, ModeratorNote: r.note,
-			ResolvedAt: r.resolvedAt, CreatedAt: r.createdAt,
+			ReportedUserID: r.reportedUserID, Reason: r.reason, Status: r.status,
+			ModeratorNote: r.note, ResolvedAt: r.resolvedAt, CreatedAt: r.createdAt,
 		}
 		if u, err := f.auth.GetUserByID(context.Background(), r.reporterID); err == nil {
 			row.ReporterUsername = u.Username
+		}
+		if r.reportedUserID.Valid {
+			if u, err := f.auth.GetUserByID(context.Background(), uuid.UUID(r.reportedUserID.Bytes)); err == nil {
+				un := u.Username
+				row.ReportedUsername = &un
+			}
 		}
 		if r.videoID.Valid {
 			if v, ok := f.videos.videos[uuid.UUID(r.videoID.Bytes)]; ok {
@@ -268,6 +291,48 @@ func TestReportCommentAndUnknown(t *testing.T) {
 	// Reporting a non-existent comment → 404.
 	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/comments/"+uuid.New().String()+"/report", `{"reason":"x"}`, bob); rec.Code != http.StatusNotFound {
 		t.Errorf("report unknown comment = %d, want 404", rec.Code)
+	}
+}
+
+func TestReportAccountAndModerate(t *testing.T) {
+	srv := videoServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bob, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	// bob reports the admin's account.
+	adminID := ""
+	{
+		var me userView
+		_ = json.Unmarshal(getWithAuth(srv, "/api/v1/auth/me", admin).Body.Bytes(), &me)
+		adminID = me.ID
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/users/"+adminID+"/report", `{"reason":"impersonation"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("report account = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// The admin sees the account report with the resolved reported username.
+	var body reportListResponse
+	_ = json.Unmarshal(listReports(srv, "?status=open", admin).Body.Bytes(), &body)
+	if len(body.Reports) != 1 {
+		t.Fatalf("reports = %d, want 1; body=%+v", len(body.Reports), body)
+	}
+	r := body.Reports[0]
+	if r.TargetType != "account" || r.Reason != "impersonation" || r.Reporter.Username != "bob" ||
+		r.ReportedUserID != adminID || r.ReportedUsername != "ada" {
+		t.Errorf("report = %+v, want account/impersonation/bob/ada(%s)", r, adminID)
+	}
+
+	// Reporting yourself → 422.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/users/"+bobID+"/report", `{"reason":"me"}`, bob); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("self-report = %d, want 422", rec.Code)
+	}
+	// Reporting an unknown account → 404.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/users/"+uuid.New().String()+"/report", `{"reason":"x"}`, bob); rec.Code != http.StatusNotFound {
+		t.Errorf("report unknown account = %d, want 404", rec.Code)
+	}
+	// Auth required.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/users/"+adminID+"/report", `{"reason":"x"}`, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anon report account = %d, want 401", rec.Code)
 	}
 }
 

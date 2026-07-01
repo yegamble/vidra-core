@@ -13,6 +13,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createAccountReport = `-- name: CreateAccountReport :execrows
+INSERT INTO reports (reporter_id, target_type, reported_user_id, reason)
+VALUES ($1, 'account', $2, $3)
+ON CONFLICT (reporter_id, reported_user_id) WHERE reported_user_id IS NOT NULL DO NOTHING
+`
+
+type CreateAccountReportParams struct {
+	ReporterID     uuid.UUID   `json:"reporter_id"`
+	ReportedUserID pgtype.UUID `json:"reported_user_id"`
+	Reason         string      `json:"reason"`
+}
+
+// Report an account (idempotent per reporter+account). A non-existent target
+// user raises a foreign-key violation, which the service maps to "invalid
+// target". Self-reports are rejected in the service before insert.
+func (q *Queries) CreateAccountReport(ctx context.Context, arg CreateAccountReportParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createAccountReport, arg.ReporterID, arg.ReportedUserID, arg.Reason)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createCommentReport = `-- name: CreateCommentReport :execrows
 INSERT INTO reports (reporter_id, target_type, comment_id, reason)
 VALUES ($1, 'comment', $2, $3)
@@ -58,15 +81,17 @@ func (q *Queries) CreateVideoReport(ctx context.Context, arg CreateVideoReportPa
 }
 
 const listReports = `-- name: ListReports :many
-SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reason, r.status,
+SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.reason, r.status,
        r.moderator_note, r.resolved_at, r.created_at,
        u.username AS reporter_username,
        v.title AS video_title,
-       cm.body AS comment_body
+       cm.body AS comment_body,
+       ru.username AS reported_username
 FROM reports r
 JOIN users u ON u.id = r.reporter_id
 LEFT JOIN videos v ON v.id = r.video_id
 LEFT JOIN comments cm ON cm.id = r.comment_id
+LEFT JOIN users ru ON ru.id = r.reported_user_id
 WHERE (NOT $1::bool OR r.status = 'open')
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT $3 OFFSET $2
@@ -83,6 +108,7 @@ type ListReportsRow struct {
 	TargetType       string             `json:"target_type"`
 	VideoID          pgtype.UUID        `json:"video_id"`
 	CommentID        pgtype.UUID        `json:"comment_id"`
+	ReportedUserID   pgtype.UUID        `json:"reported_user_id"`
 	Reason           string             `json:"reason"`
 	Status           string             `json:"status"`
 	ModeratorNote    string             `json:"moderator_note"`
@@ -91,11 +117,12 @@ type ListReportsRow struct {
 	ReporterUsername string             `json:"reporter_username"`
 	VideoTitle       *string            `json:"video_title"`
 	CommentBody      *string            `json:"comment_body"`
+	ReportedUsername *string            `json:"reported_username"`
 }
 
 // The moderation queue, newest first, with the reporter's username and the
-// target context (video title / comment body). When open_only is true, only
-// unresolved (status='open') reports are returned.
+// target context (video title / comment body / reported account username). When
+// open_only is true, only unresolved (status='open') reports are returned.
 func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]ListReportsRow, error) {
 	rows, err := q.db.Query(ctx, listReports, arg.OpenOnly, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
@@ -110,6 +137,7 @@ func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Lis
 			&i.TargetType,
 			&i.VideoID,
 			&i.CommentID,
+			&i.ReportedUserID,
 			&i.Reason,
 			&i.Status,
 			&i.ModeratorNote,
@@ -118,6 +146,7 @@ func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Lis
 			&i.ReporterUsername,
 			&i.VideoTitle,
 			&i.CommentBody,
+			&i.ReportedUsername,
 		); err != nil {
 			return nil, err
 		}

@@ -20,6 +20,7 @@ import (
 const (
 	TargetVideo   = "video"
 	TargetComment = "comment"
+	TargetAccount = "account"
 
 	StatusOpen     = "open"
 	StatusAccepted = "accepted"
@@ -34,6 +35,8 @@ var (
 	ErrInvalidTarget = errors.New("moderation: invalid report target")
 	// ErrVideoNotFound means a block targets a video that does not exist.
 	ErrVideoNotFound = errors.New("moderation: video not found")
+	// ErrCannotReportSelf means a user tried to report their own account.
+	ErrCannotReportSelf = errors.New("moderation: cannot report yourself")
 )
 
 // Repository is the data access the moderation service needs. *sqlcgen.Queries
@@ -41,6 +44,7 @@ var (
 type Repository interface {
 	CreateVideoReport(ctx context.Context, arg sqlcgen.CreateVideoReportParams) (int64, error)
 	CreateCommentReport(ctx context.Context, arg sqlcgen.CreateCommentReportParams) (int64, error)
+	CreateAccountReport(ctx context.Context, arg sqlcgen.CreateAccountReportParams) (int64, error)
 	ListReports(ctx context.Context, arg sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error)
 	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (int64, error)
 	BlockVideo(ctx context.Context, arg sqlcgen.BlockVideoParams) (int64, error)
@@ -74,6 +78,10 @@ type Item struct {
 	VideoTitle       string
 	CommentID        string
 	CommentBody      string
+	// Account-target context (target_type='account'). ReportedUsername is ""
+	// when that account was deleted after the report was filed.
+	ReportedUserID   string
+	ReportedUsername string
 }
 
 // ReportVideo records reporterID's report of a video (idempotent per
@@ -94,6 +102,24 @@ func (s *Service) ReportComment(ctx context.Context, reporterID, commentID uuid.
 		ReporterID: reporterID,
 		CommentID:  pgUUID(commentID),
 		Reason:     reason,
+	})
+	if isForeignKeyViolation(err) {
+		return ErrInvalidTarget
+	}
+	return err
+}
+
+// ReportAccount records reporterID's report of another account (idempotent per
+// reporter+account). Reporting your own account → ErrCannotReportSelf; an unknown
+// target user → ErrInvalidTarget.
+func (s *Service) ReportAccount(ctx context.Context, reporterID, targetUserID uuid.UUID, reason string) error {
+	if reporterID == targetUserID {
+		return ErrCannotReportSelf
+	}
+	_, err := s.repo.CreateAccountReport(ctx, sqlcgen.CreateAccountReportParams{
+		ReporterID:     reporterID,
+		ReportedUserID: pgUUID(targetUserID),
+		Reason:         reason,
 	})
 	if isForeignKeyViolation(err) {
 		return ErrInvalidTarget
@@ -127,6 +153,8 @@ func (s *Service) List(ctx context.Context, openOnly bool, limit, offset int32) 
 			VideoTitle:       deref(r.VideoTitle),
 			CommentID:        uuidString(r.CommentID),
 			CommentBody:      deref(r.CommentBody),
+			ReportedUserID:   uuidString(r.ReportedUserID),
+			ReportedUsername: deref(r.ReportedUsername),
 		})
 	}
 	return items, nil

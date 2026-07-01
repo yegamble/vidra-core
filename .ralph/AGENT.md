@@ -165,6 +165,8 @@ curl -sX POST localhost:8080/api/v1/videos/<id>/report -H 'authorization: Bearer
   -H 'content-type: application/json' -d '{"reason":"spam"}'                            # report a video -> 204 (idempotent)
 curl -sX POST localhost:8080/api/v1/comments/<id>/report -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"reason":"abuse"}'                           # report a comment -> 204
+curl -sX POST localhost:8080/api/v1/users/<user-id>/report -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"reason":"impersonation"}'                   # report an account -> 204 (self -> 422, unknown -> 404)
 curl -s 'localhost:8080/api/v1/admin/reports?status=open' -H 'authorization: Bearer <admin-token>'   # moderation queue (403 if not mod/admin)
 curl -sX POST localhost:8080/api/v1/admin/reports/<id>/resolve -H 'authorization: Bearer <admin-token>' \
   -H 'content-type: application/json' -d '{"status":"accepted","note":"removed"}'      # accept|reject + internal note -> 204

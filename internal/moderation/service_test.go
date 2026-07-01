@@ -13,22 +13,24 @@ import (
 )
 
 type reportRow struct {
-	id         uuid.UUID
-	reporterID uuid.UUID
-	targetType string
-	videoID    pgtype.UUID
-	commentID  pgtype.UUID
-	reason     string
-	status     string
-	note       string
-	createdAt  time.Time
-	resolvedAt pgtype.Timestamptz
+	id             uuid.UUID
+	reporterID     uuid.UUID
+	targetType     string
+	videoID        pgtype.UUID
+	commentID      pgtype.UUID
+	reportedUserID pgtype.UUID
+	reason         string
+	status         string
+	note           string
+	createdAt      time.Time
+	resolvedAt     pgtype.Timestamptz
 }
 
 // fakeRepo is an in-memory moderation.Repository.
 type fakeRepo struct {
 	reports     []reportRow
 	commentErr  error // returned by CreateCommentReport when set
+	accountErr  error // returned by CreateAccountReport when set (e.g. a FK violation)
 	blocked     map[uuid.UUID]bool
 	blockReason map[uuid.UUID]string
 	blockOrder  []uuid.UUID // block order (oldest first)
@@ -59,6 +61,22 @@ func (f *fakeRepo) CreateCommentReport(_ context.Context, a sqlcgen.CreateCommen
 	return 1, nil
 }
 
+func (f *fakeRepo) CreateAccountReport(_ context.Context, a sqlcgen.CreateAccountReportParams) (int64, error) {
+	if f.accountErr != nil {
+		return 0, f.accountErr
+	}
+	for _, r := range f.reports {
+		if r.reporterID == a.ReporterID && r.reportedUserID == a.ReportedUserID {
+			return 0, nil // already reported
+		}
+	}
+	f.reports = append(f.reports, reportRow{
+		id: uuid.New(), reporterID: a.ReporterID, targetType: TargetAccount,
+		reportedUserID: a.ReportedUserID, reason: a.Reason, status: StatusOpen, createdAt: time.Now(),
+	})
+	return 1, nil
+}
+
 func (f *fakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error) {
 	var rows []sqlcgen.ListReportsRow
 	for i := len(f.reports) - 1; i >= 0; i-- { // newest first
@@ -66,11 +84,17 @@ func (f *fakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) (
 		if a.OpenOnly && r.status != StatusOpen {
 			continue
 		}
-		rows = append(rows, sqlcgen.ListReportsRow{
+		row := sqlcgen.ListReportsRow{
 			ID: r.id, TargetType: r.targetType, VideoID: r.videoID, CommentID: r.commentID,
-			Reason: r.reason, Status: r.status, ModeratorNote: r.note,
-			ResolvedAt: r.resolvedAt, CreatedAt: r.createdAt, ReporterUsername: "reporter",
-		})
+			ReportedUserID: r.reportedUserID, Reason: r.reason, Status: r.status,
+			ModeratorNote: r.note, ResolvedAt: r.resolvedAt, CreatedAt: r.createdAt,
+			ReporterUsername: "reporter",
+		}
+		if r.reportedUserID.Valid {
+			name := "target"
+			row.ReportedUsername = &name
+		}
+		rows = append(rows, row)
 	}
 	return rows, nil
 }
@@ -168,6 +192,41 @@ func TestReportCommentInvalidTarget(t *testing.T) {
 	svc := NewService(&fakeRepo{commentErr: &pgconn.PgError{Code: "23503"}})
 	if err := svc.ReportComment(context.Background(), uuid.New(), uuid.New(), "x"); err != ErrInvalidTarget {
 		t.Errorf("err = %v, want ErrInvalidTarget", err)
+	}
+}
+
+func TestReportAccount(t *testing.T) {
+	ctx := context.Background()
+	reporter, target := uuid.New(), uuid.New()
+
+	svc := NewService(&fakeRepo{})
+	if err := svc.ReportAccount(ctx, reporter, target, "harassment"); err != nil {
+		t.Fatalf("ReportAccount: %v", err)
+	}
+	// Idempotent: a second report of the same account is a no-op (no error).
+	if err := svc.ReportAccount(ctx, reporter, target, "harassment again"); err != nil {
+		t.Fatalf("ReportAccount dup: %v", err)
+	}
+	items, err := svc.List(ctx, false, 20, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("account reports = %d, want 1 (dedup'd)", len(items))
+	}
+	if items[0].TargetType != TargetAccount || items[0].ReportedUserID != target.String() || items[0].ReportedUsername != "target" {
+		t.Errorf("item = %+v, want account report for %s (target)", items[0], target)
+	}
+
+	// Reporting yourself is rejected before any insert.
+	if err := svc.ReportAccount(ctx, reporter, reporter, "me"); err != ErrCannotReportSelf {
+		t.Errorf("self-report err = %v, want ErrCannotReportSelf", err)
+	}
+
+	// An unknown target account (FK violation) → ErrInvalidTarget.
+	fkSvc := NewService(&fakeRepo{accountErr: &pgconn.PgError{Code: "23503"}})
+	if err := fkSvc.ReportAccount(ctx, uuid.New(), uuid.New(), "x"); err != ErrInvalidTarget {
+		t.Errorf("unknown target err = %v, want ErrInvalidTarget", err)
 	}
 }
 

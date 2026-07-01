@@ -2382,6 +2382,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/users/{id}/report:
+    post:
+      operationId: reportAccount
+      summary: Report an account
+      description: >-
+        Files an abuse report against another user account (idempotent per
+        reporter). Reporting your own account is 422; an unknown account is 404.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportRequest"
+      responses:
+        "204":
+          description: The report was filed (or already existed).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed, or an attempt to report your own account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/reports:
     get:
       operationId: listReports
@@ -3859,7 +3903,7 @@ components:
           format: uuid
         target_type:
           type: string
-          enum: [video, comment]
+          enum: [video, comment, account]
         reason:
           type: string
         status:
@@ -3887,6 +3931,13 @@ components:
           description: The reported comment (comment reports).
         comment_body:
           type: string
+        reported_user_id:
+          type: string
+          format: uuid
+          description: The reported account (account reports).
+        reported_username:
+          type: string
+          description: Username of the reported account; omitted if that account was deleted.
     ReportListResponse:
       type: object
       required: [reports, limit, offset]

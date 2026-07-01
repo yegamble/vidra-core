@@ -103,18 +103,19 @@ type PlaylistItem struct {
 }
 
 type Report struct {
-	ID            uuid.UUID          `json:"id"`
-	ReporterID    uuid.UUID          `json:"reporter_id"`
-	TargetType    string             `json:"target_type"`
-	VideoID       pgtype.UUID        `json:"video_id"`
-	CommentID     pgtype.UUID        `json:"comment_id"`
-	Reason        string             `json:"reason"`
-	Status        string             `json:"status"`
-	ModeratorNote string             `json:"moderator_note"`
-	ResolvedBy    pgtype.UUID        `json:"resolved_by"`
-	ResolvedAt    pgtype.Timestamptz `json:"resolved_at"`
-	CreatedAt     time.Time          `json:"created_at"`
-	UpdatedAt     time.Time          `json:"updated_at"`
+	ID             uuid.UUID          `json:"id"`
+	ReporterID     uuid.UUID          `json:"reporter_id"`
+	TargetType     string             `json:"target_type"`
+	VideoID        pgtype.UUID        `json:"video_id"`
+	CommentID      pgtype.UUID        `json:"comment_id"`
+	Reason         string             `json:"reason"`
+	Status         string             `json:"status"`
+	ModeratorNote  string             `json:"moderator_note"`
+	ResolvedBy     pgtype.UUID        `json:"resolved_by"`
+	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+	ReportedUserID pgtype.UUID        `json:"reported_user_id"`
 }
 
 type SavedVideo struct {

@@ -76,6 +76,33 @@ func (s *Server) handleReportComment(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// handleReportAccount files a report against another user account. Behind
+// requireAuth. Reporting yourself is 422; an unknown account is 404. Idempotent.
+func (s *Server) handleReportAccount(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	targetID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "account not found")
+	}
+	var in createReportRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := s.moderationsvc.ReportAccount(c.Request().Context(), userID, targetID, strings.TrimSpace(in.Reason)); err != nil {
+		switch {
+		case errors.Is(err, moderation.ErrCannotReportSelf):
+			return echo.NewHTTPError(http.StatusUnprocessableEntity, "cannot report yourself")
+		case errors.Is(err, moderation.ErrInvalidTarget):
+			return echo.NewHTTPError(http.StatusNotFound, "account not found")
+		}
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 // reportReporterView identifies who filed a report.
 type reportReporterView struct {
 	Username string `json:"username"`
@@ -84,34 +111,38 @@ type reportReporterView struct {
 // reportView is the moderation-queue projection of a report. Target context is
 // type-dependent and omitted when not applicable.
 type reportView struct {
-	ID            string             `json:"id"`
-	TargetType    string             `json:"target_type"`
-	Reason        string             `json:"reason"`
-	Status        string             `json:"status"`
-	ModeratorNote string             `json:"moderator_note"`
-	CreatedAt     time.Time          `json:"created_at"`
-	ResolvedAt    *time.Time         `json:"resolved_at,omitempty"`
-	Reporter      reportReporterView `json:"reporter"`
-	VideoID       string             `json:"video_id,omitempty"`
-	VideoTitle    string             `json:"video_title,omitempty"`
-	CommentID     string             `json:"comment_id,omitempty"`
-	CommentBody   string             `json:"comment_body,omitempty"`
+	ID               string             `json:"id"`
+	TargetType       string             `json:"target_type"`
+	Reason           string             `json:"reason"`
+	Status           string             `json:"status"`
+	ModeratorNote    string             `json:"moderator_note"`
+	CreatedAt        time.Time          `json:"created_at"`
+	ResolvedAt       *time.Time         `json:"resolved_at,omitempty"`
+	Reporter         reportReporterView `json:"reporter"`
+	VideoID          string             `json:"video_id,omitempty"`
+	VideoTitle       string             `json:"video_title,omitempty"`
+	CommentID        string             `json:"comment_id,omitempty"`
+	CommentBody      string             `json:"comment_body,omitempty"`
+	ReportedUserID   string             `json:"reported_user_id,omitempty"`
+	ReportedUsername string             `json:"reported_username,omitempty"`
 }
 
 func newReportView(it moderation.Item) reportView {
 	return reportView{
-		ID:            it.ID.String(),
-		TargetType:    it.TargetType,
-		Reason:        it.Reason,
-		Status:        it.Status,
-		ModeratorNote: it.ModeratorNote,
-		CreatedAt:     it.CreatedAt,
-		ResolvedAt:    it.ResolvedAt,
-		Reporter:      reportReporterView{Username: it.ReporterUsername},
-		VideoID:       it.VideoID,
-		VideoTitle:    it.VideoTitle,
-		CommentID:     it.CommentID,
-		CommentBody:   it.CommentBody,
+		ID:               it.ID.String(),
+		TargetType:       it.TargetType,
+		Reason:           it.Reason,
+		Status:           it.Status,
+		ModeratorNote:    it.ModeratorNote,
+		CreatedAt:        it.CreatedAt,
+		ResolvedAt:       it.ResolvedAt,
+		Reporter:         reportReporterView{Username: it.ReporterUsername},
+		VideoID:          it.VideoID,
+		VideoTitle:       it.VideoTitle,
+		CommentID:        it.CommentID,
+		CommentBody:      it.CommentBody,
+		ReportedUserID:   it.ReportedUserID,
+		ReportedUsername: it.ReportedUsername,
 	}
 }
 
