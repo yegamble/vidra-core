@@ -102,6 +102,20 @@ type PlaylistItem struct {
 	AddedAt    time.Time `json:"added_at"`
 }
 
+type RegistrationRequest struct {
+	ID            uuid.UUID          `json:"id"`
+	Username      string             `json:"username"`
+	Email         string             `json:"email"`
+	PasswordHash  string             `json:"password_hash"`
+	Note          string             `json:"note"`
+	Status        string             `json:"status"`
+	ModeratorNote string             `json:"moderator_note"`
+	ReviewedBy    pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt    pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
+}
+
 type Report struct {
 	ID             uuid.UUID          `json:"id"`
 	ReporterID     uuid.UUID          `json:"reporter_id"`

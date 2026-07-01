@@ -56,6 +56,11 @@ type Repository interface {
 	MarkEmailVerificationTokenUsed(ctx context.Context, id uuid.UUID) error
 	DeleteUnusedEmailVerificationTokens(ctx context.Context, userID uuid.UUID) error
 	SetUserEmailVerified(ctx context.Context, id uuid.UUID) error
+
+	CreateRegistrationRequest(ctx context.Context, arg sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error)
+	ListRegistrationRequests(ctx context.Context, arg sqlcgen.ListRegistrationRequestsParams) ([]sqlcgen.ListRegistrationRequestsRow, error)
+	ApproveRegistrationRequest(ctx context.Context, arg sqlcgen.ApproveRegistrationRequestParams) (sqlcgen.ApproveRegistrationRequestRow, error)
+	RejectRegistrationRequest(ctx context.Context, arg sqlcgen.RejectRegistrationRequestParams) (int64, error)
 }
 
 // defaultResetTTL is how long a password-reset token stays valid.

@@ -202,6 +202,15 @@ curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer 
   -H 'content-type: application/json' -d '{"role":"moderator"}'                        # change role (user|moderator|admin)
 curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer <admin-token>' \
   -H 'content-type: application/json' -d '{"is_active":false}'                          # deactivate (revokes the user's sessions); self-demote/deactivate -> 422
+
+# Registration approval queue (admin-only; only meaningful when
+# REGISTRATION_REQUIRE_APPROVAL=true, in which case /auth/register returns 202
+# {"status":"pending"} with no token instead of creating an account). Bootstrap
+# the first admin BEFORE enabling approval.
+curl -s 'localhost:8080/api/v1/admin/registration-requests?status=pending' -H 'authorization: Bearer <admin-token>'  # queue (no password hash)
+curl -sX POST localhost:8080/api/v1/admin/registration-requests/<id>/approve -H 'authorization: Bearer <admin-token>'  # create the account -> 204 (unknown 404, taken 409)
+curl -sX POST localhost:8080/api/v1/admin/registration-requests/<id>/reject  -H 'authorization: Bearer <admin-token>' \
+  -H 'content-type: application/json' -d '{"note":"not now"}'                            # reject -> 204 (unknown 404)
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

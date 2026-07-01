@@ -112,7 +112,9 @@ paths:
       description: >-
         Creates an account and returns it with an access token. The first
         account created on a fresh instance is granted the admin role. Rate
-        limited; subject to the standard request guards.
+        limited; subject to the standard request guards. When the instance
+        requires registration approval, no account is created: a pending
+        registration request is filed and 202 is returned with no token.
       tags: [auth]
       requestBody:
         required: true
@@ -127,6 +129,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthResponse"
+        "202":
+          description: >-
+            Registration requires approval; a pending request was filed. No
+            account or token is created until an admin approves it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationPending"
         "400":
           description: Malformed request body.
           content:
@@ -2994,6 +3004,152 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/registration-requests:
+    get:
+      operationId: listRegistrationRequests
+      summary: List the registration approval queue
+      description: >-
+        Returns registration requests, newest first, with the reviewing admin's
+        username. Restricted to admins. status=pending returns only unresolved
+        requests. Paginated via limit (1–100, default 20) and offset. The stored
+        password hash is never exposed.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          description: Set to "pending" to return only unresolved requests.
+          schema:
+            type: string
+            enum: [pending]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of registration requests (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationRequestListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/registration-requests/{id}/approve:
+    post:
+      operationId: approveRegistrationRequest
+      summary: Approve a registration request
+      description: >-
+        Approves a pending request, creating the account from the stored
+        credentials (atomically). Admin only. An unknown/already-resolved id is
+        404; a username/email taken since the request was filed is 409.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The request was approved and the account created.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such pending registration request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The username or email is already taken.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/registration-requests/{id}/reject:
+    post:
+      operationId: rejectRegistrationRequest
+      summary: Reject a registration request
+      description: >-
+        Rejects a pending request with an optional internal moderator note.
+        Admin only. An unknown/already-resolved id is 404.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectRegistrationRequest"
+      responses:
+        "204":
+          description: The request was rejected.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such pending registration request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/users:
     get:
       operationId: listUsers
@@ -3199,7 +3355,7 @@ components:
                     example: must be a valid email
     InstanceResponse:
       type: object
-      required: [name, description, software, registration_enabled, terms_url, privacy_url, contact_email]
+      required: [name, description, software, registration_enabled, registration_requires_approval, terms_url, privacy_url, contact_email]
       properties:
         name:
           type: string
@@ -3220,6 +3376,12 @@ components:
         registration_enabled:
           type: boolean
           description: Whether public account signup is currently accepted.
+        registration_requires_approval:
+          type: boolean
+          description: >-
+            Whether signup files a pending request for admin approval instead of
+            creating an account immediately (only relevant when registration is
+            enabled).
         terms_url:
           type: string
           description: Link to the instance terms of service; may be empty.
@@ -4212,6 +4374,70 @@ components:
           minLength: 8
           maxLength: 72
           format: password
+        note:
+          type: string
+          maxLength: 2000
+          description: >-
+            Optional message to moderators, used only when the instance requires
+            registration approval; ignored otherwise.
+    RegistrationPending:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending]
+          description: The signup is queued for admin approval; no account exists yet.
+    RegistrationRequest:
+      type: object
+      required: [id, username, email, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+        note:
+          type: string
+          description: Optional applicant message.
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        moderator_note:
+          type: string
+          description: Internal note recorded when the request was rejected.
+        reviewed_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        reviewer_username:
+          type: string
+          description: Username of the admin who reviewed it; omitted while pending.
+    RegistrationRequestListResponse:
+      type: object
+      required: [requests, limit, offset]
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/RegistrationRequest"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    RejectRegistrationRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          maxLength: 2000
+          description: Optional internal moderator note (not shown to the applicant).
     LoginRequest:
       type: object
       required: [email, password]

@@ -318,6 +318,12 @@ func (s *Server) routes() {
 		authGroup.PATCH("/me", s.handleUpdateMe, s.requireAuth)
 		authGroup.POST("/me/deactivate", s.handleDeactivateAccount, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
+
+		// Registration approval queue (admin-only). Present whenever auth is wired;
+		// only meaningful when REGISTRATION_REQUIRE_APPROVAL is on.
+		api.GET("/admin/registration-requests", s.handleListRegistrationRequests, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/registration-requests/:id/approve", s.handleApproveRegistration, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/registration-requests/:id/reject", s.handleRejectRegistration, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// DEV-ONLY: expose captured account-security tokens so e2e tests can complete

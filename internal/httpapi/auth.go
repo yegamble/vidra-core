@@ -31,7 +31,13 @@ type registerRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	// Note is an optional message to moderators, used only when the instance
+	// requires registration approval; ignored otherwise.
+	Note string `json:"note,omitempty"`
 }
+
+// maxRegistrationNoteLen bounds the optional applicant note.
+const maxRegistrationNoteLen = 2000
 
 // bcrypt silently truncates input beyond 72 bytes, so we cap password length to
 // avoid a surprising security cliff.
@@ -54,6 +60,9 @@ func (r registerRequest) Validate() []FieldError {
 		fes = append(fes, FieldError{Field: "password", Message: "must be at least 8 characters"})
 	case len(r.Password) > maxPasswordLen:
 		fes = append(fes, FieldError{Field: "password", Message: "must be at most 72 characters"})
+	}
+	if len(r.Note) > maxRegistrationNoteLen {
+		fes = append(fes, FieldError{Field: "note", Message: "must be at most 2000 characters"})
 	}
 	return fes
 }
@@ -140,11 +149,22 @@ func (s *Server) handleRegister(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	user, tokens, err := s.authsvc.Register(c.Request().Context(), auth.RegisterInput{
-		Username: in.Username,
-		Email:    in.Email,
-		Password: in.Password,
-	}, c.Request().UserAgent())
+	regInput := auth.RegisterInput{Username: in.Username, Email: in.Email, Password: in.Password}
+
+	// When the instance requires approval, signup files a pending request instead
+	// of creating an account + session. The response reveals no token.
+	if s.cfg.RegistrationRequireApproval {
+		if _, err := s.authsvc.RequestRegistration(c.Request().Context(), regInput, in.Note); err != nil {
+			if errors.Is(err, auth.ErrConflict) {
+				return echo.NewHTTPError(http.StatusConflict, "username or email already taken")
+			}
+			return err
+		}
+		s.audit(c, observability.ActionRegistrationRequest, observability.ResultSuccess, "", "pending_approval")
+		return c.JSON(http.StatusAccepted, map[string]string{"status": "pending"})
+	}
+
+	user, tokens, err := s.authsvc.Register(c.Request().Context(), regInput, c.Request().UserAgent())
 	if err != nil {
 		if errors.Is(err, auth.ErrConflict) {
 			return echo.NewHTTPError(http.StatusConflict, "username or email already taken")

@@ -7,11 +7,25 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
+
+// fakeRegReq is an in-memory registration request row.
+type fakeRegReq struct {
+	id            uuid.UUID
+	username      string
+	email         string
+	passwordHash  string
+	note          string
+	status        string
+	moderatorNote string
+	reviewedAt    pgtype.Timestamptz
+	createdAt     time.Time
+}
 
 // fakeRepo is an in-memory auth.Repository keyed by lowercased email/username.
 type fakeRepo struct {
@@ -20,6 +34,7 @@ type fakeRepo struct {
 	sessions map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
 	resets   map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
 	verifs   map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
+	regReqs  []*fakeRegReq
 }
 
 func newFakeRepo() *fakeRepo {
@@ -30,6 +45,71 @@ func newFakeRepo() *fakeRepo {
 		resets:   map[string]*sqlcgen.PasswordResetToken{},
 		verifs:   map[string]*sqlcgen.EmailVerificationToken{},
 	}
+}
+
+func (f *fakeRepo) CreateRegistrationRequest(_ context.Context, a sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error) {
+	for _, r := range f.regReqs {
+		if r.status == "pending" && (lower(r.email) == lower(a.Email) || lower(r.username) == lower(a.Username)) {
+			return sqlcgen.CreateRegistrationRequestRow{}, &pgconn.PgError{Code: "23505"}
+		}
+	}
+	rr := &fakeRegReq{
+		id: uuid.New(), username: a.Username, email: a.Email, passwordHash: a.PasswordHash,
+		note: a.Note, status: "pending", createdAt: time.Now(),
+	}
+	f.regReqs = append(f.regReqs, rr)
+	return sqlcgen.CreateRegistrationRequestRow{
+		ID: rr.id, Username: rr.username, Email: rr.email, Note: rr.note,
+		Status: rr.status, ModeratorNote: rr.moderatorNote, CreatedAt: rr.createdAt,
+	}, nil
+}
+
+func (f *fakeRepo) ListRegistrationRequests(_ context.Context, a sqlcgen.ListRegistrationRequestsParams) ([]sqlcgen.ListRegistrationRequestsRow, error) {
+	var rows []sqlcgen.ListRegistrationRequestsRow
+	for i := len(f.regReqs) - 1; i >= 0; i-- { // newest first
+		r := f.regReqs[i]
+		if a.PendingOnly && r.status != "pending" {
+			continue
+		}
+		rows = append(rows, sqlcgen.ListRegistrationRequestsRow{
+			ID: r.id, Username: r.username, Email: r.email, Note: r.note,
+			Status: r.status, ModeratorNote: r.moderatorNote, ReviewedAt: r.reviewedAt, CreatedAt: r.createdAt,
+		})
+	}
+	return rows, nil
+}
+
+func (f *fakeRepo) ApproveRegistrationRequest(ctx context.Context, a sqlcgen.ApproveRegistrationRequestParams) (sqlcgen.ApproveRegistrationRequestRow, error) {
+	for _, r := range f.regReqs {
+		if r.id == a.ID && r.status == "pending" {
+			u, err := f.CreateUser(ctx, sqlcgen.CreateUserParams{
+				Username: r.username, Email: r.email, PasswordHash: r.passwordHash, Role: "user",
+			})
+			if err != nil {
+				return sqlcgen.ApproveRegistrationRequestRow{}, err // e.g. 23505 conflict
+			}
+			r.status = "approved"
+			r.reviewedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			return sqlcgen.ApproveRegistrationRequestRow{
+				ID: u.ID, Username: u.Username, Email: u.Email, PasswordHash: u.PasswordHash,
+				Role: u.Role, EmailVerified: u.EmailVerified, IsActive: u.IsActive,
+				CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt, DisplayName: u.DisplayName, Bio: u.Bio,
+			}, nil
+		}
+	}
+	return sqlcgen.ApproveRegistrationRequestRow{}, pgx.ErrNoRows
+}
+
+func (f *fakeRepo) RejectRegistrationRequest(_ context.Context, a sqlcgen.RejectRegistrationRequestParams) (int64, error) {
+	for _, r := range f.regReqs {
+		if r.id == a.ID && r.status == "pending" {
+			r.status = "rejected"
+			r.moderatorNote = a.ModeratorNote
+			r.reviewedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			return 1, nil
+		}
+	}
+	return 0, nil
 }
 
 func (f *fakeRepo) CreateEmailVerificationToken(_ context.Context, a sqlcgen.CreateEmailVerificationTokenParams) (sqlcgen.EmailVerificationToken, error) {
