@@ -21,6 +21,9 @@ var (
 	ErrNotFound = errors.New("comment: not found")
 	// ErrForbidden means the caller is not the comment's author.
 	ErrForbidden = errors.New("comment: not the author")
+	// ErrParentNotFound means a reply's parent_id does not reference an existing
+	// comment on the same video.
+	ErrParentNotFound = errors.New("comment: parent not found")
 )
 
 // Repository is the data access the comment service needs. *sqlcgen.Queries
@@ -51,12 +54,24 @@ type WithAuthor struct {
 }
 
 // Create posts a comment by userID on videoID. The caller is responsible for
-// confirming the video is commentable (exists + visible) first.
-func (s *Service) Create(ctx context.Context, videoID, userID uuid.UUID, body string) (sqlcgen.Comment, error) {
+// confirming the video is commentable (exists + visible) first. When parentID is
+// non-nil the comment is a reply, and the parent must be an existing comment on
+// the SAME video — otherwise ErrParentNotFound (so a reply can't be smuggled onto
+// another video's thread, and existence of arbitrary comment ids isn't leaked).
+func (s *Service) Create(ctx context.Context, videoID, userID uuid.UUID, body string, parentID *uuid.UUID) (sqlcgen.Comment, error) {
+	var parent pgtype.UUID
+	if parentID != nil {
+		p, err := s.repo.GetComment(ctx, *parentID)
+		if err != nil || p.VideoID != videoID {
+			return sqlcgen.Comment{}, ErrParentNotFound
+		}
+		parent = pgtype.UUID{Bytes: *parentID, Valid: true}
+	}
 	return s.repo.CreateComment(ctx, sqlcgen.CreateCommentParams{
-		VideoID: videoID,
-		UserID:  userID,
-		Body:    body,
+		VideoID:  videoID,
+		UserID:   userID,
+		Body:     body,
+		ParentID: parent,
 	})
 }
 
@@ -79,7 +94,7 @@ func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, 
 		out = append(out, WithAuthor{
 			Comment: sqlcgen.Comment{
 				ID: r.ID, VideoID: r.VideoID, UserID: r.UserID, Body: r.Body,
-				CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				ParentID: r.ParentID, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			},
 			AuthorUsername:    r.AuthorUsername,
 			AuthorDisplayName: r.AuthorDisplayName,

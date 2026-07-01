@@ -1,14 +1,16 @@
 -- name: CreateComment :one
-INSERT INTO comments (video_id, user_id, body)
-VALUES ($1, $2, $3)
-RETURNING id, video_id, user_id, body, created_at, updated_at;
+-- parent_id is NULL for a top-level comment, or the id of the comment being
+-- replied to (the service validates it references a comment on the same video).
+INSERT INTO comments (video_id, user_id, body, parent_id)
+VALUES (sqlc.arg('video_id'), sqlc.arg('user_id'), sqlc.arg('body'), sqlc.narg('parent_id'))
+RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id;
 
 -- name: ListCommentsByVideo :many
 -- A video's comments, newest first, joined with author identity for display.
 -- When viewer_id is provided (an authenticated viewer), comments authored by an
 -- account that viewer has muted are hidden; when NULL (anonymous), nothing is
 -- filtered — a NULL muter_id matches no muted_accounts row.
-SELECT c.id, c.video_id, c.user_id, c.body, c.created_at, c.updated_at,
+SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at,
        u.username AS author_username, u.display_name AS author_display_name
 FROM comments c
 JOIN users u ON u.id = c.user_id
@@ -21,7 +23,7 @@ ORDER BY c.created_at DESC, c.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: GetComment :one
-SELECT id, video_id, user_id, body, created_at, updated_at
+SELECT id, video_id, user_id, body, created_at, updated_at, parent_id
 FROM comments
 WHERE id = $1;
 

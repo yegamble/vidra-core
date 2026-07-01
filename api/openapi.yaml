@@ -1498,6 +1498,13 @@ paths:
                   type: string
                   maxLength: 2000
                   description: The comment text.
+                parent_id:
+                  type: string
+                  format: uuid
+                  description: >-
+                    Optional. The id of the comment being replied to; it must be a
+                    comment on the same video. Omit (or null) for a top-level
+                    comment. A malformed or cross-video parent_id is a 422.
       responses:
         "201":
           description: The created comment.
@@ -3448,7 +3455,7 @@ components:
             $ref: "#/components/schemas/Caption"
     Comment:
       type: object
-      required: [id, video_id, body, author_id, author_username, author_display_name, created_at, updated_at]
+      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, created_at, updated_at]
       properties:
         id:
           type: string
@@ -3458,6 +3465,12 @@ components:
           format: uuid
         body:
           type: string
+        parent_id:
+          type: [string, "null"]
+          format: uuid
+          description: >-
+            The id of the comment this one replies to, or null for a top-level
+            comment. The client uses it to build the thread tree.
         author_id:
           type: string
           format: uuid

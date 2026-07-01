@@ -39,12 +39,13 @@ type ChannelFollow struct {
 }
 
 type Comment struct {
-	ID        uuid.UUID `json:"id"`
-	VideoID   uuid.UUID `json:"video_id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        uuid.UUID   `json:"id"`
+	VideoID   uuid.UUID   `json:"video_id"`
+	UserID    uuid.UUID   `json:"user_id"`
+	Body      string      `json:"body"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+	ParentID  pgtype.UUID `json:"parent_id"`
 }
 
 type EmailVerificationToken struct {

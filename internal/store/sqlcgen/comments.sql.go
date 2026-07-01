@@ -14,19 +14,27 @@ import (
 )
 
 const createComment = `-- name: CreateComment :one
-INSERT INTO comments (video_id, user_id, body)
-VALUES ($1, $2, $3)
-RETURNING id, video_id, user_id, body, created_at, updated_at
+INSERT INTO comments (video_id, user_id, body, parent_id)
+VALUES ($1, $2, $3, $4)
+RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id
 `
 
 type CreateCommentParams struct {
-	VideoID uuid.UUID `json:"video_id"`
-	UserID  uuid.UUID `json:"user_id"`
-	Body    string    `json:"body"`
+	VideoID  uuid.UUID   `json:"video_id"`
+	UserID   uuid.UUID   `json:"user_id"`
+	Body     string      `json:"body"`
+	ParentID pgtype.UUID `json:"parent_id"`
 }
 
+// parent_id is NULL for a top-level comment, or the id of the comment being
+// replied to (the service validates it references a comment on the same video).
 func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (Comment, error) {
-	row := q.db.QueryRow(ctx, createComment, arg.VideoID, arg.UserID, arg.Body)
+	row := q.db.QueryRow(ctx, createComment,
+		arg.VideoID,
+		arg.UserID,
+		arg.Body,
+		arg.ParentID,
+	)
 	var i Comment
 	err := row.Scan(
 		&i.ID,
@@ -35,6 +43,7 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 		&i.Body,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ParentID,
 	)
 	return i, err
 }
@@ -50,7 +59,7 @@ func (q *Queries) DeleteComment(ctx context.Context, id uuid.UUID) error {
 }
 
 const getComment = `-- name: GetComment :one
-SELECT id, video_id, user_id, body, created_at, updated_at
+SELECT id, video_id, user_id, body, created_at, updated_at, parent_id
 FROM comments
 WHERE id = $1
 `
@@ -65,6 +74,7 @@ func (q *Queries) GetComment(ctx context.Context, id uuid.UUID) (Comment, error)
 		&i.Body,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ParentID,
 	)
 	return i, err
 }
@@ -129,7 +139,7 @@ func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsPa
 }
 
 const listCommentsByVideo = `-- name: ListCommentsByVideo :many
-SELECT c.id, c.video_id, c.user_id, c.body, c.created_at, c.updated_at,
+SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at,
        u.username AS author_username, u.display_name AS author_display_name
 FROM comments c
 JOIN users u ON u.id = c.user_id
@@ -150,14 +160,15 @@ type ListCommentsByVideoParams struct {
 }
 
 type ListCommentsByVideoRow struct {
-	ID                uuid.UUID `json:"id"`
-	VideoID           uuid.UUID `json:"video_id"`
-	UserID            uuid.UUID `json:"user_id"`
-	Body              string    `json:"body"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	AuthorUsername    string    `json:"author_username"`
-	AuthorDisplayName string    `json:"author_display_name"`
+	ID                uuid.UUID   `json:"id"`
+	VideoID           uuid.UUID   `json:"video_id"`
+	UserID            uuid.UUID   `json:"user_id"`
+	Body              string      `json:"body"`
+	ParentID          pgtype.UUID `json:"parent_id"`
+	CreatedAt         time.Time   `json:"created_at"`
+	UpdatedAt         time.Time   `json:"updated_at"`
+	AuthorUsername    string      `json:"author_username"`
+	AuthorDisplayName string      `json:"author_display_name"`
 }
 
 // A video's comments, newest first, joined with author identity for display.
@@ -183,6 +194,7 @@ func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVid
 			&i.VideoID,
 			&i.UserID,
 			&i.Body,
+			&i.ParentID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AuthorUsername,

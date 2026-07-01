@@ -27,7 +27,7 @@ func newFakeRepo() *fakeRepo {
 func (f *fakeRepo) CreateComment(_ context.Context, a sqlcgen.CreateCommentParams) (sqlcgen.Comment, error) {
 	c := sqlcgen.Comment{
 		ID: uuid.New(), VideoID: a.VideoID, UserID: a.UserID, Body: a.Body,
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		ParentID: a.ParentID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.comments[c.ID] = c
 	return c, nil
@@ -84,7 +84,7 @@ func TestCreateAndListByVideo(t *testing.T) {
 	video, user := uuid.New(), uuid.New()
 	repo.authors[user] = author{"ada", "Ada Makes"}
 
-	if _, err := svc.Create(context.Background(), video, user, "first!"); err != nil {
+	if _, err := svc.Create(context.Background(), video, user, "first!", nil); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	items, err := svc.ListByVideo(context.Background(), video, uuid.Nil, false, 20, 0)
@@ -99,14 +99,48 @@ func TestCreateAndListByVideo(t *testing.T) {
 	}
 }
 
+func TestCreateReply(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+	video, other, user := uuid.New(), uuid.New(), uuid.New()
+	repo.authors[user] = author{"ada", "Ada Makes"}
+
+	parent, err := svc.Create(ctx, video, user, "top-level", nil)
+	if err != nil {
+		t.Fatalf("Create parent: %v", err)
+	}
+
+	// A reply to a comment on the same video is accepted and records parent_id.
+	reply, err := svc.Create(ctx, video, user, "a reply", &parent.ID)
+	if err != nil {
+		t.Fatalf("Create reply: %v", err)
+	}
+	if !reply.ParentID.Valid || uuid.UUID(reply.ParentID.Bytes) != parent.ID {
+		t.Errorf("reply parent_id = %+v, want %s", reply.ParentID, parent.ID)
+	}
+
+	// A reply whose parent is unknown is rejected.
+	unknown := uuid.New()
+	if _, err := svc.Create(ctx, video, user, "orphan", &unknown); err != ErrParentNotFound {
+		t.Errorf("reply to unknown parent = %v, want ErrParentNotFound", err)
+	}
+
+	// A reply cannot point at a comment on a different video.
+	otherParent, _ := svc.Create(ctx, other, user, "elsewhere", nil)
+	if _, err := svc.Create(ctx, video, user, "cross-video", &otherParent.ID); err != ErrParentNotFound {
+		t.Errorf("cross-video reply = %v, want ErrParentNotFound", err)
+	}
+}
+
 func TestListForAdmin(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo)
 	user := uuid.New()
 	repo.authors[user] = author{"ada", "Ada Makes"}
 	ctx := context.Background()
-	_, _ = svc.Create(ctx, uuid.New(), user, "hello world")
-	_, _ = svc.Create(ctx, uuid.New(), user, "spam spam")
+	_, _ = svc.Create(ctx, uuid.New(), user, "hello world", nil)
+	_, _ = svc.Create(ctx, uuid.New(), user, "spam spam", nil)
 
 	all, err := svc.ListForAdmin(ctx, "", 20, 0)
 	if err != nil {
@@ -129,7 +163,7 @@ func TestDeleteOnlyByAuthor(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo)
 	authorID := uuid.New()
-	c, _ := svc.Create(context.Background(), uuid.New(), authorID, "x")
+	c, _ := svc.Create(context.Background(), uuid.New(), authorID, "x", nil)
 
 	if err := svc.Delete(context.Background(), c.ID, uuid.New(), false); err != ErrForbidden {
 		t.Errorf("non-author delete = %v, want ErrForbidden", err)
@@ -148,7 +182,7 @@ func TestDeleteOnlyByAuthor(t *testing.T) {
 func TestModeratorCanDeleteAnyComment(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo)
-	c, _ := svc.Create(context.Background(), uuid.New(), uuid.New(), "x")
+	c, _ := svc.Create(context.Background(), uuid.New(), uuid.New(), "x", nil)
 
 	// A non-author moderator may delete it.
 	if err := svc.Delete(context.Background(), c.ID, uuid.New(), true); err != nil {

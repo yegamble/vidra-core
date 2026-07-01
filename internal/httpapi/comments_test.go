@@ -32,7 +32,7 @@ func (f *commentFakeRepo) CreateComment(_ context.Context, a sqlcgen.CreateComme
 	}
 	c := sqlcgen.Comment{
 		ID: uuid.New(), VideoID: a.VideoID, UserID: a.UserID, Body: a.Body,
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		ParentID: a.ParentID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.comments[c.ID] = c
 	return c, nil
@@ -60,7 +60,7 @@ func (f *commentFakeRepo) ListCommentsByVideo(_ context.Context, a sqlcgen.ListC
 		username, display := f.author(c.UserID)
 		rows = append(rows, sqlcgen.ListCommentsByVideoRow{
 			ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
-			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+			ParentID: c.ParentID, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 			AuthorUsername: username, AuthorDisplayName: display,
 		})
 	}
@@ -157,6 +157,52 @@ func TestCommentCreateListDelete(t *testing.T) {
 	}
 	if c := parse(listComments(srv, vid)); len(c.Comments) != 0 {
 		t.Errorf("comments after delete = %d, want 0", len(c.Comments))
+	}
+}
+
+func TestCommentReplyThreading(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, tok, "ada", `{"title":"v","privacy":"public"}`)
+	other := createPublishedVideo(t, srv, tok, "ada", `{"title":"w","privacy":"public"}`)
+
+	// A top-level comment has a null parent_id.
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/comments", `{"body":"top"}`, tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create top = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var top commentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &top)
+	if top.ParentID != nil {
+		t.Errorf("top-level parent_id = %v, want null", *top.ParentID)
+	}
+
+	// A reply carries parent_id pointing at the top-level comment.
+	rec = sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/comments", `{"body":"reply","parent_id":"`+top.ID+`"}`, tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create reply = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var reply commentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &reply)
+	if reply.ParentID == nil || *reply.ParentID != top.ID {
+		t.Errorf("reply parent_id = %v, want %s", reply.ParentID, top.ID)
+	}
+
+	// Both surface in the list, and the reply keeps its parent link.
+	var list commentListResponse
+	_ = json.Unmarshal(listComments(srv, vid).Body.Bytes(), &list)
+	if len(list.Comments) != 2 {
+		t.Fatalf("list = %d comments, want 2", len(list.Comments))
+	}
+
+	// A malformed parent_id is a 422 (field-level validation).
+	if bad := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/comments", `{"body":"x","parent_id":"not-a-uuid"}`, tok); bad.Code != http.StatusUnprocessableEntity {
+		t.Errorf("malformed parent_id = %d, want 422", bad.Code)
+	}
+
+	// A parent on another video is rejected (can't smuggle a reply cross-thread).
+	if xrec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+other+"/comments", `{"body":"x","parent_id":"`+top.ID+`"}`, tok); xrec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("cross-video parent = %d, want 422", xrec.Code)
 	}
 }
 

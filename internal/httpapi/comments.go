@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/comment"
@@ -17,10 +18,13 @@ const maxCommentLen = 2000
 
 // commentView is the public projection of a comment, with its author's identity.
 // AuthorID is the author's account id (so a signed-in viewer can mute them).
+// ParentID is null for a top-level comment, or the id of the comment this one
+// replies to (so the client can build the thread tree).
 type commentView struct {
 	ID                string    `json:"id"`
 	VideoID           string    `json:"video_id"`
 	Body              string    `json:"body"`
+	ParentID          *string   `json:"parent_id"`
 	AuthorID          string    `json:"author_id"`
 	AuthorUsername    string    `json:"author_username"`
 	AuthorDisplayName string    `json:"author_display_name"`
@@ -33,12 +37,23 @@ func newCommentView(c sqlcgen.Comment, authorUsername, authorDisplayName string)
 		ID:                c.ID.String(),
 		VideoID:           c.VideoID.String(),
 		Body:              c.Body,
+		ParentID:          uuidPtrString(c.ParentID),
 		AuthorID:          c.UserID.String(),
 		AuthorUsername:    authorUsername,
 		AuthorDisplayName: authorDisplayName,
 		CreatedAt:         c.CreatedAt,
 		UpdatedAt:         c.UpdatedAt,
 	}
+}
+
+// uuidPtrString renders a nullable pgtype.UUID as *string: nil when NULL, else
+// the canonical UUID string.
+func uuidPtrString(u pgtype.UUID) *string {
+	if !u.Valid {
+		return nil
+	}
+	s := uuid.UUID(u.Bytes).String()
+	return &s
 }
 
 // publicVideoID parses the :id param and confirms the video exists and is
@@ -62,9 +77,11 @@ func (s *Server) publicVideoID(c echo.Context) (uuid.UUID, error) {
 	return id, nil
 }
 
-// createCommentRequest is the POST /videos/{id}/comments body.
+// createCommentRequest is the POST /videos/{id}/comments body. parent_id is
+// optional: when present it makes the comment a reply to that comment.
 type createCommentRequest struct {
-	Body string `json:"body"`
+	Body     string  `json:"body"`
+	ParentID *string `json:"parent_id"`
 }
 
 func (r createCommentRequest) Validate() []FieldError {
@@ -75,7 +92,25 @@ func (r createCommentRequest) Validate() []FieldError {
 	case len(body) > maxCommentLen:
 		return []FieldError{{Field: "body", Message: "must be at most 2000 characters"}}
 	}
+	if r.ParentID != nil && strings.TrimSpace(*r.ParentID) != "" {
+		if _, err := uuid.Parse(strings.TrimSpace(*r.ParentID)); err != nil {
+			return []FieldError{{Field: "parent_id", Message: "must be a valid comment id"}}
+		}
+	}
 	return nil
+}
+
+// parentID returns the parsed parent comment id, or nil for a top-level comment.
+// It assumes Validate has already accepted the format.
+func (r createCommentRequest) parentID() *uuid.UUID {
+	if r.ParentID == nil || strings.TrimSpace(*r.ParentID) == "" {
+		return nil
+	}
+	id, err := uuid.Parse(strings.TrimSpace(*r.ParentID))
+	if err != nil {
+		return nil
+	}
+	return &id
 }
 
 // handleCreateComment posts a comment on a public, published video. Behind requireAuth.
@@ -93,8 +128,11 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
-	created, err := s.commentsvc.Create(ctx, videoID, userID, strings.TrimSpace(in.Body))
+	created, err := s.commentsvc.Create(ctx, videoID, userID, strings.TrimSpace(in.Body), in.parentID())
 	if err != nil {
+		if errors.Is(err, comment.ErrParentNotFound) {
+			return &ValidationError{Fields: []FieldError{{Field: "parent_id", Message: "is not a comment on this video"}}}
+		}
 		return err
 	}
 	// The author is the authenticated user; load their identity for the response.
