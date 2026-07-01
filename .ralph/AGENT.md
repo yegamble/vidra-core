@@ -299,7 +299,9 @@ migration; add a new one.
    follow `.ralph/specs/observability.md`. The banned-logging + secrets-in-logs
    guard tests (`internal/observability/logging_guard_test.go`:
    `TestNoForbiddenLogging` + `TestNoSensitiveLogKeys`) are built and run under
-   `make ci`; OTel traces/metrics remain a fix_plan P17.3 task.
+   `make ci`. OTel **tracing** is built (`OTEL_ENABLED` + `SetupTracing`;
+   otelecho HTTP spans; inbound `traceparent`; `trace_id`/`span_id` in logs); OTel
+   **metrics** + datastore/outbound spans remain a fix_plan P17.3 task.
 7. branch CI is green (same `make ci`); `ci-guard.yml` passes — a local green alone
    is not done
 

@@ -25,6 +25,14 @@ type Config struct {
 	LogLevel  string
 	LogFormat string
 
+	// OpenTelemetry tracing. Opt-in and zero-cost when OTelEnabled is false. When
+	// enabled, spans export to OTelExporterEndpoint over OTelExporterProtocol
+	// (grpc | http/protobuf); OTelServiceName labels the service in traces.
+	OTelEnabled          bool
+	OTelExporterEndpoint string
+	OTelExporterProtocol string
+	OTelServiceName      string
+
 	// HTTP server.
 	HTTPHost            string
 	HTTPPort            int
@@ -119,6 +127,10 @@ func Load() (*Config, error) {
 		Environment:                 env,
 		LogLevel:                    strings.ToLower(getEnv("LOG_LEVEL", "info")),
 		LogFormat:                   strings.ToLower(getEnv("LOG_FORMAT", "json")),
+		OTelEnabled:                 getEnvBool("OTEL_ENABLED", false),
+		OTelExporterEndpoint:        getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		OTelExporterProtocol:        strings.ToLower(getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")),
+		OTelServiceName:             getEnv("OTEL_SERVICE_NAME", "vidra-core"),
 		HTTPHost:                    getEnv("HTTP_HOST", "0.0.0.0"),
 		InstanceName:                getEnv("INSTANCE_NAME", "Vidra (dev)"),
 		InstanceDescription:         getEnv("INSTANCE_DESCRIPTION", ""),
@@ -187,6 +199,16 @@ func (c *Config) validate() error {
 	case "json", "text":
 	default:
 		return fmt.Errorf("config: invalid LOG_FORMAT %q (want json|text)", c.LogFormat)
+	}
+	if c.OTelEnabled {
+		switch c.OTelExporterProtocol {
+		case "grpc", "http/protobuf":
+		default:
+			return fmt.Errorf("config: invalid OTEL_EXPORTER_OTLP_PROTOCOL %q (want grpc|http/protobuf)", c.OTelExporterProtocol)
+		}
+		if strings.TrimSpace(c.OTelExporterEndpoint) == "" {
+			return fmt.Errorf("config: OTEL_EXPORTER_OTLP_ENDPOINT is required when OTEL_ENABLED is true")
+		}
 	}
 	if c.HTTPPort < 1 || c.HTTPPort > 65535 {
 		return fmt.Errorf("config: HTTP_PORT %d out of range", c.HTTPPort)

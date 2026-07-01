@@ -591,12 +591,12 @@
 
 ## P17.3 OpenTelemetry (traces + metrics)
 
-- [ ] Add OTel Go SDK setup + graceful shutdown in `internal/observability`, wired in `cmd/api` (and worker), no-op when disabled.
-- [ ] Add config `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_SERVICE_NAME`, `METRICS_ENABLED` + `.env.example` + validation.
-- [ ] Instrument HTTP (otelecho), datastore (pgx/Redis spans), and outbound HTTP calls.
-- [ ] Accept inbound W3C `traceparent` from `vidra-user`; inject context on outbound calls.
+- [x] Add OTel Go SDK setup + graceful shutdown in `internal/observability`, wired in `cmd/api` (and worker), no-op when disabled. (`observability.SetupTracing(ctx, TracingConfig)` (`internal/observability/otel.go`): when disabled returns a no-op shutdown (global stays the no-op provider, zero cost); when enabled builds an OTLP trace exporter (grpc or http/protobuf, `WithInsecure`, lazy-connect so a down collector never blocks startup), a `sdktrace` provider with a `service.name`/`service.version` resource, sets it global + the W3C TraceContext+Baggage propagator, and returns `tp.Shutdown`. `cmd/api` calls it and defers shutdown. Tested: disabled→no-op, unknown-protocol→error, enabled→constructs+shutdown.)
+- [x] Add config `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_SERVICE_NAME` + `.env.example` + validation. (`config.OTelEnabled`/`OTelExporterEndpoint`/`OTelExporterProtocol` (grpc default) /`OTelServiceName` (default `vidra-core`); validated when enabled: protocol ∈ {grpc, http/protobuf}, endpoint required. `.env.example` documents all four. Tested: defaults, enabled-valid, missing-endpoint→error, bad-protocol→error. `METRICS_ENABLED` lands with the metrics slice below.)
+- [~] Instrument HTTP (otelecho), datastore (pgx/Redis spans), and outbound HTTP calls. (HTTP DONE: `otelecho.Middleware(service)` is mounted (gated on `OTEL_ENABLED`, so zero cost off) after correlationID and before the request logger, so each request is a span and the logger sees its trace_id. Datastore (pgx/Redis) + outbound-HTTP spans are a follow-up.)
+- [~] Accept inbound W3C `traceparent` from `vidra-user`; inject context on outbound calls. (Inbound DONE: the W3C `TraceContext` propagator is installed by `SetupTracing`, and otelecho extracts inbound `traceparent`/`tracestate`, so a `vidra-user` request continues its trace in `vidra-core`. Outbound injection lands with the datastore/outbound span work.)
 - [ ] Export RED metrics with bounded label cardinality (no IDs/tokens/raw URLs as labels); gate the metrics surface behind `METRICS_ENABLED` and document any route in `api/openapi.yaml`.
-- [ ] Stamp `trace_id`/`span_id` into slog output when OTel is enabled.
+- [x] Stamp `trace_id`/`span_id` into slog output when OTel is enabled. (The request logger adds `trace_id`/`span_id` from `trace.SpanContextFromContext` whenever a span is active (`HasTraceID()`), pairing with the OTel-off `correlation_id`. Tested: `TestRequestLogIncludesTraceID` injects a span context and asserts both fields on the `request` line.)
 - [ ] Add optional Docker Compose profile for a local OTel Collector / Jaeger.
 
 ## P17.4 Operations

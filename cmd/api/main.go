@@ -31,6 +31,7 @@ import (
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
+	"github.com/vidra/vidra-core/internal/version"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
@@ -64,6 +65,26 @@ func run() error {
 		"log_level", cfg.LogLevel,
 		"log_format", cfg.LogFormat,
 	)
+
+	// OpenTelemetry tracing (no-op with zero cost when OTEL_ENABLED is false).
+	otelShutdown, err := observability.SetupTracing(context.Background(), observability.TracingConfig{
+		Enabled:        cfg.OTelEnabled,
+		Endpoint:       cfg.OTelExporterEndpoint,
+		Protocol:       cfg.OTelExporterProtocol,
+		ServiceName:    cfg.OTelServiceName,
+		ServiceVersion: version.Version,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = otelShutdown(context.Background()) }()
+	if cfg.OTelEnabled {
+		logger.Info("opentelemetry tracing enabled",
+			"endpoint", cfg.OTelExporterEndpoint,
+			"protocol", cfg.OTelExporterProtocol,
+			"service", cfg.OTelServiceName,
+		)
+	}
 
 	// Bound dependency startup so a missing DB/Redis fails fast rather than
 	// hanging the process indefinitely.

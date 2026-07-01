@@ -79,6 +79,54 @@ func TestLoggingRejectsInvalidFormat(t *testing.T) {
 	}
 }
 
+func TestOTelDefaults(t *testing.T) {
+	for _, k := range []string{"OTEL_ENABLED", "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_PROTOCOL", "OTEL_SERVICE_NAME"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OTelEnabled {
+		t.Error("OTelEnabled default should be false")
+	}
+	if cfg.OTelExporterProtocol != "grpc" {
+		t.Errorf("OTelExporterProtocol = %q, want grpc", cfg.OTelExporterProtocol)
+	}
+	if cfg.OTelServiceName != "vidra-core" {
+		t.Errorf("OTelServiceName = %q, want vidra-core", cfg.OTelServiceName)
+	}
+}
+
+func TestOTelEnabledValid(t *testing.T) {
+	t.Setenv("OTEL_ENABLED", "true")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.OTelEnabled || cfg.OTelExporterEndpoint != "localhost:4317" {
+		t.Errorf("OTel config = %+v, want enabled with endpoint", cfg)
+	}
+}
+
+func TestOTelEnabledRequiresEndpoint(t *testing.T) {
+	t.Setenv("OTEL_ENABLED", "true")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for missing OTEL_EXPORTER_OTLP_ENDPOINT, got nil")
+	}
+}
+
+func TestOTelRejectsBadProtocol(t *testing.T) {
+	t.Setenv("OTEL_ENABLED", "true")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "carrier-pigeon")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for invalid OTEL_EXPORTER_OTLP_PROTOCOL, got nil")
+	}
+}
+
 func TestRateLimitDefaults(t *testing.T) {
 	for _, k := range []string{"RATE_LIMIT_ENABLED", "RATE_LIMIT_REQUESTS", "RATE_LIMIT_WINDOW"} {
 		t.Setenv(k, "")

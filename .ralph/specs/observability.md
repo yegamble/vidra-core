@@ -10,10 +10,12 @@
 > diagnostics) and `TestNoSensitiveLogKeys` (no denylisted slog key) — which run
 > under `make ci` via `go test -race ./...` (being ordinary Go tests IS the
 > enforcement; no Makefile change was needed). Centralized logger construction
-> (`NewLogger`) + `LOG_LEVEL`/`LOG_FORMAT` config are built too (P17.1). Still
-> planned: propagating the request-scoped logger through the service/store layers
-> via context (P17.1) and all of OpenTelemetry — traces/metrics/log correlation
-> (P17.3).
+> (`NewLogger`) + `LOG_LEVEL`/`LOG_FORMAT` config are built too (P17.1).
+> OpenTelemetry **tracing** is built (P17.3): `SetupTracing` (OTLP, no-op when
+> off), `otelecho` HTTP spans, inbound W3C `traceparent`, and `trace_id`/`span_id`
+> in request logs. Still planned: OTel **metrics** (RED + `METRICS_ENABLED`),
+> datastore/outbound span instrumentation, and propagating the request-scoped
+> logger through the service/store layers via context (P17.1).
 
 ## Goals
 

@@ -11,6 +11,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -207,6 +209,12 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// correlationID runs after RequestID (to mint from it) and before the request
 	// logger (so `correlation_id` is present on the emitted line).
 	e.Use(correlationID())
+	// OpenTelemetry HTTP instrumentation (only when enabled — zero cost off). It
+	// runs before the request logger so the active span's trace_id/span_id are in
+	// context when the line is emitted, and it accepts inbound W3C traceparent.
+	if cfg.OTelEnabled {
+		e.Use(otelecho.Middleware(cfg.OTelServiceName))
+	}
 	e.Use(s.requestLogger())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: cfg.CORSAllowedOrigins,
@@ -256,6 +264,10 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 			}
 			if cid := correlationIDFromContext(c.Request().Context()); cid != "" {
 				attrs = append(attrs, "correlation_id", cid)
+			}
+			// When a trace is active (OTel enabled), correlate the log to it.
+			if sc := trace.SpanContextFromContext(c.Request().Context()); sc.HasTraceID() {
+				attrs = append(attrs, "trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
 			}
 			if v.Error != nil {
 				attrs = append(attrs, "error", v.Error)
