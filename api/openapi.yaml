@@ -1345,7 +1345,11 @@ paths:
   /api/v1/comments/{id}:
     delete:
       operationId: deleteComment
-      summary: Delete your own comment
+      summary: Delete a comment
+      description: >-
+        Deletes a comment. The comment's author may always delete it; a
+        moderator/admin may delete anyone's. An unknown id is 404; a non-author
+        non-moderator is 403.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -2289,6 +2293,59 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/comments:
+    get:
+      operationId: listAdminComments
+      summary: List all comments (admin/moderator overview)
+      description: >-
+        The admin/moderator comments overview: every comment, newest first, each
+        with its author and the video it's on. Restricted to moderators/admins.
+        Optional q filters by body substring. Paginated via limit (1–100,
+        default 20) and offset. Delete any comment via DELETE /api/v1/comments/{id}.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive body substring filter.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of comments (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCommentListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
           content:
             application/json:
               schema:
@@ -3517,6 +3574,42 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AdminVideo"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    AdminComment:
+      type: object
+      description: A comment in the admin/moderator overview, with author + video context.
+      required: [id, video_id, video_title, body, author_username, author_display_name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        video_title:
+          type: string
+        body:
+          type: string
+        author_username:
+          type: string
+        author_display_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    AdminCommentListResponse:
+      type: object
+      required: [comments, limit, offset]
+      properties:
+        comments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminComment"
         limit:
           type: integer
           example: 20

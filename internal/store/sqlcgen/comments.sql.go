@@ -69,6 +69,65 @@ func (q *Queries) GetComment(ctx context.Context, id uuid.UUID) (Comment, error)
 	return i, err
 }
 
+const listAdminComments = `-- name: ListAdminComments :many
+SELECT c.id, c.video_id, c.body, c.created_at,
+       u.username AS author_username, u.display_name AS author_display_name,
+       v.title AS video_title
+FROM comments c
+JOIN users u ON u.id = c.user_id
+JOIN videos v ON v.id = c.video_id
+WHERE ($1::text IS NULL OR c.body ILIKE '%' || $1 || '%')
+ORDER BY c.created_at DESC, c.id DESC
+LIMIT $3 OFFSET $2
+`
+
+type ListAdminCommentsParams struct {
+	Query        *string `json:"query"`
+	ResultOffset int32   `json:"result_offset"`
+	ResultLimit  int32   `json:"result_limit"`
+}
+
+type ListAdminCommentsRow struct {
+	ID                uuid.UUID `json:"id"`
+	VideoID           uuid.UUID `json:"video_id"`
+	Body              string    `json:"body"`
+	CreatedAt         time.Time `json:"created_at"`
+	AuthorUsername    string    `json:"author_username"`
+	AuthorDisplayName string    `json:"author_display_name"`
+	VideoTitle        string    `json:"video_title"`
+}
+
+// The admin/moderator comments overview: ALL comments newest first, with the
+// author's identity and the video they're on. An optional case-insensitive body
+// filter (NULL = no filter).
+func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsParams) ([]ListAdminCommentsRow, error) {
+	rows, err := q.db.Query(ctx, listAdminComments, arg.Query, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAdminCommentsRow
+	for rows.Next() {
+		var i ListAdminCommentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.VideoID,
+			&i.Body,
+			&i.CreatedAt,
+			&i.AuthorUsername,
+			&i.AuthorDisplayName,
+			&i.VideoTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCommentsByVideo = `-- name: ListCommentsByVideo :many
 SELECT c.id, c.video_id, c.user_id, c.body, c.created_at, c.updated_at,
        u.username AS author_username, u.display_name AS author_display_name

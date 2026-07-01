@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 type commentFakeRepo struct {
 	users    *authFakeRepo
 	mutes    *muteFakeRepo
+	videos   *videoFakeRepo
 	comments map[uuid.UUID]sqlcgen.Comment
 }
 
@@ -60,6 +62,26 @@ func (f *commentFakeRepo) ListCommentsByVideo(_ context.Context, a sqlcgen.ListC
 			ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
 			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 			AuthorUsername: username, AuthorDisplayName: display,
+		})
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	return rows, nil
+}
+
+func (f *commentFakeRepo) ListAdminComments(_ context.Context, a sqlcgen.ListAdminCommentsParams) ([]sqlcgen.ListAdminCommentsRow, error) {
+	var rows []sqlcgen.ListAdminCommentsRow
+	for _, c := range f.comments {
+		if a.Query != nil && !strings.Contains(strings.ToLower(c.Body), strings.ToLower(*a.Query)) {
+			continue
+		}
+		username, display := f.author(c.UserID)
+		title := ""
+		if f.videos != nil {
+			title = f.videos.videos[c.VideoID].Title
+		}
+		rows = append(rows, sqlcgen.ListAdminCommentsRow{
+			ID: c.ID, VideoID: c.VideoID, Body: c.Body, CreatedAt: c.CreatedAt,
+			AuthorUsername: username, AuthorDisplayName: display, VideoTitle: title,
 		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })

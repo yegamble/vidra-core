@@ -329,6 +329,7 @@ func (s *Server) routes() {
 			api.GET("/videos/:id/comments", s.handleListComments, s.optionalAuth)
 			api.POST("/videos/:id/comments", s.handleCreateComment, s.requireAuth)
 			api.DELETE("/comments/:id", s.handleDeleteComment, s.requireAuth)
+			api.GET("/admin/comments", s.handleListAdminComments, s.requireAuth, s.requireRole("admin", "moderator"))
 		}
 
 		// Ratings (like/dislike) are scoped to a (public, published) video.

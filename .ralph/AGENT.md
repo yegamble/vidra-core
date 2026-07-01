@@ -105,7 +105,7 @@ curl -s localhost:8080/api/v1/videos/<id>/thumbnail -o poster.jpg               
 curl -s localhost:8080/api/v1/videos/<id>/comments                                   # list (public, newest-first, paginated)
 curl -sX POST localhost:8080/api/v1/videos/<id>/comments -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"body":"nice video"}'
-curl -sX DELETE localhost:8080/api/v1/comments/<comment-id> -H 'authorization: Bearer <token>'  # your own only
+curl -sX DELETE localhost:8080/api/v1/comments/<comment-id> -H 'authorization: Bearer <token>'  # delete a comment (author's own; a moderator/admin may delete anyone's)
 
 # Ratings (like/dislike on public, published videos):
 curl -s localhost:8080/api/v1/videos/<id>/rating                                     # counts (+ my_rating if authed)
@@ -161,6 +161,7 @@ curl -sX POST localhost:8080/api/v1/admin/videos/<id>/block -H 'authorization: B
 curl -sX DELETE localhost:8080/api/v1/admin/videos/<id>/block -H 'authorization: Bearer <admin-token>'  # unblock (idempotent) -> 204
 curl -s 'localhost:8080/api/v1/admin/videos/blocked?limit=20' -H 'authorization: Bearer <admin-token>'  # block-list (newest first; channel, reason, who/when)
 curl -s 'localhost:8080/api/v1/admin/videos?q=cat&limit=20' -H 'authorization: Bearer <admin-token>'    # admin videos overview: ALL videos (any privacy/state) + blocked flag; optional q title filter
+curl -s 'localhost:8080/api/v1/admin/comments?q=spam&limit=20' -H 'authorization: Bearer <admin-token>' # admin comments overview: ALL comments + author + video; optional q body filter (delete any via DELETE /comments/:id)
 
 # Account mutes (a signed-in user mutes another account by user id; the muted
 # account's comments AND videos are hidden from them — an authed GET of

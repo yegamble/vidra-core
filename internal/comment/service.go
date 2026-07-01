@@ -6,6 +6,8 @@ package comment
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -26,6 +28,7 @@ var (
 type Repository interface {
 	CreateComment(ctx context.Context, arg sqlcgen.CreateCommentParams) (sqlcgen.Comment, error)
 	ListCommentsByVideo(ctx context.Context, arg sqlcgen.ListCommentsByVideoParams) ([]sqlcgen.ListCommentsByVideoRow, error)
+	ListAdminComments(ctx context.Context, arg sqlcgen.ListAdminCommentsParams) ([]sqlcgen.ListAdminCommentsRow, error)
 	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
 	DeleteComment(ctx context.Context, id uuid.UUID) error
 }
@@ -85,15 +88,59 @@ func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, 
 	return out, nil
 }
 
-// Delete removes a comment, but only if userID is its author. An unknown id is
-// ErrNotFound; a non-author is ErrForbidden.
-func (s *Service) Delete(ctx context.Context, commentID, userID uuid.UUID) error {
+// Delete removes a comment. The comment's author may always delete it; a
+// moderator/admin (isModerator) may delete anyone's. An unknown id is
+// ErrNotFound; a non-author non-moderator is ErrForbidden.
+func (s *Service) Delete(ctx context.Context, commentID, userID uuid.UUID, isModerator bool) error {
 	c, err := s.repo.GetComment(ctx, commentID)
 	if err != nil {
 		return ErrNotFound
 	}
-	if c.UserID != userID {
+	if !isModerator && c.UserID != userID {
 		return ErrForbidden
 	}
 	return s.repo.DeleteComment(ctx, commentID)
+}
+
+// AdminComment is a comment as seen in the admin/moderator comments overview:
+// the body, its author's identity, and the video it's on.
+type AdminComment struct {
+	ID                uuid.UUID
+	VideoID           uuid.UUID
+	VideoTitle        string
+	Body              string
+	AuthorUsername    string
+	AuthorDisplayName string
+	CreatedAt         time.Time
+}
+
+// ListForAdmin returns all comments newest first for the admin/moderator
+// overview. A non-empty query filters by body substring. The caller clamps
+// limit/offset.
+func (s *Service) ListForAdmin(ctx context.Context, query string, limit, offset int32) ([]AdminComment, error) {
+	var q *string
+	if trimmed := strings.TrimSpace(query); trimmed != "" {
+		q = &trimmed
+	}
+	rows, err := s.repo.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{
+		Query:        q,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]AdminComment, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, AdminComment{
+			ID:                r.ID,
+			VideoID:           r.VideoID,
+			VideoTitle:        r.VideoTitle,
+			Body:              r.Body,
+			AuthorUsername:    r.AuthorUsername,
+			AuthorDisplayName: r.AuthorDisplayName,
+			CreatedAt:         r.CreatedAt,
+		})
+	}
+	return items, nil
 }

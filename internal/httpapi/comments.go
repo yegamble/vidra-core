@@ -146,9 +146,10 @@ func (s *Server) handleListComments(c echo.Context) error {
 	return c.JSON(http.StatusOK, commentListResponse{Comments: views, Limit: limit, Offset: offset})
 }
 
-// handleDeleteComment removes the caller's own comment. Behind requireAuth.
+// handleDeleteComment removes a comment. Behind requireAuth. The comment's author
+// may always delete it; a moderator/admin may delete anyone's.
 func (s *Server) handleDeleteComment(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
+	userID, role, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
@@ -156,7 +157,8 @@ func (s *Server) handleDeleteComment(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
 	}
-	if err := s.commentsvc.Delete(c.Request().Context(), id, userID); err != nil {
+	isModerator := role == "admin" || role == "moderator"
+	if err := s.commentsvc.Delete(c.Request().Context(), id, userID, isModerator); err != nil {
 		switch {
 		case errors.Is(err, comment.ErrNotFound):
 			return echo.NewHTTPError(http.StatusNotFound, "comment not found")

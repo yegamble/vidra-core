@@ -28,3 +28,17 @@ WHERE id = $1;
 -- name: DeleteComment :exec
 DELETE FROM comments
 WHERE id = $1;
+
+-- name: ListAdminComments :many
+-- The admin/moderator comments overview: ALL comments newest first, with the
+-- author's identity and the video they're on. An optional case-insensitive body
+-- filter (NULL = no filter).
+SELECT c.id, c.video_id, c.body, c.created_at,
+       u.username AS author_username, u.display_name AS author_display_name,
+       v.title AS video_title
+FROM comments c
+JOIN users u ON u.id = c.user_id
+JOIN videos v ON v.id = c.video_id
+WHERE (sqlc.narg('query')::text IS NULL OR c.body ILIKE '%' || sqlc.narg('query') || '%')
+ORDER BY c.created_at DESC, c.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
