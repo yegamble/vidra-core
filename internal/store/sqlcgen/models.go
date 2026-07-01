@@ -241,3 +241,10 @@ type WatchedWord struct {
 	CreatedBy pgtype.UUID `json:"created_by"`
 	CreatedAt time.Time   `json:"created_at"`
 }
+
+type WatchedWordMatch struct {
+	ID            uuid.UUID `json:"id"`
+	WatchedWordID uuid.UUID `json:"watched_word_id"`
+	CommentID     uuid.UUID `json:"comment_id"`
+	CreatedAt     time.Time `json:"created_at"`
+}

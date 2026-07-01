@@ -51,6 +51,63 @@ func (q *Queries) DeleteWatchedWord(ctx context.Context, id uuid.UUID) (int64, e
 	return result.RowsAffected(), nil
 }
 
+const listWatchedWordMatches = `-- name: ListWatchedWordMatches :many
+SELECT m.id, m.created_at, w.word,
+       c.id AS comment_id, c.body AS comment_body, c.video_id,
+       u.username AS author_username
+FROM watched_word_matches m
+JOIN watched_words w ON w.id = m.watched_word_id
+JOIN comments c ON c.id = m.comment_id
+JOIN users u ON u.id = c.user_id
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $2 OFFSET $1
+`
+
+type ListWatchedWordMatchesParams struct {
+	ResultOffset int32 `json:"result_offset"`
+	ResultLimit  int32 `json:"result_limit"`
+}
+
+type ListWatchedWordMatchesRow struct {
+	ID             uuid.UUID `json:"id"`
+	CreatedAt      time.Time `json:"created_at"`
+	Word           string    `json:"word"`
+	CommentID      uuid.UUID `json:"comment_id"`
+	CommentBody    string    `json:"comment_body"`
+	VideoID        uuid.UUID `json:"video_id"`
+	AuthorUsername string    `json:"author_username"`
+}
+
+// Flagged comments, newest match first, with the matched term + comment context
+// (body, author, and the video it is on).
+func (q *Queries) ListWatchedWordMatches(ctx context.Context, arg ListWatchedWordMatchesParams) ([]ListWatchedWordMatchesRow, error) {
+	rows, err := q.db.Query(ctx, listWatchedWordMatches, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWatchedWordMatchesRow
+	for rows.Next() {
+		var i ListWatchedWordMatchesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.Word,
+			&i.CommentID,
+			&i.CommentBody,
+			&i.VideoID,
+			&i.AuthorUsername,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWatchedWords = `-- name: ListWatchedWords :many
 SELECT w.id, w.word, w.created_at, u.username AS created_by_username
 FROM watched_words w
@@ -96,4 +153,52 @@ func (q *Queries) ListWatchedWords(ctx context.Context, arg ListWatchedWordsPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const matchWatchedWords = `-- name: MatchWatchedWords :many
+SELECT id, word FROM watched_words
+WHERE strpos(lower($1::text), lower(word)) > 0
+`
+
+type MatchWatchedWordsRow struct {
+	ID   uuid.UUID `json:"id"`
+	Word string    `json:"word"`
+}
+
+// Watched terms that occur (case-insensitive substring) in the given text.
+func (q *Queries) MatchWatchedWords(ctx context.Context, text string) ([]MatchWatchedWordsRow, error) {
+	rows, err := q.db.Query(ctx, matchWatchedWords, text)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MatchWatchedWordsRow
+	for rows.Next() {
+		var i MatchWatchedWordsRow
+		if err := rows.Scan(&i.ID, &i.Word); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recordWatchedWordMatch = `-- name: RecordWatchedWordMatch :exec
+INSERT INTO watched_word_matches (watched_word_id, comment_id)
+VALUES ($1, $2)
+ON CONFLICT (watched_word_id, comment_id) DO NOTHING
+`
+
+type RecordWatchedWordMatchParams struct {
+	WatchedWordID uuid.UUID `json:"watched_word_id"`
+	CommentID     uuid.UUID `json:"comment_id"`
+}
+
+// Record that a comment matched a watched term (idempotent per word+comment).
+func (q *Queries) RecordWatchedWordMatch(ctx context.Context, arg RecordWatchedWordMatchParams) error {
+	_, err := q.db.Exec(ctx, recordWatchedWordMatch, arg.WatchedWordID, arg.CommentID)
+	return err
 }

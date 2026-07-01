@@ -18,6 +18,7 @@ type fakeRepo struct {
 	words   map[uuid.UUID]sqlcgen.WatchedWord
 	order   []uuid.UUID
 	present map[string]bool // lower(word) -> exists
+	matches []sqlcgen.ListWatchedWordMatchesRow
 }
 
 func newFakeRepo() *fakeRepo {
@@ -55,6 +56,81 @@ func (f *fakeRepo) DeleteWatchedWord(_ context.Context, id uuid.UUID) (int64, er
 	delete(f.words, id)
 	delete(f.present, strings.ToLower(w.Word))
 	return 1, nil
+}
+
+func (f *fakeRepo) MatchWatchedWords(_ context.Context, text string) ([]sqlcgen.MatchWatchedWordsRow, error) {
+	var out []sqlcgen.MatchWatchedWordsRow
+	for _, id := range f.order {
+		w, ok := f.words[id]
+		if ok && strings.Contains(strings.ToLower(text), strings.ToLower(w.Word)) {
+			out = append(out, sqlcgen.MatchWatchedWordsRow{ID: w.ID, Word: w.Word})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeRepo) RecordWatchedWordMatch(_ context.Context, a sqlcgen.RecordWatchedWordMatchParams) error {
+	for _, m := range f.matches {
+		if m.CommentID == a.CommentID && m.Word == f.words[a.WatchedWordID].Word {
+			return nil // idempotent
+		}
+	}
+	f.matches = append(f.matches, sqlcgen.ListWatchedWordMatchesRow{
+		ID: uuid.New(), Word: f.words[a.WatchedWordID].Word, CommentID: a.CommentID, CreatedAt: time.Now(),
+	})
+	return nil
+}
+
+func (f *fakeRepo) ListWatchedWordMatches(_ context.Context, _ sqlcgen.ListWatchedWordMatchesParams) ([]sqlcgen.ListWatchedWordMatchesRow, error) {
+	out := make([]sqlcgen.ListWatchedWordMatchesRow, 0, len(f.matches))
+	for i := len(f.matches) - 1; i >= 0; i-- { // newest first
+		out = append(out, f.matches[i])
+	}
+	return out, nil
+}
+
+func TestFlagCommentAndListMatches(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo())
+	admin := uuid.New()
+	if _, err := svc.Add(ctx, "spam", admin); err != nil {
+		t.Fatalf("Add spam: %v", err)
+	}
+	if _, err := svc.Add(ctx, "scam", admin); err != nil {
+		t.Fatalf("Add scam: %v", err)
+	}
+
+	c1 := uuid.New()
+	n, err := svc.FlagComment(ctx, c1, "this is SPAM and a scam")
+	if err != nil {
+		t.Fatalf("FlagComment: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("matched terms = %d, want 2 (spam + scam, case-insensitive)", n)
+	}
+
+	// A clean comment matches nothing.
+	if n, _ := svc.FlagComment(ctx, uuid.New(), "a perfectly nice comment"); n != 0 {
+		t.Errorf("clean comment matched = %d, want 0", n)
+	}
+
+	// Re-flagging the same comment is idempotent (no duplicate rows).
+	if _, err := svc.FlagComment(ctx, c1, "this is SPAM and a scam"); err != nil {
+		t.Fatalf("re-FlagComment: %v", err)
+	}
+
+	matches, err := svc.ListMatches(ctx, 20, 0)
+	if err != nil {
+		t.Fatalf("ListMatches: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("matches = %d, want 2 (the two terms on c1, dedup'd)", len(matches))
+	}
+	for _, m := range matches {
+		if m.CommentID != c1 {
+			t.Errorf("match for %s, want %s", m.CommentID, c1)
+		}
+	}
 }
 
 func TestAddListDelete(t *testing.T) {

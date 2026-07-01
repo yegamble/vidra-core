@@ -149,6 +149,13 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 			}
 		}
 	}
+	// Flag the comment against the moderation watched-words list (best-effort;
+	// records matches for the admin review queue — never blocks the post).
+	if s.watchwordsvc != nil {
+		if _, werr := s.watchwordsvc.FlagComment(ctx, created.ID, created.Body); werr != nil {
+			s.logger.WarnContext(ctx, "watched-word flagging failed", "error", werr, "comment_id", created.ID)
+		}
+	}
 	return c.JSON(http.StatusCreated, newCommentView(created, author.Username, author.DisplayName))
 }
 

@@ -186,6 +186,9 @@ curl -sX POST localhost:8080/api/v1/admin/watched-words -H 'authorization: Beare
   -H 'content-type: application/json' -d '{"word":"spam"}'                                # add a term -> 201 (case-insensitive dup -> 409)
 curl -s 'localhost:8080/api/v1/admin/watched-words?limit=20' -H 'authorization: Bearer <admin-token>'  # list (newest first, with adder)
 curl -sX DELETE localhost:8080/api/v1/admin/watched-words/<id> -H 'authorization: Bearer <admin-token>' # remove (idempotent -> 204)
+# Comments auto-flagged by a watched term on post (detection + review only; no
+# auto-hide yet). Moderator/admin review queue, newest match first:
+curl -s 'localhost:8080/api/v1/admin/watched-word-matches?limit=20' -H 'authorization: Bearer <admin-token>'  # flagged comments + matched term
 
 # Account mutes (a signed-in user mutes another account by user id; the muted
 # account's comments AND videos are hidden from them — an authed GET of

@@ -26,6 +26,9 @@ type Repository interface {
 	CreateWatchedWord(ctx context.Context, arg sqlcgen.CreateWatchedWordParams) (sqlcgen.WatchedWord, error)
 	ListWatchedWords(ctx context.Context, arg sqlcgen.ListWatchedWordsParams) ([]sqlcgen.ListWatchedWordsRow, error)
 	DeleteWatchedWord(ctx context.Context, id uuid.UUID) (int64, error)
+	MatchWatchedWords(ctx context.Context, text string) ([]sqlcgen.MatchWatchedWordsRow, error)
+	RecordWatchedWordMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordMatchParams) error
+	ListWatchedWordMatches(ctx context.Context, arg sqlcgen.ListWatchedWordMatchesParams) ([]sqlcgen.ListWatchedWordMatchesRow, error)
 }
 
 // Service holds the watched-words application logic.
@@ -87,6 +90,58 @@ func (s *Service) List(ctx context.Context, limit, offset int32) ([]WatchedWord,
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	_, err := s.repo.DeleteWatchedWord(ctx, id)
 	return err
+}
+
+// FlagComment checks a comment's body against the watched-words list and records
+// a match row for each term found (idempotent per word+comment). It returns the
+// number of terms matched. Best-effort: callers invoke it as a side effect of
+// posting a comment and must not fail the comment on error.
+func (s *Service) FlagComment(ctx context.Context, commentID uuid.UUID, body string) (int, error) {
+	matches, err := s.repo.MatchWatchedWords(ctx, body)
+	if err != nil {
+		return 0, err
+	}
+	for _, m := range matches {
+		if err := s.repo.RecordWatchedWordMatch(ctx, sqlcgen.RecordWatchedWordMatchParams{
+			WatchedWordID: m.ID,
+			CommentID:     commentID,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return len(matches), nil
+}
+
+// Match is a flagged comment for the moderation review queue: the matched term
+// plus the comment's context.
+type Match struct {
+	ID             uuid.UUID
+	Word           string
+	CommentID      uuid.UUID
+	CommentBody    string
+	VideoID        uuid.UUID
+	AuthorUsername string
+	CreatedAt      time.Time
+}
+
+// ListMatches returns flagged comments, newest match first. The caller clamps
+// limit/offset.
+func (s *Service) ListMatches(ctx context.Context, limit, offset int32) ([]Match, error) {
+	rows, err := s.repo.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Match, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Match{
+			ID: r.ID, Word: r.Word, CommentID: r.CommentID, CommentBody: r.CommentBody,
+			VideoID: r.VideoID, AuthorUsername: r.AuthorUsername, CreatedAt: r.CreatedAt,
+		})
+	}
+	return out, nil
 }
 
 // sqlState returns the SQLSTATE code of a PostgreSQL error, "" otherwise.

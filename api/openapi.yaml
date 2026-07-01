@@ -2663,6 +2663,52 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/watched-word-matches:
+    get:
+      operationId: listWatchedWordMatches
+      summary: List comments flagged by the watched-words list
+      description: >-
+        Returns comments that matched a watched term when posted, newest match
+        first, with the matched term and the comment's context (body, author,
+        video). Restricted to moderators/admins. Detection is recorded on comment
+        creation; this slice does not auto-hide the content. Paginated via ?limit
+        (1–100, default 20)/?offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of flagged comments (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordMatchListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/comments:
     get:
       operationId: listAdminComments
@@ -4342,6 +4388,44 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WatchedWord"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    WatchedWordMatch:
+      type: object
+      description: A comment flagged by the watched-words list, for moderator review.
+      required: [id, word, comment_id, comment_body, video_id, author_username, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        word:
+          type: string
+          description: The watched term that matched.
+        comment_id:
+          type: string
+          format: uuid
+        comment_body:
+          type: string
+        video_id:
+          type: string
+          format: uuid
+        author_username:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    WatchedWordMatchListResponse:
+      type: object
+      required: [matches, limit, offset]
+      properties:
+        matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/WatchedWordMatch"
         limit:
           type: integer
           example: 20

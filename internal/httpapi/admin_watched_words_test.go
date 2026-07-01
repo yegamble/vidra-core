@@ -22,6 +22,7 @@ type watchwordFakeRepo struct {
 	words   map[uuid.UUID]sqlcgen.WatchedWord
 	order   []uuid.UUID
 	present map[string]bool
+	matches []sqlcgen.ListWatchedWordMatchesRow
 }
 
 func (f *watchwordFakeRepo) CreateWatchedWord(_ context.Context, a sqlcgen.CreateWatchedWordParams) (sqlcgen.WatchedWord, error) {
@@ -64,6 +65,37 @@ func (f *watchwordFakeRepo) DeleteWatchedWord(_ context.Context, id uuid.UUID) (
 	delete(f.words, id)
 	delete(f.present, strings.ToLower(w.Word))
 	return 1, nil
+}
+
+func (f *watchwordFakeRepo) MatchWatchedWords(_ context.Context, text string) ([]sqlcgen.MatchWatchedWordsRow, error) {
+	var out []sqlcgen.MatchWatchedWordsRow
+	for _, id := range f.order {
+		w, ok := f.words[id]
+		if ok && strings.Contains(strings.ToLower(text), strings.ToLower(w.Word)) {
+			out = append(out, sqlcgen.MatchWatchedWordsRow{ID: w.ID, Word: w.Word})
+		}
+	}
+	return out, nil
+}
+
+func (f *watchwordFakeRepo) RecordWatchedWordMatch(_ context.Context, a sqlcgen.RecordWatchedWordMatchParams) error {
+	for _, m := range f.matches {
+		if m.CommentID == a.CommentID && m.Word == f.words[a.WatchedWordID].Word {
+			return nil
+		}
+	}
+	f.matches = append(f.matches, sqlcgen.ListWatchedWordMatchesRow{
+		ID: uuid.New(), Word: f.words[a.WatchedWordID].Word, CommentID: a.CommentID, CreatedAt: time.Now(),
+	})
+	return nil
+}
+
+func (f *watchwordFakeRepo) ListWatchedWordMatches(_ context.Context, _ sqlcgen.ListWatchedWordMatchesParams) ([]sqlcgen.ListWatchedWordMatchesRow, error) {
+	out := make([]sqlcgen.ListWatchedWordMatchesRow, 0, len(f.matches))
+	for i := len(f.matches) - 1; i >= 0; i-- {
+		out = append(out, f.matches[i])
+	}
+	return out, nil
 }
 
 // watchedWordsBody parses GET /admin/watched-words.
