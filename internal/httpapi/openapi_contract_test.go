@@ -14,6 +14,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
+	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
@@ -41,6 +42,7 @@ func fullRouteOptions() []Option {
 		WithWatchWordService(watchword.NewService(nil)),
 		WithAdminService(admin.NewService(nil)),
 		WithAuditLog(audit.NewService(nil)),
+		WithMessagingService(messaging.NewService(nil)),
 	}
 }
 

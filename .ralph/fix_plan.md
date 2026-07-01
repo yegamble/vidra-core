@@ -86,7 +86,7 @@
 - [ ] Add `internal/media`.
 - [ ] Add `internal/storage`.
 - [ ] Add `internal/federation`.
-- [ ] Add `internal/messaging`.
+- [x] Add `internal/messaging`. (normal 1:1 DM service; E2EE is P11.2)
 - [ ] Add `internal/moderation`.
 - [ ] Add `internal/observability`.
 - [ ] Add `internal/testutil`.
@@ -195,8 +195,8 @@
 - [ ] Add federation actors table.
 - [ ] Add federation activities/inbox/outbox table.
 - [ ] Add ATProto identities/events tables.
-- [ ] Add direct messages conversations table.
-- [ ] Add direct messages table.
+- [x] Add direct messages conversations table. (migration 0031: `conversations` + `conversation_participants`)
+- [x] Add direct messages table. (migration 0031: `messages`, index on `(conversation_id, created_at DESC)`)
 - [ ] Add encrypted message device/prekey/session tables if E2EE is enabled.
 - [ ] Add attachments table.
 - [ ] Add link previews table.
@@ -212,7 +212,7 @@
 - [x] Generate typed queries for videos. (`internal/store/queries/videos.sql` — CreateVideo / GetVideoByID (joined owner_id) / ListVideosByChannel / ListPublicVideosByChannel / UpdateVideo / DeleteVideo)
 - [x] Generate typed queries for watch history. (`internal/store/queries/watch_history.sql` — UpsertWatchProgress / GetWatchProgress / ListWatchHistory (discovery-card join + position + watched_at) / DeleteWatchHistoryEntry / ClearWatchHistory)
 - [x] Generate typed queries for playlists. (`internal/store/queries/playlists.sql` — CreatePlaylist / GetPlaylistByID (+ public video_count) / ListPlaylistsByOwner / UpdatePlaylist (COALESCE partial) / DeletePlaylist / AddPlaylistItem (append at MAX(position)+1, idempotent ON CONFLICT) / RemovePlaylistItem / ListPlaylistItems (discovery-card join, public+published only, ordered by position).)
-- [ ] Generate typed queries for messaging.
+- [x] Generate typed queries for messaging. (`internal/store/queries/messaging.sql` — CreateConversation (ON CONFLICT DO NOTHING by dm_key) / GetConversationByDMKey / AddConversationParticipant / IsConversationParticipant / CreateMessage / TouchConversation / ListMessages (sender join, newest-first) / ListConversations (LATERAL last-message + other participant, COALESCE for empty threads).)
 - [ ] Generate typed queries for moderation.
 - [ ] Add sqlc generation command to Makefile/task runner.
 - [ ] Add CI check that generated sqlc output is current.
@@ -464,16 +464,16 @@
 
 ## P11.1 Normal Secure Messaging
 
-- [ ] Implement conversations.
-- [ ] Implement conversation participants.
-- [ ] Implement message send/list/read.
-- [ ] Implement message attachments.
-- [ ] Implement attachment virus scanning.
-- [ ] Implement link preview extraction with SSRF protection.
-- [ ] Implement read receipts.
-- [ ] Implement typing presence or explicitly defer.
-- [ ] Implement blocking/reporting integration.
-- [ ] Add messaging API tests.
+- [x] Implement conversations. (1:1 DM: `conversations.dm_key` = sorted `"<uuid>:<uuid>"`, UNIQUE → idempotent start-or-get; migration 0031; `internal/messaging`, `POST /api/v1/conversations`)
+- [x] Implement conversation participants. (`conversation_participants`; `GET /api/v1/me/conversations` inbox with other participant + last-message preview, most-recently-active first)
+- [x] Implement message send/list/read. (`messages` table; `POST/GET /api/v1/conversations/{id}/messages`, newest-first, participant-only → non-participant/unknown conversation is 404; 5000-char body cap; `TouchConversation` bumps recency)
+- [ ] Implement message attachments. (deferred — normal-DM slice covers text only)
+- [ ] Implement attachment virus scanning. (deferred with attachments)
+- [ ] Implement link preview extraction with SSRF protection. (deferred)
+- [ ] Implement read receipts. (deferred)
+- [ ] Implement typing presence or explicitly defer. (deferred — polling model, no presence yet)
+- [ ] Implement blocking/reporting integration. (deferred — block model exists in P moderation; wire into DM start next)
+- [x] Add messaging API tests. (`internal/messaging/service_test.go` — start/self/recipient-404/send/list/authz; `internal/httpapi/messaging_test.go` — full HTTP flow incl. idempotent start, sender identity, non-participant 404, self 422, unknown 404, anon 401)
 
 ## P11.2 Encrypted Messaging
 

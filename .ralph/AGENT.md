@@ -199,6 +199,17 @@ curl -sX POST   localhost:8080/api/v1/me/mutes/accounts/<user-id> -H 'authorizat
 curl -sX DELETE localhost:8080/api/v1/me/mutes/accounts/<user-id> -H 'authorization: Bearer <token>'  # unmute (idempotent)
 curl -s 'localhost:8080/api/v1/me/mutes/accounts?limit=20' -H 'authorization: Bearer <token>'         # your muted accounts (newest first, with identity)
 
+# Direct messaging (normal 1:1 DM; plaintext bodies — E2EE is a separate later
+# slice, P11.2. Start is idempotent: the (me, recipient) pair maps to one
+# conversation via a sorted dm_key. All endpoints require auth; a non-participant
+# — or an unknown conversation id — is 404 so a thread's existence is not leaked):
+curl -sX POST localhost:8080/api/v1/conversations -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"recipient_id":"<user-id>"}'                  # start-or-get -> 201 {id,...} (self -> 422, unknown recipient -> 404)
+curl -s 'localhost:8080/api/v1/me/conversations?limit=20' -H 'authorization: Bearer <token>'  # inbox: other participant + last-message preview, most-recently-active first
+curl -sX POST localhost:8080/api/v1/conversations/<id>/messages -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"body":"hello"}'                              # send -> 201 {..,sender_username} (>5000 chars -> 422; non-participant -> 404)
+curl -s 'localhost:8080/api/v1/conversations/<id>/messages?limit=20' -H 'authorization: Bearer <token>'  # messages, newest first (non-participant -> 404)
+
 # Admin user management (admin-only; the first registered account is admin):
 curl -s 'localhost:8080/api/v1/admin/users?q=ada&limit=20' -H 'authorization: Bearer <admin-token>'  # list/search accounts (no password hash)
 curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer <admin-token>' \

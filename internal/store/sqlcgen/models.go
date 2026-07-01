@@ -58,6 +58,18 @@ type Comment struct {
 	ParentID  pgtype.UUID `json:"parent_id"`
 }
 
+type Conversation struct {
+	ID        uuid.UUID `json:"id"`
+	DmKey     *string   `json:"dm_key"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type ConversationParticipant struct {
+	ConversationID uuid.UUID `json:"conversation_id"`
+	UserID         uuid.UUID `json:"user_id"`
+}
+
 type EmailVerificationToken struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`
@@ -65,6 +77,14 @@ type EmailVerificationToken struct {
 	ExpiresAt time.Time          `json:"expires_at"`
 	UsedAt    pgtype.Timestamptz `json:"used_at"`
 	CreatedAt time.Time          `json:"created_at"`
+}
+
+type Message struct {
+	ID             uuid.UUID `json:"id"`
+	ConversationID uuid.UUID `json:"conversation_id"`
+	SenderID       uuid.UUID `json:"sender_id"`
+	Body           string    `json:"body"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type MutedAccount struct {

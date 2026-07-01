@@ -23,6 +23,7 @@ import (
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
@@ -190,6 +191,9 @@ func run() error {
 
 	auditsvc := audit.NewService(db.Queries())
 	opts = append(opts, httpapi.WithAuditLog(auditsvc))
+
+	messagingsvc := messaging.NewService(db.Queries())
+	opts = append(opts, httpapi.WithMessagingService(messagingsvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

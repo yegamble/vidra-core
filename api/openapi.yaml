@@ -3050,6 +3050,183 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/conversations:
+    post:
+      operationId: startConversation
+      summary: Start (or get) a direct conversation
+      description: >-
+        Returns the 1:1 conversation with the recipient, creating it if it does
+        not exist (idempotent). Behind auth. Messaging yourself is 422; an unknown
+        recipient is 404.
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartConversationRequest"
+      responses:
+        "201":
+          description: The conversation (existing or newly created).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such recipient.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed, or an attempt to message yourself.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/conversations:
+    get:
+      operationId: listConversations
+      summary: List my conversations
+      description: >-
+        Returns the caller's conversations, most-recently-active first, each with
+        the other participant and a last-message preview. Behind auth. Paginated
+        via limit (1–100, default 20) and offset.
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of conversations (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/conversations/{id}/messages:
+    get:
+      operationId: listMessages
+      summary: List messages in a conversation
+      description: >-
+        Returns a conversation's messages, newest first. Behind auth. A
+        non-participant (or unknown conversation) is 404 so a conversation's
+        existence is not leaked. Paginated via limit (1–100, default 20)/offset.
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of messages (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such conversation for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: sendMessage
+      summary: Send a message
+      description: >-
+        Posts a message to a conversation. Behind auth. A non-participant (or
+        unknown conversation) is 404.
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "201":
+          description: The message was sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such conversation for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/audit-log:
     get:
       operationId: listAuditLog
@@ -4471,6 +4648,108 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AdminUser"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    StartConversationRequest:
+      type: object
+      required: [recipient_id]
+      properties:
+        recipient_id:
+          type: string
+          format: uuid
+    Conversation:
+      type: object
+      required: [id, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ConversationSummary:
+      type: object
+      description: "A conversation in the inbox: the other participant + last message preview."
+      required: [id, updated_at, other_user_id, other_username, other_display_name, last_message_body, last_message_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+        other_user_id:
+          type: string
+          format: uuid
+        other_username:
+          type: string
+        other_display_name:
+          type: string
+        last_message_body:
+          type: string
+          description: Empty when the conversation has no messages yet.
+        last_message_at:
+          type: string
+          format: date-time
+    ConversationListResponse:
+      type: object
+      required: [conversations, limit, offset]
+      properties:
+        conversations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationSummary"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    SendMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 5000
+    Message:
+      type: object
+      required: [id, conversation_id, sender_id, body, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        sender_id:
+          type: string
+          format: uuid
+        sender_username:
+          type: string
+        sender_display_name:
+          type: string
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    MessageListResponse:
+      type: object
+      required: [messages, limit, offset]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
         limit:
           type: integer
           example: 20

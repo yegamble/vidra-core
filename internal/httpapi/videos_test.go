@@ -23,6 +23,7 @@ import (
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
@@ -577,6 +578,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 	cmRepo := &commentFakeRepo{users: authRepo, mutes: muteRepo, videos: repo}
 	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
 	repo.blocks = modRepo
+	msgRepo := newMessagingFakeRepo(authRepo)
 	return New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
@@ -589,6 +591,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 		WithMuteService(mute.NewService(muteRepo)),
 		WithWatchWordService(watchword.NewService(&watchwordFakeRepo{auth: authRepo})),
 		WithAdminService(admin.NewService(authRepo)),
+		WithMessagingService(messaging.NewService(msgRepo)),
 		WithMediaStorage(blobs),
 	)
 }

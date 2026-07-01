@@ -20,6 +20,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
@@ -59,6 +60,7 @@ type Server struct {
 	watchwordsvc  *watchword.Service
 	adminsvc      *admin.Service
 	auditLog      *audit.Service
+	messagingsvc  *messaging.Service
 	media         storage.Backend
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
 	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
@@ -159,6 +161,12 @@ func WithWatchWordService(svc *watchword.Service) Option {
 // edit role + active flag). When unset, the routes are not registered.
 func WithAdminService(svc *admin.Service) Option {
 	return func(s *Server) { s.adminsvc = svc }
+}
+
+// WithMessagingService mounts the direct-messaging endpoints (start/list
+// conversations, send/list messages). When unset, the routes are not registered.
+func WithMessagingService(svc *messaging.Service) Option {
+	return func(s *Server) { s.messagingsvc = svc }
 }
 
 // WithAuditLog wires the durable audit-log service. When set, s.audit persists
@@ -480,6 +488,15 @@ func (s *Server) routes() {
 	// Admin operational status. Depends only on core wiring; auth guards it.
 	if s.authsvc != nil {
 		api.GET("/admin/system", s.handleSystemStatus, s.requireAuth, s.requireRole("admin"))
+	}
+
+	// Direct messaging (1:1 conversations + messages). All behind requireAuth;
+	// non-participants get 404 so a conversation's existence is not leaked.
+	if s.messagingsvc != nil {
+		api.POST("/conversations", s.handleStartConversation, s.requireAuth)
+		api.GET("/me/conversations", s.handleListConversations, s.requireAuth)
+		api.GET("/conversations/:id/messages", s.handleListMessages, s.requireAuth)
+		api.POST("/conversations/:id/messages", s.handleSendMessage, s.requireAuth)
 	}
 }
 
