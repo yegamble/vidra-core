@@ -142,3 +142,19 @@ RETURNING id, channel_id, title, description, privacy, state, created_at, update
 
 -- name: DeleteVideo :exec
 DELETE FROM videos WHERE id = $1;
+
+-- name: ListAdminVideos :many
+-- The admin/moderator videos overview: ALL videos (any privacy/state) newest
+-- first, with the owning channel, view count, and whether the video is currently
+-- blocked. An optional case-insensitive title filter (NULL = no filter).
+SELECT v.id, v.title, v.privacy, v.state,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       COALESCE(vc.views, 0)::bigint AS views,
+       v.created_at,
+       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE (sqlc.narg('query')::text IS NULL OR v.title ILIKE '%' || sqlc.narg('query') || '%')
+ORDER BY v.created_at DESC, v.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');

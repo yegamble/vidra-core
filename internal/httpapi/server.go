@@ -367,6 +367,7 @@ func (s *Server) routes() {
 		api.POST("/comments/:id/report", s.handleReportComment, s.requireAuth)
 		api.GET("/admin/reports", s.handleListReports, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.POST("/admin/reports/:id/resolve", s.handleResolveReport, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.GET("/admin/videos", s.handleListAdminVideos, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.GET("/admin/videos/blocked", s.handleListBlockedVideos, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.POST("/admin/videos/:id/block", s.handleBlockVideo, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.DELETE("/admin/videos/:id/block", s.handleUnblockVideo, s.requireAuth, s.requireRole("admin", "moderator"))

@@ -2293,6 +2293,59 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/videos:
+    get:
+      operationId: listAdminVideos
+      summary: List all videos (admin/moderator overview)
+      description: >-
+        The admin/moderator videos overview: every video (any privacy/state),
+        newest first, each with its owning channel, view count, and whether it is
+        currently blocked. Restricted to moderators/admins. Optional q filters by
+        title substring. Paginated via limit (1–100, default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive title substring filter.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of videos (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminVideoListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/videos/blocked:
     get:
       operationId: listBlockedVideos
@@ -3421,6 +3474,49 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/BlockedVideo"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    AdminVideo:
+      type: object
+      description: A video in the admin/moderator overview (any privacy/state), with block status.
+      required: [id, title, privacy, state, channel_handle, channel_display_name, views, created_at, blocked]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        state:
+          type: string
+          enum: [draft, processing, published, failed]
+        channel_handle:
+          type: string
+        channel_display_name:
+          type: string
+        views:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        blocked:
+          type: boolean
+          description: Whether the video is currently blocked (hidden from public surfaces).
+    AdminVideoListResponse:
+      type: object
+      required: [videos, limit, offset]
+      properties:
+        videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminVideo"
         limit:
           type: integer
           example: 20

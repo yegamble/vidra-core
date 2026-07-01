@@ -38,6 +38,7 @@ import (
 type videoFakeRepo struct {
 	channels *channelFakeRepo
 	mutes    *muteFakeRepo
+	blocks   *moderationFakeRepo
 	videos   map[uuid.UUID]sqlcgen.GetVideoByIDRow
 	files    map[uuid.UUID][]sqlcgen.VideoFile
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
@@ -386,6 +387,34 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 	return all[lo:hi], nil
 }
 
+// ListAdminVideos returns all videos (any privacy/state) with the current block
+// status, mirroring the real admin overview query. An optional title filter.
+func (f *videoFakeRepo) ListAdminVideos(_ context.Context, a sqlcgen.ListAdminVideosParams) ([]sqlcgen.ListAdminVideosRow, error) {
+	var rows []sqlcgen.ListAdminVideosRow
+	for _, r := range f.videos {
+		if a.Query != nil && !strings.Contains(strings.ToLower(r.Title), strings.ToLower(*a.Query)) {
+			continue
+		}
+		blocked := false
+		if f.blocks != nil {
+			blocked, _ = f.blocks.IsVideoBlocked(context.Background(), r.ID)
+		}
+		ch, cn := f.channelInfo(r.ChannelID)
+		rows = append(rows, sqlcgen.ListAdminVideosRow{
+			ID: r.ID, Title: r.Title, Privacy: r.Privacy, State: r.State,
+			ChannelHandle: ch, ChannelDisplayName: cn,
+			Views: f.views[r.ID], CreatedAt: r.CreatedAt, Blocked: blocked,
+		})
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	lo := min(int(a.ResultOffset), len(rows))
+	rows = rows[lo:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(rows) {
+		rows = rows[:a.ResultLimit]
+	}
+	return rows, nil
+}
+
 func (f *videoFakeRepo) hasThumb(id uuid.UUID) bool {
 	for _, vf := range f.files[id] {
 		if vf.Kind == "thumbnail" {
@@ -493,6 +522,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 	repo.mutes = muteRepo
 	cmRepo := &commentFakeRepo{users: authRepo, mutes: muteRepo}
 	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
+	repo.blocks = modRepo
 	return New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),

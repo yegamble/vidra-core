@@ -93,6 +93,71 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 	return i, err
 }
 
+const listAdminVideos = `-- name: ListAdminVideos :many
+SELECT v.id, v.title, v.privacy, v.state,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       COALESCE(vc.views, 0)::bigint AS views,
+       v.created_at,
+       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+WHERE ($1::text IS NULL OR v.title ILIKE '%' || $1 || '%')
+ORDER BY v.created_at DESC, v.id DESC
+LIMIT $3 OFFSET $2
+`
+
+type ListAdminVideosParams struct {
+	Query        *string `json:"query"`
+	ResultOffset int32   `json:"result_offset"`
+	ResultLimit  int32   `json:"result_limit"`
+}
+
+type ListAdminVideosRow struct {
+	ID                 uuid.UUID `json:"id"`
+	Title              string    `json:"title"`
+	Privacy            string    `json:"privacy"`
+	State              string    `json:"state"`
+	ChannelHandle      string    `json:"channel_handle"`
+	ChannelDisplayName string    `json:"channel_display_name"`
+	Views              int64     `json:"views"`
+	CreatedAt          time.Time `json:"created_at"`
+	Blocked            bool      `json:"blocked"`
+}
+
+// The admin/moderator videos overview: ALL videos (any privacy/state) newest
+// first, with the owning channel, view count, and whether the video is currently
+// blocked. An optional case-insensitive title filter (NULL = no filter).
+func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams) ([]ListAdminVideosRow, error) {
+	rows, err := q.db.Query(ctx, listAdminVideos, arg.Query, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAdminVideosRow
+	for rows.Next() {
+		var i ListAdminVideosRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Privacy,
+			&i.State,
+			&i.ChannelHandle,
+			&i.ChannelDisplayName,
+			&i.Views,
+			&i.CreatedAt,
+			&i.Blocked,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublicVideosByChannel = `-- name: ListPublicVideosByChannel :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,

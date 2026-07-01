@@ -160,6 +160,7 @@ curl -sX POST localhost:8080/api/v1/admin/videos/<id>/block -H 'authorization: B
   -H 'content-type: application/json' -d '{"reason":"copyright"}'                       # block (idempotent) -> 204
 curl -sX DELETE localhost:8080/api/v1/admin/videos/<id>/block -H 'authorization: Bearer <admin-token>'  # unblock (idempotent) -> 204
 curl -s 'localhost:8080/api/v1/admin/videos/blocked?limit=20' -H 'authorization: Bearer <admin-token>'  # block-list (newest first; channel, reason, who/when)
+curl -s 'localhost:8080/api/v1/admin/videos?q=cat&limit=20' -H 'authorization: Bearer <admin-token>'    # admin videos overview: ALL videos (any privacy/state) + blocked flag; optional q title filter
 
 # Account mutes (a signed-in user mutes another account by user id; the muted
 # account's comments AND videos are hidden from them — an authed GET of

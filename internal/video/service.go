@@ -59,6 +59,7 @@ type Repository interface {
 	SaveVideo(ctx context.Context, arg sqlcgen.SaveVideoParams) error
 	UnsaveVideo(ctx context.Context, arg sqlcgen.UnsaveVideoParams) error
 	SearchPublicVideos(ctx context.Context, arg sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error)
+	ListAdminVideos(ctx context.Context, arg sqlcgen.ListAdminVideosParams) ([]sqlcgen.ListAdminVideosRow, error)
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
 	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
@@ -669,6 +670,53 @@ func (s *Service) SearchPublic(ctx context.Context, query string, viewerID uuid.
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName))
+	}
+	return items, nil
+}
+
+// AdminVideo is a video as seen in the admin/moderator videos overview: any
+// privacy/state, with the owning channel, view count, and current block status.
+type AdminVideo struct {
+	ID                 uuid.UUID
+	Title              string
+	Privacy            string
+	State              string
+	ChannelHandle      string
+	ChannelDisplayName string
+	Views              int64
+	CreatedAt          time.Time
+	Blocked            bool
+}
+
+// ListAdmin returns all videos (any privacy/state) newest first for the
+// admin/moderator overview. A non-empty query filters by title substring. The
+// caller clamps limit/offset.
+func (s *Service) ListAdmin(ctx context.Context, query string, limit, offset int32) ([]AdminVideo, error) {
+	var q *string
+	if trimmed := strings.TrimSpace(query); trimmed != "" {
+		q = &trimmed
+	}
+	rows, err := s.repo.ListAdminVideos(ctx, sqlcgen.ListAdminVideosParams{
+		Query:        q,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]AdminVideo, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, AdminVideo{
+			ID:                 r.ID,
+			Title:              r.Title,
+			Privacy:            r.Privacy,
+			State:              r.State,
+			ChannelHandle:      r.ChannelHandle,
+			ChannelDisplayName: r.ChannelDisplayName,
+			Views:              r.Views,
+			CreatedAt:          r.CreatedAt,
+			Blocked:            r.Blocked,
+		})
 	}
 	return items, nil
 }

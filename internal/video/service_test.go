@@ -296,6 +296,21 @@ func (f *fakeRepo) SetVideoState(_ context.Context, a sqlcgen.SetVideoStateParam
 	return rowToVideo(r), nil
 }
 
+func (f *fakeRepo) ListAdminVideos(_ context.Context, a sqlcgen.ListAdminVideosParams) ([]sqlcgen.ListAdminVideosRow, error) {
+	var all []sqlcgen.ListAdminVideosRow
+	for _, r := range f.videos {
+		if a.Query != nil && !strings.Contains(strings.ToLower(r.Title), strings.ToLower(*a.Query)) {
+			continue
+		}
+		all = append(all, sqlcgen.ListAdminVideosRow{
+			ID: r.ID, Title: r.Title, Privacy: r.Privacy, State: r.State,
+			Views: f.views[r.ID], CreatedAt: r.CreatedAt,
+		})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	return all, nil
+}
+
 func (f *fakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error) {
 	q := ""
 	if a.Query != nil {

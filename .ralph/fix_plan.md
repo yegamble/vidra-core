@@ -420,7 +420,7 @@
 - [ ] Implement watched words lists.
 - [ ] Implement watched words tagging for videos/comments.
 - [ ] Implement admin comments overview.
-- [ ] Implement admin videos overview.
+- [x] Implement admin videos overview. (`GET /api/v1/admin/videos?q=&limit=&offset=` (requireRole admin/moderator) lists ALL videos — any privacy/state, newest first — each with the owning channel (handle + display_name), view count, `created_at`, and a `blocked` flag (whether it's in `video_blocks`). Optional `q` case-insensitive title filter. Complements the blocked-only list (`GET /admin/videos/blocked`): this is the general moderation surface an admin browses to find + block/unblock any video. sqlc `ListAdminVideos` (JOIN channels, LEFT JOIN view counts, `EXISTS video_blocks`, nullable `query` narg); `internal/video` `AdminVideo`/`ListAdmin`; `internal/httpapi/admin_videos.go` `handleListAdminVideos`. openapi documents it + `AdminVideo`/`AdminVideoListResponse` (drift guard green). Tested: `TestAdminVideosOverview` (admin sees a public+blocked video AND a private draft with correct privacy/state/blocked flags; `q` filters by title; non-mod 403; anon 401). Unblocks the frontend admin videos-management surface (browse all + block/unblock any).)
 - [ ] Implement admin audit log.
 - [ ] Implement rate-limit management endpoints or config-only decision.
 - [ ] Add moderation integration tests.
