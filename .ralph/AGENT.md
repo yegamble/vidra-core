@@ -73,6 +73,13 @@ curl -sX POST localhost:8080/api/v1/auth/verify-email -H 'authorization: Bearer 
 curl -sX POST localhost:8080/api/v1/auth/verify-email/confirm \
   -H 'content-type: application/json' -d '{"token":"<verification-token>"}'
 
+# DEV-ONLY token retrieval (test seam). With DEV_MAIL_CAPTURE_ENABLED=true the raw
+# reset/verify token is captured in memory and readable here, so e2e tests can
+# complete the confirm steps. The route exists only when the flag is on (the api
+# WARNs on boot); NEVER enable in production. Not in api/openapi.yaml by design.
+# kind=reset (default) | verification.
+curl -s 'localhost:8080/api/v1/dev/email-token?email=ada@example.test&kind=reset'
+
 # Channels:
 curl -sX POST localhost:8080/api/v1/channels -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' \

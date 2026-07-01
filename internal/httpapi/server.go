@@ -55,6 +55,9 @@ type Server struct {
 	watchwordsvc  *watchword.Service
 	adminsvc      *admin.Service
 	media         storage.Backend
+	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
+	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
+	devMailCapture *auth.CaptureMailer
 }
 
 // uploadRoutePath is the Echo route template for the original-file upload. It is
@@ -169,6 +172,17 @@ func WithLogger(l *slog.Logger) Option {
 			s.logger = l
 		}
 	}
+}
+
+// WithDevMailCapture wires the DEVELOPMENT-ONLY mail-capture reader. When set,
+// GET /api/v1/dev/email-token exposes the most recent captured account-security
+// token for an email so end-to-end tests can complete the reset/verify flows.
+// The route is registered ONLY when this option is provided (i.e. when
+// DEV_MAIL_CAPTURE_ENABLED is on), so production never carries it. It is
+// intentionally absent from api/openapi.yaml — a test seam, not a public
+// contract surface — so the OpenAPI drift test does not mount it.
+func WithDevMailCapture(c *auth.CaptureMailer) Option {
+	return func(s *Server) { s.devMailCapture = c }
 }
 
 // New constructs the HTTP server with middleware and routes registered. db and
@@ -295,6 +309,13 @@ func (s *Server) routes() {
 		authGroup.PATCH("/me", s.handleUpdateMe, s.requireAuth)
 		authGroup.POST("/me/deactivate", s.handleDeactivateAccount, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
+	}
+
+	// DEV-ONLY: expose captured account-security tokens so e2e tests can complete
+	// the reset/verify flows. Registered only when DEV_MAIL_CAPTURE_ENABLED wired
+	// the capture mailer (never in production). Intentionally not in openapi.yaml.
+	if s.devMailCapture != nil {
+		api.GET("/dev/email-token", s.handleDevEmailToken)
 	}
 
 	if s.channelsvc != nil {

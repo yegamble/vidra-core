@@ -77,6 +77,10 @@ services:
       # a suite that makes many register/login calls from one host. Rate limiting
       # has dedicated unit tests, so the e2e suite need not exercise it.
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      # DEV-ONLY: when true, account-security tokens (reset / verify) are captured
+      # in memory and retrievable via GET /api/v1/dev/email-token so end-to-end
+      # tests can complete the token flows. NEVER enable in production. Default off.
+      DEV_MAIL_CAPTURE_ENABLED: ${DEV_MAIL_CAPTURE_ENABLED:-false}
     ports:
       - "${HTTP_PORT:-8080}:8080"
 

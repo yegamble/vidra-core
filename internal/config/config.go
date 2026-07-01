@@ -53,6 +53,14 @@ type Config struct {
 	// RegistrationEnabled controls whether public account signup is accepted.
 	RegistrationEnabled bool
 
+	// DevMailCaptureEnabled turns on the DEVELOPMENT-ONLY in-memory mail capture:
+	// account-security tokens (password reset, email verification) are held in
+	// memory and retrievable via GET /api/v1/dev/email-token instead of being
+	// delivered out-of-band. It exists so end-to-end tests can complete the token
+	// flows without a real mailer. NEVER enable it in production — it exposes
+	// single-use credentials. Default false; the process warns loudly when on.
+	DevMailCaptureEnabled bool
+
 	// Rate limiting (Redis fixed-window) applied to the /api surface.
 	RateLimitEnabled  bool
 	RateLimitRequests int
@@ -96,32 +104,33 @@ func Load() (*Config, error) {
 	env := getEnv("VIDRA_ENV", "development")
 
 	cfg := &Config{
-		Environment:          env,
-		HTTPHost:             getEnv("HTTP_HOST", "0.0.0.0"),
-		InstanceName:         getEnv("INSTANCE_NAME", "Vidra (dev)"),
-		InstanceDescription:  getEnv("INSTANCE_DESCRIPTION", ""),
-		InstanceTermsURL:     getEnv("INSTANCE_TERMS_URL", ""),
-		InstancePrivacyURL:   getEnv("INSTANCE_PRIVACY_URL", ""),
-		InstanceContactEmail: getEnv("INSTANCE_CONTACT_EMAIL", ""),
-		RegistrationEnabled:  getEnvBool("REGISTRATION_ENABLED", true),
-		DatabaseURL:          getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
-		RedisURL:             getEnv("REDIS_URL", "redis://localhost:6379/0"),
-		CORSAllowedOrigins:   splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
-		HTTPReadTimeout:      getEnvDuration("HTTP_READ_TIMEOUT", 15*time.Second),
-		HTTPWriteTimeout:     getEnvDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
-		HTTPShutdownTimeout:  getEnvDuration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
-		HTTPRequestTimeout:   getEnvDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
-		HTTPBodyLimit:        getEnv("HTTP_BODY_LIMIT", "8M"),
-		RateLimitEnabled:     getEnvBool("RATE_LIMIT_ENABLED", true),
-		RateLimitWindow:      getEnvDuration("RATE_LIMIT_WINDOW", time.Minute),
-		JWTSecret:            getEnv("JWT_SECRET", devJWTSecret),
-		JWTIssuer:            getEnv("JWT_ISSUER", "vidra"),
-		JWTAudience:          getEnv("JWT_AUDIENCE", "vidra"),
-		JWTAccessTTL:         getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
-		JWTRefreshTTL:        getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
-		StorageBackend:       getEnv("STORAGE_BACKEND", "local"),
-		StorageLocalRoot:     getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
-		UploadMaxSize:        getEnv("UPLOAD_MAX_SIZE", "2G"),
+		Environment:           env,
+		HTTPHost:              getEnv("HTTP_HOST", "0.0.0.0"),
+		InstanceName:          getEnv("INSTANCE_NAME", "Vidra (dev)"),
+		InstanceDescription:   getEnv("INSTANCE_DESCRIPTION", ""),
+		InstanceTermsURL:      getEnv("INSTANCE_TERMS_URL", ""),
+		InstancePrivacyURL:    getEnv("INSTANCE_PRIVACY_URL", ""),
+		InstanceContactEmail:  getEnv("INSTANCE_CONTACT_EMAIL", ""),
+		RegistrationEnabled:   getEnvBool("REGISTRATION_ENABLED", true),
+		DevMailCaptureEnabled: getEnvBool("DEV_MAIL_CAPTURE_ENABLED", false),
+		DatabaseURL:           getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
+		RedisURL:              getEnv("REDIS_URL", "redis://localhost:6379/0"),
+		CORSAllowedOrigins:    splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
+		HTTPReadTimeout:       getEnvDuration("HTTP_READ_TIMEOUT", 15*time.Second),
+		HTTPWriteTimeout:      getEnvDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
+		HTTPShutdownTimeout:   getEnvDuration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
+		HTTPRequestTimeout:    getEnvDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+		HTTPBodyLimit:         getEnv("HTTP_BODY_LIMIT", "8M"),
+		RateLimitEnabled:      getEnvBool("RATE_LIMIT_ENABLED", true),
+		RateLimitWindow:       getEnvDuration("RATE_LIMIT_WINDOW", time.Minute),
+		JWTSecret:             getEnv("JWT_SECRET", devJWTSecret),
+		JWTIssuer:             getEnv("JWT_ISSUER", "vidra"),
+		JWTAudience:           getEnv("JWT_AUDIENCE", "vidra"),
+		JWTAccessTTL:          getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
+		JWTRefreshTTL:         getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
+		StorageBackend:        getEnv("STORAGE_BACKEND", "local"),
+		StorageLocalRoot:      getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
+		UploadMaxSize:         getEnv("UPLOAD_MAX_SIZE", "2G"),
 	}
 
 	port, err := getEnvInt("HTTP_PORT", 8080)

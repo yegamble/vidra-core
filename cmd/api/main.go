@@ -87,8 +87,18 @@ func run(logger *slog.Logger) error {
 	}
 
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
-	authsvc := auth.NewService(db.Queries(), issuer, cfg.JWTRefreshTTL)
+	var authOpts []auth.Option
+	var captureMailer *auth.CaptureMailer
+	if cfg.DevMailCaptureEnabled {
+		captureMailer = auth.NewCaptureMailer()
+		authOpts = append(authOpts, auth.WithMailer(captureMailer))
+		logger.Warn("DEV mail capture ENABLED — account-security tokens are retrievable via GET /api/v1/dev/email-token; NEVER enable this in production (DEV_MAIL_CAPTURE_ENABLED)")
+	}
+	authsvc := auth.NewService(db.Queries(), issuer, cfg.JWTRefreshTTL, authOpts...)
 	opts = append(opts, httpapi.WithAuthService(authsvc, cfg.JWTAccessTTL))
+	if captureMailer != nil {
+		opts = append(opts, httpapi.WithDevMailCapture(captureMailer))
+	}
 
 	channelsvc := channel.NewService(db.Queries())
 	opts = append(opts, httpapi.WithChannelService(channelsvc))
