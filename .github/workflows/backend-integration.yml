@@ -1,0 +1,74 @@
+name: backend-integration
+
+# Runs the integration-tagged backend tests (`-tags=integration`) against REAL
+# Postgres + Redis + ffmpeg. These exercise the actual sqlc SQL, the Redis
+# rate-limiter/dedupe, and the ffprobe/thumbnail media paths — coverage the fast
+# `make ci` gate (unit tests against in-memory fakes) deliberately does not have.
+#
+# Kept SEPARATE from backend-ci.yml on purpose: the canonical `make ci` gate must
+# stay fast and runnable on hosts without a DB/ffmpeg, so integration tests live
+# behind their own `make test-integration` target + this job. Each integration
+# test self-skips when its dependency is absent, so `make test-integration` is
+# safe locally too.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vidra
+          POSTGRES_PASSWORD: vidra
+          POSTGRES_DB: vidra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vidra"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install ffmpeg (media integration tests use the real binary)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install migrate CLI
+        run: |
+          curl -fsSL https://github.com/golang-migrate/migrate/releases/download/v4.17.1/migrate.linux-amd64.tar.gz \
+            | tar xz -C /usr/local/bin migrate
+
+      - name: Run migrations against a fresh database
+        env:
+          DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
+        run: migrate -path migrations -database "$DATABASE_URL" up
+
+      - name: Run integration tests (make test-integration)
+        env:
+          DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+        run: make test-integration

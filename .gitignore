@@ -1,0 +1,53 @@
+# Ralph generated/runtime files (in any .ralph/)
+**/.ralph/.call_count
+**/.ralph/.last_reset
+**/.ralph/.last_output_length
+**/.ralph/.loop_start_sha
+**/.ralph/.token_count
+**/.ralph/.exit_signals
+**/.ralph/status.json
+**/.ralph/progress.json
+**/.ralph/live.log
+**/.ralph/.ralph_session
+**/.ralph/.ralph_session_history
+**/.ralph/.claude_session_id
+**/.ralph/.response_analysis
+**/.ralph/.circuit_breaker_state
+**/.ralph/.circuit_breaker_history
+
+# Ralph logs and generated docs
+**/.ralph/logs/*
+!**/.ralph/logs/.gitkeep
+**/.ralph/docs/generated/*
+!**/.ralph/docs/generated/.gitkeep
+
+# Ralph backup directories
+.ralph_backup_*
+
+# General logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+.temp/
+
+# --- Go ---
+bin/
+dist/
+*.test
+*.out
+
+# --- Env ---
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo

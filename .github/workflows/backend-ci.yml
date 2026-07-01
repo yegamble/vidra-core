@@ -1,0 +1,68 @@
+name: backend-ci
+
+# Standalone vidra-core repo: the project lives at the repo root, so this builds
+# and tests directly (no working-directory / path filters — that scoping was only
+# needed while core was a subdirectory of the vidra monorepo).
+#
+# Local/CI parity: run the SAME canonical gate developers run locally
+# (`make ci` = fmt-check + vet + openapi-verify + test-race). Do not add checks
+# here that aren't in `make ci`, or the two will drift (ci-guard.yml enforces this).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vidra
+          POSTGRES_PASSWORD: vidra
+          POSTGRES_DB: vidra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vidra"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install migrate CLI
+        run: |
+          curl -fsSL https://github.com/golang-migrate/migrate/releases/download/v4.17.1/migrate.linux-amd64.tar.gz \
+            | tar xz -C /usr/local/bin migrate
+
+      - name: Run migrations against fresh database
+        env:
+          DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
+        run: migrate -path migrations -database "$DATABASE_URL" up
+
+      - name: Run canonical gate (make ci)
+        env:
+          DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+        run: make ci
