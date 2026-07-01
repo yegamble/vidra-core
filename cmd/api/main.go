@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/admin"
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/channel"
@@ -186,6 +187,9 @@ func run() error {
 
 	adminsvc := admin.NewService(db.Queries())
 	opts = append(opts, httpapi.WithAdminService(adminsvc))
+
+	auditsvc := audit.NewService(db.Queries())
+	opts = append(opts, httpapi.WithAuditLog(auditsvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

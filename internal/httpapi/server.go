@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/vidra/vidra-core/internal/admin"
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
@@ -56,6 +57,7 @@ type Server struct {
 	mutesvc       *mute.Service
 	watchwordsvc  *watchword.Service
 	adminsvc      *admin.Service
+	auditLog      *audit.Service
 	media         storage.Backend
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
 	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
@@ -156,6 +158,14 @@ func WithWatchWordService(svc *watchword.Service) Option {
 // edit role + active flag). When unset, the routes are not registered.
 func WithAdminService(svc *admin.Service) Option {
 	return func(s *Server) { s.adminsvc = svc }
+}
+
+// WithAuditLog wires the durable audit-log service. When set, s.audit persists
+// each security-audit event (best-effort) in addition to logging it, and the
+// GET /api/v1/admin/audit-log endpoint is registered. When unset, audit events
+// are slog-only and the endpoint is not mounted.
+func WithAuditLog(svc *audit.Service) Option {
+	return func(s *Server) { s.auditLog = svc }
 }
 
 // WithMediaStorage gives the server the blob backend used to stream stored media
@@ -458,6 +468,11 @@ func (s *Server) routes() {
 	if s.adminsvc != nil {
 		api.GET("/admin/users", s.handleListUsers, s.requireAuth, s.requireRole("admin"))
 		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole("admin"))
+	}
+
+	// Durable audit trail (admin-only), when the audit-log service is wired.
+	if s.auditLog != nil {
+		api.GET("/admin/audit-log", s.handleListAuditLog, s.requireAuth, s.requireRole("admin"))
 	}
 }
 

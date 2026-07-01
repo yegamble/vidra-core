@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/admin"
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
@@ -39,6 +40,7 @@ func fullRouteOptions() []Option {
 		WithMuteService(mute.NewService(nil)),
 		WithWatchWordService(watchword.NewService(nil)),
 		WithAdminService(admin.NewService(nil)),
+		WithAuditLog(audit.NewService(nil)),
 	}
 }
 

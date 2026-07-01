@@ -211,6 +211,10 @@ curl -s 'localhost:8080/api/v1/admin/registration-requests?status=pending' -H 'a
 curl -sX POST localhost:8080/api/v1/admin/registration-requests/<id>/approve -H 'authorization: Bearer <admin-token>'  # create the account -> 204 (unknown 404, taken 409)
 curl -sX POST localhost:8080/api/v1/admin/registration-requests/<id>/reject  -H 'authorization: Bearer <admin-token>' \
   -H 'content-type: application/json' -d '{"note":"not now"}'                            # reject -> 204 (unknown 404)
+
+# Security audit log (admin-only; durable, append-only trail of auth/moderation/
+# admin/registration actions; no secrets/PII). Optional action filter.
+curl -s 'localhost:8080/api/v1/admin/audit-log?action=auth.login&limit=20' -H 'authorization: Bearer <admin-token>'  # newest-first entries
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`

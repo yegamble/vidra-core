@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -17,13 +18,28 @@ import (
 // request ID from the response headers. See internal/observability and
 // .ralph/specs/observability.md. actorID/reason may be empty.
 func (s *Server) audit(c echo.Context, action, result, actorID, reason string) {
-	observability.Audit(c.Request().Context(), s.logger, observability.AuditEvent{
+	ctx := c.Request().Context()
+	reqID := c.Response().Header().Get(echo.HeaderXRequestID)
+	observability.Audit(ctx, s.logger, observability.AuditEvent{
 		Action:    action,
 		Result:    result,
 		ActorID:   actorID,
-		RequestID: c.Response().Header().Get(echo.HeaderXRequestID),
+		RequestID: reqID,
 		Reason:    reason,
 	})
+	// Persist the durable audit trail best-effort when wired; a failure never
+	// blocks the request (the slog line above is still emitted).
+	if s.auditLog != nil {
+		if err := s.auditLog.Record(ctx, audit.Event{
+			Action:    action,
+			Result:    result,
+			ActorID:   actorID,
+			Reason:    reason,
+			RequestID: reqID,
+		}); err != nil {
+			s.logger.WarnContext(ctx, "audit log persist failed", "error", err, "action", action)
+		}
+	}
 }
 
 // registerRequest is the POST /api/v1/auth/register body.

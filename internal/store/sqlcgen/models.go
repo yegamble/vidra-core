@@ -12,6 +12,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AuditLog struct {
+	ID         uuid.UUID   `json:"id"`
+	Action     string      `json:"action"`
+	Result     string      `json:"result"`
+	ActorID    pgtype.UUID `json:"actor_id"`
+	Reason     string      `json:"reason"`
+	RequestID  string      `json:"request_id"`
+	OccurredAt time.Time   `json:"occurred_at"`
+}
+
 type Caption struct {
 	ID         uuid.UUID `json:"id"`
 	VideoID    uuid.UUID `json:"video_id"`

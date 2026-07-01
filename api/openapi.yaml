@@ -3004,6 +3004,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/audit-log:
+    get:
+      operationId: listAuditLog
+      summary: List the security audit log
+      description: >-
+        Returns the durable audit trail of security-sensitive actions (auth,
+        moderation, admin, registration), newest first. Restricted to admins.
+        Optional action filters by a specific action id. Paginated via limit
+        (1–100, default 20) and offset. Rows never contain secrets/PII.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: action
+          in: query
+          description: Filter to a single action id (e.g. auth.login).
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of audit entries (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditLogListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/registration-requests:
     get:
       operationId: listRegistrationRequests
@@ -4305,6 +4355,50 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AdminUser"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    AuditLogEntry:
+      type: object
+      description: A durable security-audit record. Never contains secrets/PII.
+      required: [id, action, result, occurred_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          description: Stable dot-namespaced action id (e.g. auth.login).
+          example: auth.login
+        result:
+          type: string
+          enum: [success, failure]
+        actor_id:
+          type: string
+          format: uuid
+          description: The acting account's id; omitted for unauthenticated events.
+        actor_username:
+          type: string
+          description: Resolved best-effort; omitted if the account is deleted/unknown.
+        reason:
+          type: string
+          description: Safe, non-sensitive classification (e.g. invalid_credentials).
+        request_id:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+    AuditLogListResponse:
+      type: object
+      required: [entries, limit, offset]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditLogEntry"
         limit:
           type: integer
           example: 20
