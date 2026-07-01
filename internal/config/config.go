@@ -18,6 +18,13 @@ type Config struct {
 	// Environment is one of "development", "test", or "production".
 	Environment string
 
+	// Logging. LogLevel is the minimum emitted level (debug|info|warn|error,
+	// default info); LogFormat selects the slog handler (json — default,
+	// production — or text for readable local dev). Consumed by
+	// internal/observability.NewLogger at startup.
+	LogLevel  string
+	LogFormat string
+
 	// HTTP server.
 	HTTPHost            string
 	HTTPPort            int
@@ -105,6 +112,8 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		Environment:           env,
+		LogLevel:              strings.ToLower(getEnv("LOG_LEVEL", "info")),
+		LogFormat:             strings.ToLower(getEnv("LOG_FORMAT", "json")),
 		HTTPHost:              getEnv("HTTP_HOST", "0.0.0.0"),
 		InstanceName:          getEnv("INSTANCE_NAME", "Vidra (dev)"),
 		InstanceDescription:   getEnv("INSTANCE_DESCRIPTION", ""),
@@ -162,6 +171,16 @@ func (c *Config) validate() error {
 	case "development", "test", "production":
 	default:
 		return fmt.Errorf("config: invalid VIDRA_ENV %q (want development|test|production)", c.Environment)
+	}
+	switch c.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("config: invalid LOG_LEVEL %q (want debug|info|warn|error)", c.LogLevel)
+	}
+	switch c.LogFormat {
+	case "json", "text":
+	default:
+		return fmt.Errorf("config: invalid LOG_FORMAT %q (want json|text)", c.LogFormat)
 	}
 	if c.HTTPPort < 1 || c.HTTPPort > 65535 {
 		return fmt.Errorf("config: HTTP_PORT %d out of range", c.HTTPPort)

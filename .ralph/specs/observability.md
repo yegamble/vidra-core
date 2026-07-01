@@ -9,9 +9,11 @@
 > (`IsSensitiveKey`) plus two AST guards — `TestNoForbiddenLogging` (no banned
 > diagnostics) and `TestNoSensitiveLogKeys` (no denylisted slog key) — which run
 > under `make ci` via `go test -race ./...` (being ordinary Go tests IS the
-> enforcement; no Makefile change was needed). Still honor-system / planned:
-> centralized logger construction + `LOG_LEVEL`/`LOG_FORMAT` config (P17.1) and
-> all of OpenTelemetry — traces/metrics/log correlation (P17.3).
+> enforcement; no Makefile change was needed). Centralized logger construction
+> (`NewLogger`) + `LOG_LEVEL`/`LOG_FORMAT` config are built too (P17.1). Still
+> planned: propagating the request-scoped logger through the service/store layers
+> via context (P17.1) and all of OpenTelemetry — traces/metrics/log correlation
+> (P17.3).
 
 ## Goals
 
@@ -30,9 +32,10 @@
 - Use the standard library `log/slog` only. Do **not** introduce a second
   logging library, and do **not** use `fmt.Print*`, `log.Print*`, `println`, or
   `panic` for diagnostics in non-`main`, non-test code.
-- A single logging setup lives in `internal/observability` (construct the
-  `*slog.Logger`, set it as `slog.Default()`, inject it into the server/workers).
-- Configurable via env (add to `internal/config` + `.env.example`):
+- A single logging setup lives in `internal/observability`:
+  `NewLogger(w, level, format)` constructs the `*slog.Logger`; `cmd/api` sets it
+  as `slog.Default()` and injects it into the server via `httpapi.WithLogger`.
+- Configured via env (`internal/config` + `.env.example`):
   - `LOG_LEVEL` — `debug|info|warn|error` (default `info`).
   - `LOG_FORMAT` — `json` (default, production) or `text` (developer-friendly,
     for local runs).

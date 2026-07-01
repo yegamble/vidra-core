@@ -577,8 +577,8 @@
 
 - [x] Add structured logs (slog JSON to stdout).
 - [x] Add request IDs (Echo RequestID + per-request slog line).
-- [ ] Centralize logger construction in `internal/observability` and inject it.
-- [ ] Add `LOG_LEVEL` and `LOG_FORMAT` (json/text) config + `.env.example` + tests.
+- [x] Centralize logger construction in `internal/observability` and inject it. (`observability.NewLogger(w, level, format)` in `internal/observability/logger.go` is the single logger constructor — parses level (debug|info|warn|error) + format (json|text), returns a `*slog.Logger`, errors on bad input (`ParseLevel` exported for reuse). `cmd/api` builds it from config after `config.Load()`, `slog.SetDefault`s it, and injects it into the server via `httpapi.WithLogger`; a bootstrap Info/JSON logger covers pre-config-load errors. Tested: level filtering, json/text formats, empty→info/json defaults, invalid level/format rejected, `ParseLevel` table.)
+- [x] Add `LOG_LEVEL` and `LOG_FORMAT` (json/text) config + `.env.example` + tests. (`config.LogLevel`/`LogFormat`, default info/json, lowercased on load, validated in `validate()` (unknown value → error). `.env.example` documents both in a logging section. Tested: defaults, override+case-normalisation, invalid level/format rejected.)
 - [ ] Propagate the request-scoped logger (request_id/trace_id) through service and store layers via `context.Context`.
 
 ## P17.2 Security-friendly logging

@@ -25,6 +25,7 @@ import (
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
@@ -35,21 +36,34 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	// Bootstrap logger for pre-config diagnostics; replaced by the configured
+	// logger (LOG_LEVEL/LOG_FORMAT) once config is loaded in run().
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
-	if err := run(logger); err != nil {
-		logger.Error("fatal", "error", err)
+	if err := run(); err != nil {
+		slog.Error("fatal", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
+func run() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	logger.Info("configuration loaded", "env", cfg.Environment, "addr", cfg.HTTPAddr())
+
+	logger, err := observability.NewLogger(os.Stdout, cfg.LogLevel, cfg.LogFormat)
+	if err != nil {
+		return err
+	}
+	slog.SetDefault(logger)
+	opts := []httpapi.Option{httpapi.WithLogger(logger)}
+	logger.Info("configuration loaded",
+		"env", cfg.Environment,
+		"addr", cfg.HTTPAddr(),
+		"log_level", cfg.LogLevel,
+		"log_format", cfg.LogFormat,
+	)
 
 	// Bound dependency startup so a missing DB/Redis fails fast rather than
 	// hanging the process indefinitely.
@@ -70,7 +84,6 @@ func run(logger *slog.Logger) error {
 	defer func() { _ = rdb.Close() }()
 	logger.Info("connected to redis")
 
-	var opts []httpapi.Option
 	if cfg.RateLimitEnabled {
 		counter := ratelimit.NewRedisCounter(rdb.Client)
 		limiter := ratelimit.NewLimiter(counter, cfg.RateLimitRequests, cfg.RateLimitWindow)

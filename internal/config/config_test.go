@@ -34,6 +34,51 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestLoggingDefaults(t *testing.T) {
+	for _, k := range []string{"LOG_LEVEL", "LOG_FORMAT"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.LogLevel != "info" {
+		t.Errorf("LogLevel = %q, want info", cfg.LogLevel)
+	}
+	if cfg.LogFormat != "json" {
+		t.Errorf("LogFormat = %q, want json", cfg.LogFormat)
+	}
+}
+
+func TestLoggingOverrideAndNormalisation(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "DEBUG")
+	t.Setenv("LOG_FORMAT", "Text")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.LogLevel != "debug" {
+		t.Errorf("LogLevel = %q, want debug (lowercased)", cfg.LogLevel)
+	}
+	if cfg.LogFormat != "text" {
+		t.Errorf("LogFormat = %q, want text (lowercased)", cfg.LogFormat)
+	}
+}
+
+func TestLoggingRejectsInvalidLevel(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "loud")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for invalid LOG_LEVEL, got nil")
+	}
+}
+
+func TestLoggingRejectsInvalidFormat(t *testing.T) {
+	t.Setenv("LOG_FORMAT", "yaml")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for invalid LOG_FORMAT, got nil")
+	}
+}
+
 func TestRateLimitDefaults(t *testing.T) {
 	for _, k := range []string{"RATE_LIMIT_ENABLED", "RATE_LIMIT_REQUESTS", "RATE_LIMIT_WINDOW"} {
 		t.Setenv(k, "")
