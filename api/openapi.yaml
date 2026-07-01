@@ -2297,6 +2297,130 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/watched-words:
+    get:
+      operationId: listWatchedWords
+      summary: List watched words
+      description: >-
+        The instance-wide watched-words list, newest first, each with who added it.
+        Restricted to moderators/admins. Paginated via limit (1–100, default 20)
+        and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of watched words (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWordListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: addWatchedWord
+      summary: Add a watched word
+      description: >-
+        Adds a term to the instance-wide watched-words list. Restricted to
+        moderators/admins. A duplicate term (case-insensitive) is 409.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWatchedWordRequest"
+      responses:
+        "201":
+          description: The watched word was added.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedWord"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The term is already on the list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/watched-words/{id}:
+    delete:
+      operationId: deleteWatchedWord
+      summary: Remove a watched word
+      description: >-
+        Removes a term from the watched-words list. Restricted to
+        moderators/admins. Idempotent (removing an absent term still succeeds).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The term is not on the list (it was removed, or already was not).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/comments:
     get:
       operationId: listAdminComments
@@ -3616,6 +3740,43 @@ components:
         offset:
           type: integer
           example: 0
+    WatchedWord:
+      type: object
+      description: A term on the instance-wide watched-words list.
+      required: [id, word, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        word:
+          type: string
+        created_by_username:
+          type: string
+          description: Username of the moderator who added it; omitted on the create response or if that account was deleted.
+        created_at:
+          type: string
+          format: date-time
+    WatchedWordListResponse:
+      type: object
+      required: [words, limit, offset]
+      properties:
+        words:
+          type: array
+          items:
+            $ref: "#/components/schemas/WatchedWord"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    CreateWatchedWordRequest:
+      type: object
+      required: [word]
+      properties:
+        word:
+          type: string
+          maxLength: 100
     AdminUser:
       type: object
       description: Admin projection of an account (never includes the password hash).

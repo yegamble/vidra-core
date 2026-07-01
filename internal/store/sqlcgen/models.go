@@ -195,3 +195,10 @@ type WatchHistory struct {
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
+
+type WatchedWord struct {
+	ID        uuid.UUID   `json:"id"`
+	Word      string      `json:"word"`
+	CreatedBy pgtype.UUID `json:"created_by"`
+	CreatedAt time.Time   `json:"created_at"`
+}

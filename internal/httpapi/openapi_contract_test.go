@@ -19,6 +19,7 @@ import (
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/video"
+	"github.com/vidra/vidra-core/internal/watchword"
 )
 
 // fullRouteOptions mounts every optional feature so the contract test enumerates
@@ -36,6 +37,7 @@ func fullRouteOptions() []Option {
 		WithPlaylistService(playlist.NewService(nil)),
 		WithModerationService(moderation.NewService(nil)),
 		WithMuteService(mute.NewService(nil)),
+		WithWatchWordService(watchword.NewService(nil)),
 		WithAdminService(admin.NewService(nil)),
 	}
 }

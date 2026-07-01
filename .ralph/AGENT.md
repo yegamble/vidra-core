@@ -163,6 +163,13 @@ curl -s 'localhost:8080/api/v1/admin/videos/blocked?limit=20' -H 'authorization:
 curl -s 'localhost:8080/api/v1/admin/videos?q=cat&limit=20' -H 'authorization: Bearer <admin-token>'    # admin videos overview: ALL videos (any privacy/state) + blocked flag; optional q title filter
 curl -s 'localhost:8080/api/v1/admin/comments?q=spam&limit=20' -H 'authorization: Bearer <admin-token>' # admin comments overview: ALL comments + author + video; optional q body filter (delete any via DELETE /comments/:id)
 
+# Watched words (instance-wide moderation term list; moderator/admin only; the
+# matching/flagging effect on content is a later slice):
+curl -sX POST localhost:8080/api/v1/admin/watched-words -H 'authorization: Bearer <admin-token>' \
+  -H 'content-type: application/json' -d '{"word":"spam"}'                                # add a term -> 201 (case-insensitive dup -> 409)
+curl -s 'localhost:8080/api/v1/admin/watched-words?limit=20' -H 'authorization: Bearer <admin-token>'  # list (newest first, with adder)
+curl -sX DELETE localhost:8080/api/v1/admin/watched-words/<id> -H 'authorization: Bearer <admin-token>' # remove (idempotent -> 204)
+
 # Account mutes (a signed-in user mutes another account by user id; the muted
 # account's comments AND videos are hidden from them — an authed GET of
 # /videos/:id/comments filters muted authors, and the feed/search/subscriptions

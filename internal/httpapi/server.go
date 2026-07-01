@@ -25,6 +25,7 @@ import (
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/video"
+	"github.com/vidra/vidra-core/internal/watchword"
 )
 
 // Pinger is satisfied by dependencies that can report liveness (store, cache).
@@ -51,6 +52,7 @@ type Server struct {
 	playlistsvc   *playlist.Service
 	moderationsvc *moderation.Service
 	mutesvc       *mute.Service
+	watchwordsvc  *watchword.Service
 	adminsvc      *admin.Service
 	media         storage.Backend
 }
@@ -137,6 +139,12 @@ func WithModerationService(svc *moderation.Service) Option {
 // accounts the caller has muted). When unset, the routes are not registered.
 func WithMuteService(svc *mute.Service) Option {
 	return func(s *Server) { s.mutesvc = svc }
+}
+
+// WithWatchWordService mounts the moderation watched-words endpoints (add / list /
+// delete instance-wide watched terms). When unset, the routes are not registered.
+func WithWatchWordService(svc *watchword.Service) Option {
+	return func(s *Server) { s.watchwordsvc = svc }
 }
 
 // WithAdminService mounts the admin user-management endpoints (list/search users,
@@ -380,6 +388,13 @@ func (s *Server) routes() {
 		api.GET("/me/mutes/accounts", s.handleListMutedAccounts, s.requireAuth)
 		api.POST("/me/mutes/accounts/:id", s.handleMuteAccount, s.requireAuth)
 		api.DELETE("/me/mutes/accounts/:id", s.handleUnmuteAccount, s.requireAuth)
+	}
+
+	// Watched words: moderators/admins maintain the instance-wide watched-terms list.
+	if s.watchwordsvc != nil {
+		api.GET("/admin/watched-words", s.handleListWatchedWords, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.POST("/admin/watched-words", s.handleAddWatchedWord, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.DELETE("/admin/watched-words/:id", s.handleDeleteWatchedWord, s.requireAuth, s.requireRole("admin", "moderator"))
 	}
 
 	// Admin user management is admin-only (not moderators).

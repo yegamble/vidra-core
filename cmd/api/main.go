@@ -31,6 +31,7 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/video"
+	"github.com/vidra/vidra-core/internal/watchword"
 )
 
 func main() {
@@ -135,6 +136,9 @@ func run(logger *slog.Logger) error {
 
 	mutesvc := mute.NewService(db.Queries())
 	opts = append(opts, httpapi.WithMuteService(mutesvc))
+
+	watchwordsvc := watchword.NewService(db.Queries())
+	opts = append(opts, httpapi.WithWatchWordService(watchwordsvc))
 
 	adminsvc := admin.NewService(db.Queries())
 	opts = append(opts, httpapi.WithAdminService(adminsvc))
