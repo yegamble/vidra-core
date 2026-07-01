@@ -305,7 +305,7 @@ func (s *Server) routes() {
 	if s.videosvc != nil && s.channelsvc != nil {
 		api.POST("/channels/:handle/videos", s.handleCreateVideo, s.requireAuth)
 		api.GET("/channels/:handle/videos", s.handleListChannelVideos, s.optionalAuth)
-		api.GET("/videos", s.handleListPublicVideos)
+		api.GET("/videos", s.handleListPublicVideos, s.optionalAuth)
 		api.GET("/me/subscriptions/videos", s.handleListSubscriptionVideos, s.requireAuth)
 		api.GET("/me/saved", s.handleListSavedVideos, s.requireAuth)
 		api.POST("/videos/:id/save", s.handleSaveVideo, s.requireAuth)
@@ -315,7 +315,7 @@ func (s *Server) routes() {
 		api.DELETE("/me/history/:id", s.handleDeleteHistoryEntry, s.requireAuth)
 		api.GET("/videos/:id/watch-progress", s.handleGetWatchProgress, s.requireAuth)
 		api.PUT("/videos/:id/watch-progress", s.handleRecordWatchProgress, s.requireAuth)
-		api.GET("/videos/search", s.handleSearchVideos)
+		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
 		api.GET("/videos/:id/thumbnail", s.handleGetVideoThumbnail, s.optionalAuth)

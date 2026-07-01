@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -36,6 +37,7 @@ import (
 // owner from the shared channelFakeRepo so GetVideoByID can return owner_id.
 type videoFakeRepo struct {
 	channels *channelFakeRepo
+	mutes    *muteFakeRepo
 	videos   map[uuid.UUID]sqlcgen.GetVideoByIDRow
 	files    map[uuid.UUID][]sqlcgen.VideoFile
 	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
@@ -170,7 +172,8 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 	var rows []sqlcgen.ListSubscriptionVideosRow
 	for _, r := range f.videos {
 		follows := f.channels != nil && f.channels.follows[a.FollowerID.String()+"|"+r.ChannelID.String()]
-		if r.Privacy == "public" && r.State == "published" && follows {
+		muted := f.mutes != nil && f.mutes.isMuted(a.FollowerID, f.channelOwner(r.ChannelID))
+		if r.Privacy == "public" && r.State == "published" && follows && !muted {
 			rows = append(rows, sqlcgen.ListSubscriptionVideosRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
@@ -362,7 +365,8 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 	}
 	var all []sqlcgen.SearchPublicVideosRow
 	for _, r := range f.videos {
-		if r.Privacy == "public" && r.State == "published" && strings.Contains(strings.ToLower(r.Title), q) {
+		if r.Privacy == "public" && r.State == "published" && strings.Contains(strings.ToLower(r.Title), q) &&
+			!f.mutedFromFeed(a.ViewerID, r.ChannelID) {
 			all = append(all, sqlcgen.SearchPublicVideosRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
@@ -405,10 +409,30 @@ func (f *videoFakeRepo) channelInfo(channelID uuid.UUID) (handle, displayName st
 	return "", ""
 }
 
+// channelOwner returns the owner (account id) of a channel, mirroring the real
+// videos→channels join used for mute-filtering.
+func (f *videoFakeRepo) channelOwner(channelID uuid.UUID) uuid.UUID {
+	if f.channels == nil {
+		return uuid.Nil
+	}
+	for _, c := range f.channels.byHandle {
+		if c.ID == channelID {
+			return c.OwnerID
+		}
+	}
+	return uuid.Nil
+}
+
+// mutedFromFeed reports whether an authenticated viewer has muted the owner of
+// the given channel — mirrors the feed queries' per-viewer mute filter.
+func (f *videoFakeRepo) mutedFromFeed(viewer pgtype.UUID, channelID uuid.UUID) bool {
+	return viewer.Valid && f.mutes != nil && f.mutes.isMuted(uuid.UUID(viewer.Bytes), f.channelOwner(channelID))
+}
+
 func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error) {
 	var rows []sqlcgen.ListPublicVideosSortedRow
 	for _, r := range f.videos {
-		if r.Privacy == "public" && r.State == "published" {
+		if r.Privacy == "public" && r.State == "published" && !f.mutedFromFeed(a.ViewerID, r.ChannelID) {
 			ch, cn := f.channelInfo(r.ChannelID)
 			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
@@ -466,6 +490,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 	notifRepo := &notifFakeRepo{auth: authRepo, channels: chRepo, videos: repo}
 	plRepo := &playlistFakeRepo{videos: repo, playlists: map[uuid.UUID]sqlcgen.Playlist{}, items: map[uuid.UUID][]uuid.UUID{}}
 	muteRepo := &muteFakeRepo{auth: authRepo}
+	repo.mutes = muteRepo
 	cmRepo := &commentFakeRepo{users: authRepo, mutes: muteRepo}
 	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
 	return New(cfg, nil, nil,
@@ -699,6 +724,75 @@ func TestListChannelVideosOwnerVsPublic(t *testing.T) {
 	}
 	if other := list(otherTok); len(other.Videos) != 1 {
 		t.Errorf("non-owner list = %d, want 1 (public only)", len(other.Videos))
+	}
+}
+
+func TestFeedHidesMutedAccounts(t *testing.T) {
+	srv := videoServer(t)
+	ada := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	_ = createPublishedVideo(t, srv, ada, "ada", `{"title":"by ada","privacy":"public"}`)
+
+	// A second creator, bob.
+	bobTok, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels", `{"handle":"bob","display_name":"Bob"}`, bobTok); rec.Code != http.StatusCreated {
+		t.Fatalf("create bob channel = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	_ = createPublishedVideo(t, srv, bobTok, "bob", `{"title":"by bob","privacy":"public"}`)
+
+	// A viewer, charlie.
+	charlie := registerAndToken(t, srv, `{"username":"charlie","email":"charlie@example.test","password":"supersecret"}`)
+
+	feedTitles := func(tok string) []string {
+		rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos", "", tok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("feed = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		var body videoFeedResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		out := make([]string, 0, len(body.Videos))
+		for _, v := range body.Videos {
+			out = append(out, v.Title)
+		}
+		return out
+	}
+	searchTitles := func(tok string) []string {
+		rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/search?q=by", "", tok)
+		var body videoSearchResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		out := make([]string, 0, len(body.Videos))
+		for _, v := range body.Videos {
+			out = append(out, v.Title)
+		}
+		return out
+	}
+
+	// Before muting, charlie sees both creators' videos.
+	if got := feedTitles(charlie); len(got) != 2 {
+		t.Fatalf("charlie feed before mute = %v, want 2", got)
+	}
+
+	// charlie mutes bob.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/mutes/accounts/"+bobID, "", charlie); rec.Code != http.StatusNoContent {
+		t.Fatalf("mute bob = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// charlie's feed + search now exclude bob's video; an anonymous viewer still sees both.
+	if got := feedTitles(charlie); len(got) != 1 || got[0] != "by ada" {
+		t.Errorf("charlie feed after mute = %v, want [by ada]", got)
+	}
+	if got := searchTitles(charlie); len(got) != 1 || got[0] != "by ada" {
+		t.Errorf("charlie search after mute = %v, want [by ada]", got)
+	}
+	if got := feedTitles(""); len(got) != 2 {
+		t.Errorf("anon feed = %v, want 2 (mutes are per-viewer)", got)
+	}
+
+	// Unmuting restores bob's video to charlie's feed.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/me/mutes/accounts/"+bobID, "", charlie); rec.Code != http.StatusNoContent {
+		t.Fatalf("unmute = %d", rec.Code)
+	}
+	if got := feedTitles(charlie); len(got) != 2 {
+		t.Errorf("charlie feed after unmute = %v, want 2", got)
 	}
 }
 

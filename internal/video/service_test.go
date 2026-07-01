@@ -539,14 +539,14 @@ func TestListPublicPaginates(t *testing.T) {
 	}
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "priv", Privacy: "private"})
 
-	page1, err := svc.ListPublic(ctx, "recent", 2, 0)
+	page1, err := svc.ListPublic(ctx, "recent", uuid.Nil, false, 2, 0)
 	if err != nil {
 		t.Fatalf("ListPublic: %v", err)
 	}
 	if len(page1) != 2 {
 		t.Errorf("page1 = %d, want 2", len(page1))
 	}
-	page2, _ := svc.ListPublic(ctx, "recent", 2, 2)
+	page2, _ := svc.ListPublic(ctx, "recent", uuid.Nil, false, 2, 2)
 	if len(page2) != 1 { // only 3 public total
 		t.Errorf("page2 = %d, want 1", len(page2))
 	}
@@ -571,7 +571,7 @@ func TestListPublicSortModes(t *testing.T) {
 	}
 	_, _ = repo.IncrementVideoViews(ctx, a.ID)
 
-	popular, _ := svc.ListPublic(ctx, "popular", 20, 0)
+	popular, _ := svc.ListPublic(ctx, "popular", uuid.Nil, false, 20, 0)
 	if len(popular) != 2 || popular[0].Video.ID != b.ID {
 		t.Errorf("popular order = %v, want most-viewed (b) first", feedIDs(popular))
 	}
@@ -579,7 +579,7 @@ func TestListPublicSortModes(t *testing.T) {
 		t.Errorf("top item views = %d, want 5", popular[0].Views)
 	}
 	// Unknown sort falls back to recent (newest first -> b created after a).
-	recent, _ := svc.ListPublic(ctx, "bogus", 20, 0)
+	recent, _ := svc.ListPublic(ctx, "bogus", uuid.Nil, false, 20, 0)
 	if len(recent) != 2 || recent[0].Video.ID != b.ID {
 		t.Errorf("fallback order = %v, want recent (b first)", feedIDs(recent))
 	}
@@ -602,7 +602,7 @@ func TestSearchPublicMatchesTitleAndExcludesPrivate(t *testing.T) {
 	publishDraft(t, svc, ctx, ch, CreateInput{Title: "Rust basics", Privacy: "public"})
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "Go internals", Privacy: "private"})
 
-	res, err := svc.SearchPublic(ctx, "go", 20, 0)
+	res, err := svc.SearchPublic(ctx, "go", uuid.Nil, false, 20, 0)
 	if err != nil {
 		t.Fatalf("SearchPublic: %v", err)
 	}

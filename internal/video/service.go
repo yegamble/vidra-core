@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -518,9 +519,10 @@ func NormalizeFeedSort(sort string) string {
 // ListPublic returns the cross-channel public feed in the requested order
 // (recent|popular|trending; unknown → recent), each item carrying its view
 // count and poster availability. The caller clamps limit/offset.
-func (s *Service) ListPublic(ctx context.Context, sort string, limit, offset int32) ([]FeedItem, error) {
+func (s *Service) ListPublic(ctx context.Context, sort string, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
 	rows, err := s.repo.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
 		Sort:         NormalizeFeedSort(sort),
+		ViewerID:     pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
@@ -653,10 +655,11 @@ func (s *Service) ClearHistory(ctx context.Context, userID uuid.UUID) error {
 // (case-insensitive substring, ranked by trigram similarity then recency),
 // paginated, with discovery-card data. The caller validates/clamps query,
 // limit, and offset.
-func (s *Service) SearchPublic(ctx context.Context, query string, limit, offset int32) ([]FeedItem, error) {
+func (s *Service) SearchPublic(ctx context.Context, query string, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
 	q := query
 	rows, err := s.repo.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
 		Query:        &q,
+		ViewerID:     pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})

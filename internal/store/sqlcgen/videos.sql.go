@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createVideo = `-- name: CreateVideo :one
@@ -172,20 +173,25 @@ JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
+  )
 ORDER BY
-    CASE WHEN $1::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
-    CASE WHEN $1::text = 'trending'
+    CASE WHEN $2::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
+    CASE WHEN $2::text = 'trending'
          THEN COALESCE(vc.views, 0)::float8
               / power(EXTRACT(EPOCH FROM (now() - v.created_at)) / 3600.0 + 2.0, 1.5)
     END DESC,
     v.created_at DESC, v.id DESC
-LIMIT $3 OFFSET $2
+LIMIT $4 OFFSET $3
 `
 
 type ListPublicVideosSortedParams struct {
-	Sort         string `json:"sort"`
-	ResultOffset int32  `json:"result_offset"`
-	ResultLimit  int32  `json:"result_limit"`
+	ViewerID     pgtype.UUID `json:"viewer_id"`
+	Sort         string      `json:"sort"`
+	ResultOffset int32       `json:"result_offset"`
+	ResultLimit  int32       `json:"result_limit"`
 }
 
 type ListPublicVideosSortedRow struct {
@@ -210,7 +216,12 @@ type ListPublicVideosSortedRow struct {
 //	popular  -> most all-time views first
 //	trending -> views decayed by age (Hacker-News-style gravity)
 func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVideosSortedParams) ([]ListPublicVideosSortedRow, error) {
-	rows, err := q.db.Query(ctx, listPublicVideosSorted, arg.Sort, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listPublicVideosSorted,
+		arg.ViewerID,
+		arg.Sort,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +267,10 @@ JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
+  )
   AND v.channel_id IN (
       SELECT channel_id FROM channel_follows WHERE follower_id = $1
   )
@@ -398,15 +413,20 @@ JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-  AND v.title ILIKE '%' || $1 || '%'
-ORDER BY similarity(v.title, $1) DESC, v.created_at DESC, v.id DESC
-LIMIT $3 OFFSET $2
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
+  )
+  AND v.title ILIKE '%' || $2 || '%'
+ORDER BY similarity(v.title, $2) DESC, v.created_at DESC, v.id DESC
+LIMIT $4 OFFSET $3
 `
 
 type SearchPublicVideosParams struct {
-	Query        *string `json:"query"`
-	ResultOffset int32   `json:"result_offset"`
-	ResultLimit  int32   `json:"result_limit"`
+	ViewerID     pgtype.UUID `json:"viewer_id"`
+	Query        *string     `json:"query"`
+	ResultOffset int32       `json:"result_offset"`
+	ResultLimit  int32       `json:"result_limit"`
 }
 
 type SearchPublicVideosRow struct {
@@ -426,7 +446,12 @@ type SearchPublicVideosRow struct {
 
 // Public, published title search with discovery-card data.
 func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideosParams) ([]SearchPublicVideosRow, error) {
-	rows, err := q.db.Query(ctx, searchPublicVideos, arg.Query, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, searchPublicVideos,
+		arg.ViewerID,
+		arg.Query,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

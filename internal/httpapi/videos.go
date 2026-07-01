@@ -220,7 +220,8 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 	if offset < 0 {
 		offset = 0
 	}
-	items, err := s.videosvc.ListPublic(c.Request().Context(), sort, int32(limit), int32(offset))
+	viewerID, _, authed := principalFromContext(c)
+	items, err := s.videosvc.ListPublic(c.Request().Context(), sort, viewerID, authed, int32(limit), int32(offset))
 	if err != nil {
 		return err
 	}
@@ -281,7 +282,8 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	if offset < 0 {
 		offset = 0
 	}
-	items, err := s.videosvc.SearchPublic(c.Request().Context(), q, int32(limit), int32(offset))
+	viewerID, _, authed := principalFromContext(c)
+	items, err := s.videosvc.SearchPublic(c.Request().Context(), q, viewerID, authed, int32(limit), int32(offset))
 	if err != nil {
 		return err
 	}
