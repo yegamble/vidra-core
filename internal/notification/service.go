@@ -20,6 +20,7 @@ import (
 const (
 	TypeFollow  = "follow"
 	TypeComment = "comment"
+	TypeMessage = "message"
 )
 
 // ErrNotFound means no notification matches the lookup for this user.
@@ -59,6 +60,7 @@ type Item struct {
 	VideoID            string
 	VideoTitle         string
 	CommentID          string
+	ConversationID     string
 }
 
 // NotifyFollow records that actorID followed recipientID's channel. Notifying
@@ -93,6 +95,23 @@ func (s *Service) NotifyComment(ctx context.Context, recipientID, actorID, video
 	return err
 }
 
+// NotifyMessage records that actorID sent recipientID a direct message in a
+// conversation. Notifying yourself is a no-op. Best-effort. The message body is
+// deliberately NOT stored on the notification (no message plaintext leaks into
+// the notification surface).
+func (s *Service) NotifyMessage(ctx context.Context, recipientID, actorID, conversationID uuid.UUID) error {
+	if recipientID == actorID {
+		return nil
+	}
+	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:         recipientID,
+		Type:           TypeMessage,
+		ActorID:        pgUUID(actorID),
+		ConversationID: pgUUID(conversationID),
+	})
+	return err
+}
+
 // List returns the user's notifications, newest first. When unreadOnly is true,
 // only unread notifications are returned. The caller clamps limit/offset.
 func (s *Service) List(ctx context.Context, userID uuid.UUID, unreadOnly bool, limit, offset int32) ([]Item, error) {
@@ -119,6 +138,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, unreadOnly bool, l
 			VideoID:            uuidString(r.VideoID),
 			VideoTitle:         deref(r.VideoTitle),
 			CommentID:          uuidString(r.CommentID),
+			ConversationID:     uuidString(r.ConversationID),
 		})
 	}
 	return items, nil

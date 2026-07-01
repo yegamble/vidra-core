@@ -4198,8 +4198,8 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment]
-          description: What happened. follow = someone followed your channel; comment = someone commented on your video.
+          enum: [follow, comment, message]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video; message = someone sent you a direct message.
         read:
           type: boolean
         created_at:
@@ -4224,6 +4224,10 @@ components:
           type: string
           format: uuid
           description: The comment's id (comment notifications).
+        conversation_id:
+          type: string
+          format: uuid
+          description: The conversation's id (message notifications) — link to the thread.
     NotificationListResponse:
       type: object
       required: [notifications, unread_count, limit, offset]

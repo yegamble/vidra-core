@@ -92,6 +92,15 @@ func (f *fakeRepo) CreateMessage(_ context.Context, a sqlcgen.CreateMessageParam
 	return sqlcgen.Message{ID: m.id, ConversationID: m.convID, SenderID: m.senderID, Body: m.body, CreatedAt: m.createdAt}, nil
 }
 
+func (f *fakeRepo) GetOtherParticipant(_ context.Context, a sqlcgen.GetOtherParticipantParams) (uuid.UUID, error) {
+	for uid := range f.participants[a.ConversationID] {
+		if uid != a.UserID {
+			return uid, nil
+		}
+	}
+	return uuid.Nil, pgx.ErrNoRows
+}
+
 func (f *fakeRepo) TouchConversation(_ context.Context, id uuid.UUID) error {
 	if c := f.convs[id]; c != nil {
 		c.updatedAt = time.Now()
@@ -182,6 +191,10 @@ func TestSendAndListMessages(t *testing.T) {
 	conv, err := svc.StartConversation(ctx, ada, bob)
 	if err != nil {
 		t.Fatalf("StartConversation: %v", err)
+	}
+	// The other participant (recipient of ada's messages) is bob.
+	if other, err := svc.OtherParticipant(ctx, conv.ID, ada); err != nil || other != bob {
+		t.Fatalf("OtherParticipant = (%s, %v), want (%s, nil)", other, err, bob)
 	}
 	if _, err := svc.SendMessage(ctx, ada, conv.ID, "hi bob"); err != nil {
 		t.Fatalf("SendMessage: %v", err)

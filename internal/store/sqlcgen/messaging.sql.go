@@ -94,6 +94,26 @@ func (q *Queries) GetConversationByDMKey(ctx context.Context, dmKey *string) (Ge
 	return i, err
 }
 
+const getOtherParticipant = `-- name: GetOtherParticipant :one
+SELECT user_id FROM conversation_participants
+WHERE conversation_id = $1 AND user_id <> $2
+LIMIT 1
+`
+
+type GetOtherParticipantParams struct {
+	ConversationID uuid.UUID `json:"conversation_id"`
+	UserID         uuid.UUID `json:"user_id"`
+}
+
+// The other member of a 1:1 conversation (whoever isn't the given user). Used to
+// address a "you have a new message" notification to the recipient.
+func (q *Queries) GetOtherParticipant(ctx context.Context, arg GetOtherParticipantParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getOtherParticipant, arg.ConversationID, arg.UserID)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const isConversationParticipant = `-- name: IsConversationParticipant :one
 SELECT EXISTS (
     SELECT 1 FROM conversation_participants

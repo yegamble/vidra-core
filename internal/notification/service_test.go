@@ -20,7 +20,7 @@ func (f *fakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNotific
 	n := sqlcgen.Notification{
 		ID: uuid.New(), UserID: a.UserID, Type: a.Type,
 		ActorID: a.ActorID, ChannelID: a.ChannelID, VideoID: a.VideoID, CommentID: a.CommentID,
-		CreatedAt: time.Now(),
+		ConversationID: a.ConversationID, CreatedAt: time.Now(),
 	}
 	f.notifs = append(f.notifs, n)
 	return n, nil
@@ -38,7 +38,8 @@ func (f *fakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotificati
 		}
 		rows = append(rows, sqlcgen.ListNotificationsRow{
 			ID: n.ID, Type: n.Type, ActorID: n.ActorID, ChannelID: n.ChannelID,
-			VideoID: n.VideoID, CommentID: n.CommentID, ReadAt: n.ReadAt, CreatedAt: n.CreatedAt,
+			VideoID: n.VideoID, CommentID: n.CommentID, ConversationID: n.ConversationID,
+			ReadAt: n.ReadAt, CreatedAt: n.CreatedAt,
 		})
 	}
 	return rows, nil
@@ -107,6 +108,31 @@ func TestNotifyAndList(t *testing.T) {
 	// Newest first: the comment was created after the follow.
 	if items[0].Type != TypeComment || items[1].Type != TypeFollow {
 		t.Errorf("order = [%s, %s], want [comment, follow]", items[0].Type, items[1].Type)
+	}
+}
+
+func TestNotifyMessage(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	ctx := context.Background()
+	recipient, sender, conv := uuid.New(), uuid.New(), uuid.New()
+
+	if err := svc.NotifyMessage(ctx, recipient, sender, conv); err != nil {
+		t.Fatalf("NotifyMessage: %v", err)
+	}
+	// Messaging yourself never notifies.
+	if err := svc.NotifyMessage(ctx, recipient, recipient, conv); err != nil {
+		t.Fatalf("self NotifyMessage: %v", err)
+	}
+
+	items, err := svc.List(ctx, recipient, false, 20, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("list len = %d, want 1 (self-notification skipped)", len(items))
+	}
+	if items[0].Type != TypeMessage || items[0].ConversationID != conv.String() {
+		t.Errorf("item = {type:%s conversation:%s}, want {message %s}", items[0].Type, items[0].ConversationID, conv)
 	}
 }
 

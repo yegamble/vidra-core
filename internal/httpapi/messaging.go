@@ -214,5 +214,14 @@ func (s *Server) handleSendMessage(c echo.Context) error {
 		view.SenderUsername = u.Username
 		view.SenderDisplayName = u.DisplayName
 	}
+	// Best-effort: notify the recipient of the new message. A failure here must
+	// never fail the send (the message is already persisted).
+	if s.notifsvc != nil {
+		if other, oerr := s.messagingsvc.OtherParticipant(ctx, convID, userID); oerr == nil {
+			if nerr := s.notifsvc.NotifyMessage(ctx, other, userID, convID); nerr != nil {
+				s.logger.WarnContext(ctx, "notify message failed", "error", nerr, "conversation_id", convID)
+			}
+		}
+	}
 	return c.JSON(http.StatusCreated, view)
 }

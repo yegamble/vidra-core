@@ -1,9 +1,9 @@
 -- name: CreateNotification :one
 -- Record a notification for a recipient (user_id). Context columns are optional
 -- and depend on the type.
-INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at;
+INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id;
 
 -- name: ListNotifications :many
 -- A user's notifications, newest first, joined with the actor's identity and the
@@ -11,7 +11,7 @@ RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at
 -- joined columns are nullable because the context depends on the type. When
 -- unread_only is true, only unread (read_at IS NULL) rows are returned.
 SELECT n.id, n.type, n.actor_id, n.channel_id, n.video_id, n.comment_id,
-       n.read_at, n.created_at,
+       n.conversation_id, n.read_at, n.created_at,
        a.username AS actor_username, a.display_name AS actor_display_name,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        v.title AS video_title

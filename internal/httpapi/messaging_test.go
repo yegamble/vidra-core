@@ -83,6 +83,15 @@ func (f *messagingFakeRepo) CreateMessage(_ context.Context, a sqlcgen.CreateMes
 	return m, nil
 }
 
+func (f *messagingFakeRepo) GetOtherParticipant(_ context.Context, a sqlcgen.GetOtherParticipantParams) (uuid.UUID, error) {
+	for uid := range f.participants[a.ConversationID] {
+		if uid != a.UserID {
+			return uid, nil
+		}
+	}
+	return uuid.Nil, pgx.ErrNoRows
+}
+
 func (f *messagingFakeRepo) TouchConversation(_ context.Context, id uuid.UUID) error {
 	if _, ok := f.convs[id]; ok {
 		f.convs[id] = time.Now()
@@ -207,5 +216,29 @@ func TestMessagingFlow(t *testing.T) {
 	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/me/conversations", bobTok).Body.Bytes(), &inbox)
 	if len(inbox.Conversations) != 1 || inbox.Conversations[0].OtherUsername != "ada" || inbox.Conversations[0].LastMessageBody != "hi bob" {
 		t.Fatalf("inbox = %+v, want one conversation with ada, last 'hi bob'", inbox)
+	}
+
+	// Bob was notified of the new message (actor ada, linking the conversation).
+	var notifs notificationListResponse
+	_ = json.Unmarshal(listNotifications(srv, bobTok).Body.Bytes(), &notifs)
+	var msgNotif *notificationView
+	for i := range notifs.Notifications {
+		if notifs.Notifications[i].Type == "message" {
+			msgNotif = &notifs.Notifications[i]
+		}
+	}
+	if msgNotif == nil {
+		t.Fatalf("bob has no message notification; notifications = %+v", notifs.Notifications)
+	}
+	if msgNotif.ConversationID != conv.ID || msgNotif.Actor == nil || msgNotif.Actor.Username != "ada" {
+		t.Fatalf("message notification = %+v, want conversation %s from ada", msgNotif, conv.ID)
+	}
+	// Ada (the sender) is NOT notified of her own message.
+	var adaNotifs notificationListResponse
+	_ = json.Unmarshal(listNotifications(srv, adaTok).Body.Bytes(), &adaNotifs)
+	for _, n := range adaNotifs.Notifications {
+		if n.Type == "message" {
+			t.Fatalf("ada should not be notified of her own message; got %+v", n)
+		}
 	}
 }

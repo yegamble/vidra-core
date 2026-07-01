@@ -26,18 +26,19 @@ func (q *Queries) CountUnreadNotifications(ctx context.Context, userID uuid.UUID
 }
 
 const createNotification = `-- name: CreateNotification :one
-INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at
+INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id
 `
 
 type CreateNotificationParams struct {
-	UserID    uuid.UUID   `json:"user_id"`
-	Type      string      `json:"type"`
-	ActorID   pgtype.UUID `json:"actor_id"`
-	ChannelID pgtype.UUID `json:"channel_id"`
-	VideoID   pgtype.UUID `json:"video_id"`
-	CommentID pgtype.UUID `json:"comment_id"`
+	UserID         uuid.UUID   `json:"user_id"`
+	Type           string      `json:"type"`
+	ActorID        pgtype.UUID `json:"actor_id"`
+	ChannelID      pgtype.UUID `json:"channel_id"`
+	VideoID        pgtype.UUID `json:"video_id"`
+	CommentID      pgtype.UUID `json:"comment_id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
 }
 
 // Record a notification for a recipient (user_id). Context columns are optional
@@ -50,6 +51,7 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		arg.ChannelID,
 		arg.VideoID,
 		arg.CommentID,
+		arg.ConversationID,
 	)
 	var i Notification
 	err := row.Scan(
@@ -62,13 +64,14 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		&i.CommentID,
 		&i.ReadAt,
 		&i.CreatedAt,
+		&i.ConversationID,
 	)
 	return i, err
 }
 
 const listNotifications = `-- name: ListNotifications :many
 SELECT n.id, n.type, n.actor_id, n.channel_id, n.video_id, n.comment_id,
-       n.read_at, n.created_at,
+       n.conversation_id, n.read_at, n.created_at,
        a.username AS actor_username, a.display_name AS actor_display_name,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        v.title AS video_title
@@ -96,6 +99,7 @@ type ListNotificationsRow struct {
 	ChannelID          pgtype.UUID        `json:"channel_id"`
 	VideoID            pgtype.UUID        `json:"video_id"`
 	CommentID          pgtype.UUID        `json:"comment_id"`
+	ConversationID     pgtype.UUID        `json:"conversation_id"`
 	ReadAt             pgtype.Timestamptz `json:"read_at"`
 	CreatedAt          time.Time          `json:"created_at"`
 	ActorUsername      *string            `json:"actor_username"`
@@ -130,6 +134,7 @@ func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsPa
 			&i.ChannelID,
 			&i.VideoID,
 			&i.CommentID,
+			&i.ConversationID,
 			&i.ReadAt,
 			&i.CreatedAt,
 			&i.ActorUsername,

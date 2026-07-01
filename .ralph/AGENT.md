@@ -142,7 +142,8 @@ curl -s 'localhost:8080/api/v1/me/history?limit=20' -H 'authorization: Bearer <t
 curl -sX DELETE localhost:8080/api/v1/me/history/<id> -H 'authorization: Bearer <token>'         # remove one entry (idempotent)
 curl -sX DELETE localhost:8080/api/v1/me/history -H 'authorization: Bearer <token>'              # clear all history (idempotent)
 
-# Notifications (created as a side effect of follow/comment; never self-notify):
+# Notifications (created as a side effect of follow/comment/message; never self-notify.
+# type=message carries conversation_id (link to the DM thread), actor=the sender):
 curl -s 'localhost:8080/api/v1/me/notifications?unread=true&limit=20' -H 'authorization: Bearer <token>'  # {notifications, unread_count, ...}
 curl -s localhost:8080/api/v1/me/notifications/unread-count -H 'authorization: Bearer <token>'   # {unread_count} (for a badge)
 curl -sX POST localhost:8080/api/v1/me/notifications/<id>/read -H 'authorization: Bearer <token>' # mark one read (idempotent; 404 if not yours)
@@ -207,7 +208,7 @@ curl -sX POST localhost:8080/api/v1/conversations -H 'authorization: Bearer <tok
   -H 'content-type: application/json' -d '{"recipient_id":"<user-id>"}'                  # start-or-get -> 201 {id,...} (self -> 422, unknown recipient -> 404)
 curl -s 'localhost:8080/api/v1/me/conversations?limit=20' -H 'authorization: Bearer <token>'  # inbox: other participant + last-message preview, most-recently-active first
 curl -sX POST localhost:8080/api/v1/conversations/<id>/messages -H 'authorization: Bearer <token>' \
-  -H 'content-type: application/json' -d '{"body":"hello"}'                              # send -> 201 {..,sender_username} (>5000 chars -> 422; non-participant -> 404)
+  -H 'content-type: application/json' -d '{"body":"hello"}'                              # send -> 201 {..,sender_username} (>5000 chars -> 422; non-participant -> 404); best-effort notifies the recipient (type=message)
 curl -s 'localhost:8080/api/v1/conversations/<id>/messages?limit=20' -H 'authorization: Bearer <token>'  # messages, newest first (non-participant -> 404)
 
 # Admin user management (admin-only; the first registered account is admin):

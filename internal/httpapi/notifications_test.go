@@ -45,7 +45,7 @@ func (f *notifFakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNo
 	n := sqlcgen.Notification{
 		ID: uuid.New(), UserID: a.UserID, Type: a.Type,
 		ActorID: a.ActorID, ChannelID: a.ChannelID, VideoID: a.VideoID, CommentID: a.CommentID,
-		CreatedAt: time.Now(),
+		ConversationID: a.ConversationID, CreatedAt: time.Now(),
 	}
 	f.notifs = append(f.notifs, n)
 	return n, nil
@@ -63,7 +63,8 @@ func (f *notifFakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotif
 		}
 		row := sqlcgen.ListNotificationsRow{
 			ID: n.ID, Type: n.Type, ActorID: n.ActorID, ChannelID: n.ChannelID,
-			VideoID: n.VideoID, CommentID: n.CommentID, ReadAt: n.ReadAt, CreatedAt: n.CreatedAt,
+			VideoID: n.VideoID, CommentID: n.CommentID, ConversationID: n.ConversationID,
+			ReadAt: n.ReadAt, CreatedAt: n.CreatedAt,
 		}
 		if n.ActorID.Valid {
 			if u, ok := f.userByID(uuid.UUID(n.ActorID.Bytes)); ok {

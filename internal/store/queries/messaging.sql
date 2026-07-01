@@ -22,6 +22,13 @@ SELECT EXISTS (
     WHERE conversation_id = $1 AND user_id = $2
 );
 
+-- name: GetOtherParticipant :one
+-- The other member of a 1:1 conversation (whoever isn't the given user). Used to
+-- address a "you have a new message" notification to the recipient.
+SELECT user_id FROM conversation_participants
+WHERE conversation_id = $1 AND user_id <> $2
+LIMIT 1;
+
 -- name: CreateMessage :one
 INSERT INTO messages (conversation_id, sender_id, body)
 VALUES ($1, $2, $3)

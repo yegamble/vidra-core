@@ -33,6 +33,7 @@ type Repository interface {
 	AddConversationParticipant(ctx context.Context, arg sqlcgen.AddConversationParticipantParams) error
 	IsConversationParticipant(ctx context.Context, arg sqlcgen.IsConversationParticipantParams) (bool, error)
 	CreateMessage(ctx context.Context, arg sqlcgen.CreateMessageParams) (sqlcgen.Message, error)
+	GetOtherParticipant(ctx context.Context, arg sqlcgen.GetOtherParticipantParams) (uuid.UUID, error)
 	TouchConversation(ctx context.Context, id uuid.UUID) error
 	ListMessages(ctx context.Context, arg sqlcgen.ListMessagesParams) ([]sqlcgen.ListMessagesRow, error)
 	ListConversations(ctx context.Context, arg sqlcgen.ListConversationsParams) ([]sqlcgen.ListConversationsRow, error)
@@ -176,6 +177,16 @@ func (s *Service) SendMessage(ctx context.Context, meID, conversationID uuid.UUI
 		ID: m.ID, ConversationID: m.ConversationID, SenderID: m.SenderID,
 		Body: m.Body, CreatedAt: m.CreatedAt,
 	}, nil
+}
+
+// OtherParticipant returns the other member of a 1:1 conversation (whoever isn't
+// meID). Used to address a new-message notification to the recipient. Returns
+// pgx.ErrNoRows if there is no other participant.
+func (s *Service) OtherParticipant(ctx context.Context, conversationID, meID uuid.UUID) (uuid.UUID, error) {
+	return s.repo.GetOtherParticipant(ctx, sqlcgen.GetOtherParticipantParams{
+		ConversationID: conversationID,
+		UserID:         meID,
+	})
 }
 
 // ListMessages returns a conversation's messages, newest first. The caller must

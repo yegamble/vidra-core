@@ -32,6 +32,8 @@ type notificationView struct {
 	VideoID    string `json:"video_id,omitempty"`
 	VideoTitle string `json:"video_title,omitempty"`
 	CommentID  string `json:"comment_id,omitempty"`
+	// Message context.
+	ConversationID string `json:"conversation_id,omitempty"`
 }
 
 func newNotificationView(it notification.Item) notificationView {
@@ -45,6 +47,7 @@ func newNotificationView(it notification.Item) notificationView {
 		VideoID:            it.VideoID,
 		VideoTitle:         it.VideoTitle,
 		CommentID:          it.CommentID,
+		ConversationID:     it.ConversationID,
 	}
 	if it.ActorUsername != "" || it.ActorDisplayName != "" {
 		v.Actor = &notificationActorView{Username: it.ActorUsername, DisplayName: it.ActorDisplayName}
