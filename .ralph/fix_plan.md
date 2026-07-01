@@ -543,7 +543,7 @@
 - [ ] Add OAuth redirect validation.
 - [ ] Add secure headers.
 - [ ] Add audit logging for sensitive actions (typed audit events, no secrets; see P17.2 and `.ralph/specs/observability.md`).
-- [ ] Enforce no-secrets-in-logs via the secrets-in-logs guard test (P17.2).
+- [x] Enforce no-secrets-in-logs via the secrets-in-logs guard test (P17.2). (`TestNoSensitiveLogKeys` in `internal/observability/logging_guard_test.go`, runs under `make ci`.)
 - [ ] Add fuzz tests for URL parsing.
 - [ ] Add fuzz tests for metadata parsing.
 - [ ] Add fuzz tests for ActivityPub parsing when implemented.
@@ -583,9 +583,9 @@
 
 ## P17.2 Security-friendly logging
 
-- [ ] Add a redaction helper + denylist of sensitive field names in `internal/observability`; route struct/config logging through it (never log `cfg` whole).
-- [ ] Add the banned-logging guard test (`TestNoForbiddenLogging`): no `fmt.Print*`/`log.Print*`/`println` diagnostics outside `main`/tests.
-- [ ] Add the secrets-in-logs guard test: fail when a denylisted key is used as an slog/span/metric key.
+- [~] Add a redaction helper + denylist of sensitive field names in `internal/observability`; route struct/config logging through it (never log `cfg` whole). (Denylist DONE + now enforced: `IsSensitiveKey`/`sensitiveKeys` in `audit.go` is the canonical list, and the secrets-in-logs guard below fails the build on any denylisted slog key. `cfg` is never logged whole today — `cmd/api` logs only individual non-sensitive fields. A value-scrubbing `Redact(...)` helper for the rare "must log a struct" case remains optional.)
+- [x] Add the banned-logging guard test (`TestNoForbiddenLogging`): no `fmt.Print*`/`log.Print*`/`println` diagnostics outside `main`/tests. (`internal/observability/logging_guard_test.go` — an AST guard that parses every non-test, non-`package main` file in the module and fails on `fmt.Print*`, `log.Print*`/`Fatal*`/`Panic*`, or the `println`/`print` builtins (`fmt.Fprint*`/`Sprint*`/`Errorf` allowed). Runs under `make ci` via `test-race`; being an ordinary Go test IS the enforcement — no Makefile change. Green on the current tree; a negative check confirmed it catches a planted `fmt.Println`.)
+- [x] Add the secrets-in-logs guard test: fail when a denylisted key is used as an slog/span/metric key. (`TestNoSensitiveLogKeys` in the same file — flags a denylisted `IsSensitiveKey` name used as a structured-log key in three idioms: inline in an slog key/value call (`Debug/Info/Warn/Error[Context]`, `Log`, top-level `slog.*` — key positions computed per signature), at an even index of a `[]any{}`/`[]interface{}{}` args slice (the slog args-builder idiom used by `server.go`/`audit.go`), and as an slog attribute-constructor key (`slog.String("token", …)`). Green on the current tree; a negative check confirmed it catches planted inline/slice/attr-ctor keys.)
 - [ ] Implement typed audit events for auth/admin/moderation actions (durable, no secrets); add per-action audit tests asserting no denylisted field. (See P15.)
 
 ## P17.3 OpenTelemetry (traces + metrics)

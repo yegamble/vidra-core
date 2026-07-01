@@ -4,11 +4,14 @@
 > follow this when adding any handler, service, worker, or store code. Logging
 > and tracing are part of the definition of done, not a later phase.
 >
-> ⚠️ STATUS: the mechanical guards described under "Enforcement" are **PLANNED
-> (fix_plan P17), not yet built** — `internal/observability` and the
-> `TestNoForbiddenLogging`/secrets-in-logs tests do not exist yet, and `make ci`
-> today is only `fmt-check vet openapi-verify test-race`. Until those land, the
-> rules below are honor-system: follow them, and build the guards under P17.
+> ✅ STATUS: the mechanical **logging guards** under "Enforcement" are **built**
+> (fix_plan P17.2). `internal/observability` holds the redaction denylist
+> (`IsSensitiveKey`) plus two AST guards — `TestNoForbiddenLogging` (no banned
+> diagnostics) and `TestNoSensitiveLogKeys` (no denylisted slog key) — which run
+> under `make ci` via `go test -race ./...` (being ordinary Go tests IS the
+> enforcement; no Makefile change was needed). Still honor-system / planned:
+> centralized logger construction + `LOG_LEVEL`/`LOG_FORMAT` config (P17.1) and
+> all of OpenTelemetry — traces/metrics/log correlation (P17.3).
 
 ## Goals
 
@@ -123,24 +126,25 @@ return to a client:
 
 ---
 
-## 3. Enforcement (PLANNED — fix_plan P17; not yet built)
+## 3. Enforcement
 
-These guards do **not exist yet**. Until they are built under fix_plan P17 and
-wired into the `ci` Make target, the rules above are honor-system — follow them,
-and treat the items below as the build target (not as checks you can run today).
-`make ci` is currently only `fmt-check vet openapi-verify test-race`.
+The two logging guards below are **built** (`internal/observability/logging_guard_test.go`)
+and run under `make ci` (`go test -race ./...`). The OTel/metrics enforcement is
+still planned (fix_plan P17.3).
 
-- **Banned-logging guard (planned, P17.2)** — a Go test to be added in
-  `internal/observability` (e.g. `TestNoForbiddenLogging`) that will fail the
-  build if non-test, non-`main` code uses `fmt.Print*`, `log.Print*`/`log.Fatal*`,
-  or `println` for diagnostics, steering all logging through `slog`.
-- **Secrets-in-logs guard (planned, P17.2)** — a test/CI check to be added that
-  will fail when a denylisted sensitive field name (password, token, secret,
-  authorization, cookie, private_key, stream_key, …) is passed as an
-  slog/span/metric key, or when `cfg`/a secret struct is logged whole.
-- **CI (planned)** — once added, these will run as part of `make ci` with the
-  rest of `go test -race ./...`, and OTel must compile and initialise (no-op
-  path) cleanly in tests. They are not in `make ci` today.
+- **Banned-logging guard (built, P17.2)** — `TestNoForbiddenLogging` parses every
+  non-test, non-`package main` source file in the module and fails the build if
+  it uses `fmt.Print*`, `log.Print*`/`log.Fatal*`/`log.Panic*`, or the
+  `println`/`print` builtins for diagnostics, steering all logging through `slog`.
+  (`fmt.Fprint*`, `fmt.Sprint*`, and `fmt.Errorf` are intentionally allowed.)
+- **Secrets-in-logs guard (built, P17.2)** — `TestNoSensitiveLogKeys` fails when a
+  denylisted sensitive field name (`IsSensitiveKey`: password, token, secret,
+  authorization, cookie, private_key, stream_key, …) is used as a structured-log
+  key — inline in an slog key/value call, at an even index of a `[]any{}` args
+  slice (the slog args-builder idiom), or as an slog attribute-constructor key
+  (`slog.String("token", …)`). Config/secret structs must never be logged whole.
+- **OTel (planned, P17.3)** — once added, OTel must compile and initialise (no-op
+  path) cleanly in tests as part of `make ci`.
 - **Release gates** (fix_plan P19) include: structured logging configurable via
   `LOG_LEVEL`/`LOG_FORMAT`; no denylisted data in logs/spans/labels; audit
   events exist and are tested for sensitive actions; OTel traces/metrics behind

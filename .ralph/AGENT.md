@@ -280,9 +280,10 @@ migration; add a new one.
 4. integration smoke profile up
 5. Newman/Postman API suite when API behavior changed
 6. observability: structured logs, audit events for sensitive actions, and OTel
-   follow `.ralph/specs/observability.md`. NOTE: the banned-logging + secrets-in-logs
-   guard tests do NOT exist yet and are NOT in `make ci` — building them is a
-   fix_plan P17.2 task, not a check to run today.
+   follow `.ralph/specs/observability.md`. The banned-logging + secrets-in-logs
+   guard tests (`internal/observability/logging_guard_test.go`:
+   `TestNoForbiddenLogging` + `TestNoSensitiveLogKeys`) are built and run under
+   `make ci`; OTel traces/metrics remain a fix_plan P17.3 task.
 7. branch CI is green (same `make ci`); `ci-guard.yml` passes — a local green alone
    is not done
 
