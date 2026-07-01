@@ -214,11 +214,13 @@ func (f *fakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (
 	v := sqlcgen.Video{
 		ID: uuid.New(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
+		Category: a.Category, Language: a.Language, License: a.License,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
 		ID: v.ID, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 		Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
+		Category: v.Category, Language: v.Language, License: v.License,
 		OwnerID: f.owner,
 	}
 	return v, nil
@@ -236,6 +238,7 @@ func rowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 	return sqlcgen.Video{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		Category: r.Category, Language: r.Language, License: r.License,
 	}
 }
 
@@ -282,6 +285,15 @@ func (f *fakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoParams) (
 	}
 	if a.Privacy != nil {
 		r.Privacy = *a.Privacy
+	}
+	if a.Category != nil {
+		r.Category = a.Category
+	}
+	if a.Language != nil {
+		r.Language = a.Language
+	}
+	if a.License != nil {
+		r.License = a.License
 	}
 	r.UpdatedAt = time.Now()
 	f.videos[a.ID] = r

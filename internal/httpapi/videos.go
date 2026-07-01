@@ -29,6 +29,9 @@ type createVideoRequest struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Privacy     string `json:"privacy"`
+	Category    string `json:"category"`
+	Language    string `json:"language"`
+	License     string `json:"license"`
 }
 
 func (r createVideoRequest) Validate() []FieldError {
@@ -44,6 +47,24 @@ func (r createVideoRequest) Validate() []FieldError {
 	}
 	if r.Privacy != "" && !validVideoPrivacy[r.Privacy] {
 		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private"})
+	}
+	fes = append(fes, validateTaxonomy(r.Category, r.Language, r.License)...)
+	return fes
+}
+
+// validateTaxonomy checks optional category/language/license values against the
+// canonical GET /videos/config maps. Empty values are unset (skipped); a
+// non-empty unknown value is a 422 field error.
+func validateTaxonomy(category, language, license string) []FieldError {
+	var fes []FieldError
+	if category != "" && !video.IsCategory(category) {
+		fes = append(fes, FieldError{Field: "category", Message: "unknown category"})
+	}
+	if language != "" && !video.IsLanguage(language) {
+		fes = append(fes, FieldError{Field: "language", Message: "unknown language"})
+	}
+	if license != "" && !video.IsLicense(license) {
+		fes = append(fes, FieldError{Field: "license", Message: "unknown license"})
 	}
 	return fes
 }
@@ -75,6 +96,11 @@ type videoView struct {
 	// channel).
 	ChannelHandle      *string `json:"channel_handle,omitempty"`
 	ChannelDisplayName *string `json:"channel_display_name,omitempty"`
+	// Category, Language, License are the optional taxonomy ids (see GET
+	// /videos/config); omitted when unset. Populated on create/update/detail.
+	Category *string `json:"category,omitempty"`
+	Language *string `json:"language,omitempty"`
+	License  *string `json:"license,omitempty"`
 }
 
 func newVideoView(v sqlcgen.Video) videoView {
@@ -86,6 +112,9 @@ func newVideoView(v sqlcgen.Video) videoView {
 		Privacy:     v.Privacy,
 		State:       v.State,
 		CreatedAt:   v.CreatedAt,
+		Category:    v.Category,
+		Language:    v.Language,
+		License:     v.License,
 	}
 }
 
@@ -98,6 +127,9 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 		Privacy:     v.Privacy,
 		State:       v.State,
 		CreatedAt:   v.CreatedAt,
+		Category:    v.Category,
+		Language:    v.Language,
+		License:     v.License,
 	}
 }
 
@@ -129,6 +161,9 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 		Title:       in.Title,
 		Description: in.Description,
 		Privacy:     privacy,
+		Category:    in.Category,
+		Language:    in.Language,
+		License:     in.License,
 	})
 	if err != nil {
 		return err
@@ -349,11 +384,15 @@ type updateVideoRequest struct {
 	Title       *string `json:"title"`
 	Description *string `json:"description"`
 	Privacy     *string `json:"privacy"`
+	Category    *string `json:"category"`
+	Language    *string `json:"language"`
+	License     *string `json:"license"`
 }
 
 func (r updateVideoRequest) Validate() []FieldError {
-	if r.Title == nil && r.Description == nil && r.Privacy == nil {
-		return []FieldError{{Field: "title", Message: "at least one of title, description, privacy is required"}}
+	if r.Title == nil && r.Description == nil && r.Privacy == nil &&
+		r.Category == nil && r.Language == nil && r.License == nil {
+		return []FieldError{{Field: "title", Message: "at least one updatable field is required"}}
 	}
 	var fes []FieldError
 	if r.Title != nil {
@@ -370,7 +409,28 @@ func (r updateVideoRequest) Validate() []FieldError {
 	if r.Privacy != nil && !validVideoPrivacy[*r.Privacy] {
 		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private"})
 	}
+	// A provided taxonomy field must be a known, non-empty id (clearing to unset
+	// is not supported via update).
+	fes = append(fes, validateTaxonomy(derefOr(r.Category), derefOr(r.Language), derefOr(r.License))...)
+	if r.Category != nil && *r.Category == "" {
+		fes = append(fes, FieldError{Field: "category", Message: "unknown category"})
+	}
+	if r.Language != nil && *r.Language == "" {
+		fes = append(fes, FieldError{Field: "language", Message: "unknown language"})
+	}
+	if r.License != nil && *r.License == "" {
+		fes = append(fes, FieldError{Field: "license", Message: "unknown license"})
+	}
 	return fes
+}
+
+// derefOr returns the pointee or "" when nil (so validateTaxonomy skips absent
+// fields while still validating present ones).
+func derefOr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // handleUpdateVideo updates a video owned by the authenticated user.
@@ -391,6 +451,9 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		Title:       in.Title,
 		Description: in.Description,
 		Privacy:     in.Privacy,
+		Category:    in.Category,
+		Language:    in.Language,
+		License:     in.License,
 	})
 	if err != nil {
 		return videoError(err)

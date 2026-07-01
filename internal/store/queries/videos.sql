@@ -1,10 +1,11 @@
 -- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy)
-VALUES ($1, $2, $3, $4)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at;
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license;
 
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
+       v.category, v.language, v.license,
        c.owner_id
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
@@ -129,16 +130,19 @@ UPDATE videos
 SET title       = COALESCE(sqlc.narg('title'), title),
     description = COALESCE(sqlc.narg('description'), description),
     privacy     = COALESCE(sqlc.narg('privacy'), privacy),
+    category    = COALESCE(sqlc.narg('category'), category),
+    language    = COALESCE(sqlc.narg('language'), language),
+    license     = COALESCE(sqlc.narg('license'), license),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license;
 
 -- name: DeleteVideo :exec
 DELETE FROM videos WHERE id = $1;

@@ -274,11 +274,13 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 	v := sqlcgen.Video{
 		ID: uuid.New(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
+		Category: a.Category, Language: a.Language, License: a.License,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
 		ID: v.ID, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 		Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
+		Category: v.Category, Language: v.Language, License: v.License,
 		OwnerID: owner,
 	}
 	return v, nil
@@ -296,6 +298,7 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 	return sqlcgen.Video{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		Category: r.Category, Language: r.Language, License: r.License,
 	}
 }
 
@@ -342,6 +345,15 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	}
 	if a.Privacy != nil {
 		r.Privacy = *a.Privacy
+	}
+	if a.Category != nil {
+		r.Category = a.Category
+	}
+	if a.Language != nil {
+		r.Language = a.Language
+	}
+	if a.License != nil {
+		r.License = a.License
 	}
 	f.videos[a.ID] = r
 	return vidRowToVideo(r), nil
@@ -747,6 +759,56 @@ func TestUpdateVideoOwnerAndNonOwner(t *testing.T) {
 	// Empty patch -> 422.
 	if empty := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id, `{}`, ownerTok); empty.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("empty patch = %d, want 422", empty.Code)
+	}
+}
+
+func TestVideoTaxonomyMetadata(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	// Create with valid category/language/license; they round-trip on detail.
+	id := createVideo(t, srv, tok, "ada",
+		`{"title":"Tagged","category":"1","language":"en","license":"7"}`)
+	var v videoView
+	_ = json.Unmarshal(getVideo(srv, id, tok).Body.Bytes(), &v)
+	if v.Category == nil || *v.Category != "1" || v.Language == nil || *v.Language != "en" ||
+		v.License == nil || *v.License != "7" {
+		t.Fatalf("taxonomy not stored: %+v", v)
+	}
+
+	// A video created without taxonomy omits the fields (NULL -> omitempty).
+	id2 := createVideo(t, srv, tok, "ada", `{"title":"Plain"}`)
+	var v2 videoView
+	_ = json.Unmarshal(getVideo(srv, id2, tok).Body.Bytes(), &v2)
+	if v2.Category != nil || v2.Language != nil || v2.License != nil {
+		t.Errorf("expected unset taxonomy to be omitted: %+v", v2)
+	}
+
+	// Unknown value on create -> 422 (field-scoped).
+	if bad := postJSONAuth(srv, "/api/v1/channels/ada/videos",
+		`{"title":"x","category":"999"}`, tok); bad.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown category create = %d, want 422; body=%s", bad.Code, bad.Body.String())
+	}
+
+	// Update one field; the others are preserved (partial update).
+	up := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id, `{"language":"fr"}`, tok)
+	if up.Code != http.StatusOK {
+		t.Fatalf("update language = %d; body=%s", up.Code, up.Body.String())
+	}
+	var v3 videoView
+	_ = json.Unmarshal(up.Body.Bytes(), &v3)
+	if v3.Language == nil || *v3.Language != "fr" || v3.Category == nil || *v3.Category != "1" {
+		t.Errorf("partial update wrong: %+v", v3)
+	}
+
+	// Unknown / empty taxonomy on update -> 422.
+	if badU := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id,
+		`{"license":"nope"}`, tok); badU.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown license update = %d, want 422", badU.Code)
+	}
+	if emptyU := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id,
+		`{"category":""}`, tok); emptyU.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("empty category update = %d, want 422", emptyU.Code)
 	}
 }
 

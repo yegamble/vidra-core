@@ -14,9 +14,9 @@ import (
 )
 
 const createVideo = `-- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy)
-VALUES ($1, $2, $3, $4)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license
 `
 
 type CreateVideoParams struct {
@@ -24,6 +24,9 @@ type CreateVideoParams struct {
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Privacy     string    `json:"privacy"`
+	Category    *string   `json:"category"`
+	Language    *string   `json:"language"`
+	License     *string   `json:"license"`
 }
 
 func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video, error) {
@@ -32,6 +35,9 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		arg.Title,
 		arg.Description,
 		arg.Privacy,
+		arg.Category,
+		arg.Language,
+		arg.License,
 	)
 	var i Video
 	err := row.Scan(
@@ -43,6 +49,9 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Category,
+		&i.Language,
+		&i.License,
 	)
 	return i, err
 }
@@ -58,6 +67,7 @@ func (q *Queries) DeleteVideo(ctx context.Context, id uuid.UUID) error {
 
 const getVideoByID = `-- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
+       v.category, v.language, v.license,
        c.owner_id
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
@@ -73,6 +83,9 @@ type GetVideoByIDRow struct {
 	State       string    `json:"state"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	Category    *string   `json:"category"`
+	Language    *string   `json:"language"`
+	License     *string   `json:"license"`
 	OwnerID     uuid.UUID `json:"owner_id"`
 }
 
@@ -88,6 +101,9 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Category,
+		&i.Language,
+		&i.License,
 		&i.OwnerID,
 	)
 	return i, err
@@ -553,7 +569,7 @@ UPDATE videos
 SET state      = $1,
     updated_at = now()
 WHERE id = $2
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license
 `
 
 type SetVideoStateParams struct {
@@ -573,6 +589,9 @@ func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (V
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Category,
+		&i.Language,
+		&i.License,
 	)
 	return i, err
 }
@@ -582,15 +601,21 @@ UPDATE videos
 SET title       = COALESCE($1, title),
     description = COALESCE($2, description),
     privacy     = COALESCE($3, privacy),
+    category    = COALESCE($4, category),
+    language    = COALESCE($5, language),
+    license     = COALESCE($6, license),
     updated_at  = now()
-WHERE id = $4
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at
+WHERE id = $7
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license
 `
 
 type UpdateVideoParams struct {
 	Title       *string   `json:"title"`
 	Description *string   `json:"description"`
 	Privacy     *string   `json:"privacy"`
+	Category    *string   `json:"category"`
+	Language    *string   `json:"language"`
+	License     *string   `json:"license"`
 	ID          uuid.UUID `json:"id"`
 }
 
@@ -599,6 +624,9 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		arg.Title,
 		arg.Description,
 		arg.Privacy,
+		arg.Category,
+		arg.Language,
+		arg.License,
 		arg.ID,
 	)
 	var i Video
@@ -611,6 +639,9 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Category,
+		&i.Language,
+		&i.License,
 	)
 	return i, err
 }

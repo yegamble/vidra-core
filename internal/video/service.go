@@ -163,6 +163,11 @@ type CreateInput struct {
 	Title       string
 	Description string
 	Privacy     string
+	// Category, Language, License are optional taxonomy ids (empty = unset). The
+	// HTTP layer validates non-empty values against the GET /videos/config maps.
+	Category string
+	Language string
+	License  string
 }
 
 // CreateDraft creates a new draft video under the given channel. Ownership is
@@ -173,6 +178,9 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 		Title:       strings.TrimSpace(in.Title),
 		Description: strings.TrimSpace(in.Description),
 		Privacy:     in.Privacy,
+		Category:    nilIfEmpty(in.Category),
+		Language:    nilIfEmpty(in.Language),
+		License:     nilIfEmpty(in.License),
 	})
 }
 
@@ -427,6 +435,12 @@ type UpdateInput struct {
 	Title       *string
 	Description *string
 	Privacy     *string
+	// Category, Language, License: nil leaves the field unchanged; a non-nil value
+	// (validated by the HTTP layer) sets it. Clearing back to unset is not yet
+	// supported (the COALESCE update cannot distinguish keep from clear).
+	Category *string
+	Language *string
+	License  *string
 }
 
 // Update changes a video's mutable metadata. Only the owner may update; a
@@ -444,6 +458,9 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 		Title:       trimPtr(in.Title),
 		Description: trimPtr(in.Description),
 		Privacy:     in.Privacy,
+		Category:    in.Category,
+		Language:    in.Language,
+		License:     in.License,
 	})
 }
 
@@ -737,4 +754,14 @@ func trimPtr(p *string) *string {
 	}
 	t := strings.TrimSpace(*p)
 	return &t
+}
+
+// nilIfEmpty maps an optional string to a nullable column value: a blank string
+// (after trimming) becomes NULL, otherwise the trimmed value.
+func nilIfEmpty(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return &s
 }

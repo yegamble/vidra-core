@@ -3363,6 +3363,21 @@ components:
           description: >-
             Recorded view count. Present on the detail endpoint; omitted on
             list/feed views.
+        category:
+          type: string
+          description: >-
+            Optional subject-category id from GET /videos/config; omitted when
+            unset. Present on the create/update/detail views.
+        language:
+          type: string
+          description: >-
+            Optional content language code (ISO 639-1) from GET /videos/config;
+            omitted when unset.
+        license:
+          type: string
+          description: >-
+            Optional content-license id from GET /videos/config; omitted when
+            unset.
     CreateVideoRequest:
       type: object
       required: [title]
@@ -3378,6 +3393,15 @@ components:
           type: string
           enum: [public, unlisted, private]
           description: Defaults to "private" when omitted.
+        category:
+          type: string
+          description: Optional subject-category id (see GET /videos/config). Unknown value -> 422.
+        language:
+          type: string
+          description: Optional content language code (see GET /videos/config). Unknown value -> 422.
+        license:
+          type: string
+          description: Optional content-license id (see GET /videos/config). Unknown value -> 422.
     UpdateVideoRequest:
       type: object
       description: Partial update; provide at least one field.
@@ -3392,6 +3416,15 @@ components:
         privacy:
           type: string
           enum: [public, unlisted, private]
+        category:
+          type: string
+          description: Set the subject-category id (see GET /videos/config). Unknown/empty value -> 422.
+        language:
+          type: string
+          description: Set the content language code (see GET /videos/config). Unknown/empty value -> 422.
+        license:
+          type: string
+          description: Set the content-license id (see GET /videos/config). Unknown/empty value -> 422.
     Caption:
       type: object
       description: A WebVTT caption track's metadata (the file is fetched separately).
