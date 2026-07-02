@@ -85,6 +85,14 @@ services:
       # addresses so backed e2e can import from a loopback/compose-network origin (a
       # public origin isn't reachable in CI). NEVER enable in production. Default off.
       HTTP_IMPORT_ALLOW_PRIVATE_URLS: ${HTTP_IMPORT_ALLOW_PRIVATE_URLS:-false}
+      # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
+      # freshly minted stream key (informational; empty by default).
+      LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}
+      # LIVE_INGEST_SECRET is the shared secret the media server (RTMP ingest) presents
+      # on the media-server-facing /live/ingest hooks. When empty (default) the hooks
+      # are disabled (404). Set it to enable them (dev/test harnesses; a real deploy
+      # sets a strong value). NEVER commit a real secret here.
+      LIVE_INGEST_SECRET: ${LIVE_INGEST_SECRET:-}
     # Make the host reachable as host.docker.internal on Linux too (Docker Desktop
     # provides it already). Lets a backed e2e point URL import at a media origin
     # served on the host (paired with HTTP_IMPORT_ALLOW_PRIVATE_URLS=true). No
