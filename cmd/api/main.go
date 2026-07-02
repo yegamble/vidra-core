@@ -123,6 +123,10 @@ func run() error {
 		)
 	}
 
+	if cfg.ImportAllowPrivateURLs {
+		logger.Warn("URL-import SSRF guard RELAXED — private/loopback addresses are fetchable by video URL import; NEVER enable this in production (HTTP_IMPORT_ALLOW_PRIVATE_URLS)")
+	}
+
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
 	var authOpts []auth.Option
 	var captureMailer *auth.CaptureMailer

@@ -38,12 +38,33 @@ var (
 
 const maxRedirects = 5
 
-// ValidateURL parses raw and returns it only if it is a fetchable public URL:
-// an http/https scheme, a non-empty host, and no embedded credentials. When the
-// host is a literal IP, it must not be in a blocked range. Hostnames are NOT
-// resolved here — that check happens at dial time (see NewClient), which is what
-// actually defeats DNS rebinding; this pre-flight just rejects the obvious cases.
-func ValidateURL(raw string) (*url.URL, error) {
+// Guard applies the SSRF policy. The zero value is the secure default: block
+// every non-public address. Guard{AllowPrivate: true} relaxes ONLY the
+// private/loopback/link-local/CGNAT IP checks — a DEV/TEST escape hatch (e.g.
+// importing from a loopback origin in backed e2e), gated by config and never
+// enabled in production. Scheme/host/userinfo validation and fail-closed on an
+// unparseable IP still apply even when AllowPrivate is set.
+type Guard struct {
+	AllowPrivate bool
+}
+
+// blockedIP applies the guard's policy to a single IP.
+func (g Guard) blockedIP(ip net.IP) bool {
+	if ip == nil {
+		return true // unparseable → fail closed regardless of AllowPrivate
+	}
+	if g.AllowPrivate {
+		return false
+	}
+	return IsBlockedIP(ip)
+}
+
+// ValidateURL parses raw and returns it only if it is a fetchable URL: an
+// http/https scheme, a non-empty host, and no embedded credentials. When the host
+// is a literal IP, it must pass the guard's policy. Hostnames are NOT resolved
+// here — that check happens at dial time (see NewClient), which is what actually
+// defeats DNS rebinding; this pre-flight just rejects the obvious cases.
+func (g Guard) ValidateURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
@@ -58,11 +79,14 @@ func ValidateURL(raw string) (*url.URL, error) {
 	if host == "" {
 		return nil, fmt.Errorf("%w: missing host", ErrInvalidURL)
 	}
-	if ip := net.ParseIP(host); ip != nil && IsBlockedIP(ip) {
+	if ip := net.ParseIP(host); ip != nil && g.blockedIP(ip) {
 		return nil, fmt.Errorf("%w: non-public address", ErrInvalidURL)
 	}
 	return u, nil
 }
+
+// ValidateURL with the secure default policy (block all non-public addresses).
+func ValidateURL(raw string) (*url.URL, error) { return Guard{}.ValidateURL(raw) }
 
 // IsBlockedIP reports whether ip is one an outbound fetch must never reach.
 // A nil/unparseable IP is treated as blocked (fail closed).
@@ -85,10 +109,10 @@ func IsBlockedIP(ip net.IP) bool {
 	return false
 }
 
-// safeControl is the net.Dialer.Control hook. It runs after DNS resolution, once
-// per candidate IP, with address as "ip:port" — so rejecting a blocked IP here
-// is the dial-time guard that defeats DNS rebinding.
-func safeControl(_, address string, _ syscall.RawConn) error {
+// control is the net.Dialer.Control hook. It runs after DNS resolution, once per
+// candidate IP, with address as "ip:port" — so rejecting a blocked IP here is the
+// dial-time guard that defeats DNS rebinding.
+func (g Guard) control(_, address string, _ syscall.RawConn) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrBlockedAddress, err)
@@ -97,7 +121,7 @@ func safeControl(_, address string, _ syscall.RawConn) error {
 	if ip == nil {
 		return fmt.Errorf("%w: non-IP dial address %q", ErrBlockedAddress, host)
 	}
-	if IsBlockedIP(ip) {
+	if g.blockedIP(ip) {
 		return fmt.Errorf("%w: %s", ErrBlockedAddress, ip)
 	}
 	return nil
@@ -108,8 +132,8 @@ func safeControl(_, address string, _ syscall.RawConn) error {
 // rebinding), never honours proxy environment variables, caps the redirect chain,
 // and applies timeout as the overall deadline (bounding slow responses). Callers
 // must still bound the response body size themselves.
-func NewClient(timeout time.Duration) *http.Client {
-	dialer := &net.Dialer{Timeout: 10 * time.Second, Control: safeControl}
+func (g Guard) NewClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, Control: g.control}
 	transport := &http.Transport{
 		DialContext:           dialer.DialContext,
 		Proxy:                 nil, // ignore HTTP(S)_PROXY — could route around the guard
@@ -129,10 +153,13 @@ func NewClient(timeout time.Duration) *http.Client {
 			// Re-validate each redirect target's scheme/host (the dial guard
 			// still blocks the IP, but this rejects a redirect to a non-http
 			// scheme early with a clear error).
-			if _, err := ValidateURL(req.URL.String()); err != nil {
+			if _, err := g.ValidateURL(req.URL.String()); err != nil {
 				return err
 			}
 			return nil
 		},
 	}
 }
+
+// NewClient with the secure default policy (block all non-public addresses).
+func NewClient(timeout time.Duration) *http.Client { return Guard{}.NewClient(timeout) }

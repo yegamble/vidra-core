@@ -191,6 +191,25 @@ func TestUploadMaxSizeDefaultAndOverride(t *testing.T) {
 	}
 }
 
+func TestImportAllowPrivateURLsDefaultAndOverride(t *testing.T) {
+	t.Setenv("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ImportAllowPrivateURLs {
+		t.Error("ImportAllowPrivateURLs = true, want false by default (SSRF guard on)")
+	}
+	t.Setenv("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() override error = %v", err)
+	}
+	if !cfg.ImportAllowPrivateURLs {
+		t.Error("ImportAllowPrivateURLs = false, want true when overridden")
+	}
+}
+
 func TestUploadMaxSizeRejectsInvalid(t *testing.T) {
 	t.Setenv("UPLOAD_MAX_SIZE", "not-a-size")
 	if _, err := Load(); err == nil {

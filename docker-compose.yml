@@ -81,6 +81,10 @@ services:
       # in memory and retrievable via GET /api/v1/dev/email-token so end-to-end
       # tests can complete the token flows. NEVER enable in production. Default off.
       DEV_MAIL_CAPTURE_ENABLED: ${DEV_MAIL_CAPTURE_ENABLED:-false}
+      # DEV/TEST-ONLY: when true, the URL-import SSRF guard permits private/loopback
+      # addresses so backed e2e can import from a loopback/compose-network origin (a
+      # public origin isn't reachable in CI). NEVER enable in production. Default off.
+      HTTP_IMPORT_ALLOW_PRIVATE_URLS: ${HTTP_IMPORT_ALLOW_PRIVATE_URLS:-false}
     ports:
       - "${HTTP_PORT:-8080}:8080"
 

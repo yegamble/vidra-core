@@ -81,6 +81,14 @@ type Config struct {
 	// single-use credentials. Default false; the process warns loudly when on.
 	DevMailCaptureEnabled bool
 
+	// ImportAllowPrivateURLs relaxes the SSRF guard on URL video import so it may
+	// fetch from private/loopback addresses. DEVELOPMENT/TEST-ONLY: it exists so
+	// backed end-to-end tests can import from a loopback/compose-network origin
+	// (a public origin isn't reachable in CI). NEVER enable it in production — it
+	// re-opens the SSRF hole the guard closes. Default false; the process warns
+	// loudly when on. See internal/urlsafety.Guard.AllowPrivate.
+	ImportAllowPrivateURLs bool
+
 	// Rate limiting (Redis fixed-window) applied to the /api surface.
 	RateLimitEnabled  bool
 	RateLimitRequests int
@@ -140,6 +148,7 @@ func Load() (*Config, error) {
 		RegistrationEnabled:         getEnvBool("REGISTRATION_ENABLED", true),
 		RegistrationRequireApproval: getEnvBool("REGISTRATION_REQUIRE_APPROVAL", false),
 		DevMailCaptureEnabled:       getEnvBool("DEV_MAIL_CAPTURE_ENABLED", false),
+		ImportAllowPrivateURLs:      getEnvBool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
 		DatabaseURL:                 getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
 		RedisURL:                    getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		CORSAllowedOrigins:          splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),

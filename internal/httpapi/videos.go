@@ -615,7 +615,10 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	target, err := urlsafety.ValidateURL(strings.TrimSpace(in.URL))
+	// The guard is secure by default; ImportAllowPrivateURLs (dev/test only) relaxes
+	// the private-address block so backed e2e can import from a loopback origin.
+	guard := urlsafety.Guard{AllowPrivate: s.cfg.ImportAllowPrivateURLs}
+	target, err := guard.ValidateURL(strings.TrimSpace(in.URL))
 	if err != nil {
 		return &ValidationError{Fields: []FieldError{{Field: "url", Message: "must be a public http(s) URL"}}}
 	}
@@ -631,7 +634,7 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 
 	client := s.importClient
 	if client == nil {
-		client = urlsafety.NewClient(importFetchTimeout)
+		client = guard.NewClient(importFetchTimeout)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {

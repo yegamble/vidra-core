@@ -104,6 +104,33 @@ func TestImportVideoSSRFGuardBlocksLoopback(t *testing.T) {
 	}
 }
 
+// TestImportVideoAllowPrivateConfig proves the HTTP_IMPORT_ALLOW_PRIVATE_URLS
+// dev/test knob flows config → urlsafety.Guard → real client: with it on, the
+// same loopback origin the guard normally blocks is imported successfully — using
+// the guard-built client (no injected test client) and a literal 127.0.0.1 URL
+// that ValidateURL would normally reject. This is what makes the frontend
+// URL-import backed e2e provable in CI.
+func TestImportVideoAllowPrivateConfig(t *testing.T) {
+	cfg := testConfig()
+	cfg.ImportAllowPrivateURLs = true
+	srv := videoServerCfg(t, cfg)
+	media := importMediaServer(t)
+
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Imported","privacy":"public"}`)
+
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
+		`{"url":"`+media.URL+`/clip.mp4"}`, tok) // literal 127.0.0.1 URL, no rewrite
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("import with AllowPrivate = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp uploadVideoFileResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Video.State != "published" {
+		t.Errorf("state = %q, want published", resp.Video.State)
+	}
+}
+
 func TestImportVideoValidation(t *testing.T) {
 	srv := videoServer(t)
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")

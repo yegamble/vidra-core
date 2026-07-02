@@ -352,4 +352,7 @@ Run `make help` for the full target list.
   redirects too), ignores proxy env, and caps redirects. Never build a bare
   `http.Client` for URL import / link previews / federation fetches / webhooks.
   Callers still bound the response body (io.LimitReader / http.MaxBytesReader).
+  `urlsafety.Guard{}` is the secure default; `Guard{AllowPrivate:true}` (wired to
+  `HTTP_IMPORT_ALLOW_PRIVATE_URLS`, default false, dev/test ONLY, loud boot warning)
+  relaxes only the private-IP block so backed e2e can import from a loopback origin.
 - Update this file whenever build/test/run commands change.

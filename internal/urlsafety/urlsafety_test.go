@@ -96,11 +96,38 @@ func TestClientBlocksLoopback(t *testing.T) {
 // client is wired with our control hook: dialing an explicit private IP fails
 // with ErrBlockedAddress surfaced through the transport.
 func TestControlRejectsPrivateDial(t *testing.T) {
-	if err := safeControl("tcp", "10.0.0.9:80", nil); !errors.Is(err, ErrBlockedAddress) {
-		t.Errorf("safeControl(private) = %v, want ErrBlockedAddress", err)
+	if err := (Guard{}).control("tcp", "10.0.0.9:80", nil); !errors.Is(err, ErrBlockedAddress) {
+		t.Errorf("control(private) = %v, want ErrBlockedAddress", err)
 	}
-	if err := safeControl("tcp", "8.8.8.8:443", nil); err != nil {
-		t.Errorf("safeControl(public) = %v, want nil", err)
+	if err := (Guard{}).control("tcp", "8.8.8.8:443", nil); err != nil {
+		t.Errorf("control(public) = %v, want nil", err)
+	}
+}
+
+// TestGuardAllowPrivate: the dev/test escape hatch permits private/loopback IPs
+// (validate + dial) while still rejecting non-http schemes and fail-closing on an
+// unparseable dial address.
+func TestGuardAllowPrivate(t *testing.T) {
+	g := Guard{AllowPrivate: true}
+	// A loopback literal-IP URL now passes ValidateURL.
+	if _, err := g.ValidateURL("http://127.0.0.1:8080/clip.mp4"); err != nil {
+		t.Errorf("AllowPrivate ValidateURL(loopback) = %v, want nil", err)
+	}
+	// A private dial address is now permitted.
+	if err := g.control("tcp", "10.0.0.9:80", nil); err != nil {
+		t.Errorf("AllowPrivate control(private) = %v, want nil", err)
+	}
+	// But scheme validation still applies...
+	if _, err := g.ValidateURL("ftp://127.0.0.1/x"); err == nil {
+		t.Error("AllowPrivate ValidateURL(ftp) = nil, want error")
+	}
+	// ...and an unparseable dial address still fails closed.
+	if err := g.control("tcp", "not-an-ip", nil); err == nil {
+		t.Error("AllowPrivate control(bad addr) = nil, want error")
+	}
+	// The secure default still blocks loopback.
+	if _, err := (Guard{}).ValidateURL("http://127.0.0.1/x"); err == nil {
+		t.Error("default ValidateURL(loopback) = nil, want error")
 	}
 }
 
