@@ -23,7 +23,18 @@ var (
 	ErrRecipientNotFound = errors.New("messaging: recipient not found")
 	// ErrNotParticipant means the caller is not a member of the conversation.
 	ErrNotParticipant = errors.New("messaging: not a participant")
+	// ErrBlocked means a block exists between the two users (in either
+	// direction), so they cannot message each other.
+	ErrBlocked = errors.New("messaging: blocked")
 )
+
+// Blocker reports whether a block exists between two users (in either
+// direction). *block.Service satisfies it. When wired, messaging refuses to
+// start a conversation with, or send a message to, a user on either side of a
+// block. Optional: nil means no block enforcement.
+type Blocker interface {
+	IsBlockedBetween(ctx context.Context, a, b uuid.UUID) (bool, error)
+}
 
 // Repository is the data access the messaging service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
@@ -41,10 +52,28 @@ type Repository interface {
 }
 
 // Service holds the messaging application logic.
-type Service struct{ repo Repository }
+type Service struct {
+	repo    Repository
+	blocker Blocker // optional; nil disables block enforcement
+}
+
+// Option configures the messaging service.
+type Option func(*Service)
+
+// WithBlocker enables block enforcement: a conversation cannot be started with,
+// or a message sent to, a user on either side of a block.
+func WithBlocker(b Blocker) Option {
+	return func(s *Service) { s.blocker = b }
+}
 
 // NewService builds the messaging service.
-func NewService(repo Repository) *Service { return &Service{repo: repo} }
+func NewService(repo Repository, opts ...Option) *Service {
+	s := &Service{repo: repo}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
 
 // Conversation is a 1:1 thread.
 type Conversation struct {
@@ -77,6 +106,15 @@ type Message struct {
 	CreatedAt         time.Time
 }
 
+// isBlocked reports whether a block exists between the two users. Always false
+// when no Blocker is wired.
+func (s *Service) isBlocked(ctx context.Context, a, b uuid.UUID) (bool, error) {
+	if s.blocker == nil {
+		return false, nil
+	}
+	return s.blocker.IsBlockedBetween(ctx, a, b)
+}
+
 // dmKey is the canonical, order-independent key for a 1:1 conversation.
 func dmKey(a, b uuid.UUID) string {
 	x, y := a.String(), b.String()
@@ -99,6 +137,11 @@ func (s *Service) StartConversation(ctx context.Context, meID, recipientID uuid.
 			return Conversation{}, ErrRecipientNotFound
 		}
 		return Conversation{}, err
+	}
+	if blocked, err := s.isBlocked(ctx, meID, recipientID); err != nil {
+		return Conversation{}, err
+	} else if blocked {
+		return Conversation{}, ErrBlocked
 	}
 
 	key := dmKey(meID, recipientID)
@@ -162,6 +205,20 @@ func (s *Service) SendMessage(ctx context.Context, meID, conversationID uuid.UUI
 	}
 	if !member {
 		return Message{}, ErrNotParticipant
+	}
+	// Refuse to send if a block exists between the sender and the other
+	// participant (in either direction).
+	if s.blocker != nil {
+		if other, oerr := s.repo.GetOtherParticipant(ctx, sqlcgen.GetOtherParticipantParams{
+			ConversationID: conversationID,
+			UserID:         meID,
+		}); oerr == nil {
+			if blocked, berr := s.blocker.IsBlockedBetween(ctx, meID, other); berr != nil {
+				return Message{}, berr
+			} else if blocked {
+				return Message{}, ErrBlocked
+			}
+		}
 	}
 	m, err := s.repo.CreateMessage(ctx, sqlcgen.CreateMessageParams{
 		ConversationID: conversationID,

@@ -151,6 +151,45 @@ func (f *fakeRepo) ListConversations(_ context.Context, a sqlcgen.ListConversati
 	return rows, nil
 }
 
+// fakeBlocker is a messaging.Blocker whose verdict is fixed.
+type fakeBlocker struct{ blocked bool }
+
+func (b fakeBlocker) IsBlockedBetween(_ context.Context, _, _ uuid.UUID) (bool, error) {
+	return b.blocked, nil
+}
+
+func TestStartConversationRefusedWhenBlocked(t *testing.T) {
+	ctx := context.Background()
+	ada, bob := uuid.New(), uuid.New()
+	svc := NewService(newFakeRepo(ada, bob), WithBlocker(fakeBlocker{blocked: true}))
+
+	if _, err := svc.StartConversation(ctx, ada, bob); err != ErrBlocked {
+		t.Errorf("blocked StartConversation err = %v, want ErrBlocked", err)
+	}
+}
+
+func TestSendMessageRefusedWhenBlocked(t *testing.T) {
+	ctx := context.Background()
+	ada, bob, carol := uuid.New(), uuid.New(), uuid.New()
+	repo := newFakeRepo(ada, bob, carol)
+
+	// Create the conversation with no block in force.
+	conv, err := NewService(repo).StartConversation(ctx, ada, bob)
+	if err != nil {
+		t.Fatalf("StartConversation: %v", err)
+	}
+	// Now a block exists between the participants → sends are refused.
+	blocked := NewService(repo, WithBlocker(fakeBlocker{blocked: true}))
+	if _, err := blocked.SendMessage(ctx, ada, conv.ID, "hi"); err != ErrBlocked {
+		t.Errorf("blocked SendMessage err = %v, want ErrBlocked", err)
+	}
+	// A non-participant is still ErrNotParticipant (participant check precedes the
+	// block check, so existence isn't leaked as a 403).
+	if _, err := blocked.SendMessage(ctx, carol, conv.ID, "hi"); err != ErrNotParticipant {
+		t.Errorf("non-participant err = %v, want ErrNotParticipant", err)
+	}
+}
+
 func TestStartConversationCreatesAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	ada, bob := uuid.New(), uuid.New()

@@ -17,6 +17,7 @@ import (
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
@@ -183,6 +184,9 @@ func run() error {
 	mutesvc := mute.NewService(db.Queries())
 	opts = append(opts, httpapi.WithMuteService(mutesvc))
 
+	blocksvc := block.NewService(db.Queries())
+	opts = append(opts, httpapi.WithBlockService(blocksvc))
+
 	watchwordsvc := watchword.NewService(db.Queries())
 	opts = append(opts, httpapi.WithWatchWordService(watchwordsvc))
 
@@ -192,7 +196,7 @@ func run() error {
 	auditsvc := audit.NewService(db.Queries())
 	opts = append(opts, httpapi.WithAuditLog(auditsvc))
 
-	messagingsvc := messaging.NewService(db.Queries())
+	messagingsvc := messaging.NewService(db.Queries(), messaging.WithBlocker(blocksvc))
 	opts = append(opts, httpapi.WithMessagingService(messagingsvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)

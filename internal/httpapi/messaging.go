@@ -119,6 +119,8 @@ func (s *Server) handleStartConversation(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "cannot message yourself")
 		case errors.Is(err, messaging.ErrRecipientNotFound):
 			return echo.NewHTTPError(http.StatusNotFound, "recipient not found")
+		case errors.Is(err, messaging.ErrBlocked):
+			return echo.NewHTTPError(http.StatusForbidden, "cannot message this user")
 		}
 		return err
 	}
@@ -206,6 +208,9 @@ func (s *Server) handleSendMessage(c echo.Context) error {
 	if err != nil {
 		if errors.Is(err, messaging.ErrNotParticipant) {
 			return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
+		}
+		if errors.Is(err, messaging.ErrBlocked) {
+			return echo.NewHTTPError(http.StatusForbidden, "cannot message this user")
 		}
 		return err
 	}

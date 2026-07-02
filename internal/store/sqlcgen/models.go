@@ -194,6 +194,12 @@ type User struct {
 	Bio           string    `json:"bio"`
 }
 
+type UserBlock struct {
+	BlockerID uuid.UUID `json:"blocker_id"`
+	BlockedID uuid.UUID `json:"blocked_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Video struct {
 	ID          uuid.UUID `json:"id"`
 	ChannelID   uuid.UUID `json:"channel_id"`

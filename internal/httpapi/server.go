@@ -17,6 +17,7 @@ import (
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
@@ -57,6 +58,7 @@ type Server struct {
 	playlistsvc   *playlist.Service
 	moderationsvc *moderation.Service
 	mutesvc       *mute.Service
+	blocksvc      *block.Service
 	watchwordsvc  *watchword.Service
 	adminsvc      *admin.Service
 	auditLog      *audit.Service
@@ -149,6 +151,14 @@ func WithModerationService(svc *moderation.Service) Option {
 // accounts the caller has muted). When unset, the routes are not registered.
 func WithMuteService(svc *mute.Service) Option {
 	return func(s *Server) { s.mutesvc = svc }
+}
+
+// WithBlockService mounts the account-block endpoints (block / unblock / list the
+// accounts the caller has blocked). When unset, the routes are not registered.
+// The messaging service is given this same service as its Blocker in cmd/api so
+// a block gates direct messaging in both directions.
+func WithBlockService(svc *block.Service) Option {
+	return func(s *Server) { s.blocksvc = svc }
 }
 
 // WithWatchWordService mounts the moderation watched-words endpoints (add / list /
@@ -464,6 +474,14 @@ func (s *Server) routes() {
 		api.GET("/me/mutes/accounts", s.handleListMutedAccounts, s.requireAuth)
 		api.POST("/me/mutes/accounts/:id", s.handleMuteAccount, s.requireAuth)
 		api.DELETE("/me/mutes/accounts/:id", s.handleUnmuteAccount, s.requireAuth)
+	}
+
+	// Account blocks: a signed-in user blocks/unblocks another account (cutting
+	// off direct messaging in both directions) and lists who they have blocked.
+	if s.blocksvc != nil {
+		api.GET("/me/blocks", s.handleListBlockedUsers, s.requireAuth)
+		api.POST("/me/blocks/:id", s.handleBlockUser, s.requireAuth)
+		api.DELETE("/me/blocks/:id", s.handleUnblockUser, s.requireAuth)
 	}
 
 	// Watched words: moderators/admins maintain the instance-wide watched-terms list.

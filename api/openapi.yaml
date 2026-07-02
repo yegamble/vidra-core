@@ -3050,6 +3050,109 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/blocks:
+    get:
+      operationId: listBlockedUsers
+      summary: List blocked accounts
+      description: >-
+        Returns the accounts the caller has blocked, newest block first. Requires
+        authentication. Paginated via limit (1–100, default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of blocked accounts (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockedUserListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/blocks/{id}:
+    post:
+      operationId: blockUser
+      summary: Block an account
+      description: >-
+        Blocks another account, cutting off direct messaging between the two in
+        both directions. Requires authentication. Idempotent. Blocking yourself is
+        422; an unknown target account is 404.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The account is blocked.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Cannot block yourself.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unblockUser
+      summary: Unblock an account
+      description: >-
+        Lifts the caller's block of another account. Requires authentication.
+        Idempotent (unblocking a not-blocked account still succeeds).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The account is not blocked (it was unblocked, or already was).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/conversations:
     post:
       operationId: startConversation
@@ -3076,6 +3179,12 @@ paths:
                 $ref: "#/components/schemas/Conversation"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A block exists between you and the recipient (either direction).
           content:
             application/json:
               schema:
@@ -3211,6 +3320,12 @@ paths:
                 $ref: "#/components/schemas/Message"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A block exists between you and the other participant (either direction).
           content:
             application/json:
               schema:
@@ -4031,6 +4146,32 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MutedAccount"
+        limit:
+          type: integer
+        offset:
+          type: integer
+    BlockedUser:
+      type: object
+      required: [user_id, username, display_name, blocked_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        blocked_at:
+          type: string
+          format: date-time
+    BlockedUserListResponse:
+      type: object
+      required: [users, limit, offset]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockedUser"
         limit:
           type: integer
         offset:
