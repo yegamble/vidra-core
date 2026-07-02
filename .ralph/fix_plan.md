@@ -432,6 +432,14 @@
 
 # P10 — Federation
 
+> **DESIGN LANDED** — `.ralph/specs/federation.md` grounds this whole phase: it decides the
+> actor model (AP key columns on `users`/`channels`, remote actors in a separate table), the
+> id/URL scheme (root, not `/api/v1`), content negotiation, the OpenAPI drift-guard handling
+> (federation routes excluded like the dev endpoint), and — importantly — the **private-key
+> at-rest** approach (envelope encryption via a `FEDERATION_KEY_KEK`, resolving
+> security.md:31). It orders the 21 items below into 7 buildable slices. Build in that order;
+> the first (keypair-free) slice is config `PUBLIC_BASE_URL`/`FEDERATION_ENABLED` + NodeInfo.
+
 ## P10.1 ActivityPub
 
 - [ ] Implement local actor model for accounts.
