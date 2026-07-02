@@ -705,7 +705,7 @@
 - [x] Enforce no-secrets-in-logs via the secrets-in-logs guard test (P17.2). (`TestNoSensitiveLogKeys` in `internal/observability/logging_guard_test.go`, runs under `make ci`.)
 - [x] Add fuzz tests for URL parsing. (`FuzzValidateURL` in `internal/urlsafety/urlsafety_test.go` — asserts `ValidateURL` never panics and that any accepted URL is http/https with a host and no userinfo; seed corpus runs under `make ci`, and a 10s `go test -fuzz` pass (270k+ execs) found no crash. Metadata/ActivityPub-parsing fuzz targets remain for those slices.)
 - [ ] Add fuzz tests for metadata parsing.
-- [ ] Add fuzz tests for ActivityPub parsing when implemented.
+- [x] Add fuzz tests for ActivityPub parsing when implemented. (`internal/httpsig/fuzz_test.go` — `FuzzParseSignatureHeader` (the hand-written, attacker-controlled Signature-header parser on the inbound federation path) + `FuzzVerify` (the full inbound verification path with an arbitrary Signature header + body). Both assert no panic on any input; the parser also must never return a non-error empty map. Seed corpus runs under `make ci`; short `go test -fuzz` passes (~1M execs each) found no crash. The JSON-based AP envelope/actor parsing uses `encoding/json` (panic-safe by construction). Remaining: metadata-parsing fuzz — see below.)
 
 ---
 
