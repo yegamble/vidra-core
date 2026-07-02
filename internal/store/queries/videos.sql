@@ -8,6 +8,10 @@ RETURNING id, channel_id, title, description, privacy, state, created_at, update
 -- these ever federate, so this is the right public-facing total.
 SELECT count(*) FROM videos WHERE privacy = 'public' AND state = 'published';
 
+-- name: CountPublicVideosByChannel :one
+-- Public, published videos for one channel — the totalItems of its AP outbox.
+SELECT count(*) FROM videos WHERE channel_id = $1 AND privacy = 'public' AND state = 'published';
+
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license,

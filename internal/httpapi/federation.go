@@ -160,6 +160,40 @@ func (s *Server) handleWebFinger(c echo.Context) error {
 	return c.JSON(http.StatusOK, jrd)
 }
 
+// serveCollection content-negotiates and serves an actor OrderedCollection.
+func (s *Server) serveCollection(c echo.Context, fetch func(context.Context) (*federation.OrderedCollection, error)) error {
+	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
+		return echo.NewHTTPError(http.StatusNotAcceptable, "collections are served as application/activity+json")
+	}
+	col, err := fetch(c.Request().Context())
+	if errors.Is(err, federation.ErrNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound)
+	}
+	if err != nil {
+		return err
+	}
+	c.Response().Header().Set(echo.HeaderContentType, activityJSONContentType)
+	return c.JSON(http.StatusOK, col)
+}
+
+// channelCollection / accountCollection return handlers for a channel's or
+// account's followers/following/outbox collection of the given kind.
+func (s *Server) channelCollection(kind string) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		return s.serveCollection(c, func(ctx context.Context) (*federation.OrderedCollection, error) {
+			return s.fedsvc.ChannelCollection(ctx, c.Param("handle"), kind)
+		})
+	}
+}
+
+func (s *Server) accountCollection(kind string) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		return s.serveCollection(c, func(ctx context.Context) (*federation.OrderedCollection, error) {
+			return s.fedsvc.AccountCollection(ctx, c.Param("handle"), kind)
+		})
+	}
+}
+
 // handleInbox verifies an inbound activity's HTTP signature (resolving the
 // signer's key via the remote-actor cache), then dispatches it. Used for the
 // shared /inbox and per-actor inbox routes; the target is read from the activity,

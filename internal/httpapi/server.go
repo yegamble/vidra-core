@@ -367,6 +367,11 @@ func (s *Server) routes() {
 		s.echo.POST("/inbox", s.handleInbox)
 		s.echo.POST("/accounts/:handle/inbox", s.handleInbox)
 		s.echo.POST("/video-channels/:handle/inbox", s.handleInbox)
+		// Actor collections advertised in the actor documents (read-only summaries).
+		for _, kind := range []string{"followers", "following", "outbox"} {
+			s.echo.GET("/video-channels/:handle/"+kind, s.channelCollection(kind))
+			s.echo.GET("/accounts/:handle/"+kind, s.accountCollection(kind))
+		}
 	}
 
 	api := s.echo.Group("/api/v1")

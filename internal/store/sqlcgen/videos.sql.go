@@ -26,6 +26,18 @@ func (q *Queries) CountPublicVideos(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countPublicVideosByChannel = `-- name: CountPublicVideosByChannel :one
+SELECT count(*) FROM videos WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
+`
+
+// Public, published videos for one channel — the totalItems of its AP outbox.
+func (q *Queries) CountPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPublicVideosByChannel, channelID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createVideo = `-- name: CreateVideo :one
 INSERT INTO videos (channel_id, title, description, privacy, category, language, license)
 VALUES ($1, $2, $3, $4, $5, $6, $7)

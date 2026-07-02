@@ -33,6 +33,9 @@ type fakeFedRepo struct {
 	processed               map[string]bool
 	remoteFollows           map[string]sqlcgen.InsertRemoteFollowParams
 	deliveries              map[string]sqlcgen.EnqueueDeliveryParams
+	localFollowerN          int64
+	remoteFollowerN         int64
+	channelVideoN           int64
 }
 
 func (f fakeFedRepo) CountUsers(context.Context) (int64, error)        { return f.users, nil }
@@ -116,6 +119,15 @@ func (fakeFedRepo) GetChannelByID(context.Context, uuid.UUID) (sqlcgen.Channel, 
 func (fakeFedRepo) ListRemoteFollowerInboxes(context.Context, uuid.UUID) ([]string, error) {
 	return nil, nil
 }
+func (f fakeFedRepo) CountChannelFollowers(context.Context, uuid.UUID) (int64, error) {
+	return f.localFollowerN, nil
+}
+func (f fakeFedRepo) CountRemoteFollowers(context.Context, uuid.UUID) (int64, error) {
+	return f.remoteFollowerN, nil
+}
+func (f fakeFedRepo) CountPublicVideosByChannel(context.Context, uuid.UUID) (int64, error) {
+	return f.channelVideoN, nil
+}
 
 func (f fakeFedRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDeliveryParams) error {
 	f.deliveries[arg.InboxUrl] = arg
@@ -141,14 +153,17 @@ func fedTestConfig() *config.Config {
 func fedServerRepo(cfg *config.Config) (*Server, fakeFedRepo) {
 	repo := fakeFedRepo{
 		users: 7, videos: 3, comments: 11,
-		userID:        uuid.New(),
-		channelID:     uuid.New(),
-		acctKeys:      map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
-		chanKeys:      map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
-		remoteActors:  map[string]sqlcgen.RemoteActor{},
-		processed:     map[string]bool{},
-		remoteFollows: map[string]sqlcgen.InsertRemoteFollowParams{},
-		deliveries:    map[string]sqlcgen.EnqueueDeliveryParams{},
+		localFollowerN:  3,
+		remoteFollowerN: 2,
+		channelVideoN:   7,
+		userID:          uuid.New(),
+		channelID:       uuid.New(),
+		acctKeys:        map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
+		chanKeys:        map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
+		remoteActors:    map[string]sqlcgen.RemoteActor{},
+		processed:       map[string]bool{},
+		remoteFollows:   map[string]sqlcgen.InsertRemoteFollowParams{},
+		deliveries:      map[string]sqlcgen.EnqueueDeliveryParams{},
 	}
 	svc := federation.NewService(repo, federation.WithBaseURL(cfg.PublicBaseURL))
 	return New(cfg, nil, nil, WithFederationService(svc)), repo
@@ -369,6 +384,47 @@ func TestInboxRejectsBadSignature(t *testing.T) {
 	}
 }
 
+func TestChannelCollectionEndpoints(t *testing.T) {
+	srv := fedServer(fedTestConfig())
+
+	followers := getAccept(t, srv, "/video-channels/films/followers", apAccept)
+	if followers.Code != http.StatusOK {
+		t.Fatalf("followers status = %d, want 200", followers.Code)
+	}
+	if ct := followers.Header().Get("Content-Type"); !strings.Contains(ct, "activity+json") {
+		t.Errorf("content-type = %q", ct)
+	}
+	var col federation.OrderedCollection
+	if err := json.Unmarshal(followers.Body.Bytes(), &col); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if col.Type != "OrderedCollection" || col.TotalItems != 5 { // 3 local + 2 remote
+		t.Errorf("followers = %+v, want OrderedCollection totalItems 5", col)
+	}
+
+	outbox := getAccept(t, srv, "/video-channels/films/outbox", apAccept)
+	_ = json.Unmarshal(outbox.Body.Bytes(), &col)
+	if outbox.Code != http.StatusOK || col.TotalItems != 7 {
+		t.Errorf("outbox status=%d totalItems=%d, want 200/7", outbox.Code, col.TotalItems)
+	}
+
+	account := getAccept(t, srv, "/accounts/ada/followers", apAccept)
+	_ = json.Unmarshal(account.Body.Bytes(), &col)
+	if account.Code != http.StatusOK || col.TotalItems != 0 {
+		t.Errorf("account followers status=%d totalItems=%d, want 200/0", account.Code, col.TotalItems)
+	}
+}
+
+func TestCollectionRequiresActivityJSONAndExists(t *testing.T) {
+	srv := fedServer(fedTestConfig())
+	if rec := getAccept(t, srv, "/video-channels/films/outbox", "text/html"); rec.Code != http.StatusNotAcceptable {
+		t.Errorf("non-AP Accept status = %d, want 406", rec.Code)
+	}
+	if rec := getAccept(t, srv, "/video-channels/ghost/followers", apAccept); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown channel status = %d, want 404", rec.Code)
+	}
+}
+
 // The routes are a prod-safe opt-in: absent (404) when FEDERATION_ENABLED is off,
 // even though the service is wired — mirroring the dev-endpoint exclusion.
 func TestFederationRoutesAbsentWhenDisabled(t *testing.T) {
@@ -381,6 +437,8 @@ func TestFederationRoutesAbsentWhenDisabled(t *testing.T) {
 		{"/.well-known/webfinger?resource=acct:ada@videos.example", ""},
 		{"/accounts/ada", apAccept},
 		{"/video-channels/films", apAccept},
+		{"/video-channels/films/followers", apAccept},
+		{"/video-channels/films/outbox", apAccept},
 	}
 	for _, tc := range cases {
 		if rec := getAccept(t, srv, tc.path, tc.accept); rec.Code != http.StatusNotFound {
