@@ -174,6 +174,19 @@ type RegistrationRequest struct {
 	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
+type RemoteActor struct {
+	ActorUrl          string    `json:"actor_url"`
+	ActorType         string    `json:"actor_type"`
+	PreferredUsername string    `json:"preferred_username"`
+	Domain            string    `json:"domain"`
+	InboxUrl          string    `json:"inbox_url"`
+	SharedInboxUrl    *string   `json:"shared_inbox_url"`
+	PublicKeyPem      string    `json:"public_key_pem"`
+	FollowersUrl      string    `json:"followers_url"`
+	FetchedAt         time.Time `json:"fetched_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
 type Report struct {
 	ID             uuid.UUID          `json:"id"`
 	ReporterID     uuid.UUID          `json:"reporter_id"`

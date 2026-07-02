@@ -20,10 +20,11 @@ type fakeRepo struct {
 	users, videos, comments int64
 	err                     error
 
-	usersByName map[string]sqlcgen.GetUserActorByUsernameRow
-	channels    map[string]sqlcgen.Channel
-	acctKeys    map[uuid.UUID]sqlcgen.GetAccountActorKeyRow
-	chanKeys    map[uuid.UUID]sqlcgen.GetChannelActorKeyRow
+	usersByName  map[string]sqlcgen.GetUserActorByUsernameRow
+	channels     map[string]sqlcgen.Channel
+	acctKeys     map[uuid.UUID]sqlcgen.GetAccountActorKeyRow
+	chanKeys     map[uuid.UUID]sqlcgen.GetChannelActorKeyRow
+	remoteActors map[string]sqlcgen.RemoteActor
 }
 
 func (f fakeRepo) CountUsers(context.Context) (int64, error)        { return f.users, f.err }
@@ -72,6 +73,27 @@ func (f fakeRepo) InsertChannelActorKeyIfAbsent(_ context.Context, arg sqlcgen.I
 	}
 	f.chanKeys[arg.ChannelID] = sqlcgen.GetChannelActorKeyRow{PublicKeyPem: arg.PublicKeyPem, PrivateKeyPem: arg.PrivateKeyPem}
 	return 1, nil
+}
+
+func (f fakeRepo) GetRemoteActor(_ context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
+	if r, ok := f.remoteActors[actorURL]; ok {
+		return r, nil
+	}
+	return sqlcgen.RemoteActor{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) UpsertRemoteActor(_ context.Context, arg sqlcgen.UpsertRemoteActorParams) error {
+	f.remoteActors[arg.ActorUrl] = sqlcgen.RemoteActor{
+		ActorUrl:          arg.ActorUrl,
+		ActorType:         arg.ActorType,
+		PreferredUsername: arg.PreferredUsername,
+		Domain:            arg.Domain,
+		InboxUrl:          arg.InboxUrl,
+		SharedInboxUrl:    arg.SharedInboxUrl,
+		PublicKeyPem:      arg.PublicKeyPem,
+		FollowersUrl:      arg.FollowersUrl,
+	}
+	return nil
 }
 
 func TestNodeInfoUsage(t *testing.T) {

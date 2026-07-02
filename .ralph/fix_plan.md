@@ -488,8 +488,19 @@
 > and RSA-verifies against a caller-supplied `ResolveKey(keyID)` callback — so the package needs no
 > network or DB. Fully unit-tested: sign→verify round-trip, tampered body/signature, wrong key, stale
 > Date, missing digest-coverage, unsupported algorithm, missing/garbled Signature header, base64 parse.
-> NEXT: Slice 3b — `remote_actors` table + SSRF-guarded (`internal/urlsafety`) remote-actor fetch/cache
-> that supplies `ResolveKey` (parse the fetched actor's `publicKey.publicKeyPem` → rsa.PublicKey).
+>
+> **Slice 3b SHIPPED** (remote-actor fetch + cache): migration 0036 `remote_actors` (actor_url PK,
+> type/preferred_username/domain/inbox/shared_inbox/public_key_pem/followers + fetched/updated_at) +
+> sqlc `GetRemoteActor`/`UpsertRemoteActor`. `internal/federation` `resolveRemoteActor` serves from the
+> cache on hit, else fetches the actor doc through the SSRF guard (`urlsafety.Guard{AllowPrivate}`,
+> Accept: activity+json, 1 MiB body cap), parses id/type/preferredUsername/inbox/endpoints.sharedInbox/
+> publicKey/followers, and upserts it. `Service.ResolveKey(keyID)` strips the `#fragment`, resolves the
+> actor, and parses `publicKey.publicKeyPem` → `*rsa.PublicKey` — the resolver `internal/httpsig.Verifier`
+> will use for inbound verification. `WithAllowPrivateFetch` (wired from HTTP_IMPORT_ALLOW_PRIVATE_URLS)
+> + `WithFetchClient` (tests). Tested: unit (fetch→parse→cache reuse via httptest [origin hit once],
+> no-key reject, SSRF-guarded-by-default reject, PEM parse) + integration (upsert/get + ON CONFLICT
+> refresh against real Postgres). NEXT: Slice 4 — inbox endpoint (`POST /inbox` + per-actor) that
+> `httpsig.Verify`s the request via `ResolveKey`, then handles `Follow` → auto-`Accept` for channels.
 
 ## P10.1 ActivityPub
 

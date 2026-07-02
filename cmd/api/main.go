@@ -213,7 +213,12 @@ func run() error {
 	// mount only when FEDERATION_ENABLED (gated in httpapi.routes). Actor private
 	// keys are envelope-encrypted with FEDERATION_KEY_KEK; without it (dev) they are
 	// stored raw. See .ralph/specs/federation.md.
-	fedOpts := []federation.Option{federation.WithBaseURL(cfg.PublicBaseURL)}
+	fedOpts := []federation.Option{
+		federation.WithBaseURL(cfg.PublicBaseURL),
+		// Reuse the outbound-fetch dev knob: when set, remote-actor fetches may reach
+		// loopback/private origins (dev/e2e only; never in production).
+		federation.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
+	}
 	if cfg.FederationKeyKEK != "" {
 		cipher, err := secretbox.NewCipherFromBase64(cfg.FederationKeyKEK)
 		if err != nil {

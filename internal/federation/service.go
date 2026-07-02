@@ -7,6 +7,7 @@ package federation
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/google/uuid"
 
@@ -28,6 +29,9 @@ type Repository interface {
 	InsertAccountActorKeyIfAbsent(ctx context.Context, arg sqlcgen.InsertAccountActorKeyIfAbsentParams) (int64, error)
 	GetChannelActorKey(ctx context.Context, channelID uuid.UUID) (sqlcgen.GetChannelActorKeyRow, error)
 	InsertChannelActorKeyIfAbsent(ctx context.Context, arg sqlcgen.InsertChannelActorKeyIfAbsentParams) (int64, error)
+	// Remote-actor cache (Slice 3b).
+	GetRemoteActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error)
+	UpsertRemoteActor(ctx context.Context, arg sqlcgen.UpsertRemoteActorParams) error
 }
 
 // NodeInfoUsage is the fediverse NodeInfo "usage" block: total users plus local
@@ -45,6 +49,13 @@ type Service struct {
 	repo    Repository
 	baseURL string            // canonical public origin, e.g. https://videos.example (no trailing slash)
 	cipher  *secretbox.Cipher // nil in dev → private keys stored raw
+
+	// allowPrivateFetch relaxes the SSRF guard for remote-actor fetches so backed
+	// e2e / dev can reach a loopback origin. Never true in production.
+	allowPrivateFetch bool
+	// fetchClient, when set, overrides the SSRF-guarded client used for remote
+	// fetches (tests inject one; production leaves it nil to build the guard).
+	fetchClient *http.Client
 }
 
 // Option configures a Service.
@@ -56,6 +67,13 @@ func WithBaseURL(u string) Option { return func(s *Service) { s.baseURL = u } }
 // WithCipher sets the envelope cipher used to seal actor private keys at rest.
 // When unset, private keys are stored raw (dev only).
 func WithCipher(c *secretbox.Cipher) Option { return func(s *Service) { s.cipher = c } }
+
+// WithAllowPrivateFetch relaxes the SSRF guard for remote-actor fetches (dev/test
+// only; wired from HTTP_IMPORT_ALLOW_PRIVATE_URLS).
+func WithAllowPrivateFetch(v bool) Option { return func(s *Service) { s.allowPrivateFetch = v } }
+
+// WithFetchClient overrides the HTTP client used to fetch remote actors (tests).
+func WithFetchClient(c *http.Client) Option { return func(s *Service) { s.fetchClient = c } }
 
 // NewService builds a federation Service over the given repository.
 func NewService(repo Repository, opts ...Option) *Service {

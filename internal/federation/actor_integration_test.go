@@ -92,3 +92,51 @@ func TestActorKeyMintingPersists(t *testing.T) {
 		t.Errorf("GetChannelActorKey after mint: %v", err)
 	}
 }
+
+func TestRemoteActorUpsertGet(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	url := "https://remote.example/accounts/bob-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
+	shared := "https://remote.example/inbox"
+	if err := q.UpsertRemoteActor(ctx, sqlcgen.UpsertRemoteActorParams{
+		ActorUrl: url, ActorType: "Person", PreferredUsername: "bob",
+		Domain: "remote.example", InboxUrl: url + "/inbox", SharedInboxUrl: &shared,
+		PublicKeyPem: "PEM-v1", FollowersUrl: url + "/followers",
+	}); err != nil {
+		t.Fatalf("UpsertRemoteActor insert: %v", err)
+	}
+	got, err := q.GetRemoteActor(ctx, url)
+	if err != nil {
+		t.Fatalf("GetRemoteActor: %v", err)
+	}
+	if got.PublicKeyPem != "PEM-v1" || got.SharedInboxUrl == nil || *got.SharedInboxUrl != shared {
+		t.Errorf("row = %+v", got)
+	}
+	// Upsert again (ON CONFLICT DO UPDATE) refreshes the key.
+	if err := q.UpsertRemoteActor(ctx, sqlcgen.UpsertRemoteActorParams{
+		ActorUrl: url, ActorType: "Person", PreferredUsername: "bob",
+		Domain: "remote.example", InboxUrl: url + "/inbox", SharedInboxUrl: nil,
+		PublicKeyPem: "PEM-v2", FollowersUrl: url + "/followers",
+	}); err != nil {
+		t.Fatalf("UpsertRemoteActor update: %v", err)
+	}
+	got2, err := q.GetRemoteActor(ctx, url)
+	if err != nil {
+		t.Fatalf("GetRemoteActor after update: %v", err)
+	}
+	if got2.PublicKeyPem != "PEM-v2" || got2.SharedInboxUrl != nil {
+		t.Errorf("after upsert row = %+v, want key PEM-v2 and null shared inbox", got2)
+	}
+}

@@ -73,6 +73,13 @@ func (f fakeFedRepo) InsertChannelActorKeyIfAbsent(_ context.Context, arg sqlcge
 	return 1, nil
 }
 
+func (fakeFedRepo) GetRemoteActor(context.Context, string) (sqlcgen.RemoteActor, error) {
+	return sqlcgen.RemoteActor{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) UpsertRemoteActor(context.Context, sqlcgen.UpsertRemoteActorParams) error {
+	return nil
+}
+
 func fedTestConfig() *config.Config {
 	c := testConfig()
 	c.FederationEnabled = true
