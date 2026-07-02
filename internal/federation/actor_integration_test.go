@@ -260,3 +260,74 @@ func TestDeliveryQueuePersistsClaimReschedule(t *testing.T) {
 		t.Error("rescheduled (future) delivery should not be due")
 	}
 }
+
+func TestAnnounceVideoEnqueuesToFollowers(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suf := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	u, err := q.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username: "fed_" + suf, Email: "fed_" + suf + "@example.test", PasswordHash: "x", Role: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	ch, err := q.CreateChannel(ctx, sqlcgen.CreateChannelParams{OwnerID: u.ID, Handle: "fedch" + suf, DisplayName: "Ch"})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+
+	// A remote follower with an inbox, accepted.
+	remote := "https://remote.example/accounts/dave" + suf
+	inbox := remote + "/inbox"
+	if err := q.UpsertRemoteActor(ctx, sqlcgen.UpsertRemoteActorParams{
+		ActorUrl: remote, ActorType: "Person", PreferredUsername: "dave", Domain: "remote.example",
+		InboxUrl: inbox, PublicKeyPem: "pem", FollowersUrl: remote + "/followers",
+	}); err != nil {
+		t.Fatalf("UpsertRemoteActor: %v", err)
+	}
+	if err := q.InsertRemoteFollow(ctx, sqlcgen.InsertRemoteFollowParams{
+		ChannelID: ch.ID, RemoteActorUrl: remote, FollowActivityUrl: "https://remote.example/f/" + suf,
+	}); err != nil {
+		t.Fatalf("InsertRemoteFollow: %v", err)
+	}
+
+	// A published, public video on that channel.
+	v, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{ChannelID: ch.ID, Title: "Clip", Description: "", Privacy: "public"})
+	if err != nil {
+		t.Fatalf("CreateVideo: %v", err)
+	}
+	if _, err := q.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: v.ID, State: "published"}); err != nil {
+		t.Fatalf("SetVideoState: %v", err)
+	}
+
+	svc := federation.NewService(q, federation.WithBaseURL("https://videos.example"))
+	if err := svc.AnnounceVideo(ctx, v.ID); err != nil {
+		t.Fatalf("AnnounceVideo: %v", err)
+	}
+
+	rows, err := q.ClaimDueDeliveries(ctx, 500)
+	if err != nil {
+		t.Fatalf("ClaimDueDeliveries: %v", err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.InboxUrl == inbox {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no Create delivery enqueued to the follower inbox %q", inbox)
+	}
+}

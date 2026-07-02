@@ -54,6 +54,37 @@ func (q *Queries) IsActivityProcessed(ctx context.Context, activityID string) (b
 	return exists, err
 }
 
+const listRemoteFollowerInboxes = `-- name: ListRemoteFollowerInboxes :many
+SELECT DISTINCT COALESCE(ra.shared_inbox_url, ra.inbox_url) AS inbox
+FROM remote_follows rf
+JOIN remote_actors ra ON ra.actor_url = rf.remote_actor_url
+WHERE rf.channel_id = $1
+  AND rf.state = 'accepted'
+  AND COALESCE(ra.shared_inbox_url, ra.inbox_url) <> ''
+`
+
+// Distinct inbox URLs (shared inbox preferred) of a channel's accepted remote
+// followers — the fan-out targets when the channel publishes a video.
+func (q *Queries) ListRemoteFollowerInboxes(ctx context.Context, channelID uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, listRemoteFollowerInboxes, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var inbox string
+		if err := rows.Scan(&inbox); err != nil {
+			return nil, err
+		}
+		items = append(items, inbox)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markActivityProcessed = `-- name: MarkActivityProcessed :exec
 INSERT INTO federation_inbox_activities (activity_id)
 VALUES ($1)

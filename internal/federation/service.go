@@ -36,6 +36,10 @@ type Repository interface {
 	IsActivityProcessed(ctx context.Context, activityID string) (bool, error)
 	MarkActivityProcessed(ctx context.Context, activityID string) error
 	InsertRemoteFollow(ctx context.Context, arg sqlcgen.InsertRemoteFollowParams) error
+	// Outbox fan-out (Slice 5b).
+	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
+	GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error)
+	ListRemoteFollowerInboxes(ctx context.Context, channelID uuid.UUID) ([]string, error)
 	// Outbound delivery queue (Slice 5a).
 	EnqueueDelivery(ctx context.Context, arg sqlcgen.EnqueueDeliveryParams) error
 	ClaimDueDeliveries(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueDeliveriesRow, error)

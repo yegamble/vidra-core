@@ -17,3 +17,13 @@ DO UPDATE SET state = 'accepted', follow_activity_url = EXCLUDED.follow_activity
 
 -- name: CountRemoteFollowers :one
 SELECT count(*) FROM remote_follows WHERE channel_id = $1 AND state = 'accepted';
+
+-- name: ListRemoteFollowerInboxes :many
+-- Distinct inbox URLs (shared inbox preferred) of a channel's accepted remote
+-- followers — the fan-out targets when the channel publishes a video.
+SELECT DISTINCT COALESCE(ra.shared_inbox_url, ra.inbox_url) AS inbox
+FROM remote_follows rf
+JOIN remote_actors ra ON ra.actor_url = rf.remote_actor_url
+WHERE rf.channel_id = $1
+  AND rf.state = 'accepted'
+  AND COALESCE(ra.shared_inbox_url, ra.inbox_url) <> '';

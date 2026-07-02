@@ -21,14 +21,17 @@ type fakeRepo struct {
 	users, videos, comments int64
 	err                     error
 
-	usersByName   map[string]sqlcgen.GetUserActorByUsernameRow
-	channels      map[string]sqlcgen.Channel
-	acctKeys      map[uuid.UUID]sqlcgen.GetAccountActorKeyRow
-	chanKeys      map[uuid.UUID]sqlcgen.GetChannelActorKeyRow
-	remoteActors  map[string]sqlcgen.RemoteActor
-	processed     map[string]bool
-	remoteFollows map[string]sqlcgen.InsertRemoteFollowParams
-	deliveries    map[uuid.UUID]*fakeDelivery
+	usersByName     map[string]sqlcgen.GetUserActorByUsernameRow
+	channels        map[string]sqlcgen.Channel
+	acctKeys        map[uuid.UUID]sqlcgen.GetAccountActorKeyRow
+	chanKeys        map[uuid.UUID]sqlcgen.GetChannelActorKeyRow
+	remoteActors    map[string]sqlcgen.RemoteActor
+	processed       map[string]bool
+	remoteFollows   map[string]sqlcgen.InsertRemoteFollowParams
+	deliveries      map[uuid.UUID]*fakeDelivery
+	videosByID      map[uuid.UUID]sqlcgen.GetVideoByIDRow
+	channelsByID    map[uuid.UUID]sqlcgen.Channel
+	followerInboxes map[uuid.UUID][]string
 }
 
 // fakeDelivery is an in-memory federation_deliveries row.
@@ -119,6 +122,24 @@ func (f fakeRepo) MarkActivityProcessed(_ context.Context, id string) error {
 func (f fakeRepo) InsertRemoteFollow(_ context.Context, arg sqlcgen.InsertRemoteFollowParams) error {
 	f.remoteFollows[arg.ChannelID.String()+"|"+arg.RemoteActorUrl] = arg
 	return nil
+}
+
+func (f fakeRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	if v, ok := f.videosByID[id]; ok {
+		return v, nil
+	}
+	return sqlcgen.GetVideoByIDRow{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) GetChannelByID(_ context.Context, id uuid.UUID) (sqlcgen.Channel, error) {
+	if c, ok := f.channelsByID[id]; ok {
+		return c, nil
+	}
+	return sqlcgen.Channel{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) ListRemoteFollowerInboxes(_ context.Context, channelID uuid.UUID) ([]string, error) {
+	return f.followerInboxes[channelID], nil
 }
 
 func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDeliveryParams) error {

@@ -107,6 +107,16 @@ func (f fakeFedRepo) InsertRemoteFollow(_ context.Context, arg sqlcgen.InsertRem
 	return nil
 }
 
+func (fakeFedRepo) GetVideoByID(context.Context, uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	return sqlcgen.GetVideoByIDRow{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) GetChannelByID(context.Context, uuid.UUID) (sqlcgen.Channel, error) {
+	return sqlcgen.Channel{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) ListRemoteFollowerInboxes(context.Context, uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
 func (f fakeFedRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDeliveryParams) error {
 	f.deliveries[arg.InboxUrl] = arg
 	return nil

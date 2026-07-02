@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -170,6 +172,20 @@ func run() error {
 		logger.Warn("thumbnail generation disabled (ffmpeg not on PATH); videos publish without a poster")
 	}
 	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
+	// When federation is on, fan a published video out to the channel's remote
+	// followers. fedsvc is assigned below; the hook only runs post-startup so the
+	// closure sees the built service (nil-guarded regardless).
+	var fedsvc *federation.Service
+	if cfg.FederationEnabled {
+		vopts = append(vopts, video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
+			if fedsvc == nil {
+				return
+			}
+			if err := fedsvc.AnnounceVideo(ctx, videoID); err != nil {
+				logger.Warn("federation announce failed", "video_id", videoID, "error", err)
+			}
+		}))
+	}
 	videosvc := video.NewService(db.Queries(), blobs, vopts...)
 	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(blobs))
 
@@ -228,7 +244,7 @@ func run() error {
 	} else if cfg.FederationEnabled {
 		logger.Warn("FEDERATION_KEY_KEK unset — actor private keys are stored UNENCRYPTED; set a KEK outside dev (FEDERATION_KEY_KEK)")
 	}
-	fedsvc := federation.NewService(db.Queries(), fedOpts...)
+	fedsvc = federation.NewService(db.Queries(), fedOpts...)
 	opts = append(opts, httpapi.WithFederationService(fedsvc))
 
 	// Drain the outbound federation delivery queue in the background (signed

@@ -534,8 +534,19 @@
 > when FEDERATION_ENABLED. Tested: unit (drain signs+delivers+marks via httptest inbox that verifies the
 > signature; failure reschedules with attempts++ future) + `HandleInbox` enqueues + httpapi (signed Follow →
 > 202 + Accept enqueued) + integration (enqueue/claim/reschedule against real Postgres). The Follow→Accept
-> handshake is now durable end-to-end. NEXT: Slice 5b — outbox collections + `Create`/`Announce` on publish
-> (enqueue deliveries to a channel's followers when a video is published).
+> handshake is now durable end-to-end.
+>
+> **Slice 5b SHIPPED** (publish fan-out): sqlc `ListRemoteFollowerInboxes` (distinct inbox URLs, shared
+> inbox preferred, of a channel's accepted `remote_follows` — a remote_follows⋈remote_actors join).
+> `federation.AnnounceVideo(videoID)` loads the video (no-op unless public+published), its channel, and the
+> follower inboxes, builds a `Create{Video}` (attributed to the channel actor, addressed to the public), and
+> enqueues one signed delivery per inbox via the Slice 5a queue. Wired without coupling: `video.Service`
+> gained an optional `WithPublishHook` that `Process` invokes on the published transition; cmd/api wires it
+> to `AnnounceVideo` when FEDERATION_ENABLED (best-effort, logged, never blocks/rolls back publish). Tested:
+> unit (fan-out enqueues one Create per follower + shape; skips private/unpublished/no-followers/unknown) +
+> integration (publish → delivery enqueued to a real remote follower's inbox via the join, against Postgres).
+> NEXT: outbox/followers COLLECTION endpoints (GET), then inbound `Create`/`Announce` receive, federated
+> comments, and `Update`/`Delete` propagation.
 
 ## P10.1 ActivityPub
 
@@ -549,7 +560,7 @@
 - [x] Implement JSON-LD signature strategy or documented compatibility plan. (Documented compatibility plan — `.ralph/specs/federation.md` §7: Vidra authenticates server-to-server with **HTTP Signatures** (RSA-SHA256) and does NOT emit JSON-LD/LD-Signatures, matching Mastodon's default and PeerTube interop. Object integrity rides the signed Digest, not LD proofs.)
 - [ ] Implement follow remote instance/channel/account.
 - [ ] Implement receive remote video activity.
-- [ ] Implement announce video from channel.
+- [x] Implement announce video from channel. (Slice 5b — on the published transition, `AnnounceVideo` builds a `Create{Video}` attributed to the channel actor and fans it out to the channel's accepted remote followers via the delivery queue (`ListRemoteFollowerInboxes`, shared-inbox-preferred, signed per channel). Wired through `video.WithPublishHook` (no video→federation coupling). A dedicated re-`Announce` of an existing/imported video and the outbox collection endpoint are later refinements.)
 - [ ] Implement federated comments if in-scope.
 - [ ] Implement federated deletes/updates.
 - [x] Implement federation queue/retry/dead-letter. (`federation_deliveries` table + `DrainDeliveries` worker — Slice 5a. Claims due pending rows, signs each as its channel and POSTs via the SSRF-guarded client; success → delivered, failure → reschedule with exponential backoff (30s×2ⁿ, cap 6h) or dead-letter (state 'failed') after 6 attempts. A single background worker (cmd/api, 10s ticker) drains it. First producer wired: an inbound Follow enqueues a signed Accept. More producers (Create/Announce) land with the outbox slice.)

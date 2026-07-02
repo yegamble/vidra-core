@@ -131,6 +131,7 @@ type Service struct {
 	prober      Prober
 	thumbnailer Thumbnailer
 	viewDeduper ViewDeduper
+	onPublish   func(context.Context, uuid.UUID)
 }
 
 // Option customises the Service.
@@ -152,6 +153,14 @@ func WithThumbnailer(t Thumbnailer) Option {
 // recorded view counts.
 func WithViewDeduper(d ViewDeduper) Option {
 	return func(s *Service) { s.viewDeduper = d }
+}
+
+// WithPublishHook registers a callback invoked (best-effort, synchronously) after
+// a video transitions to the "published" state in Process — the seam federation
+// uses to fan a Create out to remote followers, without this package depending on
+// federation. Without it, Process does no post-publish work.
+func WithPublishHook(fn func(context.Context, uuid.UUID)) Option {
+	return func(s *Service) { s.onPublish = fn }
 }
 
 // NewService builds the video service. blobs is the media storage backend used
@@ -285,7 +294,11 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		// Thumbnail generation is best-effort: a failure must not block publish.
 		s.generateThumbnail(ctx, videoID, originalKey, durationHint)
 	}
-	return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
+	v, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
+	if err == nil && v.State == "published" && s.onPublish != nil {
+		s.onPublish(ctx, videoID)
+	}
+	return v, err
 }
 
 // FileForView authorises serving a stored file of the given kind ("original",
