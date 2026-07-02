@@ -3,6 +3,8 @@ package media
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -10,8 +12,10 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
-// fakeClamd is a minimal clamd that reads an INSTREAM upload and replies with a
-// fixed verdict. It returns the listener address.
+// fakeClamd is a minimal clamd: it reads a full INSTREAM upload (command, then
+// size-prefixed chunks until the zero-length terminator) and only then replies
+// with a fixed verdict — matching real clamd so the client's terminator write
+// never races a premature close. Returns the listener address.
 func fakeClamd(t *testing.T, verdict string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -25,18 +29,21 @@ func fakeClamd(t *testing.T, verdict string) string {
 			return
 		}
 		defer func() { _ = conn.Close() }()
-		// Drain the request until the client is done writing (it half-closes or we
-		// just read whatever arrives); then reply. Reading a little is enough to
-		// exercise the write path without fully parsing the framing.
 		r := bufio.NewReader(conn)
-		_, _ = r.ReadString(0) // consume the "zINSTREAM\0" command
-		buf := make([]byte, 4096)
+		if _, err := r.ReadString(0); err != nil { // "zINSTREAM\0"
+			return
+		}
 		for {
-			if _, err := r.Read(buf); err != nil {
+			var sz [4]byte
+			if _, err := io.ReadFull(r, sz[:]); err != nil {
+				return
+			}
+			n := binary.BigEndian.Uint32(sz[:])
+			if n == 0 { // zero-length chunk = end of stream
 				break
 			}
-			if r.Buffered() == 0 {
-				break
+			if _, err := io.ReadFull(r, make([]byte, n)); err != nil {
+				return
 			}
 		}
 		_, _ = conn.Write([]byte(verdict + "\x00"))
