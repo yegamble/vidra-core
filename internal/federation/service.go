@@ -36,6 +36,12 @@ type Repository interface {
 	IsActivityProcessed(ctx context.Context, activityID string) (bool, error)
 	MarkActivityProcessed(ctx context.Context, activityID string) error
 	InsertRemoteFollow(ctx context.Context, arg sqlcgen.InsertRemoteFollowParams) error
+	// Outbound delivery queue (Slice 5a).
+	EnqueueDelivery(ctx context.Context, arg sqlcgen.EnqueueDeliveryParams) error
+	ClaimDueDeliveries(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueDeliveriesRow, error)
+	MarkDeliveryDelivered(ctx context.Context, id uuid.UUID) error
+	RescheduleDelivery(ctx context.Context, arg sqlcgen.RescheduleDeliveryParams) error
+	FailDelivery(ctx context.Context, arg sqlcgen.FailDeliveryParams) error
 }
 
 // NodeInfoUsage is the fediverse NodeInfo "usage" block: total users plus local

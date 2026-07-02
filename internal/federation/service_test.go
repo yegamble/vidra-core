@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -27,6 +28,14 @@ type fakeRepo struct {
 	remoteActors  map[string]sqlcgen.RemoteActor
 	processed     map[string]bool
 	remoteFollows map[string]sqlcgen.InsertRemoteFollowParams
+	deliveries    map[uuid.UUID]*fakeDelivery
+}
+
+// fakeDelivery is an in-memory federation_deliveries row.
+type fakeDelivery struct {
+	row         sqlcgen.ClaimDueDeliveriesRow
+	state       string
+	nextAttempt time.Time
 }
 
 func (f fakeRepo) CountUsers(context.Context) (int64, error)        { return f.users, f.err }
@@ -109,6 +118,57 @@ func (f fakeRepo) MarkActivityProcessed(_ context.Context, id string) error {
 
 func (f fakeRepo) InsertRemoteFollow(_ context.Context, arg sqlcgen.InsertRemoteFollowParams) error {
 	f.remoteFollows[arg.ChannelID.String()+"|"+arg.RemoteActorUrl] = arg
+	return nil
+}
+
+func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDeliveryParams) error {
+	id := uuid.New()
+	f.deliveries[id] = &fakeDelivery{
+		row: sqlcgen.ClaimDueDeliveriesRow{
+			ID:                   id,
+			InboxUrl:             arg.InboxUrl,
+			Payload:              arg.Payload,
+			SigningChannelID:     arg.SigningChannelID,
+			SigningChannelHandle: arg.SigningChannelHandle,
+		},
+		state: "pending",
+	}
+	return nil
+}
+
+func (f fakeRepo) ClaimDueDeliveries(_ context.Context, limit int32) ([]sqlcgen.ClaimDueDeliveriesRow, error) {
+	var out []sqlcgen.ClaimDueDeliveriesRow
+	for _, d := range f.deliveries {
+		if d.state == "pending" && !d.nextAttempt.After(time.Now()) {
+			out = append(out, d.row)
+			if len(out) >= int(limit) {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (f fakeRepo) MarkDeliveryDelivered(_ context.Context, id uuid.UUID) error {
+	if d, ok := f.deliveries[id]; ok {
+		d.state = "delivered"
+	}
+	return nil
+}
+
+func (f fakeRepo) RescheduleDelivery(_ context.Context, arg sqlcgen.RescheduleDeliveryParams) error {
+	if d, ok := f.deliveries[arg.ID]; ok {
+		d.row.Attempts++
+		d.nextAttempt = arg.NextAttemptAt
+	}
+	return nil
+}
+
+func (f fakeRepo) FailDelivery(_ context.Context, arg sqlcgen.FailDeliveryParams) error {
+	if d, ok := f.deliveries[arg.ID]; ok {
+		d.row.Attempts++
+		d.state = "failed"
+	}
 	return nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/store"
@@ -192,5 +193,70 @@ func TestInboxFollowPersists(t *testing.T) {
 	}
 	if n2, _ := q.CountRemoteFollowers(ctx, ch.ID); n2 != 1 {
 		t.Errorf("after replay remote followers = %d, want 1 (deduped)", n2)
+	}
+}
+
+func TestDeliveryQueuePersistsClaimReschedule(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suf := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	u, err := q.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username: "fed_" + suf, Email: "fed_" + suf + "@example.test", PasswordHash: "x", Role: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	ch, err := q.CreateChannel(ctx, sqlcgen.CreateChannelParams{OwnerID: u.ID, Handle: "fedch" + suf, DisplayName: "Ch"})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+
+	inbox := "https://remote.example/inbox/" + suf
+	if err := q.EnqueueDelivery(ctx, sqlcgen.EnqueueDeliveryParams{
+		InboxUrl:             inbox,
+		Payload:              []byte(`{"type":"Accept"}`),
+		SigningChannelID:     pgtype.UUID{Bytes: ch.ID, Valid: true},
+		SigningChannelHandle: ch.Handle,
+	}); err != nil {
+		t.Fatalf("EnqueueDelivery: %v", err)
+	}
+
+	find := func() *sqlcgen.ClaimDueDeliveriesRow {
+		rows, err := q.ClaimDueDeliveries(ctx, 100)
+		if err != nil {
+			t.Fatalf("ClaimDueDeliveries: %v", err)
+		}
+		for i := range rows {
+			if rows[i].InboxUrl == inbox {
+				return &rows[i]
+			}
+		}
+		return nil
+	}
+
+	row := find()
+	if row == nil {
+		t.Fatal("enqueued delivery not returned as due")
+	}
+	// Reschedule into the future → no longer due.
+	if err := q.RescheduleDelivery(ctx, sqlcgen.RescheduleDeliveryParams{
+		ID: row.ID, NextAttemptAt: time.Now().Add(time.Hour), LastError: "boom",
+	}); err != nil {
+		t.Fatalf("RescheduleDelivery: %v", err)
+	}
+	if find() != nil {
+		t.Error("rescheduled (future) delivery should not be due")
 	}
 }

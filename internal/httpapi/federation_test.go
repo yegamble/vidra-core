@@ -32,6 +32,7 @@ type fakeFedRepo struct {
 	remoteActors            map[string]sqlcgen.RemoteActor
 	processed               map[string]bool
 	remoteFollows           map[string]sqlcgen.InsertRemoteFollowParams
+	deliveries              map[string]sqlcgen.EnqueueDeliveryParams
 }
 
 func (f fakeFedRepo) CountUsers(context.Context) (int64, error)        { return f.users, nil }
@@ -106,6 +107,19 @@ func (f fakeFedRepo) InsertRemoteFollow(_ context.Context, arg sqlcgen.InsertRem
 	return nil
 }
 
+func (f fakeFedRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDeliveryParams) error {
+	f.deliveries[arg.InboxUrl] = arg
+	return nil
+}
+func (fakeFedRepo) ClaimDueDeliveries(context.Context, int32) ([]sqlcgen.ClaimDueDeliveriesRow, error) {
+	return nil, nil
+}
+func (fakeFedRepo) MarkDeliveryDelivered(context.Context, uuid.UUID) error { return nil }
+func (fakeFedRepo) RescheduleDelivery(context.Context, sqlcgen.RescheduleDeliveryParams) error {
+	return nil
+}
+func (fakeFedRepo) FailDelivery(context.Context, sqlcgen.FailDeliveryParams) error { return nil }
+
 func fedTestConfig() *config.Config {
 	c := testConfig()
 	c.FederationEnabled = true
@@ -124,6 +138,7 @@ func fedServerRepo(cfg *config.Config) (*Server, fakeFedRepo) {
 		remoteActors:  map[string]sqlcgen.RemoteActor{},
 		processed:     map[string]bool{},
 		remoteFollows: map[string]sqlcgen.InsertRemoteFollowParams{},
+		deliveries:    map[string]sqlcgen.EnqueueDeliveryParams{},
 	}
 	svc := federation.NewService(repo, federation.WithBaseURL(cfg.PublicBaseURL))
 	return New(cfg, nil, nil, WithFederationService(svc)), repo
@@ -295,8 +310,10 @@ const bobActor = "https://remote.example/accounts/bob"
 func TestInboxAcceptsSignedFollow(t *testing.T) {
 	key, pubPEM := signerKeyPEM(t)
 	srv, repo := fedServerRepo(fedTestConfig())
-	// Pre-seed the signer's key in the remote-actor cache so ResolveKey needs no fetch.
-	repo.remoteActors[bobActor] = sqlcgen.RemoteActor{ActorUrl: bobActor, PublicKeyPem: pubPEM}
+	// Pre-seed the signer in the remote-actor cache (key for ResolveKey + inbox for
+	// the Accept delivery) so no network fetch is needed.
+	bobInbox := "https://remote.example/accounts/bob/inbox"
+	repo.remoteActors[bobActor] = sqlcgen.RemoteActor{ActorUrl: bobActor, PublicKeyPem: pubPEM, InboxUrl: bobInbox}
 
 	body := []byte(`{"id":"https://remote.example/act/1","type":"Follow","actor":"` + bobActor +
 		`","object":"https://videos.example/video-channels/films"}`)
@@ -311,6 +328,10 @@ func TestInboxAcceptsSignedFollow(t *testing.T) {
 	}
 	if _, ok := repo.remoteFollows[bobActor]; !ok {
 		t.Errorf("remote follow not recorded: %+v", repo.remoteFollows)
+	}
+	// An Accept was durably enqueued to the follower's inbox.
+	if _, ok := repo.deliveries[bobInbox]; !ok {
+		t.Errorf("Accept not enqueued for delivery: %+v", repo.deliveries)
 	}
 }
 

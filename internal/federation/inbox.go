@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -77,11 +78,37 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 		}
 		return err
 	}
-	return s.repo.InsertRemoteFollow(ctx, sqlcgen.InsertRemoteFollowParams{
+	if err := s.repo.InsertRemoteFollow(ctx, sqlcgen.InsertRemoteFollowParams{
 		ChannelID:         ch.ID,
 		RemoteActorUrl:    signerActorURL,
 		FollowActivityUrl: act.ID,
-	})
+	}); err != nil {
+		return err
+	}
+	return s.enqueueAcceptFollow(ctx, ch.ID, handle, signerActorURL, act.ID)
+}
+
+// enqueueAcceptFollow queues an Accept back to the follower's inbox (a durable,
+// signed delivery). The follower was just fetched+cached during signature
+// verification, so this reads the cache (no network in the request path); if it
+// is somehow absent or lacks an inbox, the follow is still recorded and the Accept
+// is simply not queued.
+func (s *Service) enqueueAcceptFollow(ctx context.Context, channelID uuid.UUID, channelHandle, followerActorURL, followActivityURL string) error {
+	follower, err := s.repo.GetRemoteActor(ctx, followerActorURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if follower.InboxUrl == "" {
+		return nil
+	}
+	payload, err := s.buildAcceptFollow(channelHandle, followerActorURL, followActivityURL)
+	if err != nil {
+		return err
+	}
+	return s.enqueueChannelDelivery(ctx, channelID, channelHandle, follower.InboxUrl, payload)
 }
 
 // localChannelHandle returns the channel handle when actorURL is one of our local

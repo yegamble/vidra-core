@@ -231,6 +231,15 @@ func run() error {
 	fedsvc := federation.NewService(db.Queries(), fedOpts...)
 	opts = append(opts, httpapi.WithFederationService(fedsvc))
 
+	// Drain the outbound federation delivery queue in the background (signed
+	// Accept/activity delivery with retry + dead-letter). Only when enabled.
+	if cfg.FederationEnabled {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runFederationDeliveryWorker(workerCtx, logger, fedsvc)
+		logger.Info("federation delivery worker started")
+	}
+
 	srv := httpapi.New(cfg, db, rdb, opts...)
 
 	// Run the server in the background so we can wait for a shutdown signal.
@@ -259,6 +268,29 @@ func run() error {
 	}
 	logger.Info("shutdown complete")
 	return nil
+}
+
+// runFederationDeliveryWorker drains the outbound federation delivery queue on a
+// ticker until ctx is canceled. A single worker suffices (deliveries claim without
+// row locking); it logs only claim-query errors — per-delivery failures are
+// recorded in the queue (retry/backoff/dead-letter) rather than logged.
+func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsvc *federation.Service) {
+	const (
+		interval = 10 * time.Second
+		batch    = 20
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := fedsvc.DrainDeliveries(ctx, batch); err != nil {
+				logger.Warn("federation delivery drain failed", "error", err)
+			}
+		}
+	}
 }
 
 // newStorageBackend builds the media blob backend selected by config. Config

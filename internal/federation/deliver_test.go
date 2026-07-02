@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -121,6 +122,81 @@ func TestUnlockPrivateKeyRawAndSealed(t *testing.T) {
 	// Sealed value but no cipher → error (never silently mishandle a secret).
 	if _, err := (&Service{}).unlockPrivateKey(sealed); err == nil {
 		t.Error("unlock of a sealed key without a cipher must fail")
+	}
+}
+
+func TestDrainDeliveriesSignsDeliversAndMarks(t *testing.T) {
+	channelID := uuid.New()
+	repo := fakeRepo{
+		chanKeys:   map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
+		deliveries: map[uuid.UUID]*fakeDelivery{},
+	}
+	var verifyErr error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		pub, err := parseRSAPublicKey(repo.chanKeys[channelID].PublicKeyPem)
+		if err != nil {
+			t.Errorf("parse channel key: %v", err)
+		}
+		_, verifyErr = httpsigVerifier(pub)(r, body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := NewService(repo, WithBaseURL("https://videos.example"), WithAllowPrivateFetch(true))
+	if err := svc.enqueueChannelDelivery(context.Background(), channelID, "films", srv.URL, []byte(`{"type":"Accept"}`)); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	n, err := svc.DrainDeliveries(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("DrainDeliveries: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("delivered = %d, want 1", n)
+	}
+	if verifyErr != nil {
+		t.Errorf("inbox could not verify the delivered signature: %v", verifyErr)
+	}
+	for _, d := range repo.deliveries {
+		if d.state != "delivered" {
+			t.Errorf("delivery state = %q, want delivered", d.state)
+		}
+	}
+}
+
+func TestDrainDeliveriesReschedulesOnFailure(t *testing.T) {
+	channelID := uuid.New()
+	repo := fakeRepo{
+		chanKeys:   map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
+		deliveries: map[uuid.UUID]*fakeDelivery{},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := NewService(repo, WithBaseURL("https://videos.example"), WithAllowPrivateFetch(true))
+	if err := svc.enqueueChannelDelivery(context.Background(), channelID, "films", srv.URL, []byte(`{}`)); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	n, err := svc.DrainDeliveries(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("DrainDeliveries: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("delivered = %d, want 0 (target 500s)", n)
+	}
+	for _, d := range repo.deliveries {
+		if d.state != "pending" {
+			t.Errorf("state = %q, want pending (rescheduled, not failed before the cap)", d.state)
+		}
+		if d.row.Attempts != 1 {
+			t.Errorf("attempts = %d, want 1", d.row.Attempts)
+		}
+		if !d.nextAttempt.After(time.Now()) {
+			t.Error("next attempt should be scheduled in the future (backoff)")
+		}
 	}
 }
 

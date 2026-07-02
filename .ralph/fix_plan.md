@@ -522,9 +522,20 @@
 > inbox (remote-actor cache), builds the `Accept{object: Follow}`, and delivers it. Tested: unit — an
 > httptest inbox that **verifies the signed Accept against the channel's minted public key** (correct
 > keyId + Accept/Follow shape) + `unlockPrivateKey` raw/sealed round-trip + sealed-without-cipher reject.
-> Not yet wired into the request path (no inline outbound call in the inbox response). NEXT: Slice 5 — the
-> `federation_deliveries` table + a retry/dead-letter worker that CALLS `SendAcceptFollow`/deliver (so an
-> inbound Follow enqueues an Accept), then the outbox + `Create`/`Announce` on publish.
+> Not yet wired into the request path (no inline outbound call in the inbox response).
+>
+> **Slice 5a SHIPPED** (durable delivery queue + Follow→Accept wired): migration 0038 `federation_deliveries`
+> (inbox_url, payload=unsigned activity, signing_channel_id/handle, state, attempts, next_attempt_at,
+> last_error) + sqlc enqueue/claim-due/mark-delivered/reschedule/fail. `DrainDeliveries` claims due rows,
+> signs each as its channel (`channelActorSigner`) and POSTs via `deliverActivity`; on failure it reschedules
+> with exponential backoff (30s×2ⁿ, cap 6h) or dead-letters after 6 attempts. The inbox Follow handler now
+> **enqueues an Accept** to the follower's cached inbox (no network in the request path — enqueue is a local
+> write; the 202 returns immediately). cmd/api runs a single background worker (10s ticker) draining the queue
+> when FEDERATION_ENABLED. Tested: unit (drain signs+delivers+marks via httptest inbox that verifies the
+> signature; failure reschedules with attempts++ future) + `HandleInbox` enqueues + httpapi (signed Follow →
+> 202 + Accept enqueued) + integration (enqueue/claim/reschedule against real Postgres). The Follow→Accept
+> handshake is now durable end-to-end. NEXT: Slice 5b — outbox collections + `Create`/`Announce` on publish
+> (enqueue deliveries to a channel's followers when a video is published).
 
 ## P10.1 ActivityPub
 
@@ -541,7 +552,7 @@
 - [ ] Implement announce video from channel.
 - [ ] Implement federated comments if in-scope.
 - [ ] Implement federated deletes/updates.
-- [ ] Implement federation queue/retry/dead-letter.
+- [x] Implement federation queue/retry/dead-letter. (`federation_deliveries` table + `DrainDeliveries` worker — Slice 5a. Claims due pending rows, signs each as its channel and POSTs via the SSRF-guarded client; success → delivered, failure → reschedule with exponential backoff (30s×2ⁿ, cap 6h) or dead-letter (state 'failed') after 6 attempts. A single background worker (cmd/api, 10s ticker) drains it. First producer wired: an inbound Follow enqueues a signed Accept. More producers (Create/Announce) land with the outbox slice.)
 - [ ] Implement remote media cache strategy.
 - [ ] Add federation contract tests using fixtures.
 

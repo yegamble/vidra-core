@@ -10,13 +10,103 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/httpsig"
 	"github.com/vidra/vidra-core/internal/secretbox"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 )
+
+const (
+	// maxDeliveryAttempts is how many times a delivery is retried before it is
+	// dead-lettered (state 'failed').
+	maxDeliveryAttempts = 6
+	// deliveryBaseBackoff is the first retry delay; it doubles each attempt.
+	deliveryBaseBackoff = 30 * time.Second
+	// maxDeliveryBackoff caps the exponential backoff.
+	maxDeliveryBackoff = 6 * time.Hour
+	// maxLastErrorLen bounds the stored last_error string.
+	maxLastErrorLen = 500
+)
+
+// DrainDeliveries claims up to limit due deliveries and attempts each: on success
+// it is marked delivered; on failure it is rescheduled with exponential backoff,
+// or dead-lettered after maxDeliveryAttempts. Returns the number delivered. Only
+// the claim query error is returned (per-delivery failures are persisted, not
+// surfaced). Intended to be called on a ticker by a single worker.
+func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
+	rows, err := s.repo.ClaimDueDeliveries(ctx, int32(limit))
+	if err != nil {
+		return 0, err
+	}
+	delivered := 0
+	for _, row := range rows {
+		if err := s.attemptDelivery(ctx, row); err != nil {
+			s.recordDeliveryFailure(ctx, row, err)
+			continue
+		}
+		_ = s.repo.MarkDeliveryDelivered(ctx, row.ID)
+		delivered++
+	}
+	return delivered, nil
+}
+
+// attemptDelivery signs the queued payload as its signing channel and POSTs it.
+func (s *Service) attemptDelivery(ctx context.Context, row sqlcgen.ClaimDueDeliveriesRow) error {
+	if !row.SigningChannelID.Valid {
+		return errors.New("federation: delivery has no signing channel")
+	}
+	signer, err := s.channelActorSigner(ctx, uuid.UUID(row.SigningChannelID.Bytes), row.SigningChannelHandle)
+	if err != nil {
+		return err
+	}
+	return s.deliverActivity(ctx, signer, row.InboxUrl, row.Payload)
+}
+
+// recordDeliveryFailure reschedules with backoff, or dead-letters after the cap.
+func (s *Service) recordDeliveryFailure(ctx context.Context, row sqlcgen.ClaimDueDeliveriesRow, cause error) {
+	attempts := int(row.Attempts) + 1
+	msg := cause.Error()
+	if len(msg) > maxLastErrorLen {
+		msg = msg[:maxLastErrorLen]
+	}
+	if attempts >= maxDeliveryAttempts {
+		_ = s.repo.FailDelivery(ctx, sqlcgen.FailDeliveryParams{ID: row.ID, LastError: msg})
+		return
+	}
+	_ = s.repo.RescheduleDelivery(ctx, sqlcgen.RescheduleDeliveryParams{
+		ID:            row.ID,
+		NextAttemptAt: time.Now().UTC().Add(deliveryBackoff(attempts)),
+		LastError:     msg,
+	})
+}
+
+// deliveryBackoff is deliveryBaseBackoff * 2^(attempts-1), capped.
+func deliveryBackoff(attempts int) time.Duration {
+	d := deliveryBaseBackoff
+	for i := 1; i < attempts; i++ {
+		d *= 2
+		if d >= maxDeliveryBackoff {
+			return maxDeliveryBackoff
+		}
+	}
+	return d
+}
+
+// enqueueChannelDelivery queues an activity payload to inboxURL, to be signed as
+// the given local channel at send time.
+func (s *Service) enqueueChannelDelivery(ctx context.Context, channelID uuid.UUID, channelHandle, inboxURL string, payload []byte) error {
+	return s.repo.EnqueueDelivery(ctx, sqlcgen.EnqueueDeliveryParams{
+		InboxUrl:             inboxURL,
+		Payload:              payload,
+		SigningChannelID:     pgtype.UUID{Bytes: channelID, Valid: true},
+		SigningChannelHandle: channelHandle,
+	})
+}
 
 // SendAcceptFollow signs an `Accept` of the given inbound Follow, as the local
 // channel, and delivers it to the follower's inbox. This is the outbound

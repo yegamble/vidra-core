@@ -93,6 +93,20 @@ type EmailVerificationToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type FederationDelivery struct {
+	ID                   uuid.UUID   `json:"id"`
+	InboxUrl             string      `json:"inbox_url"`
+	Payload              []byte      `json:"payload"`
+	SigningChannelID     pgtype.UUID `json:"signing_channel_id"`
+	SigningChannelHandle string      `json:"signing_channel_handle"`
+	State                string      `json:"state"`
+	Attempts             int32       `json:"attempts"`
+	NextAttemptAt        time.Time   `json:"next_attempt_at"`
+	LastError            string      `json:"last_error"`
+	CreatedAt            time.Time   `json:"created_at"`
+	UpdatedAt            time.Time   `json:"updated_at"`
+}
+
 type FederationInboxActivity struct {
 	ActivityID string    `json:"activity_id"`
 	ReceivedAt time.Time `json:"received_at"`

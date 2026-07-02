@@ -45,6 +45,21 @@ func TestHandleInboxFollowRecordsRemoteFollow(t *testing.T) {
 	}
 }
 
+func TestHandleInboxEnqueuesAccept(t *testing.T) {
+	repo := newInboxRepo()
+	repo.remoteActors = map[string]sqlcgen.RemoteActor{
+		remoteBob: {ActorUrl: remoteBob, InboxUrl: "https://remote.example/accounts/bob/inbox"},
+	}
+	repo.deliveries = map[uuid.UUID]*fakeDelivery{}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(filmsFollow)); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	if len(repo.deliveries) != 1 {
+		t.Errorf("enqueued deliveries = %d, want 1 (Accept)", len(repo.deliveries))
+	}
+}
+
 func TestHandleInboxRejectsActorMismatch(t *testing.T) {
 	svc := NewService(newInboxRepo(), WithBaseURL("https://videos.example"))
 	// Signer differs from the Follow's actor.
