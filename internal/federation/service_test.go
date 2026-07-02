@@ -35,6 +35,7 @@ type fakeRepo struct {
 	localFollowers  map[uuid.UUID]int64
 	remoteFollowerN map[uuid.UUID]int64
 	channelVideoN   map[uuid.UUID]int64
+	outboxVideos    map[uuid.UUID][]sqlcgen.ListChannelOutboxVideosRow
 }
 
 // fakeDelivery is an in-memory federation_deliveries row.
@@ -158,6 +159,18 @@ func (f fakeRepo) CountRemoteFollowers(_ context.Context, id uuid.UUID) (int64, 
 }
 func (f fakeRepo) CountPublicVideosByChannel(_ context.Context, id uuid.UUID) (int64, error) {
 	return f.channelVideoN[id], nil
+}
+func (f fakeRepo) ListChannelOutboxVideos(_ context.Context, arg sqlcgen.ListChannelOutboxVideosParams) ([]sqlcgen.ListChannelOutboxVideosRow, error) {
+	all := f.outboxVideos[arg.ChannelID]
+	lo := int(arg.Offset)
+	if lo > len(all) {
+		lo = len(all)
+	}
+	hi := lo + int(arg.Limit)
+	if hi > len(all) {
+		hi = len(all)
+	}
+	return all[lo:hi], nil
 }
 
 func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDeliveryParams) error {

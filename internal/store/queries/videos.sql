@@ -12,6 +12,15 @@ SELECT count(*) FROM videos WHERE privacy = 'public' AND state = 'published';
 -- Public, published videos for one channel — the totalItems of its AP outbox.
 SELECT count(*) FROM videos WHERE channel_id = $1 AND privacy = 'public' AND state = 'published';
 
+-- name: ListChannelOutboxVideos :many
+-- One page of a channel's public, published videos (newest first) for the AP
+-- outbox collection — just the fields needed to render a Create{Video}.
+SELECT id, title, description
+FROM videos
+WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
+ORDER BY created_at DESC, id DESC
+LIMIT $2 OFFSET $3;
+
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license,

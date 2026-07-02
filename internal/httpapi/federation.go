@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -184,6 +185,30 @@ func (s *Server) channelCollection(kind string) echo.HandlerFunc {
 			return s.fedsvc.ChannelCollection(ctx, c.Param("handle"), kind)
 		})
 	}
+}
+
+// channelOutbox serves the channel outbox: the summary OrderedCollection (with a
+// `first` link) by default, or an OrderedCollectionPage when ?page=N is given.
+func (s *Server) channelOutbox(c echo.Context) error {
+	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
+		return echo.NewHTTPError(http.StatusNotAcceptable, "collections are served as application/activity+json")
+	}
+	handle := c.Param("handle")
+	if p := c.QueryParam("page"); p != "" {
+		page, _ := strconv.Atoi(p)
+		pg, err := s.fedsvc.ChannelOutboxPage(c.Request().Context(), handle, page)
+		if errors.Is(err, federation.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound)
+		}
+		if err != nil {
+			return err
+		}
+		c.Response().Header().Set(echo.HeaderContentType, activityJSONContentType)
+		return c.JSON(http.StatusOK, pg)
+	}
+	return s.serveCollection(c, func(ctx context.Context) (*federation.OrderedCollection, error) {
+		return s.fedsvc.ChannelCollection(ctx, handle, "outbox")
+	})
 }
 
 func (s *Server) accountCollection(kind string) echo.HandlerFunc {

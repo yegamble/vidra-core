@@ -199,6 +199,48 @@ func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams
 	return items, nil
 }
 
+const listChannelOutboxVideos = `-- name: ListChannelOutboxVideos :many
+SELECT id, title, description
+FROM videos
+WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
+ORDER BY created_at DESC, id DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListChannelOutboxVideosParams struct {
+	ChannelID uuid.UUID `json:"channel_id"`
+	Limit     int32     `json:"limit"`
+	Offset    int32     `json:"offset"`
+}
+
+type ListChannelOutboxVideosRow struct {
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+}
+
+// One page of a channel's public, published videos (newest first) for the AP
+// outbox collection — just the fields needed to render a Create{Video}.
+func (q *Queries) ListChannelOutboxVideos(ctx context.Context, arg ListChannelOutboxVideosParams) ([]ListChannelOutboxVideosRow, error) {
+	rows, err := q.db.Query(ctx, listChannelOutboxVideos, arg.ChannelID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChannelOutboxVideosRow
+	for rows.Next() {
+		var i ListChannelOutboxVideosRow
+		if err := rows.Scan(&i.ID, &i.Title, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublicVideosByChannel = `-- name: ListPublicVideosByChannel :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,

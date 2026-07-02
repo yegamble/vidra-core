@@ -45,6 +45,7 @@ type Repository interface {
 	CountChannelFollowers(ctx context.Context, channelID uuid.UUID) (int64, error)
 	CountRemoteFollowers(ctx context.Context, channelID uuid.UUID) (int64, error)
 	CountPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
+	ListChannelOutboxVideos(ctx context.Context, arg sqlcgen.ListChannelOutboxVideosParams) ([]sqlcgen.ListChannelOutboxVideosRow, error)
 	// Outbound delivery queue (Slice 5a).
 	EnqueueDelivery(ctx context.Context, arg sqlcgen.EnqueueDeliveryParams) error
 	ClaimDueDeliveries(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueDeliveriesRow, error)

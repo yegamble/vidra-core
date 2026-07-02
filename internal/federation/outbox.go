@@ -123,17 +123,22 @@ func (s *Service) buildVideoActivity(activityType, channelHandle string, v sqlcg
 		"type":     activityType,
 		"actor":    channelActor,
 		"to":       []string{publicAudience},
-		"object": map[string]any{
-			"id":           videoURL,
-			"type":         "Video",
-			"name":         v.Title,
-			"content":      v.Description,
-			"attributedTo": channelActor,
-			"url":          videoURL,
-			"to":           []string{publicAudience},
-		},
+		"object":   videoObject(channelActor, videoURL, v.Title, v.Description),
 	}
 	return json.Marshal(activity)
+}
+
+// videoObject renders a video as an AS Video object.
+func videoObject(channelActor, videoURL, title, description string) map[string]any {
+	return map[string]any{
+		"id":           videoURL,
+		"type":         "Video",
+		"name":         title,
+		"content":      description,
+		"attributedTo": channelActor,
+		"url":          videoURL,
+		"to":           []string{publicAudience},
+	}
 }
 
 // buildDeleteVideo renders a Delete activity for a video (object = its AP id).

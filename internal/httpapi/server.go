@@ -367,11 +367,14 @@ func (s *Server) routes() {
 		s.echo.POST("/inbox", s.handleInbox)
 		s.echo.POST("/accounts/:handle/inbox", s.handleInbox)
 		s.echo.POST("/video-channels/:handle/inbox", s.handleInbox)
-		// Actor collections advertised in the actor documents (read-only summaries).
-		for _, kind := range []string{"followers", "following", "outbox"} {
+		// Actor collections advertised in the actor documents (read-only). Followers
+		// and following are summaries; the channel outbox is paged (?page=N).
+		for _, kind := range []string{"followers", "following"} {
 			s.echo.GET("/video-channels/:handle/"+kind, s.channelCollection(kind))
 			s.echo.GET("/accounts/:handle/"+kind, s.accountCollection(kind))
 		}
+		s.echo.GET("/video-channels/:handle/outbox", s.channelOutbox)
+		s.echo.GET("/accounts/:handle/outbox", s.accountCollection("outbox"))
 	}
 
 	api := s.echo.Group("/api/v1")

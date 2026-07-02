@@ -36,6 +36,7 @@ type fakeFedRepo struct {
 	localFollowerN          int64
 	remoteFollowerN         int64
 	channelVideoN           int64
+	outboxVideos            []sqlcgen.ListChannelOutboxVideosRow
 }
 
 func (f fakeFedRepo) CountUsers(context.Context) (int64, error)        { return f.users, nil }
@@ -132,6 +133,18 @@ func (f fakeFedRepo) CountRemoteFollowers(context.Context, uuid.UUID) (int64, er
 func (f fakeFedRepo) CountPublicVideosByChannel(context.Context, uuid.UUID) (int64, error) {
 	return f.channelVideoN, nil
 }
+func (f fakeFedRepo) ListChannelOutboxVideos(_ context.Context, arg sqlcgen.ListChannelOutboxVideosParams) ([]sqlcgen.ListChannelOutboxVideosRow, error) {
+	all := f.outboxVideos
+	lo := int(arg.Offset)
+	if lo > len(all) {
+		lo = len(all)
+	}
+	hi := lo + int(arg.Limit)
+	if hi > len(all) {
+		hi = len(all)
+	}
+	return all[lo:hi], nil
+}
 
 func (f fakeFedRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDeliveryParams) error {
 	f.deliveries[arg.InboxUrl] = arg
@@ -160,14 +173,18 @@ func fedServerRepo(cfg *config.Config) (*Server, fakeFedRepo) {
 		localFollowerN:  3,
 		remoteFollowerN: 2,
 		channelVideoN:   7,
-		userID:          uuid.New(),
-		channelID:       uuid.New(),
-		acctKeys:        map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
-		chanKeys:        map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
-		remoteActors:    map[string]sqlcgen.RemoteActor{},
-		processed:       map[string]bool{},
-		remoteFollows:   map[string]sqlcgen.InsertRemoteFollowParams{},
-		deliveries:      map[string]sqlcgen.EnqueueDeliveryParams{},
+		outboxVideos: []sqlcgen.ListChannelOutboxVideosRow{
+			{ID: uuid.New(), Title: "One", Description: "a"},
+			{ID: uuid.New(), Title: "Two", Description: "b"},
+		},
+		userID:        uuid.New(),
+		channelID:     uuid.New(),
+		acctKeys:      map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
+		chanKeys:      map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
+		remoteActors:  map[string]sqlcgen.RemoteActor{},
+		processed:     map[string]bool{},
+		remoteFollows: map[string]sqlcgen.InsertRemoteFollowParams{},
+		deliveries:    map[string]sqlcgen.EnqueueDeliveryParams{},
 	}
 	svc := federation.NewService(repo, federation.WithBaseURL(cfg.PublicBaseURL))
 	return New(cfg, nil, nil, WithFederationService(svc)), repo
@@ -416,6 +433,36 @@ func TestChannelCollectionEndpoints(t *testing.T) {
 	_ = json.Unmarshal(account.Body.Bytes(), &col)
 	if account.Code != http.StatusOK || col.TotalItems != 0 {
 		t.Errorf("account followers status=%d totalItems=%d, want 200/0", account.Code, col.TotalItems)
+	}
+}
+
+func TestChannelOutboxPaging(t *testing.T) {
+	srv := fedServer(fedTestConfig())
+
+	// Base outbox: a summary OrderedCollection with a `first` page link.
+	base := getAccept(t, srv, "/video-channels/films/outbox", apAccept)
+	if base.Code != http.StatusOK {
+		t.Fatalf("outbox status = %d, want 200", base.Code)
+	}
+	var col federation.OrderedCollection
+	if err := json.Unmarshal(base.Body.Bytes(), &col); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if col.Type != "OrderedCollection" || col.First == "" {
+		t.Errorf("outbox = %+v, want OrderedCollection with a first link", col)
+	}
+
+	// Page 1: an OrderedCollectionPage carrying the seeded videos as Create items.
+	pageRec := getAccept(t, srv, "/video-channels/films/outbox?page=1", apAccept)
+	if pageRec.Code != http.StatusOK {
+		t.Fatalf("outbox page status = %d, want 200", pageRec.Code)
+	}
+	var page federation.OrderedCollectionPage
+	if err := json.Unmarshal(pageRec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("unmarshal page: %v", err)
+	}
+	if page.Type != "OrderedCollectionPage" || len(page.OrderedItems) != 2 {
+		t.Errorf("page = type %q with %d items, want OrderedCollectionPage/2", page.Type, len(page.OrderedItems))
 	}
 }
 

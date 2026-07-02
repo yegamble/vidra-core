@@ -39,6 +39,9 @@ func TestChannelCollectionCounts(t *testing.T) {
 	if outbox.TotalItems != 7 {
 		t.Errorf("outbox totalItems = %d, want 7", outbox.TotalItems)
 	}
+	if outbox.First != "https://videos.example/video-channels/films/outbox?page=1" {
+		t.Errorf("outbox first = %q, want a page-1 link", outbox.First)
+	}
 
 	following, err := svc.ChannelCollection(ctx, "films", "following")
 	if err != nil {
@@ -53,6 +56,54 @@ func TestChannelCollectionCounts(t *testing.T) {
 	}
 	if _, err := svc.ChannelCollection(ctx, "films", "bogus"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown kind: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestChannelOutboxPage(t *testing.T) {
+	cid := uuid.New()
+	full := make([]sqlcgen.ListChannelOutboxVideosRow, outboxPageSize)
+	for i := range full {
+		full[i] = sqlcgen.ListChannelOutboxVideosRow{ID: uuid.New(), Title: "v", Description: ""}
+	}
+	repo := fakeRepo{
+		channels:     map[string]sqlcgen.Channel{"films": {ID: cid, Handle: "films"}},
+		outboxVideos: map[uuid.UUID][]sqlcgen.ListChannelOutboxVideosRow{cid: full},
+	}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	pg, err := svc.ChannelOutboxPage(ctx, "films", 1)
+	if err != nil {
+		t.Fatalf("outbox page: %v", err)
+	}
+	if pg.Type != "OrderedCollectionPage" || pg.PartOf != "https://videos.example/video-channels/films/outbox" {
+		t.Errorf("page = %+v", pg)
+	}
+	if len(pg.OrderedItems) != outboxPageSize {
+		t.Fatalf("items = %d, want %d", len(pg.OrderedItems), outboxPageSize)
+	}
+	if pg.Next != "https://videos.example/video-channels/films/outbox?page=2" {
+		t.Errorf("a full page should link next, got %q", pg.Next)
+	}
+	if pg.OrderedItems[0]["type"] != "Create" {
+		t.Errorf("item type = %v, want Create", pg.OrderedItems[0]["type"])
+	}
+
+	// A partial (last) page has no next.
+	repo2 := fakeRepo{
+		channels:     map[string]sqlcgen.Channel{"films": {ID: cid, Handle: "films"}},
+		outboxVideos: map[uuid.UUID][]sqlcgen.ListChannelOutboxVideosRow{cid: full[:3]},
+	}
+	pg2, err := NewService(repo2, WithBaseURL("https://videos.example")).ChannelOutboxPage(ctx, "films", 1)
+	if err != nil {
+		t.Fatalf("partial page: %v", err)
+	}
+	if len(pg2.OrderedItems) != 3 || pg2.Next != "" {
+		t.Errorf("partial page items=%d next=%q, want 3 / no next", len(pg2.OrderedItems), pg2.Next)
+	}
+
+	if _, err := svc.ChannelOutboxPage(ctx, "nope", 1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown channel: err = %v, want ErrNotFound", err)
 	}
 }
 

@@ -576,9 +576,19 @@
 > public+published, else a `Delete` (unfederate, e.g. went private); `DeleteVideo` sends a `Delete` (object =
 > the video's AP URL) only if it had been public. Both reuse the shared `fanOutToFollowers` + delivery queue.
 > Tested: unit (Update sends Update{Video}; went-private sends Delete; DeleteVideo sends Delete of the URL;
-> non-public delete is a no-op). NEXT (unblocked): paged `orderedItems` for the collection endpoints, or
-> federated comments as `Note` on local videos. Still DESIGN-GATED: inbound remote video/comment receive +
-> outbound follow-remote-channel (remote-content storage/feed-surfacing/moderation product model).
+> non-public delete is a no-op).
+>
+> **Slice 5f SHIPPED** (paged outbox): the channel outbox is now a real paged AS collection. The base
+> `GET /video-channels/:h/outbox` returns an `OrderedCollection` with `totalItems` + a `first` page link;
+> `?page=N` returns an `OrderedCollectionPage` (`partOf` + `orderedItems` = the channel's public videos as
+> `Create{Video}` activities, newest first, `next` link while a page is full). Backed by a new lean sqlc
+> `ListChannelOutboxVideos` (LIMIT/OFFSET) + `ChannelOutboxPage`; the `videoObject` builder is shared with the
+> delivery activities. 20/page. Tested: federation unit (page shape/partOf/next on a full page, no-next on a
+> partial page, unknown-channel 404, `first` link on the base collection) + httpapi (base OrderedCollection
+> has `first`; page returns an OrderedCollectionPage with the items). Still DESIGN-GATED: inbound remote
+> video/comment receive + outbound follow-remote-channel (remote-content storage/feed-surfacing/moderation
+> product model). NEXT (unblocked): federated comments as `Note` on local videos, or a golden-fixture
+> contract test suite.
 
 ## P10.1 ActivityPub
 
@@ -587,7 +597,7 @@
 - [x] Implement WebFinger. (`GET /.well-known/webfinger?resource=acct:name@domain` → self link to the actor URL; own-domain-only, resolves account then channel — Slice 2b.)
 - [x] Implement ActivityPub actor endpoints. (Content-negotiated actor documents — `application/activity+json`, 406 otherwise — with `@context` (incl. security vocab), derived inbox/outbox/followers/following collection URLs, and the `publicKey` block. The collection endpoints themselves land in Slices 4-5 — Slice 2b.)
 - [x] Implement inbox endpoint. (Shared `POST /inbox` + per-actor `/accounts/:h/inbox` + `/video-channels/:h/inbox`; HTTP-signature-verified (401 on failure), body-bounded, deduped by activity id, dispatched by type. A remote `Follow` of a local channel is recorded (auto-accepted); other types accepted-and-ignored for now — Slice 4a. Sending the Accept back + inbound Create/Announce/Delete land in later slices.)
-- [~] Implement outbox endpoint. (Slice 5c — `GET /video-channels/:h/outbox` (+ /accounts/:h/outbox) serves a summary AS `OrderedCollection` with an accurate `totalItems` (channel = `CountPublicVideosByChannel`), content-negotiated + FEDERATION_ENABLED-gated. Also serves the followers/following collections. Paged `orderedItems` — the actual videos as Create/Announce — are the remaining refinement.)
+- [x] Implement outbox endpoint. (Slices 5c+5f — `GET /video-channels/:h/outbox` returns an AS `OrderedCollection` (`totalItems` = `CountPublicVideosByChannel`, `first` page link); `?page=N` returns an `OrderedCollectionPage` of the channel's public videos as `Create{Video}` activities (newest first, `next` while full, 20/page, via `ListChannelOutboxVideos`). `/accounts/:h/outbox` + the followers/following collections are served too (summaries). Content-negotiated + FEDERATION_ENABLED-gated + excluded from the REST drift guard.)
 - [x] Implement HTTP signatures. (`internal/httpsig` RSA-SHA256 cavage sign/verify over `(request-target) host date digest` with Digest + skew, unit-tested (Slice 3a). **Inbound verification WIRED** (Slice 4a): the inbox verifies every request via `httpsig.Verifier{ResolveKey: fedsvc.ResolveKey}` against the remote-actor key cache. **Outbound signing WIRED** (Slice 4b): `federation.deliverActivity` unlocks the local actor key (secretbox → rsa) and `httpsig.Sign`s each delivery — verified end-to-end by an httptest inbox in `deliver_test.go`. What remains for federation broadly is the *delivery queue* that schedules outbound sends (separate item below), not the signature mechanism itself.)
 - [x] Implement JSON-LD signature strategy or documented compatibility plan. (Documented compatibility plan — `.ralph/specs/federation.md` §7: Vidra authenticates server-to-server with **HTTP Signatures** (RSA-SHA256) and does NOT emit JSON-LD/LD-Signatures, matching Mastodon's default and PeerTube interop. Object integrity rides the signed Digest, not LD proofs.)
 - [ ] Implement follow remote instance/channel/account.
