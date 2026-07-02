@@ -1679,6 +1679,60 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
   /api/v1/comments/{id}:
+    patch:
+      operationId: updateComment
+      summary: Edit a comment
+      description: >-
+        Edits the caller's own comment body. Only the author may edit (moderators
+        delete, not edit): another user's comment is 403, an unknown id is 404, and
+        a blank or too-long body is 422. Bumps updated_at so `edited` becomes true.
+      tags: [comments]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCommentRequest"
+      responses:
+        "200":
+          description: The edited comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The comment belongs to another user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: deleteComment
       summary: Delete a comment
@@ -4558,7 +4612,7 @@ components:
             $ref: "#/components/schemas/Caption"
     Comment:
       type: object
-      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, created_at, updated_at]
+      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, created_at, updated_at, edited]
       properties:
         id:
           type: string
@@ -4588,6 +4642,9 @@ components:
         updated_at:
           type: string
           format: date-time
+        edited:
+          type: boolean
+          description: True once the comment has been edited (updated_at moved past created_at).
     CommentListResponse:
       type: object
       required: [comments, limit, offset]
@@ -4600,6 +4657,14 @@ components:
           type: integer
         offset:
           type: integer
+    UpdateCommentRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          maxLength: 2000
+          description: The new comment text.
     MutedAccount:
       type: object
       description: An account the caller has muted, with its display identity.

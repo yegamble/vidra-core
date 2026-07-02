@@ -33,6 +33,7 @@ type Repository interface {
 	ListCommentsByVideo(ctx context.Context, arg sqlcgen.ListCommentsByVideoParams) ([]sqlcgen.ListCommentsByVideoRow, error)
 	ListAdminComments(ctx context.Context, arg sqlcgen.ListAdminCommentsParams) ([]sqlcgen.ListAdminCommentsRow, error)
 	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
+	UpdateComment(ctx context.Context, arg sqlcgen.UpdateCommentParams) (sqlcgen.Comment, error)
 	DeleteComment(ctx context.Context, id uuid.UUID) error
 }
 
@@ -115,6 +116,20 @@ func (s *Service) Delete(ctx context.Context, commentID, userID uuid.UUID, isMod
 		return ErrForbidden
 	}
 	return s.repo.DeleteComment(ctx, commentID)
+}
+
+// Edit changes a comment's body. Only the author may edit their own comment
+// (moderators delete, not edit). An unknown id is ErrNotFound; another user's
+// comment is ErrForbidden. The caller trims/validates the body first.
+func (s *Service) Edit(ctx context.Context, commentID, userID uuid.UUID, body string) (sqlcgen.Comment, error) {
+	c, err := s.repo.GetComment(ctx, commentID)
+	if err != nil {
+		return sqlcgen.Comment{}, ErrNotFound
+	}
+	if c.UserID != userID {
+		return sqlcgen.Comment{}, ErrForbidden
+	}
+	return s.repo.UpdateComment(ctx, sqlcgen.UpdateCommentParams{ID: commentID, Body: body})
 }
 
 // AdminComment is a comment as seen in the admin/moderator comments overview:

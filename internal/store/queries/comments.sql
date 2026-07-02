@@ -27,6 +27,14 @@ SELECT id, video_id, user_id, body, created_at, updated_at, parent_id
 FROM comments
 WHERE id = $1;
 
+-- name: UpdateComment :one
+-- Edit a comment's body (author-only; enforced in the service). Bumps updated_at
+-- so clients can show an "edited" marker (updated_at > created_at).
+UPDATE comments
+SET body = sqlc.arg('body'), updated_at = now()
+WHERE id = sqlc.arg('id')
+RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id;
+
 -- name: DeleteComment :exec
 DELETE FROM comments
 WHERE id = $1;

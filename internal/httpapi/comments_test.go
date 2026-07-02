@@ -96,6 +96,17 @@ func (f *commentFakeRepo) GetComment(_ context.Context, id uuid.UUID) (sqlcgen.C
 	return c, nil
 }
 
+func (f *commentFakeRepo) UpdateComment(_ context.Context, a sqlcgen.UpdateCommentParams) (sqlcgen.Comment, error) {
+	c, ok := f.comments[a.ID]
+	if !ok {
+		return sqlcgen.Comment{}, errors.New("not found")
+	}
+	c.Body = a.Body
+	c.UpdatedAt = time.Now()
+	f.comments[a.ID] = c
+	return c, nil
+}
+
 func (f *commentFakeRepo) DeleteComment(_ context.Context, id uuid.UUID) error {
 	delete(f.comments, id)
 	return nil

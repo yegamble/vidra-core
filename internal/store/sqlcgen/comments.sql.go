@@ -221,3 +221,32 @@ func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVid
 	}
 	return items, nil
 }
+
+const updateComment = `-- name: UpdateComment :one
+UPDATE comments
+SET body = $1, updated_at = now()
+WHERE id = $2
+RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id
+`
+
+type UpdateCommentParams struct {
+	Body string    `json:"body"`
+	ID   uuid.UUID `json:"id"`
+}
+
+// Edit a comment's body (author-only; enforced in the service). Bumps updated_at
+// so clients can show an "edited" marker (updated_at > created_at).
+func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, updateComment, arg.Body, arg.ID)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.VideoID,
+		&i.UserID,
+		&i.Body,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+	)
+	return i, err
+}

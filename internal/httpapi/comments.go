@@ -30,6 +30,9 @@ type commentView struct {
 	AuthorDisplayName string    `json:"author_display_name"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	// Edited is true once the body has been edited (updated_at moved past
+	// created_at), so the client can show an "(edited)" marker.
+	Edited bool `json:"edited"`
 }
 
 func newCommentView(c sqlcgen.Comment, authorUsername, authorDisplayName string) commentView {
@@ -43,6 +46,7 @@ func newCommentView(c sqlcgen.Comment, authorUsername, authorDisplayName string)
 		AuthorDisplayName: authorDisplayName,
 		CreatedAt:         c.CreatedAt,
 		UpdatedAt:         c.UpdatedAt,
+		Edited:            c.UpdatedAt.After(c.CreatedAt),
 	}
 }
 
@@ -213,4 +217,60 @@ func (s *Server) handleDeleteComment(c echo.Context) error {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// updateCommentRequest is the PATCH /comments/{id} body.
+type updateCommentRequest struct {
+	Body string `json:"body"`
+}
+
+func (r updateCommentRequest) Validate() []FieldError {
+	switch body := strings.TrimSpace(r.Body); {
+	case body == "":
+		return []FieldError{{Field: "body", Message: "is required"}}
+	case len(body) > maxCommentLen:
+		return []FieldError{{Field: "body", Message: "must be at most 2000 characters"}}
+	}
+	return nil
+}
+
+// handleUpdateComment edits the caller's own comment. Behind requireAuth. Only
+// the author may edit (moderators delete, not edit): another user's comment is
+// 403, an unknown id is 404, a blank/too-long body is 422.
+func (s *Server) handleUpdateComment(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+	}
+	var in updateCommentRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	updated, err := s.commentsvc.Edit(ctx, id, userID, strings.TrimSpace(in.Body))
+	if err != nil {
+		switch {
+		case errors.Is(err, comment.ErrNotFound):
+			return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		case errors.Is(err, comment.ErrForbidden):
+			return echo.NewHTTPError(http.StatusForbidden, "not your comment")
+		}
+		return err
+	}
+	// Re-flag the edited body against the moderation watched-words list
+	// (best-effort; an edit can newly introduce a flagged term).
+	if s.watchwordsvc != nil {
+		if _, werr := s.watchwordsvc.FlagComment(ctx, updated.ID, updated.Body); werr != nil {
+			s.logger.WarnContext(ctx, "watched-word flagging failed", "error", werr, "comment_id", updated.ID)
+		}
+	}
+	author, err := s.authsvc.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, newCommentView(updated, author.Username, author.DisplayName))
 }

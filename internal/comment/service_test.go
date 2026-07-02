@@ -73,6 +73,17 @@ func (f *fakeRepo) GetComment(_ context.Context, id uuid.UUID) (sqlcgen.Comment,
 	return c, nil
 }
 
+func (f *fakeRepo) UpdateComment(_ context.Context, a sqlcgen.UpdateCommentParams) (sqlcgen.Comment, error) {
+	c, ok := f.comments[a.ID]
+	if !ok {
+		return sqlcgen.Comment{}, errors.New("not found")
+	}
+	c.Body = a.Body
+	c.UpdatedAt = time.Now()
+	f.comments[a.ID] = c
+	return c, nil
+}
+
 func (f *fakeRepo) DeleteComment(_ context.Context, id uuid.UUID) error {
 	delete(f.comments, id)
 	return nil
@@ -191,5 +202,38 @@ func TestModeratorCanDeleteAnyComment(t *testing.T) {
 	// An unknown id is still ErrNotFound, even for a moderator.
 	if err := svc.Delete(context.Background(), uuid.New(), uuid.New(), true); err != ErrNotFound {
 		t.Errorf("moderator delete unknown = %v, want ErrNotFound", err)
+	}
+}
+
+func TestEditComment(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+	author, other := uuid.New(), uuid.New()
+
+	c, err := svc.Create(ctx, uuid.New(), author, "original", nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// The author edits their own comment.
+	edited, err := svc.Edit(ctx, c.ID, author, "revised")
+	if err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+	if edited.Body != "revised" {
+		t.Errorf("body = %q, want revised", edited.Body)
+	}
+	if !edited.UpdatedAt.After(edited.CreatedAt) {
+		t.Errorf("updated_at %v should be after created_at %v", edited.UpdatedAt, edited.CreatedAt)
+	}
+
+	// Another user cannot edit it (moderators delete, not edit — no isModerator path).
+	if _, err := svc.Edit(ctx, c.ID, other, "hacked"); !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-author edit = %v, want ErrForbidden", err)
+	}
+	// An unknown comment is ErrNotFound.
+	if _, err := svc.Edit(ctx, uuid.New(), author, "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown edit = %v, want ErrNotFound", err)
 	}
 }
