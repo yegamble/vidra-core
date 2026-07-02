@@ -13,6 +13,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countPublicVideos = `-- name: CountPublicVideos :one
+SELECT count(*) FROM videos WHERE privacy = 'public' AND state = 'published'
+`
+
+// Public, published videos — the "local posts" count NodeInfo advertises. Only
+// these ever federate, so this is the right public-facing total.
+func (q *Queries) CountPublicVideos(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countPublicVideos)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createVideo = `-- name: CreateVideo :one
 INSERT INTO videos (channel_id, title, description, privacy, category, language, license)
 VALUES ($1, $2, $3, $4, $5, $6, $7)

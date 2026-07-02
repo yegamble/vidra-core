@@ -13,6 +13,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countComments = `-- name: CountComments :one
+SELECT count(*) FROM comments
+`
+
+// Total comments — the "local comments" count NodeInfo advertises.
+func (q *Queries) CountComments(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countComments)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createComment = `-- name: CreateComment :one
 INSERT INTO comments (video_id, user_id, body, parent_id)
 VALUES ($1, $2, $3, $4)

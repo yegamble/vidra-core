@@ -31,6 +31,10 @@ WHERE id = $1;
 DELETE FROM comments
 WHERE id = $1;
 
+-- name: CountComments :one
+-- Total comments — the "local comments" count NodeInfo advertises.
+SELECT count(*) FROM comments;
+
 -- name: ListAdminComments :many
 -- The admin/moderator comments overview: ALL comments newest first, with the
 -- author's identity and the video they're on. An optional case-insensitive body

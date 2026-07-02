@@ -3,6 +3,11 @@ INSERT INTO videos (channel_id, title, description, privacy, category, language,
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license;
 
+-- name: CountPublicVideos :one
+-- Public, published videos — the "local posts" count NodeInfo advertises. Only
+-- these ever federate, so this is the right public-facing total.
+SELECT count(*) FROM videos WHERE privacy = 'public' AND state = 'published';
+
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license,

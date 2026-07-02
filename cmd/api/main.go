@@ -22,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/media"
@@ -206,6 +207,12 @@ func run() error {
 
 	livesvc := live.NewService(db.Queries())
 	opts = append(opts, httpapi.WithLiveService(livesvc))
+
+	// Federation (ActivityPub) — the service is always constructed, but its routes
+	// mount only when FEDERATION_ENABLED (gated in httpapi.routes). See
+	// .ralph/specs/federation.md.
+	fedsvc := federation.NewService(db.Queries())
+	opts = append(opts, httpapi.WithFederationService(fedsvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

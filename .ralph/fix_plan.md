@@ -439,6 +439,20 @@
 > at-rest** approach (envelope encryption via a `FEDERATION_KEY_KEK`, resolving
 > security.md:31). It orders the 21 items below into 7 buildable slices. Build in that order;
 > the first (keypair-free) slice is config `PUBLIC_BASE_URL`/`FEDERATION_ENABLED` + NodeInfo.
+>
+> **Slice 1 SHIPPED** (keypair-free discovery): config `FEDERATION_ENABLED` (default false,
+> master gate) + `PUBLIC_BASE_URL` (validated http(s) origin, no path, https in prod; trailing
+> slash trimmed) in `internal/config`, `.env.example`, `docker-compose.yml`. `internal/federation`
+> service (NodeInfo usage counts) over new `CountPublicVideos`/`CountComments` sqlc queries
+> (`CountUsers` reused). Root routes `GET /.well-known/nodeinfo` + `GET /nodeinfo/2.1`
+> (`internal/httpapi/federation.go`) mounted ONLY when `FEDERATION_ENABLED && fedsvc != nil` —
+> so they 404 by default and stay OUT of the REST OpenAPI drift guard (exclusion-by-omission,
+> like the dev endpoint; `TestOpenAPIContract` green). NodeInfo 2.1 advertises software=vidra,
+> protocols=[activitypub], openRegistrations=RegistrationEnabled, usage={users, localPosts=public
+> published videos, localComments}. Tested: `internal/federation` (usage mapping + error
+> propagation) + `internal/httpapi` (discovery link, 2.1 doc shape + profile content type,
+> absent-when-disabled 404). NEXT: Slice 2 — actor model + WebFinger + actor endpoints (needs the
+> key-columns migration + `FEDERATION_KEY_KEK` envelope encryption per spec §3).
 
 ## P10.1 ActivityPub
 

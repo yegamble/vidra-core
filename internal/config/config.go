@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -57,6 +58,17 @@ type Config struct {
 
 	// InstanceName is the human-facing name of this Vidra instance.
 	InstanceName string
+
+	// PublicBaseURL is the canonical public origin of this instance (e.g.
+	// https://videos.example), used to build federation actor/object ids and
+	// URLs. Required when FederationEnabled; must carry no path or trailing
+	// slash (a trailing slash is trimmed at load). See .ralph/specs/federation.md.
+	PublicBaseURL string
+
+	// FederationEnabled is the master switch for ActivityPub federation. When
+	// false (default) all federation routes are unmounted (they 404) — zero cost
+	// when off. See .ralph/specs/federation.md.
+	FederationEnabled bool
 
 	// LiveRTMPURL is the base RTMP ingest URL returned to a streamer on live-stream
 	// create (the streamer appends their stream key in OBS). Empty until an RTMP
@@ -152,6 +164,8 @@ func Load() (*Config, error) {
 		OTelServiceName:             getEnv("OTEL_SERVICE_NAME", "vidra-core"),
 		HTTPHost:                    getEnv("HTTP_HOST", "0.0.0.0"),
 		InstanceName:                getEnv("INSTANCE_NAME", "Vidra (dev)"),
+		PublicBaseURL:               strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
+		FederationEnabled:           getEnvBool("FEDERATION_ENABLED", false),
 		LiveRTMPURL:                 getEnv("LIVE_RTMP_URL", ""),
 		LiveIngestSecret:            getEnv("LIVE_INGEST_SECRET", ""),
 		InstanceDescription:         getEnv("INSTANCE_DESCRIPTION", ""),
@@ -288,6 +302,18 @@ func (c *Config) validate() error {
 			if o == "*" {
 				return fmt.Errorf("config: wildcard CORS origin is not allowed in production")
 			}
+		}
+	}
+	if c.FederationEnabled {
+		u, err := url.Parse(c.PublicBaseURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("config: PUBLIC_BASE_URL must be a valid http(s) origin when FEDERATION_ENABLED=true")
+		}
+		if u.Path != "" && u.Path != "/" {
+			return fmt.Errorf("config: PUBLIC_BASE_URL must not include a path (got %q)", c.PublicBaseURL)
+		}
+		if c.Environment == "production" && u.Scheme != "https" {
+			return fmt.Errorf("config: PUBLIC_BASE_URL must be https in production")
 		}
 	}
 	return nil

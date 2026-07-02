@@ -21,6 +21,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -65,6 +66,7 @@ type Server struct {
 	auditLog      *audit.Service
 	messagingsvc  *messaging.Service
 	livesvc       *live.Service
+	fedsvc        *federation.Service
 	media         storage.Backend
 	// importClient fetches remote videos for URL import. Nil in production, where
 	// the handler builds an SSRF-safe urlsafety.NewClient per request; tests inject
@@ -190,6 +192,14 @@ func WithMessagingService(svc *messaging.Service) Option {
 // stream-key regeneration). When unset, the routes are not registered.
 func WithLiveService(svc *live.Service) Option {
 	return func(s *Server) { s.livesvc = svc }
+}
+
+// WithFederationService wires the ActivityPub federation service. The federation
+// routes (currently NodeInfo discovery) are mounted only when this is set AND
+// cfg.FederationEnabled is true — so they are absent by default and never appear
+// in the REST OpenAPI contract. See .ralph/specs/federation.md.
+func WithFederationService(svc *federation.Service) Option {
+	return func(s *Server) { s.fedsvc = svc }
 }
 
 // WithAuditLog wires the durable audit-log service. When set, s.audit persists
@@ -341,6 +351,15 @@ func (s *Server) routes() {
 	s.echo.GET("/healthz", s.handleLive)
 	s.echo.GET("/readyz", s.handleReady)
 	s.echo.GET("/version", s.handleVersion)
+
+	// Fediverse discovery (NodeInfo) lives at the root, outside /api/v1, and is a
+	// federation contract — not part of the REST OpenAPI. Mounted only when
+	// federation is enabled and wired, so the REST drift guard never sees it and
+	// it 404s by default. See .ralph/specs/federation.md §4-5.
+	if s.cfg.FederationEnabled && s.fedsvc != nil {
+		s.echo.GET("/.well-known/nodeinfo", s.handleNodeInfoDiscovery)
+		s.echo.GET("/nodeinfo/2.1", s.handleNodeInfo21)
+	}
 
 	api := s.echo.Group("/api/v1")
 	// Rate limiting guards the API surface only; liveness/readiness/version are
