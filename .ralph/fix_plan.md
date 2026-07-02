@@ -511,10 +511,20 @@
 > `InsertRemoteFollow`/`CountRemoteFollowers`. Gated on FEDERATION_ENABLED, excluded from the REST drift
 > guard. Tested: unit (`HandleInbox` follow-records/actor-mismatch/dedup/ignore/malformed) + httpapi handler
 > (signed Follow → 202 + recorded; tampered signature → 401) + integration (Follow persists + replay dedups
-> against real Postgres). **Accept is auto-recorded locally; SENDING the Accept back is Slice 4b.** NEXT:
-> Slice 4b/5 — signed outbound delivery: unlock the local actor key (secretbox → rsa) + `httpsig.Sign` an
-> `Accept`/activity and POST it to the remote inbox (SSRF-guarded), then the `federation_deliveries`
-> retry/dead-letter queue + outbox + `Create`/`Announce` on publish.
+> against real Postgres). **Accept is auto-recorded locally; SENDING the Accept back is Slice 4b.**
+>
+> **Slice 4b SHIPPED** (signed outbound-delivery primitive): `internal/federation/deliver.go` — pure Go,
+> no migration/queries. `unlockPrivateKey` opens the secretbox envelope when a stored actor key is sealed
+> (else treats it as raw dev PEM) and parses PKCS#8 → `*rsa.PrivateKey` (errors if sealed with no KEK, or
+> non-RSA). `channelActorSigner` mints-if-needed + unlocks a channel's key into an `httpsig.Signer`.
+> `deliverActivity` SSRF-validates the inbox URL, `httpsig.Sign`s the payload (Date/Digest/Signature), and
+> POSTs it (Content-Type activity+json) via the guarded client. `SendAcceptFollow` resolves the follower's
+> inbox (remote-actor cache), builds the `Accept{object: Follow}`, and delivers it. Tested: unit — an
+> httptest inbox that **verifies the signed Accept against the channel's minted public key** (correct
+> keyId + Accept/Follow shape) + `unlockPrivateKey` raw/sealed round-trip + sealed-without-cipher reject.
+> Not yet wired into the request path (no inline outbound call in the inbox response). NEXT: Slice 5 — the
+> `federation_deliveries` table + a retry/dead-letter worker that CALLS `SendAcceptFollow`/deliver (so an
+> inbound Follow enqueues an Accept), then the outbox + `Create`/`Announce` on publish.
 
 ## P10.1 ActivityPub
 
@@ -524,7 +534,7 @@
 - [x] Implement ActivityPub actor endpoints. (Content-negotiated actor documents — `application/activity+json`, 406 otherwise — with `@context` (incl. security vocab), derived inbox/outbox/followers/following collection URLs, and the `publicKey` block. The collection endpoints themselves land in Slices 4-5 — Slice 2b.)
 - [x] Implement inbox endpoint. (Shared `POST /inbox` + per-actor `/accounts/:h/inbox` + `/video-channels/:h/inbox`; HTTP-signature-verified (401 on failure), body-bounded, deduped by activity id, dispatched by type. A remote `Follow` of a local channel is recorded (auto-accepted); other types accepted-and-ignored for now — Slice 4a. Sending the Accept back + inbound Create/Announce/Delete land in later slices.)
 - [ ] Implement outbox endpoint.
-- [~] Implement HTTP signatures. (Primitive DONE in Slice 3a — `internal/httpsig` RSA-SHA256 cavage sign/verify over `(request-target) host date digest` with Digest + skew, unit-tested. **Inbound verification WIRED** in Slice 4a: the inbox verifies every request via `httpsig.Verifier{ResolveKey: fedsvc.ResolveKey}` (remote-actor cache). Remaining: **outbound signing** — wired with the delivery slice (unlock the local actor key via secretbox → sign deliveries).)
+- [x] Implement HTTP signatures. (`internal/httpsig` RSA-SHA256 cavage sign/verify over `(request-target) host date digest` with Digest + skew, unit-tested (Slice 3a). **Inbound verification WIRED** (Slice 4a): the inbox verifies every request via `httpsig.Verifier{ResolveKey: fedsvc.ResolveKey}` against the remote-actor key cache. **Outbound signing WIRED** (Slice 4b): `federation.deliverActivity` unlocks the local actor key (secretbox → rsa) and `httpsig.Sign`s each delivery — verified end-to-end by an httptest inbox in `deliver_test.go`. What remains for federation broadly is the *delivery queue* that schedules outbound sends (separate item below), not the signature mechanism itself.)
 - [x] Implement JSON-LD signature strategy or documented compatibility plan. (Documented compatibility plan — `.ralph/specs/federation.md` §7: Vidra authenticates server-to-server with **HTTP Signatures** (RSA-SHA256) and does NOT emit JSON-LD/LD-Signatures, matching Mastodon's default and PeerTube interop. Object integrity rides the signed Digest, not LD proofs.)
 - [ ] Implement follow remote instance/channel/account.
 - [ ] Implement receive remote video activity.
