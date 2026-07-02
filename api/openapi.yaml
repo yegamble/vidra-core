@@ -1346,10 +1346,11 @@ paths:
         server refuses to connect to non-public addresses (loopback, private,
         link-local, CGNAT, cloud-metadata) — enforced at connection time, so DNS
         rebinding and internal redirects are blocked too. The download is bounded
-        by UPLOAD_MAX_SIZE (413 if exceeded) and the URL's file extension must be
-        an accepted video container (415). Ownership is checked before any fetch;
-        a non-owner or unknown id is 404. Re-importing replaces the previous
-        original.
+        by UPLOAD_MAX_SIZE (413 if exceeded). The container type must be an accepted
+        video type, taken from the URL's file extension or — when the path has none
+        (e.g. /download?id=…) — from the response Content-Type; otherwise 415.
+        Ownership is checked before any fetch; a non-owner or unknown id is 404.
+        Re-importing replaces the previous original.
       tags: [videos]
       security:
         - bearerAuth: []

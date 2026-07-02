@@ -107,7 +107,7 @@ curl -sX DELETE localhost:8080/api/v1/videos/<id> -H 'authorization: Bearer <tok
 curl -sX POST localhost:8080/api/v1/videos/<id>/file -H 'authorization: Bearer <token>' \
   -F 'file=@clip.mp4'                                                                 # upload original (owner-only) -> published (no prober yet)
 curl -sX POST localhost:8080/api/v1/videos/<id>/import -H 'authorization: Bearer <token>' \
-  -H 'content-type: application/json' -d '{"url":"https://example.com/clip.mp4"}'     # import original from a URL (owner-only, SSRF-guarded via internal/urlsafety); non-public/non-http -> 422, too big -> 413, bad ext -> 415
+  -H 'content-type: application/json' -d '{"url":"https://example.com/clip.mp4"}'     # import original from a URL (owner-only, SSRF-guarded via internal/urlsafety); non-public/non-http -> 422, too big -> 413, bad type -> 415 (type from the path ext, else the response Content-Type)
 curl -s localhost:8080/api/v1/videos/<id>/original -o out.mp4                         # stream original (Range-capable); private => owner only
 curl -s localhost:8080/api/v1/videos/<id>/thumbnail -o poster.jpg                     # poster image (generated or uploaded)
 curl -sX POST localhost:8080/api/v1/videos/<id>/thumbnail -H 'authorization: Bearer <token>' \

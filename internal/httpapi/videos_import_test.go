@@ -29,6 +29,9 @@ func importMediaServer(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte("tiny-video-bytes"))
 		case "/notavideo.txt":
 			_, _ = w.Write([]byte("not a video"))
+		case "/download": // no file extension; type is only in the Content-Type
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("extensionless-video-bytes"))
 		case "/big.mp4":
 			w.Header().Set("Content-Type", "video/mp4")
 			_, _ = w.Write(make([]byte, 4096))
@@ -67,6 +70,30 @@ func TestImportVideoFile(t *testing.T) {
 	// The imported original is now publicly reachable.
 	if g := getVideo(srv, id, ""); g.Code != http.StatusOK {
 		t.Errorf("public detail after import = %d, want 200", g.Code)
+	}
+}
+
+// TestImportVideoContentTypeFallback: a URL whose path has no file extension is
+// accepted when the response Content-Type is a video container (real CDN URLs
+// like /download?id=…). This is also what lets a backed e2e import the backend's
+// own extension-less /original endpoint.
+func TestImportVideoContentTypeFallback(t *testing.T) {
+	srv := videoServer(t)
+	srv.importClient = &http.Client{}
+	media := importMediaServer(t)
+
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"CDN import","privacy":"public"}`)
+
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
+		`{"url":"`+loopbackAsLocalhost(media.URL)+`/download"}`, tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("import extensionless URL = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp uploadVideoFileResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Video.State != "published" {
+		t.Errorf("state = %q, want published", resp.Video.State)
 	}
 }
 

@@ -85,6 +85,12 @@ services:
       # addresses so backed e2e can import from a loopback/compose-network origin (a
       # public origin isn't reachable in CI). NEVER enable in production. Default off.
       HTTP_IMPORT_ALLOW_PRIVATE_URLS: ${HTTP_IMPORT_ALLOW_PRIVATE_URLS:-false}
+    # Make the host reachable as host.docker.internal on Linux too (Docker Desktop
+    # provides it already). Lets a backed e2e point URL import at a media origin
+    # served on the host (paired with HTTP_IMPORT_ALLOW_PRIVATE_URLS=true). No
+    # effect on normal operation.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${HTTP_PORT:-8080}:8080"
 

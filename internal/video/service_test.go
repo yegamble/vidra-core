@@ -754,6 +754,59 @@ func TestAttachOriginalStoresBytesAndFlipsToProcessing(t *testing.T) {
 	}
 }
 
+// TestAttachOriginalContentTypeFallback: a filename with no usable extension
+// (a URL import from an extension-less path) is accepted when the Content-Type is
+// a known video container, and the stored key gets the derived extension.
+func TestAttachOriginalContentTypeFallback(t *testing.T) {
+	owner := uuid.New()
+	blobs, _ := storage.NewLocal(t.TempDir())
+	svc := NewService(newFakeRepo(owner), blobs)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "private"})
+
+	// No extension on the name, but Content-Type video/mp4 (with a charset param).
+	_, file, err := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{
+		Filename: "original", ContentType: "video/mp4; charset=binary", Reader: strings.NewReader("bytes"),
+	})
+	if err != nil {
+		t.Fatalf("AttachOriginal with content-type fallback: %v", err)
+	}
+	if want := "web-videos/" + v.ID.String() + ".mp4"; file.StorageKey != want {
+		t.Errorf("key = %q, want %q (extension derived from content type)", file.StorageKey, want)
+	}
+
+	// An unrecognised content type on an extension-less name is still rejected.
+	v2, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t2", Privacy: "private"})
+	if _, _, err := svc.AttachOriginal(ctx, owner, v2.ID, UploadInput{
+		Filename: "download", ContentType: "application/octet-stream", Reader: strings.NewReader("x"),
+	}); !errors.Is(err, ErrUnsupportedMedia) {
+		t.Errorf("octet-stream err = %v, want ErrUnsupportedMedia", err)
+	}
+}
+
+func TestExtForContentType(t *testing.T) {
+	cases := map[string]string{
+		"video/mp4":                ".mp4",
+		"VIDEO/WEBM":               ".webm",
+		"video/quicktime; x=y":     ".mov",
+		"  video/x-matroska  ":     ".mkv",
+		"application/octet-stream": "",
+		"":                         "",
+	}
+	for ct, want := range cases {
+		got, ok := extForContentType(ct)
+		if want == "" {
+			if ok {
+				t.Errorf("extForContentType(%q) = (%q, true), want not ok", ct, got)
+			}
+			continue
+		}
+		if !ok || got != want {
+			t.Errorf("extForContentType(%q) = (%q, %v), want (%q, true)", ct, got, ok, want)
+		}
+	}
+}
+
 func TestAttachOriginalRejectsNonOwnerAndUnknown(t *testing.T) {
 	owner := uuid.New()
 	blobs, _ := storage.NewLocal(t.TempDir())

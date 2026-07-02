@@ -219,6 +219,13 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	}
 	ext, ok := acceptedExt(in.Filename)
 	if !ok {
+		// Fall back to the declared content type — e.g. a URL import from a path
+		// with no file extension (`/download?id=…`) served as `Content-Type:
+		// video/mp4`. The multipart upload path always has a real filename, so
+		// this only matters for import.
+		ext, ok = extForContentType(in.ContentType)
+	}
+	if !ok {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrUnsupportedMedia
 	}
 
@@ -466,6 +473,37 @@ func acceptedExt(filename string) (string, bool) {
 		return ext, true
 	}
 	return "", false
+}
+
+// videoContentTypeExts maps common video-container MIME types to a canonical
+// extension (always one that acceptedVideoExts allows). Used as the fallback type
+// gate for URL imports whose path carries no usable extension.
+var videoContentTypeExts = map[string]string{
+	"video/mp4":        ".mp4",
+	"video/x-m4v":      ".m4v",
+	"video/quicktime":  ".mov",
+	"video/webm":       ".webm",
+	"video/x-matroska": ".mkv",
+	"video/x-msvideo":  ".avi",
+	"video/ogg":        ".ogv",
+	"application/ogg":  ".ogv",
+	"video/mpeg":       ".mpeg",
+	"video/mp2t":       ".ts",
+	"video/x-flv":      ".flv",
+	"video/x-ms-wmv":   ".wmv",
+	"video/3gpp":       ".3gp",
+}
+
+// extForContentType returns a canonical extension for a video-container content
+// type (media type only; any ";charset=…" parameters and case are ignored), and
+// false when the type is not a recognised video container.
+func extForContentType(contentType string) (string, bool) {
+	mediaType := strings.ToLower(strings.TrimSpace(contentType))
+	if i := strings.IndexByte(mediaType, ';'); i >= 0 {
+		mediaType = strings.TrimSpace(mediaType[:i])
+	}
+	ext, ok := videoContentTypeExts[mediaType]
+	return ext, ok
 }
 
 // originalKey builds the storage key for the video file served for web playback.
