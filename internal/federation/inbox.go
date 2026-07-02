@@ -55,10 +55,45 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 	switch act.Type {
 	case "Follow":
 		return s.handleFollow(ctx, act, signerActorURL)
+	case "Undo":
+		return s.handleUndo(ctx, act, signerActorURL)
 	default:
-		// Undo / Create / Announce / Delete land in later slices; accept & ignore.
+		// Create / Announce / Delete land in later slices; accept & ignore.
 		return nil
 	}
+}
+
+// handleUndo reverses a previously-federated activity. Only Undo{Follow} (a remote
+// actor un-following a local channel) is handled today; other Undo objects are
+// accepted and ignored.
+func (s *Service) handleUndo(ctx context.Context, act inboxActivity, signerActorURL string) error {
+	var inner struct {
+		Type   string          `json:"type"`
+		Actor  string          `json:"actor"`
+		Object json.RawMessage `json:"object"`
+	}
+	if err := json.Unmarshal(act.Object, &inner); err != nil || inner.Type != "Follow" {
+		return nil // not an Undo{Follow} → ignore
+	}
+	// The undoer must be the request signer and (if named) the Follow's actor.
+	if act.Actor != signerActorURL || (inner.Actor != "" && inner.Actor != signerActorURL) {
+		return ErrActorMismatch
+	}
+	handle, ok := s.localChannelHandle(objectID(inner.Object))
+	if !ok {
+		return nil // not one of our channels → nothing to undo
+	}
+	ch, err := s.repo.GetChannelByHandle(ctx, handle)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	return s.repo.DeleteRemoteFollow(ctx, sqlcgen.DeleteRemoteFollowParams{
+		ChannelID:      ch.ID,
+		RemoteActorUrl: signerActorURL,
+	})
 }
 
 // handleFollow records a remote actor following one of our local channels.

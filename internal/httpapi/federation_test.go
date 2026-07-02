@@ -109,6 +109,10 @@ func (f fakeFedRepo) InsertRemoteFollow(_ context.Context, arg sqlcgen.InsertRem
 	f.remoteFollows[arg.RemoteActorUrl] = arg
 	return nil
 }
+func (f fakeFedRepo) DeleteRemoteFollow(_ context.Context, arg sqlcgen.DeleteRemoteFollowParams) error {
+	delete(f.remoteFollows, arg.RemoteActorUrl)
+	return nil
+}
 
 func (fakeFedRepo) GetVideoByID(context.Context, uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	return sqlcgen.GetVideoByIDRow{}, pgx.ErrNoRows

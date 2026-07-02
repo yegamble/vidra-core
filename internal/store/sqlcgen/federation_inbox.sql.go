@@ -22,6 +22,21 @@ func (q *Queries) CountRemoteFollowers(ctx context.Context, channelID uuid.UUID)
 	return count, err
 }
 
+const deleteRemoteFollow = `-- name: DeleteRemoteFollow :exec
+DELETE FROM remote_follows WHERE channel_id = $1 AND remote_actor_url = $2
+`
+
+type DeleteRemoteFollowParams struct {
+	ChannelID      uuid.UUID `json:"channel_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+}
+
+// A remote actor un-following a local channel (inbound Undo{Follow}). Idempotent.
+func (q *Queries) DeleteRemoteFollow(ctx context.Context, arg DeleteRemoteFollowParams) error {
+	_, err := q.db.Exec(ctx, deleteRemoteFollow, arg.ChannelID, arg.RemoteActorUrl)
+	return err
+}
+
 const insertRemoteFollow = `-- name: InsertRemoteFollow :exec
 INSERT INTO remote_follows (channel_id, remote_actor_url, state, follow_activity_url)
 VALUES ($1, $2, 'accepted', $3)

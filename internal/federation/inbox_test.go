@@ -60,6 +60,49 @@ func TestHandleInboxEnqueuesAccept(t *testing.T) {
 	}
 }
 
+func TestHandleInboxUndoFollowRemoves(t *testing.T) {
+	repo := newInboxRepo()
+	// Seed an existing remote follow (as if a prior Follow was recorded).
+	cid := repo.channels["films"].ID
+	repo.remoteFollows[cid.String()+"|"+remoteBob] = sqlcgen.InsertRemoteFollowParams{ChannelID: cid, RemoteActorUrl: remoteBob}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+
+	undo := `{"id":"https://remote.example/act/undo/1","type":"Undo","actor":"` + remoteBob +
+		`","object":{"id":"` + followID + `","type":"Follow","actor":"` + remoteBob + `","object":"` + filmsActor + `"}}`
+	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(undo)); err != nil {
+		t.Fatalf("HandleInbox Undo: %v", err)
+	}
+	if _, ok := repo.remoteFollows[cid.String()+"|"+remoteBob]; ok {
+		t.Error("remote follow was not removed by Undo{Follow}")
+	}
+}
+
+func TestHandleInboxUndoNonFollowIgnored(t *testing.T) {
+	repo := newInboxRepo()
+	cid := repo.channels["films"].ID
+	repo.remoteFollows[cid.String()+"|"+remoteBob] = sqlcgen.InsertRemoteFollowParams{ChannelID: cid, RemoteActorUrl: remoteBob}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	// Undo of a Like → accepted and ignored; the follow stays.
+	undo := `{"id":"https://remote.example/act/undo/2","type":"Undo","actor":"` + remoteBob +
+		`","object":{"type":"Like","object":"x"}}`
+	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(undo)); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	if _, ok := repo.remoteFollows[cid.String()+"|"+remoteBob]; !ok {
+		t.Error("Undo{Like} should not remove a follow")
+	}
+}
+
+func TestHandleInboxUndoActorMismatch(t *testing.T) {
+	svc := NewService(newInboxRepo(), WithBaseURL("https://videos.example"))
+	// Signer differs from the Undo's actor.
+	undo := `{"id":"https://remote.example/act/undo/3","type":"Undo","actor":"` + remoteBob +
+		`","object":{"type":"Follow","actor":"` + remoteBob + `","object":"` + filmsActor + `"}}`
+	if err := svc.HandleInbox(context.Background(), "https://remote.example/accounts/eve", []byte(undo)); !errors.Is(err, ErrActorMismatch) {
+		t.Errorf("err = %v, want ErrActorMismatch", err)
+	}
+}
+
 func TestHandleInboxRejectsActorMismatch(t *testing.T) {
 	svc := NewService(newInboxRepo(), WithBaseURL("https://videos.example"))
 	// Signer differs from the Follow's actor.

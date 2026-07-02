@@ -554,8 +554,22 @@
 > `CountPublicVideosByChannel` (new sqlc); following = 0; accounts are empty (attribution actors). Tested:
 > federation unit (counts + not-found for unknown handle/kind) + httpapi (OrderedCollection shape/totalItems,
 > 406/404, absent-when-disabled). Paged `orderedItems` (the actual videos/followers) are a later refinement.
-> NEXT: inbound `Create`/`Announce` receive (needs a remote-video model) to complete bidirectional video
-> federation, then federated comments + `Update`/`Delete` propagation + remote media cache + contract tests.
+>
+> **Slice 5d SHIPPED** (inbound Undo{Follow}): the inbox now handles `Undo` — a remote actor un-following a
+> local channel. `dispatchActivity` gains an `Undo` case → `handleUndo` parses the embedded Follow, checks
+> the undoer is the request signer (and the Follow's actor), resolves the local channel, and
+> `DeleteRemoteFollow` (new sqlc, idempotent). Undo of a non-Follow is accepted-and-ignored; actor mismatch →
+> 400. Tested: unit (Undo removes the follow / non-Follow ignored / actor-mismatch rejected) + integration
+> (follow → undo → CountRemoteFollowers 1 → 0 against real Postgres). Completes the inbound follow lifecycle.
+>
+> **DESIGN GATE for the remaining federation items.** "Receive remote video activity" (inbound
+> Create/Announce) and "follow remote instance/channel/account" (OUTBOUND follow) are interdependent and hinge
+> on **product decisions not covered by specs**: whether/how a local user follows a remote channel, how remote
+> videos are stored (dedicated `remote_videos` table) and whether/where they surface in Vidra's feeds, and how
+> remote content is moderated. These should be resolved by a spec addendum or user product input BEFORE
+> implementation — do not build them blind. NEXT (unblocked): federated comments as `Note` on local videos,
+> or `Update`/`Delete` propagation for a channel's own published videos (outbound, reuses the delivery queue),
+> or paged `orderedItems` for the collection endpoints.
 
 ## P10.1 ActivityPub
 
@@ -571,7 +585,7 @@
 - [ ] Implement receive remote video activity.
 - [x] Implement announce video from channel. (Slice 5b — on the published transition, `AnnounceVideo` builds a `Create{Video}` attributed to the channel actor and fans it out to the channel's accepted remote followers via the delivery queue (`ListRemoteFollowerInboxes`, shared-inbox-preferred, signed per channel). Wired through `video.WithPublishHook` (no video→federation coupling). A dedicated re-`Announce` of an existing/imported video and the outbox collection endpoint are later refinements.)
 - [ ] Implement federated comments if in-scope.
-- [ ] Implement federated deletes/updates.
+- [~] Implement federated deletes/updates. (Inbound `Undo{Follow}` DONE (Slice 5d) — removes a remote follower (`DeleteRemoteFollow`), signer-authorised, idempotent. Remaining: inbound `Delete`/`Update` of remote objects (needs the remote-video/comment model) and OUTBOUND `Update`/`Delete` of a channel's own videos via the delivery queue.)
 - [x] Implement federation queue/retry/dead-letter. (`federation_deliveries` table + `DrainDeliveries` worker — Slice 5a. Claims due pending rows, signs each as its channel and POSTs via the SSRF-guarded client; success → delivered, failure → reschedule with exponential backoff (30s×2ⁿ, cap 6h) or dead-letter (state 'failed') after 6 attempts. A single background worker (cmd/api, 10s ticker) drains it. First producer wired: an inbound Follow enqueues a signed Accept. More producers (Create/Announce) land with the outbox slice.)
 - [ ] Implement remote media cache strategy.
 - [ ] Add federation contract tests using fixtures.

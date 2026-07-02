@@ -18,6 +18,10 @@ DO UPDATE SET state = 'accepted', follow_activity_url = EXCLUDED.follow_activity
 -- name: CountRemoteFollowers :one
 SELECT count(*) FROM remote_follows WHERE channel_id = $1 AND state = 'accepted';
 
+-- name: DeleteRemoteFollow :exec
+-- A remote actor un-following a local channel (inbound Undo{Follow}). Idempotent.
+DELETE FROM remote_follows WHERE channel_id = $1 AND remote_actor_url = $2;
+
 -- name: ListRemoteFollowerInboxes :many
 -- Distinct inbox URLs (shared inbox preferred) of a channel's accepted remote
 -- followers — the fan-out targets when the channel publishes a video.

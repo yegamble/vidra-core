@@ -331,3 +331,51 @@ func TestAnnounceVideoEnqueuesToFollowers(t *testing.T) {
 		t.Errorf("no Create delivery enqueued to the follower inbox %q", inbox)
 	}
 }
+
+func TestInboxUndoFollowRemoves(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suf := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	u, err := q.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username: "fed_" + suf, Email: "fed_" + suf + "@example.test", PasswordHash: "x", Role: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	ch, err := q.CreateChannel(ctx, sqlcgen.CreateChannelParams{OwnerID: u.ID, Handle: "fedch" + suf, DisplayName: "Ch"})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+
+	svc := federation.NewService(q, federation.WithBaseURL("https://videos.example"))
+	remote := "https://remote.example/accounts/erin" + suf
+	object := "https://videos.example/video-channels/fedch" + suf
+	follow := []byte(`{"id":"https://remote.example/f/` + suf + `","type":"Follow","actor":"` + remote + `","object":"` + object + `"}`)
+	if err := svc.HandleInbox(ctx, remote, follow); err != nil {
+		t.Fatalf("HandleInbox Follow: %v", err)
+	}
+	if n, _ := q.CountRemoteFollowers(ctx, ch.ID); n != 1 {
+		t.Fatalf("after follow, followers = %d, want 1", n)
+	}
+
+	undo := []byte(`{"id":"https://remote.example/u/` + suf + `","type":"Undo","actor":"` + remote +
+		`","object":{"id":"https://remote.example/f/` + suf + `","type":"Follow","actor":"` + remote + `","object":"` + object + `"}}`)
+	if err := svc.HandleInbox(ctx, remote, undo); err != nil {
+		t.Fatalf("HandleInbox Undo: %v", err)
+	}
+	if n, _ := q.CountRemoteFollowers(ctx, ch.ID); n != 0 {
+		t.Errorf("after undo, followers = %d, want 0", n)
+	}
+}
