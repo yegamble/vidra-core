@@ -3,14 +3,19 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/httpsig"
 	"github.com/vidra/vidra-core/internal/version"
 )
+
+// maxInboxBytes bounds an inbound activity body.
+const maxInboxBytes = 1 << 20 // 1 MiB
 
 // NodeInfo (https://nodeinfo.diaspora.software/) is the fediverse's instance
 // self-description: software name/version, supported protocols, whether signup
@@ -153,4 +158,28 @@ func (s *Server) handleWebFinger(c echo.Context) error {
 	}
 	c.Response().Header().Set(echo.HeaderContentType, "application/jrd+json; charset=utf-8")
 	return c.JSON(http.StatusOK, jrd)
+}
+
+// handleInbox verifies an inbound activity's HTTP signature (resolving the
+// signer's key via the remote-actor cache), then dispatches it. Used for the
+// shared /inbox and per-actor inbox routes; the target is read from the activity,
+// not the path. Bad signature → 401; malformed/mismatched activity → 400.
+func (s *Server) handleInbox(c echo.Context) error {
+	body, err := io.ReadAll(io.LimitReader(c.Request().Body, maxInboxBytes))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "could not read request body")
+	}
+	verifier := httpsig.Verifier{ResolveKey: s.fedsvc.ResolveKey}
+	keyID, err := verifier.Verify(c.Request().Context(), c.Request(), body)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "signature verification failed")
+	}
+	signerActorURL, _, _ := strings.Cut(keyID, "#")
+	if err := s.fedsvc.HandleInbox(c.Request().Context(), signerActorURL, body); err != nil {
+		if errors.Is(err, federation.ErrBadResource) || errors.Is(err, federation.ErrActorMismatch) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid activity")
+		}
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, "could not process activity")
+	}
+	return c.NoContent(http.StatusAccepted)
 }

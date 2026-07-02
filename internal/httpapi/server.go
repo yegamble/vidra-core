@@ -362,6 +362,11 @@ func (s *Server) routes() {
 		s.echo.GET("/.well-known/webfinger", s.handleWebFinger)
 		s.echo.GET("/accounts/:handle", s.handleAccountActor)
 		s.echo.GET("/video-channels/:handle", s.handleChannelActor)
+		// Inbound activities. The shared inbox plus per-actor inboxes advertised in
+		// the actor documents; all share one signature-verifying handler.
+		s.echo.POST("/inbox", s.handleInbox)
+		s.echo.POST("/accounts/:handle/inbox", s.handleInbox)
+		s.echo.POST("/video-channels/:handle/inbox", s.handleInbox)
 	}
 
 	api := s.echo.Group("/api/v1")

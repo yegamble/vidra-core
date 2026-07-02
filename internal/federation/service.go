@@ -32,6 +32,10 @@ type Repository interface {
 	// Remote-actor cache (Slice 3b).
 	GetRemoteActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error)
 	UpsertRemoteActor(ctx context.Context, arg sqlcgen.UpsertRemoteActorParams) error
+	// Inbound activities (Slice 4a).
+	IsActivityProcessed(ctx context.Context, activityID string) (bool, error)
+	MarkActivityProcessed(ctx context.Context, activityID string) error
+	InsertRemoteFollow(ctx context.Context, arg sqlcgen.InsertRemoteFollowParams) error
 }
 
 // NodeInfoUsage is the fediverse NodeInfo "usage" block: total users plus local

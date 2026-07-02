@@ -140,3 +140,57 @@ func TestRemoteActorUpsertGet(t *testing.T) {
 		t.Errorf("after upsert row = %+v, want key PEM-v2 and null shared inbox", got2)
 	}
 }
+
+func TestInboxFollowPersists(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suf := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	u, err := q.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username: "fed_" + suf, Email: "fed_" + suf + "@example.test", PasswordHash: "x", Role: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	ch, err := q.CreateChannel(ctx, sqlcgen.CreateChannelParams{
+		OwnerID: u.ID, Handle: "fedch" + suf, DisplayName: "Fed Ch",
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+
+	svc := federation.NewService(q, federation.WithBaseURL("https://videos.example"))
+	remote := "https://remote.example/accounts/carol" + suf
+	body := []byte(`{"id":"https://remote.example/act/` + suf +
+		`","type":"Follow","actor":"` + remote +
+		`","object":"https://videos.example/video-channels/fedch` + suf + `"}`)
+
+	if err := svc.HandleInbox(ctx, remote, body); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	n, err := q.CountRemoteFollowers(ctx, ch.ID)
+	if err != nil {
+		t.Fatalf("CountRemoteFollowers: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("remote followers = %d, want 1", n)
+	}
+	// Idempotent: replaying the same activity does not double-count.
+	if err := svc.HandleInbox(ctx, remote, body); err != nil {
+		t.Fatalf("HandleInbox replay: %v", err)
+	}
+	if n2, _ := q.CountRemoteFollowers(ctx, ch.ID); n2 != 1 {
+		t.Errorf("after replay remote followers = %d, want 1 (deduped)", n2)
+	}
+}

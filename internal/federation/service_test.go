@@ -20,11 +20,13 @@ type fakeRepo struct {
 	users, videos, comments int64
 	err                     error
 
-	usersByName  map[string]sqlcgen.GetUserActorByUsernameRow
-	channels     map[string]sqlcgen.Channel
-	acctKeys     map[uuid.UUID]sqlcgen.GetAccountActorKeyRow
-	chanKeys     map[uuid.UUID]sqlcgen.GetChannelActorKeyRow
-	remoteActors map[string]sqlcgen.RemoteActor
+	usersByName   map[string]sqlcgen.GetUserActorByUsernameRow
+	channels      map[string]sqlcgen.Channel
+	acctKeys      map[uuid.UUID]sqlcgen.GetAccountActorKeyRow
+	chanKeys      map[uuid.UUID]sqlcgen.GetChannelActorKeyRow
+	remoteActors  map[string]sqlcgen.RemoteActor
+	processed     map[string]bool
+	remoteFollows map[string]sqlcgen.InsertRemoteFollowParams
 }
 
 func (f fakeRepo) CountUsers(context.Context) (int64, error)        { return f.users, f.err }
@@ -93,6 +95,20 @@ func (f fakeRepo) UpsertRemoteActor(_ context.Context, arg sqlcgen.UpsertRemoteA
 		PublicKeyPem:      arg.PublicKeyPem,
 		FollowersUrl:      arg.FollowersUrl,
 	}
+	return nil
+}
+
+func (f fakeRepo) IsActivityProcessed(_ context.Context, id string) (bool, error) {
+	return f.processed[id], nil
+}
+
+func (f fakeRepo) MarkActivityProcessed(_ context.Context, id string) error {
+	f.processed[id] = true
+	return nil
+}
+
+func (f fakeRepo) InsertRemoteFollow(_ context.Context, arg sqlcgen.InsertRemoteFollowParams) error {
+	f.remoteFollows[arg.ChannelID.String()+"|"+arg.RemoteActorUrl] = arg
 	return nil
 }
 

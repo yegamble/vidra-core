@@ -499,8 +499,22 @@
 > will use for inbound verification. `WithAllowPrivateFetch` (wired from HTTP_IMPORT_ALLOW_PRIVATE_URLS)
 > + `WithFetchClient` (tests). Tested: unit (fetch→parse→cache reuse via httptest [origin hit once],
 > no-key reject, SSRF-guarded-by-default reject, PEM parse) + integration (upsert/get + ON CONFLICT
-> refresh against real Postgres). NEXT: Slice 4 — inbox endpoint (`POST /inbox` + per-actor) that
-> `httpsig.Verify`s the request via `ResolveKey`, then handles `Follow` → auto-`Accept` for channels.
+> refresh against real Postgres).
+>
+> **Slice 4a SHIPPED** (inbound inbox gateway + Follow): migration 0037 `remote_follows` (channel_id FK,
+> remote_actor_url, state, follow_activity_url; PK(channel_id, actor)) + `federation_inbox_activities`
+> dedup log. httpapi `POST /inbox` + per-actor `/accounts/:h/inbox` + `/video-channels/:h/inbox` read the
+> raw body (1 MiB cap), **`httpsig.Verify` the signature via `fedsvc.ResolveKey`** (401 on failure), then
+> `HandleInbox` dedups by activity id and dispatches: a `Follow` of a local channel (signer must equal the
+> Follow's `actor`) records an auto-accepted `remote_follows` row → 202; unknown types / foreign objects are
+> accepted-and-ignored; malformed/mismatched → 400. sqlc `IsActivityProcessed`/`MarkActivityProcessed`/
+> `InsertRemoteFollow`/`CountRemoteFollowers`. Gated on FEDERATION_ENABLED, excluded from the REST drift
+> guard. Tested: unit (`HandleInbox` follow-records/actor-mismatch/dedup/ignore/malformed) + httpapi handler
+> (signed Follow → 202 + recorded; tampered signature → 401) + integration (Follow persists + replay dedups
+> against real Postgres). **Accept is auto-recorded locally; SENDING the Accept back is Slice 4b.** NEXT:
+> Slice 4b/5 — signed outbound delivery: unlock the local actor key (secretbox → rsa) + `httpsig.Sign` an
+> `Accept`/activity and POST it to the remote inbox (SSRF-guarded), then the `federation_deliveries`
+> retry/dead-letter queue + outbox + `Create`/`Announce` on publish.
 
 ## P10.1 ActivityPub
 
@@ -508,9 +522,9 @@
 - [x] Implement local actor model for channels. (Group actor: `channel_actor_keys` + `ensureChannelKey`, served as `GET /video-channels/:handle` — Slice 2a/2b.)
 - [x] Implement WebFinger. (`GET /.well-known/webfinger?resource=acct:name@domain` → self link to the actor URL; own-domain-only, resolves account then channel — Slice 2b.)
 - [x] Implement ActivityPub actor endpoints. (Content-negotiated actor documents — `application/activity+json`, 406 otherwise — with `@context` (incl. security vocab), derived inbox/outbox/followers/following collection URLs, and the `publicKey` block. The collection endpoints themselves land in Slices 4-5 — Slice 2b.)
-- [ ] Implement inbox endpoint.
+- [x] Implement inbox endpoint. (Shared `POST /inbox` + per-actor `/accounts/:h/inbox` + `/video-channels/:h/inbox`; HTTP-signature-verified (401 on failure), body-bounded, deduped by activity id, dispatched by type. A remote `Follow` of a local channel is recorded (auto-accepted); other types accepted-and-ignored for now — Slice 4a. Sending the Accept back + inbound Create/Announce/Delete land in later slices.)
 - [ ] Implement outbox endpoint.
-- [~] Implement HTTP signatures. (Primitive DONE in Slice 3a — `internal/httpsig` RSA-SHA256 cavage sign/verify over `(request-target) host date digest` with Digest + skew, unit-tested. Not yet WIRED: signing outbound delivery lands with the outbox/delivery (Slice 5) and verifying inbound lands with the inbox (Slice 4, needs the Slice 3b remote-actor key resolver).)
+- [~] Implement HTTP signatures. (Primitive DONE in Slice 3a — `internal/httpsig` RSA-SHA256 cavage sign/verify over `(request-target) host date digest` with Digest + skew, unit-tested. **Inbound verification WIRED** in Slice 4a: the inbox verifies every request via `httpsig.Verifier{ResolveKey: fedsvc.ResolveKey}` (remote-actor cache). Remaining: **outbound signing** — wired with the delivery slice (unlock the local actor key via secretbox → sign deliveries).)
 - [x] Implement JSON-LD signature strategy or documented compatibility plan. (Documented compatibility plan — `.ralph/specs/federation.md` §7: Vidra authenticates server-to-server with **HTTP Signatures** (RSA-SHA256) and does NOT emit JSON-LD/LD-Signatures, matching Mastodon's default and PeerTube interop. Object integrity rides the signed Digest, not LD proofs.)
 - [ ] Implement follow remote instance/channel/account.
 - [ ] Implement receive remote video activity.

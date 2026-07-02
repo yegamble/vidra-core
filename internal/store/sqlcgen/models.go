@@ -93,6 +93,11 @@ type EmailVerificationToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type FederationInboxActivity struct {
+	ActivityID string    `json:"activity_id"`
+	ReceivedAt time.Time `json:"received_at"`
+}
+
 type LiveStream struct {
 	ID            uuid.UUID `json:"id"`
 	ChannelID     uuid.UUID `json:"channel_id"`
@@ -185,6 +190,14 @@ type RemoteActor struct {
 	FollowersUrl      string    `json:"followers_url"`
 	FetchedAt         time.Time `json:"fetched_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type RemoteFollow struct {
+	ChannelID         uuid.UUID `json:"channel_id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	State             string    `json:"state"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type Report struct {

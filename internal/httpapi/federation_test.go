@@ -1,8 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +18,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/httpsig"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -23,6 +29,9 @@ type fakeFedRepo struct {
 	userID, channelID       uuid.UUID
 	acctKeys                map[uuid.UUID]sqlcgen.GetAccountActorKeyRow
 	chanKeys                map[uuid.UUID]sqlcgen.GetChannelActorKeyRow
+	remoteActors            map[string]sqlcgen.RemoteActor
+	processed               map[string]bool
+	remoteFollows           map[string]sqlcgen.InsertRemoteFollowParams
 }
 
 func (f fakeFedRepo) CountUsers(context.Context) (int64, error)        { return f.users, nil }
@@ -73,10 +82,27 @@ func (f fakeFedRepo) InsertChannelActorKeyIfAbsent(_ context.Context, arg sqlcge
 	return 1, nil
 }
 
-func (fakeFedRepo) GetRemoteActor(context.Context, string) (sqlcgen.RemoteActor, error) {
+func (f fakeFedRepo) GetRemoteActor(_ context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
+	if r, ok := f.remoteActors[actorURL]; ok {
+		return r, nil
+	}
 	return sqlcgen.RemoteActor{}, pgx.ErrNoRows
 }
-func (fakeFedRepo) UpsertRemoteActor(context.Context, sqlcgen.UpsertRemoteActorParams) error {
+
+func (f fakeFedRepo) UpsertRemoteActor(_ context.Context, arg sqlcgen.UpsertRemoteActorParams) error {
+	f.remoteActors[arg.ActorUrl] = sqlcgen.RemoteActor{ActorUrl: arg.ActorUrl, PublicKeyPem: arg.PublicKeyPem}
+	return nil
+}
+
+func (f fakeFedRepo) IsActivityProcessed(_ context.Context, id string) (bool, error) {
+	return f.processed[id], nil
+}
+func (f fakeFedRepo) MarkActivityProcessed(_ context.Context, id string) error {
+	f.processed[id] = true
+	return nil
+}
+func (f fakeFedRepo) InsertRemoteFollow(_ context.Context, arg sqlcgen.InsertRemoteFollowParams) error {
+	f.remoteFollows[arg.RemoteActorUrl] = arg
 	return nil
 }
 
@@ -88,16 +114,24 @@ func fedTestConfig() *config.Config {
 	return c
 }
 
-func fedServer(cfg *config.Config) *Server {
+func fedServerRepo(cfg *config.Config) (*Server, fakeFedRepo) {
 	repo := fakeFedRepo{
 		users: 7, videos: 3, comments: 11,
-		userID:    uuid.New(),
-		channelID: uuid.New(),
-		acctKeys:  map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
-		chanKeys:  map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
+		userID:        uuid.New(),
+		channelID:     uuid.New(),
+		acctKeys:      map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
+		chanKeys:      map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
+		remoteActors:  map[string]sqlcgen.RemoteActor{},
+		processed:     map[string]bool{},
+		remoteFollows: map[string]sqlcgen.InsertRemoteFollowParams{},
 	}
 	svc := federation.NewService(repo, federation.WithBaseURL(cfg.PublicBaseURL))
-	return New(cfg, nil, nil, WithFederationService(svc))
+	return New(cfg, nil, nil, WithFederationService(svc)), repo
+}
+
+func fedServer(cfg *config.Config) *Server {
+	srv, _ := fedServerRepo(cfg)
+	return srv
 }
 
 func get(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
@@ -240,6 +274,67 @@ func TestWebFingerErrors(t *testing.T) {
 	}
 	if rec := get(t, srv, "/.well-known/webfinger?resource=acct:ada@elsewhere.example"); rec.Code != http.StatusNotFound {
 		t.Errorf("foreign domain: status = %d, want 404", rec.Code)
+	}
+}
+
+func signerKeyPEM(t *testing.T) (*rsa.PrivateKey, string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return key, string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
+const bobActor = "https://remote.example/accounts/bob"
+
+func TestInboxAcceptsSignedFollow(t *testing.T) {
+	key, pubPEM := signerKeyPEM(t)
+	srv, repo := fedServerRepo(fedTestConfig())
+	// Pre-seed the signer's key in the remote-actor cache so ResolveKey needs no fetch.
+	repo.remoteActors[bobActor] = sqlcgen.RemoteActor{ActorUrl: bobActor, PublicKeyPem: pubPEM}
+
+	body := []byte(`{"id":"https://remote.example/act/1","type":"Follow","actor":"` + bobActor +
+		`","object":"https://videos.example/video-channels/films"}`)
+	req := httptest.NewRequest(http.MethodPost, "https://videos.example/inbox", bytes.NewReader(body))
+	if err := (httpsig.Signer{KeyID: bobActor + "#main-key", Priv: key}).Sign(req, body); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := repo.remoteFollows[bobActor]; !ok {
+		t.Errorf("remote follow not recorded: %+v", repo.remoteFollows)
+	}
+}
+
+func TestInboxRejectsBadSignature(t *testing.T) {
+	key, pubPEM := signerKeyPEM(t)
+	srv, repo := fedServerRepo(fedTestConfig())
+	repo.remoteActors[bobActor] = sqlcgen.RemoteActor{ActorUrl: bobActor, PublicKeyPem: pubPEM}
+
+	body := []byte(`{"id":"https://remote.example/act/2","type":"Follow","actor":"` + bobActor +
+		`","object":"https://videos.example/video-channels/films"}`)
+	req := httptest.NewRequest(http.MethodPost, "https://videos.example/inbox", bytes.NewReader(body))
+	if err := (httpsig.Signer{KeyID: bobActor + "#main-key", Priv: key}).Sign(req, body); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	// Corrupt the signature after signing.
+	sig := req.Header.Get("Signature")
+	req.Header.Set("Signature", sig[:len(sig)-2]+`A"`)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if len(repo.remoteFollows) != 0 {
+		t.Error("a follow was recorded despite a bad signature")
 	}
 }
 
