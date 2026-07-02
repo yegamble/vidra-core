@@ -109,7 +109,9 @@ curl -sX POST localhost:8080/api/v1/videos/<id>/file -H 'authorization: Bearer <
 curl -sX POST localhost:8080/api/v1/videos/<id>/import -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"url":"https://example.com/clip.mp4"}'     # import original from a URL (owner-only, SSRF-guarded via internal/urlsafety); non-public/non-http -> 422, too big -> 413, bad ext -> 415
 curl -s localhost:8080/api/v1/videos/<id>/original -o out.mp4                         # stream original (Range-capable); private => owner only
-curl -s localhost:8080/api/v1/videos/<id>/thumbnail -o poster.jpg                     # poster image (if ffmpeg generated one)
+curl -s localhost:8080/api/v1/videos/<id>/thumbnail -o poster.jpg                     # poster image (generated or uploaded)
+curl -sX POST localhost:8080/api/v1/videos/<id>/thumbnail -H 'authorization: Bearer <token>' \
+  -F 'file=@poster.png'                                                                # set a custom poster (owner-only; JPEG/PNG/WebP, else 415) -> replaces the generated one
 
 # Captions (WebVTT; owner uploads/removes, anyone lists/downloads on a public video):
 curl -sX POST localhost:8080/api/v1/videos/<id>/captions -H 'authorization: Bearer <token>' \

@@ -1165,6 +1165,69 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: setVideoThumbnail
+      summary: Set a video's poster image
+      description: >-
+        Uploads a creator-supplied poster image (owner only) as a multipart form
+        with a single "file" part, replacing any previous or auto-generated
+        thumbnail. Accepted types are JPEG/PNG/WebP (by extension; otherwise 415);
+        the served Content-Type is derived from the extension. Does not change the
+        video's state. A non-owner or unknown id is 404. The upload is bounded by
+        the global HTTP body limit.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The poster image (JPEG/PNG/WebP).
+      responses:
+        "201":
+          description: The thumbnail was stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoFile"
+        "400":
+          description: The multipart "file" field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: The file extension is not an accepted image type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/view:
     post:
       operationId: recordVideoView

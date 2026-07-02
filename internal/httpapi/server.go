@@ -410,6 +410,7 @@ func (s *Server) routes() {
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
 		api.GET("/videos/:id/thumbnail", s.handleGetVideoThumbnail, s.optionalAuth)
+		api.POST("/videos/:id/thumbnail", s.handleSetVideoThumbnail, s.requireAuth)
 		api.POST("/videos/:id/view", s.handleRecordVideoView, s.optionalAuth)
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)

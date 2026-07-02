@@ -50,6 +50,13 @@ var acceptedVideoExts = map[string]bool{
 	".ts": true, ".flv": true, ".wmv": true, ".3gp": true,
 }
 
+// acceptedImageExts maps a custom-thumbnail upload extension to the content type
+// served for it. The served Content-Type is derived here (authoritative), not
+// from the client-declared type, so a mislabelled upload can't set a bogus type.
+var acceptedImageExts = map[string]string{
+	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
+}
+
 // Repository is the data access the video service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
@@ -359,6 +366,57 @@ func (s *Service) generateThumbnail(ctx context.Context, videoID uuid.UUID, orig
 		ContentType:  "image/jpeg",
 		OriginalName: "thumbnail.jpg",
 		SizeBytes:    int64(len(jpg)),
+	})
+}
+
+// acceptedImageExt returns the served content type for filename when it is an
+// accepted thumbnail image, and ok=false otherwise. It is the thumbnail-upload
+// type gate (mirrors acceptedExt for originals).
+func acceptedImageExt(filename string) (contentType string, ok bool) {
+	ct, ok := acceptedImageExts[strings.ToLower(filepath.Ext(filename))]
+	return ct, ok
+}
+
+// SetThumbnail stores a creator-supplied poster image for a video, replacing any
+// previous (uploaded or auto-generated) thumbnail. Owner-only (non-owner →
+// ErrForbidden, unknown id → ErrNotFound); a non-image extension → ErrUnsupportedMedia.
+// It does not change the video's state — a thumbnail can be set at any point. The
+// blob is stored at the deterministic thumbnail key, so exactly one poster exists
+// and the GET /thumbnail endpoint serves it with the content type derived here.
+func (s *Service) SetThumbnail(ctx context.Context, ownerID, videoID uuid.UUID, in UploadInput) (sqlcgen.VideoFile, error) {
+	if s.blobs == nil {
+		return sqlcgen.VideoFile{}, ErrStorageUnavailable
+	}
+	v, err := s.GetByID(ctx, videoID)
+	if err != nil {
+		return sqlcgen.VideoFile{}, err
+	}
+	if v.OwnerID != ownerID {
+		return sqlcgen.VideoFile{}, ErrForbidden
+	}
+	contentType, ok := acceptedImageExt(in.Filename)
+	if !ok {
+		return sqlcgen.VideoFile{}, ErrUnsupportedMedia
+	}
+
+	key := thumbnailKey(videoID)
+	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
+		VideoID: videoID,
+		Kind:    "thumbnail",
+	}); err != nil {
+		return sqlcgen.VideoFile{}, err
+	}
+	size, err := s.blobs.Put(ctx, key, in.Reader)
+	if err != nil {
+		return sqlcgen.VideoFile{}, err
+	}
+	return s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+		VideoID:      videoID,
+		Kind:         "thumbnail",
+		StorageKey:   key,
+		ContentType:  contentType,
+		OriginalName: strings.TrimSpace(in.Filename),
+		SizeBytes:    size,
 	})
 }
 

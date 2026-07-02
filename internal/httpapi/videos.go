@@ -552,6 +552,40 @@ func (s *Server) handleUploadVideoFile(c echo.Context) error {
 	})
 }
 
+// handleSetVideoThumbnail stores a creator-supplied poster image (multipart form
+// field "file") for a video owned by the caller, replacing any previous or
+// auto-generated thumbnail. Behind requireAuth; non-owner/unknown → 404; a
+// non-image extension → 415. The 8M global body limit bounds the upload.
+func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	fh, err := c.FormFile("file")
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, `multipart form field "file" is required`)
+	}
+	f, err := fh.Open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	file, err := s.videosvc.SetThumbnail(c.Request().Context(), userID, id, video.UploadInput{
+		Filename:    fh.Filename,
+		ContentType: fh.Header.Get("Content-Type"),
+		Reader:      f,
+	})
+	if err != nil {
+		return videoError(err)
+	}
+	return c.JSON(http.StatusCreated, newVideoFileView(file))
+}
+
 // importVideoRequest is the POST /videos/:id/import body.
 type importVideoRequest struct {
 	URL string `json:"url"`
