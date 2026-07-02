@@ -541,6 +541,10 @@ func (s *Server) routes() {
 		api.GET("/live/:id", s.handleGetLiveStream, s.optionalAuth)
 		api.POST("/live/:id/key", s.handleRegenerateLiveStreamKey, s.requireAuth)
 		api.DELETE("/live/:id", s.handleDeleteLiveStream, s.requireAuth)
+		// RTMP ingest boundary (media-server-facing): authenticated by the ingest
+		// shared secret, not a user token. 404 unless LIVE_INGEST_SECRET is set.
+		api.POST("/live/ingest/start", s.handleLiveIngestStart)
+		api.POST("/live/ingest/stop", s.handleLiveIngestStop)
 	}
 }
 

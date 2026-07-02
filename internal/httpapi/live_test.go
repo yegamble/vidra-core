@@ -79,6 +79,24 @@ func (f *liveFakeRepo) UpdateLiveStreamKey(_ context.Context, a sqlcgen.UpdateLi
 	return nil
 }
 
+func (f *liveFakeRepo) GetLiveStreamByKeyHash(_ context.Context, h string) (sqlcgen.GetLiveStreamByKeyHashRow, error) {
+	for id, hash := range f.hashes {
+		if hash == h {
+			r := f.rows[id]
+			return sqlcgen.GetLiveStreamByKeyHashRow{ID: id, ChannelID: r.ChannelID, Permanent: r.Permanent, State: r.State}, nil
+		}
+	}
+	return sqlcgen.GetLiveStreamByKeyHashRow{}, errors.New("not found")
+}
+
+func (f *liveFakeRepo) SetLiveStreamState(_ context.Context, a sqlcgen.SetLiveStreamStateParams) error {
+	if r, ok := f.rows[a.ID]; ok {
+		r.State = a.State
+		f.rows[a.ID] = r
+	}
+	return nil
+}
+
 func (f *liveFakeRepo) DeleteLiveStream(_ context.Context, id uuid.UUID) (int64, error) {
 	if _, ok := f.rows[id]; ok {
 		delete(f.rows, id)
@@ -178,6 +196,69 @@ func TestLiveStreamAuthzAndPrivacy(t *testing.T) {
 	}
 	if d := sendJSONAuth(srv, http.MethodDelete, "/api/v1/live/"+id, "", bob); d.Code != http.StatusNotFound {
 		t.Errorf("non-owner delete = %d, want 404", d.Code)
+	}
+}
+
+func ingestReq(srv *Server, path, body, secret string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("content-type", "application/json")
+	if secret != "" {
+		req.Header.Set("X-Ingest-Secret", secret)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// TestLiveIngestDisabledWithoutSecret: with no LIVE_INGEST_SECRET, the ingest
+// hooks are 404 (not enabled) regardless of the body.
+func TestLiveIngestDisabledWithoutSecret(t *testing.T) {
+	srv := videoServer(t) // testConfig has no ingest secret
+	if rec := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"x"}`, "x"); rec.Code != http.StatusNotFound {
+		t.Fatalf("ingest start without secret configured = %d, want 404", rec.Code)
+	}
+}
+
+// TestLiveIngestFlow: with a configured secret, the media server flips a stream
+// live/ended by its key; a bad secret is 401 and an unknown key is 404.
+func TestLiveIngestFlow(t *testing.T) {
+	cfg := testConfig()
+	cfg.LiveIngestSecret = "s3cret"
+	srv := videoServerCfg(t, cfg)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	rec := createLiveStream(srv, "ada", `{"title":"Show"}`, tok)
+	var created createLiveStreamResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	id := created.LiveStream.ID
+	key := created.StreamKey
+
+	// Wrong secret → 401.
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+key+`"}`, "wrong"); r.Code != http.StatusUnauthorized {
+		t.Errorf("bad secret = %d, want 401", r.Code)
+	}
+	// Unknown key → 404.
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"nope"}`, "s3cret"); r.Code != http.StatusNotFound {
+		t.Errorf("unknown key = %d, want 404", r.Code)
+	}
+	// Correct secret + key → 200, stream goes live.
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+key+`"}`, "s3cret"); r.Code != http.StatusOK {
+		t.Fatalf("ingest start = %d, want 200; body=%s", r.Code, r.Body.String())
+	}
+	var live liveStreamView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+id, tok).Body.Bytes(), &live)
+	if live.State != "live" {
+		t.Errorf("state after ingest start = %q, want live", live.State)
+	}
+
+	// Stop → the one-shot stream ends.
+	if r := ingestReq(srv, "/api/v1/live/ingest/stop", `{"stream_key":"`+key+`"}`, "s3cret"); r.Code != http.StatusNoContent {
+		t.Fatalf("ingest stop = %d, want 204", r.Code)
+	}
+	var ended liveStreamView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+id, tok).Body.Bytes(), &ended)
+	if ended.State != "ended" {
+		t.Errorf("state after ingest stop = %q, want ended", ended.State)
 	}
 }
 

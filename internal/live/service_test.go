@@ -65,6 +65,24 @@ func (f *fakeRepo) UpdateLiveStreamKey(_ context.Context, a sqlcgen.UpdateLiveSt
 	return nil
 }
 
+func (f *fakeRepo) GetLiveStreamByKeyHash(_ context.Context, h string) (sqlcgen.GetLiveStreamByKeyHashRow, error) {
+	for id, hash := range f.hashes {
+		if hash == h {
+			r := f.rows[id]
+			return sqlcgen.GetLiveStreamByKeyHashRow{ID: id, ChannelID: r.ChannelID, Permanent: r.Permanent, State: r.State}, nil
+		}
+	}
+	return sqlcgen.GetLiveStreamByKeyHashRow{}, errors.New("not found")
+}
+
+func (f *fakeRepo) SetLiveStreamState(_ context.Context, a sqlcgen.SetLiveStreamStateParams) error {
+	if r, ok := f.rows[a.ID]; ok {
+		r.State = a.State
+		f.rows[a.ID] = r
+	}
+	return nil
+}
+
 func (f *fakeRepo) DeleteLiveStream(_ context.Context, id uuid.UUID) (int64, error) {
 	if _, ok := f.rows[id]; ok {
 		delete(f.rows, id)
@@ -138,6 +156,42 @@ func TestGetAndListAndDelete(t *testing.T) {
 	}
 	if _, err := svc.Get(ctx, s1.ID); err != ErrNotFound {
 		t.Errorf("after delete Get = %v, want ErrNotFound", err)
+	}
+}
+
+func TestIngestStartStop(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo(uuid.New())
+	svc := NewService(repo)
+
+	// A one-shot stream: start → live, stop → ended.
+	s, key, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "One-shot"})
+	if _, err := svc.StartIngest(ctx, key); err != nil {
+		t.Fatalf("StartIngest: %v", err)
+	}
+	if got := repo.rows[s.ID].State; got != StateLive {
+		t.Errorf("state after start = %q, want live", got)
+	}
+	if _, err := svc.StopIngest(ctx, key); err != nil {
+		t.Fatalf("StopIngest: %v", err)
+	}
+	if got := repo.rows[s.ID].State; got != StateEnded {
+		t.Errorf("state after stop (one-shot) = %q, want ended", got)
+	}
+
+	// A permanent stream returns to offline on stop (reusable).
+	p, pkey, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Permanent", Permanent: true})
+	svc.StartIngest(ctx, pkey) //nolint
+	if _, err := svc.StopIngest(ctx, pkey); err != nil {
+		t.Fatalf("StopIngest (permanent): %v", err)
+	}
+	if got := repo.rows[p.ID].State; got != StateOffline {
+		t.Errorf("state after stop (permanent) = %q, want offline", got)
+	}
+
+	// An unknown key is denied.
+	if _, err := svc.StartIngest(ctx, "not-a-real-key"); err != ErrNotFound {
+		t.Errorf("StartIngest(unknown) = %v, want ErrNotFound", err)
 	}
 }
 

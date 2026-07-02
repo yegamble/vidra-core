@@ -63,6 +63,12 @@ type Config struct {
 	// ingest is provisioned; the create response then omits it.
 	LiveRTMPURL string
 
+	// LiveIngestSecret is the shared secret the media server (RTMP ingest) presents
+	// on the internal live-ingest start/stop hooks, so only it can flip a stream's
+	// live state. Empty disables the ingest hooks entirely (they 404) — they are
+	// only safe to expose when a secret is set.
+	LiveIngestSecret string
+
 	// Instance about/legal metadata surfaced at GET /api/v1/instance. All
 	// optional (empty when unset).
 	InstanceDescription  string
@@ -147,6 +153,7 @@ func Load() (*Config, error) {
 		HTTPHost:                    getEnv("HTTP_HOST", "0.0.0.0"),
 		InstanceName:                getEnv("INSTANCE_NAME", "Vidra (dev)"),
 		LiveRTMPURL:                 getEnv("LIVE_RTMP_URL", ""),
+		LiveIngestSecret:            getEnv("LIVE_INGEST_SECRET", ""),
 		InstanceDescription:         getEnv("INSTANCE_DESCRIPTION", ""),
 		InstanceTermsURL:            getEnv("INSTANCE_TERMS_URL", ""),
 		InstancePrivacyURL:          getEnv("INSTANCE_PRIVACY_URL", ""),

@@ -3487,6 +3487,104 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/live/ingest/start:
+    post:
+      operationId: liveIngestStart
+      summary: Live ingest "on-publish" hook (media-server-facing)
+      description: >-
+        The RTMP ingest boundary calls this when a publisher connects, presenting
+        the publisher's stream key; the matching stream is flipped to "live" (allow
+        the publish). Authenticated by the X-Ingest-Secret shared secret, NOT a
+        user token. Returns 404 when LIVE_INGEST_SECRET is not configured (the hook
+        is disabled), 401 on a bad secret, and 404 when no stream matches the key.
+      tags: [live]
+      parameters:
+        - name: X-Ingest-Secret
+          in: header
+          required: true
+          description: The LIVE_INGEST_SECRET shared secret.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LiveIngestRequest"
+      responses:
+        "200":
+          description: The stream is now live.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  state:
+                    type: string
+        "400":
+          description: Missing stream_key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Invalid ingest secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Ingest not enabled, or no stream matches the key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/live/ingest/stop:
+    post:
+      operationId: liveIngestStop
+      summary: Live ingest "on-publish-done" hook (media-server-facing)
+      description: >-
+        Called by the RTMP ingest boundary when a publish session ends: the stream
+        identified by the key returns to "offline" (permanent) or "ended" (one-shot).
+        Same X-Ingest-Secret auth as the start hook.
+      tags: [live]
+      parameters:
+        - name: X-Ingest-Secret
+          in: header
+          required: true
+          description: The LIVE_INGEST_SECRET shared secret.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LiveIngestRequest"
+      responses:
+        "204":
+          description: The stream's live state was updated.
+        "400":
+          description: Missing stream_key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Invalid ingest secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Ingest not enabled, or no stream matches the key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/conversations:
     post:
       operationId: startConversation
@@ -5214,6 +5312,13 @@ components:
           description: The new stream key, shown ONCE.
         rtmp_url:
           type: string
+    LiveIngestRequest:
+      type: object
+      required: [stream_key]
+      properties:
+        stream_key:
+          type: string
+          description: The publisher's raw stream key, as presented to the RTMP ingest.
     StartConversationRequest:
       type: object
       required: [recipient_id]

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 	"time"
@@ -183,6 +184,64 @@ func (s *Server) handleRegenerateLiveStreamKey(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, liveStreamKeyView{StreamKey: key, RTMPURL: s.cfg.LiveRTMPURL})
+}
+
+// liveIngestRequest is the body of the internal RTMP ingest hooks — the media
+// server presents the raw stream key of the publisher.
+type liveIngestRequest struct {
+	StreamKey string `json:"stream_key"`
+}
+
+const ingestSecretHeader = "X-Ingest-Secret"
+
+// ingestAuthorized gates the ingest hooks: they are disabled (404) unless an
+// ingest secret is configured, and require the media server to present it
+// (constant-time compared). Returns an *echo.HTTPError to send, or nil to proceed.
+func (s *Server) ingestAuthorized(c echo.Context) *echo.HTTPError {
+	if s.cfg.LiveIngestSecret == "" {
+		return echo.NewHTTPError(http.StatusNotFound, "live ingest is not enabled")
+	}
+	presented := c.Request().Header.Get(ingestSecretHeader)
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(s.cfg.LiveIngestSecret)) != 1 {
+		return echo.NewHTTPError(http.StatusUnauthorized, "invalid ingest secret")
+	}
+	return nil
+}
+
+// handleLiveIngestStart is the RTMP ingest "on-publish" hook: the media server
+// posts the publisher's stream key; a matching stream is flipped to live (allow
+// the publish). Authenticated by the ingest shared secret, NOT a user token. An
+// unknown/invalid key is 404 (deny). Not enabled (404) without LIVE_INGEST_SECRET.
+func (s *Server) handleLiveIngestStart(c echo.Context) error {
+	if err := s.ingestAuthorized(c); err != nil {
+		return err
+	}
+	var in liveIngestRequest
+	if err := c.Bind(&in); err != nil || strings.TrimSpace(in.StreamKey) == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "stream_key is required")
+	}
+	id, err := s.livesvc.StartIngest(c.Request().Context(), strings.TrimSpace(in.StreamKey))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "no live stream for that key")
+	}
+	return c.JSON(http.StatusOK, map[string]string{"id": id.String(), "state": live.StateLive})
+}
+
+// handleLiveIngestStop is the RTMP "on-publish-done" hook: the stream identified
+// by the key returns to offline (permanent) or ended (one-shot). Same auth as
+// start.
+func (s *Server) handleLiveIngestStop(c echo.Context) error {
+	if err := s.ingestAuthorized(c); err != nil {
+		return err
+	}
+	var in liveIngestRequest
+	if err := c.Bind(&in); err != nil || strings.TrimSpace(in.StreamKey) == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "stream_key is required")
+	}
+	if _, err := s.livesvc.StopIngest(c.Request().Context(), strings.TrimSpace(in.StreamKey)); err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "no live stream for that key")
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 // handleDeleteLiveStream deletes a live stream. Behind requireAuth;

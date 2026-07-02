@@ -26,5 +26,17 @@ ORDER BY created_at DESC, id;
 -- Rotate a stream's key (store the new hash).
 UPDATE live_streams SET stream_key_hash = $2, updated_at = now() WHERE id = $1;
 
+-- name: GetLiveStreamByKeyHash :one
+-- Look up a stream by its key hash — the RTMP ingest boundary authenticates a
+-- publisher by hashing the presented stream key. Returns id, channel, permanent
+-- (so stop can decide ended vs offline), and current state.
+SELECT id, channel_id, permanent, state
+FROM live_streams
+WHERE stream_key_hash = $1;
+
+-- name: SetLiveStreamState :exec
+-- Flip a stream's live state (offline/live/ended), set by the ingest boundary.
+UPDATE live_streams SET state = $2, updated_at = now() WHERE id = $1;
+
 -- name: DeleteLiveStream :execrows
 DELETE FROM live_streams WHERE id = $1;

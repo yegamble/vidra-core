@@ -121,6 +121,12 @@ curl -s localhost:8080/api/v1/channels/<handle>/live -H 'authorization: Bearer <
 curl -s localhost:8080/api/v1/live/<id>                                                # public metadata (private => owner only; no key)
 curl -sX POST localhost:8080/api/v1/live/<id>/key -H 'authorization: Bearer <token>'   # rotate the stream key -> new {stream_key, rtmp_url} (once)
 curl -sX DELETE localhost:8080/api/v1/live/<id> -H 'authorization: Bearer <token>'     # delete (owner-only)
+# RTMP ingest hooks (media-server-facing; NOT user auth — gated by LIVE_INGEST_SECRET,
+# 404 when that env is unset). The ingest presents the publisher's stream key:
+curl -sX POST localhost:8080/api/v1/live/ingest/start -H 'X-Ingest-Secret: <secret>' \
+  -H 'content-type: application/json' -d '{"stream_key":"<key>"}'                       # publisher connected -> stream goes live (bad secret 401, unknown key 404)
+curl -sX POST localhost:8080/api/v1/live/ingest/stop  -H 'X-Ingest-Secret: <secret>' \
+  -H 'content-type: application/json' -d '{"stream_key":"<key>"}'                       # publisher disconnected -> ended (one-shot) / offline (permanent)
 
 # Captions (WebVTT; owner uploads/removes, anyone lists/downloads on a public video):
 curl -sX POST localhost:8080/api/v1/videos/<id>/captions -H 'authorization: Bearer <token>' \

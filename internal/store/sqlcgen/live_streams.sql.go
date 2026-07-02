@@ -123,6 +123,34 @@ func (q *Queries) GetLiveStreamByID(ctx context.Context, id uuid.UUID) (GetLiveS
 	return i, err
 }
 
+const getLiveStreamByKeyHash = `-- name: GetLiveStreamByKeyHash :one
+SELECT id, channel_id, permanent, state
+FROM live_streams
+WHERE stream_key_hash = $1
+`
+
+type GetLiveStreamByKeyHashRow struct {
+	ID        uuid.UUID `json:"id"`
+	ChannelID uuid.UUID `json:"channel_id"`
+	Permanent bool      `json:"permanent"`
+	State     string    `json:"state"`
+}
+
+// Look up a stream by its key hash — the RTMP ingest boundary authenticates a
+// publisher by hashing the presented stream key. Returns id, channel, permanent
+// (so stop can decide ended vs offline), and current state.
+func (q *Queries) GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash string) (GetLiveStreamByKeyHashRow, error) {
+	row := q.db.QueryRow(ctx, getLiveStreamByKeyHash, streamKeyHash)
+	var i GetLiveStreamByKeyHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.ChannelID,
+		&i.Permanent,
+		&i.State,
+	)
+	return i, err
+}
+
 const listLiveStreamsByChannel = `-- name: ListLiveStreamsByChannel :many
 SELECT id, channel_id, title, description, privacy, state, permanent, created_at, updated_at
 FROM live_streams
@@ -171,6 +199,21 @@ func (q *Queries) ListLiveStreamsByChannel(ctx context.Context, channelID uuid.U
 		return nil, err
 	}
 	return items, nil
+}
+
+const setLiveStreamState = `-- name: SetLiveStreamState :exec
+UPDATE live_streams SET state = $2, updated_at = now() WHERE id = $1
+`
+
+type SetLiveStreamStateParams struct {
+	ID    uuid.UUID `json:"id"`
+	State string    `json:"state"`
+}
+
+// Flip a stream's live state (offline/live/ended), set by the ingest boundary.
+func (q *Queries) SetLiveStreamState(ctx context.Context, arg SetLiveStreamStateParams) error {
+	_, err := q.db.Exec(ctx, setLiveStreamState, arg.ID, arg.State)
+	return err
 }
 
 const updateLiveStreamKey = `-- name: UpdateLiveStreamKey :exec

@@ -37,7 +37,16 @@ type Repository interface {
 	ListLiveStreamsByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListLiveStreamsByChannelRow, error)
 	UpdateLiveStreamKey(ctx context.Context, arg sqlcgen.UpdateLiveStreamKeyParams) error
 	DeleteLiveStream(ctx context.Context, id uuid.UUID) (int64, error)
+	GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash string) (sqlcgen.GetLiveStreamByKeyHashRow, error)
+	SetLiveStreamState(ctx context.Context, arg sqlcgen.SetLiveStreamStateParams) error
 }
+
+// Live-stream states.
+const (
+	StateOffline = "offline"
+	StateLive    = "live"
+	StateEnded   = "ended"
+)
 
 // Service holds the live-stream application logic.
 type Service struct{ repo Repository }
@@ -155,6 +164,39 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+// StartIngest authenticates a publisher by the raw stream key it presents (the
+// RTMP ingest boundary): it looks the stream up by key hash and flips it to
+// "live". An unknown key → ErrNotFound (deny the publish). The HTTP layer gates
+// this behind the ingest shared secret.
+func (s *Service) StartIngest(ctx context.Context, rawKey string) (uuid.UUID, error) {
+	row, err := s.repo.GetLiveStreamByKeyHash(ctx, hashStreamKey(rawKey))
+	if err != nil {
+		return uuid.Nil, ErrNotFound
+	}
+	if err := s.repo.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: row.ID, State: StateLive}); err != nil {
+		return uuid.Nil, err
+	}
+	return row.ID, nil
+}
+
+// StopIngest ends a publish session for the stream identified by the raw key: a
+// permanent stream returns to "offline" (reusable), a one-shot stream becomes
+// "ended". An unknown key → ErrNotFound.
+func (s *Service) StopIngest(ctx context.Context, rawKey string) (uuid.UUID, error) {
+	row, err := s.repo.GetLiveStreamByKeyHash(ctx, hashStreamKey(rawKey))
+	if err != nil {
+		return uuid.Nil, ErrNotFound
+	}
+	next := StateEnded
+	if row.Permanent {
+		next = StateOffline
+	}
+	if err := s.repo.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: row.ID, State: next}); err != nil {
+		return uuid.Nil, err
+	}
+	return row.ID, nil
+}
+
 // generateStreamKey returns a new high-entropy opaque stream key and its storage
 // hash. The raw key goes to the streamer (OBS) exactly once; only the hash is
 // persisted. A fast hash (SHA-256) is correct for a high-entropy random token.
@@ -164,6 +206,12 @@ func generateStreamKey() (raw, hash string, err error) {
 		return "", "", err
 	}
 	raw = base64.RawURLEncoding.EncodeToString(b)
+	return raw, hashStreamKey(raw), nil
+}
+
+// hashStreamKey returns the hex SHA-256 of a raw stream key — the stored form and
+// the ingest-lookup key.
+func hashStreamKey(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
-	return raw, hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(sum[:])
 }
