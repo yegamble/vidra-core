@@ -51,6 +51,8 @@ var sensitiveKeys = map[string]bool{
 	"cookie":             true,
 	"secret":             true,
 	"private_key":        true,
+	"private_key_pem":    true,
+	"kek":                true,
 	"stream_key":         true,
 	"jwt":                true,
 }

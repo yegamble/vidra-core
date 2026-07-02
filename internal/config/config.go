@@ -4,6 +4,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"os"
@@ -69,6 +70,12 @@ type Config struct {
 	// false (default) all federation routes are unmounted (they 404) — zero cost
 	// when off. See .ralph/specs/federation.md.
 	FederationEnabled bool
+
+	// FederationKeyKEK is the base64 (standard) 32-byte key-encryption key used to
+	// envelope-encrypt actor private keys at rest (AES-256-GCM via internal/secretbox).
+	// Required in production when FederationEnabled; empty in dev stores keys raw
+	// (with a loud boot warning). NEVER commit a real value. See federation.md §3.
+	FederationKeyKEK string
 
 	// LiveRTMPURL is the base RTMP ingest URL returned to a streamer on live-stream
 	// create (the streamer appends their stream key in OBS). Empty until an RTMP
@@ -166,6 +173,7 @@ func Load() (*Config, error) {
 		InstanceName:                getEnv("INSTANCE_NAME", "Vidra (dev)"),
 		PublicBaseURL:               strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
 		FederationEnabled:           getEnvBool("FEDERATION_ENABLED", false),
+		FederationKeyKEK:            getEnv("FEDERATION_KEY_KEK", ""),
 		LiveRTMPURL:                 getEnv("LIVE_RTMP_URL", ""),
 		LiveIngestSecret:            getEnv("LIVE_INGEST_SECRET", ""),
 		InstanceDescription:         getEnv("INSTANCE_DESCRIPTION", ""),
@@ -314,6 +322,13 @@ func (c *Config) validate() error {
 		}
 		if c.Environment == "production" && u.Scheme != "https" {
 			return fmt.Errorf("config: PUBLIC_BASE_URL must be https in production")
+		}
+		if c.FederationKeyKEK != "" {
+			if k, err := base64.StdEncoding.DecodeString(c.FederationKeyKEK); err != nil || len(k) != 32 {
+				return fmt.Errorf("config: FEDERATION_KEY_KEK must be base64 of exactly 32 bytes")
+			}
+		} else if c.Environment == "production" {
+			return fmt.Errorf("config: FEDERATION_KEY_KEK is required in production when FEDERATION_ENABLED=true")
 		}
 	}
 	return nil

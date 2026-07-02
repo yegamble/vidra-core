@@ -12,6 +12,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AccountActorKey struct {
+	UserID        uuid.UUID `json:"user_id"`
+	PublicKeyPem  string    `json:"public_key_pem"`
+	PrivateKeyPem string    `json:"private_key_pem"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type AuditLog struct {
 	ID         uuid.UUID   `json:"id"`
 	Action     string      `json:"action"`
@@ -40,6 +47,13 @@ type Channel struct {
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type ChannelActorKey struct {
+	ChannelID     uuid.UUID `json:"channel_id"`
+	PublicKeyPem  string    `json:"public_key_pem"`
+	PrivateKeyPem string    `json:"private_key_pem"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type ChannelFollow struct {

@@ -97,6 +97,9 @@ services:
       # PUBLIC_BASE_URL to this instance's canonical origin. See .ralph/specs/federation.md.
       FEDERATION_ENABLED: ${FEDERATION_ENABLED:-false}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # Base64 32-byte KEK for actor private-key envelope encryption (required in
+      # production when federation is on). NEVER commit a real value.
+      FEDERATION_KEY_KEK: ${FEDERATION_KEY_KEK:-}
     # Make the host reachable as host.docker.internal on Linux too (Docker Desktop
     # provides it already). Lets a backed e2e point URL import at a media origin
     # served on the host (paired with HTTP_IMPORT_ALLOW_PRIVATE_URLS=true). No

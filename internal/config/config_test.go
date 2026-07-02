@@ -1,6 +1,8 @@
 package config
 
 import (
+	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 )
@@ -332,5 +334,79 @@ func TestCORSOriginsParsing(t *testing.T) {
 	}
 	if len(cfg.CORSAllowedOrigins) != 2 {
 		t.Fatalf("CORSAllowedOrigins = %v, want 2 entries", cfg.CORSAllowedOrigins)
+	}
+}
+
+func TestFederationDisabledByDefault(t *testing.T) {
+	t.Setenv("FEDERATION_ENABLED", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.FederationEnabled {
+		t.Error("FederationEnabled = true, want false by default")
+	}
+}
+
+func TestFederationEnabledTrimsBaseURL(t *testing.T) {
+	t.Setenv("FEDERATION_ENABLED", "true")
+	t.Setenv("PUBLIC_BASE_URL", "https://videos.example/")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.FederationEnabled {
+		t.Error("FederationEnabled = false, want true")
+	}
+	if cfg.PublicBaseURL != "https://videos.example" {
+		t.Errorf("PublicBaseURL = %q, want trailing slash trimmed", cfg.PublicBaseURL)
+	}
+}
+
+func TestFederationRejectsBadBaseURL(t *testing.T) {
+	for _, bad := range []string{"", "https://videos.example/with/path", "ftp://videos.example"} {
+		t.Setenv("FEDERATION_ENABLED", "true")
+		t.Setenv("PUBLIC_BASE_URL", bad)
+		if _, err := Load(); err == nil {
+			t.Errorf("Load() with FEDERATION_ENABLED and PUBLIC_BASE_URL=%q: expected error", bad)
+		}
+	}
+}
+
+// prodFedConfig is a fully-valid production config with federation on, varying
+// only the KEK — so validate()'s only remaining variable is FEDERATION_KEY_KEK.
+func prodFedConfig(kek string) *Config {
+	return &Config{
+		Environment:        "production",
+		LogLevel:           "info",
+		LogFormat:          "json",
+		HTTPPort:           8080,
+		DatabaseURL:        "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable",
+		RedisURL:           "redis://localhost:6379/0",
+		HTTPRequestTimeout: time.Second,
+		HTTPBodyLimit:      "8M",
+		UploadMaxSize:      "64K",
+		JWTSecret:          strings.Repeat("x", 40),
+		JWTAccessTTL:       time.Minute,
+		JWTRefreshTTL:      time.Hour,
+		StorageBackend:     "local",
+		StorageLocalRoot:   "/tmp/vidra",
+		CORSAllowedOrigins: []string{"https://videos.example"},
+		FederationEnabled:  true,
+		PublicBaseURL:      "https://videos.example",
+		FederationKeyKEK:   kek,
+	}
+}
+
+func TestFederationProductionRequiresKEK(t *testing.T) {
+	if err := prodFedConfig("").validate(); err == nil {
+		t.Fatal("validate(): production federation without a KEK must error")
+	}
+	good := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	if err := prodFedConfig(good).validate(); err != nil {
+		t.Fatalf("validate(): unexpected error with a valid 32-byte KEK: %v", err)
+	}
+	if err := prodFedConfig("bad").validate(); err == nil {
+		t.Fatal("validate(): a non-32-byte KEK must error")
 	}
 }

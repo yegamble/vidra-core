@@ -46,20 +46,25 @@ handling.
 ## 2. Actor model (accounts + channels)
 
 Both `users` (Person) and `channels` (Group, PeerTube models channels as `Group`) are
-federated actors. Decision: **store the AP fields as columns on the existing `users` and
-`channels` tables** rather than a shared `actors` table.
-- Rationale: our handles are already unique per table, ids are UUIDs, and the two entities
-  have distinct lifecycles/queries. A shared table would force joins into every existing
-  account/channel read for little gain at our scale. PeerTube's shared `actor` table exists
-  largely for remote-actor storage; we keep **remote** actors in a separate `remote_actors`
-  table (Slice 4) and keep local actors inline.
+federated actors. Decision: **store the actor keypairs in dedicated 1:1 side tables**
+(`account_actor_keys`, `channel_actor_keys`) keyed by `user_id`/`channel_id`, rather than
+columns on `users`/`channels` or a shared polymorphic `actors` table.
+- Rationale (revised in Slice 2a): adding columns to `users`/`channels` makes several
+  existing queries' `RETURNING`/`SELECT` lists diverge from the shared sqlc model, so sqlc
+  stops reusing `User`/`Channel` and emits new `*Row` types — churning every service
+  Repository interface that references those models. Dedicated tables keep the core models
+  untouched (zero ripple), give proper `ON DELETE CASCADE` cleanup, and cleanly separate
+  federation-only, lazily-minted data from core account/channel data.
 
-New columns (one migration per entity, added in Slice 2), on both `users` and `channels`:
-- `public_key_pem  TEXT` — PEM SPKI public key (safe to serve).
-- `private_key_pem  TEXT` — PEM PKCS#8 private key (secret; see §3).
-- `actor_created_at TIMESTAMPTZ` — when the keypair was minted (nullable until minted).
+Each side table (migration 0035, Slice 2a):
+- `{user,channel}_id UUID PRIMARY KEY REFERENCES … ON DELETE CASCADE`
+- `public_key_pem  TEXT NOT NULL` — PEM SPKI public key (safe to serve).
+- `private_key_pem TEXT NOT NULL` — private key at rest (secret; see §3).
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` — when the keypair was minted.
+A row is inserted lazily on first federation use (absent row = not yet minted).
 Inbox/outbox/followers/following/actor URLs are **derived** from `PUBLIC_BASE_URL` +
-username/handle at serialization time — not stored (no drift, cheaper migration).
+username/handle at serialization time — not stored (no drift). Remote actors still live in a
+separate `remote_actors` table (Slice 4).
 
 Remote actors (Slice 4): `remote_actors` table — `id UUID`, `actor_url TEXT UNIQUE`,
 `type`, `preferred_username`, `domain`, `inbox_url`, `shared_inbox_url NULL`,

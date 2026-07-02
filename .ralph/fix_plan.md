@@ -451,8 +451,21 @@
 > protocols=[activitypub], openRegistrations=RegistrationEnabled, usage={users, localPosts=public
 > published videos, localComments}. Tested: `internal/federation` (usage mapping + error
 > propagation) + `internal/httpapi` (discovery link, 2.1 doc shape + profile content type,
-> absent-when-disabled 404). NEXT: Slice 2 — actor model + WebFinger + actor endpoints (needs the
-> key-columns migration + `FEDERATION_KEY_KEK` envelope encryption per spec §3).
+> absent-when-disabled 404).
+>
+> **Slice 2a SHIPPED** (actor-key crypto + schema foundation): migration 0035 adds dedicated
+> 1:1 side tables `account_actor_keys` + `channel_actor_keys` (public_key_pem, private_key_pem,
+> created_at; `ON DELETE CASCADE`) — **NOT** columns on users/channels, because adding columns
+> there made existing queries' RETURNING lists diverge from the shared sqlc model and churned
+> every service Repository (spec §2 decision revised accordingly). `internal/secretbox`:
+> AES-256-GCM envelope encryption (`Seal`→`enc:<base64 nonce||ct>`, `Open`, `IsSealed`,
+> `NewCipherFromBase64`) for private keys at rest; fully unit-tested (round-trip, fresh-nonce,
+> wrong-KEK/tamper reject, non-prefixed reject, bad length/base64). Config `FEDERATION_KEY_KEK`
+> (base64 32-byte; required in production when federation on, dev stores raw) with validation
+> tests; `.env.example` + compose passthrough. Banned-log-key guard extended (`private_key_pem`,
+> `kek`). NEXT: Slice 2b — key-minting queries + service (lazy RSA-2048 gen, encrypt via secretbox)
+> + content-negotiated actor endpoints (`/accounts/:h` Person, `/video-channels/:h` Group) +
+> WebFinger, proven end-to-end against a real DB.
 
 ## P10.1 ActivityPub
 
