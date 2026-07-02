@@ -38,6 +38,39 @@ Implemented so far:
 - **Federation input**: all remote payloads validated and size-bounded; remote
   failures must never crash local playback.
 
+## JWT signing-key rotation
+
+Current scheme: access tokens are **HS256** JWTs signed with a single symmetric
+`JWT_SECRET` (`internal/auth/jwt.go`); the verifier pins the algorithm to HMAC
+(defeating alg-confusion) and checks issuer/audience/exp/nbf. Refresh tokens are
+**opaque random tokens stored hashed** in `sessions` (not JWTs) and are
+independently revocable — so they do NOT depend on `JWT_SECRET`.
+
+**Rotation procedure available today (brief, bounded disruption).** Because the
+signing secret only protects short-TTL access tokens and refresh is DB-backed:
+1. Generate a new strong secret (`openssl rand -base64 48`), set `JWT_SECRET`, and
+   restart. (Validation already rejects the dev default and any secret < 32 bytes
+   in production.)
+2. Outstanding **access** tokens signed with the old secret then fail verification
+   (401) — but each client transparently calls `POST /auth/refresh` (its opaque
+   refresh token is unaffected) and receives a new access token signed with the new
+   secret. Worst-case disruption is one failed request per client within the access
+   TTL, not a re-login.
+3. Rotate on suspected secret compromise, on operator schedule, or on staff
+   offboarding. A rotation does not, by itself, revoke sessions; use logout-all /
+   session revocation for that.
+
+**Zero-downtime rotation — DEFERRED (documented).** To eliminate even the brief
+refresh burst, the issuer would carry a `kid` header and a small keyring: the
+primary key signs, and primary + recently-retired keys all verify, with retired
+keys dropped after one access-TTL grace window. This is deferred because (a) the
+disruption above is already bounded to a single transparent refresh, and (b) it
+adds keyring config + verify-fanout complexity. **Trigger to implement:** an
+instance large enough that a rotation's synchronized refresh burst is an
+availability concern, or a compliance requirement mandating scheduled key rollover
+without any client-visible error. When implemented it ships with issuer keyring
+tests (old-key token still verifies within grace; dropped after).
+
 ## Rules
 
 - Never commit real secrets, tokens, keys, or personal data anywhere
