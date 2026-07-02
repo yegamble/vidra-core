@@ -478,8 +478,18 @@
 > cmd/api builds the secretbox cipher from `FEDERATION_KEY_KEK` (warns when unset with federation on).
 > Tested: federation unit (mint-once, seal-with-cipher, Person/Group build, WebFinger resolve/reject),
 > httpapi handler (Person/Group serve, 406/404, WebFinger), and an **integration test proving minting
-> persists + is idempotent against real Postgres** (run in backend-integration). NEXT: Slice 3 — HTTP
-> signatures (sign/verify) + SSRF-guarded remote actor fetch/cache (`remote_actors`).
+> persists + is idempotent against real Postgres** (run in backend-integration).
+>
+> **Slice 3a SHIPPED** (HTTP Signatures primitive): `internal/httpsig` — standalone cavage-draft
+> "Signing HTTP Messages" (RSA-SHA256) used across the fediverse. `Signer.Sign` sets Date + Digest
+> (`SHA-256=<base64>` over the body) + a `Signature` header covering `(request-target) host date digest`;
+> `Verifier.Verify` parses the header, enforces the minimum covered set (digest required when a body is
+> present), checks Date within skew (default 5m, injectable clock), verifies the Digest against the body,
+> and RSA-verifies against a caller-supplied `ResolveKey(keyID)` callback — so the package needs no
+> network or DB. Fully unit-tested: sign→verify round-trip, tampered body/signature, wrong key, stale
+> Date, missing digest-coverage, unsupported algorithm, missing/garbled Signature header, base64 parse.
+> NEXT: Slice 3b — `remote_actors` table + SSRF-guarded (`internal/urlsafety`) remote-actor fetch/cache
+> that supplies `ResolveKey` (parse the fetched actor's `publicKey.publicKeyPem` → rsa.PublicKey).
 
 ## P10.1 ActivityPub
 
@@ -489,8 +499,8 @@
 - [x] Implement ActivityPub actor endpoints. (Content-negotiated actor documents — `application/activity+json`, 406 otherwise — with `@context` (incl. security vocab), derived inbox/outbox/followers/following collection URLs, and the `publicKey` block. The collection endpoints themselves land in Slices 4-5 — Slice 2b.)
 - [ ] Implement inbox endpoint.
 - [ ] Implement outbox endpoint.
-- [ ] Implement HTTP signatures.
-- [ ] Implement JSON-LD signature strategy or documented compatibility plan.
+- [~] Implement HTTP signatures. (Primitive DONE in Slice 3a — `internal/httpsig` RSA-SHA256 cavage sign/verify over `(request-target) host date digest` with Digest + skew, unit-tested. Not yet WIRED: signing outbound delivery lands with the outbox/delivery (Slice 5) and verifying inbound lands with the inbox (Slice 4, needs the Slice 3b remote-actor key resolver).)
+- [x] Implement JSON-LD signature strategy or documented compatibility plan. (Documented compatibility plan — `.ralph/specs/federation.md` §7: Vidra authenticates server-to-server with **HTTP Signatures** (RSA-SHA256) and does NOT emit JSON-LD/LD-Signatures, matching Mastodon's default and PeerTube interop. Object integrity rides the signed Digest, not LD proofs.)
 - [ ] Implement follow remote instance/channel/account.
 - [ ] Implement receive remote video activity.
 - [ ] Implement announce video from channel.
