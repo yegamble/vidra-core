@@ -108,6 +108,15 @@ func (f *fakeRepo) ListPlaylistItems(_ context.Context, playlistID uuid.UUID) ([
 	return rows, nil
 }
 
+func (f *fakeRepo) ListPlaylistItemVideoIDs(_ context.Context, playlistID uuid.UUID) ([]uuid.UUID, error) {
+	return append([]uuid.UUID(nil), f.items[playlistID]...), nil
+}
+
+func (f *fakeRepo) ReorderPlaylistItems(_ context.Context, a sqlcgen.ReorderPlaylistItemsParams) error {
+	f.items[a.PlaylistID] = append([]uuid.UUID(nil), a.VideoIds...)
+	return nil
+}
+
 func TestCreateGetAndItems(t *testing.T) {
 	svc := NewService(newFakeRepo())
 	ctx := context.Background()
@@ -188,3 +197,51 @@ func TestOwnerOnlyMutations(t *testing.T) {
 }
 
 func strptr(s string) *string { return &s }
+
+func TestReorderItems(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	ctx := context.Background()
+	owner, other := uuid.New(), uuid.New()
+
+	p, _ := svc.Create(ctx, owner, CreateInput{Title: "Q", Visibility: "public"})
+	v1, v2, v3 := uuid.New(), uuid.New(), uuid.New()
+	for _, v := range []uuid.UUID{v1, v2, v3} {
+		if err := svc.AddItem(ctx, owner, p.ID, v); err != nil {
+			t.Fatalf("AddItem: %v", err)
+		}
+	}
+
+	// Happy path: reverse the order.
+	if err := svc.ReorderItems(ctx, owner, p.ID, []uuid.UUID{v3, v2, v1}); err != nil {
+		t.Fatalf("ReorderItems: %v", err)
+	}
+	ids, _ := svc.repo.ListPlaylistItemVideoIDs(ctx, p.ID)
+	if len(ids) != 3 || ids[0] != v3 || ids[1] != v2 || ids[2] != v1 {
+		t.Fatalf("order = %v, want [v3 v2 v1]", ids)
+	}
+
+	// Ownership + existence.
+	if err := svc.ReorderItems(ctx, other, p.ID, []uuid.UUID{v3, v2, v1}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-owner = %v, want ErrForbidden", err)
+	}
+	if err := svc.ReorderItems(ctx, owner, uuid.New(), []uuid.UUID{v1}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown = %v, want ErrNotFound", err)
+	}
+
+	// Non-permutations all reject.
+	for name, ids := range map[string][]uuid.UUID{
+		"missing":   {v1, v2},
+		"extra":     {v1, v2, v3, uuid.New()},
+		"duplicate": {v1, v2, v2},
+	} {
+		if err := svc.ReorderItems(ctx, owner, p.ID, ids); !errors.Is(err, ErrInvalidOrder) {
+			t.Errorf("%s = %v, want ErrInvalidOrder", name, err)
+		}
+	}
+
+	// Empty playlist: an empty order is a valid no-op.
+	empty, _ := svc.Create(ctx, owner, CreateInput{Title: "Empty", Visibility: "private"})
+	if err := svc.ReorderItems(ctx, owner, empty.ID, nil); err != nil {
+		t.Errorf("empty reorder = %v, want nil", err)
+	}
+}

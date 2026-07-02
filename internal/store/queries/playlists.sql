@@ -50,6 +50,27 @@ ON CONFLICT (playlist_id, video_id) DO NOTHING;
 DELETE FROM playlist_items
 WHERE playlist_id = $1 AND video_id = $2;
 
+-- name: ListPlaylistItemVideoIDs :many
+-- Every item's video id in current order, UNFILTERED by video privacy/state, so
+-- the service can validate a reorder request covers exactly the playlist's items
+-- (ListPlaylistItems only returns public+published cards and can't be used here).
+SELECT video_id FROM playlist_items
+WHERE playlist_id = $1
+ORDER BY position ASC, added_at ASC;
+
+-- name: ReorderPlaylistItems :exec
+-- Rewrite item positions to the given order: each video's position becomes its
+-- 1-based index in video_ids. One atomic statement — items not listed keep their
+-- position (callers pass the full set), and there is no UNIQUE(position) to
+-- transiently collide with mid-update.
+UPDATE playlist_items pi
+SET position = src.rn
+FROM (
+    SELECT vid, rn::int AS rn
+    FROM unnest(sqlc.arg('video_ids')::uuid[]) WITH ORDINALITY AS t(vid, rn)
+) src
+WHERE pi.playlist_id = sqlc.arg('playlist_id') AND pi.video_id = src.vid;
+
 -- name: ListPlaylistItems :many
 -- A playlist's videos in order, as discovery cards (the same card data as the
 -- main feed). Only public, published videos are returned.

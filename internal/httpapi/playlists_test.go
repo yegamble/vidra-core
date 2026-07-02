@@ -137,6 +137,15 @@ func (f *playlistFakeRepo) ListPlaylistItems(_ context.Context, playlistID uuid.
 	return rows, nil
 }
 
+func (f *playlistFakeRepo) ListPlaylistItemVideoIDs(_ context.Context, playlistID uuid.UUID) ([]uuid.UUID, error) {
+	return append([]uuid.UUID(nil), f.items[playlistID]...), nil
+}
+
+func (f *playlistFakeRepo) ReorderPlaylistItems(_ context.Context, a sqlcgen.ReorderPlaylistItemsParams) error {
+	f.items[a.PlaylistID] = append([]uuid.UUID(nil), a.VideoIds...)
+	return nil
+}
+
 func createPlaylist(t *testing.T, srv *Server, token, body string) playlistView {
 	t.Helper()
 	rec := postJSONAuth(srv, "/api/v1/playlists", body, token)
@@ -282,11 +291,59 @@ func TestPlaylistValidationAndAuth(t *testing.T) {
 		{http.MethodPatch, "/api/v1/playlists/" + someID, `{"title":"x"}`},
 		{http.MethodDelete, "/api/v1/playlists/" + someID, ""},
 		{http.MethodPost, "/api/v1/playlists/" + someID + "/videos", `{"video_id":"` + someID + `"}`},
+		{http.MethodPut, "/api/v1/playlists/" + someID + "/videos", `{"video_ids":["` + someID + `"]}`},
 		{http.MethodDelete, "/api/v1/playlists/" + someID + "/videos/" + someID, ""},
 	}
 	for _, tc := range cases {
 		if rec := sendJSONAuth(srv, tc.method, tc.path, tc.body, ""); rec.Code != http.StatusUnauthorized {
 			t.Errorf("anon %s %s = %d, want 401", tc.method, tc.path, rec.Code)
 		}
+	}
+}
+
+func TestPlaylistReorder(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	v1 := createPublishedVideo(t, srv, tok, "ada", `{"title":"One","privacy":"public"}`)
+	v2 := createPublishedVideo(t, srv, tok, "ada", `{"title":"Two","privacy":"public"}`)
+	v3 := createPublishedVideo(t, srv, tok, "ada", `{"title":"Three","privacy":"public"}`)
+
+	pl := createPlaylist(t, srv, tok, `{"title":"Mix","visibility":"public"}`)
+	for _, v := range []string{v1, v2, v3} {
+		if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/playlists/"+pl.ID+"/videos", `{"video_id":"`+v+`"}`, tok); rec.Code != http.StatusNoContent {
+			t.Fatalf("add %s = %d", v, rec.Code)
+		}
+	}
+
+	reorder := func(body, token string) *httptest.ResponseRecorder {
+		return sendJSONAuth(srv, http.MethodPut, "/api/v1/playlists/"+pl.ID+"/videos", body, token)
+	}
+
+	// Happy path: reverse the order → 204, and the detail reflects the new order.
+	if rec := reorder(`{"video_ids":["`+v3+`","`+v2+`","`+v1+`"]}`, tok); rec.Code != http.StatusNoContent {
+		t.Fatalf("reorder = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var detail playlistDetailResponse
+	_ = json.Unmarshal(getPlaylist(srv, pl.ID, "").Body.Bytes(), &detail)
+	if len(detail.Videos) != 3 || detail.Videos[0].ID != v3 || detail.Videos[1].ID != v2 || detail.Videos[2].ID != v1 {
+		t.Fatalf("order after reorder = %+v, want [v3 v2 v1]", detail.Videos)
+	}
+
+	// A non-permutation (missing an id) → 422.
+	if rec := reorder(`{"video_ids":["`+v1+`","`+v2+`"]}`, tok); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("missing id = %d, want 422", rec.Code)
+	}
+	// A malformed uuid → 422 (body validation).
+	if rec := reorder(`{"video_ids":["not-a-uuid"]}`, tok); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("bad uuid = %d, want 422", rec.Code)
+	}
+	// A non-owner sees 404 (existence hidden), even with a valid permutation.
+	otherTok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	if rec := reorder(`{"video_ids":["`+v3+`","`+v2+`","`+v1+`"]}`, otherTok); rec.Code != http.StatusNotFound {
+		t.Errorf("non-owner = %d, want 404", rec.Code)
+	}
+	// Anonymous → 401.
+	if rec := reorder(`{"video_ids":["`+v1+`"]}`, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anon = %d, want 401", rec.Code)
 	}
 }

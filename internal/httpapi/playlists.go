@@ -331,6 +331,55 @@ func (s *Server) handleRemovePlaylistItem(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// reorderPlaylistItemsRequest is the PUT /api/v1/playlists/{id}/videos body: the
+// playlist's video ids in the desired order. It must list exactly the current
+// items (a permutation) — a drag-reorder UI submits the full order.
+type reorderPlaylistItemsRequest struct {
+	VideoIDs []string `json:"video_ids"`
+}
+
+func (r reorderPlaylistItemsRequest) Validate() []FieldError {
+	if r.VideoIDs == nil {
+		return []FieldError{{Field: "video_ids", Message: "is required"}}
+	}
+	for _, s := range r.VideoIDs {
+		if _, err := uuid.Parse(strings.TrimSpace(s)); err != nil {
+			return []FieldError{{Field: "video_ids", Message: "must all be valid video ids"}}
+		}
+	}
+	return nil
+}
+
+// handleReorderPlaylistItems rewrites the order of a playlist's items. Owner-only
+// (a non-owner or unknown playlist is 404, hiding existence); the body must be
+// exactly the playlist's current items in the new order, else 422.
+func (s *Server) handleReorderPlaylistItems(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+	}
+	var in reorderPlaylistItemsRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	videoIDs := make([]uuid.UUID, 0, len(in.VideoIDs))
+	for _, sID := range in.VideoIDs {
+		vid, _ := uuid.Parse(strings.TrimSpace(sID)) // Validate() already proved each parses.
+		videoIDs = append(videoIDs, vid)
+	}
+	if err := s.playlistsvc.ReorderItems(c.Request().Context(), userID, id, videoIDs); err != nil {
+		if errors.Is(err, playlist.ErrInvalidOrder) {
+			return echo.NewHTTPError(http.StatusUnprocessableEntity, "video_ids must be exactly the playlist's items, each listed once")
+		}
+		return playlistError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 // playlistError maps playlist service sentinels to HTTP error envelopes. A
 // non-owner sees 404 (not 403) so a private playlist's existence is not leaked;
 // an owned but missing playlist is also 404.

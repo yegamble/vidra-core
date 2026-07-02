@@ -113,6 +113,35 @@ func (q *Queries) GetPlaylistByID(ctx context.Context, id uuid.UUID) (GetPlaylis
 	return i, err
 }
 
+const listPlaylistItemVideoIDs = `-- name: ListPlaylistItemVideoIDs :many
+SELECT video_id FROM playlist_items
+WHERE playlist_id = $1
+ORDER BY position ASC, added_at ASC
+`
+
+// Every item's video id in current order, UNFILTERED by video privacy/state, so
+// the service can validate a reorder request covers exactly the playlist's items
+// (ListPlaylistItems only returns public+published cards and can't be used here).
+func (q *Queries) ListPlaylistItemVideoIDs(ctx context.Context, playlistID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listPlaylistItemVideoIDs, playlistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var video_id uuid.UUID
+		if err := rows.Scan(&video_id); err != nil {
+			return nil, err
+		}
+		items = append(items, video_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPlaylistItems = `-- name: ListPlaylistItems :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,
@@ -244,6 +273,30 @@ type RemovePlaylistItemParams struct {
 
 func (q *Queries) RemovePlaylistItem(ctx context.Context, arg RemovePlaylistItemParams) error {
 	_, err := q.db.Exec(ctx, removePlaylistItem, arg.PlaylistID, arg.VideoID)
+	return err
+}
+
+const reorderPlaylistItems = `-- name: ReorderPlaylistItems :exec
+UPDATE playlist_items pi
+SET position = src.rn
+FROM (
+    SELECT vid, rn::int AS rn
+    FROM unnest($2::uuid[]) WITH ORDINALITY AS t(vid, rn)
+) src
+WHERE pi.playlist_id = $1 AND pi.video_id = src.vid
+`
+
+type ReorderPlaylistItemsParams struct {
+	PlaylistID uuid.UUID   `json:"playlist_id"`
+	VideoIds   []uuid.UUID `json:"video_ids"`
+}
+
+// Rewrite item positions to the given order: each video's position becomes its
+// 1-based index in video_ids. One atomic statement — items not listed keep their
+// position (callers pass the full set), and there is no UNIQUE(position) to
+// transiently collide with mid-update.
+func (q *Queries) ReorderPlaylistItems(ctx context.Context, arg ReorderPlaylistItemsParams) error {
+	_, err := q.db.Exec(ctx, reorderPlaylistItems, arg.PlaylistID, arg.VideoIds)
 	return err
 }
 

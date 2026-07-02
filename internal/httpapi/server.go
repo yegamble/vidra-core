@@ -501,6 +501,7 @@ func (s *Server) routes() {
 		api.PATCH("/playlists/:id", s.handleUpdatePlaylist, s.requireAuth)
 		api.DELETE("/playlists/:id", s.handleDeletePlaylist, s.requireAuth)
 		api.POST("/playlists/:id/videos", s.handleAddPlaylistItem, s.requireAuth)
+		api.PUT("/playlists/:id/videos", s.handleReorderPlaylistItems, s.requireAuth)
 		api.DELETE("/playlists/:id/videos/:videoId", s.handleRemovePlaylistItem, s.requireAuth)
 	}
 

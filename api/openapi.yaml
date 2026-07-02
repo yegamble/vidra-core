@@ -2408,6 +2408,51 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: reorderPlaylistItems
+      summary: Reorder a playlist's videos
+      description: >-
+        Rewrites the order of a playlist owned by the caller. The body must list
+        exactly the playlist's current video ids, each once, in the desired order
+        (a drag-reorder UI submits the full order); any missing, extra, or
+        duplicated id is 422.
+      tags: [playlists]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReorderPlaylistItemsRequest"
+      responses:
+        "204":
+          description: The playlist's videos are in the new order.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such playlist owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The video ids are not exactly the playlist's items, or a body validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/playlists/{id}/videos/{videoId}:
     delete:
       operationId: removePlaylistItem
@@ -4906,6 +4951,18 @@ components:
         video_id:
           type: string
           format: uuid
+    ReorderPlaylistItemsRequest:
+      type: object
+      required: [video_ids]
+      properties:
+        video_ids:
+          type: array
+          description: >-
+            The playlist's video ids in the desired order. Must be exactly the
+            playlist's current items — each id once, none missing or extra.
+          items:
+            type: string
+            format: uuid
     CreateReportRequest:
       type: object
       required: [reason]

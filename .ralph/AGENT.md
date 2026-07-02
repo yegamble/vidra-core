@@ -186,6 +186,8 @@ curl -sX PATCH  localhost:8080/api/v1/playlists/<id> -H 'authorization: Bearer <
 curl -sX DELETE localhost:8080/api/v1/playlists/<id> -H 'authorization: Bearer <token>'         # owner-only
 curl -sX POST localhost:8080/api/v1/playlists/<id>/videos -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"video_id":"<vid>"}'                                 # add (public+published only; idempotent)
+curl -sX PUT localhost:8080/api/v1/playlists/<id>/videos -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"video_ids":["<vid3>","<vid2>","<vid1>"]}'           # reorder (owner-only; must be exactly the items, each once -> 422)
 curl -sX DELETE localhost:8080/api/v1/playlists/<id>/videos/<vid> -H 'authorization: Bearer <token>'  # remove (idempotent)
 
 # Abuse reports (any authed user files; the queue is moderator/admin-only):

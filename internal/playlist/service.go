@@ -20,6 +20,9 @@ var (
 	ErrNotFound = errors.New("playlist: not found")
 	// ErrForbidden means the caller does not own the playlist.
 	ErrForbidden = errors.New("playlist: not owner")
+	// ErrInvalidOrder means a reorder request's video ids are not exactly the
+	// playlist's current item set (a missing, extra, or duplicated id).
+	ErrInvalidOrder = errors.New("playlist: reorder ids do not match the playlist items")
 )
 
 // Repository is the data access the playlist service needs. *sqlcgen.Queries
@@ -33,6 +36,8 @@ type Repository interface {
 	AddPlaylistItem(ctx context.Context, arg sqlcgen.AddPlaylistItemParams) error
 	RemovePlaylistItem(ctx context.Context, arg sqlcgen.RemovePlaylistItemParams) error
 	ListPlaylistItems(ctx context.Context, playlistID uuid.UUID) ([]sqlcgen.ListPlaylistItemsRow, error)
+	ListPlaylistItemVideoIDs(ctx context.Context, playlistID uuid.UUID) ([]uuid.UUID, error)
+	ReorderPlaylistItems(ctx context.Context, arg sqlcgen.ReorderPlaylistItemsParams) error
 }
 
 // Service holds the playlist application logic.
@@ -157,6 +162,58 @@ func (s *Service) RemoveItem(ctx context.Context, ownerID, playlistID, videoID u
 		return ErrForbidden
 	}
 	return s.repo.RemovePlaylistItem(ctx, sqlcgen.RemovePlaylistItemParams{PlaylistID: playlistID, VideoID: videoID})
+}
+
+// ReorderItems rewrites the order of a playlist's items. Only the owner may
+// reorder (non-owner → ErrForbidden, unknown id → ErrNotFound). videoIDs must be
+// exactly the playlist's current items — every item present, none extra, no
+// duplicates — else ErrInvalidOrder; this matches how a drag-reorder UI submits
+// the full new order and rejects a stale/garbage request rather than silently
+// applying a partial reorder.
+func (s *Service) ReorderItems(ctx context.Context, ownerID, playlistID uuid.UUID, videoIDs []uuid.UUID) error {
+	p, err := s.GetByID(ctx, playlistID)
+	if err != nil {
+		return err
+	}
+	if p.OwnerID != ownerID {
+		return ErrForbidden
+	}
+	current, err := s.repo.ListPlaylistItemVideoIDs(ctx, playlistID)
+	if err != nil {
+		return err
+	}
+	if !samePermutation(videoIDs, current) {
+		return ErrInvalidOrder
+	}
+	if len(videoIDs) == 0 {
+		return nil // empty playlist: nothing to rewrite.
+	}
+	return s.repo.ReorderPlaylistItems(ctx, sqlcgen.ReorderPlaylistItemsParams{
+		PlaylistID: playlistID,
+		VideoIds:   videoIDs,
+	})
+}
+
+// samePermutation reports whether want and have contain exactly the same ids
+// with no duplicates in want (want is the client-supplied order; have is the
+// authoritative item set). Order is irrelevant here — only set equality.
+func samePermutation(want, have []uuid.UUID) bool {
+	if len(want) != len(have) {
+		return false
+	}
+	seen := make(map[uuid.UUID]bool, len(want))
+	for _, id := range want {
+		if seen[id] {
+			return false // duplicate in the request
+		}
+		seen[id] = true
+	}
+	for _, id := range have {
+		if !seen[id] {
+			return false // an existing item was omitted
+		}
+	}
+	return true
 }
 
 // ListItems returns a playlist's public, published videos in order, as cards.
