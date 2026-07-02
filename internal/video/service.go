@@ -132,6 +132,8 @@ type Service struct {
 	thumbnailer Thumbnailer
 	viewDeduper ViewDeduper
 	onPublish   func(context.Context, uuid.UUID)
+	onUpdate    func(context.Context, uuid.UUID)
+	onDelete    func(context.Context, uuid.UUID, uuid.UUID, bool)
 }
 
 // Option customises the Service.
@@ -161,6 +163,20 @@ func WithViewDeduper(d ViewDeduper) Option {
 // federation. Without it, Process does no post-publish work.
 func WithPublishHook(fn func(context.Context, uuid.UUID)) Option {
 	return func(s *Service) { s.onPublish = fn }
+}
+
+// WithUpdateHook registers a callback invoked (best-effort) after a video's
+// metadata is updated — federation uses it to propagate an Update to remote
+// followers. Passed the video id.
+func WithUpdateHook(fn func(context.Context, uuid.UUID)) Option {
+	return func(s *Service) { s.onUpdate = fn }
+}
+
+// WithDeleteHook registers a callback invoked (best-effort) after a video is
+// deleted — federation uses it to propagate a Delete. Passed the video id, its
+// channel id, and whether it was public (i.e. had been federated).
+func WithDeleteHook(fn func(context.Context, uuid.UUID, uuid.UUID, bool)) Option {
+	return func(s *Service) { s.onDelete = fn }
 }
 
 // NewService builds the video service. blobs is the media storage backend used
@@ -562,7 +578,7 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 	if v.OwnerID != ownerID {
 		return sqlcgen.Video{}, ErrForbidden
 	}
-	return s.repo.UpdateVideo(ctx, sqlcgen.UpdateVideoParams{
+	updated, err := s.repo.UpdateVideo(ctx, sqlcgen.UpdateVideoParams{
 		ID:          id,
 		Title:       trimPtr(in.Title),
 		Description: trimPtr(in.Description),
@@ -571,6 +587,10 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 		Language:    in.Language,
 		License:     in.License,
 	})
+	if err == nil && s.onUpdate != nil {
+		s.onUpdate(ctx, id)
+	}
+	return updated, err
 }
 
 // Delete removes a video. Only the owner may delete; non-owner → ErrForbidden,
@@ -583,7 +603,13 @@ func (s *Service) Delete(ctx context.Context, ownerID, id uuid.UUID) error {
 	if v.OwnerID != ownerID {
 		return ErrForbidden
 	}
-	return s.repo.DeleteVideo(ctx, id)
+	if err := s.repo.DeleteVideo(ctx, id); err != nil {
+		return err
+	}
+	if s.onDelete != nil {
+		s.onDelete(ctx, id, v.ChannelID, v.Privacy == "public")
+	}
+	return nil
 }
 
 // ListByChannel returns every video in a channel (the owner's view), newest

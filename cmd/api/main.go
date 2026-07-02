@@ -177,14 +177,29 @@ func run() error {
 	// closure sees the built service (nil-guarded regardless).
 	var fedsvc *federation.Service
 	if cfg.FederationEnabled {
-		vopts = append(vopts, video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
-			if fedsvc == nil {
-				return
-			}
-			if err := fedsvc.AnnounceVideo(ctx, videoID); err != nil {
-				logger.Warn("federation announce failed", "video_id", videoID, "error", err)
-			}
-		}))
+		vopts = append(vopts,
+			video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
+				if fedsvc != nil {
+					if err := fedsvc.AnnounceVideo(ctx, videoID); err != nil {
+						logger.Warn("federation announce failed", "video_id", videoID, "error", err)
+					}
+				}
+			}),
+			video.WithUpdateHook(func(ctx context.Context, videoID uuid.UUID) {
+				if fedsvc != nil {
+					if err := fedsvc.UpdateVideo(ctx, videoID); err != nil {
+						logger.Warn("federation update failed", "video_id", videoID, "error", err)
+					}
+				}
+			}),
+			video.WithDeleteHook(func(ctx context.Context, videoID, channelID uuid.UUID, wasPublic bool) {
+				if fedsvc != nil {
+					if err := fedsvc.DeleteVideo(ctx, videoID, channelID, wasPublic); err != nil {
+						logger.Warn("federation delete failed", "video_id", videoID, "error", err)
+					}
+				}
+			}),
+		)
 	}
 	videosvc := video.NewService(db.Queries(), blobs, vopts...)
 	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(blobs))

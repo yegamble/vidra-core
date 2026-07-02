@@ -86,6 +86,92 @@ func TestAnnounceVideoSkips(t *testing.T) {
 	}
 }
 
+func TestUpdateVideoSendsUpdate(t *testing.T) {
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := newOutboxRepo(channelID, videoID, "public", "published", []string{"https://a.example/inbox"})
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.UpdateVideo(context.Background(), videoID); err != nil {
+		t.Fatalf("UpdateVideo: %v", err)
+	}
+	if len(repo.deliveries) != 1 {
+		t.Fatalf("deliveries = %d, want 1", len(repo.deliveries))
+	}
+	for _, d := range repo.deliveries {
+		var a struct {
+			Type   string `json:"type"`
+			Object struct {
+				Type string `json:"type"`
+			} `json:"object"`
+		}
+		_ = json.Unmarshal(d.row.Payload, &a)
+		if a.Type != "Update" || a.Object.Type != "Video" {
+			t.Errorf("activity = %+v, want Update{Video}", a)
+		}
+	}
+}
+
+func TestUpdateVideoGonePublicSendsDelete(t *testing.T) {
+	// A video that is no longer public+published (e.g. went private) unfederates
+	// via a Delete.
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := newOutboxRepo(channelID, videoID, "private", "published", []string{"https://a.example/inbox"})
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.UpdateVideo(context.Background(), videoID); err != nil {
+		t.Fatalf("UpdateVideo: %v", err)
+	}
+	for _, d := range repo.deliveries {
+		var a struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(d.row.Payload, &a)
+		if a.Type != "Delete" {
+			t.Errorf("private video should unfederate via Delete, got %q", a.Type)
+		}
+	}
+}
+
+func TestDeleteVideoSendsDelete(t *testing.T) {
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := fakeRepo{
+		channelsByID:    map[uuid.UUID]sqlcgen.Channel{channelID: {ID: channelID, Handle: "films"}},
+		followerInboxes: map[uuid.UUID][]string{channelID: {"https://a.example/inbox"}},
+		deliveries:      map[uuid.UUID]*fakeDelivery{},
+	}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.DeleteVideo(context.Background(), videoID, channelID, true); err != nil {
+		t.Fatalf("DeleteVideo: %v", err)
+	}
+	if len(repo.deliveries) != 1 {
+		t.Fatalf("deliveries = %d, want 1", len(repo.deliveries))
+	}
+	for _, d := range repo.deliveries {
+		var a struct {
+			Type   string `json:"type"`
+			Object string `json:"object"`
+		}
+		_ = json.Unmarshal(d.row.Payload, &a)
+		if a.Type != "Delete" || a.Object != "https://videos.example/videos/watch/"+videoID.String() {
+			t.Errorf("activity = %+v, want Delete of the video URL", a)
+		}
+	}
+}
+
+func TestDeleteVideoNonPublicIsNoop(t *testing.T) {
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := fakeRepo{
+		channelsByID:    map[uuid.UUID]sqlcgen.Channel{channelID: {ID: channelID, Handle: "films"}},
+		followerInboxes: map[uuid.UUID][]string{channelID: {"https://a.example/inbox"}},
+		deliveries:      map[uuid.UUID]*fakeDelivery{},
+	}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.DeleteVideo(context.Background(), videoID, channelID, false); err != nil {
+		t.Fatalf("DeleteVideo: %v", err)
+	}
+	if len(repo.deliveries) != 0 {
+		t.Errorf("deliveries = %d, want 0 (never-public video not federated)", len(repo.deliveries))
+	}
+}
+
 func TestAnnounceVideoUnknownIsNoop(t *testing.T) {
 	svc := NewService(fakeRepo{videosByID: map[uuid.UUID]sqlcgen.GetVideoByIDRow{}}, WithBaseURL("https://videos.example"))
 	if err := svc.AnnounceVideo(context.Background(), uuid.New()); err != nil {
