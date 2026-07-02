@@ -64,6 +64,11 @@ type Server struct {
 	auditLog      *audit.Service
 	messagingsvc  *messaging.Service
 	media         storage.Backend
+	// importClient fetches remote videos for URL import. Nil in production, where
+	// the handler builds an SSRF-safe urlsafety.NewClient per request; tests inject
+	// a plain client so they can reach a loopback httptest server (which the
+	// production guard correctly refuses).
+	importClient *http.Client
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
 	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
 	devMailCapture *auth.CaptureMailer
@@ -409,6 +414,7 @@ func (s *Server) routes() {
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
 		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, middleware.BodyLimit(s.cfg.UploadMaxSize))
+		api.POST("/videos/:id/import", s.handleImportVideoFile, s.requireAuth)
 
 		// Captions: the owner uploads/removes WebVTT tracks (any state); anyone
 		// lists/downloads them on a public, published video.

@@ -1271,6 +1271,80 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/import:
+    post:
+      operationId: importVideoFile
+      summary: Import a video's original file from a URL
+      description: >-
+        Fetches a remote media file by URL (owner only) and stores it as the
+        video's original, then finalises the video exactly like the multipart
+        upload (published, or failed if a configured probe rejects it). The
+        outbound fetch is SSRF-guarded: only http/https URLs are allowed, and the
+        server refuses to connect to non-public addresses (loopback, private,
+        link-local, CGNAT, cloud-metadata) — enforced at connection time, so DNS
+        rebinding and internal redirects are blocked too. The download is bounded
+        by UPLOAD_MAX_SIZE (413 if exceeded) and the URL's file extension must be
+        an accepted video container (415). Ownership is checked before any fetch;
+        a non-owner or unknown id is 404. Re-importing replaces the previous
+        original.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportVideoRequest"
+      responses:
+        "201":
+          description: >-
+            The remote file was fetched and stored and the video finalised.
+            video.state is "published" on success, or "failed" if the probe
+            rejected it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadVideoFileResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: The fetched file exceeds UPLOAD_MAX_SIZE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: The URL's file extension is not an accepted video container.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The URL is missing/malformed/non-public, or the fetch failed (bad
+            status, unreachable, blocked address, timeout).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/captions:
     get:
       operationId: listCaptions
@@ -5032,6 +5106,17 @@ components:
           $ref: "#/components/schemas/Video"
         file:
           $ref: "#/components/schemas/VideoFile"
+    ImportVideoRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: >-
+            Public http/https URL of the media file to import. The server refuses
+            non-http schemes and non-public addresses (SSRF-guarded).
+          example: https://example.com/clip.mp4
     RegisterRequest:
       type: object
       required: [username, email, password]
