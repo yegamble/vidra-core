@@ -343,4 +343,11 @@ Run `make help` for the full target list.
   workflows in subdirectories); scope backend jobs with `vidra-core/**` path filters.
 - Redis is wired through `internal/store` (combined open) and/or `internal/cache`;
   Redis is never the durable source of truth.
+- **Outbound fetches of user-supplied URLs MUST go through `internal/urlsafety`**
+  (SSRF guard): `urlsafety.ValidateURL(raw)` to pre-flight the scheme/host, then
+  `urlsafety.NewClient(timeout)` for the request — its dialer re-checks every
+  resolved IP at connect time (defeats DNS rebinding, blocks internal IPs on
+  redirects too), ignores proxy env, and caps redirects. Never build a bare
+  `http.Client` for URL import / link previews / federation fetches / webhooks.
+  Callers still bound the response body (io.LimitReader / http.MaxBytesReader).
 - Update this file whenever build/test/run commands change.

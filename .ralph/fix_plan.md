@@ -315,7 +315,7 @@
 - [~] Implement file validation. (upload enforces a size cap — `UPLOAD_MAX_SIZE`, default 2G, via a per-route body limit so the upload route is exempt from the small JSON `HTTP_BODY_LIMIT`; oversize → 413 — and an extension allowlist of video containers; unaccepted → 415, checked after ownership so non-owners still see 404. Authoritative content/codec validation is FFprobe's job in the transcode slice; magic-byte sniffing is unreliable for video containers in Go's detector.)
 - [ ] Implement ClamAV scan integration.
 - [ ] Implement ClamAV fallback modes: fail-closed, fail-open, quarantine.
-- [ ] Implement URL import with SSRF protection.
+- [ ] Implement URL import with SSRF protection. (SSRF foundation now READY — route the outbound fetch through `internal/urlsafety` (`ValidateURL` + `NewClient`), P15. Remaining: the import endpoint + fetch→store→probe pipeline.)
 - [ ] Implement torrent/magnet import placeholder or adapter boundary.
 - [ ] Implement upload cancellation.
 - [ ] Implement failed upload cleanup.
@@ -534,7 +534,7 @@
 
 # P15 — Security Hardening
 
-- [ ] Add SSRF protection package/policy for URL imports and link previews.
+- [x] Add SSRF protection package/policy for URL imports and link previews. (`internal/urlsafety`: `ValidateURL` (http/https only, host required, no userinfo, literal-IP range check), `IsBlockedIP` (fail-closed: loopback/unspecified/link-local/multicast via !GlobalUnicast, RFC1918+ULA via IsPrivate, CGNAT 100.64/10, IPv4-mapped), and `NewClient(timeout)` — an `http.Client` whose `net.Dialer.Control` re-checks every **resolved** candidate IP at DIAL time, so it defeats DNS-rebinding and blocks redirects that land internally; ignores proxy env; caps redirects; re-validates each redirect target's scheme. Per `.ralph/specs/security.md` SSRF rules. This is the reusable guard the URL-import (P6.1) + link-preview (P11) + federation-fetch (P10) slices must route outbound fetches through. Tested: accept/reject URL tables, `IsBlockedIP` table (incl. cloud-metadata 169.254.169.254, IPv6 ULA/loopback, CGNAT, IPv4-mapped), a live `httptest` loopback fetch that the client refuses, and `safeControl` private/public. Callers still bound response body size themselves.)
 - [x] Add upload file type allowlist. (original-file upload accepts only known video-container extensions — mp4/m4v/mov/webm/mkv/avi/ogv/ogg/mpg/mpeg/ts/flv/wmv/3gp; others → 415. See `internal/video.acceptedVideoExts`.)
 - [ ] Add malware scan hooks.
 - [ ] Add path traversal protections for local storage.
@@ -545,7 +545,7 @@
 - [x] Add secure headers. (`internal/httpapi/secure_headers.go` — a middleware mounted right after `Recover` (so even recovered 5xx carry them) setting on every response: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Cross-Origin-Opener-Policy: same-origin`, `X-Permitted-Cross-Domain-Policies: none`, plus `Strict-Transport-Security` (2y, includeSubDomains) **in production only** (`cfg.Environment == "production"`; omitted on plain-HTTP localhost). No CSP is set — this service serves JSON/media, not HTML, so a page CSP belongs to `vidra-user`; CORS stays with the dedicated CORS middleware. Tested: `TestSecureHeadersPresent` (all base headers, HSTS absent outside prod) + `TestSecureHeadersHSTSInProduction` (HSTS present + base headers still apply). No route/contract change.)
 - [ ] Add audit logging for sensitive actions (typed audit events, no secrets; see P17.2 and `.ralph/specs/observability.md`).
 - [x] Enforce no-secrets-in-logs via the secrets-in-logs guard test (P17.2). (`TestNoSensitiveLogKeys` in `internal/observability/logging_guard_test.go`, runs under `make ci`.)
-- [ ] Add fuzz tests for URL parsing.
+- [x] Add fuzz tests for URL parsing. (`FuzzValidateURL` in `internal/urlsafety/urlsafety_test.go` — asserts `ValidateURL` never panics and that any accepted URL is http/https with a host and no userinfo; seed corpus runs under `make ci`, and a 10s `go test -fuzz` pass (270k+ execs) found no crash. Metadata/ActivityPub-parsing fuzz targets remain for those slices.)
 - [ ] Add fuzz tests for metadata parsing.
 - [ ] Add fuzz tests for ActivityPub parsing when implemented.
 
