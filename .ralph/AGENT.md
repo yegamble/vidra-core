@@ -147,6 +147,8 @@ curl -sX DELETE localhost:8080/api/v1/videos/<id>/captions/en -H 'authorization:
 curl -s localhost:8080/api/v1/videos/<id>/comments                                   # list (public, newest-first, paginated)
 curl -sX POST localhost:8080/api/v1/videos/<id>/comments -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"body":"nice video"}'
+curl -sX PATCH localhost:8080/api/v1/comments/<comment-id> -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"body":"edited"}'   # edit your own comment (author-only; sets Comment.edited=true; 403 another's, 404 unknown)
 curl -sX DELETE localhost:8080/api/v1/comments/<comment-id> -H 'authorization: Bearer <token>'  # delete a comment (author's own; a moderator/admin may delete anyone's)
 
 # Ratings (like/dislike on public, published videos):

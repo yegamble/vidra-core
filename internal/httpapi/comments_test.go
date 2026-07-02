@@ -286,3 +286,46 @@ func TestCommentBodyValidation(t *testing.T) {
 		t.Errorf("blank body = %d, want 422", rec.Code)
 	}
 }
+
+func TestCommentEdit(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, tok, "ada", `{"title":"v","privacy":"public"}`)
+
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/comments", `{"body":"original"}`, tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var created commentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	path := "/api/v1/comments/" + created.ID
+
+	// The author edits their own comment → 200, body updated, edited=true.
+	edit := sendJSONAuth(srv, http.MethodPatch, path, `{"body":"revised"}`, tok)
+	if edit.Code != http.StatusOK {
+		t.Fatalf("edit = %d; body=%s", edit.Code, edit.Body.String())
+	}
+	var updated commentView
+	_ = json.Unmarshal(edit.Body.Bytes(), &updated)
+	if updated.Body != "revised" || !updated.Edited {
+		t.Errorf("edited comment = %+v, want body 'revised' + edited true", updated)
+	}
+
+	// A blank body → 422.
+	if bad := sendJSONAuth(srv, http.MethodPatch, path, `{"body":"   "}`, tok); bad.Code != http.StatusUnprocessableEntity {
+		t.Errorf("blank edit = %d, want 422", bad.Code)
+	}
+	// Another user → 403 (moderators delete, not edit — so no exception).
+	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	if bad := sendJSONAuth(srv, http.MethodPatch, path, `{"body":"hacked"}`, otherTok); bad.Code != http.StatusForbidden {
+		t.Errorf("non-author edit = %d, want 403", bad.Code)
+	}
+	// An unknown comment → 404.
+	if nf := sendJSONAuth(srv, http.MethodPatch, "/api/v1/comments/"+uuid.NewString(), `{"body":"x"}`, tok); nf.Code != http.StatusNotFound {
+		t.Errorf("unknown edit = %d, want 404", nf.Code)
+	}
+	// Anonymous → 401.
+	if anon := sendJSONAuth(srv, http.MethodPatch, path, `{"body":"x"}`, ""); anon.Code != http.StatusUnauthorized {
+		t.Errorf("anon edit = %d, want 401", anon.Code)
+	}
+}

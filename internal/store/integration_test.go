@@ -160,3 +160,66 @@ func TestReorderPlaylistItemsPersists(t *testing.T) {
 		t.Fatalf("order after reorder = %v, want %v", got, want)
 	}
 }
+
+// TestUpdateCommentPersists proves the UpdateComment query edits the body and
+// advances updated_at past created_at against a real PostgreSQL. Seeds the FK
+// chain and cleans up via the users→… ON DELETE CASCADE.
+func TestUpdateCommentPersists(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	var userID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+		"cedit-"+suffix, "cedit-"+suffix+"@example.test",
+	).Scan(&userID); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	defer func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, userID) }()
+
+	var channelID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'C') RETURNING id`,
+		userID, "cedit_"+suffix,
+	).Scan(&channelID); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	var videoID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'v', 'public', 'published') RETURNING id`,
+		channelID,
+	).Scan(&videoID); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	var commentID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO comments (video_id, user_id, body) VALUES ($1, $2, 'original') RETURNING id`,
+		videoID, userID,
+	).Scan(&commentID); err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+
+	updated, err := q.UpdateComment(ctx, sqlcgen.UpdateCommentParams{ID: commentID, Body: "revised"})
+	if err != nil {
+		t.Fatalf("UpdateComment: %v", err)
+	}
+	if updated.Body != "revised" {
+		t.Errorf("body = %q, want revised", updated.Body)
+	}
+	if !updated.UpdatedAt.After(updated.CreatedAt) {
+		t.Errorf("updated_at %v should be after created_at %v", updated.UpdatedAt, updated.CreatedAt)
+	}
+
+	got, err := q.GetComment(ctx, commentID)
+	if err != nil || got.Body != "revised" {
+		t.Fatalf("GetComment after edit = (%q, %v), want revised", got.Body, err)
+	}
+}
