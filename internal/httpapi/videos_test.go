@@ -23,6 +23,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -595,6 +596,7 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 		WithWatchWordService(watchword.NewService(&watchwordFakeRepo{auth: authRepo})),
 		WithAdminService(admin.NewService(authRepo)),
 		WithMessagingService(messaging.NewService(msgRepo, messaging.WithBlocker(blocksvc))),
+		WithLiveService(live.NewService(newLiveFakeRepo(chRepo))),
 		WithMediaStorage(blobs),
 	)
 }

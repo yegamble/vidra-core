@@ -3291,6 +3291,202 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/live:
+    post:
+      operationId: createLiveStream
+      summary: Create a live stream
+      description: >-
+        Creates a live stream for a channel the caller owns and returns it plus
+        the stream key (shown ONCE — only its hash is stored) and the RTMP ingest
+        URL. Behind auth; a non-owner is 403, an unknown channel 404. RTMP
+        ingestion / HLS output is a later integration boundary — the stream starts
+        in state "offline".
+      tags: [live]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLiveStreamRequest"
+      responses:
+        "201":
+          description: The created live stream, its stream key (once), and RTMP URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateLiveStreamResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: You do not own this channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: listLiveStreams
+      summary: List a channel's live streams
+      description: >-
+        Lists the caller's live streams for a channel they own, newest first.
+        Behind auth; a non-owner is 403, an unknown channel 404. Stream keys are
+        never included.
+      tags: [live]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The channel's live streams (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveStreamListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: You do not own this channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/live/{id}:
+    get:
+      operationId: getLiveStream
+      summary: Get a live stream's metadata
+      description: >-
+        Returns a live stream's public metadata. A private stream is visible only
+        to its channel owner (else 404, so its existence is not leaked). The stream
+        key is never returned.
+      tags: [live]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The live stream metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveStream"
+        "404":
+          description: No such live stream (or private and not yours).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteLiveStream
+      summary: Delete a live stream
+      description: >-
+        Deletes a live stream the caller owns. Behind auth; a non-owner or unknown
+        id is 404 (existence is not leaked). Idempotent for the owner.
+      tags: [live]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The live stream is deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such live stream, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/live/{id}/key:
+    post:
+      operationId: regenerateLiveStreamKey
+      summary: Regenerate a live stream's key
+      description: >-
+        Rotates the stream key and returns the new one (shown ONCE). Behind auth; a
+        non-owner or unknown id is 404. Use this if a key leaks.
+      tags: [live]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The new stream key (once) and RTMP URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveStreamKey"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such live stream, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/conversations:
     post:
       operationId: startConversation
@@ -4937,6 +5133,87 @@ components:
         offset:
           type: integer
           example: 0
+    LiveStream:
+      type: object
+      required: [id, channel_id, title, description, privacy, state, permanent, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        state:
+          type: string
+          enum: [offline, live, ended]
+          description: RTMP ingestion (a later boundary) flips this; starts offline.
+        permanent:
+          type: boolean
+          description: A permanent/recurring live keeps its key across sessions.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        channel_handle:
+          type: string
+          description: Owning channel handle (on the single-stream get).
+        channel_display_name:
+          type: string
+    CreateLiveStreamRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+          default: public
+        permanent:
+          type: boolean
+          default: false
+    CreateLiveStreamResponse:
+      type: object
+      required: [live_stream, stream_key]
+      properties:
+        live_stream:
+          $ref: "#/components/schemas/LiveStream"
+        stream_key:
+          type: string
+          description: The private stream key, shown ONCE. Put it in your encoder (OBS).
+        rtmp_url:
+          type: string
+          description: RTMP ingest base URL (omitted when no ingest is configured).
+    LiveStreamListResponse:
+      type: object
+      required: [live_streams]
+      properties:
+        live_streams:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveStream"
+    LiveStreamKey:
+      type: object
+      required: [stream_key]
+      properties:
+        stream_key:
+          type: string
+          description: The new stream key, shown ONCE.
+        rtmp_url:
+          type: string
     StartConversationRequest:
       type: object
       required: [recipient_id]

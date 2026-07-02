@@ -493,16 +493,16 @@
 
 # P12 — Live Streaming
 
-- [ ] Implement live stream create endpoint.
-- [ ] Implement normal live vs permanent/recurring live model.
-- [ ] Generate private stream key.
-- [ ] Store stream key hashed or encrypted.
-- [ ] Implement RTMP ingestion integration boundary.
+- [x] Implement live stream create endpoint. (`POST /api/v1/channels/:handle/live` (requireAuth, owner-only; non-owner 403, unknown channel 404), body `{title, description?, privacy?, permanent?}` → 201 `{live_stream, stream_key, rtmp_url}`. migration 0034 `live_streams`; `internal/live` service; `internal/httpapi/live.go`. Also `GET /channels/:handle/live` (owner list, no keys), `GET /live/:id` (optionalAuth, privacy-gated public metadata, no key), `DELETE /live/:id` (owner). openapi documents all + schemas (drift guard green).)
+- [~] Implement normal live vs permanent/recurring live model. (A `permanent` boolean on the stream (persisted, in the create request + views) distinguishes a reusable/recurring live — whose key persists across sessions — from a one-shot live. The session/recurrence scheduling behaviour that `permanent` will drive lands with the RTMP ingest boundary.)
+- [x] Generate private stream key. (`live.generateStreamKey`: 256-bit crypto/rand token, base64url; returned to the streamer (OBS) exactly once on create and on `POST /live/:id/key` regeneration.)
+- [x] Store stream key hashed or encrypted. (Only the SHA-256 hash is persisted (`live_streams.stream_key_hash`, unique — the ingest boundary will look a stream up by key hash); the raw key is never stored or re-returned. Mirrors the refresh/reset-token hashing approach.)
+- [ ] Implement RTMP ingestion integration boundary. (Next: an ingest hook that authenticates by hashing the presented key → `live_streams.stream_key_hash`, flips `state` to `live`, and starts HLS packaging. `LIVE_RTMP_URL` config is returned to the streamer already.)
 - [ ] Implement HLS output path.
-- [ ] Implement live status updates.
+- [~] Implement live status updates. (The `state` column (offline/live/ended) exists and is surfaced read-only on every view; transitions are driven by the RTMP ingest boundary above.)
 - [ ] Implement live replay conversion.
-- [ ] Implement live stream delete/archive.
-- [ ] Add smoke test for live metadata and HLS path without requiring full RTMP in CI.
+- [~] Implement live stream delete/archive. (Delete DONE — `DELETE /live/:id` (owner-only, 404 for non-owner/unknown, idempotent). Replay/archive-to-VOD is a later slice.)
+- [~] Add smoke test for live metadata and HLS path without requiring full RTMP in CI. (Metadata lifecycle fully tested without RTMP: `internal/live/service_test.go` (create returns key once + stores only the hash, get/list/delete, regenerate rotates the hash) + `internal/httpapi/live_test.go` (lifecycle: create→list(no key leak)→public get→regenerate→delete→404; authz: anon 401, non-owner 403, private→404-to-others/200-to-owner, non-owner regenerate/delete 404; validation: empty title / bad privacy 422, unknown channel 404). HLS-path smoke awaits the ingest boundary.)
 - [ ] Add optional integration test profile for RTMP.
 
 ---

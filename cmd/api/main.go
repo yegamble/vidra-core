@@ -23,6 +23,7 @@ import (
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/httpapi"
+	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -202,6 +203,9 @@ func run() error {
 
 	messagingsvc := messaging.NewService(db.Queries(), messaging.WithBlocker(blocksvc))
 	opts = append(opts, httpapi.WithMessagingService(messagingsvc))
+
+	livesvc := live.NewService(db.Queries())
+	opts = append(opts, httpapi.WithLiveService(livesvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
 

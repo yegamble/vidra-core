@@ -113,6 +113,15 @@ curl -s localhost:8080/api/v1/videos/<id>/thumbnail -o poster.jpg               
 curl -sX POST localhost:8080/api/v1/videos/<id>/thumbnail -H 'authorization: Bearer <token>' \
   -F 'file=@poster.png'                                                                # set a custom poster (owner-only; JPEG/PNG/WebP, else 415) -> replaces the generated one
 
+# Live streams (owner manages a channel's streams + their keys; RTMP ingest/HLS is a
+# later boundary — state starts "offline". The stream_key is returned ONCE):
+curl -sX POST localhost:8080/api/v1/channels/<handle>/live -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"title":"My Show","permanent":true}'        # create -> 201 {live_stream, stream_key (once), rtmp_url}
+curl -s localhost:8080/api/v1/channels/<handle>/live -H 'authorization: Bearer <token>' # owner list (no keys)
+curl -s localhost:8080/api/v1/live/<id>                                                # public metadata (private => owner only; no key)
+curl -sX POST localhost:8080/api/v1/live/<id>/key -H 'authorization: Bearer <token>'   # rotate the stream key -> new {stream_key, rtmp_url} (once)
+curl -sX DELETE localhost:8080/api/v1/live/<id> -H 'authorization: Bearer <token>'     # delete (owner-only)
+
 # Captions (WebVTT; owner uploads/removes, anyone lists/downloads on a public video):
 curl -sX POST localhost:8080/api/v1/videos/<id>/captions -H 'authorization: Bearer <token>' \
   -F 'language=en' -F 'label=English' -F 'file=@subs.vtt'                             # upload a caption (owner-only; bad vtt/lang -> 422)

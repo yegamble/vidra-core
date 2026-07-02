@@ -1,0 +1,160 @@
+package live
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+)
+
+// fakeRepo is an in-memory live.Repository.
+type fakeRepo struct {
+	rows   map[uuid.UUID]sqlcgen.GetLiveStreamByIDRow
+	hashes map[uuid.UUID]string
+	owner  uuid.UUID
+}
+
+func newFakeRepo(owner uuid.UUID) *fakeRepo {
+	return &fakeRepo{rows: map[uuid.UUID]sqlcgen.GetLiveStreamByIDRow{}, hashes: map[uuid.UUID]string{}, owner: owner}
+}
+
+func (f *fakeRepo) CreateLiveStream(_ context.Context, a sqlcgen.CreateLiveStreamParams) (sqlcgen.CreateLiveStreamRow, error) {
+	id := uuid.New()
+	now := time.Now()
+	f.rows[id] = sqlcgen.GetLiveStreamByIDRow{
+		ID: id, ChannelID: a.ChannelID, Title: a.Title, Description: a.Description,
+		Privacy: a.Privacy, State: "offline", Permanent: a.Permanent, CreatedAt: now, UpdatedAt: now,
+		OwnerID: f.owner, ChannelHandle: "ch", ChannelDisplayName: "Ch",
+	}
+	f.hashes[id] = a.StreamKeyHash
+	return sqlcgen.CreateLiveStreamRow{
+		ID: id, ChannelID: a.ChannelID, Title: a.Title, Description: a.Description,
+		Privacy: a.Privacy, State: "offline", Permanent: a.Permanent, CreatedAt: now, UpdatedAt: now,
+	}, nil
+}
+
+func (f *fakeRepo) GetLiveStreamByID(_ context.Context, id uuid.UUID) (sqlcgen.GetLiveStreamByIDRow, error) {
+	r, ok := f.rows[id]
+	if !ok {
+		return sqlcgen.GetLiveStreamByIDRow{}, errors.New("not found")
+	}
+	return r, nil
+}
+
+func (f *fakeRepo) ListLiveStreamsByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListLiveStreamsByChannelRow, error) {
+	var out []sqlcgen.ListLiveStreamsByChannelRow
+	for _, r := range f.rows {
+		if r.ChannelID == channelID {
+			out = append(out, sqlcgen.ListLiveStreamsByChannelRow{
+				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeRepo) UpdateLiveStreamKey(_ context.Context, a sqlcgen.UpdateLiveStreamKeyParams) error {
+	f.hashes[a.ID] = a.StreamKeyHash
+	return nil
+}
+
+func (f *fakeRepo) DeleteLiveStream(_ context.Context, id uuid.UUID) (int64, error) {
+	if _, ok := f.rows[id]; ok {
+		delete(f.rows, id)
+		delete(f.hashes, id)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func hashOf(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+func TestCreateReturnsKeyOnceAndStoresHash(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo(uuid.New())
+	svc := NewService(repo)
+	ch := uuid.New()
+
+	stream, key, err := svc.Create(ctx, ch, CreateInput{Title: "My Live", Permanent: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if key == "" {
+		t.Fatal("Create returned an empty stream key")
+	}
+	if stream.Title != "My Live" || !stream.Permanent || stream.State != "offline" || stream.Privacy != "public" {
+		t.Fatalf("unexpected stream: %+v", stream)
+	}
+	// Only the hash of the key is stored (never the raw key).
+	if got := repo.hashes[stream.ID]; got != hashOf(key) {
+		t.Errorf("stored hash = %q, want sha256(key) %q", got, hashOf(key))
+	}
+
+	// A second create yields a different key + hash.
+	_, key2, _ := svc.Create(ctx, ch, CreateInput{Title: "Another"})
+	if key2 == key {
+		t.Error("two creates produced the same stream key")
+	}
+}
+
+func TestGetAndListAndDelete(t *testing.T) {
+	ctx := context.Background()
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	svc := NewService(repo)
+	ch := uuid.New()
+
+	s1, _, _ := svc.Create(ctx, ch, CreateInput{Title: "One", Privacy: "unlisted"})
+	svc.Create(ctx, ch, CreateInput{Title: "Two"}) //nolint
+
+	got, err := svc.Get(ctx, s1.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.OwnerID != owner || got.Title != "One" || got.Privacy != "unlisted" {
+		t.Fatalf("Get returned %+v", got)
+	}
+	if _, err := svc.Get(ctx, uuid.New()); err != ErrNotFound {
+		t.Errorf("Get(unknown) = %v, want ErrNotFound", err)
+	}
+
+	list, _ := svc.ListByChannel(ctx, ch)
+	if len(list) != 2 {
+		t.Fatalf("list len = %d, want 2", len(list))
+	}
+
+	if err := svc.Delete(ctx, s1.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := svc.Get(ctx, s1.ID); err != ErrNotFound {
+		t.Errorf("after delete Get = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRegenerateKey(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo(uuid.New())
+	svc := NewService(repo)
+
+	s, key1, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Live"})
+	key2, err := svc.RegenerateKey(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("RegenerateKey: %v", err)
+	}
+	if key2 == "" || key2 == key1 {
+		t.Errorf("regenerated key = %q (old %q), want a new non-empty key", key2, key1)
+	}
+	if got := repo.hashes[s.ID]; got != hashOf(key2) {
+		t.Errorf("stored hash = %q, want sha256(new key) %q", got, hashOf(key2))
+	}
+}

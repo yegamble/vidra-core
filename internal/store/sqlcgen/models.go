@@ -79,6 +79,19 @@ type EmailVerificationToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type LiveStream struct {
+	ID            uuid.UUID `json:"id"`
+	ChannelID     uuid.UUID `json:"channel_id"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description"`
+	Privacy       string    `json:"privacy"`
+	State         string    `json:"state"`
+	Permanent     bool      `json:"permanent"`
+	StreamKeyHash string    `json:"stream_key_hash"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type Message struct {
 	ID             uuid.UUID `json:"id"`
 	ConversationID uuid.UUID `json:"conversation_id"`

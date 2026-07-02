@@ -21,6 +21,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
@@ -63,6 +64,7 @@ type Server struct {
 	adminsvc      *admin.Service
 	auditLog      *audit.Service
 	messagingsvc  *messaging.Service
+	livesvc       *live.Service
 	media         storage.Backend
 	// importClient fetches remote videos for URL import. Nil in production, where
 	// the handler builds an SSRF-safe urlsafety.NewClient per request; tests inject
@@ -182,6 +184,12 @@ func WithAdminService(svc *admin.Service) Option {
 // conversations, send/list messages). When unset, the routes are not registered.
 func WithMessagingService(svc *messaging.Service) Option {
 	return func(s *Server) { s.messagingsvc = svc }
+}
+
+// WithLiveService mounts the live-stream endpoints (create/list/get/delete +
+// stream-key regeneration). When unset, the routes are not registered.
+func WithLiveService(svc *live.Service) Option {
+	return func(s *Server) { s.livesvc = svc }
 }
 
 // WithAuditLog wires the durable audit-log service. When set, s.audit persists
@@ -522,6 +530,17 @@ func (s *Server) routes() {
 		api.GET("/me/conversations", s.handleListConversations, s.requireAuth)
 		api.GET("/conversations/:id/messages", s.handleListMessages, s.requireAuth)
 		api.POST("/conversations/:id/messages", s.handleSendMessage, s.requireAuth)
+	}
+
+	// Live streams: a channel owner manages live streams + their stream keys.
+	// Reading one live stream's metadata is public (privacy-gated); RTMP ingestion
+	// / HLS output is a later integration boundary.
+	if s.livesvc != nil {
+		api.POST("/channels/:handle/live", s.handleCreateLiveStream, s.requireAuth)
+		api.GET("/channels/:handle/live", s.handleListLiveStreams, s.requireAuth)
+		api.GET("/live/:id", s.handleGetLiveStream, s.optionalAuth)
+		api.POST("/live/:id/key", s.handleRegenerateLiveStreamKey, s.requireAuth)
+		api.DELETE("/live/:id", s.handleDeleteLiveStream, s.requireAuth)
 	}
 }
 
