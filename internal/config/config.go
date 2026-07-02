@@ -71,6 +71,14 @@ type Config struct {
 	// when off. See .ralph/specs/federation.md.
 	FederationEnabled bool
 
+	// MalwareScanEnabled turns on ClamAV scanning of uploaded originals before
+	// publish (fail-closed: infected or unscannable media is not published).
+	// Requires ClamAVAddr. Default false.
+	MalwareScanEnabled bool
+
+	// ClamAVAddr is the clamd TCP address (host:port) used when MalwareScanEnabled.
+	ClamAVAddr string
+
 	// FederationKeyKEK is the base64 (standard) 32-byte key-encryption key used to
 	// envelope-encrypt actor private keys at rest (AES-256-GCM via internal/secretbox).
 	// Required in production when FederationEnabled; empty in dev stores keys raw
@@ -174,6 +182,8 @@ func Load() (*Config, error) {
 		PublicBaseURL:               strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
 		FederationEnabled:           getEnvBool("FEDERATION_ENABLED", false),
 		FederationKeyKEK:            getEnv("FEDERATION_KEY_KEK", ""),
+		MalwareScanEnabled:          getEnvBool("MALWARE_SCAN_ENABLED", false),
+		ClamAVAddr:                  getEnv("CLAMAV_ADDR", ""),
 		LiveRTMPURL:                 getEnv("LIVE_RTMP_URL", ""),
 		LiveIngestSecret:            getEnv("LIVE_INGEST_SECRET", ""),
 		InstanceDescription:         getEnv("INSTANCE_DESCRIPTION", ""),
@@ -311,6 +321,9 @@ func (c *Config) validate() error {
 				return fmt.Errorf("config: wildcard CORS origin is not allowed in production")
 			}
 		}
+	}
+	if c.MalwareScanEnabled && strings.TrimSpace(c.ClamAVAddr) == "" {
+		return fmt.Errorf("config: CLAMAV_ADDR is required when MALWARE_SCAN_ENABLED=true")
 	}
 	if c.FederationEnabled {
 		u, err := url.Parse(c.PublicBaseURL)

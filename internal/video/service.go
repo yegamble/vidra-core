@@ -103,6 +103,16 @@ type Prober interface {
 	Probe(ctx context.Context, storageKey string) (media.Metadata, error)
 }
 
+// Scanner checks stored media for malware before it is published. It is the seam
+// for a virus scanner (e.g. ClamAV); when none is configured, uploads are not
+// scanned. Fail-closed: a not-clean result OR a scan error keeps the video out of
+// the published state.
+type Scanner interface {
+	// Scan reports whether the object at storageKey is clean. A non-nil error
+	// means the scan could not complete (treated as unsafe by the caller).
+	Scan(ctx context.Context, storageKey string) (clean bool, err error)
+}
+
 // Thumbnailer produces a poster image (JPEG bytes) for the media at storageKey.
 // durationSeconds (0 if unknown) hints which frame to grab. It is the seam for
 // FFmpeg thumbnail extraction; when none is configured videos publish without a
@@ -130,6 +140,7 @@ type Service struct {
 	blobs       storage.Backend
 	prober      Prober
 	thumbnailer Thumbnailer
+	scanner     Scanner
 	viewDeduper ViewDeduper
 	onPublish   func(context.Context, uuid.UUID)
 	onUpdate    func(context.Context, uuid.UUID)
@@ -149,6 +160,12 @@ func WithProber(p Prober) Option {
 // videos publish without a thumbnail.
 func WithThumbnailer(t Thumbnailer) Option {
 	return func(s *Service) { s.thumbnailer = t }
+}
+
+// WithScanner wires a malware scanner run by Process before publishing. Without
+// it, uploads are not scanned.
+func WithScanner(sc Scanner) Option {
+	return func(s *Service) { s.scanner = sc }
 }
 
 // WithViewDeduper wires per-viewer view de-duplication. Without it, every
@@ -295,7 +312,13 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey string) (sqlcgen.Video, error) {
 	state := "published"
 	durationHint := 0
-	if s.prober != nil {
+	if s.scanner != nil {
+		// Fail-closed: infected OR unscannable media never reaches "published".
+		if clean, err := s.scanner.Scan(ctx, originalKey); err != nil || !clean {
+			state = "failed"
+		}
+	}
+	if state == "published" && s.prober != nil {
 		md, err := s.prober.Probe(ctx, originalKey)
 		if err != nil {
 			state = "failed"

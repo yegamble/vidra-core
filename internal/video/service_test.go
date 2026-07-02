@@ -929,6 +929,58 @@ func TestProcessPublishesWhenProberSucceeds(t *testing.T) {
 	}
 }
 
+type fakeScanner struct {
+	clean bool
+	err   error
+}
+
+func (f fakeScanner) Scan(context.Context, string) (bool, error) { return f.clean, f.err }
+
+func TestProcessPublishesWhenScanClean(t *testing.T) {
+	svc := NewService(newFakeRepo(uuid.New()), nil, WithScanner(fakeScanner{clean: true}))
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	got, err := svc.Process(ctx, v.ID, "k")
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if got.State != "published" {
+		t.Errorf("state = %q, want published (clean scan)", got.State)
+	}
+}
+
+func TestProcessFailsWhenScanInfected(t *testing.T) {
+	// An infected original must never publish (fail-closed), and the prober must
+	// not even run (it would fail the test if reached).
+	svc := NewService(newFakeRepo(uuid.New()), nil,
+		WithScanner(fakeScanner{clean: false}),
+		WithProber(fakeProber{err: errors.New("prober must not run for infected media")}),
+	)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	got, err := svc.Process(ctx, v.ID, "k")
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if got.State != "failed" {
+		t.Errorf("state = %q, want failed (infected)", got.State)
+	}
+}
+
+func TestProcessFailsWhenScanUnavailable(t *testing.T) {
+	// A scan error is fail-closed too — an unscannable upload is not published.
+	svc := NewService(newFakeRepo(uuid.New()), nil, WithScanner(fakeScanner{err: errors.New("clamd down")}))
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	got, err := svc.Process(ctx, v.ID, "k")
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if got.State != "failed" {
+		t.Errorf("state = %q, want failed (scan unavailable)", got.State)
+	}
+}
+
 func TestProcessFailsWhenProberErrors(t *testing.T) {
 	repo := newFakeRepo(uuid.New())
 	svc := NewService(repo, nil, WithProber(fakeProber{err: errors.New("not media")}))

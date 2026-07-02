@@ -172,6 +172,10 @@ func run() error {
 		logger.Warn("thumbnail generation disabled (ffmpeg not on PATH); videos publish without a poster")
 	}
 	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
+	if cfg.MalwareScanEnabled {
+		vopts = append(vopts, video.WithScanner(media.NewClamAV(cfg.ClamAVAddr, blobs)))
+		logger.Info("malware scanning enabled (clamd)", "addr", cfg.ClamAVAddr)
+	}
 	// When federation is on, fan a published video out to the channel's remote
 	// followers. fedsvc is assigned below; the hook only runs post-startup so the
 	// closure sees the built service (nil-guarded regardless).

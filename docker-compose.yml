@@ -85,6 +85,11 @@ services:
       # addresses so backed e2e can import from a loopback/compose-network origin (a
       # public origin isn't reachable in CI). NEVER enable in production. Default off.
       HTTP_IMPORT_ALLOW_PRIVATE_URLS: ${HTTP_IMPORT_ALLOW_PRIVATE_URLS:-false}
+      # Malware scanning: when MALWARE_SCAN_ENABLED=true, uploaded originals are
+      # streamed to the clamd at CLAMAV_ADDR before publish (fail-closed). Provide a
+      # clamd yourself (an operator-run service); off by default.
+      MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-false}
+      CLAMAV_ADDR: ${CLAMAV_ADDR:-}
       # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
       # freshly minted stream key (informational; empty by default).
       LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}
