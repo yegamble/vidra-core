@@ -33,6 +33,14 @@ curl localhost:8080/version          # build version / commit / date
 curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
 curl localhost:8080/api/v1/instance  # public about/config (name, description, software, registration_enabled, terms/privacy/contact)
 
+# Federation (ActivityPub) — only mounted when FEDERATION_ENABLED=true + PUBLIC_BASE_URL set
+# (off by default; these 404 otherwise). NOT in api/openapi.yaml — it's a JSON-LD contract,
+# documented in .ralph/specs/federation.md. Actor docs need an ActivityPub Accept header:
+curl localhost:8080/.well-known/nodeinfo                                  # fediverse NodeInfo discovery -> /nodeinfo/2.1
+curl 'localhost:8080/.well-known/webfinger?resource=acct:ada@your.domain' # -> self link to the actor URL
+curl -H 'accept: application/activity+json' localhost:8080/accounts/ada           # Person actor (keypair minted on first fetch)
+curl -H 'accept: application/activity+json' localhost:8080/video-channels/myhandle # Group actor
+
 # Auth (returns {token, token_type, expires_in, user}):
 curl -sX POST localhost:8080/api/v1/auth/register \
   -H 'content-type: application/json' \

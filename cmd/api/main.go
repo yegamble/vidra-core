@@ -34,6 +34,7 @@ import (
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
+	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/version"
@@ -209,9 +210,20 @@ func run() error {
 	opts = append(opts, httpapi.WithLiveService(livesvc))
 
 	// Federation (ActivityPub) — the service is always constructed, but its routes
-	// mount only when FEDERATION_ENABLED (gated in httpapi.routes). See
-	// .ralph/specs/federation.md.
-	fedsvc := federation.NewService(db.Queries())
+	// mount only when FEDERATION_ENABLED (gated in httpapi.routes). Actor private
+	// keys are envelope-encrypted with FEDERATION_KEY_KEK; without it (dev) they are
+	// stored raw. See .ralph/specs/federation.md.
+	fedOpts := []federation.Option{federation.WithBaseURL(cfg.PublicBaseURL)}
+	if cfg.FederationKeyKEK != "" {
+		cipher, err := secretbox.NewCipherFromBase64(cfg.FederationKeyKEK)
+		if err != nil {
+			return err
+		}
+		fedOpts = append(fedOpts, federation.WithCipher(cipher))
+	} else if cfg.FederationEnabled {
+		logger.Warn("FEDERATION_KEY_KEK unset — actor private keys are stored UNENCRYPTED; set a KEK outside dev (FEDERATION_KEY_KEK)")
+	}
+	fedsvc := federation.NewService(db.Queries(), fedOpts...)
 	opts = append(opts, httpapi.WithFederationService(fedsvc))
 
 	srv := httpapi.New(cfg, db, rdb, opts...)

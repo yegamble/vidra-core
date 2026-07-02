@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -104,6 +105,35 @@ WHERE id = $1
 func (q *Queries) DeactivateUser(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deactivateUser, id)
 	return err
+}
+
+const getUserActorByUsername = `-- name: GetUserActorByUsername :one
+SELECT id, username, display_name, bio, created_at
+FROM users
+WHERE lower(username) = lower($1) AND is_active = true
+`
+
+type GetUserActorByUsernameRow struct {
+	ID          uuid.UUID `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	Bio         string    `json:"bio"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Minimal, secret-free account fields for the ActivityPub Person actor. Only
+// active accounts are federated (deactivated accounts 404).
+func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (GetUserActorByUsernameRow, error) {
+	row := q.db.QueryRow(ctx, getUserActorByUsername, lower)
+	var i GetUserActorByUsernameRow
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.DisplayName,
+		&i.Bio,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one

@@ -1,10 +1,14 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/version"
 )
 
@@ -93,4 +97,60 @@ func (s *Server) handleNodeInfo21(c echo.Context) error {
 	// none is present), so consumers see the NodeInfo 2.1 profile.
 	c.Response().Header().Set(echo.HeaderContentType, nodeInfo21ContentType)
 	return c.JSON(http.StatusOK, doc)
+}
+
+// activityJSONContentType is what actor documents are served as.
+const activityJSONContentType = "application/activity+json; charset=utf-8"
+
+// wantsActivityJSON reports whether the Accept header asks for ActivityPub JSON.
+// Actor endpoints serve only JSON-LD; the human-facing profile is vidra-user's.
+func wantsActivityJSON(accept string) bool {
+	a := strings.ToLower(accept)
+	return strings.Contains(a, "application/activity+json") || strings.Contains(a, "application/ld+json")
+}
+
+func (s *Server) handleAccountActor(c echo.Context) error {
+	return s.serveActor(c, s.fedsvc.AccountActor)
+}
+
+func (s *Server) handleChannelActor(c echo.Context) error {
+	return s.serveActor(c, s.fedsvc.ChannelActor)
+}
+
+// serveActor content-negotiates and serves an actor document. A non-AP Accept
+// gets 406; an unknown/inactive actor gets 404.
+func (s *Server) serveActor(c echo.Context, fetch func(context.Context, string) (*federation.Actor, error)) error {
+	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
+		return echo.NewHTTPError(http.StatusNotAcceptable, "actor documents are served as application/activity+json")
+	}
+	actor, err := fetch(c.Request().Context(), c.Param("handle"))
+	if errors.Is(err, federation.ErrNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound)
+	}
+	if err != nil {
+		return err
+	}
+	c.Response().Header().Set(echo.HeaderContentType, activityJSONContentType)
+	return c.JSON(http.StatusOK, actor)
+}
+
+// handleWebFinger serves /.well-known/webfinger — resolving acct:name@domain to
+// its actor URL.
+func (s *Server) handleWebFinger(c echo.Context) error {
+	resource := c.QueryParam("resource")
+	if resource == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "resource query parameter is required")
+	}
+	jrd, err := s.fedsvc.WebFinger(c.Request().Context(), resource)
+	if errors.Is(err, federation.ErrBadResource) {
+		return echo.NewHTTPError(http.StatusBadRequest, "malformed resource")
+	}
+	if errors.Is(err, federation.ErrNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound)
+	}
+	if err != nil {
+		return err
+	}
+	c.Response().Header().Set(echo.HeaderContentType, "application/jrd+json; charset=utf-8")
+	return c.JSON(http.StatusOK, jrd)
 }

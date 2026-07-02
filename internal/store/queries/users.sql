@@ -3,6 +3,13 @@ SELECT id, username, email, password_hash, role, email_verified, is_active, crea
 FROM users
 WHERE id = $1;
 
+-- name: GetUserActorByUsername :one
+-- Minimal, secret-free account fields for the ActivityPub Person actor. Only
+-- active accounts are federated (deactivated accounts 404).
+SELECT id, username, display_name, bio, created_at
+FROM users
+WHERE lower(username) = lower($1) AND is_active = true;
+
 -- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
 FROM users

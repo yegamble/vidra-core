@@ -359,6 +359,9 @@ func (s *Server) routes() {
 	if s.cfg.FederationEnabled && s.fedsvc != nil {
 		s.echo.GET("/.well-known/nodeinfo", s.handleNodeInfoDiscovery)
 		s.echo.GET("/nodeinfo/2.1", s.handleNodeInfo21)
+		s.echo.GET("/.well-known/webfinger", s.handleWebFinger)
+		s.echo.GET("/accounts/:handle", s.handleAccountActor)
+		s.echo.GET("/video-channels/:handle", s.handleChannelActor)
 	}
 
 	api := s.echo.Group("/api/v1")

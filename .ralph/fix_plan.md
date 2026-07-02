@@ -463,16 +463,30 @@
 > wrong-KEK/tamper reject, non-prefixed reject, bad length/base64). Config `FEDERATION_KEY_KEK`
 > (base64 32-byte; required in production when federation on, dev stores raw) with validation
 > tests; `.env.example` + compose passthrough. Banned-log-key guard extended (`private_key_pem`,
-> `kek`). NEXT: Slice 2b — key-minting queries + service (lazy RSA-2048 gen, encrypt via secretbox)
-> + content-negotiated actor endpoints (`/accounts/:h` Person, `/video-channels/:h` Group) +
-> WebFinger, proven end-to-end against a real DB.
+> `kek`).
+>
+> **Slice 2b SHIPPED** (actor identity HTTP surface): sqlc queries (`GetUserActorByUsername`,
+> `GetAccountActorKey`/`GetChannelActorKey`, `InsertAccountActorKeyIfAbsent`/`Insert…Channel…`;
+> reuses `GetChannelByHandle`). `internal/federation` gained lazy RSA-2048 keypair minting
+> (`ensureAccountKey`/`ensureChannelKey`: get → mint → insert-if-absent → re-read, race-safe;
+> private key sealed via `internal/secretbox` when a KEK is set, raw in dev), actor-document
+> builders (`AccountActor` Person, `ChannelActor` Group; `@context` incl. security vocab, derived
+> inbox/outbox/followers/following + `publicKey`), and `WebFinger` (acct:name@domain → self link;
+> own-domain-only). httpapi: content-negotiated `GET /accounts/:handle` + `/video-channels/:handle`
+> (406 without an AP Accept, 404 unknown) + `GET /.well-known/webfinger` (400 bad/missing resource,
+> 404 foreign domain) — all gated on `FEDERATION_ENABLED`, excluded from the REST drift guard.
+> cmd/api builds the secretbox cipher from `FEDERATION_KEY_KEK` (warns when unset with federation on).
+> Tested: federation unit (mint-once, seal-with-cipher, Person/Group build, WebFinger resolve/reject),
+> httpapi handler (Person/Group serve, 406/404, WebFinger), and an **integration test proving minting
+> persists + is idempotent against real Postgres** (run in backend-integration). NEXT: Slice 3 — HTTP
+> signatures (sign/verify) + SSRF-guarded remote actor fetch/cache (`remote_actors`).
 
 ## P10.1 ActivityPub
 
-- [ ] Implement local actor model for accounts.
-- [ ] Implement local actor model for channels.
-- [ ] Implement WebFinger.
-- [ ] Implement ActivityPub actor endpoints.
+- [x] Implement local actor model for accounts. (Person actor: `account_actor_keys` side table + lazy RSA-2048 keypair minting (`internal/federation` `ensureAccountKey`, sealed at rest via `internal/secretbox`), served as `GET /accounts/:handle` — Slice 2a/2b.)
+- [x] Implement local actor model for channels. (Group actor: `channel_actor_keys` + `ensureChannelKey`, served as `GET /video-channels/:handle` — Slice 2a/2b.)
+- [x] Implement WebFinger. (`GET /.well-known/webfinger?resource=acct:name@domain` → self link to the actor URL; own-domain-only, resolves account then channel — Slice 2b.)
+- [x] Implement ActivityPub actor endpoints. (Content-negotiated actor documents — `application/activity+json`, 406 otherwise — with `@context` (incl. security vocab), derived inbox/outbox/followers/following collection URLs, and the `publicKey` block. The collection endpoints themselves land in Slices 4-5 — Slice 2b.)
 - [ ] Implement inbox endpoint.
 - [ ] Implement outbox endpoint.
 - [ ] Implement HTTP signatures.
