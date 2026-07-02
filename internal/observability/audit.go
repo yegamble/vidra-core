@@ -34,6 +34,8 @@ const (
 	ActionVideoBlock            = "moderation.video.block"
 	ActionVideoUnblock          = "moderation.video.unblock"
 	ActionAdminUserUpdate       = "admin.user.update"
+	ActionVideoDelete           = "content.video.delete"
+	ActionChannelDelete         = "content.channel.delete"
 )
 
 // sensitiveKeys is the canonical denylist of structured-log field names that

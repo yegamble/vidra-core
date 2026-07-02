@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -177,6 +178,7 @@ func (s *Server) handleDeleteChannel(c echo.Context) error {
 	if err := s.channelsvc.Delete(c.Request().Context(), userID, c.Param("handle")); err != nil {
 		return channelError(err)
 	}
+	s.audit(c, observability.ActionChannelDelete, observability.ResultSuccess, userID.String(), c.Param("handle"))
 	return c.NoContent(http.StatusNoContent)
 }
 

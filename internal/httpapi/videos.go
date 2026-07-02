@@ -477,6 +477,7 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 	if err := s.videosvc.Delete(c.Request().Context(), userID, id); err != nil {
 		return videoError(err)
 	}
+	s.audit(c, observability.ActionVideoDelete, observability.ResultSuccess, userID.String(), id.String())
 	return c.NoContent(http.StatusNoContent)
 }
 
