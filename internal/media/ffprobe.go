@@ -101,6 +101,11 @@ type ffprobeOutput struct {
 	} `json:"format"`
 }
 
+// maxProbeDurationSeconds caps a parsed duration (~100 days) so an absurd or
+// overflowing value a crafted file makes ffprobe emit can't yield a nonsensical
+// (or, via float->int overflow, negative) DurationSeconds.
+const maxProbeDurationSeconds = 100 * 24 * 60 * 60
+
 // parseFFProbe maps ffprobe JSON to Metadata. It is pure (no exec) so it can be
 // unit-tested with canned fixtures. Missing/blank fields are left zero.
 func parseFFProbe(b []byte) (Metadata, error) {
@@ -109,7 +114,7 @@ func parseFFProbe(b []byte) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("media: parse ffprobe output: %w", err)
 	}
 	var m Metadata
-	if d, err := strconv.ParseFloat(strings.TrimSpace(out.Format.Duration), 64); err == nil && d > 0 {
+	if d, err := strconv.ParseFloat(strings.TrimSpace(out.Format.Duration), 64); err == nil && d > 0 && d < maxProbeDurationSeconds {
 		m.DurationSeconds = int(d + 0.5) // round to nearest second
 	}
 	for _, s := range out.Streams {
