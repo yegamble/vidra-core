@@ -104,6 +104,11 @@ type videoView struct {
 	Category *string `json:"category,omitempty"`
 	Language *string `json:"language,omitempty"`
 	License  *string `json:"license,omitempty"`
+	// HLSURL is the master-playlist path for HLS playback, set on the detail
+	// endpoint only once the transcoded playlist is ready (omitted otherwise).
+	// Renditions lists the available ladder rungs alongside it.
+	HLSURL     *string         `json:"hls_url,omitempty"`
+	Renditions []renditionView `json:"renditions,omitempty"`
 }
 
 func newVideoView(v sqlcgen.Video) videoView {
@@ -211,6 +216,7 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	view.HasThumbnail = &has
 	views := s.videosvc.Views(c.Request().Context(), id)
 	view.Views = &views
+	view.HLSURL, view.Renditions = s.hlsDetail(c, id)
 	return c.JSON(http.StatusOK, view)
 }
 

@@ -1057,6 +1057,41 @@ func TestProcessFailsWhenProberErrors(t *testing.T) {
 	}
 }
 
+func TestProcessFiresTranscodeHookOnPublish(t *testing.T) {
+	var gotVideo uuid.UUID
+	var gotKey string
+	calls := 0
+	svc := NewService(newFakeRepo(uuid.New()), nil,
+		WithProber(fakeProber{}),
+		WithTranscodeHook(func(_ context.Context, videoID uuid.UUID, sourceKey string) {
+			calls++
+			gotVideo, gotKey = videoID, sourceKey
+		}),
+	)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	if _, err := svc.Process(ctx, v.ID, "web-videos/x.mp4"); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if calls != 1 || gotVideo != v.ID || gotKey != "web-videos/x.mp4" {
+		t.Errorf("transcode hook = (calls %d, %s, %q), want (1, %s, web-videos/x.mp4)", calls, gotVideo, gotKey, v.ID)
+	}
+}
+
+func TestProcessSkipsTranscodeHookOnFailedProbe(t *testing.T) {
+	svc := NewService(newFakeRepo(uuid.New()), nil,
+		WithProber(fakeProber{err: errors.New("not media")}),
+		WithTranscodeHook(func(context.Context, uuid.UUID, string) {
+			t.Error("transcode hook must not fire for a failed probe")
+		}),
+	)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	if got, err := svc.Process(ctx, v.ID, "k"); err != nil || got.State != "failed" {
+		t.Fatalf("Process = (%v, %v), want failed state", got.State, err)
+	}
+}
+
 func TestProcessPersistsProbeMetadata(t *testing.T) {
 	repo := newFakeRepo(uuid.New())
 	svc := NewService(repo, nil, WithProber(fakeProber{md: media.Metadata{DurationSeconds: 42, Width: 1280, Height: 720}}))

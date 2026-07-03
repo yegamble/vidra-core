@@ -79,6 +79,13 @@ type Config struct {
 	// ClamAVAddr is the clamd TCP address (host:port) used when MalwareScanEnabled.
 	ClamAVAddr string
 
+	// TranscodingEnabled turns on the HLS transcoding pipeline: publishing a
+	// video enqueues a durable transcode job and an in-process worker produces
+	// an H.264/AAC HLS ladder served at /api/v1/videos/{id}/hls/*. Requires
+	// ffmpeg + ffprobe on PATH (detected at boot; a missing binary logs a
+	// warning and leaves transcoding off). Default false.
+	TranscodingEnabled bool
+
 	// FederationKeyKEK is the base64 (standard) 32-byte key-encryption key used to
 	// envelope-encrypt actor private keys at rest (AES-256-GCM via internal/secretbox).
 	// Required in production when FederationEnabled; empty in dev stores keys raw
@@ -184,6 +191,7 @@ func Load() (*Config, error) {
 		FederationKeyKEK:            getEnv("FEDERATION_KEY_KEK", ""),
 		MalwareScanEnabled:          getEnvBool("MALWARE_SCAN_ENABLED", false),
 		ClamAVAddr:                  getEnv("CLAMAV_ADDR", ""),
+		TranscodingEnabled:          getEnvBool("TRANSCODING_ENABLED", false),
 		LiveRTMPURL:                 getEnv("LIVE_RTMP_URL", ""),
 		LiveIngestSecret:            getEnv("LIVE_INGEST_SECRET", ""),
 		InstanceDescription:         getEnv("INSTANCE_DESCRIPTION", ""),

@@ -90,6 +90,10 @@ services:
       # clamd yourself (an operator-run service); off by default.
       MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-false}
       CLAMAV_ADDR: ${CLAMAV_ADDR:-}
+      # HLS transcoding: when TRANSCODING_ENABLED=true, published videos are
+      # transcoded to an H.264/AAC HLS ladder by an in-process worker (ffmpeg is
+      # in the image) and served at /api/v1/videos/{id}/hls/*. Off by default.
+      TRANSCODING_ENABLED: ${TRANSCODING_ENABLED:-false}
       # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
       # freshly minted stream key (informational; empty by default).
       LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}

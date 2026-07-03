@@ -37,6 +37,23 @@ CI (`backend-ci.yml`) runs: gofmt check, `go vet`, fresh-DB migration, and
 - Keep the full gate green before flipping any fix_plan item to done; record
   anything not run.
 
+## Media/transcoding integration tests (ffmpeg-gated)
+
+The HLS transcoding pipeline keeps exec out of the unit gate: ladder planning,
+ffmpeg argument building, and master-playlist rendering are pure functions
+unit-tested in `internal/media/hls_test.go`, and the worker state machine
+(claim/backoff/dead-letter) is unit-tested with a fake runner in
+`internal/transcode`. The real exec + DB paths run under `-tags=integration`
+(`make test-integration`), each self-skipping when its dependency is absent:
+
+- `internal/media` `TestHLSTranscoderRealVideo` — real ffmpeg/ffprobe on a 2s
+  320x240 testsrc fixture → storage assertions (needs ffmpeg on PATH).
+- `internal/transcode` queue tests — `transcode_jobs` + `streaming_playlists` +
+  `video_renditions` against real PostgreSQL (needs `DATABASE_URL`).
+- `internal/httpapi` `TestHLSPipelineEndToEnd` — HTTP upload → publish-hook
+  enqueue → `DrainJobs` with the real transcoder → the `/hls/*` endpoints serve
+  master/variant/segments with correct content types (needs ffmpeg on PATH).
+
 ## Dev-only mail capture (email-token test seam)
 
 The account-security token flows (password reset, email verification) deliver a

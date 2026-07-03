@@ -247,6 +247,26 @@ type Session struct {
 	CreatedAt   time.Time          `json:"created_at"`
 }
 
+type StreamingPlaylist struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	MasterKey string    `json:"master_key"`
+	State     string    `json:"state"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type TranscodeJob struct {
+	ID            uuid.UUID `json:"id"`
+	VideoID       uuid.UUID `json:"video_id"`
+	SourceKey     string    `json:"source_key"`
+	State         string    `json:"state"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type User struct {
 	ID            uuid.UUID `json:"id"`
 	Username      string    `json:"username"`
@@ -313,6 +333,15 @@ type VideoRating struct {
 	Rating    string    `json:"rating"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type VideoRendition struct {
+	ID        uuid.UUID `json:"id"`
+	VideoID   uuid.UUID `json:"video_id"`
+	Height    int32     `json:"height"`
+	Width     int32     `json:"width"`
+	KeyPrefix string    `json:"key_prefix"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type VideoViewCount struct {

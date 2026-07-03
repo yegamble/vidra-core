@@ -39,6 +39,7 @@ import (
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
+	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/version"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/watchword"
@@ -176,6 +177,29 @@ func run() error {
 		vopts = append(vopts, video.WithScanner(media.NewClamAV(cfg.ClamAVAddr, blobs)))
 		logger.Info("malware scanning enabled (clamd)", "addr", cfg.ClamAVAddr)
 	}
+	// HLS transcoding. The read side (playlist/rendition lookups + the /hls
+	// serving routes) is always wired so previously produced playlists keep
+	// serving even when the pipeline is later disabled; the enqueue hook and
+	// worker run only when TRANSCODING_ENABLED and ffmpeg+ffprobe are present.
+	var hlsTranscoder transcode.Transcoder
+	if cfg.TranscodingEnabled {
+		if tc, ok := media.DetectHLSTranscoder(blobs); ok {
+			hlsTranscoder = tc
+			logger.Info("hls transcoding enabled (ffmpeg + ffprobe found)")
+		} else {
+			logger.Warn("TRANSCODING_ENABLED=true but ffmpeg/ffprobe not on PATH; transcoding disabled")
+		}
+	}
+	transcodesvc := transcode.NewService(db.Queries(), hlsTranscoder)
+	opts = append(opts, httpapi.WithTranscodeService(transcodesvc))
+	if hlsTranscoder != nil {
+		vopts = append(vopts, video.WithTranscodeHook(func(ctx context.Context, videoID uuid.UUID, sourceKey string) {
+			// Best-effort: an enqueue failure must never block the publish.
+			if err := transcodesvc.Enqueue(ctx, videoID, sourceKey); err != nil {
+				logger.Warn("transcode enqueue failed", "video_id", videoID, "error", err)
+			}
+		}))
+	}
 	// When federation is on, fan a published video out to the channel's remote
 	// followers. fedsvc is assigned below; the hook only runs post-startup so the
 	// closure sees the built service (nil-guarded regardless).
@@ -275,6 +299,15 @@ func run() error {
 		logger.Info("federation delivery worker started")
 	}
 
+	// Drain the transcode job queue in the background (ffmpeg HLS ladder with
+	// retry + dead-letter). Only when the transcoder is available.
+	if hlsTranscoder != nil {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runTranscodeWorker(workerCtx, logger, transcodesvc)
+		logger.Info("transcode worker started")
+	}
+
 	srv := httpapi.New(cfg, db, rdb, opts...)
 
 	// Run the server in the background so we can wait for a shutdown signal.
@@ -323,6 +356,30 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 		case <-ticker.C:
 			if _, err := fedsvc.DrainDeliveries(ctx, batch); err != nil {
 				logger.Warn("federation delivery drain failed", "error", err)
+			}
+		}
+	}
+}
+
+// runTranscodeWorker drains the durable transcode job queue on a ticker until
+// ctx is canceled (mirrors runFederationDeliveryWorker). A single worker with a
+// small batch keeps at most a couple of ffmpeg runs in flight per tick; it logs
+// only claim-query errors — per-job failures are recorded in the queue
+// (retry/backoff/dead-letter) rather than logged.
+func runTranscodeWorker(ctx context.Context, logger *slog.Logger, svc *transcode.Service) {
+	const (
+		interval = 10 * time.Second
+		batch    = 2
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := svc.DrainJobs(ctx, batch); err != nil {
+				logger.Warn("transcode drain failed", "error", err)
 			}
 		}
 	}

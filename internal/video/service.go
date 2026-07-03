@@ -143,6 +143,7 @@ type Service struct {
 	scanner     Scanner
 	viewDeduper ViewDeduper
 	onPublish   func(context.Context, uuid.UUID)
+	onTranscode func(context.Context, uuid.UUID, string)
 	onUpdate    func(context.Context, uuid.UUID)
 	onDelete    func(context.Context, uuid.UUID, uuid.UUID, bool)
 }
@@ -180,6 +181,16 @@ func WithViewDeduper(d ViewDeduper) Option {
 // federation. Without it, Process does no post-publish work.
 func WithPublishHook(fn func(context.Context, uuid.UUID)) Option {
 	return func(s *Service) { s.onPublish = fn }
+}
+
+// WithTranscodeHook registers a callback invoked (best-effort, synchronously)
+// after a video transitions to "published" in Process, passing the stored
+// original's storage key — the seam the HLS transcoding pipeline uses to
+// enqueue a durable transcode job without this package depending on the queue.
+// It must never block or fail the publish; enqueue errors are the callback's
+// concern (log-and-continue).
+func WithTranscodeHook(fn func(ctx context.Context, videoID uuid.UUID, sourceKey string)) Option {
+	return func(s *Service) { s.onTranscode = fn }
 }
 
 // WithUpdateHook registers a callback invoked (best-effort) after a video's
@@ -334,8 +345,15 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		s.generateThumbnail(ctx, videoID, originalKey, durationHint)
 	}
 	v, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
-	if err == nil && v.State == "published" && s.onPublish != nil {
-		s.onPublish(ctx, videoID)
+	if err == nil && v.State == "published" {
+		if s.onPublish != nil {
+			s.onPublish(ctx, videoID)
+		}
+		// Best-effort HLS transcode enqueue: only after a successful publish (a
+		// failed scan/probe never reaches here) and never able to block it.
+		if s.onTranscode != nil {
+			s.onTranscode(ctx, videoID, originalKey)
+		}
 	}
 	return v, err
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
@@ -557,6 +558,14 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 func videoServer(t *testing.T) *Server { return videoServerCfg(t, testConfig()) }
 
 func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Server {
+	srv, _, _ := videoServerEnv(t, cfg, opts...)
+	return srv
+}
+
+// videoServerEnv builds the full test server and also returns the blob backend
+// and the in-memory transcode repo so tests can seed stored media / playlist
+// state directly (the HLS tests need both).
+func videoServerEnv(t *testing.T, cfg *config.Config, opts ...video.Option) (*Server, storage.Backend, *transcodeFakeRepo) {
 	t.Helper()
 	chRepo := newChannelFakeRepo()
 	authRepo := newAuthFakeRepo()
@@ -582,7 +591,8 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 	repo.blocks = modRepo
 	msgRepo := newMessagingFakeRepo(authRepo)
 	blocksvc := block.NewService(&blockFakeRepo{auth: authRepo})
-	return New(cfg, nil, nil,
+	tcRepo := newTranscodeFakeRepo()
+	srv := New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
 		WithVideoService(video.NewService(repo, blobs, opts...)),
@@ -597,8 +607,10 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 		WithAdminService(admin.NewService(authRepo)),
 		WithMessagingService(messaging.NewService(msgRepo, messaging.WithBlocker(blocksvc))),
 		WithLiveService(live.NewService(newLiveFakeRepo(chRepo))),
+		WithTranscodeService(transcode.NewService(tcRepo, nil)),
 		WithMediaStorage(blobs),
 	)
+	return srv, blobs, tcRepo
 }
 
 // fakeProber lets handler tests drive the publish/fail outcome and metadata of

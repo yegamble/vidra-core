@@ -110,15 +110,30 @@ exposes and persisting it to `video_metadata`; a probe error marks the video
 `failed`. Where `ffprobe` is absent the original is trusted and published unprobed
 (no metadata). The public discovery surfaces — `GET /api/v1/videos`,
 `/videos/search`, and the public view of a channel's videos — return only
-`published` videos. (Real transcoding into multiple renditions reuses this same
-seam in a later slice.)
+`published` videos. When transcoding is enabled (below), the publish transition
+also enqueues an HLS transcode job, best-effort — it never blocks publishing.
 
 `GET /api/v1/videos/{id}/original` streams the stored original bytes for direct
 playback — same visibility as the detail endpoint (private → owner only, else
 `404`; a video with no stored original is `404`). It honours HTTP `Range`
 requests (`206 Partial Content`) so a `<video>` element can seek; the local
-backend serves via `http.ServeContent`. HLS/rendition manifests come with
-transcoding later.
+backend serves via `http.ServeContent`.
+
+**HLS transcoding** (`TRANSCODING_ENABLED=true`, default off; needs `ffmpeg` +
+`ffprobe` on `PATH` — both are in the Docker image): publishing a video enqueues
+a durable job in `transcode_jobs` (mirroring the federation delivery queue) and
+an in-process worker produces an H.264/AAC HLS ladder — rungs from
+1080p/720p/480p/360p, capped at the source height (never upscaled; a smaller
+source gets a single rung at its own size) — stored under
+`streaming-playlists/<video_id>/` with ~4s MPEG-TS segments. Failures retry
+with exponential backoff and dead-letter after 5 attempts. Once the
+`streaming_playlists` row is `ready`, the video detail carries `hls_url` +
+`renditions [{height,width}]`, and playback is served (same visibility rules as
+`/original`) by `GET /api/v1/videos/{id}/hls/master.m3u8`
+(`application/vnd.apple.mpegurl`) and
+`GET /api/v1/videos/{id}/hls/{rendition}/{file}` (variant playlists + `video/mp2t`
+segments; all playlist URIs are relative so proxying works). Progressive
+playback of the original remains available regardless.
 
 During finalisation an FFmpeg-backed thumbnailer (when `ffmpeg` is on `PATH`)
 extracts a poster frame and stores it as a `thumbnail` file;

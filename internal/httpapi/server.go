@@ -31,6 +31,7 @@ import (
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
+	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
@@ -66,6 +67,7 @@ type Server struct {
 	auditLog      *audit.Service
 	messagingsvc  *messaging.Service
 	livesvc       *live.Service
+	transcodesvc  *transcode.Service
 	fedsvc        *federation.Service
 	media         storage.Backend
 	// importClient fetches remote videos for URL import. Nil in production, where
@@ -192,6 +194,14 @@ func WithMessagingService(svc *messaging.Service) Option {
 // stream-key regeneration). When unset, the routes are not registered.
 func WithLiveService(svc *live.Service) Option {
 	return func(s *Server) { s.livesvc = svc }
+}
+
+// WithTranscodeService wires the HLS transcoding read side: the video detail's
+// hls_url/renditions fields and the /videos/{id}/hls/* serving routes (which
+// register only when the video service is also present). The write side (the
+// enqueue hook + worker) is wired in cmd/api, gated by TRANSCODING_ENABLED.
+func WithTranscodeService(svc *transcode.Service) Option {
+	return func(s *Server) { s.transcodesvc = svc }
 }
 
 // WithFederationService wires the ActivityPub federation service. The federation
@@ -463,6 +473,14 @@ func (s *Server) routes() {
 		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
+
+		// HLS playback (transcoded ladder): the master playlist plus per-rendition
+		// variant playlists/segments, same visibility as /original. Registered only
+		// when the transcode read side is wired.
+		if s.transcodesvc != nil {
+			api.GET("/videos/:id/hls/master.m3u8", s.handleGetHLSMaster, s.optionalAuth)
+			api.GET("/videos/:id/hls/:rendition/:file", s.handleGetHLSFile, s.optionalAuth)
+		}
 		api.GET("/videos/:id/thumbnail", s.handleGetVideoThumbnail, s.optionalAuth)
 		api.POST("/videos/:id/thumbnail", s.handleSetVideoThumbnail, s.requireAuth)
 		api.POST("/videos/:id/view", s.handleRecordVideoView, s.optionalAuth)

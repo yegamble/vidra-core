@@ -1,0 +1,130 @@
+package httpapi
+
+import (
+	"errors"
+	"net/http"
+	"regexp"
+
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
+
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/video"
+)
+
+// HLS media content types (RFC 8216).
+const (
+	contentTypeM3U8 = "application/vnd.apple.mpegurl"
+	contentTypeTS   = "video/mp2t"
+)
+
+// The two file shapes a rendition directory contains: its variant playlist and
+// its numbered MPEG-TS segments (as written by the transcoder). Anything else —
+// including any traversal attempt — is 404. Rendition directories are named
+// "<height>p" ("720p").
+var (
+	hlsRenditionName = regexp.MustCompile(`^[0-9]{2,4}p$`)
+	hlsFileName      = regexp.MustCompile(`^(playlist\.m3u8|seg_[0-9]+\.ts)$`)
+)
+
+// hlsPlaylistForView authorises serving a video's HLS assets and returns its
+// streaming playlist row. Visibility mirrors the /original endpoint: the video
+// must exist and be visible to the caller (private → owner only, blocked →
+// moderators only), and its playlist must be ready; every other case is 404 so
+// existence is not leaked.
+func (s *Server) hlsPlaylistForView(c echo.Context, id uuid.UUID) (sqlcgen.StreamingPlaylist, error) {
+	notFound := echo.NewHTTPError(http.StatusNotFound, "video not found")
+	if s.transcodesvc == nil {
+		return sqlcgen.StreamingPlaylist{}, notFound
+	}
+	v, err := s.videosvc.GetByID(c.Request().Context(), id)
+	if err != nil {
+		if errors.Is(err, video.ErrNotFound) {
+			return sqlcgen.StreamingPlaylist{}, notFound
+		}
+		return sqlcgen.StreamingPlaylist{}, err
+	}
+	if v.Privacy == "private" {
+		userID, _, ok := principalFromContext(c)
+		if !ok || userID != v.OwnerID {
+			return sqlcgen.StreamingPlaylist{}, notFound
+		}
+	}
+	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
+		return sqlcgen.StreamingPlaylist{}, err
+	} else if hidden {
+		return sqlcgen.StreamingPlaylist{}, notFound
+	}
+	sp, ok := s.transcodesvc.Playlist(c.Request().Context(), id)
+	if !ok || sp.State != "ready" || sp.MasterKey == "" {
+		return sqlcgen.StreamingPlaylist{}, notFound
+	}
+	return sp, nil
+}
+
+// handleGetHLSMaster serves a video's HLS master playlist. Behind optionalAuth:
+// visibility mirrors the /original endpoint (private → owner only, else 404); a
+// video whose playlist is not ready is 404 — the detail response's hls_url
+// tells clients when one exists.
+func (s *Server) handleGetHLSMaster(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	sp, err := s.hlsPlaylistForView(c, id)
+	if err != nil {
+		return err
+	}
+	return s.serveStoredObject(c, sp.MasterKey, contentTypeM3U8)
+}
+
+// handleGetHLSFile serves one rendition file: a variant playlist
+// (:rendition/playlist.m3u8) or an MPEG-TS segment (:rendition/seg_NNNNN.ts).
+// Playlist URIs are relative, so players resolve segment requests to this same
+// route. Same visibility as the master playlist; path parts that do not match
+// the transcoder's fixed naming are 404 (nothing else under the prefix is
+// reachable).
+func (s *Server) handleGetHLSFile(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	rendition, file := c.Param("rendition"), c.Param("file")
+	if !hlsRenditionName.MatchString(rendition) || !hlsFileName.MatchString(file) {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if _, err := s.hlsPlaylistForView(c, id); err != nil {
+		return err
+	}
+	contentType := contentTypeTS
+	if file == "playlist.m3u8" {
+		contentType = contentTypeM3U8
+	}
+	key := "streaming-playlists/" + id.String() + "/" + rendition + "/" + file
+	return s.serveStoredObject(c, key, contentType)
+}
+
+// renditionView is the public projection of an available HLS rendition.
+type renditionView struct {
+	Height int32 `json:"height"`
+	Width  int32 `json:"width"`
+}
+
+// hlsDetail returns the video-detail HLS fields: the master playlist URL and
+// the available renditions, but only once the playlist is ready (nil/absent
+// otherwise, including when transcoding is not wired).
+func (s *Server) hlsDetail(c echo.Context, id uuid.UUID) (*string, []renditionView) {
+	if s.transcodesvc == nil {
+		return nil, nil
+	}
+	sp, ok := s.transcodesvc.Playlist(c.Request().Context(), id)
+	if !ok || sp.State != "ready" || sp.MasterKey == "" {
+		return nil, nil
+	}
+	url := "/api/v1/videos/" + id.String() + "/hls/master.m3u8"
+	var rends []renditionView
+	for _, r := range s.transcodesvc.Renditions(c.Request().Context(), id) {
+		rends = append(rends, renditionView{Height: r.Height, Width: r.Width})
+	}
+	return &url, rends
+}

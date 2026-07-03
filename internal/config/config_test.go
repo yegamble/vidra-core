@@ -360,6 +360,25 @@ func TestCookieSecureDerivation(t *testing.T) {
 	}
 }
 
+func TestTranscodingDisabledByDefault(t *testing.T) {
+	t.Setenv("TRANSCODING_ENABLED", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TranscodingEnabled {
+		t.Error("TranscodingEnabled = true, want false by default")
+	}
+	t.Setenv("TRANSCODING_ENABLED", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.TranscodingEnabled {
+		t.Error("TranscodingEnabled = false with TRANSCODING_ENABLED=true")
+	}
+}
+
 func TestFederationDisabledByDefault(t *testing.T) {
 	t.Setenv("FEDERATION_ENABLED", "")
 	cfg, err := Load()

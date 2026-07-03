@@ -22,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/rating"
+	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
@@ -47,6 +48,7 @@ func fullRouteOptions() []Option {
 		WithAuditLog(audit.NewService(nil)),
 		WithMessagingService(messaging.NewService(nil)),
 		WithLiveService(live.NewService(nil)),
+		WithTranscodeService(transcode.NewService(nil, nil)),
 	}
 }
 

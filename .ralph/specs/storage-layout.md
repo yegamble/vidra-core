@@ -19,7 +19,7 @@ PeerTube buckets (from its `storage:` config) and the vidra mapping:
 |--------------------------|-----------------------------------------|----------------------------------|--------|
 | `web-videos/`            | the video file served for web playback  | `web-videos/<id><ext>`           | **in use** (the served upload; `video_files.kind='original'`) |
 | `thumbnails/`            | poster/thumbnail images                 | `thumbnails/<id>.jpg`            | **in use** (`kind='thumbnail'`) |
-| `streaming-playlists/`   | HLS playlists + segments                | `streaming-playlists/<id>/...`   | planned (P6 transcoding) |
+| `streaming-playlists/`   | HLS playlists + segments                | `streaming-playlists/<id>/...`   | **in use** (P6 transcoding: `master.m3u8` + `<height>p/playlist.m3u8` + `<height>p/seg_NNNNN.ts`; relative URIs so the API proxies them) |
 | `original-video-files/`  | archived original upload (keep-original)| `original-video-files/<id><ext>` | planned (when transcoding + keep-original land) |
 | `previews/`              | large preview images                    | `previews/<id>.jpg`             | planned |
 | `storyboards/`           | scrubbing storyboards                   | `storyboards/<id>.jpg`          | planned |
