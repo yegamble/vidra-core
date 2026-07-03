@@ -175,7 +175,10 @@ paths:
         enumeration. With `cookie_mode: true` (or an existing `vidra_refresh`
         cookie) the refresh token is delivered as an httpOnly `vidra_refresh`
         cookie (Path=/api/v1/auth, SameSite=Lax, Secure on https instances)
-        instead of in the response body.
+        instead of in the response body. When the account has two-factor
+        authentication enabled, valid credentials return `{mfa_required: true,
+        mfa_token}` with NO session tokens — complete the login at
+        POST /api/v1/auth/mfa/challenge within 5 minutes.
       tags: [auth]
       requestBody:
         required: true
@@ -185,11 +188,15 @@ paths:
               $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
-          description: Authenticated.
+          description: >-
+            Authenticated — or, for an MFA-enabled account, an MFA challenge
+            (no session tokens yet).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/AuthResponse"
+                  - $ref: "#/components/schemas/MFARequiredResponse"
         "401":
           description: Invalid email or password.
           content:
@@ -510,6 +517,212 @@ paths:
           description: The account's email is now verified.
         "400":
           description: The verification token is invalid, used, or expired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/mfa:
+    get:
+      operationId: getMFAStatus
+      summary: Two-factor authentication status
+      description: >-
+        Reports whether TOTP two-factor authentication is enabled for the
+        authenticated account and how many single-use recovery codes remain. A
+        pending (started but unverified) enrollment reports as disabled.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The account's two-factor state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MFAStatusResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/mfa/totp:
+    post:
+      operationId: beginTOTPEnrollment
+      summary: Start TOTP enrollment
+      description: >-
+        Generates a TOTP shared secret (RFC 6238: SHA1, 6 digits, 30s period)
+        for the authenticated account and returns it — together with the
+        otpauth:// provisioning URI for QR display — EXACTLY ONCE. The secret
+        is stored encrypted server-side and is never retrievable again; POST
+        again to restart a pending enrollment with a fresh secret. Login is
+        unaffected until the enrollment is verified with a first valid code.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: >-
+            The new secret and provisioning URI (shown once, never logged).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPEnrollmentResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            Two-factor authentication is already enabled — disable it first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: disableTOTP
+      summary: Disable two-factor authentication
+      description: >-
+        Turns TOTP off for the authenticated account and deletes the stored
+        secret and every recovery code. The account password must be re-entered
+        (a bearer token alone cannot strip two-factor protection). Also cancels
+        a pending (unverified) enrollment.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  format: password
+                  description: The account's current password, for confirmation.
+      responses:
+        "204":
+          description: Two-factor authentication is disabled.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The supplied password is incorrect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Two-factor authentication is not enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/mfa/totp/verify:
+    post:
+      operationId: verifyTOTPEnrollment
+      summary: Verify TOTP enrollment
+      description: >-
+        Confirms a pending enrollment with the first valid authenticator code
+        (±1 step of clock skew): two-factor authentication flips on and the 10
+        single-use recovery codes are returned EXACTLY ONCE — they are stored
+        hashed and cannot be retrieved again. Subsequent logins then require
+        the MFA challenge.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: The current 6-digit code from the authenticator app.
+      responses:
+        "200":
+          description: >-
+            Two-factor authentication is now enabled; the recovery codes are
+            shown once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodesResponse"
+        "400":
+          description: The code is invalid, or no enrollment is in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Two-factor authentication is already enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/mfa/challenge:
+    post:
+      operationId: completeMFAChallenge
+      summary: Complete an MFA login
+      description: >-
+        Second half of a two-factor login: exchanges the short-lived (5 min)
+        single-purpose `mfa_token` from the login response plus a 6-digit TOTP
+        code — or a single-use recovery code, which is consumed — for the full
+        auth response. Rate limited like login. Supports `cookie_mode` exactly
+        like login: the session's refresh token is then delivered as the
+        httpOnly `vidra_refresh` cookie and omitted from the body. A tampered,
+        expired, or repurposed token and a wrong code are both 401.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MFAChallengeRequest"
+      responses:
+        "200":
+          description: Authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: >-
+            The mfa_token is invalid/expired, or the code did not verify (an
+            already-used recovery code does not verify).
           content:
             application/json:
               schema:
@@ -8357,3 +8570,77 @@ components:
           example: 900
         user:
           $ref: "#/components/schemas/User"
+    MFARequiredResponse:
+      type: object
+      required: [mfa_required, mfa_token]
+      description: >-
+        Login outcome for an account with two-factor authentication enabled:
+        the credentials were valid but no session is issued yet. Present the
+        mfa_token with a TOTP or recovery code at POST /api/v1/auth/mfa/challenge.
+      properties:
+        mfa_required:
+          type: boolean
+          enum: [true]
+        mfa_token:
+          type: string
+          description: >-
+            Short-lived (5 min) single-purpose token. Not an access token — it
+            is only accepted by the MFA challenge endpoint.
+    MFAStatusResponse:
+      type: object
+      required: [enabled, recovery_codes_remaining]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether TOTP two-factor authentication is enabled.
+        recovery_codes_remaining:
+          type: integer
+          description: Unused single-use recovery codes left (0 when disabled).
+          example: 10
+    TOTPEnrollmentResponse:
+      type: object
+      required: [secret, otpauth_uri]
+      description: >-
+        Returned exactly once when enrollment starts; neither field can be
+        retrieved again.
+      properties:
+        secret:
+          type: string
+          description: Base32 TOTP shared secret, for manual authenticator entry.
+        otpauth_uri:
+          type: string
+          description: >-
+            otpauth:// provisioning URI (QR-code payload) carrying the secret,
+            the account label, and the instance's issuer name.
+    RecoveryCodesResponse:
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          description: >-
+            The 10 single-use recovery codes, shown exactly once (stored
+            hashed). Each replaces a TOTP code at the MFA challenge and is
+            consumed on use.
+          items:
+            type: string
+            example: a1b2c-3d4e5
+    MFAChallengeRequest:
+      type: object
+      required: [mfa_token, code]
+      properties:
+        mfa_token:
+          type: string
+          description: The mfa_token from the login response (valid 5 minutes).
+        code:
+          type: string
+          description: >-
+            The current 6-digit authenticator code (±1 period of clock skew is
+            tolerated) or one unused recovery code.
+        cookie_mode:
+          type: boolean
+          default: false
+          description: >-
+            Opt the new session into cookie mode (browser clients), exactly
+            like login: the rotating refresh token is set as an httpOnly
+            `vidra_refresh` cookie and omitted from the response body.

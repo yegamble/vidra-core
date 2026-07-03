@@ -31,6 +31,9 @@ const (
 	ActionAccountDeactivate     = "auth.account.deactivate"
 	ActionOAuthLink             = "auth.oauth.link"
 	ActionOAuthUnlink           = "auth.oauth.unlink"
+	ActionMFAEnable             = "auth.mfa.enable"
+	ActionMFADisable            = "auth.mfa.disable"
+	ActionMFAChallenge          = "auth.mfa.challenge"
 	ActionRateLimited           = "auth.rate_limited"
 	ActionReportResolve         = "moderation.report.resolve"
 	ActionReportDelete          = "moderation.report.delete"
@@ -72,6 +75,12 @@ var sensitiveKeys = map[string]bool{
 	"kek":                true,
 	"stream_key":         true,
 	"jwt":                true,
+	"totp_secret":        true,
+	"totp_secret_sealed": true,
+	"otpauth_uri":        true,
+	"mfa_token":          true,
+	"recovery_code":      true,
+	"recovery_codes":     true,
 }
 
 // IsSensitiveKey reports whether a structured-log key is on the denylist

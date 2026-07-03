@@ -93,6 +93,19 @@ type Config struct {
 	// (with a loud boot warning). NEVER commit a real value. See federation.md §3.
 	FederationKeyKEK string
 
+	// MFAKeyKEK is the base64 (standard) 32-byte key-encryption key used to
+	// envelope-encrypt TOTP shared secrets at rest (same secretbox envelope as
+	// FederationKeyKEK). Deployments that already run a federation KEK can share
+	// it: MFAKEK() falls back to FederationKeyKEK when this is unset. With
+	// neither set (dev), TOTP secrets are stored raw with a loud boot warning.
+	// NEVER commit a real value.
+	MFAKeyKEK string
+
+	// TOTPIssuer is the issuer label embedded in TOTP enrollment otpauth:// URIs
+	// — what authenticator apps display next to the account. Defaults to the
+	// instance name.
+	TOTPIssuer string
+
 	// LiveRTMPURL is the base RTMP ingest URL returned to a streamer on live-stream
 	// create (the streamer appends their stream key in OBS). Empty until an RTMP
 	// ingest is provisioned; the create response then omits it.
@@ -267,6 +280,8 @@ func Load() (*Config, error) {
 		PublicBaseURL:               strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
 		FederationEnabled:           getEnvBool("FEDERATION_ENABLED", false),
 		FederationKeyKEK:            getEnv("FEDERATION_KEY_KEK", ""),
+		MFAKeyKEK:                   getEnv("MFA_KEY_KEK", ""),
+		TOTPIssuer:                  getEnv("TOTP_ISSUER", ""),
 		MalwareScanEnabled:          getEnvBool("MALWARE_SCAN_ENABLED", false),
 		ClamAVAddr:                  getEnv("CLAMAV_ADDR", ""),
 		TranscodingEnabled:          getEnvBool("TRANSCODING_ENABLED", false),
@@ -352,6 +367,12 @@ func Load() (*Config, error) {
 			ClientSecret: getEnv(prefix+"_CLIENT_SECRET", ""),
 			Scopes:       splitAndTrim(getEnv(prefix+"_SCOPES", "")),
 		})
+	}
+
+	// The TOTP issuer label defaults to the instance name (what authenticator
+	// apps display); it cannot reference InstanceName inside the literal above.
+	if cfg.TOTPIssuer == "" {
+		cfg.TOTPIssuer = cfg.InstanceName
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -481,6 +502,11 @@ func (c *Config) validate() error {
 	if c.MalwareScanEnabled && strings.TrimSpace(c.ClamAVAddr) == "" {
 		return fmt.Errorf("config: CLAMAV_ADDR is required when MALWARE_SCAN_ENABLED=true")
 	}
+	if c.MFAKeyKEK != "" {
+		if k, err := base64.StdEncoding.DecodeString(c.MFAKeyKEK); err != nil || len(k) != 32 {
+			return fmt.Errorf("config: MFA_KEY_KEK must be base64 of exactly 32 bytes")
+		}
+	}
 	if err := c.validateOAuth(); err != nil {
 		return err
 	}
@@ -579,6 +605,17 @@ func (c *Config) CookieSecure() bool {
 		return true
 	}
 	return c.Environment == "production"
+}
+
+// MFAKEK returns the key-encryption key that seals TOTP secrets at rest:
+// MFA_KEY_KEK when set, otherwise FEDERATION_KEY_KEK (so a deployment already
+// running a federation KEK covers MFA without a second secret). Empty means no
+// sealing (dev-only; cmd/api warns loudly).
+func (c *Config) MFAKEK() string {
+	if c.MFAKeyKEK != "" {
+		return c.MFAKeyKEK
+	}
+	return c.FederationKeyKEK
 }
 
 func getEnv(key, def string) string {

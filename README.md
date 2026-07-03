@@ -86,6 +86,23 @@ request parameters. `GET /api/v1/me/oauth-identities` lists the caller's
 linked identities; `DELETE /api/v1/me/oauth-identities/{provider}` unlinks one
 (`422` when it is a passwordless account's last sign-in method).
 
+Two-factor authentication (TOTP, RFC 6238 SHA1/6-digit/30s ±1 step):
+`POST /api/v1/auth/mfa/totp` (bearer) starts enrollment and returns the base32
+secret + `otpauth://` URI exactly once; `POST /api/v1/auth/mfa/totp/verify
+{code}` confirms with the first valid authenticator code, enables MFA, and
+returns 10 single-use recovery codes exactly once (stored SHA-256-hashed).
+`GET /api/v1/auth/mfa` reports `{enabled, recovery_codes_remaining}`;
+`DELETE /api/v1/auth/mfa/totp {password}` disables (password re-auth required).
+With MFA enabled, a credential-valid login returns `{mfa_required: true,
+mfa_token}` (short-lived 5-minute single-purpose token) with no session tokens;
+`POST /api/v1/auth/mfa/challenge {mfa_token, code}` — a TOTP code or one
+recovery code, consumed on use — completes the login with the full auth
+response (cookie mode supported, rate-limited like login). TOTP secrets are
+sealed at rest with `MFA_KEY_KEK` (falls back to `FEDERATION_KEY_KEK`; raw in
+dev with a boot warning); the issuer label comes from `TOTP_ISSUER` (default
+`INSTANCE_NAME`). OAuth/OIDC logins are not TOTP-gated — the IdP owns that
+factor.
+
 Authorization: routes are gated by `requireAuth` (valid bearer token) and, where
 role-restricted, `requireRole(...)` off the JWT's `role` claim — an authenticated
 principal lacking an allowed role gets `403`.

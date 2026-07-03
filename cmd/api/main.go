@@ -166,6 +166,19 @@ func run() error {
 		authOpts = append(authOpts, auth.WithMailer(captureMailer))
 		logger.Warn("DEV mail capture ENABLED — account-security tokens are retrievable via GET /api/v1/dev/email-token; NEVER enable this in production (DEV_MAIL_CAPTURE_ENABLED)")
 	}
+	// TOTP two-factor auth (P4). Shared secrets are envelope-encrypted at rest
+	// with MFA_KEY_KEK (falling back to FEDERATION_KEY_KEK); without a KEK (dev)
+	// they are stored raw. NB: the KEK itself is never logged.
+	var mfaCipher *secretbox.Cipher
+	if kek := cfg.MFAKEK(); kek != "" {
+		mfaCipher, err = secretbox.NewCipherFromBase64(kek)
+		if err != nil {
+			return fmt.Errorf("MFA KEK: %w", err)
+		}
+	} else {
+		logger.Warn("MFA_KEY_KEK unset — TOTP secrets are stored UNENCRYPTED; set a KEK outside dev (MFA_KEY_KEK, or share FEDERATION_KEY_KEK)")
+	}
+	authOpts = append(authOpts, auth.WithMFA(db.Queries(), mfaCipher, cfg.TOTPIssuer))
 	authsvc := auth.NewService(db.Queries(), issuer, cfg.JWTRefreshTTL, authOpts...)
 	opts = append(opts, httpapi.WithAuthService(authsvc, cfg.JWTAccessTTL))
 	if captureMailer != nil {

@@ -70,7 +70,7 @@ func TestApproveRegistrationCreatesAccount(t *testing.T) {
 		t.Errorf("approved user = %+v, want bob/user", user)
 	}
 	// The approved account can now log in.
-	if _, _, err := svc.Login(ctx, LoginInput{Email: "bob@example.test", Password: "supersecret"}, "ua"); err != nil {
+	if _, err := svc.Login(ctx, LoginInput{Email: "bob@example.test", Password: "supersecret"}, "ua"); err != nil {
 		t.Errorf("login after approval: %v", err)
 	}
 	// Re-approving the same (now resolved) request → not found.
@@ -111,7 +111,7 @@ func TestRejectRegistration(t *testing.T) {
 		t.Errorf("re-reject err = %v, want ErrRegistrationRequestNotFound", err)
 	}
 	// No account was created, so login fails.
-	if _, _, err := svc.Login(ctx, LoginInput{Email: "carol@example.test", Password: "supersecret"}, "ua"); err == nil {
+	if _, err := svc.Login(ctx, LoginInput{Email: "carol@example.test", Password: "supersecret"}, "ua"); err == nil {
 		t.Error("login should fail for a rejected registration")
 	}
 }

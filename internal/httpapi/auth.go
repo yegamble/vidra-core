@@ -286,13 +286,23 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 	return c.JSON(http.StatusOK, view)
 }
 
-// handleLogin verifies credentials and returns an access + refresh token.
+// mfaRequiredResponse is the login response for an MFA-enabled account: no
+// session tokens, just the short-lived single-purpose mfa_token to present at
+// POST /api/v1/auth/mfa/challenge together with a TOTP or recovery code.
+type mfaRequiredResponse struct {
+	MFARequired bool   `json:"mfa_required"`
+	MFAToken    string `json:"mfa_token"`
+}
+
+// handleLogin verifies credentials and returns an access + refresh token — or,
+// when the account has TOTP MFA enabled, an MFA challenge (mfa_required +
+// mfa_token) WITHOUT any session tokens.
 func (s *Server) handleLogin(c echo.Context) error {
 	var in loginRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	user, tokens, err := s.authsvc.Login(c.Request().Context(), auth.LoginInput{
+	res, err := s.authsvc.Login(c.Request().Context(), auth.LoginInput{
 		Email:    in.Email,
 		Password: in.Password,
 	}, c.Request().UserAgent())
@@ -310,9 +320,15 @@ func (s *Server) handleLogin(c echo.Context) error {
 		}
 		return err
 	}
-	s.audit(c, observability.ActionLogin, observability.ResultSuccess, user.ID.String(), "")
+	if res.MFARequired {
+		// Credentials verified, but the session is withheld until the MFA
+		// challenge completes (audited there as auth.mfa.challenge).
+		s.audit(c, observability.ActionLogin, observability.ResultSuccess, res.User.ID.String(), "mfa_required")
+		return c.JSON(http.StatusOK, mfaRequiredResponse{MFARequired: true, MFAToken: res.MFAToken})
+	}
+	s.audit(c, observability.ActionLogin, observability.ResultSuccess, res.User.ID.String(), "")
 	cookieMode := in.CookieMode || refreshCookieToken(c) != ""
-	return s.authResponse(http.StatusOK, c, user, tokens, cookieMode)
+	return s.authResponse(http.StatusOK, c, res.User, res.Tokens, cookieMode)
 }
 
 // refreshRequest is the POST /api/v1/auth/refresh and /logout body. The token

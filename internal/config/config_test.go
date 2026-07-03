@@ -614,3 +614,49 @@ func TestMailEnabledRejectsBadPort(t *testing.T) {
 		t.Errorf("Load() = %v, want SMTP_PORT range error", err)
 	}
 }
+
+func TestMFAKEKFallbackAndValidation(t *testing.T) {
+	// MFAKEK() prefers MFA_KEY_KEK and falls back to FEDERATION_KEY_KEK.
+	c := &Config{MFAKeyKEK: "mfa-kek", FederationKeyKEK: "fed-kek"}
+	if got := c.MFAKEK(); got != "mfa-kek" {
+		t.Errorf("MFAKEK() = %q, want the dedicated MFA KEK", got)
+	}
+	c.MFAKeyKEK = ""
+	if got := c.MFAKEK(); got != "fed-kek" {
+		t.Errorf("MFAKEK() = %q, want the federation fallback", got)
+	}
+	c.FederationKeyKEK = ""
+	if got := c.MFAKEK(); got != "" {
+		t.Errorf("MFAKEK() = %q, want empty (dev raw mode)", got)
+	}
+
+	// A set MFA_KEY_KEK must be base64 of exactly 32 bytes.
+	t.Setenv("MFA_KEY_KEK", "not-a-kek")
+	if _, err := Load(); err == nil {
+		t.Error("Load() with a malformed MFA_KEY_KEK must error")
+	}
+	t.Setenv("MFA_KEY_KEK", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if _, err := Load(); err != nil {
+		t.Errorf("Load() with a valid MFA_KEY_KEK: %v", err)
+	}
+}
+
+func TestTOTPIssuerDefaultsToInstanceName(t *testing.T) {
+	t.Setenv("TOTP_ISSUER", "")
+	t.Setenv("INSTANCE_NAME", "My Tube")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if cfg.TOTPIssuer != "My Tube" {
+		t.Errorf("TOTPIssuer = %q, want the instance name default", cfg.TOTPIssuer)
+	}
+	t.Setenv("TOTP_ISSUER", "Custom Label")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if cfg.TOTPIssuer != "Custom Label" {
+		t.Errorf("TOTPIssuer = %q, want the explicit override", cfg.TOTPIssuer)
+	}
+}

@@ -19,7 +19,7 @@ Implemented so far:
 ## Planned controls (tracked in fix_plan / feature ledger)
 
 - JWT access tokens (short TTL) + refresh-token rotation and revocation.
-- TOTP 2FA; OAuth2/OIDC where specs require.
+- TOTP 2FA — DONE, see "TOTP two-factor authentication" below. OAuth2/OIDC — DONE (P4).
 - Rate limiting (Redis) for auth, upload, messaging, search, federation.
 - SSRF protection for imports, link previews, federation fetches, webhooks,
   remote media: block localhost, private/link-local/reserved ranges, metadata
@@ -29,6 +29,41 @@ Implemented so far:
 - File handling: content-type + size validation, path-traversal prevention,
   ClamAV scanning (fail-closed in production by default).
 - No secrets in logs; no plaintext private keys at rest without documented KMS.
+
+## TOTP two-factor authentication (P4)
+
+Implemented in `internal/auth/mfa.go` + `internal/httpapi/auth_mfa.go`
+(migration 0056: `user_mfa`, `mfa_recovery_codes`).
+
+- **Profile**: RFC 6238, SHA1 / 6 digits / 30s, ±1 step skew, via
+  `github.com/pquerna/otp` (the de-facto standard Go implementation; bespoke
+  HMAC-window arithmetic would be the riskier choice).
+- **Secret at rest**: envelope-encrypted (`internal/secretbox`, AES-256-GCM)
+  under `MFA_KEY_KEK`, falling back to `FEDERATION_KEY_KEK` so one KEK can
+  cover both; with neither set (dev) the secret is stored raw and the api
+  warns loudly at boot. The secret and `otpauth://` URI leave the server
+  exactly once (enrollment response) and are on the log denylist
+  (`totp_secret`, `otpauth_uri`, `mfa_token`, `recovery_code(s)`).
+- **Enrollment is two-phase**: `POST /auth/mfa/totp` stores the secret with
+  `enabled=false` (login unaffected); the first valid code at
+  `POST /auth/mfa/totp/verify` flips it on — so a user can never lock
+  themselves out by enrolling without a working authenticator.
+- **Recovery codes**: 10 issued on enable, shown once, stored SHA-256-hashed,
+  strictly single-use (`UPDATE … WHERE used_at IS NULL` execrows).
+- **Login split**: with MFA enabled, valid credentials return only
+  `{mfa_required, mfa_token}` — a 5-minute single-purpose HS256 token whose
+  audience is suffixed `:mfa`, so it can never be used as an access token
+  (and an access token can never drive the challenge).
+  `POST /auth/mfa/challenge` (TOTP or recovery code) then issues the normal
+  session (cookie mode supported) and sits behind the strict auth rate
+  limiter like login.
+- **Disable requires the account password** (a stolen bearer token cannot
+  strip 2FA); it drops the secret and all recovery codes.
+- **Audit**: `auth.mfa.enable` / `auth.mfa.disable` / `auth.mfa.challenge`
+  success+failure (challenge success records the method `totp`/`recovery_code`);
+  never a code, secret, or token.
+- **Intentional scope**: OAuth/OIDC logins are not TOTP-gated — the upstream
+  IdP owns that factor for its identities.
 
 ## Threat-model notes
 

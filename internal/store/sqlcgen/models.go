@@ -155,6 +155,14 @@ type Message struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type MfaRecoveryCode struct {
+	ID        uuid.UUID          `json:"id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	CodeHash  string             `json:"code_hash"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
+	CreatedAt time.Time          `json:"created_at"`
+}
+
 type MutedAccount struct {
 	MuterID   uuid.UUID `json:"muter_id"`
 	MutedID   uuid.UUID `json:"muted_id"`
@@ -375,6 +383,13 @@ type UserImage struct {
 	SizeBytes   int64     `json:"size_bytes"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type UserMfa struct {
+	UserID           uuid.UUID `json:"user_id"`
+	TotpSecretSealed string    `json:"totp_secret_sealed"`
+	Enabled          bool      `json:"enabled"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type Video struct {

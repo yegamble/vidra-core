@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -79,6 +80,13 @@ type Service struct {
 	verifyTTL  time.Duration
 	mailer     Mailer
 	now        func() time.Time // injectable clock for tests
+
+	// TOTP MFA collaborators (WithMFA). mfaRepo nil = feature not wired: the
+	// MFA endpoints answer ErrMFAUnavailable and login is unchanged.
+	mfaRepo       MFARepository
+	mfaCipher     *secretbox.Cipher // nil in dev → secrets stored raw
+	mfaIssuerName string            // otpauth:// issuer label
+	mfaTokens     *TokenIssuer      // single-purpose mfa_token minting/parsing
 }
 
 // NewService builds the auth service. refreshTTL is the refresh-token lifetime.
@@ -201,29 +209,51 @@ func (s *Service) Register(ctx context.Context, in RegisterInput, userAgent stri
 	return user, tokens, nil
 }
 
-// Login verifies credentials and returns the account with an access + refresh
-// token pair. Unknown account and wrong password are indistinguishable
-// (ErrInvalidCredentials).
-func (s *Service) Login(ctx context.Context, in LoginInput, userAgent string) (sqlcgen.User, Tokens, error) {
+// LoginResult is the outcome of a successful credential verification: either a
+// completed session (Tokens) or, when the account has TOTP MFA enabled, a
+// pending challenge — MFARequired with a short-lived single-purpose MFAToken
+// and NO session tokens (the session is only issued by CompleteMFAChallenge).
+type LoginResult struct {
+	User        sqlcgen.User
+	Tokens      Tokens
+	MFARequired bool
+	MFAToken    string
+}
+
+// Login verifies credentials. Without MFA it returns the account with an
+// access + refresh token pair; with TOTP enabled it withholds the session and
+// returns an mfa_token instead (see LoginResult). Unknown account and wrong
+// password are indistinguishable (ErrInvalidCredentials).
+func (s *Service) Login(ctx context.Context, in LoginInput, userAgent string) (LoginResult, error) {
 	user, err := s.repo.GetUserByEmail(ctx, strings.TrimSpace(in.Email))
 	if err != nil {
 		// Run a dummy compare to keep timing roughly constant whether or not the
 		// account exists, reducing user-enumeration via response time.
 		_ = CheckPassword("$2a$12$0000000000000000000000000000000000000000000000000000", in.Password)
-		return sqlcgen.User{}, Tokens{}, ErrInvalidCredentials
+		return LoginResult{}, ErrInvalidCredentials
 	}
 	if err := CheckPassword(user.PasswordHash, in.Password); err != nil {
-		return sqlcgen.User{}, Tokens{}, ErrInvalidCredentials
+		return LoginResult{}, ErrInvalidCredentials
 	}
 	if !user.IsActive {
-		return sqlcgen.User{}, Tokens{}, ErrAccountDisabled
+		return LoginResult{}, ErrAccountDisabled
+	}
+
+	// MFA gate: credentials alone do not make a session on an MFA-enabled
+	// account — the caller must complete the TOTP/recovery-code challenge.
+	if s.mfaEnabled(ctx, user.ID) {
+		mfaToken, err := s.mfaTokens.Issue(user.ID, user.Role)
+		if err != nil {
+			return LoginResult{}, err
+		}
+		return LoginResult{User: user, MFARequired: true, MFAToken: mfaToken}, nil
 	}
 
 	tokens, err := s.issueTokens(ctx, user, userAgent)
 	if err != nil {
-		return sqlcgen.User{}, Tokens{}, err
+		return LoginResult{}, err
 	}
-	return user, tokens, nil
+	return LoginResult{User: user, Tokens: tokens}, nil
 }
 
 // Refresh rotates a refresh token: it validates the presented token, revokes the

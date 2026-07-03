@@ -480,6 +480,16 @@ func (s *Server) routes() {
 		authGroup.POST("/me/deactivate", s.handleDeactivateAccount, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
 
+		// TOTP two-factor authentication (P4). Enrollment/status/disable act on
+		// the authenticated account; the challenge is the second half of an MFA
+		// login — public, and behind the strict auth limiter like login itself
+		// (it is a code-guessing surface).
+		authGroup.GET("/mfa", s.handleGetMFAStatus, s.requireAuth)
+		authGroup.POST("/mfa/totp", s.handleBeginTOTPEnrollment, s.requireAuth)
+		authGroup.POST("/mfa/totp/verify", s.handleVerifyTOTPEnrollment, s.requireAuth)
+		authGroup.DELETE("/mfa/totp", s.handleDisableTOTP, s.requireAuth)
+		authGroup.POST("/mfa/challenge", s.handleMFAChallenge, authMW...)
+
 		// OIDC login/link (P4/P15). Browser-navigation flow: begin 302s to the
 		// provider, the callback issues a cookie-mode session. The auth limiter
 		// throttles both (they are unauthenticated credential endpoints).

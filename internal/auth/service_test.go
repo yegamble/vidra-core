@@ -363,12 +363,15 @@ func TestLoginSuccess(t *testing.T) {
 	svc := newTestService(newFakeRepo())
 	register(t, svc, "ada", "ada@example.test")
 
-	user, tok, err := svc.Login(context.Background(), LoginInput{Email: "ADA@example.test", Password: "supersecret"}, "test-agent")
+	res, err := svc.Login(context.Background(), LoginInput{Email: "ADA@example.test", Password: "supersecret"}, "test-agent")
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}
-	if tok.AccessToken == "" || tok.RefreshToken == "" || user.Username != "ada" {
-		t.Errorf("unexpected login result: user=%+v tokens=%+v", user, tok)
+	if res.Tokens.AccessToken == "" || res.Tokens.RefreshToken == "" || res.User.Username != "ada" {
+		t.Errorf("unexpected login result: %+v", res)
+	}
+	if res.MFARequired || res.MFAToken != "" {
+		t.Errorf("no-MFA login must not require a challenge: %+v", res)
 	}
 }
 
@@ -376,14 +379,14 @@ func TestLoginWrongPasswordIsInvalidCredentials(t *testing.T) {
 	svc := newTestService(newFakeRepo())
 	register(t, svc, "ada", "ada@example.test")
 
-	if _, _, err := svc.Login(context.Background(), LoginInput{Email: "ada@example.test", Password: "nope"}, "a"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := svc.Login(context.Background(), LoginInput{Email: "ada@example.test", Password: "nope"}, "a"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
 	}
 }
 
 func TestLoginUnknownAccountIsInvalidCredentials(t *testing.T) {
 	svc := newTestService(newFakeRepo())
-	if _, _, err := svc.Login(context.Background(), LoginInput{Email: "ghost@example.test", Password: "whatever"}, "a"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := svc.Login(context.Background(), LoginInput{Email: "ghost@example.test", Password: "whatever"}, "a"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
 	}
 }
