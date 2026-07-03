@@ -105,28 +105,33 @@ func (s *Server) handleDeleteWatchedWord(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// watchedWordMatchView is a flagged comment for the moderation review queue: the
-// matched term plus the comment's context.
+// watchedWordMatchView is flagged content for the moderation review queue: the
+// matched term plus the target's context. Type is "comment" (comment_id/
+// comment_body set; video_id is the video the comment is on) or "video"
+// (comment fields omitted; video_id/video_title are the flagged video — §12).
 type watchedWordMatchView struct {
 	ID             string    `json:"id"`
 	Word           string    `json:"word"`
-	CommentID      string    `json:"comment_id"`
-	CommentBody    string    `json:"comment_body"`
+	Type           string    `json:"type"`
+	CommentID      string    `json:"comment_id,omitempty"`
+	CommentBody    string    `json:"comment_body,omitempty"`
 	VideoID        string    `json:"video_id"`
+	VideoTitle     string    `json:"video_title"`
 	AuthorUsername string    `json:"author_username"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// watchedWordMatchListResponse is the paginated flagged-comment queue.
+// watchedWordMatchListResponse is the paginated flagged-content queue.
 type watchedWordMatchListResponse struct {
 	Matches []watchedWordMatchView `json:"matches"`
 	Limit   int                    `json:"limit"`
 	Offset  int                    `json:"offset"`
 }
 
-// handleListWatchedWordMatches returns comments flagged by the watched-words
-// list, newest match first. Behind requireRole(admin, moderator). Pagination via
-// ?limit (1–100, default 20)/?offset.
+// handleListWatchedWordMatches returns content flagged by the watched-words
+// list — comments and videos (§12) — newest match first, each with a type
+// badge and its target context. Behind requireRole(admin, moderator).
+// Pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListWatchedWordMatches(c echo.Context) error {
 	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
 	offset := queryInt(c, "offset", 0)
@@ -139,15 +144,20 @@ func (s *Server) handleListWatchedWordMatches(c echo.Context) error {
 	}
 	views := make([]watchedWordMatchView, 0, len(items))
 	for _, m := range items {
-		views = append(views, watchedWordMatchView{
+		view := watchedWordMatchView{
 			ID:             m.ID.String(),
 			Word:           m.Word,
-			CommentID:      m.CommentID.String(),
-			CommentBody:    m.CommentBody,
+			Type:           m.Type,
 			VideoID:        m.VideoID.String(),
+			VideoTitle:     m.VideoTitle,
 			AuthorUsername: m.AuthorUsername,
 			CreatedAt:      m.CreatedAt,
-		})
+		}
+		if m.Type == watchword.MatchTargetComment {
+			view.CommentID = m.CommentID.String()
+			view.CommentBody = m.CommentBody
+		}
+		views = append(views, view)
 	}
 	return c.JSON(http.StatusOK, watchedWordMatchListResponse{Matches: views, Limit: limit, Offset: offset})
 }

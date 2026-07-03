@@ -1,8 +1,10 @@
 // Package watchword implements the moderation "watched words" list for vidra-core:
-// an instance-wide set of terms a moderator/admin maintains. This package owns the
-// list management (add / list / delete); the matching/flagging effect on content
-// (comments, videos) is applied by those surfaces in a later slice. It is
-// HTTP-agnostic and testable without a server.
+// an instance-wide set of terms a moderator/admin maintains, plus the matching/
+// flagging of content against it — comment bodies on post/edit and video
+// title+description on create/edit (§12). Flagging only records matches for the
+// moderator review queue; it never blocks or hides the content itself (the §11
+// quarantine pipeline is the hold mechanism for videos). It is HTTP-agnostic and
+// testable without a server.
 package watchword
 
 import (
@@ -28,6 +30,7 @@ type Repository interface {
 	DeleteWatchedWord(ctx context.Context, id uuid.UUID) (int64, error)
 	MatchWatchedWords(ctx context.Context, text string) ([]sqlcgen.MatchWatchedWordsRow, error)
 	RecordWatchedWordMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordMatchParams) error
+	RecordWatchedWordVideoMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordVideoMatchParams) error
 	ListWatchedWordMatches(ctx context.Context, arg sqlcgen.ListWatchedWordMatchesParams) ([]sqlcgen.ListWatchedWordMatchesRow, error)
 }
 
@@ -104,7 +107,7 @@ func (s *Service) FlagComment(ctx context.Context, commentID uuid.UUID, body str
 	for _, m := range matches {
 		if err := s.repo.RecordWatchedWordMatch(ctx, sqlcgen.RecordWatchedWordMatchParams{
 			WatchedWordID: m.ID,
-			CommentID:     commentID,
+			CommentID:     pgtype.UUID{Bytes: commentID, Valid: true},
 		}); err != nil {
 			return 0, err
 		}
@@ -112,20 +115,52 @@ func (s *Service) FlagComment(ctx context.Context, commentID uuid.UUID, body str
 	return len(matches), nil
 }
 
-// Match is a flagged comment for the moderation review queue: the matched term
-// plus the comment's context.
+// FlagVideo checks a video's title+description against the watched-words list
+// and records a match row for each term found (idempotent per word+video). It
+// returns the number of terms matched. Best-effort: callers invoke it as a side
+// effect of creating/editing a video and must not fail the write on error. No
+// auto-hold: the §11 quarantine pipeline is the hold mechanism for videos.
+func (s *Service) FlagVideo(ctx context.Context, videoID uuid.UUID, text string) (int, error) {
+	matches, err := s.repo.MatchWatchedWords(ctx, text)
+	if err != nil {
+		return 0, err
+	}
+	for _, m := range matches {
+		if err := s.repo.RecordWatchedWordVideoMatch(ctx, sqlcgen.RecordWatchedWordVideoMatchParams{
+			WatchedWordID: m.ID,
+			VideoID:       pgtype.UUID{Bytes: videoID, Valid: true},
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return len(matches), nil
+}
+
+// Match target discriminators for the review queue.
+const (
+	MatchTargetComment = "comment"
+	MatchTargetVideo   = "video"
+)
+
+// Match is flagged content for the moderation review queue: the matched term
+// plus the target's context. Type says what was flagged — a comment (CommentID/
+// CommentBody set; VideoID is the video the comment is on) or a video
+// (CommentID/CommentBody empty; VideoID/VideoTitle are the flagged video). The
+// author is the comment's author or the video's owner respectively.
 type Match struct {
 	ID             uuid.UUID
 	Word           string
+	Type           string
 	CommentID      uuid.UUID
 	CommentBody    string
 	VideoID        uuid.UUID
+	VideoTitle     string
 	AuthorUsername string
 	CreatedAt      time.Time
 }
 
-// ListMatches returns flagged comments, newest match first. The caller clamps
-// limit/offset.
+// ListMatches returns flagged comments and videos, newest match first. The
+// caller clamps limit/offset.
 func (s *Service) ListMatches(ctx context.Context, limit, offset int32) ([]Match, error) {
 	rows, err := s.repo.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{
 		ResultLimit:  limit,
@@ -136,10 +171,21 @@ func (s *Service) ListMatches(ctx context.Context, limit, offset int32) ([]Match
 	}
 	out := make([]Match, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Match{
-			ID: r.ID, Word: r.Word, CommentID: r.CommentID, CommentBody: r.CommentBody,
+		m := Match{
+			ID: r.ID, Word: r.Word, Type: MatchTargetVideo,
 			VideoID: r.VideoID, AuthorUsername: r.AuthorUsername, CreatedAt: r.CreatedAt,
-		})
+		}
+		if r.VideoTitle != nil {
+			m.VideoTitle = *r.VideoTitle
+		}
+		if r.CommentID.Valid {
+			m.Type = MatchTargetComment
+			m.CommentID = uuid.UUID(r.CommentID.Bytes)
+			if r.CommentBody != nil {
+				m.CommentBody = *r.CommentBody
+			}
+		}
+		out = append(out, m)
 	}
 	return out, nil
 }

@@ -3762,13 +3762,16 @@ paths:
   /api/v1/admin/watched-word-matches:
     get:
       operationId: listWatchedWordMatches
-      summary: List comments flagged by the watched-words list
+      summary: List content flagged by the watched-words list
       description: >-
-        Returns comments that matched a watched term when posted, newest match
-        first, with the matched term and the comment's context (body, author,
-        video). Restricted to moderators/admins. Detection is recorded on comment
-        creation; this slice does not auto-hide the content. Paginated via ?limit
-        (1–100, default 20)/?offset.
+        Returns comments AND videos that matched a watched term, newest match
+        first, with the matched term and the target's context — a type badge
+        ("comment" or "video"), the comment's body/author + its video, or the
+        flagged video's title + owner. Comments are matched on post/edit;
+        videos on create/edit (title+description). Restricted to
+        moderators/admins. Detection only — nothing is auto-hidden (the upload
+        quarantine pipeline is the hold mechanism for videos). Paginated via
+        ?limit (1–100, default 20)/?offset.
       tags: [moderation]
       security:
         - bearerAuth: []
@@ -6612,8 +6615,13 @@ components:
           example: 0
     WatchedWordMatch:
       type: object
-      description: A comment flagged by the watched-words list, for moderator review.
-      required: [id, word, comment_id, comment_body, video_id, author_username, created_at]
+      description: >-
+        Content flagged by the watched-words list, for moderator review: a
+        comment (type "comment"; comment_id/comment_body present, video_id is
+        the video it is on) or a video (type "video"; comment fields absent,
+        video_id/video_title are the flagged video). author_username is the
+        comment's author or the video's owner respectively.
+      required: [id, word, type, video_id, video_title, author_username, created_at]
       properties:
         id:
           type: string
@@ -6621,14 +6629,24 @@ components:
         word:
           type: string
           description: The watched term that matched.
+        type:
+          type: string
+          enum: [comment, video]
+          description: What was flagged.
         comment_id:
           type: string
           format: uuid
+          description: The flagged comment (comment matches only).
         comment_body:
           type: string
+          description: The flagged comment's body (comment matches only).
         video_id:
           type: string
           format: uuid
+          description: The flagged video, or the video the flagged comment is on.
+        video_title:
+          type: string
+          description: The video's title (a link target for the review queue).
         author_username:
           type: string
         created_at:

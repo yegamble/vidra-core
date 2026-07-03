@@ -222,9 +222,22 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	s.flagVideoWatchedWords(ctx, v.ID, v.Title, v.Description)
 	view := newVideoView(v)
 	s.attachVideoTags(ctx, &view, v.ID)
 	return c.JSON(http.StatusCreated, view)
+}
+
+// flagVideoWatchedWords checks a video's title+description against the
+// moderation watched-words list (§12), recording matches for the review queue.
+// Best-effort: it never blocks the create/edit.
+func (s *Server) flagVideoWatchedWords(ctx context.Context, videoID uuid.UUID, title, description string) {
+	if s.watchwordsvc == nil {
+		return
+	}
+	if _, err := s.watchwordsvc.FlagVideo(ctx, videoID, title+"\n"+description); err != nil {
+		s.logger.WarnContext(ctx, "watched-word flagging failed", "error", err, "video_id", videoID)
+	}
 }
 
 // attachVideoTags populates view.Tags from the stored tag set (best-effort: a
@@ -565,6 +578,9 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		}
 		return videoError(err)
 	}
+	// Re-flag the edited metadata against the watched-words list (best-effort;
+	// an edit can newly introduce a flagged term — §12).
+	s.flagVideoWatchedWords(c.Request().Context(), v.ID, v.Title, v.Description)
 	view := newVideoView(v)
 	s.attachVideoTags(c.Request().Context(), &view, v.ID)
 	return c.JSON(http.StatusOK, view)

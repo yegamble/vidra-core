@@ -790,7 +790,7 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		WithModerationService(moderation.NewService(modRepo)),
 		WithMuteService(mute.NewService(muteRepo)),
 		WithBlockService(blocksvc),
-		WithWatchWordService(watchword.NewService(&watchwordFakeRepo{auth: authRepo})),
+		WithWatchWordService(watchword.NewService(&watchwordFakeRepo{auth: authRepo, videos: repo})),
 		WithAdminService(admin.NewService(authRepo)),
 		WithMessagingService(messaging.NewService(msgRepo, messaging.WithBlocker(blocksvc))),
 		WithLiveService(live.NewService(newLiveFakeRepo(chRepo))),

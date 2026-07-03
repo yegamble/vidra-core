@@ -29,15 +29,30 @@ INSERT INTO watched_word_matches (watched_word_id, comment_id)
 VALUES ($1, $2)
 ON CONFLICT (watched_word_id, comment_id) DO NOTHING;
 
+-- name: RecordWatchedWordVideoMatch :exec
+-- Record that a video's title/description matched a watched term (idempotent
+-- per word+video; §12).
+INSERT INTO watched_word_matches (watched_word_id, video_id)
+VALUES ($1, $2)
+ON CONFLICT (watched_word_id, video_id) WHERE video_id IS NOT NULL DO NOTHING;
+
 -- name: ListWatchedWordMatches :many
--- Flagged comments, newest match first, with the matched term + comment context
--- (body, author, and the video it is on).
+-- Flagged content (comments AND videos), newest match first, with the matched
+-- term + target context: for a comment match, its body/author and the video it
+-- is on; for a video match, the video's title and its owner as the author.
+-- comment_id/comment_body are NULL for video matches (the review UI's type
+-- badge keys off that).
 SELECT m.id, m.created_at, w.word,
-       c.id AS comment_id, c.body AS comment_body, c.video_id,
-       u.username AS author_username
+       m.comment_id, c.body AS comment_body,
+       COALESCE(m.video_id, c.video_id)::uuid AS video_id,
+       v.title AS video_title,
+       COALESCE(cu.username, vu.username)::text AS author_username
 FROM watched_word_matches m
 JOIN watched_words w ON w.id = m.watched_word_id
-JOIN comments c ON c.id = m.comment_id
-JOIN users u ON u.id = c.user_id
+LEFT JOIN comments c ON c.id = m.comment_id
+LEFT JOIN users cu ON cu.id = c.user_id
+LEFT JOIN videos v ON v.id = COALESCE(m.video_id, c.video_id)
+LEFT JOIN channels ch ON ch.id = v.channel_id
+LEFT JOIN users vu ON vu.id = ch.owner_id
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');

@@ -53,12 +53,17 @@ func (q *Queries) DeleteWatchedWord(ctx context.Context, id uuid.UUID) (int64, e
 
 const listWatchedWordMatches = `-- name: ListWatchedWordMatches :many
 SELECT m.id, m.created_at, w.word,
-       c.id AS comment_id, c.body AS comment_body, c.video_id,
-       u.username AS author_username
+       m.comment_id, c.body AS comment_body,
+       COALESCE(m.video_id, c.video_id)::uuid AS video_id,
+       v.title AS video_title,
+       COALESCE(cu.username, vu.username)::text AS author_username
 FROM watched_word_matches m
 JOIN watched_words w ON w.id = m.watched_word_id
-JOIN comments c ON c.id = m.comment_id
-JOIN users u ON u.id = c.user_id
+LEFT JOIN comments c ON c.id = m.comment_id
+LEFT JOIN users cu ON cu.id = c.user_id
+LEFT JOIN videos v ON v.id = COALESCE(m.video_id, c.video_id)
+LEFT JOIN channels ch ON ch.id = v.channel_id
+LEFT JOIN users vu ON vu.id = ch.owner_id
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT $2 OFFSET $1
 `
@@ -69,17 +74,21 @@ type ListWatchedWordMatchesParams struct {
 }
 
 type ListWatchedWordMatchesRow struct {
-	ID             uuid.UUID `json:"id"`
-	CreatedAt      time.Time `json:"created_at"`
-	Word           string    `json:"word"`
-	CommentID      uuid.UUID `json:"comment_id"`
-	CommentBody    string    `json:"comment_body"`
-	VideoID        uuid.UUID `json:"video_id"`
-	AuthorUsername string    `json:"author_username"`
+	ID             uuid.UUID   `json:"id"`
+	CreatedAt      time.Time   `json:"created_at"`
+	Word           string      `json:"word"`
+	CommentID      pgtype.UUID `json:"comment_id"`
+	CommentBody    *string     `json:"comment_body"`
+	VideoID        uuid.UUID   `json:"video_id"`
+	VideoTitle     *string     `json:"video_title"`
+	AuthorUsername string      `json:"author_username"`
 }
 
-// Flagged comments, newest match first, with the matched term + comment context
-// (body, author, and the video it is on).
+// Flagged content (comments AND videos), newest match first, with the matched
+// term + target context: for a comment match, its body/author and the video it
+// is on; for a video match, the video's title and its owner as the author.
+// comment_id/comment_body are NULL for video matches (the review UI's type
+// badge keys off that).
 func (q *Queries) ListWatchedWordMatches(ctx context.Context, arg ListWatchedWordMatchesParams) ([]ListWatchedWordMatchesRow, error) {
 	rows, err := q.db.Query(ctx, listWatchedWordMatches, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
@@ -96,6 +105,7 @@ func (q *Queries) ListWatchedWordMatches(ctx context.Context, arg ListWatchedWor
 			&i.CommentID,
 			&i.CommentBody,
 			&i.VideoID,
+			&i.VideoTitle,
 			&i.AuthorUsername,
 		); err != nil {
 			return nil, err
@@ -193,12 +203,30 @@ ON CONFLICT (watched_word_id, comment_id) DO NOTHING
 `
 
 type RecordWatchedWordMatchParams struct {
-	WatchedWordID uuid.UUID `json:"watched_word_id"`
-	CommentID     uuid.UUID `json:"comment_id"`
+	WatchedWordID uuid.UUID   `json:"watched_word_id"`
+	CommentID     pgtype.UUID `json:"comment_id"`
 }
 
 // Record that a comment matched a watched term (idempotent per word+comment).
 func (q *Queries) RecordWatchedWordMatch(ctx context.Context, arg RecordWatchedWordMatchParams) error {
 	_, err := q.db.Exec(ctx, recordWatchedWordMatch, arg.WatchedWordID, arg.CommentID)
+	return err
+}
+
+const recordWatchedWordVideoMatch = `-- name: RecordWatchedWordVideoMatch :exec
+INSERT INTO watched_word_matches (watched_word_id, video_id)
+VALUES ($1, $2)
+ON CONFLICT (watched_word_id, video_id) WHERE video_id IS NOT NULL DO NOTHING
+`
+
+type RecordWatchedWordVideoMatchParams struct {
+	WatchedWordID uuid.UUID   `json:"watched_word_id"`
+	VideoID       pgtype.UUID `json:"video_id"`
+}
+
+// Record that a video's title/description matched a watched term (idempotent
+// per word+video; §12).
+func (q *Queries) RecordWatchedWordVideoMatch(ctx context.Context, arg RecordWatchedWordVideoMatchParams) error {
+	_, err := q.db.Exec(ctx, recordWatchedWordVideoMatch, arg.WatchedWordID, arg.VideoID)
 	return err
 }

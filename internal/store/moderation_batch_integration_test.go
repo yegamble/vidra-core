@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -108,6 +111,113 @@ func TestQuarantinePipelinePersists(t *testing.T) {
 	for _, r := range queue {
 		if r.ID == videoID {
 			t.Fatalf("published video still in the quarantine queue")
+		}
+	}
+}
+
+// TestWatchedWordVideoMatchesPersist proves the §12 storage pieces against a
+// real PostgreSQL: the video-target insert is idempotent via the partial
+// unique index, the exactly-one-target CHECK rejects bad rows, the review
+// query types both kinds with their context, and deleting the video cascades
+// its match rows away.
+func TestWatchedWordVideoMatchesPersist(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	userID, channelID := seedOwnerChannel(ctx, t, st, "wwv")
+	videoID := seedPublishedVideo(ctx, t, st, channelID, "flagged probe")
+
+	// A unique term isolates the run on a shared dev database.
+	term := "wwv-" + uuid.NewString()[:8]
+	word, err := q.CreateWatchedWord(ctx, sqlcgen.CreateWatchedWordParams{
+		Word: term, CreatedBy: pgtype.UUID{Bytes: userID, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("CreateWatchedWord: %v", err)
+	}
+	t.Cleanup(func() { _, _ = q.DeleteWatchedWord(context.Background(), word.ID) })
+
+	// Idempotent video-target insert (partial unique index).
+	for i := 0; i < 2; i++ {
+		if err := q.RecordWatchedWordVideoMatch(ctx, sqlcgen.RecordWatchedWordVideoMatchParams{
+			WatchedWordID: word.ID, VideoID: pgtype.UUID{Bytes: videoID, Valid: true},
+		}); err != nil {
+			t.Fatalf("RecordWatchedWordVideoMatch #%d: %v", i+1, err)
+		}
+	}
+
+	// The CHECK rejects a row with both targets or neither.
+	var commentID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO comments (video_id, user_id, body) VALUES ($1, $2, 'hi') RETURNING id`,
+		videoID, userID,
+	).Scan(&commentID); err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO watched_word_matches (watched_word_id, comment_id, video_id) VALUES ($1, $2, $3)`,
+		word.ID, commentID, videoID,
+	); err == nil {
+		t.Fatalf("both-targets row accepted, want CHECK violation")
+	}
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO watched_word_matches (watched_word_id) VALUES ($1)`, word.ID,
+	); err == nil {
+		t.Fatalf("no-target row accepted, want CHECK violation")
+	}
+
+	// A comment match joins the same queue; both rows are typed with context.
+	if err := q.RecordWatchedWordMatch(ctx, sqlcgen.RecordWatchedWordMatchParams{
+		WatchedWordID: word.ID, CommentID: pgtype.UUID{Bytes: commentID, Valid: true},
+	}); err != nil {
+		t.Fatalf("RecordWatchedWordMatch: %v", err)
+	}
+	rows, err := q.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{ResultLimit: 500})
+	if err != nil {
+		t.Fatalf("ListWatchedWordMatches: %v", err)
+	}
+	var sawVideo, sawComment bool
+	for _, r := range rows {
+		if r.Word != term {
+			continue
+		}
+		if r.CommentID.Valid {
+			sawComment = true
+			if uuid.UUID(r.CommentID.Bytes) != commentID || r.CommentBody == nil || *r.CommentBody != "hi" {
+				t.Errorf("comment row context = %+v", r)
+			}
+			if r.VideoID != videoID {
+				t.Errorf("comment row video_id = %s, want the comment's video %s", r.VideoID, videoID)
+			}
+		} else {
+			sawVideo = true
+			if r.VideoID != videoID || r.VideoTitle == nil || *r.VideoTitle != "flagged probe" {
+				t.Errorf("video row context = %+v", r)
+			}
+			if r.AuthorUsername == "" {
+				t.Errorf("video row missing owner username: %+v", r)
+			}
+		}
+	}
+	if !sawVideo || !sawComment {
+		t.Fatalf("queue rows for term = video:%v comment:%v, want both", sawVideo, sawComment)
+	}
+
+	// Deleting the video cascades both match rows away (the comment goes too).
+	if _, err := st.Pool.Exec(ctx, `DELETE FROM videos WHERE id = $1`, videoID); err != nil {
+		t.Fatalf("delete video: %v", err)
+	}
+	rows, _ = q.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{ResultLimit: 500})
+	for _, r := range rows {
+		if r.Word == term {
+			t.Fatalf("match row survived the video delete: %+v", r)
 		}
 	}
 }

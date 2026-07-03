@@ -410,8 +410,9 @@ type WatchedWord struct {
 }
 
 type WatchedWordMatch struct {
-	ID            uuid.UUID `json:"id"`
-	WatchedWordID uuid.UUID `json:"watched_word_id"`
-	CommentID     uuid.UUID `json:"comment_id"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            uuid.UUID   `json:"id"`
+	WatchedWordID uuid.UUID   `json:"watched_word_id"`
+	CommentID     pgtype.UUID `json:"comment_id"`
+	CreatedAt     time.Time   `json:"created_at"`
+	VideoID       pgtype.UUID `json:"video_id"`
 }

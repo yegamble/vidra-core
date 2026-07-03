@@ -16,9 +16,12 @@ import (
 
 // watchwordFakeRepo is an in-memory watchword.Repository. It enforces the
 // case-insensitive uniqueness of the real index and resolves the creator's
-// username from the shared auth fake.
+// username from the shared auth fake; video-match rows resolve the flagged
+// video's title + owner from the shared video fake (mirroring the real
+// read-time JOINs, resolved at record time for simplicity).
 type watchwordFakeRepo struct {
 	auth    *authFakeRepo
+	videos  *videoFakeRepo
 	words   map[uuid.UUID]sqlcgen.WatchedWord
 	order   []uuid.UUID
 	present map[string]bool
@@ -87,6 +90,33 @@ func (f *watchwordFakeRepo) RecordWatchedWordMatch(_ context.Context, a sqlcgen.
 	f.matches = append(f.matches, sqlcgen.ListWatchedWordMatchesRow{
 		ID: uuid.New(), Word: f.words[a.WatchedWordID].Word, CommentID: a.CommentID, CreatedAt: time.Now(),
 	})
+	return nil
+}
+
+func (f *watchwordFakeRepo) RecordWatchedWordVideoMatch(_ context.Context, a sqlcgen.RecordWatchedWordVideoMatchParams) error {
+	vid := uuid.UUID(a.VideoID.Bytes)
+	for _, m := range f.matches {
+		if !m.CommentID.Valid && m.VideoID == vid && m.Word == f.words[a.WatchedWordID].Word {
+			return nil // idempotent (mirrors the partial unique index)
+		}
+	}
+	row := sqlcgen.ListWatchedWordMatchesRow{
+		ID: uuid.New(), Word: f.words[a.WatchedWordID].Word, VideoID: vid, CreatedAt: time.Now(),
+	}
+	if f.videos != nil {
+		if v, ok := f.videos.videos[vid]; ok {
+			title := v.Title
+			row.VideoTitle = &title
+			if f.auth != nil {
+				for _, u := range f.auth.users {
+					if u.ID == v.OwnerID {
+						row.AuthorUsername = u.Username
+					}
+				}
+			}
+		}
+	}
+	f.matches = append(f.matches, row)
 	return nil
 }
 

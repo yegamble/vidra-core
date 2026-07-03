@@ -81,6 +81,18 @@ func (f *fakeRepo) RecordWatchedWordMatch(_ context.Context, a sqlcgen.RecordWat
 	return nil
 }
 
+func (f *fakeRepo) RecordWatchedWordVideoMatch(_ context.Context, a sqlcgen.RecordWatchedWordVideoMatchParams) error {
+	for _, m := range f.matches {
+		if !m.CommentID.Valid && m.VideoID == uuid.UUID(a.VideoID.Bytes) && m.Word == f.words[a.WatchedWordID].Word {
+			return nil // idempotent (mirrors the partial unique index)
+		}
+	}
+	f.matches = append(f.matches, sqlcgen.ListWatchedWordMatchesRow{
+		ID: uuid.New(), Word: f.words[a.WatchedWordID].Word, VideoID: uuid.UUID(a.VideoID.Bytes), CreatedAt: time.Now(),
+	})
+	return nil
+}
+
 func (f *fakeRepo) ListWatchedWordMatches(_ context.Context, _ sqlcgen.ListWatchedWordMatchesParams) ([]sqlcgen.ListWatchedWordMatchesRow, error) {
 	out := make([]sqlcgen.ListWatchedWordMatchesRow, 0, len(f.matches))
 	for i := len(f.matches) - 1; i >= 0; i-- { // newest first
@@ -130,6 +142,65 @@ func TestFlagCommentAndListMatches(t *testing.T) {
 		if m.CommentID != c1 {
 			t.Errorf("match for %s, want %s", m.CommentID, c1)
 		}
+	}
+}
+
+// TestFlagVideoAndListMatches proves §12: a video's title+description are
+// matched with the same matcher, recorded idempotently against the video
+// target, and surface in the review queue typed "video" with the video context
+// (no comment fields).
+func TestFlagVideoAndListMatches(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo())
+	admin := uuid.New()
+	if _, err := svc.Add(ctx, "spam", admin); err != nil {
+		t.Fatalf("Add spam: %v", err)
+	}
+	if _, err := svc.Add(ctx, "scam", admin); err != nil {
+		t.Fatalf("Add scam: %v", err)
+	}
+
+	v1 := uuid.New()
+	n, err := svc.FlagVideo(ctx, v1, "SPAM title\na scam description")
+	if err != nil {
+		t.Fatalf("FlagVideo: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("matched terms = %d, want 2 (title + description, case-insensitive)", n)
+	}
+
+	// A clean video matches nothing; re-flagging is idempotent.
+	if n, _ := svc.FlagVideo(ctx, uuid.New(), "wholesome cooking video"); n != 0 {
+		t.Errorf("clean video matched = %d, want 0", n)
+	}
+	if _, err := svc.FlagVideo(ctx, v1, "SPAM title\na scam description"); err != nil {
+		t.Fatalf("re-FlagVideo: %v", err)
+	}
+
+	matches, err := svc.ListMatches(ctx, 20, 0)
+	if err != nil {
+		t.Fatalf("ListMatches: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("matches = %d, want 2 (the two terms on v1, dedup'd)", len(matches))
+	}
+	for _, m := range matches {
+		if m.Type != MatchTargetVideo || m.VideoID != v1 {
+			t.Errorf("match = %+v, want type=video for %s", m, v1)
+		}
+		if m.CommentID != uuid.Nil || m.CommentBody != "" {
+			t.Errorf("video match carries comment fields: %+v", m)
+		}
+	}
+
+	// Comment and video matches share one queue, each typed.
+	c1 := uuid.New()
+	if _, err := svc.FlagComment(ctx, c1, "more spam"); err != nil {
+		t.Fatalf("FlagComment: %v", err)
+	}
+	mixed, _ := svc.ListMatches(ctx, 20, 0)
+	if len(mixed) != 3 || mixed[0].Type != MatchTargetComment || mixed[0].CommentID != c1 {
+		t.Fatalf("mixed queue = %+v, want the comment match newest-first", mixed)
 	}
 }
 

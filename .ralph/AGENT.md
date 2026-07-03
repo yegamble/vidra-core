@@ -223,15 +223,18 @@ curl -sX POST localhost:8080/api/v1/admin/videos/<id>/approve -H 'authorization:
 curl -sX POST localhost:8080/api/v1/admin/videos/<id>/reject -H 'authorization: Bearer <admin-token>' \
   -H 'content-type: application/json' -d '{"reason":"spam"}'                                                # reject -> 204 (reason optional, audited)
 
-# Watched words (instance-wide moderation term list; moderator/admin only; the
-# matching/flagging effect on content is a later slice):
+# Watched words (instance-wide moderation term list; moderator/admin only.
+# Detection is automatic: comment bodies on post/edit and video
+# title+description on create/edit are matched and recorded — never blocked):
 curl -sX POST localhost:8080/api/v1/admin/watched-words -H 'authorization: Bearer <admin-token>' \
   -H 'content-type: application/json' -d '{"word":"spam"}'                                # add a term -> 201 (case-insensitive dup -> 409)
 curl -s 'localhost:8080/api/v1/admin/watched-words?limit=20' -H 'authorization: Bearer <admin-token>'  # list (newest first, with adder)
 curl -sX DELETE localhost:8080/api/v1/admin/watched-words/<id> -H 'authorization: Bearer <admin-token>' # remove (idempotent -> 204)
-# Comments auto-flagged by a watched term on post (detection + review only; no
-# auto-hide yet). Moderator/admin review queue, newest match first:
-curl -s 'localhost:8080/api/v1/admin/watched-word-matches?limit=20' -H 'authorization: Bearer <admin-token>'  # flagged comments + matched term
+# Content auto-flagged by a watched term (detection + review only; nothing is
+# auto-hidden — quarantine is the hold mechanism for videos). Moderator/admin
+# review queue, newest match first; each row carries type=comment|video, the
+# matched term, and the target's context (comment body/author or video title/owner):
+curl -s 'localhost:8080/api/v1/admin/watched-word-matches?limit=20' -H 'authorization: Bearer <admin-token>'  # flagged comments + videos
 
 # Account mutes (a signed-in user mutes another account by user id; the muted
 # account's comments AND videos are hidden from them — an authed GET of
