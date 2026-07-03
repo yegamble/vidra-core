@@ -29,6 +29,8 @@ const (
 	ActionEmailVerifyRequest    = "auth.email_verify.request"
 	ActionEmailVerifyConfirm    = "auth.email_verify.confirm"
 	ActionAccountDeactivate     = "auth.account.deactivate"
+	ActionOAuthLink             = "auth.oauth.link"
+	ActionOAuthUnlink           = "auth.oauth.unlink"
 	ActionRateLimited           = "auth.rate_limited"
 	ActionReportResolve         = "moderation.report.resolve"
 	ActionReportDelete          = "moderation.report.delete"
@@ -61,6 +63,9 @@ var sensitiveKeys = map[string]bool{
 	"secret":             true,
 	"secret_key":         true,
 	"smtp_password":      true,
+	"client_secret":      true,
+	"id_token":           true,
+	"code_verifier":      true,
 	"access_key":         true,
 	"private_key":        true,
 	"private_key_pem":    true,

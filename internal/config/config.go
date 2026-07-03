@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -109,6 +110,15 @@ type Config struct {
 	InstanceTermsURL     string
 	InstancePrivacyURL   string
 	InstanceContactEmail string
+
+	// OAuthProviders are the configured OIDC login providers (OAUTH_PROVIDERS
+	// comma list; per-provider OAUTH_<NAME>_ISSUER/_CLIENT_ID/_CLIENT_SECRET and
+	// optional _SCOPES). Empty (the default) disables OAuth login entirely.
+	// PublicBaseURL is required when any provider is configured — the OAuth
+	// callback redirect URI is ALWAYS derived from it server-side (P15), never
+	// from request parameters. Client secrets are secrets: never log them
+	// (observability sensitive-key rules).
+	OAuthProviders []OAuthProviderConfig
 
 	// RegistrationEnabled controls whether public account signup is accepted.
 	RegistrationEnabled bool
@@ -212,6 +222,26 @@ type Config struct {
 	InstanceDefaultQuotaBytes int64
 }
 
+// OAuthProviderConfig describes one OIDC login provider. Providers are generic:
+// any spec-compliant OIDC issuer (Google, a GitHub OIDC shim, Keycloak,
+// Authentik, …) works via its discovery document. ClientSecret is sensitive
+// and must never be logged.
+type OAuthProviderConfig struct {
+	// Name is the URL-safe identifier used in routes
+	// (/api/v1/auth/oauth/<name>) and env-var lookups (dashes map to
+	// underscores): lowercase letters, digits, and dashes.
+	Name string
+	// IssuerURL is the OIDC issuer; discovery is fetched from
+	// <issuer>/.well-known/openid-configuration.
+	IssuerURL string
+	// ClientID / ClientSecret are the OAuth2 client credentials registered
+	// with the provider.
+	ClientID     string
+	ClientSecret string
+	// Scopes overrides the requested scopes (default: openid email profile).
+	Scopes []string
+}
+
 // devJWTSecret is the obviously-fake signing key used only for local dev/test.
 // Production must override JWT_SECRET; validate() rejects this value in prod.
 const devJWTSecret = "dev-insecure-jwt-secret-change-me-0000000000000000"
@@ -312,6 +342,17 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.InstanceDefaultQuotaBytes = quotaBytes
+
+	for _, name := range splitAndTrim(getEnv("OAUTH_PROVIDERS", "")) {
+		prefix := "OAUTH_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+		cfg.OAuthProviders = append(cfg.OAuthProviders, OAuthProviderConfig{
+			Name:         name,
+			IssuerURL:    strings.TrimRight(getEnv(prefix+"_ISSUER", ""), "/"),
+			ClientID:     getEnv(prefix+"_CLIENT_ID", ""),
+			ClientSecret: getEnv(prefix+"_CLIENT_SECRET", ""),
+			Scopes:       splitAndTrim(getEnv(prefix+"_SCOPES", "")),
+		})
+	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -440,6 +481,9 @@ func (c *Config) validate() error {
 	if c.MalwareScanEnabled && strings.TrimSpace(c.ClamAVAddr) == "" {
 		return fmt.Errorf("config: CLAMAV_ADDR is required when MALWARE_SCAN_ENABLED=true")
 	}
+	if err := c.validateOAuth(); err != nil {
+		return err
+	}
 	if c.FederationEnabled {
 		u, err := url.Parse(c.PublicBaseURL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -460,6 +504,63 @@ func (c *Config) validate() error {
 		}
 	}
 	return nil
+}
+
+// oauthProviderName constrains provider names to URL-path- and env-var-safe
+// identifiers: lowercase letters/digits, dash-separated.
+var oauthProviderName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// validateOAuth checks the configured OIDC providers. Providers are disabled
+// by default (no OAUTH_PROVIDERS); each configured provider must be complete,
+// and PUBLIC_BASE_URL must be set because the callback redirect URI is derived
+// from it server-side (never from request parameters — P15).
+func (c *Config) validateOAuth() error {
+	if len(c.OAuthProviders) == 0 {
+		return nil
+	}
+	u, err := url.Parse(c.PublicBaseURL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("config: PUBLIC_BASE_URL must be a valid http(s) origin when OAUTH_PROVIDERS is set (OAuth redirect URIs derive from it)")
+	}
+	if c.Environment == "production" && u.Scheme != "https" {
+		return fmt.Errorf("config: PUBLIC_BASE_URL must be https in production")
+	}
+	seen := map[string]bool{}
+	for _, p := range c.OAuthProviders {
+		if !oauthProviderName.MatchString(p.Name) {
+			return fmt.Errorf("config: invalid OAuth provider name %q (want lowercase letters/digits/dashes)", p.Name)
+		}
+		if seen[p.Name] {
+			return fmt.Errorf("config: duplicate OAuth provider %q in OAUTH_PROVIDERS", p.Name)
+		}
+		seen[p.Name] = true
+		envName := strings.ToUpper(strings.ReplaceAll(p.Name, "-", "_"))
+		iss, err := url.Parse(p.IssuerURL)
+		if err != nil || iss.Host == "" || (iss.Scheme != "http" && iss.Scheme != "https") {
+			return fmt.Errorf("config: OAUTH_%s_ISSUER must be a valid http(s) URL", envName)
+		}
+		if c.Environment == "production" && iss.Scheme != "https" {
+			return fmt.Errorf("config: OAUTH_%s_ISSUER must be https in production", envName)
+		}
+		if strings.TrimSpace(p.ClientID) == "" {
+			return fmt.Errorf("config: OAUTH_%s_CLIENT_ID is required", envName)
+		}
+		if strings.TrimSpace(p.ClientSecret) == "" {
+			return fmt.Errorf("config: OAUTH_%s_CLIENT_SECRET is required", envName)
+		}
+	}
+	return nil
+}
+
+// OAuthProviderNames returns the configured provider names in configuration
+// order (the order OAUTH_PROVIDERS lists them), for the public instance
+// document. Never nil.
+func (c *Config) OAuthProviderNames() []string {
+	names := make([]string, 0, len(c.OAuthProviders))
+	for _, p := range c.OAuthProviders {
+		names = append(names, p.Name)
+	}
+	return names
 }
 
 // HTTPAddr returns the host:port the HTTP server should bind to.

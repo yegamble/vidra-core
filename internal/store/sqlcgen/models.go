@@ -188,6 +188,15 @@ type NotificationPref struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type OauthIdentity struct {
+	ID        uuid.UUID `json:"id"`
+	Provider  string    `json:"provider"`
+	Subject   string    `json:"subject"`
+	UserID    uuid.UUID `json:"user_id"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type PasswordResetToken struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`

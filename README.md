@@ -66,6 +66,26 @@ to the cookie when the body omits the token; logout/logout-all clear it. CORS se
 `Access-Control-Allow-Credentials: true` for the explicit `CORS_ALLOWED_ORIGINS`
 allow-list (never combined with a wildcard origin).
 
+OAuth/OIDC login: set `OAUTH_PROVIDERS` (comma list; per provider
+`OAUTH_<NAME>_ISSUER`/`_CLIENT_ID`/`_CLIENT_SECRET`, optional `_SCOPES`;
+`PUBLIC_BASE_URL` required) and the instance document advertises the names in
+`oauth_providers`. The browser navigates (top-level) to
+`GET /api/v1/auth/oauth/{provider}?return_to=/path` → 302 to the provider with
+state + nonce + PKCE (sealed in a signed, httpOnly, 10-minute
+`vidra_oauth_state` cookie); the provider redirects to
+`GET /api/v1/auth/oauth/{provider}/callback`, which verifies state/nonce and
+the id_token (JWKS via OIDC discovery), then logs in — a known identity signs
+its account in, a new identity with a provider-verified email matching an
+existing account links to it, anything else creates an account (username
+derived + deduplicated, `email_verified` inherited). Sessions are always
+cookie-mode (the SPA then calls `/auth/refresh` with credentials); the
+callback 302s to the validated same-origin `return_to`, or with
+`?oauth_error=<code>` on user-actionable failures. The redirect URI sent to
+the provider is always derived server-side from `PUBLIC_BASE_URL`, never from
+request parameters. `GET /api/v1/me/oauth-identities` lists the caller's
+linked identities; `DELETE /api/v1/me/oauth-identities/{provider}` unlinks one
+(`422` when it is a passwordless account's last sign-in method).
+
 Authorization: routes are gated by `requireAuth` (valid bearer token) and, where
 role-restricted, `requireRole(...)` off the JWT's `role` claim — an authenticated
 principal lacking an allowed role gets `403`.

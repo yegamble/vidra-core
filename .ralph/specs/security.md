@@ -102,6 +102,40 @@ Design (defense-in-depth):
   for the explicit `CORS_ALLOWED_ORIGINS` allow-list and is disabled entirely
   if the list contains `*` (credentials + wildcard is never granted).
 
+## OAuth/OIDC login (P4 + P15)
+
+Generic OIDC over provider discovery (`OAUTH_PROVIDERS` config; disabled by
+default). Implementation: `internal/auth/oauth.go` + `internal/httpapi/oauth.go`;
+deps `golang.org/x/oauth2` (code + PKCE) and `github.com/coreos/go-oidc/v3`
+(discovery, JWKS, id_token verification).
+
+Security invariants (all test-enforced):
+
+- **Server-derived redirect URI (P15)** — the `redirect_uri` sent to the
+  provider is always `PUBLIC_BASE_URL + /api/v1/auth/oauth/<provider>/callback`,
+  never taken from request parameters; `PUBLIC_BASE_URL` is required by config
+  validation whenever any provider is configured.
+- **Same-origin return_to** — the post-login `return_to` must be a relative
+  path (starts `/`, never `//`, no `\`, no scheme/host); anything else is a
+  422 at begin. It travels inside the signed state cookie, not the callback URL.
+- **Per-attempt state + nonce + PKCE (S256)** — sealed into the httpOnly,
+  HMAC-signed (JWT secret), 10-minute, single-use `vidra_oauth_state` cookie
+  (Path=/api/v1/auth/oauth, SameSite=Lax, Secure per `config.CookieSecure`).
+  The callback compares state in constant time, verifies the id_token against
+  the provider JWKS (signature/iss/aud/exp via go-oidc), and checks its nonce.
+- **Account-linking rule** — a new identity links to an existing account ONLY
+  when the provider asserts `email_verified` for a matching email; an
+  unverified match is refused (`oauth_error=email_conflict`) — otherwise a lax
+  IdP registration would be an account-takeover vector.
+- **Passwordless accounts** — OAuth-created accounts store an EMPTY
+  `password_hash` (bcrypt can never verify it). The last-credential guard
+  refuses unlinking the only identity of a passwordless account (422); the
+  password-reset flow is the way to add a password first.
+- **No provider tokens stored; no secrets logged** — Vidra issues its own
+  session (always cookie-mode, since a top-level navigation cannot receive a
+  bearer token safely); `client_secret`/`id_token`/`code_verifier` are on the
+  sensitive-key denylist; audit events carry `oauth:<provider>` reasons only.
+
 ## Rules
 
 - Never commit real secrets, tokens, keys, or personal data anywhere

@@ -172,6 +172,24 @@ func run() error {
 		opts = append(opts, httpapi.WithDevMailCapture(captureMailer))
 	}
 
+	// OIDC login providers (P4). Provider discovery is lazy (first use), so a
+	// temporarily unreachable IdP never blocks boot. NB: provider name/issuer
+	// are safe to log; the client secret is NOT (sensitive-key rules).
+	if len(cfg.OAuthProviders) > 0 {
+		providers := make([]auth.OAuthProvider, 0, len(cfg.OAuthProviders))
+		for _, p := range cfg.OAuthProviders {
+			providers = append(providers, auth.OAuthProvider{
+				Name:         p.Name,
+				IssuerURL:    p.IssuerURL,
+				ClientID:     p.ClientID,
+				ClientSecret: p.ClientSecret,
+				Scopes:       p.Scopes,
+			})
+			logger.Info("oauth provider configured", "provider", p.Name, "issuer", p.IssuerURL)
+		}
+		opts = append(opts, httpapi.WithOAuthService(auth.NewOAuthService(db.Queries(), authsvc, providers)))
+	}
+
 	channelsvc := channel.NewService(db.Queries())
 	opts = append(opts, httpapi.WithChannelService(channelsvc))
 

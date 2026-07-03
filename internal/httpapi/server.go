@@ -57,6 +57,7 @@ type Server struct {
 	authLimit      *ratelimit.Limiter
 	authsvc        *auth.Service
 	authTTL        time.Duration
+	oauthsvc       *auth.OAuthService
 	channelsvc     *channel.Service
 	videosvc       *video.Service
 	commentsvc     *comment.Service
@@ -109,6 +110,15 @@ func WithAuthService(svc *auth.Service, ttl time.Duration) Option {
 		s.authsvc = svc
 		s.authTTL = ttl
 	}
+}
+
+// WithOAuthService mounts the OIDC login endpoints (begin/callback per
+// provider) and the linked-identity management routes. The flow routes need
+// the auth service too (it issues the resulting session); when either is
+// unset, none are registered. With zero configured providers the routes exist
+// but every provider name 404s.
+func WithOAuthService(svc *auth.OAuthService) Option {
+	return func(s *Server) { s.oauthsvc = svc }
 }
 
 // WithAuthRateLimiter mounts a stricter, dedicated limiter on the sensitive auth
@@ -469,6 +479,16 @@ func (s *Server) routes() {
 		authGroup.PATCH("/me", s.handleUpdateMe, s.requireAuth)
 		authGroup.POST("/me/deactivate", s.handleDeactivateAccount, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
+
+		// OIDC login/link (P4/P15). Browser-navigation flow: begin 302s to the
+		// provider, the callback issues a cookie-mode session. The auth limiter
+		// throttles both (they are unauthenticated credential endpoints).
+		if s.oauthsvc != nil {
+			authGroup.GET("/oauth/:provider", s.handleOAuthBegin, authMW...)
+			authGroup.GET("/oauth/:provider/callback", s.handleOAuthCallback, authMW...)
+			api.GET("/me/oauth-identities", s.handleListOAuthIdentities, s.requireAuth)
+			api.DELETE("/me/oauth-identities/:provider", s.handleUnlinkOAuthIdentity, s.requireAuth)
+		}
 
 		// Registration approval queue (admin-only). Present whenever auth is wired;
 		// only meaningful when REGISTRATION_REQUIRE_APPROVAL is on.

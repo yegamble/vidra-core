@@ -23,13 +23,22 @@ type instanceResponse struct {
 	Software                     instanceSoftware `json:"software"`
 	RegistrationEnabled          bool             `json:"registration_enabled"`
 	RegistrationRequiresApproval bool             `json:"registration_requires_approval"`
-	TermsURL                     string           `json:"terms_url"`
-	PrivacyURL                   string           `json:"privacy_url"`
-	ContactEmail                 string           `json:"contact_email"`
+	// OAuthProviders lists the configured OIDC login provider names so the
+	// frontend can render "continue with …" buttons pointing at
+	// GET /api/v1/auth/oauth/{provider}. Empty array when OAuth is off.
+	OAuthProviders []string `json:"oauth_providers"`
+	// FederationEnabled reports whether ActivityPub federation is on, so the
+	// frontend can show/hide remote-content surfaces (remote follows, remote
+	// videos).
+	FederationEnabled bool   `json:"federation_enabled"`
+	TermsURL          string `json:"terms_url"`
+	PrivacyURL        string `json:"privacy_url"`
+	ContactEmail      string `json:"contact_email"`
 }
 
 // handleInstance returns public instance metadata. No auth required; it exposes
-// only operator-configured, non-sensitive fields.
+// only operator-configured, non-sensitive fields (provider names, never client
+// credentials).
 func (s *Server) handleInstance(c echo.Context) error {
 	return c.JSON(http.StatusOK, instanceResponse{
 		Name:                         s.cfg.InstanceName,
@@ -37,6 +46,8 @@ func (s *Server) handleInstance(c echo.Context) error {
 		Software:                     instanceSoftware{Name: "vidra", Version: version.Version},
 		RegistrationEnabled:          s.cfg.RegistrationEnabled,
 		RegistrationRequiresApproval: s.cfg.RegistrationRequireApproval,
+		OAuthProviders:               s.cfg.OAuthProviderNames(),
+		FederationEnabled:            s.cfg.FederationEnabled,
 		TermsURL:                     s.cfg.InstanceTermsURL,
 		PrivacyURL:                   s.cfg.InstancePrivacyURL,
 		ContactEmail:                 s.cfg.InstanceContactEmail,

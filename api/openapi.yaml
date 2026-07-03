@@ -520,6 +520,189 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/oauth/{provider}:
+    get:
+      operationId: beginOAuth
+      summary: Start an OIDC login
+      description: >-
+        Begins the OAuth2/OIDC authorization-code flow for a configured
+        provider (see `oauth_providers` in the instance document): responds 302
+        to the provider's authorization endpoint with a fresh state, nonce, and
+        PKCE challenge, sealing the attempt into a short-lived, signed,
+        httpOnly `vidra_oauth_state` cookie. Navigate the browser here
+        (top-level), do not call it with fetch. The callback redirect URI sent
+        to the provider is always derived server-side from PUBLIC_BASE_URL —
+        never from request parameters.
+      tags: [auth]
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Configured provider name (e.g. `google`).
+        - name: return_to
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Where to send the browser after the flow completes. Must be a
+            same-origin relative path (`/...`); absolute URLs and `//...` are
+            rejected. Defaults to `/`.
+      responses:
+        "302":
+          description: Redirect to the provider's authorization endpoint.
+        "404":
+          description: Unknown or unconfigured provider.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid return_to (not a same-origin relative path).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Provider discovery failed (issuer unreachable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/oauth/{provider}/callback:
+    get:
+      operationId: completeOAuth
+      summary: OIDC provider callback
+      description: >-
+        The redirect target the provider sends the browser back to. Verifies
+        the signed state cookie against the returned `state`, exchanges the
+        code (with PKCE), verifies the id_token against the provider JWKS and
+        the attempt nonce, then logs in: a known identity signs its account
+        in; a new identity whose provider-verified email matches an existing
+        account is linked to it; otherwise a new account is created (username
+        derived from the profile and deduplicated, email_verified inherited
+        from the claim). The session is always issued in cookie mode — the
+        rotating refresh token is set as the httpOnly `vidra_refresh` cookie
+        and the SPA obtains an access token via POST /api/v1/auth/refresh with
+        credentials — and the browser is redirected (302) to the validated
+        `return_to` path. User-actionable failures redirect with an
+        `oauth_error` query code (`access_denied`, `email_conflict`,
+        `email_required`, `account_disabled`, `conflict`); protocol violations
+        (missing/forged/expired state, nonce mismatch) are 400.
+      tags: [auth]
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Authorization code from the provider.
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Must match the state sealed in the attempt cookie.
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Provider-reported error (e.g. the user denied consent).
+      responses:
+        "302":
+          description: >-
+            Redirect to return_to. On success the `vidra_refresh` session
+            cookie is set; on user-actionable failure the location carries
+            `?oauth_error=<code>` instead.
+        "400":
+          description: Missing/forged/expired state, nonce mismatch, or missing code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown or unconfigured provider.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Code exchange or id_token verification failed upstream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/oauth-identities:
+    get:
+      operationId: listOAuthIdentities
+      summary: List the caller's linked OAuth identities
+      description: >-
+        The OIDC identities linked to the authenticated account, oldest link
+        first. The email is the point-in-time snapshot captured when the
+        identity was linked.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Linked identities.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthIdentitiesResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/oauth-identities/{provider}:
+    delete:
+      operationId: unlinkOAuthIdentity
+      summary: Unlink an OAuth identity
+      description: >-
+        Removes the authenticated account's linked identity for one provider.
+        Refused (422) when it is the account's last sign-in method — an account
+        with no password set must keep at least one linked identity; set a
+        password (via the password-reset flow) first.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Identity unlinked.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: That provider is not linked to this account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Cannot remove the last sign-in method.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/channels:
     post:
       operationId: createChannel
@@ -5950,7 +6133,7 @@ components:
                     example: must be a valid email
     InstanceResponse:
       type: object
-      required: [name, description, software, registration_enabled, registration_requires_approval, terms_url, privacy_url, contact_email]
+      required: [name, description, software, registration_enabled, registration_requires_approval, oauth_providers, federation_enabled, terms_url, privacy_url, contact_email]
       properties:
         name:
           type: string
@@ -5977,6 +6160,20 @@ components:
             Whether signup files a pending request for admin approval instead of
             creating an account immediately (only relevant when registration is
             enabled).
+        oauth_providers:
+          type: array
+          items:
+            type: string
+          description: >-
+            Configured OIDC login provider names, in display order. Render a
+            "continue with <provider>" button per entry, navigating (top-level)
+            to GET /api/v1/auth/oauth/{provider}. Empty when OAuth login is off.
+          example: [google]
+        federation_enabled:
+          type: boolean
+          description: >-
+            Whether ActivityPub federation is enabled on this instance (gates
+            remote-content surfaces such as remote follows and remote videos).
         terms_url:
           type: string
           description: Link to the instance terms of service; may be empty.
@@ -5986,6 +6183,31 @@ components:
         contact_email:
           type: string
           description: Operator contact email; may be empty.
+    OAuthIdentity:
+      type: object
+      required: [provider, email, created_at]
+      properties:
+        provider:
+          type: string
+          description: Configured provider name the identity belongs to.
+          example: google
+        email:
+          type: string
+          description: >-
+            Email snapshot captured when the identity was linked (display only;
+            the account email is authoritative). May be empty.
+        created_at:
+          type: string
+          format: date-time
+          description: When the identity was linked.
+    OAuthIdentitiesResponse:
+      type: object
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          items:
+            $ref: "#/components/schemas/OAuthIdentity"
     NodeInfoResponse:
       type: object
       required: [version, software, instance]

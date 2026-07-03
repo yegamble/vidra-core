@@ -125,6 +125,12 @@ services:
       # approve (the registration approval queue). Overridable so approval-mode
       # backed e2e runs can flip it without editing the file. Default off.
       REGISTRATION_REQUIRE_APPROVAL: ${REGISTRATION_REQUIRE_APPROVAL:-false}
+      # OAuth/OIDC login providers (comma list; disabled when empty). Compose has
+      # no wildcard passthrough, so each named provider's OAUTH_<NAME>_ISSUER /
+      # _CLIENT_ID / _CLIENT_SECRET (+ optional _SCOPES) must also be added here
+      # for your provider names. PUBLIC_BASE_URL is required when any provider
+      # is set. The client secret is a secret: never commit a real value.
+      OAUTH_PROVIDERS: ${OAUTH_PROVIDERS:-}
       # Real outbound email over SMTP (password reset / email verification).
       # SMTP_HOST + SMTP_FROM are required when enabled; SMTP_PASSWORD is a
       # secret (never commit/log it). DEV_MAIL_CAPTURE_ENABLED wins when both
