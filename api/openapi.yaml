@@ -4504,8 +4504,10 @@ components:
             - integer
             - "null"
           description: >-
-            Probed duration in whole seconds. Present on the detail endpoint once
-            a media probe has recorded it; omitted when unknown.
+            Probed duration in whole seconds, recorded by the media probe. Present
+            on the detail endpoint and on card/feed views (feed, search, channel
+            lists, subscriptions, saved, history) so a card can show a length badge
+            or resume progress bar; omitted when unknown (not yet probed).
         width:
           type:
             - integer

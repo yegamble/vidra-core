@@ -105,7 +105,7 @@ curl -sX POST localhost:8080/api/v1/channels/ada_makes/videos -H 'authorization:
   -H 'content-type: application/json' -d '{"title":"My upload","privacy":"public","description":"...","category":"7","language":"en","license":"1"}'  # create draft (owner-only; category/language/license optional, validated vs /videos/config → 422)
 curl -s localhost:8080/api/v1/videos/<id>                                            # public/unlisted; private => owner only
 curl -s localhost:8080/api/v1/channels/ada_makes/videos                              # owner: all; else public-only
-curl -s 'localhost:8080/api/v1/videos?sort=trending&limit=20&offset=0'               # public feed (sort: recent|popular|trending; cards carry views + has_thumbnail)
+curl -s 'localhost:8080/api/v1/videos?sort=trending&limit=20&offset=0'               # public feed (sort: recent|popular|trending; cards carry views + has_thumbnail + duration_seconds)
 curl -s 'localhost:8080/api/v1/videos/search?q=go'                                   # fuzzy title search (public)
 curl -s localhost:8080/api/v1/videos/config                                         # metadata taxonomy: categories/licenses/languages/privacies (public, static)
 curl -s 'localhost:8080/api/v1/me/subscriptions/videos?limit=20' -H 'authorization: Bearer <token>'  # videos from followed channels

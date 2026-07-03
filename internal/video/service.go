@@ -644,7 +644,7 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]Fee
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName))
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
 	}
 	return items, nil
 }
@@ -658,25 +658,27 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID) 
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName))
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
 	}
 	return items, nil
 }
 
-// FeedItem is a video plus discovery-card data: its view count and whether a
-// poster image is available.
+// FeedItem is a video plus discovery-card data: its view count, whether a
+// poster image is available, and the probed duration (nil when unknown) so a
+// card can show a length badge / resume progress bar.
 type FeedItem struct {
 	Video              sqlcgen.Video
 	Views              int64
 	HasThumbnail       bool
 	ChannelHandle      string
 	ChannelDisplayName string
+	DurationSeconds    *int32
 }
 
 // newFeedItem packages a video's columns and card data into a FeedItem. It lets
 // the (structurally identical but distinct) sqlc row types from the feed,
 // search, and channel-list queries share one conversion.
-func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state string, createdAt, updatedAt time.Time, views int64, hasThumbnail bool, channelHandle, channelDisplayName string) FeedItem {
+func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state string, createdAt, updatedAt time.Time, views int64, hasThumbnail bool, channelHandle, channelDisplayName string, durationSeconds *int32) FeedItem {
 	return FeedItem{
 		Video: sqlcgen.Video{
 			ID: id, ChannelID: channelID, Title: title, Description: description,
@@ -686,6 +688,7 @@ func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state str
 		HasThumbnail:       hasThumbnail,
 		ChannelHandle:      channelHandle,
 		ChannelDisplayName: channelDisplayName,
+		DurationSeconds:    durationSeconds,
 	}
 }
 
@@ -715,7 +718,7 @@ func (s *Service) ListPublic(ctx context.Context, sort string, viewerID uuid.UUI
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName))
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
 	}
 	return items, nil
 }
@@ -734,7 +737,7 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName))
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
 	}
 	return items, nil
 }
@@ -763,7 +766,7 @@ func (s *Service) ListSaved(ctx context.Context, userID uuid.UUID, limit, offset
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName))
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
 	}
 	return items, nil
 }
@@ -817,7 +820,7 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 	items := make([]HistoryItem, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, HistoryItem{
-			FeedItem:        newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName),
+			FeedItem:        newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds),
 			PositionSeconds: r.PositionSeconds,
 			WatchedAt:       r.WatchedAt,
 		})
@@ -852,7 +855,7 @@ func (s *Service) SearchPublic(ctx context.Context, query string, viewerID uuid.
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName))
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
 	}
 	return items, nil
 }

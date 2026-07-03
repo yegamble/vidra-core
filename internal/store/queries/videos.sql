@@ -38,10 +38,12 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = $1
 ORDER BY v.created_at DESC;
 
@@ -54,10 +56,12 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 ORDER BY v.created_at DESC;
@@ -75,10 +79,12 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (
@@ -104,10 +110,12 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (
@@ -129,10 +137,12 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (

@@ -74,11 +74,13 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds,
        wh.position_seconds, wh.updated_at AS watched_at
 FROM watch_history wh
 JOIN videos v ON v.id = wh.video_id
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE wh.user_id = $1
   AND v.privacy = 'public' AND v.state = 'published'
 ORDER BY wh.updated_at DESC, v.id DESC
@@ -104,6 +106,7 @@ type ListWatchHistoryRow struct {
 	HasThumbnail       bool      `json:"has_thumbnail"`
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
 	PositionSeconds    int32     `json:"position_seconds"`
 	WatchedAt          time.Time `json:"watched_at"`
 }
@@ -133,6 +136,7 @@ func (q *Queries) ListWatchHistory(ctx context.Context, arg ListWatchHistoryPara
 			&i.HasThumbnail,
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
+			&i.DurationSeconds,
 			&i.PositionSeconds,
 			&i.WatchedAt,
 		); err != nil {

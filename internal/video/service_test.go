@@ -122,7 +122,7 @@ func (f *fakeRepo) ListWatchHistory(_ context.Context, a sqlcgen.ListWatchHistor
 		rows = append(rows, sqlcgen.ListWatchHistoryRow{
 			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID), DurationSeconds: f.duration(r.ID),
 			PositionSeconds: m.position, WatchedAt: m.watchedAt,
 		})
 	}
@@ -157,7 +157,7 @@ func (f *fakeRepo) ListSavedVideos(_ context.Context, a sqlcgen.ListSavedVideosP
 			rows = append(rows, sqlcgen.ListSavedVideosRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID), DurationSeconds: f.duration(r.ID),
 			})
 		}
 	}
@@ -172,7 +172,7 @@ func (f *fakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.ListSubsc
 			rows = append(rows, sqlcgen.ListSubscriptionVideosRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID), DurationSeconds: f.duration(r.ID),
 			})
 		}
 	}
@@ -249,7 +249,7 @@ func (f *fakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UUID) (
 			out = append(out, sqlcgen.ListVideosByChannelRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID), DurationSeconds: f.duration(r.ID),
 			})
 		}
 	}
@@ -264,7 +264,7 @@ func (f *fakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.U
 			out = append(out, sqlcgen.ListPublicVideosByChannelRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID), DurationSeconds: f.duration(r.ID),
 			})
 		}
 	}
@@ -377,7 +377,7 @@ func (f *fakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicV
 			all = append(all, sqlcgen.SearchPublicVideosRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID), DurationSeconds: f.duration(r.ID),
 			})
 		}
 	}
@@ -402,6 +402,15 @@ func (f *fakeRepo) hasThumb(id uuid.UUID) bool {
 	return false
 }
 
+// duration mirrors the card queries' LEFT JOIN video_metadata: the probed
+// duration when metadata exists, nil (unknown) otherwise.
+func (f *fakeRepo) duration(id uuid.UUID) *int32 {
+	if m, ok := f.metadata[id]; ok {
+		return m.DurationSeconds
+	}
+	return nil
+}
+
 func (f *fakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error) {
 	var rows []sqlcgen.ListPublicVideosSortedRow
 	for _, r := range f.videos {
@@ -409,7 +418,7 @@ func (f *fakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPubli
 			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID), DurationSeconds: f.duration(r.ID),
 			})
 		}
 	}
@@ -661,6 +670,56 @@ func feedIDs(items []FeedItem) []uuid.UUID {
 		out = append(out, it.Video.ID)
 	}
 	return out
+}
+
+// TestFeedCardsCarryDuration asserts the probed duration rides discovery-card
+// views (feed + watch history), so the frontend can show a length badge and a
+// resume progress bar; it is nil (omitted) when the video has not been probed.
+func TestFeedCardsCarryDuration(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	svc := NewService(repo, nil)
+	ctx := context.Background()
+	ch := uuid.New()
+
+	withDur := publishDraft(t, svc, ctx, ch, CreateInput{Title: "probed", Privacy: "public"})
+	noDur := publishDraft(t, svc, ctx, ch, CreateInput{Title: "unprobed", Privacy: "public"})
+
+	// Record a probed duration for one video; the other stays unprobed.
+	d := int32(137)
+	if _, err := repo.UpsertVideoMetadata(ctx, sqlcgen.UpsertVideoMetadataParams{
+		VideoID: withDur.ID, DurationSeconds: &d,
+	}); err != nil {
+		t.Fatalf("UpsertVideoMetadata: %v", err)
+	}
+
+	feed, err := svc.ListPublic(ctx, "recent", uuid.Nil, false, 20, 0)
+	if err != nil {
+		t.Fatalf("ListPublic: %v", err)
+	}
+	got := map[uuid.UUID]*int32{}
+	for _, it := range feed {
+		got[it.Video.ID] = it.DurationSeconds
+	}
+	if got[withDur.ID] == nil || *got[withDur.ID] != 137 {
+		t.Errorf("probed card duration = %v, want 137", got[withDur.ID])
+	}
+	if got[noDur.ID] != nil {
+		t.Errorf("unprobed card duration = %v, want nil (omitted)", got[noDur.ID])
+	}
+
+	// The same duration rides the watch-history card so a resume progress bar
+	// can be scaled against the full video length.
+	if err := svc.RecordProgress(ctx, withDur.ID, owner, 42); err != nil {
+		t.Fatalf("RecordProgress: %v", err)
+	}
+	hist, err := svc.ListHistory(ctx, owner, 20, 0)
+	if err != nil {
+		t.Fatalf("ListHistory: %v", err)
+	}
+	if len(hist) != 1 || hist[0].DurationSeconds == nil || *hist[0].DurationSeconds != 137 {
+		t.Errorf("history card duration = %+v, want a card with duration 137", hist)
+	}
 }
 
 func TestSearchPublicMatchesTitleAndExcludesPrivate(t *testing.T) {

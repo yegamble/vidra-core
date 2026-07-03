@@ -249,10 +249,12 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
 ORDER BY v.created_at DESC
@@ -271,6 +273,7 @@ type ListPublicVideosByChannelRow struct {
 	HasThumbnail       bool      `json:"has_thumbnail"`
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
 }
 
 // A channel's public, published videos with discovery-card data.
@@ -296,6 +299,7 @@ func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.
 			&i.HasThumbnail,
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
+			&i.DurationSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -315,10 +319,12 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (
@@ -355,6 +361,7 @@ type ListPublicVideosSortedRow struct {
 	HasThumbnail       bool      `json:"has_thumbnail"`
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
 }
 
 // The public feed, joined with view counts and thumbnail availability so cards
@@ -390,6 +397,7 @@ func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVide
 			&i.HasThumbnail,
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
+			&i.DurationSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -409,10 +417,12 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (
@@ -445,6 +455,7 @@ type ListSubscriptionVideosRow struct {
 	HasThumbnail       bool      `json:"has_thumbnail"`
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
 }
 
 // The "subscriptions" feed: public, published videos from the channels the given
@@ -471,6 +482,7 @@ func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscripti
 			&i.HasThumbnail,
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
+			&i.DurationSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -490,10 +502,12 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = $1
 ORDER BY v.created_at DESC
 `
@@ -511,6 +525,7 @@ type ListVideosByChannelRow struct {
 	HasThumbnail       bool      `json:"has_thumbnail"`
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
 }
 
 // A channel's videos (owner view, all states) with discovery-card data.
@@ -536,6 +551,7 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) 
 			&i.HasThumbnail,
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
+			&i.DurationSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -555,10 +571,12 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       vm.duration_seconds
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
   AND NOT EXISTS (
@@ -590,6 +608,7 @@ type SearchPublicVideosRow struct {
 	HasThumbnail       bool      `json:"has_thumbnail"`
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
 }
 
 // Public, published title search with discovery-card data.
@@ -620,6 +639,7 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 			&i.HasThumbnail,
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
+			&i.DurationSeconds,
 		); err != nil {
 			return nil, err
 		}

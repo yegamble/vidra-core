@@ -244,6 +244,7 @@ func feedItemView(it video.FeedItem) videoView {
 	v.ChannelHandle = &handle
 	name := it.ChannelDisplayName
 	v.ChannelDisplayName = &name
+	v.DurationSeconds = it.DurationSeconds
 	return v
 }
 
