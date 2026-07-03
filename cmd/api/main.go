@@ -211,6 +211,12 @@ func run() error {
 		vopts = append(vopts, video.WithScanner(media.NewClamAV(cfg.ClamAVAddr, blobs)))
 		logger.Info("malware scanning enabled (clamd)", "addr", cfg.ClamAVAddr)
 	}
+	if cfg.QuarantineNewUploads {
+		// §11: non-privileged uploads park in 'quarantined' until a moderator
+		// approves (publish hooks fire then) or rejects them.
+		vopts = append(vopts, video.WithQuarantineNewUploads(true))
+		logger.Info("upload quarantine enabled (QUARANTINE_NEW_UPLOADS)")
+	}
 	// HLS transcoding. The read side (playlist/rendition lookups + the /hls
 	// serving routes) is always wired so previously produced playlists keep
 	// serving even when the pipeline is later disabled; the enqueue hook and

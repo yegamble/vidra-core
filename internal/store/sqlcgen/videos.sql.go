@@ -467,6 +467,65 @@ func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVide
 	return items, nil
 }
 
+const listQuarantinedVideos = `-- name: ListQuarantinedVideos :many
+SELECT v.id, v.title, v.privacy, v.state, v.created_at,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       u.username AS owner_username
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users u ON u.id = c.owner_id
+WHERE v.state = 'quarantined'
+ORDER BY v.created_at DESC, v.id DESC
+LIMIT $2 OFFSET $1
+`
+
+type ListQuarantinedVideosParams struct {
+	ResultOffset int32 `json:"result_offset"`
+	ResultLimit  int32 `json:"result_limit"`
+}
+
+type ListQuarantinedVideosRow struct {
+	ID                 uuid.UUID `json:"id"`
+	Title              string    `json:"title"`
+	Privacy            string    `json:"privacy"`
+	State              string    `json:"state"`
+	CreatedAt          time.Time `json:"created_at"`
+	ChannelHandle      string    `json:"channel_handle"`
+	ChannelDisplayName string    `json:"channel_display_name"`
+	OwnerUsername      string    `json:"owner_username"`
+}
+
+// The moderation quarantine queue: quarantined videos newest first, with the
+// owning channel + account so a moderator can judge and follow up.
+func (q *Queries) ListQuarantinedVideos(ctx context.Context, arg ListQuarantinedVideosParams) ([]ListQuarantinedVideosRow, error) {
+	rows, err := q.db.Query(ctx, listQuarantinedVideos, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListQuarantinedVideosRow
+	for rows.Next() {
+		var i ListQuarantinedVideosRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.ChannelHandle,
+			&i.ChannelDisplayName,
+			&i.OwnerUsername,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSubscriptionVideos = `-- name: ListSubscriptionVideos :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,
@@ -805,4 +864,23 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		&i.PublishAt,
 	)
 	return i, err
+}
+
+const uploadRequiresQuarantine = `-- name: UploadRequiresQuarantine :one
+SELECT (u.role = 'user' AND NOT u.bypass_quarantine)::bool AS requires_quarantine
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users u ON u.id = c.owner_id
+WHERE v.id = $1
+`
+
+// Whether a finished upload of this video must park in 'quarantined' instead of
+// publishing (product-decisions.md §11): true when the owning account is a
+// non-privileged user (role 'user') without the admin-granted bypass. Only
+// consulted when the QUARANTINE_NEW_UPLOADS instance setting is on.
+func (q *Queries) UploadRequiresQuarantine(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, uploadRequiresQuarantine, id)
+	var requires_quarantine bool
+	err := row.Scan(&requires_quarantine)
+	return requires_quarantine, err
 }

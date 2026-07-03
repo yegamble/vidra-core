@@ -212,6 +212,17 @@ curl -s 'localhost:8080/api/v1/admin/videos/blocked?limit=20' -H 'authorization:
 curl -s 'localhost:8080/api/v1/admin/videos?q=cat&limit=20' -H 'authorization: Bearer <admin-token>'    # admin videos overview: ALL videos (any privacy/state) + blocked flag; optional q title filter
 curl -s 'localhost:8080/api/v1/admin/comments?q=spam&limit=20' -H 'authorization: Bearer <admin-token>' # admin comments overview: ALL comments + author + video; optional q body filter (delete any via DELETE /comments/:id)
 
+# Upload quarantine (QUARANTINE_NEW_UPLOADS=true; product-decisions §11): a
+# finished upload by a role=user account without bypass_quarantine parks in
+# state 'quarantined' — owner (badged) + moderators only, absent from public
+# surfaces — until a moderator approves (-> published; federation announce +
+# transcode enqueue fire at approval) or rejects (-> failed; owner gets a
+# video_rejected notification; the reason lands in the audit trail):
+curl -s 'localhost:8080/api/v1/admin/videos/quarantined?limit=20' -H 'authorization: Bearer <admin-token>'  # review queue (newest first; channel + owner)
+curl -sX POST localhost:8080/api/v1/admin/videos/<id>/approve -H 'authorization: Bearer <admin-token>'      # approve -> 204 (not quarantined -> 409)
+curl -sX POST localhost:8080/api/v1/admin/videos/<id>/reject -H 'authorization: Bearer <admin-token>' \
+  -H 'content-type: application/json' -d '{"reason":"spam"}'                                                # reject -> 204 (reason optional, audited)
+
 # Watched words (instance-wide moderation term list; moderator/admin only; the
 # matching/flagging effect on content is a later slice):
 curl -sX POST localhost:8080/api/v1/admin/watched-words -H 'authorization: Bearer <admin-token>' \
@@ -254,6 +265,8 @@ curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer 
   -H 'content-type: application/json' -d '{"role":"moderator"}'                        # change role (user|moderator|admin)
 curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer <admin-token>' \
   -H 'content-type: application/json' -d '{"is_active":false}'                          # deactivate (revokes the user's sessions); self-demote/deactivate -> 422
+curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer <admin-token>' \
+  -H 'content-type: application/json' -d '{"bypass_quarantine":true}'                    # exempt a trusted account from QUARANTINE_NEW_UPLOADS (false re-subjects it)
 
 # Registration approval queue (admin-only; only meaningful when
 # REGISTRATION_REQUIRE_APPROVAL=true, in which case /auth/register returns 202

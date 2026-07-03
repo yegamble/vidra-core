@@ -66,15 +66,18 @@ func (s *Service) ListUsers(ctx context.Context, query string, limit, offset int
 }
 
 // UpdateUserInput is a partial admin edit of an account; nil Role/IsActive/
-// EmailVerified are unchanged. The storage quota is tri-state: untouched unless
-// SetStorageQuota is true, in which case a nil StorageQuotaBytes resets the
-// account to the instance default (NULL) and a value overrides it (0 =
-// unlimited). EmailVerified lets an admin mark an address confirmed without
-// the token round-trip (or revoke that confirmation).
+// EmailVerified/BypassQuarantine are unchanged. The storage quota is tri-state:
+// untouched unless SetStorageQuota is true, in which case a nil
+// StorageQuotaBytes resets the account to the instance default (NULL) and a
+// value overrides it (0 = unlimited). EmailVerified lets an admin mark an
+// address confirmed without the token round-trip (or revoke that
+// confirmation). BypassQuarantine exempts a trusted account from the
+// QUARANTINE_NEW_UPLOADS gate (product-decisions.md §10/§11).
 type UpdateUserInput struct {
 	Role              *string
 	IsActive          *bool
 	EmailVerified     *bool
+	BypassQuarantine  *bool
 	SetStorageQuota   bool
 	StorageQuotaBytes *int64
 }
@@ -101,6 +104,7 @@ func (s *Service) UpdateUser(ctx context.Context, callerID, targetID uuid.UUID, 
 		Role:              in.Role,
 		IsActive:          in.IsActive,
 		EmailVerified:     in.EmailVerified,
+		BypassQuarantine:  in.BypassQuarantine,
 		SetStorageQuota:   in.SetStorageQuota,
 		StorageQuotaBytes: in.StorageQuotaBytes,
 	})

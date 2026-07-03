@@ -299,6 +299,7 @@ type User struct {
 	Bio               string    `json:"bio"`
 	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
 	Unlisted          bool      `json:"unlisted"`
+	BypassQuarantine  bool      `json:"bypass_quarantine"`
 }
 
 type UserBlock struct {

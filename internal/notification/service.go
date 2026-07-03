@@ -22,18 +22,19 @@ const (
 	TypeComment        = "comment"
 	TypeMessage        = "message"
 	TypeReportResolved = "report_resolved"
+	TypeVideoRejected  = "video_rejected"
 )
 
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeComment, TypeFollow, TypeMessage, TypeReportResolved}
+	return []string{TypeComment, TypeFollow, TypeMessage, TypeReportResolved, TypeVideoRejected}
 }
 
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeMessage, TypeReportResolved:
+	case TypeFollow, TypeComment, TypeMessage, TypeReportResolved, TypeVideoRejected:
 		return true
 	}
 	return false
@@ -172,6 +173,24 @@ func (s *Service) NotifyReportResolved(ctx context.Context, recipientID, actorID
 		UserID:   recipientID,
 		Type:     TypeReportResolved,
 		ReportID: pgUUID(reportID),
+	})
+	return err
+}
+
+// NotifyVideoRejected records that a moderator (actorID) rejected recipientID's
+// quarantined upload (product-decisions.md §11). Rejecting your own video is a
+// no-op, as is a recipient who disabled video_rejected notifications.
+// Best-effort. The moderator's identity is deliberately NOT stored (actor_id
+// stays null) so it is never exposed to the owner — the video's title is
+// resolved from the joined video row at read time.
+func (s *Service) NotifyVideoRejected(ctx context.Context, recipientID, actorID, videoID uuid.UUID) error {
+	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeVideoRejected) {
+		return nil
+	}
+	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:  recipientID,
+		Type:    TypeVideoRejected,
+		VideoID: pgUUID(videoID),
 	})
 	return err
 }

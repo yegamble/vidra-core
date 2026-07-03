@@ -57,6 +57,9 @@ func (s *Server) handleGetVideoDownloads(c echo.Context) error {
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	if quarantineHidesVideo(c, v.State, v.OwnerID) {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
 
 	files := make([]videoDownloadFileView, 0, 2)
 

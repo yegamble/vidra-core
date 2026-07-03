@@ -118,6 +118,13 @@ type Config struct {
 	// creating an account directly. Default false.
 	RegistrationRequireApproval bool
 
+	// QuarantineNewUploads, when true, parks a finished upload by a
+	// non-privileged user (role "user" without the admin-granted
+	// bypass_quarantine flag) in the 'quarantined' state instead of publishing,
+	// until a moderator approves (publish, hooks fire then) or rejects it.
+	// Default false. See product-decisions.md §11.
+	QuarantineNewUploads bool
+
 	// MailEnabled turns on real outbound email over SMTP: password-reset and
 	// email-verification tokens are delivered to the account's address instead
 	// of being dropped (the no-op default). Requires SMTPHost + SMTPFrom.
@@ -241,6 +248,7 @@ func Load() (*Config, error) {
 		InstanceContactEmail:        getEnv("INSTANCE_CONTACT_EMAIL", ""),
 		RegistrationEnabled:         getEnvBool("REGISTRATION_ENABLED", true),
 		RegistrationRequireApproval: getEnvBool("REGISTRATION_REQUIRE_APPROVAL", false),
+		QuarantineNewUploads:        getEnvBool("QUARANTINE_NEW_UPLOADS", false),
 		MailEnabled:                 getEnvBool("MAIL_ENABLED", false),
 		SMTPHost:                    getEnv("SMTP_HOST", ""),
 		SMTPUsername:                getEnv("SMTP_USERNAME", ""),

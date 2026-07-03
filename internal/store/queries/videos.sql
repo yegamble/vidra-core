@@ -202,6 +202,30 @@ WHERE v.state = 'scheduled' AND v.publish_at <= now()
 ORDER BY v.publish_at, v.id
 LIMIT $1;
 
+-- name: UploadRequiresQuarantine :one
+-- Whether a finished upload of this video must park in 'quarantined' instead of
+-- publishing (product-decisions.md §11): true when the owning account is a
+-- non-privileged user (role 'user') without the admin-granted bypass. Only
+-- consulted when the QUARANTINE_NEW_UPLOADS instance setting is on.
+SELECT (u.role = 'user' AND NOT u.bypass_quarantine)::bool AS requires_quarantine
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users u ON u.id = c.owner_id
+WHERE v.id = $1;
+
+-- name: ListQuarantinedVideos :many
+-- The moderation quarantine queue: quarantined videos newest first, with the
+-- owning channel + account so a moderator can judge and follow up.
+SELECT v.id, v.title, v.privacy, v.state, v.created_at,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       u.username AS owner_username
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users u ON u.id = c.owner_id
+WHERE v.state = 'quarantined'
+ORDER BY v.created_at DESC, v.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
 -- name: DeleteVideo :exec
 DELETE FROM videos WHERE id = $1;
 

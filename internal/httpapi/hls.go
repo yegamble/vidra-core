@@ -55,6 +55,9 @@ func (s *Server) hlsPlaylistForView(c echo.Context, id uuid.UUID) (sqlcgen.Strea
 	} else if hidden {
 		return sqlcgen.StreamingPlaylist{}, notFound
 	}
+	if quarantineHidesVideo(c, v.State, v.OwnerID) {
+		return sqlcgen.StreamingPlaylist{}, notFound
+	}
 	sp, ok := s.transcodesvc.Playlist(c.Request().Context(), id)
 	if !ok || sp.State != "ready" || sp.MasterKey == "" {
 		return sqlcgen.StreamingPlaylist{}, notFound

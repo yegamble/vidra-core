@@ -28,6 +28,7 @@ type adminUserView struct {
 	Role              string    `json:"role"`
 	IsActive          bool      `json:"is_active"`
 	EmailVerified     bool      `json:"email_verified"`
+	BypassQuarantine  bool      `json:"bypass_quarantine"`
 	DisplayName       string    `json:"display_name"`
 	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
 	StorageUsedBytes  int64     `json:"storage_used_bytes"`
@@ -42,6 +43,7 @@ func newAdminUserView(u sqlcgen.User, usedBytes int64) adminUserView {
 		Role:              u.Role,
 		IsActive:          u.IsActive,
 		EmailVerified:     u.EmailVerified,
+		BypassQuarantine:  u.BypassQuarantine,
 		DisplayName:       u.DisplayName,
 		StorageQuotaBytes: u.StorageQuotaBytes,
 		StorageUsedBytes:  usedBytes,
@@ -55,7 +57,8 @@ func newAdminUserViewFromRow(r sqlcgen.ListUsersRow) adminUserView {
 	return newAdminUserView(sqlcgen.User{
 		ID: r.ID, Username: r.Username, Email: r.Email, Role: r.Role,
 		IsActive: r.IsActive, EmailVerified: r.EmailVerified,
-		DisplayName: r.DisplayName, StorageQuotaBytes: r.StorageQuotaBytes,
+		BypassQuarantine: r.BypassQuarantine,
+		DisplayName:      r.DisplayName, StorageQuotaBytes: r.StorageQuotaBytes,
 		CreatedAt: r.CreatedAt,
 	}, r.StorageUsedBytes)
 }
@@ -94,10 +97,13 @@ func (s *Server) handleListUsers(c echo.Context) error {
 // per-user override (0 = unlimited) — hence the RawMessage, which preserves
 // the absent/null distinction JSON pointers cannot. email_verified lets an
 // admin mark an address confirmed without the token round-trip (or revoke it).
+// bypass_quarantine exempts a trusted account from the QUARANTINE_NEW_UPLOADS
+// gate (§11): their uploads publish directly.
 type updateUserRequest struct {
 	Role              *string         `json:"role"`
 	IsActive          *bool           `json:"is_active"`
 	EmailVerified     *bool           `json:"email_verified"`
+	BypassQuarantine  *bool           `json:"bypass_quarantine"`
 	StorageQuotaBytes json.RawMessage `json:"storage_quota_bytes"`
 }
 
@@ -125,8 +131,8 @@ func (r updateUserRequest) Validate() []FieldError {
 	if quotaErr != nil {
 		return []FieldError{*quotaErr}
 	}
-	if r.Role == nil && r.IsActive == nil && r.EmailVerified == nil && !quotaSet {
-		return []FieldError{{Field: "role", Message: "at least one of role, is_active, email_verified, storage_quota_bytes is required"}}
+	if r.Role == nil && r.IsActive == nil && r.EmailVerified == nil && r.BypassQuarantine == nil && !quotaSet {
+		return []FieldError{{Field: "role", Message: "at least one of role, is_active, email_verified, bypass_quarantine, storage_quota_bytes is required"}}
 	}
 	if r.Role != nil && !admin.ValidRole(*r.Role) {
 		return []FieldError{{Field: "role", Message: "must be one of user, moderator, admin"}}
@@ -156,6 +162,7 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 		Role:              in.Role,
 		IsActive:          in.IsActive,
 		EmailVerified:     in.EmailVerified,
+		BypassQuarantine:  in.BypassQuarantine,
 		SetStorageQuota:   quotaSet,
 		StorageQuotaBytes: quotaValue,
 	})
@@ -188,6 +195,9 @@ func adminChangeReason(targetID uuid.UUID, in updateUserRequest) string {
 	}
 	if in.EmailVerified != nil {
 		parts = append(parts, "email_verified="+strconv.FormatBool(*in.EmailVerified))
+	}
+	if in.BypassQuarantine != nil {
+		parts = append(parts, "bypass_quarantine="+strconv.FormatBool(*in.BypassQuarantine))
 	}
 	if set, value, _ := in.quotaField(); set {
 		if value == nil {

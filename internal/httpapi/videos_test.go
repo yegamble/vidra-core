@@ -504,6 +504,54 @@ func (f *videoFakeRepo) DeleteVideoFilesByVideoAndKind(_ context.Context, a sqlc
 	return nil
 }
 
+// UploadRequiresQuarantine mirrors the §11 gate query: the video's owner must
+// have role 'user' without the admin-granted bypass_quarantine flag.
+func (f *videoFakeRepo) UploadRequiresQuarantine(_ context.Context, id uuid.UUID) (bool, error) {
+	r, ok := f.videos[id]
+	if !ok {
+		return false, errors.New("not found")
+	}
+	if f.users == nil {
+		return false, nil
+	}
+	for _, u := range f.users.users {
+		if u.ID == r.OwnerID {
+			return u.Role == "user" && !u.BypassQuarantine, nil
+		}
+	}
+	return false, nil
+}
+
+// ListQuarantinedVideos mirrors the moderation quarantine-queue query.
+func (f *videoFakeRepo) ListQuarantinedVideos(_ context.Context, a sqlcgen.ListQuarantinedVideosParams) ([]sqlcgen.ListQuarantinedVideosRow, error) {
+	var rows []sqlcgen.ListQuarantinedVideosRow
+	for _, r := range f.videos {
+		if r.State != "quarantined" {
+			continue
+		}
+		handle, name := f.channelInfo(r.ChannelID)
+		owner := ""
+		if f.users != nil {
+			for _, u := range f.users.users {
+				if u.ID == r.OwnerID {
+					owner = u.Username
+				}
+			}
+		}
+		rows = append(rows, sqlcgen.ListQuarantinedVideosRow{
+			ID: r.ID, Title: r.Title, Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt,
+			ChannelHandle: handle, ChannelDisplayName: name, OwnerUsername: owner,
+		})
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	lo := min(int(a.ResultOffset), len(rows))
+	rows = rows[lo:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(rows) {
+		rows = rows[:a.ResultLimit]
+	}
+	return rows, nil
+}
+
 func (f *videoFakeRepo) SetVideoState(_ context.Context, a sqlcgen.SetVideoStateParams) (sqlcgen.Video, error) {
 	r, ok := f.videos[a.ID]
 	if !ok {

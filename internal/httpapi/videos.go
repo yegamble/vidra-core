@@ -262,6 +262,9 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	if quarantineHidesVideo(c, v.State, v.OwnerID) {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
 	view := videoViewFromRow(v)
 	if md, ok, err := s.videosvc.GetMetadata(c.Request().Context(), id); err == nil && ok {
 		view.DurationSeconds = md.DurationSeconds
@@ -881,7 +884,7 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
+	if hidden, err := s.videoHiddenFromViewer(c, id); err != nil {
 		return err
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
@@ -901,7 +904,7 @@ func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
+	if hidden, err := s.videoHiddenFromViewer(c, id); err != nil {
 		return err
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
@@ -1019,6 +1022,36 @@ func (s *Server) videoHiddenByBlock(c echo.Context, videoID uuid.UUID) (bool, er
 		return false, nil
 	}
 	return true, nil
+}
+
+// quarantineHidesVideo reports whether a quarantined video (§11) is hidden from
+// this caller: everyone except the owner (who sees it badged in the studio) and
+// moderators/admins (who review the queue). Other states are never hidden by
+// this rule — the public discovery surfaces already filter on state=published.
+func quarantineHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
+	if state != "quarantined" {
+		return false
+	}
+	userID, role, ok := principalFromContext(c)
+	if ok && (userID == ownerID || role == "admin" || role == "moderator") {
+		return false
+	}
+	return true
+}
+
+// videoHiddenFromViewer combines the moderation visibility rules the media/
+// detail surfaces share: a blocked video is hidden (moderators excepted) and a
+// quarantined one is hidden (owner + moderators excepted). An unknown id is not
+// "hidden" — the caller's own lookup reports it as 404.
+func (s *Server) videoHiddenFromViewer(c echo.Context, videoID uuid.UUID) (bool, error) {
+	if hidden, err := s.videoHiddenByBlock(c, videoID); err != nil || hidden {
+		return hidden, err
+	}
+	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
+	if err != nil {
+		return false, nil
+	}
+	return quarantineHidesVideo(c, v.State, v.OwnerID), nil
 }
 
 // blockVideoRequest is the optional POST /admin/videos/{id}/block body; the reason

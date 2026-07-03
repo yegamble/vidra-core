@@ -41,6 +41,9 @@ var (
 	// ErrPublished means the operation only applies to a video that has not yet
 	// been published (e.g. scheduling a publish time after publication).
 	ErrPublished = errors.New("video: already published")
+	// ErrNotQuarantined means a quarantine approve/reject targeted a video that
+	// is not in the 'quarantined' state.
+	ErrNotQuarantined = errors.New("video: not quarantined")
 )
 
 // acceptedVideoExts is the allow-list of original-upload file extensions. It is
@@ -84,6 +87,8 @@ type Repository interface {
 	GetCaptionByLang(ctx context.Context, arg sqlcgen.GetCaptionByLangParams) (sqlcgen.Caption, error)
 	DeleteCaption(ctx context.Context, arg sqlcgen.DeleteCaptionParams) (int64, error)
 	SetVideoState(ctx context.Context, arg sqlcgen.SetVideoStateParams) (sqlcgen.Video, error)
+	UploadRequiresQuarantine(ctx context.Context, id uuid.UUID) (bool, error)
+	ListQuarantinedVideos(ctx context.Context, arg sqlcgen.ListQuarantinedVideosParams) ([]sqlcgen.ListQuarantinedVideosRow, error)
 	DeleteVideoTags(ctx context.Context, videoID uuid.UUID) error
 	InsertVideoTags(ctx context.Context, arg sqlcgen.InsertVideoTagsParams) error
 	ListVideoTags(ctx context.Context, videoID uuid.UUID) ([]string, error)
@@ -148,16 +153,17 @@ type ViewDeduper interface {
 
 // Service holds the video application logic.
 type Service struct {
-	repo        Repository
-	blobs       storage.Backend
-	prober      Prober
-	thumbnailer Thumbnailer
-	scanner     Scanner
-	viewDeduper ViewDeduper
-	onPublish   func(context.Context, uuid.UUID)
-	onTranscode func(context.Context, uuid.UUID, string)
-	onUpdate    func(context.Context, uuid.UUID)
-	onDelete    func(context.Context, uuid.UUID, uuid.UUID, bool)
+	repo                 Repository
+	blobs                storage.Backend
+	prober               Prober
+	thumbnailer          Thumbnailer
+	scanner              Scanner
+	viewDeduper          ViewDeduper
+	quarantineNewUploads bool
+	onPublish            func(context.Context, uuid.UUID)
+	onTranscode          func(context.Context, uuid.UUID, string)
+	onUpdate             func(context.Context, uuid.UUID)
+	onDelete             func(context.Context, uuid.UUID, uuid.UUID, bool)
 }
 
 // Option customises the Service.
@@ -185,6 +191,15 @@ func WithScanner(sc Scanner) Option {
 // recorded view counts.
 func WithViewDeduper(d ViewDeduper) Option {
 	return func(s *Service) { s.viewDeduper = d }
+}
+
+// WithQuarantineNewUploads turns on the upload quarantine gate
+// (QUARANTINE_NEW_UPLOADS, product-decisions.md §11): when enabled, Process
+// parks a finished upload by a non-privileged owner (role 'user' without
+// bypass_quarantine) in the 'quarantined' state instead of publishing. No
+// publish hooks fire until a moderator approves it.
+func WithQuarantineNewUploads(enabled bool) Option {
+	return func(s *Service) { s.quarantineNewUploads = enabled }
 }
 
 // WithPublishHook registers a callback invoked (best-effort, synchronously) after
@@ -404,6 +419,16 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		s.generateThumbnail(ctx, videoID, originalKey, durationHint)
 	}
 	if state == "published" {
+		// Quarantine hold (§11): with QUARANTINE_NEW_UPLOADS on, a non-privileged
+		// owner's finished upload parks in 'quarantined' before any scheduled hold
+		// (moderation trumps scheduling). No hooks fire — approval publishes
+		// through the same transition below. Fail-closed: an unreadable gate
+		// quarantines rather than silently publishing past moderation.
+		if s.quarantineNewUploads {
+			if requires, qerr := s.repo.UploadRequiresQuarantine(ctx, videoID); qerr != nil || requires {
+				return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "quarantined"})
+			}
+		}
 		// Scheduled-publish hold (§17): a future publish_at parks the processed
 		// video in 'scheduled' instead of publishing. No hooks fire yet — the
 		// sweeper (PublishDue) runs them when the video comes due, through the
@@ -433,6 +458,87 @@ func (s *Service) publish(ctx context.Context, videoID uuid.UUID, originalKey st
 		}
 	}
 	return v, err
+}
+
+// QuarantinedVideo is a queue entry in the moderation quarantine review list:
+// the held video with its owning channel and account.
+type QuarantinedVideo struct {
+	ID                 uuid.UUID
+	Title              string
+	Privacy            string
+	State              string
+	ChannelHandle      string
+	ChannelDisplayName string
+	OwnerUsername      string
+	CreatedAt          time.Time
+}
+
+// ListQuarantined returns quarantined videos newest first for the moderation
+// queue. The caller clamps limit/offset.
+func (s *Service) ListQuarantined(ctx context.Context, limit, offset int32) ([]QuarantinedVideo, error) {
+	rows, err := s.repo.ListQuarantinedVideos(ctx, sqlcgen.ListQuarantinedVideosParams{
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]QuarantinedVideo, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, QuarantinedVideo{
+			ID:                 r.ID,
+			Title:              r.Title,
+			Privacy:            r.Privacy,
+			State:              r.State,
+			ChannelHandle:      r.ChannelHandle,
+			ChannelDisplayName: r.ChannelDisplayName,
+			OwnerUsername:      r.OwnerUsername,
+			CreatedAt:          r.CreatedAt,
+		})
+	}
+	return items, nil
+}
+
+// ApproveQuarantined releases a quarantined video through THE publish
+// transition, so the federation-announce and transcode-enqueue hooks fire at
+// approval time exactly as they would on a direct publish. Unknown id →
+// ErrNotFound; a video in any other state → ErrNotQuarantined (approval is not
+// a general-purpose publish button).
+func (s *Service) ApproveQuarantined(ctx context.Context, videoID uuid.UUID) (sqlcgen.Video, error) {
+	v, err := s.GetByID(ctx, videoID)
+	if err != nil {
+		return sqlcgen.Video{}, err
+	}
+	if v.State != "quarantined" {
+		return sqlcgen.Video{}, ErrNotQuarantined
+	}
+	// A quarantined video always has a stored original (it finished processing
+	// before the hold) — same invariant the scheduled sweeper relies on.
+	f, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "original"})
+	if err != nil {
+		return sqlcgen.Video{}, err
+	}
+	return s.publish(ctx, videoID, f.StorageKey)
+}
+
+// RejectQuarantined fails a quarantined video (it never publishes; no hooks
+// fire). The caller records the moderator's reason in the audit trail and
+// notifies the owner. Returns the video row (with owner id) so the caller can
+// address that notification. Unknown id → ErrNotFound; any other state →
+// ErrNotQuarantined.
+func (s *Service) RejectQuarantined(ctx context.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	v, err := s.GetByID(ctx, videoID)
+	if err != nil {
+		return sqlcgen.GetVideoByIDRow{}, err
+	}
+	if v.State != "quarantined" {
+		return sqlcgen.GetVideoByIDRow{}, ErrNotQuarantined
+	}
+	if _, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "failed"}); err != nil {
+		return sqlcgen.GetVideoByIDRow{}, err
+	}
+	v.State = "failed"
+	return v, nil
 }
 
 // PublishDue transitions scheduled videos whose publish_at has arrived to

@@ -3017,8 +3017,9 @@ paths:
       summary: Get the caller's notification preferences
       description: >-
         Returns the caller's per-type notification switchboard: every known
-        notification type (comment, follow, message, report_resolved) mapped to
-        whether it is delivered. Types never configured default to enabled.
+        notification type (comment, follow, message, report_resolved,
+        video_rejected) mapped to whether it is delivered. Types never
+        configured default to enabled.
       tags: [notifications]
       security:
         - bearerAuth: []
@@ -3953,6 +3954,160 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/videos/quarantined:
+    get:
+      operationId: listQuarantinedVideos
+      summary: List quarantined uploads (moderation review queue)
+      description: >-
+        Returns uploads held by the QUARANTINE_NEW_UPLOADS instance setting,
+        newest first, each with its owning channel and account. A quarantined
+        video is visible only to its owner (badged in the studio) and to
+        moderators/admins until it is approved or rejected. Restricted to
+        moderators/admins. Paginated via limit (1–100, default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of quarantined videos (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuarantinedVideoListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/videos/{id}/approve:
+    post:
+      operationId: approveQuarantinedVideo
+      summary: Approve a quarantined upload
+      description: >-
+        Releases a quarantined video by publishing it through the real publish
+        transition — the federation announce and the HLS transcode enqueue fire
+        at approval time, exactly as on a direct publish. Restricted to
+        moderators/admins. Only a video currently in the quarantined state can
+        be approved (this is not a general-purpose publish button). Audited.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The video was approved and is now published.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The video is not in the quarantined state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/videos/{id}/reject:
+    post:
+      operationId: rejectQuarantinedVideo
+      summary: Reject a quarantined upload
+      description: >-
+        Fails a quarantined video: it never publishes and no publish side
+        effects run. The owner is notified (a video_rejected notification; the
+        moderator's identity is not exposed) and the optional reason is
+        recorded in the audit trail. Restricted to moderators/admins. Only a
+        video currently in the quarantined state can be rejected. Audited.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectQuarantinedVideoRequest"
+      responses:
+        "204":
+          description: The video was rejected (state failed) and the owner notified.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The video is not in the quarantined state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (reason too long).
           content:
             application/json:
               schema:
@@ -5408,12 +5563,15 @@ components:
           enum: [public, unlisted, private]
         state:
           type: string
-          enum: [draft, processing, scheduled, published, failed]
+          enum: [draft, processing, scheduled, quarantined, published, failed]
           description: >-
             Publish lifecycle. "scheduled" means the upload finished processing
             but publish_at lies in the future; public surfaces (feed, search,
             channel lists) only show "published", while direct links behave
-            like any non-published video.
+            like any non-published video. "quarantined" means the instance
+            holds new uploads for moderator review (QUARANTINE_NEW_UPLOADS):
+            only the owner (studio badge) and moderators can see the video
+            until it is approved (published) or rejected (failed).
         created_at:
           type: string
           format: date-time
@@ -5976,8 +6134,8 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment, message, report_resolved]
-          description: What happened. follow = someone followed your channel; comment = someone commented on your video; message = someone sent you a direct message; report_resolved = a moderator resolved an abuse report you filed.
+          enum: [follow, comment, message, report_resolved, video_rejected]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video; message = someone sent you a direct message; report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one; the moderator's identity is never included).
         read:
           type: boolean
         created_at:
@@ -6054,7 +6212,7 @@ components:
             this user. Types with no stored preference default to true.
           additionalProperties:
             type: boolean
-          example: { comment: true, follow: false, message: true, report_resolved: true }
+          example: { comment: true, follow: false, message: true, report_resolved: true, video_rejected: true }
     UpdateNotificationPrefsRequest:
       type: object
       required: [prefs]
@@ -6063,8 +6221,8 @@ components:
           type: object
           description: >-
             Partial map of notification type -> enabled. Only the types present
-            are changed. Known types: comment, follow, message, report_resolved.
-            An unknown type rejects the whole update (422).
+            are changed. Known types: comment, follow, message, report_resolved,
+            video_rejected. An unknown type rejects the whole update (422).
           additionalProperties:
             type: boolean
           minProperties: 1
@@ -6187,6 +6345,55 @@ components:
         reason:
           type: string
           maxLength: 2000
+    QuarantinedVideo:
+      type: object
+      description: An upload held for moderator review (QUARANTINE_NEW_UPLOADS), for the quarantine queue.
+      required: [id, title, privacy, state, channel_handle, channel_display_name, owner_username, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+        state:
+          type: string
+          enum: [quarantined]
+        channel_handle:
+          type: string
+        channel_display_name:
+          type: string
+        owner_username:
+          type: string
+          description: The owning account's username.
+        created_at:
+          type: string
+          format: date-time
+    QuarantinedVideoListResponse:
+      type: object
+      required: [videos, limit, offset]
+      properties:
+        videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuarantinedVideo"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    RejectQuarantinedVideoRequest:
+      type: object
+      description: >-
+        Optional body for rejecting a quarantined upload; the reason is
+        recorded in the audit trail (it is not shown to the owner).
+      properties:
+        reason:
+          type: string
+          maxLength: 2000
     ReportReporter:
       type: object
       required: [username]
@@ -6266,7 +6473,7 @@ components:
           enum: [public, unlisted, private]
         state:
           type: string
-          enum: [draft, processing, published, failed]
+          enum: [draft, processing, scheduled, quarantined, published, failed]
         channel_handle:
           type: string
         channel_display_name:
@@ -6309,7 +6516,7 @@ components:
           enum: [public, unlisted, private]
         state:
           type: string
-          enum: [draft, processing, published, failed]
+          enum: [draft, processing, scheduled, quarantined, published, failed]
         channel_handle:
           type: string
         channel_display_name:
@@ -6451,7 +6658,7 @@ components:
     AdminUser:
       type: object
       description: Admin projection of an account (never includes the password hash).
-      required: [id, username, email, role, is_active, email_verified, display_name, storage_quota_bytes, storage_used_bytes, created_at]
+      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at]
       properties:
         id:
           type: string
@@ -6467,6 +6674,11 @@ components:
           type: boolean
         email_verified:
           type: boolean
+        bypass_quarantine:
+          type: boolean
+          description: >-
+            Whether this account is exempt from the QUARANTINE_NEW_UPLOADS
+            gate — its uploads publish directly like a moderator's.
         display_name:
           type: string
         storage_quota_bytes:
@@ -6808,6 +7020,12 @@ components:
             Admin-set email verification state: true marks the address
             confirmed without the token round-trip; false revokes the
             confirmation. Omit to leave unchanged.
+        bypass_quarantine:
+          type: boolean
+          description: >-
+            Exempts the account from the QUARANTINE_NEW_UPLOADS gate (its
+            uploads publish directly); false re-subjects it. Omit to leave
+            unchanged.
         storage_quota_bytes:
           type: [integer, "null"]
           format: int64

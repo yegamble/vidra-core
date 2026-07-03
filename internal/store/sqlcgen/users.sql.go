@@ -17,33 +17,36 @@ UPDATE users
 SET role       = COALESCE($1, role),
     is_active  = COALESCE($2, is_active),
     email_verified = COALESCE($3, email_verified),
-    storage_quota_bytes = CASE WHEN $4::bool
-                               THEN $5::bigint
+    bypass_quarantine = COALESCE($4, bypass_quarantine),
+    storage_quota_bytes = CASE WHEN $5::bool
+                               THEN $6::bigint
                                ELSE storage_quota_bytes END,
     updated_at = now()
-WHERE id = $6
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted
+WHERE id = $7
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine
 `
 
 type AdminUpdateUserParams struct {
 	Role              *string   `json:"role"`
 	IsActive          *bool     `json:"is_active"`
 	EmailVerified     *bool     `json:"email_verified"`
+	BypassQuarantine  *bool     `json:"bypass_quarantine"`
 	SetStorageQuota   bool      `json:"set_storage_quota"`
 	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
 	ID                uuid.UUID `json:"id"`
 }
 
-// Admin edit of a user's role, active flag, email_verified flag, and/or storage
-// quota (partial: NULL role/is_active/email_verified args are unchanged). The
-// quota is tri-state — unchanged unless set_storage_quota is true, in which
-// case a NULL value resets the account to the instance default and a value
-// (0 = unlimited) overrides it.
+// Admin edit of a user's role, active flag, email_verified flag, quarantine
+// bypass, and/or storage quota (partial: NULL role/is_active/email_verified/
+// bypass_quarantine args are unchanged). The quota is tri-state — unchanged
+// unless set_storage_quota is true, in which case a NULL value resets the
+// account to the instance default and a value (0 = unlimited) overrides it.
 func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, adminUpdateUser,
 		arg.Role,
 		arg.IsActive,
 		arg.EmailVerified,
+		arg.BypassQuarantine,
 		arg.SetStorageQuota,
 		arg.StorageQuotaBytes,
 		arg.ID,
@@ -63,6 +66,7 @@ func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams
 		&i.Bio,
 		&i.StorageQuotaBytes,
 		&i.Unlisted,
+		&i.BypassQuarantine,
 	)
 	return i, err
 }
@@ -81,7 +85,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine
 `
 
 type CreateUserParams struct {
@@ -113,6 +117,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Bio,
 		&i.StorageQuotaBytes,
 		&i.Unlisted,
+		&i.BypassQuarantine,
 	)
 	return i, err
 }
@@ -159,7 +164,7 @@ func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (Get
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -181,12 +186,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.Bio,
 		&i.StorageQuotaBytes,
 		&i.Unlisted,
+		&i.BypassQuarantine,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine
 FROM users
 WHERE id = $1
 `
@@ -208,6 +214,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.Bio,
 		&i.StorageQuotaBytes,
 		&i.Unlisted,
+		&i.BypassQuarantine,
 	)
 	return i, err
 }
@@ -215,6 +222,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 const listUsers = `-- name: ListUsers :many
 SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.is_active,
        u.created_at, u.updated_at, u.display_name, u.bio, u.storage_quota_bytes, u.unlisted,
+       u.bypass_quarantine,
        (SELECT COALESCE(SUM(vf.size_bytes), 0)::bigint
           FROM video_files vf
           JOIN videos v ON v.id = vf.video_id
@@ -248,6 +256,7 @@ type ListUsersRow struct {
 	Bio               string    `json:"bio"`
 	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
 	Unlisted          bool      `json:"unlisted"`
+	BypassQuarantine  bool      `json:"bypass_quarantine"`
 	StorageUsedBytes  int64     `json:"storage_used_bytes"`
 }
 
@@ -278,6 +287,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 			&i.Bio,
 			&i.StorageQuotaBytes,
 			&i.Unlisted,
+			&i.BypassQuarantine,
 			&i.StorageUsedBytes,
 		); err != nil {
 			return nil, err
@@ -297,7 +307,7 @@ SET display_name = COALESCE($1, display_name),
     unlisted     = COALESCE($3, unlisted),
     updated_at   = now()
 WHERE id = $4
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine
 `
 
 type UpdateUserProfileParams struct {
@@ -329,6 +339,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.Bio,
 		&i.StorageQuotaBytes,
 		&i.Unlisted,
+		&i.BypassQuarantine,
 	)
 	return i, err
 }

@@ -34,6 +34,9 @@ type fakeRepo struct {
 	dislikes map[uuid.UUID]int64
 	comments map[uuid.UUID]int64
 	owner    uuid.UUID
+	// requiresQuarantine mirrors the UploadRequiresQuarantine gate result for
+	// the test subject's uploads (true = role 'user' without bypass).
+	requiresQuarantine bool
 }
 
 func captionKeyFor(videoID uuid.UUID, lang string) string { return videoID.String() + "|" + lang }

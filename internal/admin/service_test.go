@@ -66,6 +66,9 @@ func (f *fakeRepo) AdminUpdateUser(_ context.Context, a sqlcgen.AdminUpdateUserP
 	if a.EmailVerified != nil {
 		u.EmailVerified = *a.EmailVerified
 	}
+	if a.BypassQuarantine != nil {
+		u.BypassQuarantine = *a.BypassQuarantine
+	}
 	if a.SetStorageQuota {
 		u.StorageQuotaBytes = a.StorageQuotaBytes
 	}
@@ -222,5 +225,35 @@ func TestUpdateUserEmailVerified(t *testing.T) {
 	// Self-edit of email_verified is allowed (no lockout risk).
 	if _, err := svc.UpdateUser(ctx, adminID, adminID, UpdateUserInput{EmailVerified: boolptr(true)}); err != nil {
 		t.Errorf("self email_verified edit = %v, want allowed", err)
+	}
+}
+
+// TestUpdateUserBypassQuarantine proves the §10/§11 admin edit at the service
+// layer: bypass_quarantine flips on and off, other fields stay untouched, and
+// no sessions are revoked by the edit.
+func TestUpdateUserBypassQuarantine(t *testing.T) {
+	repo := newFakeRepo()
+	adminID := repo.add("ada", RoleAdmin)
+	bobID := repo.add("bob", RoleUser)
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	updated, err := svc.UpdateUser(ctx, adminID, bobID, UpdateUserInput{BypassQuarantine: boolptr(true)})
+	if err != nil {
+		t.Fatalf("UpdateUser bypass_quarantine=true: %v", err)
+	}
+	if !updated.BypassQuarantine {
+		t.Error("bypass_quarantine not set")
+	}
+	if updated.Role != RoleUser || !updated.IsActive || updated.EmailVerified {
+		t.Errorf("unrelated fields changed: %+v", updated)
+	}
+	if repo.revoked[bobID] {
+		t.Error("sessions revoked by a bypass_quarantine edit")
+	}
+
+	updated, err = svc.UpdateUser(ctx, adminID, bobID, UpdateUserInput{BypassQuarantine: boolptr(false)})
+	if err != nil || updated.BypassQuarantine {
+		t.Fatalf("revoke = %+v/%v, want bypass=false", updated, err)
 	}
 }

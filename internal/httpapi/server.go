@@ -600,6 +600,11 @@ func (s *Server) routes() {
 		api.GET("/admin/videos/blocked", s.handleListBlockedVideos, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.POST("/admin/videos/:id/block", s.handleBlockVideo, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.DELETE("/admin/videos/:id/block", s.handleUnblockVideo, s.requireAuth, s.requireRole("admin", "moderator"))
+		// Upload quarantine review (§11): the queue plus approve (→ published,
+		// hooks fire) / reject (→ failed, owner notified).
+		api.GET("/admin/videos/quarantined", s.handleListQuarantinedVideos, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.POST("/admin/videos/:id/approve", s.handleApproveQuarantinedVideo, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.POST("/admin/videos/:id/reject", s.handleRejectQuarantinedVideo, s.requireAuth, s.requireRole("admin", "moderator"))
 	}
 
 	// Account mutes: a signed-in user mutes/unmutes another account and lists
