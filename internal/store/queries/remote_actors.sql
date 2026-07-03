@@ -21,3 +21,9 @@ ON CONFLICT (actor_url) DO UPDATE SET
     public_key_pem     = EXCLUDED.public_key_pem,
     followers_url      = EXCLUDED.followers_url,
     updated_at         = now();
+
+-- name: DeleteRemoteActor :execrows
+-- Inbound actor Delete (remote-content §7): drop the cached actor; its remote
+-- videos, remote-authored comments, and remote-channel follow edges cascade
+-- away via their remote_actor_url foreign keys.
+DELETE FROM remote_actors WHERE actor_url = $1;

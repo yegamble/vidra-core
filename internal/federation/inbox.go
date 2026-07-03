@@ -67,7 +67,19 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 	case "Undo":
 		return s.handleUndo(ctx, act, signerActorURL)
 	case "Create":
+		if objectType(act.Object) == "Note" {
+			return s.handleCreateNote(ctx, act, signerActorURL)
+		}
 		return s.handleCreateVideo(ctx, act, signerActorURL)
+	case "Update":
+		if objectType(act.Object) == "Note" {
+			return s.handleUpdateNote(ctx, act, signerActorURL)
+		}
+		// Update{Video} upserts under the same authority + follow-edge gate as
+		// Create (remote-content §7).
+		return s.handleCreateVideo(ctx, act, signerActorURL)
+	case "Delete":
+		return s.handleDelete(ctx, act, signerActorURL)
 	case "Announce":
 		return s.handleAnnounce(ctx, act, signerActorURL)
 	case "Accept":
@@ -75,8 +87,7 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 	case "Reject":
 		return s.handleReject(ctx, act, signerActorURL)
 	default:
-		// Update / Delete of remote objects land in a later slice; accept & ignore.
-		return nil
+		return nil // unhandled activity types are accepted-and-ignored
 	}
 }
 
@@ -175,6 +186,17 @@ func (s *Service) localChannelHandle(actorURL string) (string, bool) {
 		return "", false
 	}
 	return handle, true
+}
+
+// objectType extracts an activity object's type ("" for bare string objects).
+func objectType(raw json.RawMessage) string {
+	var obj struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return ""
+	}
+	return obj.Type
 }
 
 // objectID extracts an activity object's id whether it is a bare string URL or an

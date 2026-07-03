@@ -193,6 +193,29 @@ func (fakeFedRepo) HasAcceptedRemoteChannelFollow(context.Context, string) (bool
 	return false, nil
 }
 
+// Federated-comment + inbound-delete stubs (remote-content §6-7): the handler
+// suite doesn't exercise Note ingestion (see internal/federation's own tests).
+func (fakeFedRepo) GetComment(context.Context, uuid.UUID) (sqlcgen.Comment, error) {
+	return sqlcgen.Comment{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) GetCommentByRemoteObjectURL(context.Context, string) (sqlcgen.Comment, error) {
+	return sqlcgen.Comment{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) CreateRemoteComment(context.Context, sqlcgen.CreateRemoteCommentParams) (sqlcgen.Comment, error) {
+	return sqlcgen.Comment{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) UpdateComment(context.Context, sqlcgen.UpdateCommentParams) (sqlcgen.Comment, error) {
+	return sqlcgen.Comment{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) DeleteComment(context.Context, uuid.UUID) error { return nil }
+func (fakeFedRepo) GetRemoteVideoByObjectURL(context.Context, string) (sqlcgen.GetRemoteVideoByObjectURLRow, error) {
+	return sqlcgen.GetRemoteVideoByObjectURLRow{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) DeleteRemoteVideoByObjectURL(context.Context, string) (int64, error) {
+	return 0, nil
+}
+func (fakeFedRepo) DeleteRemoteActor(context.Context, string) (int64, error) { return 0, nil }
+
 func fedTestConfig() *config.Config {
 	c := testConfig()
 	c.FederationEnabled = true

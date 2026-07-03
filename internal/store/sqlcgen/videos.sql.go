@@ -417,6 +417,7 @@ FROM (
       AND $3::text IS NULL
       AND $4::text IS NULL
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $1 AND mi.domain = ra.domain
@@ -646,6 +647,7 @@ FROM (
             AND rcf.state = 'accepted'
       )
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $1 AND mi.domain = ra.domain
@@ -860,6 +862,7 @@ FROM (
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE rv.title ILIKE '%' || $1 || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain

@@ -80,13 +80,16 @@ type ChannelImage struct {
 }
 
 type Comment struct {
-	ID        uuid.UUID   `json:"id"`
-	VideoID   uuid.UUID   `json:"video_id"`
-	UserID    uuid.UUID   `json:"user_id"`
-	Body      string      `json:"body"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
-	ParentID  pgtype.UUID `json:"parent_id"`
+	ID               uuid.UUID   `json:"id"`
+	VideoID          uuid.UUID   `json:"video_id"`
+	UserID           pgtype.UUID `json:"user_id"`
+	Body             string      `json:"body"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
+	ParentID         pgtype.UUID `json:"parent_id"`
+	RemoteActorUrl   *string     `json:"remote_actor_url"`
+	RemoteAuthorName *string     `json:"remote_author_name"`
+	RemoteObjectUrl  *string     `json:"remote_object_url"`
 }
 
 type Conversation struct {
@@ -271,6 +274,13 @@ type RemoteVideo struct {
 	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
+type RemoteVideoBlock struct {
+	RemoteVideoID uuid.UUID   `json:"remote_video_id"`
+	Reason        string      `json:"reason"`
+	BlockedBy     pgtype.UUID `json:"blocked_by"`
+	CreatedAt     time.Time   `json:"created_at"`
+}
+
 type Report struct {
 	ID             uuid.UUID          `json:"id"`
 	ReporterID     uuid.UUID          `json:"reporter_id"`
@@ -285,6 +295,7 @@ type Report struct {
 	CreatedAt      time.Time          `json:"created_at"`
 	UpdatedAt      time.Time          `json:"updated_at"`
 	ReportedUserID pgtype.UUID        `json:"reported_user_id"`
+	RemoteVideoID  pgtype.UUID        `json:"remote_video_id"`
 }
 
 type SavedVideo struct {

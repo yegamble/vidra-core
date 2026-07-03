@@ -9,6 +9,21 @@ import (
 	"context"
 )
 
+const deleteRemoteActor = `-- name: DeleteRemoteActor :execrows
+DELETE FROM remote_actors WHERE actor_url = $1
+`
+
+// Inbound actor Delete (remote-content §7): drop the cached actor; its remote
+// videos, remote-authored comments, and remote-channel follow edges cascade
+// away via their remote_actor_url foreign keys.
+func (q *Queries) DeleteRemoteActor(ctx context.Context, actorUrl string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteRemoteActor, actorUrl)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRemoteActor = `-- name: GetRemoteActor :one
 
 SELECT actor_url, actor_type, preferred_username, domain, inbox_url, shared_inbox_url,

@@ -15,9 +15,14 @@ import (
 
 type author struct{ username, displayName string }
 
+// remoteRowMeta mirrors the remote-attribution columns the list SQL projects
+// for a remote-authored comment (remote_author_name + origin domain).
+type remoteRowMeta struct{ name, domain string }
+
 type fakeRepo struct {
-	comments map[uuid.UUID]sqlcgen.Comment
-	authors  map[uuid.UUID]author // user_id -> author identity
+	comments   map[uuid.UUID]sqlcgen.Comment
+	authors    map[uuid.UUID]author // user_id -> author identity
+	remoteRows map[uuid.UUID]remoteRowMeta
 }
 
 func newFakeRepo() *fakeRepo {
@@ -37,11 +42,13 @@ func (f *fakeRepo) ListCommentsByVideo(_ context.Context, a sqlcgen.ListComments
 	var rows []sqlcgen.ListCommentsByVideoRow
 	for _, c := range f.comments {
 		if c.VideoID == a.VideoID {
-			au := f.authors[c.UserID]
+			au := f.authors[uuid.UUID(c.UserID.Bytes)]
+			meta := f.remoteRows[c.ID]
 			rows = append(rows, sqlcgen.ListCommentsByVideoRow{
 				ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
 				CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 				AuthorUsername: au.username, AuthorDisplayName: au.displayName,
+				RemoteActorUrl: c.RemoteActorUrl, RemoteAuthorName: meta.name, AuthorDomain: meta.domain,
 			})
 		}
 	}
@@ -55,7 +62,7 @@ func (f *fakeRepo) ListAdminComments(_ context.Context, a sqlcgen.ListAdminComme
 		if a.Query != nil && !strings.Contains(strings.ToLower(c.Body), strings.ToLower(*a.Query)) {
 			continue
 		}
-		au := f.authors[c.UserID]
+		au := f.authors[uuid.UUID(c.UserID.Bytes)]
 		rows = append(rows, sqlcgen.ListAdminCommentsRow{
 			ID: c.ID, VideoID: c.VideoID, Body: c.Body, CreatedAt: c.CreatedAt,
 			AuthorUsername: au.username, AuthorDisplayName: au.displayName,

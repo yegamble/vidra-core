@@ -144,6 +144,7 @@ FROM (
       AND sqlc.narg('category')::text IS NULL
       AND sqlc.narg('language')::text IS NULL
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
@@ -226,6 +227,7 @@ FROM (
             AND rcf.state = 'accepted'
       )
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.arg('follower_id') AND mi.domain = ra.domain
@@ -303,6 +305,7 @@ FROM (
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE rv.title ILIKE '%' || sqlc.arg('query') || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain

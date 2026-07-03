@@ -58,6 +58,29 @@ func (q *Queries) CreateCommentReport(ctx context.Context, arg CreateCommentRepo
 	return result.RowsAffected(), nil
 }
 
+const createRemoteVideoReport = `-- name: CreateRemoteVideoReport :execrows
+INSERT INTO reports (reporter_id, target_type, remote_video_id, reason)
+VALUES ($1, 'remote_video', $2, $3)
+ON CONFLICT (reporter_id, remote_video_id) WHERE remote_video_id IS NOT NULL DO NOTHING
+`
+
+type CreateRemoteVideoReportParams struct {
+	ReporterID    uuid.UUID   `json:"reporter_id"`
+	RemoteVideoID pgtype.UUID `json:"remote_video_id"`
+	Reason        string      `json:"reason"`
+}
+
+// Report a federated remote video (remote-content §8; idempotent per
+// reporter+remote video). A non-existent target raises a foreign-key
+// violation, which the service maps to "invalid target".
+func (q *Queries) CreateRemoteVideoReport(ctx context.Context, arg CreateRemoteVideoReportParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createRemoteVideoReport, arg.ReporterID, arg.RemoteVideoID, arg.Reason)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createVideoReport = `-- name: CreateVideoReport :execrows
 INSERT INTO reports (reporter_id, target_type, video_id, reason)
 VALUES ($1, 'video', $2, $3)
@@ -96,17 +119,22 @@ func (q *Queries) DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
 }
 
 const listReports = `-- name: ListReports :many
-SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.reason, r.status,
+SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.remote_video_id,
+       r.reason, r.status,
        r.moderator_note, r.resolved_at, r.created_at,
        u.username AS reporter_username,
        v.title AS video_title,
        cm.body AS comment_body,
-       ru.username AS reported_username
+       ru.username AS reported_username,
+       rv.title AS remote_video_title,
+       ra.domain AS remote_video_domain
 FROM reports r
 JOIN users u ON u.id = r.reporter_id
 LEFT JOIN videos v ON v.id = r.video_id
 LEFT JOIN comments cm ON cm.id = r.comment_id
 LEFT JOIN users ru ON ru.id = r.reported_user_id
+LEFT JOIN remote_videos rv ON rv.id = r.remote_video_id
+LEFT JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 WHERE (NOT $1::bool OR r.status = 'open')
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT $3 OFFSET $2
@@ -119,25 +147,29 @@ type ListReportsParams struct {
 }
 
 type ListReportsRow struct {
-	ID               uuid.UUID          `json:"id"`
-	TargetType       string             `json:"target_type"`
-	VideoID          pgtype.UUID        `json:"video_id"`
-	CommentID        pgtype.UUID        `json:"comment_id"`
-	ReportedUserID   pgtype.UUID        `json:"reported_user_id"`
-	Reason           string             `json:"reason"`
-	Status           string             `json:"status"`
-	ModeratorNote    string             `json:"moderator_note"`
-	ResolvedAt       pgtype.Timestamptz `json:"resolved_at"`
-	CreatedAt        time.Time          `json:"created_at"`
-	ReporterUsername string             `json:"reporter_username"`
-	VideoTitle       *string            `json:"video_title"`
-	CommentBody      *string            `json:"comment_body"`
-	ReportedUsername *string            `json:"reported_username"`
+	ID                uuid.UUID          `json:"id"`
+	TargetType        string             `json:"target_type"`
+	VideoID           pgtype.UUID        `json:"video_id"`
+	CommentID         pgtype.UUID        `json:"comment_id"`
+	ReportedUserID    pgtype.UUID        `json:"reported_user_id"`
+	RemoteVideoID     pgtype.UUID        `json:"remote_video_id"`
+	Reason            string             `json:"reason"`
+	Status            string             `json:"status"`
+	ModeratorNote     string             `json:"moderator_note"`
+	ResolvedAt        pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt         time.Time          `json:"created_at"`
+	ReporterUsername  string             `json:"reporter_username"`
+	VideoTitle        *string            `json:"video_title"`
+	CommentBody       *string            `json:"comment_body"`
+	ReportedUsername  *string            `json:"reported_username"`
+	RemoteVideoTitle  *string            `json:"remote_video_title"`
+	RemoteVideoDomain *string            `json:"remote_video_domain"`
 }
 
 // The moderation queue, newest first, with the reporter's username and the
-// target context (video title / comment body / reported account username). When
-// open_only is true, only unresolved (status='open') reports are returned.
+// target context (video title / comment body / reported account username /
+// remote video title+domain). When open_only is true, only unresolved
+// (status='open') reports are returned.
 func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]ListReportsRow, error) {
 	rows, err := q.db.Query(ctx, listReports, arg.OpenOnly, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
@@ -153,6 +185,7 @@ func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Lis
 			&i.VideoID,
 			&i.CommentID,
 			&i.ReportedUserID,
+			&i.RemoteVideoID,
 			&i.Reason,
 			&i.Status,
 			&i.ModeratorNote,
@@ -162,6 +195,8 @@ func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Lis
 			&i.VideoTitle,
 			&i.CommentBody,
 			&i.ReportedUsername,
+			&i.RemoteVideoTitle,
+			&i.RemoteVideoDomain,
 		); err != nil {
 			return nil, err
 		}

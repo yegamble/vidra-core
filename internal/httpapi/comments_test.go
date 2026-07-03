@@ -56,18 +56,20 @@ func (f *commentFakeRepo) ListCommentsByVideo(_ context.Context, a sqlcgen.ListC
 			continue
 		}
 		// Mirror the real query: an authenticated viewer's muted OR blocked (§13)
-		// authors are hidden.
-		if a.ViewerID.Valid && f.mutes != nil && f.mutes.isMuted(uuid.UUID(a.ViewerID.Bytes), c.UserID) {
+		// authors are hidden (remote-authored rows have no local author id).
+		authorID := uuid.UUID(c.UserID.Bytes)
+		if c.UserID.Valid && a.ViewerID.Valid && f.mutes != nil && f.mutes.isMuted(uuid.UUID(a.ViewerID.Bytes), authorID) {
 			continue
 		}
-		if a.ViewerID.Valid && f.userBlocks != nil && f.userBlocks.isBlocked(uuid.UUID(a.ViewerID.Bytes), c.UserID) {
+		if c.UserID.Valid && a.ViewerID.Valid && f.userBlocks != nil && f.userBlocks.isBlocked(uuid.UUID(a.ViewerID.Bytes), authorID) {
 			continue
 		}
-		username, display := f.author(c.UserID)
+		username, display := f.author(authorID)
 		rows = append(rows, sqlcgen.ListCommentsByVideoRow{
 			ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
 			ParentID: c.ParentID, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 			AuthorUsername: username, AuthorDisplayName: display,
+			RemoteActorUrl: c.RemoteActorUrl,
 		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
@@ -80,7 +82,7 @@ func (f *commentFakeRepo) ListAdminComments(_ context.Context, a sqlcgen.ListAdm
 		if a.Query != nil && !strings.Contains(strings.ToLower(c.Body), strings.ToLower(*a.Query)) {
 			continue
 		}
-		username, display := f.author(c.UserID)
+		username, display := f.author(uuid.UUID(c.UserID.Bytes))
 		title := ""
 		if f.videos != nil {
 			title = f.videos.videos[c.VideoID].Title

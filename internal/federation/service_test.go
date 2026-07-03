@@ -40,6 +40,7 @@ type fakeRepo struct {
 	blockedDomains  map[string]bool
 	usersByID       map[uuid.UUID]sqlcgen.GetUserActorByIDRow
 	rcFollows       map[uuid.UUID]*sqlcgen.RemoteChannelFollow // keyed by row id
+	commentsByID    map[uuid.UUID]sqlcgen.Comment              // federated-comment rows (§6)
 }
 
 // fakeRemoteVideo is an in-memory remote_videos row.
@@ -354,6 +355,100 @@ func (f fakeRepo) HasAcceptedRemoteChannelFollow(_ context.Context, remoteActorU
 		}
 	}
 	return false, nil
+}
+
+// --- federated comments + inbound deletes (remote-content §6-7) -------------
+
+func (f fakeRepo) GetComment(_ context.Context, id uuid.UUID) (sqlcgen.Comment, error) {
+	if c, ok := f.commentsByID[id]; ok {
+		return c, nil
+	}
+	return sqlcgen.Comment{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) GetCommentByRemoteObjectURL(_ context.Context, u string) (sqlcgen.Comment, error) {
+	for _, c := range f.commentsByID {
+		if c.RemoteObjectUrl != nil && *c.RemoteObjectUrl == u {
+			return c, nil
+		}
+	}
+	return sqlcgen.Comment{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) CreateRemoteComment(_ context.Context, arg sqlcgen.CreateRemoteCommentParams) (sqlcgen.Comment, error) {
+	if arg.RemoteObjectUrl != nil {
+		for id, c := range f.commentsByID {
+			if c.RemoteObjectUrl != nil && *c.RemoteObjectUrl == *arg.RemoteObjectUrl {
+				c.Body = arg.Body
+				c.UpdatedAt = time.Now()
+				f.commentsByID[id] = c
+				return c, nil
+			}
+		}
+	}
+	c := sqlcgen.Comment{
+		ID: uuid.New(), VideoID: arg.VideoID, Body: arg.Body, ParentID: arg.ParentID,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		RemoteActorUrl: arg.RemoteActorUrl, RemoteAuthorName: arg.RemoteAuthorName,
+		RemoteObjectUrl: arg.RemoteObjectUrl,
+	}
+	f.commentsByID[c.ID] = c
+	return c, nil
+}
+
+func (f fakeRepo) UpdateComment(_ context.Context, arg sqlcgen.UpdateCommentParams) (sqlcgen.Comment, error) {
+	c, ok := f.commentsByID[arg.ID]
+	if !ok {
+		return sqlcgen.Comment{}, pgx.ErrNoRows
+	}
+	c.Body = arg.Body
+	c.UpdatedAt = time.Now()
+	f.commentsByID[arg.ID] = c
+	return c, nil
+}
+
+func (f fakeRepo) DeleteComment(_ context.Context, id uuid.UUID) error {
+	delete(f.commentsByID, id)
+	return nil
+}
+
+func (f fakeRepo) GetRemoteVideoByObjectURL(_ context.Context, objectURL string) (sqlcgen.GetRemoteVideoByObjectURLRow, error) {
+	if rv, ok := f.remoteVideos[objectURL]; ok {
+		return sqlcgen.GetRemoteVideoByObjectURLRow{ID: rv.id, ObjectUrl: objectURL, RemoteActorUrl: rv.params.RemoteActorUrl}, nil
+	}
+	return sqlcgen.GetRemoteVideoByObjectURLRow{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) DeleteRemoteVideoByObjectURL(_ context.Context, objectURL string) (int64, error) {
+	if _, ok := f.remoteVideos[objectURL]; ok {
+		delete(f.remoteVideos, objectURL)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f fakeRepo) DeleteRemoteActor(_ context.Context, actorURL string) (int64, error) {
+	if _, ok := f.remoteActors[actorURL]; !ok {
+		return 0, nil
+	}
+	delete(f.remoteActors, actorURL)
+	// Mirror the FK cascades: the actor's videos, comments, and follow edges.
+	for u, rv := range f.remoteVideos {
+		if rv.params.RemoteActorUrl == actorURL {
+			delete(f.remoteVideos, u)
+		}
+	}
+	for id, c := range f.commentsByID {
+		if c.RemoteActorUrl != nil && *c.RemoteActorUrl == actorURL {
+			delete(f.commentsByID, id)
+		}
+	}
+	for id, row := range f.rcFollows {
+		if row.RemoteActorUrl == actorURL {
+			delete(f.rcFollows, id)
+		}
+	}
+	return 1, nil
 }
 
 func TestNodeInfoUsage(t *testing.T) {

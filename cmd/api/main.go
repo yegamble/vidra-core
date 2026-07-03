@@ -274,7 +274,36 @@ func run() error {
 	videosvc := video.NewService(db.Queries(), blobs, vopts...)
 	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(blobs))
 
-	commentsvc := comment.NewService(db.Queries())
+	// When federation is on, fan a local comment on a local video out to the
+	// channel's remote followers as Create/Update/Delete{Note} (remote-content
+	// §6) — same deferred-fedsvc seam as the video hooks above.
+	var commentOpts []comment.Option
+	if cfg.FederationEnabled {
+		commentOpts = append(commentOpts,
+			comment.WithCreateHook(func(ctx context.Context, commentID uuid.UUID) {
+				if fedsvc != nil {
+					if err := fedsvc.AnnounceComment(ctx, commentID); err != nil {
+						logger.Warn("federation comment announce failed", "comment_id", commentID, "error", err)
+					}
+				}
+			}),
+			comment.WithUpdateHook(func(ctx context.Context, commentID uuid.UUID) {
+				if fedsvc != nil {
+					if err := fedsvc.UpdateComment(ctx, commentID); err != nil {
+						logger.Warn("federation comment update failed", "comment_id", commentID, "error", err)
+					}
+				}
+			}),
+			comment.WithDeleteHook(func(ctx context.Context, commentID, videoID, authorID uuid.UUID) {
+				if fedsvc != nil {
+					if err := fedsvc.DeleteComment(ctx, commentID, videoID, authorID); err != nil {
+						logger.Warn("federation comment delete failed", "comment_id", commentID, "error", err)
+					}
+				}
+			}),
+		)
+	}
+	commentsvc := comment.NewService(db.Queries(), commentOpts...)
 	opts = append(opts, httpapi.WithCommentService(commentsvc))
 
 	ratingsvc := rating.NewService(db.Queries())
@@ -335,6 +364,9 @@ func run() error {
 		// repository's accepted remote_channel_follows edges by default (§2) —
 		// no extra wiring needed.
 		federation.WithMediaStorage(blobs),
+		// Inbound federated comments run the same watched-words flagging as
+		// local ones (remote-content §6).
+		federation.WithCommentFlagger(watchwordsvc),
 	}
 	if cfg.FederationKeyKEK != "" {
 		cipher, err := secretbox.NewCipherFromBase64(cfg.FederationKeyKEK)

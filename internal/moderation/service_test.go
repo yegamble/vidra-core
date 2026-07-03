@@ -20,6 +20,7 @@ type reportRow struct {
 	videoID        pgtype.UUID
 	commentID      pgtype.UUID
 	reportedUserID pgtype.UUID
+	remoteVideoID  pgtype.UUID
 	reason         string
 	status         string
 	note           string
@@ -36,6 +37,10 @@ type fakeRepo struct {
 	blockReason map[uuid.UUID]string
 	blockOrder  []uuid.UUID // block order (oldest first)
 	blockErr    error       // returned by BlockVideo when set (e.g. a FK violation)
+	// remote-video moderation (remote-content §8)
+	remoteVideoErr   error // returned by the remote-video writes when set (e.g. a FK violation)
+	remoteBlocked    map[uuid.UUID]string
+	remoteBlockOrder []uuid.UUID
 }
 
 func (f *fakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (int64, error) {
@@ -162,6 +167,64 @@ func (f *fakeRepo) ListBlockedVideos(_ context.Context, a sqlcgen.ListBlockedVid
 	for i := len(f.blockOrder) - 1; i >= 0; i-- { // newest block first
 		vid := f.blockOrder[i]
 		rows = append(rows, sqlcgen.ListBlockedVideosRow{VideoID: vid, Reason: f.blockReason[vid]})
+	}
+	off := min(int(a.ResultOffset), len(rows))
+	rows = rows[off:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(rows) {
+		rows = rows[:a.ResultLimit]
+	}
+	return rows, nil
+}
+
+func (f *fakeRepo) CreateRemoteVideoReport(_ context.Context, a sqlcgen.CreateRemoteVideoReportParams) (int64, error) {
+	if f.remoteVideoErr != nil {
+		return 0, f.remoteVideoErr
+	}
+	for _, r := range f.reports {
+		if r.reporterID == a.ReporterID && r.remoteVideoID == a.RemoteVideoID {
+			return 0, nil // already reported
+		}
+	}
+	f.reports = append(f.reports, reportRow{
+		id: uuid.New(), reporterID: a.ReporterID, targetType: TargetRemoteVideo,
+		remoteVideoID: a.RemoteVideoID, reason: a.Reason, status: StatusOpen, createdAt: time.Now(),
+	})
+	return 1, nil
+}
+
+func (f *fakeRepo) BlockRemoteVideo(_ context.Context, a sqlcgen.BlockRemoteVideoParams) (int64, error) {
+	if f.remoteVideoErr != nil {
+		return 0, f.remoteVideoErr
+	}
+	if f.remoteBlocked == nil {
+		f.remoteBlocked = map[uuid.UUID]string{}
+	}
+	if _, ok := f.remoteBlocked[a.RemoteVideoID]; !ok {
+		f.remoteBlockOrder = append(f.remoteBlockOrder, a.RemoteVideoID)
+	}
+	f.remoteBlocked[a.RemoteVideoID] = a.Reason
+	return 1, nil
+}
+
+func (f *fakeRepo) UnblockRemoteVideo(_ context.Context, id uuid.UUID) (int64, error) {
+	if _, ok := f.remoteBlocked[id]; !ok {
+		return 0, nil
+	}
+	delete(f.remoteBlocked, id)
+	for i, v := range f.remoteBlockOrder {
+		if v == id {
+			f.remoteBlockOrder = append(f.remoteBlockOrder[:i], f.remoteBlockOrder[i+1:]...)
+			break
+		}
+	}
+	return 1, nil
+}
+
+func (f *fakeRepo) ListBlockedRemoteVideos(_ context.Context, a sqlcgen.ListBlockedRemoteVideosParams) ([]sqlcgen.ListBlockedRemoteVideosRow, error) {
+	var rows []sqlcgen.ListBlockedRemoteVideosRow
+	for i := len(f.remoteBlockOrder) - 1; i >= 0; i-- { // newest block first
+		id := f.remoteBlockOrder[i]
+		rows = append(rows, sqlcgen.ListBlockedRemoteVideosRow{RemoteVideoID: id, Reason: f.remoteBlocked[id]})
 	}
 	off := min(int(a.ResultOffset), len(rows))
 	rows = rows[off:]

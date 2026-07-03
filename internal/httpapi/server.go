@@ -649,11 +649,21 @@ func (s *Server) routes() {
 	}
 
 	// Remote videos (federated, metadata-only): the remote-watch surface + the
-	// locally cached thumbnail. Public reads; content from blocked instances is
-	// excluded at the query.
+	// locally cached thumbnail. Public reads; content from blocked instances or
+	// the per-video remote block-list is excluded at the query.
 	if s.remotevideosvc != nil {
 		api.GET("/remote-videos/:id", s.handleGetRemoteVideo)
 		api.GET("/remote-videos/:id/thumbnail", s.handleGetRemoteVideoThumbnail)
+	}
+
+	// Remote-video moderation (remote-content §8): local reports of federated
+	// remote videos plus the admin per-video hide, mirroring the video_blocks
+	// endpoints. Audited.
+	if s.moderationsvc != nil {
+		api.POST("/remote-videos/:id/report", s.handleReportRemoteVideo, s.requireAuth)
+		api.GET("/admin/remote-videos/blocked", s.handleListBlockedRemoteVideos, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.POST("/admin/remote-videos/:id/block", s.handleBlockRemoteVideo, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.DELETE("/admin/remote-videos/:id/block", s.handleUnblockRemoteVideo, s.requireAuth, s.requireRole("admin", "moderator"))
 	}
 
 	// Outbound remote-channel follows (remote-content §3). REST contract

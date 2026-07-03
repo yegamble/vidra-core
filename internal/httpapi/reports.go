@@ -125,24 +125,31 @@ type reportView struct {
 	CommentBody      string             `json:"comment_body,omitempty"`
 	ReportedUserID   string             `json:"reported_user_id,omitempty"`
 	ReportedUsername string             `json:"reported_username,omitempty"`
+	// Remote-video target context (target_type='remote_video').
+	RemoteVideoID     string `json:"remote_video_id,omitempty"`
+	RemoteVideoTitle  string `json:"remote_video_title,omitempty"`
+	RemoteVideoDomain string `json:"remote_video_domain,omitempty"`
 }
 
 func newReportView(it moderation.Item) reportView {
 	return reportView{
-		ID:               it.ID.String(),
-		TargetType:       it.TargetType,
-		Reason:           it.Reason,
-		Status:           it.Status,
-		ModeratorNote:    it.ModeratorNote,
-		CreatedAt:        it.CreatedAt,
-		ResolvedAt:       it.ResolvedAt,
-		Reporter:         reportReporterView{Username: it.ReporterUsername},
-		VideoID:          it.VideoID,
-		VideoTitle:       it.VideoTitle,
-		CommentID:        it.CommentID,
-		CommentBody:      it.CommentBody,
-		ReportedUserID:   it.ReportedUserID,
-		ReportedUsername: it.ReportedUsername,
+		ID:                it.ID.String(),
+		TargetType:        it.TargetType,
+		Reason:            it.Reason,
+		Status:            it.Status,
+		ModeratorNote:     it.ModeratorNote,
+		CreatedAt:         it.CreatedAt,
+		ResolvedAt:        it.ResolvedAt,
+		Reporter:          reportReporterView{Username: it.ReporterUsername},
+		VideoID:           it.VideoID,
+		VideoTitle:        it.VideoTitle,
+		CommentID:         it.CommentID,
+		CommentBody:       it.CommentBody,
+		ReportedUserID:    it.ReportedUserID,
+		ReportedUsername:  it.ReportedUsername,
+		RemoteVideoID:     it.RemoteVideoID,
+		RemoteVideoTitle:  it.RemoteVideoTitle,
+		RemoteVideoDomain: it.RemoteVideoDomain,
 	}
 }
 

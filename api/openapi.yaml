@@ -4615,6 +4615,184 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-videos/{id}/report:
+    post:
+      operationId: reportRemoteVideo
+      summary: Report a remote video
+      description: >-
+        Files an abuse report against an ingested federated remote video
+        (target_type remote_video), alongside the existing video/comment/
+        account reports. Requires authentication. An unknown remote video is
+        404. Idempotent per reporter+target.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportRequest"
+      responses:
+        "204":
+          description: The report is filed (or already was).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such remote video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/remote-videos/blocked:
+    get:
+      operationId: listBlockedRemoteVideos
+      summary: List blocked remote videos
+      description: >-
+        Returns currently-blocked federated remote videos, newest block first,
+        each with its origin identity, the block reason, who blocked it, and
+        when. Restricted to moderators/admins. Paginated via limit (1–100,
+        default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of blocked remote videos (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockedRemoteVideoListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/remote-videos/{id}/block:
+    post:
+      operationId: blockRemoteVideo
+      summary: Block a remote video
+      description: >-
+        Hides a federated remote video from all local surfaces (the
+        subscriptions feed, search, the scope=all discovery feed, and the
+        remote-watch detail endpoint), mirroring the local video block.
+        Restricted to moderators/admins. Idempotent. An unknown id is 404.
+        Audited.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockVideoRequest"
+      responses:
+        "204":
+          description: The remote video was blocked.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such remote video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unblockRemoteVideo
+      summary: Unblock a remote video
+      description: >-
+        Lifts a remote video's block, restoring it to the local surfaces.
+        Restricted to moderators/admins. Idempotent (unblocking a remote video
+        that is not blocked still succeeds). Audited.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The remote video is not blocked (it was unblocked, or already was).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/remote-follows:
     post:
       operationId: createRemoteFollow
@@ -6350,7 +6528,7 @@ components:
             $ref: "#/components/schemas/Caption"
     Comment:
       type: object
-      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, created_at, updated_at, edited]
+      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, remote, created_at, updated_at, edited]
       properties:
         id:
           type: string
@@ -6367,13 +6545,24 @@ components:
             The id of the comment this one replies to, or null for a top-level
             comment. The client uses it to build the thread tree.
         author_id:
-          type: string
+          type: [string, "null"]
           format: uuid
-          description: The comment author's account id (so a signed-in viewer can mute them).
+          description: >-
+            The comment author's account id (so a signed-in viewer can mute
+            them) — null for a federated (remote-authored) comment.
         author_username:
           type: string
+          description: >-
+            The local author's username, or — for a remote comment — the remote
+            author-name snapshot captured at ingestion.
         author_display_name:
           type: string
+        remote:
+          type: boolean
+          description: True for a federated comment authored on another instance.
+        author_domain:
+          type: string
+          description: The remote author's origin instance; omitted for local comments.
         created_at:
           type: string
           format: date-time
@@ -7052,7 +7241,7 @@ components:
           format: uuid
         target_type:
           type: string
-          enum: [video, comment, account]
+          enum: [video, comment, account, remote_video]
         reason:
           type: string
         status:
@@ -7087,6 +7276,16 @@ components:
         reported_username:
           type: string
           description: Username of the reported account; omitted if that account was deleted.
+        remote_video_id:
+          type: string
+          format: uuid
+          description: The reported federated remote video (remote_video reports).
+        remote_video_title:
+          type: string
+          description: Title of the reported remote video; omitted if it was deleted.
+        remote_video_domain:
+          type: string
+          description: Origin instance of the reported remote video.
     ReportListResponse:
       type: object
       required: [reports, limit, offset]
@@ -7144,6 +7343,51 @@ components:
         offset:
           type: integer
           example: 0
+    BlockedRemoteVideo:
+      type: object
+      description: A currently-blocked federated remote video, for the moderation block-list.
+      required: [remote_video_id, title, object_url, watch_url, channel_handle, domain, reason, blocked_at]
+      properties:
+        remote_video_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        object_url:
+          type: string
+          description: The remote video's ActivityPub object id.
+        watch_url:
+          type: string
+          description: The origin's human watch page.
+        channel_handle:
+          type: string
+          description: The origin channel identity (name@domain).
+        domain:
+          type: string
+          description: The origin instance.
+        reason:
+          type: string
+          description: The reason recorded when the remote video was blocked (may be empty).
+        blocked_by:
+          type: string
+          description: Username of the moderator who blocked it; omitted if that account was deleted.
+        blocked_at:
+          type: string
+          format: date-time
+    BlockedRemoteVideoListResponse:
+      type: object
+      required: [videos, limit, offset]
+      properties:
+        videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockedRemoteVideo"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
     AdminVideo:
       type: object
       description: A video in the admin/moderator overview (any privacy/state), with block status.
@@ -7190,7 +7434,7 @@ components:
     AdminComment:
       type: object
       description: A comment in the admin/moderator overview, with author + video context.
-      required: [id, video_id, video_title, body, author_username, author_display_name, created_at]
+      required: [id, video_id, video_title, body, author_username, author_display_name, remote, created_at]
       properties:
         id:
           type: string
@@ -7206,6 +7450,12 @@ components:
           type: string
         author_display_name:
           type: string
+        remote:
+          type: boolean
+          description: True for a federated comment authored on another instance.
+        author_domain:
+          type: string
+          description: The remote author's origin instance; omitted for local comments.
         created_at:
           type: string
           format: date-time

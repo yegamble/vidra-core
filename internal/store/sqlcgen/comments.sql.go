@@ -14,10 +14,11 @@ import (
 )
 
 const countComments = `-- name: CountComments :one
-SELECT count(*) FROM comments
+SELECT count(*) FROM comments WHERE user_id IS NOT NULL
 `
 
-// Total comments — the "local comments" count NodeInfo advertises.
+// LOCAL comments only — the "local comments" count NodeInfo advertises.
+// Federated (remote-authored) comments are excluded.
 func (q *Queries) CountComments(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countComments)
 	var count int64
@@ -28,12 +29,13 @@ func (q *Queries) CountComments(ctx context.Context) (int64, error) {
 const createComment = `-- name: CreateComment :one
 INSERT INTO comments (video_id, user_id, body, parent_id)
 VALUES ($1, $2, $3, $4)
-RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id
+RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
+          remote_actor_url, remote_author_name, remote_object_url
 `
 
 type CreateCommentParams struct {
 	VideoID  uuid.UUID   `json:"video_id"`
-	UserID   uuid.UUID   `json:"user_id"`
+	UserID   pgtype.UUID `json:"user_id"`
 	Body     string      `json:"body"`
 	ParentID pgtype.UUID `json:"parent_id"`
 }
@@ -56,6 +58,57 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ParentID,
+		&i.RemoteActorUrl,
+		&i.RemoteAuthorName,
+		&i.RemoteObjectUrl,
+	)
+	return i, err
+}
+
+const createRemoteComment = `-- name: CreateRemoteComment :one
+INSERT INTO comments (video_id, body, parent_id, remote_actor_url, remote_author_name, remote_object_url)
+VALUES ($1, $2, $3,
+        $4, $5, $6)
+ON CONFLICT (remote_object_url) DO UPDATE
+    SET body = EXCLUDED.body, updated_at = now()
+RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
+          remote_actor_url, remote_author_name, remote_object_url
+`
+
+type CreateRemoteCommentParams struct {
+	VideoID          uuid.UUID   `json:"video_id"`
+	Body             string      `json:"body"`
+	ParentID         pgtype.UUID `json:"parent_id"`
+	RemoteActorUrl   *string     `json:"remote_actor_url"`
+	RemoteAuthorName *string     `json:"remote_author_name"`
+	RemoteObjectUrl  *string     `json:"remote_object_url"`
+}
+
+// Store an inbound federated Note as a comment (remote-content §6): attributed
+// to a remote actor (with a display-name snapshot) instead of a local user.
+// Idempotent by the Note's ActivityPub object id — a re-delivered or updated
+// Note refreshes the body.
+func (q *Queries) CreateRemoteComment(ctx context.Context, arg CreateRemoteCommentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, createRemoteComment,
+		arg.VideoID,
+		arg.Body,
+		arg.ParentID,
+		arg.RemoteActorUrl,
+		arg.RemoteAuthorName,
+		arg.RemoteObjectUrl,
+	)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.VideoID,
+		&i.UserID,
+		&i.Body,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.RemoteActorUrl,
+		&i.RemoteAuthorName,
+		&i.RemoteObjectUrl,
 	)
 	return i, err
 }
@@ -71,7 +124,8 @@ func (q *Queries) DeleteComment(ctx context.Context, id uuid.UUID) error {
 }
 
 const getComment = `-- name: GetComment :one
-SELECT id, video_id, user_id, body, created_at, updated_at, parent_id
+SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
+       remote_actor_url, remote_author_name, remote_object_url
 FROM comments
 WHERE id = $1
 `
@@ -87,16 +141,52 @@ func (q *Queries) GetComment(ctx context.Context, id uuid.UUID) (Comment, error)
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ParentID,
+		&i.RemoteActorUrl,
+		&i.RemoteAuthorName,
+		&i.RemoteObjectUrl,
+	)
+	return i, err
+}
+
+const getCommentByRemoteObjectURL = `-- name: GetCommentByRemoteObjectURL :one
+SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
+       remote_actor_url, remote_author_name, remote_object_url
+FROM comments
+WHERE remote_object_url = $1::text
+`
+
+// Look a federated comment up by its Note's ActivityPub object id — the key
+// inbound Update{Note}/Delete use (§6/§7). Local comments never match (their
+// remote_object_url is NULL).
+func (q *Queries) GetCommentByRemoteObjectURL(ctx context.Context, remoteObjectUrl string) (Comment, error) {
+	row := q.db.QueryRow(ctx, getCommentByRemoteObjectURL, remoteObjectUrl)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.VideoID,
+		&i.UserID,
+		&i.Body,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.RemoteActorUrl,
+		&i.RemoteAuthorName,
+		&i.RemoteObjectUrl,
 	)
 	return i, err
 }
 
 const listAdminComments = `-- name: ListAdminComments :many
 SELECT c.id, c.video_id, c.body, c.created_at,
-       u.username AS author_username, u.display_name AS author_display_name,
+       COALESCE(u.username, '')::text AS author_username,
+       COALESCE(u.display_name, '')::text AS author_display_name,
+       c.remote_actor_url,
+       COALESCE(c.remote_author_name, '')::text AS remote_author_name,
+       COALESCE(ra.domain, '')::text AS author_domain,
        v.title AS video_title
 FROM comments c
-JOIN users u ON u.id = c.user_id
+LEFT JOIN users u ON u.id = c.user_id
+LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
 JOIN videos v ON v.id = c.video_id
 WHERE ($1::text IS NULL OR c.body ILIKE '%' || $1 || '%')
 ORDER BY c.created_at DESC, c.id DESC
@@ -116,12 +206,15 @@ type ListAdminCommentsRow struct {
 	CreatedAt         time.Time `json:"created_at"`
 	AuthorUsername    string    `json:"author_username"`
 	AuthorDisplayName string    `json:"author_display_name"`
+	RemoteActorUrl    *string   `json:"remote_actor_url"`
+	RemoteAuthorName  string    `json:"remote_author_name"`
+	AuthorDomain      string    `json:"author_domain"`
 	VideoTitle        string    `json:"video_title"`
 }
 
 // The admin/moderator comments overview: ALL comments newest first, with the
-// author's identity and the video they're on. An optional case-insensitive body
-// filter (NULL = no filter).
+// author's identity (local user or remote actor + domain, §6) and the video
+// they're on. An optional case-insensitive body filter (NULL = no filter).
 func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsParams) ([]ListAdminCommentsRow, error) {
 	rows, err := q.db.Query(ctx, listAdminComments, arg.Query, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
@@ -138,6 +231,9 @@ func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsPa
 			&i.CreatedAt,
 			&i.AuthorUsername,
 			&i.AuthorDisplayName,
+			&i.RemoteActorUrl,
+			&i.RemoteAuthorName,
+			&i.AuthorDomain,
 			&i.VideoTitle,
 		); err != nil {
 			return nil, err
@@ -152,9 +248,14 @@ func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsPa
 
 const listCommentsByVideo = `-- name: ListCommentsByVideo :many
 SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at,
-       u.username AS author_username, u.display_name AS author_display_name
+       COALESCE(u.username, '')::text AS author_username,
+       COALESCE(u.display_name, '')::text AS author_display_name,
+       c.remote_actor_url,
+       COALESCE(c.remote_author_name, '')::text AS remote_author_name,
+       COALESCE(ra.domain, '')::text AS author_domain
 FROM comments c
-JOIN users u ON u.id = c.user_id
+LEFT JOIN users u ON u.id = c.user_id
+LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
 WHERE c.video_id = $1
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
@@ -163,6 +264,13 @@ WHERE c.video_id = $1
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks ub
       WHERE ub.blocker_id = $2 AND ub.blocked_id = c.user_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_instances mi
+      WHERE mi.muter_id = $2 AND mi.domain = ra.domain
   )
 ORDER BY c.created_at DESC, c.id DESC
 LIMIT $4 OFFSET $3
@@ -178,20 +286,26 @@ type ListCommentsByVideoParams struct {
 type ListCommentsByVideoRow struct {
 	ID                uuid.UUID   `json:"id"`
 	VideoID           uuid.UUID   `json:"video_id"`
-	UserID            uuid.UUID   `json:"user_id"`
+	UserID            pgtype.UUID `json:"user_id"`
 	Body              string      `json:"body"`
 	ParentID          pgtype.UUID `json:"parent_id"`
 	CreatedAt         time.Time   `json:"created_at"`
 	UpdatedAt         time.Time   `json:"updated_at"`
 	AuthorUsername    string      `json:"author_username"`
 	AuthorDisplayName string      `json:"author_display_name"`
+	RemoteActorUrl    *string     `json:"remote_actor_url"`
+	RemoteAuthorName  string      `json:"remote_author_name"`
+	AuthorDomain      string      `json:"author_domain"`
 }
 
 // A video's comments, newest first, joined with author identity for display.
-// When viewer_id is provided (an authenticated viewer), comments authored by an
-// account that viewer has muted OR blocked are hidden (§13: blocking hides the
-// blocked account's content from the blocker); when NULL (anonymous), nothing
-// is filtered — a NULL viewer matches no muted_accounts/user_blocks row.
+// A comment is authored by a local user OR a remote actor (§6): the users join
+// is LEFT and remote rows carry remote_author_name + the origin domain. When
+// viewer_id is provided (an authenticated viewer), comments authored by an
+// account that viewer has muted OR blocked are hidden (§13), and remote
+// comments from instances that viewer muted are hidden too (§8); when NULL
+// (anonymous), only the admin instance blocklist filters (it hides for
+// everyone).
 func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVideoParams) ([]ListCommentsByVideoRow, error) {
 	rows, err := q.db.Query(ctx, listCommentsByVideo,
 		arg.VideoID,
@@ -216,6 +330,9 @@ func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVid
 			&i.UpdatedAt,
 			&i.AuthorUsername,
 			&i.AuthorDisplayName,
+			&i.RemoteActorUrl,
+			&i.RemoteAuthorName,
+			&i.AuthorDomain,
 		); err != nil {
 			return nil, err
 		}
@@ -231,7 +348,8 @@ const updateComment = `-- name: UpdateComment :one
 UPDATE comments
 SET body = $1, updated_at = now()
 WHERE id = $2
-RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id
+RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
+          remote_actor_url, remote_author_name, remote_object_url
 `
 
 type UpdateCommentParams struct {
@@ -252,6 +370,9 @@ func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (C
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ParentID,
+		&i.RemoteActorUrl,
+		&i.RemoteAuthorName,
+		&i.RemoteObjectUrl,
 	)
 	return i, err
 }

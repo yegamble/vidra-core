@@ -69,6 +69,26 @@ type Repository interface {
 	AcceptRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.AcceptRemoteChannelFollowByActivityParams) (int64, error)
 	DeleteRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.DeleteRemoteChannelFollowByActivityParams) (int64, error)
 	HasAcceptedRemoteChannelFollow(ctx context.Context, remoteActorURL string) (bool, error)
+	// Federated comments (remote-content §6): inbound Create/Update{Note}
+	// storage + the comment reads outbound fan-out needs.
+	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
+	GetCommentByRemoteObjectURL(ctx context.Context, remoteObjectURL string) (sqlcgen.Comment, error)
+	CreateRemoteComment(ctx context.Context, arg sqlcgen.CreateRemoteCommentParams) (sqlcgen.Comment, error)
+	UpdateComment(ctx context.Context, arg sqlcgen.UpdateCommentParams) (sqlcgen.Comment, error)
+	DeleteComment(ctx context.Context, id uuid.UUID) error
+	// Inbound Delete authority + effects (remote-content §7): retracted remote
+	// videos and deleted remote actors (whose content cascades away).
+	GetRemoteVideoByObjectURL(ctx context.Context, objectURL string) (sqlcgen.GetRemoteVideoByObjectURLRow, error)
+	DeleteRemoteVideoByObjectURL(ctx context.Context, objectURL string) (int64, error)
+	DeleteRemoteActor(ctx context.Context, actorURL string) (int64, error)
+}
+
+// CommentFlagger runs the watched-words moderation flagging over a stored
+// federated comment (remote-content §6: remote comments are subject to the
+// same flagging as local ones). *watchword.Service satisfies it; wiring it is
+// optional (nil = no flagging).
+type CommentFlagger interface {
+	FlagComment(ctx context.Context, commentID uuid.UUID, body string) (int, error)
 }
 
 // FollowEdgeChecker reports whether any LOCAL user has an accepted outbound
@@ -104,6 +124,9 @@ type Service struct {
 	// media stores best-effort cached remote thumbnails
 	// (remote-thumbnails/<id>.jpg). Nil = thumbnails are not cached.
 	media storage.Backend
+	// flagger runs watched-words flagging over inbound federated comments
+	// (remote-content §6). Nil = no flagging.
+	flagger CommentFlagger
 
 	// allowPrivateFetch relaxes the SSRF guard for remote-actor fetches so backed
 	// e2e / dev can reach a loopback origin. Never true in production.
@@ -139,6 +162,11 @@ func WithFollowEdgeChecker(e FollowEdgeChecker) Option { return func(s *Service)
 // WithMediaStorage wires the blob backend used to cache remote thumbnails
 // (remote-content §5). When unset, ingestion skips the thumbnail cache.
 func WithMediaStorage(b storage.Backend) Option { return func(s *Service) { s.media = b } }
+
+// WithCommentFlagger wires the watched-words flagging applied to inbound
+// federated comments (remote-content §6). When unset, remote comments are
+// stored unflagged.
+func WithCommentFlagger(f CommentFlagger) Option { return func(s *Service) { s.flagger = f } }
 
 // NewService builds a federation Service over the given repository.
 func NewService(repo Repository, opts ...Option) *Service {

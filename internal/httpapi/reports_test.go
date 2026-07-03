@@ -28,6 +28,7 @@ type modReportRow struct {
 	videoID        pgtype.UUID
 	commentID      pgtype.UUID
 	reportedUserID pgtype.UUID
+	remoteVideoID  pgtype.UUID
 	reason         string
 	status         string
 	note           string
@@ -45,6 +46,11 @@ type moderationFakeRepo struct {
 	reports    []modReportRow
 	blocks     map[uuid.UUID]modBlockMark
 	blockOrder []uuid.UUID // block order (oldest first)
+	// remote-video moderation (remote-content §8). remoteVideos is the FK
+	// target: reporting/blocking an id absent from it is a violation.
+	remoteVideos     remoteVideoFakeRepo
+	remoteBlocks     map[uuid.UUID]modBlockMark
+	remoteBlockOrder []uuid.UUID
 }
 
 // modBlockMark records a video_blocks row in the fake repo.
@@ -108,7 +114,8 @@ func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReport
 		}
 		row := sqlcgen.ListReportsRow{
 			ID: r.id, TargetType: r.targetType, VideoID: r.videoID, CommentID: r.commentID,
-			ReportedUserID: r.reportedUserID, Reason: r.reason, Status: r.status,
+			ReportedUserID: r.reportedUserID, RemoteVideoID: r.remoteVideoID,
+			Reason: r.reason, Status: r.status,
 			ModeratorNote: r.note, ResolvedAt: r.resolvedAt, CreatedAt: r.createdAt,
 		}
 		if u, err := f.auth.GetUserByID(context.Background(), r.reporterID); err == nil {
@@ -132,7 +139,82 @@ func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReport
 				row.CommentBody = &b
 			}
 		}
+		if r.remoteVideoID.Valid {
+			if rv, ok := f.remoteVideos[uuid.UUID(r.remoteVideoID.Bytes)]; ok {
+				tt, dom := rv.Title, rv.Domain
+				row.RemoteVideoTitle = &tt
+				row.RemoteVideoDomain = &dom
+			}
+		}
 		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func (f *moderationFakeRepo) CreateRemoteVideoReport(_ context.Context, a sqlcgen.CreateRemoteVideoReportParams) (int64, error) {
+	if _, ok := f.remoteVideos[uuid.UUID(a.RemoteVideoID.Bytes)]; !ok {
+		return 0, &pgconn.PgError{Code: "23503"} // foreign-key violation: no such remote video
+	}
+	for _, r := range f.reports {
+		if r.reporterID == a.ReporterID && r.remoteVideoID == a.RemoteVideoID {
+			return 0, nil
+		}
+	}
+	f.reports = append(f.reports, modReportRow{
+		id: uuid.New(), reporterID: a.ReporterID, targetType: "remote_video",
+		remoteVideoID: a.RemoteVideoID, reason: a.Reason, status: "open", createdAt: time.Now(),
+	})
+	return 1, nil
+}
+
+func (f *moderationFakeRepo) BlockRemoteVideo(_ context.Context, a sqlcgen.BlockRemoteVideoParams) (int64, error) {
+	if _, ok := f.remoteVideos[a.RemoteVideoID]; !ok {
+		return 0, &pgconn.PgError{Code: "23503"} // foreign-key violation: no such remote video
+	}
+	if f.remoteBlocks == nil {
+		f.remoteBlocks = map[uuid.UUID]modBlockMark{}
+	}
+	if _, ok := f.remoteBlocks[a.RemoteVideoID]; !ok {
+		f.remoteBlockOrder = append(f.remoteBlockOrder, a.RemoteVideoID)
+	}
+	f.remoteBlocks[a.RemoteVideoID] = modBlockMark{reason: a.Reason, by: uuid.UUID(a.BlockedBy.Bytes), at: time.Now()}
+	return 1, nil
+}
+
+func (f *moderationFakeRepo) UnblockRemoteVideo(_ context.Context, id uuid.UUID) (int64, error) {
+	if _, ok := f.remoteBlocks[id]; !ok {
+		return 0, nil
+	}
+	delete(f.remoteBlocks, id)
+	for i, v := range f.remoteBlockOrder {
+		if v == id {
+			f.remoteBlockOrder = append(f.remoteBlockOrder[:i], f.remoteBlockOrder[i+1:]...)
+			break
+		}
+	}
+	return 1, nil
+}
+
+func (f *moderationFakeRepo) ListBlockedRemoteVideos(_ context.Context, a sqlcgen.ListBlockedRemoteVideosParams) ([]sqlcgen.ListBlockedRemoteVideosRow, error) {
+	var rows []sqlcgen.ListBlockedRemoteVideosRow
+	for i := len(f.remoteBlockOrder) - 1; i >= 0; i-- { // newest block first
+		id := f.remoteBlockOrder[i]
+		mark := f.remoteBlocks[id]
+		rv := f.remoteVideos[id]
+		row := sqlcgen.ListBlockedRemoteVideosRow{
+			RemoteVideoID: id, Title: rv.Title, ObjectUrl: rv.ObjectUrl,
+			WatchUrl: rv.WatchUrl, Domain: rv.Domain, Reason: mark.reason, BlockedAt: mark.at,
+		}
+		if u, err := f.auth.GetUserByID(context.Background(), mark.by); err == nil {
+			un := u.Username
+			row.BlockedByUsername = &un
+		}
+		rows = append(rows, row)
+	}
+	off := min(int(a.ResultOffset), len(rows))
+	rows = rows[off:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(rows) {
+		rows = rows[:a.ResultLimit]
 	}
 	return rows, nil
 }

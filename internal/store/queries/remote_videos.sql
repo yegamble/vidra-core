@@ -28,11 +28,25 @@ UPDATE remote_videos SET thumbnail_key = $2, updated_at = now() WHERE id = $1;
 
 -- name: GetRemoteVideoByID :one
 -- The remote-watch read model. Content from admin-blocked instances is hidden
--- from all surfaces (§8), so a video whose origin domain is blocked is absent.
+-- from all surfaces (§8), so a video whose origin domain is blocked is absent —
+-- and so is an individually admin-blocked remote video (remote_video_blocks).
 SELECT rv.id, rv.object_url, rv.remote_actor_url, ra.domain, rv.title,
        rv.description, rv.duration_seconds, rv.published_at, rv.watch_url,
        rv.stream_url, rv.thumbnail_key, rv.fetched_at, rv.updated_at
 FROM remote_videos rv
 JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 WHERE rv.id = $1
-  AND NOT EXISTS (SELECT 1 FROM blocked_instances b WHERE b.domain = ra.domain);
+  AND NOT EXISTS (SELECT 1 FROM blocked_instances b WHERE b.domain = ra.domain)
+  AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id);
+
+-- name: GetRemoteVideoByObjectURL :one
+-- Resolve a remote video by its ActivityPub object id — the key inbound
+-- Delete authority checks use (§7). Unfiltered by moderation state (an
+-- origin's Delete applies to blocked rows too).
+SELECT id, object_url, remote_actor_url
+FROM remote_videos
+WHERE object_url = $1;
+
+-- name: DeleteRemoteVideoByObjectURL :execrows
+-- Inbound Delete of a remote video (§7): the origin retracted it.
+DELETE FROM remote_videos WHERE object_url = $1;

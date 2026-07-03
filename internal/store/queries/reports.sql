@@ -20,21 +20,35 @@ INSERT INTO reports (reporter_id, target_type, reported_user_id, reason)
 VALUES ($1, 'account', $2, $3)
 ON CONFLICT (reporter_id, reported_user_id) WHERE reported_user_id IS NOT NULL DO NOTHING;
 
+-- name: CreateRemoteVideoReport :execrows
+-- Report a federated remote video (remote-content §8; idempotent per
+-- reporter+remote video). A non-existent target raises a foreign-key
+-- violation, which the service maps to "invalid target".
+INSERT INTO reports (reporter_id, target_type, remote_video_id, reason)
+VALUES ($1, 'remote_video', $2, $3)
+ON CONFLICT (reporter_id, remote_video_id) WHERE remote_video_id IS NOT NULL DO NOTHING;
+
 -- name: ListReports :many
 -- The moderation queue, newest first, with the reporter's username and the
--- target context (video title / comment body / reported account username). When
--- open_only is true, only unresolved (status='open') reports are returned.
-SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.reason, r.status,
+-- target context (video title / comment body / reported account username /
+-- remote video title+domain). When open_only is true, only unresolved
+-- (status='open') reports are returned.
+SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.remote_video_id,
+       r.reason, r.status,
        r.moderator_note, r.resolved_at, r.created_at,
        u.username AS reporter_username,
        v.title AS video_title,
        cm.body AS comment_body,
-       ru.username AS reported_username
+       ru.username AS reported_username,
+       rv.title AS remote_video_title,
+       ra.domain AS remote_video_domain
 FROM reports r
 JOIN users u ON u.id = r.reporter_id
 LEFT JOIN videos v ON v.id = r.video_id
 LEFT JOIN comments cm ON cm.id = r.comment_id
 LEFT JOIN users ru ON ru.id = r.reported_user_id
+LEFT JOIN remote_videos rv ON rv.id = r.remote_video_id
+LEFT JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 WHERE (NOT sqlc.arg('open_only')::bool OR r.status = 'open')
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');

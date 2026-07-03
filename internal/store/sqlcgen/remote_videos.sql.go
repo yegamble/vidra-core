@@ -13,6 +13,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteRemoteVideoByObjectURL = `-- name: DeleteRemoteVideoByObjectURL :execrows
+DELETE FROM remote_videos WHERE object_url = $1
+`
+
+// Inbound Delete of a remote video (§7): the origin retracted it.
+func (q *Queries) DeleteRemoteVideoByObjectURL(ctx context.Context, objectUrl string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteRemoteVideoByObjectURL, objectUrl)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRemoteVideoByID = `-- name: GetRemoteVideoByID :one
 SELECT rv.id, rv.object_url, rv.remote_actor_url, ra.domain, rv.title,
        rv.description, rv.duration_seconds, rv.published_at, rv.watch_url,
@@ -21,6 +34,7 @@ FROM remote_videos rv
 JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 WHERE rv.id = $1
   AND NOT EXISTS (SELECT 1 FROM blocked_instances b WHERE b.domain = ra.domain)
+  AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
 `
 
 type GetRemoteVideoByIDRow struct {
@@ -40,7 +54,8 @@ type GetRemoteVideoByIDRow struct {
 }
 
 // The remote-watch read model. Content from admin-blocked instances is hidden
-// from all surfaces (§8), so a video whose origin domain is blocked is absent.
+// from all surfaces (§8), so a video whose origin domain is blocked is absent —
+// and so is an individually admin-blocked remote video (remote_video_blocks).
 func (q *Queries) GetRemoteVideoByID(ctx context.Context, id uuid.UUID) (GetRemoteVideoByIDRow, error) {
 	row := q.db.QueryRow(ctx, getRemoteVideoByID, id)
 	var i GetRemoteVideoByIDRow
@@ -59,6 +74,28 @@ func (q *Queries) GetRemoteVideoByID(ctx context.Context, id uuid.UUID) (GetRemo
 		&i.FetchedAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const getRemoteVideoByObjectURL = `-- name: GetRemoteVideoByObjectURL :one
+SELECT id, object_url, remote_actor_url
+FROM remote_videos
+WHERE object_url = $1
+`
+
+type GetRemoteVideoByObjectURLRow struct {
+	ID             uuid.UUID `json:"id"`
+	ObjectUrl      string    `json:"object_url"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+}
+
+// Resolve a remote video by its ActivityPub object id — the key inbound
+// Delete authority checks use (§7). Unfiltered by moderation state (an
+// origin's Delete applies to blocked rows too).
+func (q *Queries) GetRemoteVideoByObjectURL(ctx context.Context, objectUrl string) (GetRemoteVideoByObjectURLRow, error) {
+	row := q.db.QueryRow(ctx, getRemoteVideoByObjectURL, objectUrl)
+	var i GetRemoteVideoByObjectURLRow
+	err := row.Scan(&i.ID, &i.ObjectUrl, &i.RemoteActorUrl)
 	return i, err
 }
 

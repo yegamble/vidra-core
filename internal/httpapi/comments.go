@@ -17,7 +17,9 @@ import (
 const maxCommentLen = 2000
 
 // commentView is the public projection of a comment, with its author's identity.
-// AuthorID is the author's account id (so a signed-in viewer can mute them).
+// AuthorID is the author's account id (so a signed-in viewer can mute them) —
+// null for a REMOTE (federated) comment, which instead is flagged remote with
+// its origin domain and the remote author-name snapshot (remote-content §6).
 // ParentID is null for a top-level comment, or the id of the comment this one
 // replies to (so the client can build the thread tree).
 type commentView struct {
@@ -25,9 +27,11 @@ type commentView struct {
 	VideoID           string    `json:"video_id"`
 	Body              string    `json:"body"`
 	ParentID          *string   `json:"parent_id"`
-	AuthorID          string    `json:"author_id"`
+	AuthorID          *string   `json:"author_id"`
 	AuthorUsername    string    `json:"author_username"`
 	AuthorDisplayName string    `json:"author_display_name"`
+	Remote            bool      `json:"remote"`
+	AuthorDomain      string    `json:"author_domain,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 	// Edited is true once the body has been edited (updated_at moved past
@@ -41,9 +45,10 @@ func newCommentView(c sqlcgen.Comment, authorUsername, authorDisplayName string)
 		VideoID:           c.VideoID.String(),
 		Body:              c.Body,
 		ParentID:          uuidPtrString(c.ParentID),
-		AuthorID:          c.UserID.String(),
+		AuthorID:          uuidPtrString(c.UserID),
 		AuthorUsername:    authorUsername,
 		AuthorDisplayName: authorDisplayName,
+		Remote:            c.RemoteActorUrl != nil,
 		CreatedAt:         c.CreatedAt,
 		UpdatedAt:         c.UpdatedAt,
 		Edited:            c.UpdatedAt.After(c.CreatedAt),
@@ -190,7 +195,10 @@ func (s *Server) handleListComments(c echo.Context) error {
 	}
 	views := make([]commentView, 0, len(items))
 	for _, it := range items {
-		views = append(views, newCommentView(it.Comment, it.AuthorUsername, it.AuthorDisplayName))
+		v := newCommentView(it.Comment, it.AuthorUsername, it.AuthorDisplayName)
+		v.Remote = it.Remote
+		v.AuthorDomain = it.AuthorDomain
+		views = append(views, v)
 	}
 	return c.JSON(http.StatusOK, commentListResponse{Comments: views, Limit: limit, Offset: offset})
 }

@@ -7,7 +7,8 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// adminCommentView is the admin/moderator comments-overview projection.
+// adminCommentView is the admin/moderator comments-overview projection. Remote
+// (federated) comments are flagged with their origin domain (remote-content §6).
 type adminCommentView struct {
 	ID                string    `json:"id"`
 	VideoID           string    `json:"video_id"`
@@ -15,6 +16,8 @@ type adminCommentView struct {
 	Body              string    `json:"body"`
 	AuthorUsername    string    `json:"author_username"`
 	AuthorDisplayName string    `json:"author_display_name"`
+	Remote            bool      `json:"remote"`
+	AuthorDomain      string    `json:"author_domain,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -48,6 +51,8 @@ func (s *Server) handleListAdminComments(c echo.Context) error {
 			Body:              it.Body,
 			AuthorUsername:    it.AuthorUsername,
 			AuthorDisplayName: it.AuthorDisplayName,
+			Remote:            it.Remote,
+			AuthorDomain:      it.AuthorDomain,
 			CreatedAt:         it.CreatedAt,
 		})
 	}
