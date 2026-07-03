@@ -94,6 +94,11 @@ WHERE v.privacy = 'public' AND v.state = 'published'
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
   )
+  -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+  )
   AND (sqlc.narg('tag')::text IS NULL OR EXISTS (
       SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = sqlc.narg('tag')
   ))
@@ -132,6 +137,11 @@ WHERE v.privacy = 'public' AND v.state = 'published'
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = sqlc.arg('follower_id') AND m.muted_id = c.owner_id
   )
+  -- §13: owners the follower has BLOCKED are hidden too.
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.arg('follower_id') AND ub.blocked_id = c.owner_id
+  )
   AND v.channel_id IN (
       SELECT channel_id FROM channel_follows WHERE follower_id = sqlc.arg('follower_id')
   )
@@ -160,6 +170,11 @@ WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+  )
+  -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
   )
   AND (v.title ILIKE '%' || sqlc.arg('query') || '%'
        OR EXISTS (

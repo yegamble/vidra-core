@@ -4347,9 +4347,13 @@ paths:
       operationId: blockUser
       summary: Block an account
       description: >-
-        Blocks another account, cutting off direct messaging between the two in
-        both directions. Requires authentication. Idempotent. Blocking yourself is
-        422; an unknown target account is 404.
+        Blocks another account: direct messaging between the two is cut off in
+        both directions, and the blocked account's content is hidden from the
+        blocker — their videos leave the blocker's feed, search, and
+        subscriptions, and their comments are filtered from comment lists
+        (per-viewer, exactly like mutes; other viewers are unaffected).
+        Requires authentication. Idempotent. Blocking yourself is 422; an
+        unknown target account is 404.
       tags: [moderation]
       security:
         - bearerAuth: []
@@ -4385,8 +4389,10 @@ paths:
       operationId: unblockUser
       summary: Unblock an account
       description: >-
-        Lifts the caller's block of another account. Requires authentication.
-        Idempotent (unblocking a not-blocked account still succeeds).
+        Lifts the caller's block of another account, restoring direct messaging
+        and the blocked account's content (videos in feed/search/subscriptions,
+        comments). Requires authentication. Idempotent (unblocking a
+        not-blocked account still succeeds).
       tags: [moderation]
       security:
         - bearerAuth: []

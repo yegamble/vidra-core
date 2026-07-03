@@ -160,6 +160,10 @@ WHERE c.video_id = $1
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = $2 AND m.muted_id = c.user_id
   )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = c.user_id
+  )
 ORDER BY c.created_at DESC, c.id DESC
 LIMIT $4 OFFSET $3
 `
@@ -185,8 +189,9 @@ type ListCommentsByVideoRow struct {
 
 // A video's comments, newest first, joined with author identity for display.
 // When viewer_id is provided (an authenticated viewer), comments authored by an
-// account that viewer has muted are hidden; when NULL (anonymous), nothing is
-// filtered — a NULL muter_id matches no muted_accounts row.
+// account that viewer has muted OR blocked are hidden (§13: blocking hides the
+// blocked account's content from the blocker); when NULL (anonymous), nothing
+// is filtered — a NULL viewer matches no muted_accounts/user_blocks row.
 func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVideoParams) ([]ListCommentsByVideoRow, error) {
 	rows, err := q.db.Query(ctx, listCommentsByVideo,
 		arg.VideoID,

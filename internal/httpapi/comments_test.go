@@ -18,12 +18,14 @@ import (
 
 // commentFakeRepo is an in-memory comment.Repository. It resolves author identity
 // from the shared authFakeRepo (mirroring the ListCommentsByVideo JOIN on users)
-// and, like the real query, hides comments from accounts the viewer has muted.
+// and, like the real query, hides comments from accounts the viewer has muted
+// or blocked (§13).
 type commentFakeRepo struct {
-	users    *authFakeRepo
-	mutes    *muteFakeRepo
-	videos   *videoFakeRepo
-	comments map[uuid.UUID]sqlcgen.Comment
+	users      *authFakeRepo
+	mutes      *muteFakeRepo
+	userBlocks *blockFakeRepo
+	videos     *videoFakeRepo
+	comments   map[uuid.UUID]sqlcgen.Comment
 }
 
 func (f *commentFakeRepo) CreateComment(_ context.Context, a sqlcgen.CreateCommentParams) (sqlcgen.Comment, error) {
@@ -53,8 +55,12 @@ func (f *commentFakeRepo) ListCommentsByVideo(_ context.Context, a sqlcgen.ListC
 		if c.VideoID != a.VideoID {
 			continue
 		}
-		// Mirror the real query: an authenticated viewer's muted authors are hidden.
+		// Mirror the real query: an authenticated viewer's muted OR blocked (§13)
+		// authors are hidden.
 		if a.ViewerID.Valid && f.mutes != nil && f.mutes.isMuted(uuid.UUID(a.ViewerID.Bytes), c.UserID) {
+			continue
+		}
+		if a.ViewerID.Valid && f.userBlocks != nil && f.userBlocks.isBlocked(uuid.UUID(a.ViewerID.Bytes), c.UserID) {
 			continue
 		}
 		username, display := f.author(c.UserID)

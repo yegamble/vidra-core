@@ -221,3 +221,123 @@ func TestWatchedWordVideoMatchesPersist(t *testing.T) {
 		}
 	}
 }
+
+// TestBlockHidesContentFilters proves the §13 SQL against a real PostgreSQL:
+// a user_blocks row (blocker = viewer) removes the blocked owner's videos from
+// the feed/search/subscriptions queries and their comments from the comment
+// list — per-viewer (an anonymous/other viewer is unaffected) — and deleting
+// the block restores everything.
+func TestBlockHidesContentFilters(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	creatorID, channelID := seedOwnerChannel(ctx, t, st, "blk-creator")
+	viewerID, _ := seedOwnerChannel(ctx, t, st, "blk-viewer")
+	title := "block-probe-" + uuid.NewString()[:8]
+	videoID := seedPublishedVideo(ctx, t, st, channelID, title)
+	var commentID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO comments (video_id, user_id, body) VALUES ($1, $2, 'from creator') RETURNING id`,
+		videoID, creatorID,
+	).Scan(&commentID); err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO channel_follows (channel_id, follower_id) VALUES ($1, $2)`,
+		channelID, viewerID,
+	); err != nil {
+		t.Fatalf("seed follow: %v", err)
+	}
+
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: true}
+	inFeed := func(as pgtype.UUID) bool {
+		rows, err := q.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
+			Sort: "recent", ViewerID: as, ResultLimit: 500,
+		})
+		if err != nil {
+			t.Fatalf("ListPublicVideosSorted: %v", err)
+		}
+		for _, r := range rows {
+			if r.ID == videoID {
+				return true
+			}
+		}
+		return false
+	}
+	inSearch := func(as pgtype.UUID) bool {
+		rows, err := q.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
+			Query: &title, ViewerID: as, ResultLimit: 10,
+		})
+		if err != nil {
+			t.Fatalf("SearchPublicVideos: %v", err)
+		}
+		for _, r := range rows {
+			if r.ID == videoID {
+				return true
+			}
+		}
+		return false
+	}
+	inSubs := func() bool {
+		rows, err := q.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{
+			FollowerID: viewerID, ResultLimit: 500,
+		})
+		if err != nil {
+			t.Fatalf("ListSubscriptionVideos: %v", err)
+		}
+		for _, r := range rows {
+			if r.ID == videoID {
+				return true
+			}
+		}
+		return false
+	}
+	inComments := func(as pgtype.UUID) bool {
+		rows, err := q.ListCommentsByVideo(ctx, sqlcgen.ListCommentsByVideoParams{
+			VideoID: videoID, ViewerID: as, ResultLimit: 100,
+		})
+		if err != nil {
+			t.Fatalf("ListCommentsByVideo: %v", err)
+		}
+		for _, r := range rows {
+			if r.ID == commentID {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !inFeed(viewer) || !inSearch(viewer) || !inSubs() || !inComments(viewer) {
+		t.Fatalf("baseline: content missing before the block (feed=%v search=%v subs=%v comments=%v)",
+			inFeed(viewer), inSearch(viewer), inSubs(), inComments(viewer))
+	}
+
+	// The viewer blocks the creator (the real BlockUser upsert).
+	if _, err := q.BlockUser(ctx, sqlcgen.BlockUserParams{BlockerID: viewerID, BlockedID: creatorID}); err != nil {
+		t.Fatalf("BlockUser: %v", err)
+	}
+	if inFeed(viewer) || inSearch(viewer) || inSubs() || inComments(viewer) {
+		t.Fatalf("blocked owner still visible (feed=%v search=%v subs=%v comments=%v)",
+			inFeed(viewer), inSearch(viewer), inSubs(), inComments(viewer))
+	}
+	// Per-viewer: an anonymous viewer (NULL) still sees everything.
+	if !inFeed(pgtype.UUID{}) || !inSearch(pgtype.UUID{}) || !inComments(pgtype.UUID{}) {
+		t.Fatalf("anon viewer affected by someone else's block")
+	}
+
+	// Unblocking restores visibility.
+	if _, err := q.UnblockUser(ctx, sqlcgen.UnblockUserParams{BlockerID: viewerID, BlockedID: creatorID}); err != nil {
+		t.Fatalf("UnblockUser: %v", err)
+	}
+	if !inFeed(viewer) || !inSearch(viewer) || !inSubs() || !inComments(viewer) {
+		t.Fatalf("content not restored after unblock (feed=%v search=%v subs=%v comments=%v)",
+			inFeed(viewer), inSearch(viewer), inSubs(), inComments(viewer))
+	}
+}

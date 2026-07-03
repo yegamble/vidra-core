@@ -246,7 +246,10 @@ curl -sX DELETE localhost:8080/api/v1/me/mutes/accounts/<user-id> -H 'authorizat
 curl -s 'localhost:8080/api/v1/me/mutes/accounts?limit=20' -H 'authorization: Bearer <token>'         # your muted accounts (newest first, with identity)
 
 # Account blocks (distinct from mute: a block SYMMETRICALLY cuts off direct
-# messaging — if either user has blocked the other, start/send DM is 403):
+# messaging — if either user has blocked the other, start/send DM is 403 — and
+# additionally hides the blocked account's content from the blocker: their
+# videos leave the blocker's feed/search/subscriptions and their comments are
+# filtered, per-viewer exactly like mutes):
 curl -sX POST   localhost:8080/api/v1/me/blocks/<user-id> -H 'authorization: Bearer <token>'  # block (idempotent; self -> 422, unknown -> 404)
 curl -sX DELETE localhost:8080/api/v1/me/blocks/<user-id> -H 'authorization: Bearer <token>'  # unblock (idempotent)
 curl -s 'localhost:8080/api/v1/me/blocks?limit=20' -H 'authorization: Bearer <token>'         # your blocked accounts (newest first, with identity)

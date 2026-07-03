@@ -373,6 +373,11 @@ WHERE v.privacy = 'public' AND v.state = 'published'
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
   )
+  -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
+  )
   AND ($2::text IS NULL OR EXISTS (
       SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $2
   ))
@@ -546,6 +551,11 @@ WHERE v.privacy = 'public' AND v.state = 'published'
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
   )
+  -- §13: owners the follower has BLOCKED are hidden too.
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
+  )
   AND v.channel_id IN (
       SELECT channel_id FROM channel_follows WHERE follower_id = $1
   )
@@ -702,6 +712,11 @@ WHERE v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
+  )
+  -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
   )
   AND (v.title ILIKE '%' || $2 || '%'
        OR EXISTS (

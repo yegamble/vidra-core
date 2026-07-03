@@ -45,15 +45,17 @@ type videoFakeRepo struct {
 	channels *channelFakeRepo
 	mutes    *muteFakeRepo
 	blocks   *moderationFakeRepo
-	videos   map[uuid.UUID]sqlcgen.GetVideoByIDRow
-	files    map[uuid.UUID][]sqlcgen.VideoFile
-	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
-	views    map[uuid.UUID]int64
-	saved    map[string]time.Time       // "userID|videoID" -> saved-at
-	history  map[string]historyMark     // "userID|videoID" -> resume position + last-watched
-	captions map[string]sqlcgen.Caption // "videoID|lang" -> caption
-	tags     map[uuid.UUID][]string     // video ID -> normalized tag set
-	viewDays map[string]int64           // "videoID|YYYY-MM-DD" -> rolled-up views
+	// userBlocks mirrors the §13 user_blocks content filter (viewer = blocker).
+	userBlocks *blockFakeRepo
+	videos     map[uuid.UUID]sqlcgen.GetVideoByIDRow
+	files      map[uuid.UUID][]sqlcgen.VideoFile
+	metadata   map[uuid.UUID]sqlcgen.VideoMetadatum
+	views      map[uuid.UUID]int64
+	saved      map[string]time.Time       // "userID|videoID" -> saved-at
+	history    map[string]historyMark     // "userID|videoID" -> resume position + last-watched
+	captions   map[string]sqlcgen.Caption // "videoID|lang" -> caption
+	tags       map[uuid.UUID][]string     // video ID -> normalized tag set
+	viewDays   map[string]int64           // "videoID|YYYY-MM-DD" -> rolled-up views
 	// ratings/commentsRepo mirror the cross-table joins the stats queries do.
 	ratings      *ratingFakeRepo
 	commentsRepo *commentFakeRepo
@@ -291,8 +293,8 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 	var rows []sqlcgen.ListSubscriptionVideosRow
 	for _, r := range f.videos {
 		follows := f.channels != nil && f.channels.follows[a.FollowerID.String()+"|"+r.ChannelID.String()]
-		muted := f.mutes != nil && f.mutes.isMuted(a.FollowerID, f.channelOwner(r.ChannelID))
-		if r.Privacy == "public" && r.State == "published" && follows && !muted {
+		hidden := f.mutedFromFeed(pgtype.UUID{Bytes: a.FollowerID, Valid: true}, r.ChannelID)
+		if r.Privacy == "public" && r.State == "published" && follows && !hidden {
 			rows = append(rows, sqlcgen.ListSubscriptionVideosRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
@@ -657,10 +659,18 @@ func (f *videoFakeRepo) channelOwner(channelID uuid.UUID) uuid.UUID {
 	return uuid.Nil
 }
 
-// mutedFromFeed reports whether an authenticated viewer has muted the owner of
-// the given channel — mirrors the feed queries' per-viewer mute filter.
+// mutedFromFeed reports whether an authenticated viewer has muted OR blocked
+// the owner of the given channel — mirrors the feed queries' per-viewer mute
+// filter plus the §13 user_blocks extension.
 func (f *videoFakeRepo) mutedFromFeed(viewer pgtype.UUID, channelID uuid.UUID) bool {
-	return viewer.Valid && f.mutes != nil && f.mutes.isMuted(uuid.UUID(viewer.Bytes), f.channelOwner(channelID))
+	if !viewer.Valid {
+		return false
+	}
+	owner := f.channelOwner(channelID)
+	if f.mutes != nil && f.mutes.isMuted(uuid.UUID(viewer.Bytes), owner) {
+		return true
+	}
+	return f.userBlocks != nil && f.userBlocks.isBlocked(uuid.UUID(viewer.Bytes), owner)
 }
 
 func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error) {
@@ -752,7 +762,11 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 	plRepo := &playlistFakeRepo{videos: repo, playlists: map[uuid.UUID]sqlcgen.Playlist{}, items: map[uuid.UUID][]uuid.UUID{}}
 	muteRepo := &muteFakeRepo{auth: authRepo}
 	repo.mutes = muteRepo
-	cmRepo := &commentFakeRepo{users: authRepo, mutes: muteRepo, videos: repo}
+	// One shared user-blocks fake backs the block service AND the §13
+	// content-hiding mirrors in the video/comment fakes.
+	userBlockRepo := &blockFakeRepo{auth: authRepo}
+	repo.userBlocks = userBlockRepo
+	cmRepo := &commentFakeRepo{users: authRepo, mutes: muteRepo, userBlocks: userBlockRepo, videos: repo}
 	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
 	repo.blocks = modRepo
 	ratingRepo := newRatingFakeRepo()
@@ -761,7 +775,7 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 	repo.users = authRepo
 	notifRepo.reports = modRepo
 	msgRepo := newMessagingFakeRepo(authRepo)
-	blocksvc := block.NewService(&blockFakeRepo{auth: authRepo})
+	blocksvc := block.NewService(userBlockRepo)
 	tcRepo := newTranscodeFakeRepo()
 	// Wire storage-usage aggregation over the video fake's files (mirrors the
 	// SumUserStorageUsage SQL: every file of every video owned via the user's
