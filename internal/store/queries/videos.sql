@@ -24,7 +24,7 @@ LIMIT $2 OFFSET $3;
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at,
-       c.owner_id
+       c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 WHERE v.id = $1;
@@ -284,6 +284,13 @@ FROM (
                SELECT 1 FROM video_tags t
                WHERE t.video_id = v.id AND t.tag ILIKE '%' || sqlc.arg('query') || '%'
            ))
+      -- Optional facet filters (NULL = off), mirroring the feed: an exact
+      -- free-form tag and the category/language taxonomy ids.
+      AND (sqlc.narg('tag')::text IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = sqlc.narg('tag')
+      ))
+      AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
+      AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
     UNION ALL
@@ -303,7 +310,12 @@ FROM (
            similarity(rv.title, sqlc.arg('query')) AS search_rank
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
-    WHERE rv.title ILIKE '%' || sqlc.arg('query') || '%'
+    -- Remote videos carry no local taxonomy/tags, so any active facet filter
+    -- excludes them (matching the main feed's behavior).
+    WHERE sqlc.narg('tag')::text IS NULL
+      AND sqlc.narg('category')::text IS NULL
+      AND sqlc.narg('language')::text IS NULL
+      AND rv.title ILIKE '%' || sqlc.arg('query') || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       AND NOT EXISTS (

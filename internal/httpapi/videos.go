@@ -185,6 +185,7 @@ func newVideoView(v sqlcgen.Video) videoView {
 }
 
 func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
+	handle, name := v.ChannelHandle, v.ChannelDisplayName
 	return videoView{
 		ID:          v.ID.String(),
 		ChannelID:   v.ChannelID.String(),
@@ -197,6 +198,10 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 		Language:    v.Language,
 		License:     v.License,
 		PublishAt:   video.TimePtr(v.PublishAt),
+		// Detail carries the owning channel so the frontend related-rail can link
+		// and label without a second request (Wave A contract gap).
+		ChannelHandle:      &handle,
+		ChannelDisplayName: &name,
 	}
 }
 
@@ -448,6 +453,10 @@ type videoSearchResponse struct {
 
 // handleSearchVideos searches public video titles. No auth required. Requires a
 // non-empty ?q (<=100 chars); paginated via ?limit (1–100, default 20)/?offset.
+// Optional facet filters mirror the feed: ?tag (free-form, matched
+// case-insensitively), ?category and ?language (taxonomy ids from GET
+// /videos/config; unknown values are 422). Any active filter excludes remote
+// results.
 func (s *Server) handleSearchVideos(c echo.Context) error {
 	q := strings.TrimSpace(c.QueryParam("q"))
 	if q == "" {
@@ -461,8 +470,26 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	if offset < 0 {
 		offset = 0
 	}
+	filter := video.FeedFilter{
+		Tag:      strings.TrimSpace(c.QueryParam("tag")),
+		Category: strings.TrimSpace(c.QueryParam("category")),
+		Language: strings.TrimSpace(c.QueryParam("language")),
+	}
+	var fes []FieldError
+	if len(filter.Tag) > video.MaxTagLen {
+		fes = append(fes, FieldError{Field: "tag", Message: "must be at most 50 characters"})
+	}
+	if filter.Category != "" && !video.IsCategory(filter.Category) {
+		fes = append(fes, FieldError{Field: "category", Message: "unknown category"})
+	}
+	if filter.Language != "" && !video.IsLanguage(filter.Language) {
+		fes = append(fes, FieldError{Field: "language", Message: "unknown language"})
+	}
+	if len(fes) > 0 {
+		return &ValidationError{Fields: fes}
+	}
 	viewerID, _, authed := principalFromContext(c)
-	items, err := s.videosvc.SearchPublic(c.Request().Context(), q, viewerID, authed, int32(limit), int32(offset))
+	items, err := s.videosvc.SearchPublic(c.Request().Context(), q, filter, viewerID, authed, int32(limit), int32(offset))
 	if err != nil {
 		return err
 	}

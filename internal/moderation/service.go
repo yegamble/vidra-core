@@ -23,6 +23,7 @@ const (
 	TargetComment     = "comment"
 	TargetAccount     = "account"
 	TargetRemoteVideo = "remote_video"
+	TargetMessage     = "message"
 
 	StatusOpen     = "open"
 	StatusAccepted = "accepted"
@@ -50,6 +51,7 @@ type Repository interface {
 	CreateVideoReport(ctx context.Context, arg sqlcgen.CreateVideoReportParams) (int64, error)
 	CreateCommentReport(ctx context.Context, arg sqlcgen.CreateCommentReportParams) (int64, error)
 	CreateAccountReport(ctx context.Context, arg sqlcgen.CreateAccountReportParams) (int64, error)
+	CreateMessageReport(ctx context.Context, arg sqlcgen.CreateMessageReportParams) (int64, error)
 	ListReports(ctx context.Context, arg sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error)
 	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (uuid.UUID, error)
 	DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
@@ -98,6 +100,11 @@ type Item struct {
 	RemoteVideoID     string
 	RemoteVideoTitle  string
 	RemoteVideoDomain string
+	// Message-target context (target_type='message', product-decisions.md §14).
+	// MessageID is empty once the message row was hard-deleted; MessageBody is the
+	// snapshot captured at report time and survives a sender tombstone.
+	MessageID   string
+	MessageBody string
 }
 
 // ReportVideo records reporterID's report of a video (idempotent per
@@ -158,6 +165,24 @@ func (s *Service) ReportRemoteVideo(ctx context.Context, reporterID, remoteVideo
 	return err
 }
 
+// ReportMessage records reporterID's report of a direct-message message
+// (product-decisions.md §14; idempotent per reporter+message). bodySnapshot is
+// the message body captured at report time so the moderator keeps context even
+// after a sender tombstone. The caller has confirmed the reporter is a
+// participant of the message's conversation.
+func (s *Service) ReportMessage(ctx context.Context, reporterID, messageID uuid.UUID, bodySnapshot, reason string) error {
+	_, err := s.repo.CreateMessageReport(ctx, sqlcgen.CreateMessageReportParams{
+		ReporterID:          reporterID,
+		MessageID:           pgUUID(messageID),
+		MessageBodySnapshot: bodySnapshot,
+		Reason:              reason,
+	})
+	if isForeignKeyViolation(err) {
+		return ErrInvalidTarget
+	}
+	return err
+}
+
 // List returns the moderation queue, newest first. When openOnly is true, only
 // unresolved reports are returned. The caller clamps limit/offset.
 func (s *Service) List(ctx context.Context, openOnly bool, limit, offset int32) ([]Item, error) {
@@ -189,6 +214,8 @@ func (s *Service) List(ctx context.Context, openOnly bool, limit, offset int32) 
 			RemoteVideoID:     uuidString(r.RemoteVideoID),
 			RemoteVideoTitle:  deref(r.RemoteVideoTitle),
 			RemoteVideoDomain: deref(r.RemoteVideoDomain),
+			MessageID:         uuidString(r.MessageID),
+			MessageBody:       r.MessageBodySnapshot,
 		})
 	}
 	return items, nil

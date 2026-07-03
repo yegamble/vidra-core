@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -24,6 +25,10 @@ type messagingFakeRepo struct {
 	encrypted    map[uuid.UUID]bool      // conversation id -> encrypted flag (set by the e2ee fake)
 	participants map[uuid.UUID]map[uuid.UUID]bool
 	messages     []sqlcgen.Message
+	attachments  []sqlcgen.MessageAttachment
+	previews     map[string]sqlcgen.LinkPreview
+	watermark    map[uuid.UUID]map[uuid.UUID]uuid.UUID
+	prefs        map[uuid.UUID]map[string]bool
 }
 
 func newMessagingFakeRepo(auth *authFakeRepo) *messagingFakeRepo {
@@ -33,6 +38,9 @@ func newMessagingFakeRepo(auth *authFakeRepo) *messagingFakeRepo {
 		convs:        map[uuid.UUID]time.Time{},
 		encrypted:    map[uuid.UUID]bool{},
 		participants: map[uuid.UUID]map[uuid.UUID]bool{},
+		previews:     map[string]sqlcgen.LinkPreview{},
+		watermark:    map[uuid.UUID]map[uuid.UUID]uuid.UUID{},
+		prefs:        map[uuid.UUID]map[string]bool{},
 	}
 }
 
@@ -76,13 +84,204 @@ func (f *messagingFakeRepo) IsConversationParticipant(_ context.Context, a sqlcg
 	return f.participants[a.ConversationID][a.UserID], nil
 }
 
-func (f *messagingFakeRepo) CreateMessage(_ context.Context, a sqlcgen.CreateMessageParams) (sqlcgen.Message, error) {
+func (f *messagingFakeRepo) CreateMessage(_ context.Context, a sqlcgen.CreateMessageParams) (sqlcgen.CreateMessageRow, error) {
 	m := sqlcgen.Message{
 		ID: uuid.New(), ConversationID: a.ConversationID, SenderID: a.SenderID,
 		Body: a.Body, CreatedAt: time.Now(),
 	}
 	f.messages = append(f.messages, m)
-	return m, nil
+	return sqlcgen.CreateMessageRow{ID: m.ID, ConversationID: m.ConversationID, SenderID: m.SenderID, Body: m.Body, CreatedAt: m.CreatedAt}, nil
+}
+
+func (f *messagingFakeRepo) mmsg(id uuid.UUID) *sqlcgen.Message {
+	for i := range f.messages {
+		if f.messages[i].ID == id {
+			return &f.messages[i]
+		}
+	}
+	return nil
+}
+
+func (f *messagingFakeRepo) GetMessage(_ context.Context, id uuid.UUID) (sqlcgen.GetMessageRow, error) {
+	m := f.mmsg(id)
+	if m == nil {
+		return sqlcgen.GetMessageRow{}, pgx.ErrNoRows
+	}
+	return sqlcgen.GetMessageRow{
+		ID: m.ID, ConversationID: m.ConversationID, SenderID: m.SenderID,
+		Body: m.Body, CreatedAt: m.CreatedAt, DeletedAt: m.DeletedAt,
+	}, nil
+}
+
+func (f *messagingFakeRepo) GetLatestMessageID(_ context.Context, convID uuid.UUID) (uuid.UUID, error) {
+	var latest *sqlcgen.Message
+	for i := range f.messages {
+		if f.messages[i].ConversationID == convID && (latest == nil || f.messages[i].CreatedAt.After(latest.CreatedAt)) {
+			latest = &f.messages[i]
+		}
+	}
+	if latest == nil {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	return latest.ID, nil
+}
+
+func (f *messagingFakeRepo) SetLastReadMessage(_ context.Context, a sqlcgen.SetLastReadMessageParams) error {
+	if f.watermark[a.ConversationID] == nil {
+		f.watermark[a.ConversationID] = map[uuid.UUID]uuid.UUID{}
+	}
+	f.watermark[a.ConversationID][a.UserID] = a.MessageID.Bytes
+	return nil
+}
+
+func (f *messagingFakeRepo) GetPeerReadWatermark(_ context.Context, a sqlcgen.GetPeerReadWatermarkParams) (pgtype.UUID, error) {
+	for uid, w := range f.watermark[a.ConversationID] {
+		if uid != a.UserID {
+			return pgtype.UUID{Bytes: w, Valid: w != uuid.Nil}, nil
+		}
+	}
+	return pgtype.UUID{}, pgx.ErrNoRows
+}
+
+func (f *messagingFakeRepo) TombstoneMessage(_ context.Context, a sqlcgen.TombstoneMessageParams) (int64, error) {
+	m := f.mmsg(a.ID)
+	if m == nil || m.SenderID != a.SenderID || m.DeletedAt.Valid {
+		return 0, nil
+	}
+	m.Body = "[deleted]"
+	m.DeletedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	m.LinkPreviewUrlHash = nil
+	return 1, nil
+}
+
+func (f *messagingFakeRepo) CreateMessageAttachment(_ context.Context, a sqlcgen.CreateMessageAttachmentParams) (sqlcgen.MessageAttachment, error) {
+	att := sqlcgen.MessageAttachment{
+		ID: a.ID, ConversationID: a.ConversationID, UploaderID: a.UploaderID,
+		Kind: a.Kind, ContentType: a.ContentType, Filename: a.Filename, SizeBytes: a.SizeBytes,
+		StorageKey: a.StorageKey, CreatedAt: time.Now(),
+	}
+	f.attachments = append(f.attachments, att)
+	return att, nil
+}
+
+func (f *messagingFakeRepo) GetMessageAttachment(_ context.Context, id uuid.UUID) (sqlcgen.MessageAttachment, error) {
+	for _, a := range f.attachments {
+		if a.ID == id {
+			return a, nil
+		}
+	}
+	return sqlcgen.MessageAttachment{}, pgx.ErrNoRows
+}
+
+func (f *messagingFakeRepo) ListOwnedUnlinkedAttachments(_ context.Context, a sqlcgen.ListOwnedUnlinkedAttachmentsParams) ([]sqlcgen.ListOwnedUnlinkedAttachmentsRow, error) {
+	want := map[uuid.UUID]bool{}
+	for _, id := range a.Ids {
+		want[id] = true
+	}
+	var out []sqlcgen.ListOwnedUnlinkedAttachmentsRow
+	for _, at := range f.attachments {
+		if want[at.ID] && at.UploaderID == a.UploaderID && at.ConversationID == a.ConversationID && !at.MessageID.Valid {
+			out = append(out, sqlcgen.ListOwnedUnlinkedAttachmentsRow{ID: at.ID, StorageKey: at.StorageKey})
+		}
+	}
+	return out, nil
+}
+
+func (f *messagingFakeRepo) LinkAttachmentsToMessage(_ context.Context, a sqlcgen.LinkAttachmentsToMessageParams) error {
+	want := map[uuid.UUID]bool{}
+	for _, id := range a.Ids {
+		want[id] = true
+	}
+	for i := range f.attachments {
+		at := &f.attachments[i]
+		if want[at.ID] && at.UploaderID == a.UploaderID && at.ConversationID == a.ConversationID && !at.MessageID.Valid {
+			at.MessageID = a.MessageID
+		}
+	}
+	return nil
+}
+
+func (f *messagingFakeRepo) ListAttachmentsForMessages(_ context.Context, ids []uuid.UUID) ([]sqlcgen.ListAttachmentsForMessagesRow, error) {
+	want := map[uuid.UUID]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	var out []sqlcgen.ListAttachmentsForMessagesRow
+	for _, at := range f.attachments {
+		if at.MessageID.Valid && want[at.MessageID.Bytes] {
+			out = append(out, sqlcgen.ListAttachmentsForMessagesRow{
+				ID: at.ID, MessageID: at.MessageID, Kind: at.Kind,
+				ContentType: at.ContentType, Filename: at.Filename, SizeBytes: at.SizeBytes,
+			})
+		}
+	}
+	return out, nil
+}
+
+func (f *messagingFakeRepo) ListAttachmentKeysByMessage(_ context.Context, mid pgtype.UUID) ([]sqlcgen.ListAttachmentKeysByMessageRow, error) {
+	var out []sqlcgen.ListAttachmentKeysByMessageRow
+	for _, at := range f.attachments {
+		if at.MessageID == mid {
+			out = append(out, sqlcgen.ListAttachmentKeysByMessageRow{ID: at.ID, StorageKey: at.StorageKey})
+		}
+	}
+	return out, nil
+}
+
+func (f *messagingFakeRepo) DeleteAttachmentsByMessage(_ context.Context, mid pgtype.UUID) error {
+	kept := f.attachments[:0]
+	for _, at := range f.attachments {
+		if at.MessageID != mid {
+			kept = append(kept, at)
+		}
+	}
+	f.attachments = kept
+	return nil
+}
+
+func (f *messagingFakeRepo) UpsertPendingLinkPreview(_ context.Context, a sqlcgen.UpsertPendingLinkPreviewParams) error {
+	if _, ok := f.previews[a.UrlHash]; !ok {
+		f.previews[a.UrlHash] = sqlcgen.LinkPreview{UrlHash: a.UrlHash, Url: a.Url, State: "pending"}
+	}
+	return nil
+}
+
+func (f *messagingFakeRepo) SetMessageLinkPreview(_ context.Context, a sqlcgen.SetMessageLinkPreviewParams) error {
+	if m := f.mmsg(a.ID); m != nil {
+		m.LinkPreviewUrlHash = a.UrlHash
+	}
+	return nil
+}
+
+func (f *messagingFakeRepo) GetLinkPreview(_ context.Context, urlHash string) (sqlcgen.LinkPreview, error) {
+	if lp, ok := f.previews[urlHash]; ok {
+		return lp, nil
+	}
+	return sqlcgen.LinkPreview{}, pgx.ErrNoRows
+}
+
+func (f *messagingFakeRepo) ResolveLinkPreview(_ context.Context, a sqlcgen.ResolveLinkPreviewParams) error {
+	lp := f.previews[a.UrlHash]
+	lp.UrlHash, lp.State, lp.Title, lp.Description, lp.ImageUrl = a.UrlHash, a.State, a.Title, a.Description, a.ImageUrl
+	f.previews[a.UrlHash] = lp
+	return nil
+}
+
+func (f *messagingFakeRepo) IsNotificationTypeEnabled(_ context.Context, a sqlcgen.IsNotificationTypeEnabledParams) (bool, error) {
+	if m, ok := f.prefs[a.UserID]; ok {
+		if v, ok := m[a.Type]; ok {
+			return v, nil
+		}
+	}
+	return true, nil
+}
+
+func (f *messagingFakeRepo) UpsertNotificationPref(_ context.Context, a sqlcgen.UpsertNotificationPrefParams) error {
+	if f.prefs[a.UserID] == nil {
+		f.prefs[a.UserID] = map[string]bool{}
+	}
+	f.prefs[a.UserID][a.Type] = a.Enabled
+	return nil
 }
 
 func (f *messagingFakeRepo) GetOtherParticipant(_ context.Context, a sqlcgen.GetOtherParticipantParams) (uuid.UUID, error) {
@@ -109,10 +308,18 @@ func (f *messagingFakeRepo) ListMessages(ctx context.Context, a sqlcgen.ListMess
 			continue
 		}
 		sender, _ := f.auth.GetUserByID(ctx, m.SenderID)
-		rows = append(rows, sqlcgen.ListMessagesRow{
+		row := sqlcgen.ListMessagesRow{
 			ID: m.ID, ConversationID: m.ConversationID, SenderID: m.SenderID, Body: m.Body,
-			CreatedAt: m.CreatedAt, SenderUsername: sender.Username, SenderDisplayName: sender.DisplayName,
-		})
+			CreatedAt: m.CreatedAt, Deleted: m.DeletedAt.Valid,
+			SenderUsername: sender.Username, SenderDisplayName: sender.DisplayName,
+		}
+		if m.LinkPreviewUrlHash != nil {
+			if lp, ok := f.previews[*m.LinkPreviewUrlHash]; ok && lp.State == "ready" {
+				url, title, desc, img := lp.Url, lp.Title, lp.Description, lp.ImageUrl
+				row.PreviewUrl, row.PreviewTitle, row.PreviewDescription, row.PreviewImage = &url, &title, &desc, &img
+			}
+		}
+		rows = append(rows, row)
 	}
 	return rows, nil
 }
@@ -134,11 +341,25 @@ func (f *messagingFakeRepo) ListConversations(ctx context.Context, a sqlcgen.Lis
 			ID: id, UpdatedAt: updated, Encrypted: f.encrypted[id], OtherUserID: other,
 			OtherUsername: u.Username, OtherDisplayName: u.DisplayName, LastMessageAt: updated,
 		}
+		var wmAt time.Time
+		if w, ok := f.watermark[id][a.UserID]; ok {
+			if wm := f.mmsg(w); wm != nil {
+				wmAt = wm.CreatedAt
+			}
+		}
+		lastSet := false
 		for i := len(f.messages) - 1; i >= 0; i-- {
-			if f.messages[i].ConversationID == id {
-				row.LastMessageBody = f.messages[i].Body
-				row.LastMessageAt = f.messages[i].CreatedAt
-				break
+			m := f.messages[i]
+			if m.ConversationID != id {
+				continue
+			}
+			if !lastSet {
+				row.LastMessageBody = m.Body
+				row.LastMessageAt = m.CreatedAt
+				lastSet = true
+			}
+			if m.SenderID != a.UserID && m.CreatedAt.After(wmAt) {
+				row.UnreadCount++
 			}
 		}
 		rows = append(rows, row)

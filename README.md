@@ -164,9 +164,14 @@ age; unknown → recent) and paginated with `?limit` 1–100 default 20 and `?of
 Each feed item carries its `views` and `has_thumbnail` so cards have what they
 need (the query LEFT JOINs `video_view_counts` and checks for a stored poster).
 `GET /api/v1/videos/search?q=` fuzzy-searches
-public titles (pg_trgm, ranked by similarity then recency; same pagination). Search
-results and the channel video lists (`GET /api/v1/channels/{handle}/videos`) carry the
-same `views`/`has_thumbnail` card data as the feed, so every video grid is consistent.
+public titles (pg_trgm, ranked by similarity then recency; same pagination). It
+also accepts the same facet filters as the feed — `&tag=`, `&category=`,
+`&language=` (unknown taxonomy values `422`; any active filter excludes remote
+results). Search results and the channel video lists
+(`GET /api/v1/channels/{handle}/videos`) carry the same `views`/`has_thumbnail`
+card data as the feed, so every video grid is consistent. The video **detail**
+response (`GET /api/v1/videos/{id}`) also carries `channel_handle` +
+`channel_display_name` for the related-rail.
 `POST /api/v1/videos/{id}/file` (owner-only, `multipart/form-data` with a single
 `file` part) stores the original through the storage backend, then finalises the
 video: `draft → processing → published` (or `failed` if a configured media probe
@@ -370,8 +375,26 @@ per-section as skipped in the response summary.
 
 Direct messaging: `POST /api/v1/conversations` starts (or idempotently returns)
 the 1:1 conversation with a recipient; `GET /api/v1/me/conversations` is the
-inbox; `POST`/`GET /api/v1/conversations/{id}/messages` send/list. A user block
-in either direction refuses messaging with `403`.
+inbox (with per-conversation `unread_count`); `POST`/`GET /api/v1/conversations/{id}/messages`
+send/list. A user block in either direction refuses messaging with `403`.
+
+DM completeness (product-decisions.md §14): **attachments** — `POST /api/v1/conversations/{id}/attachments`
+(multipart `file`, ≤25 MiB, image/video/audio/pdf, ClamAV fail-closed when
+`MALWARE_SCAN_ENABLED`) returns an `attachment_id` to reference in a send
+(`attachment_ids: []`, ≤4, own-uploaded); `GET /api/v1/attachments/{id}` serves
+the bytes participant-gated; attachments are plaintext-only (encrypted
+conversations `422`). **Link previews** — the first URL in a plaintext body is
+fetched asynchronously through the SSRF guard (1 MiB, HTML-only OpenGraph;
+`HTTP_IMPORT_ALLOW_PRIVATE_URLS` also relaxes this guard in dev) and joined onto
+the message when ready; the fetch never blocks or fails the send. **Read
+receipts** — `POST /api/v1/conversations/{id}/read` advances the caller's
+watermark (idempotent); the thread exposes the peer's `peer_last_read_message_id`
+and the inbox exposes unread counts; `GET`/`PATCH /api/v1/me/messaging-prefs`
+toggles `read_receipts` (when off, the caller's watermark is hidden from peers).
+**Per-message** — `DELETE /api/v1/messages/{id}` sender-only tombstones a message
+(`[deleted]`); `POST /api/v1/messages/{id}/report` lets either participant report
+it (snapshotting the body into the moderation queue). Typing presence is an
+intentional difference (polling, no presence).
 
 Encrypted messaging (E2EE, `.ralph/specs/e2ee.md`): pass `{"encrypted": true}`
 at conversation creation for a ciphertext-only thread — the type is immutable

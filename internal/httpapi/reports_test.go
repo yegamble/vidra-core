@@ -29,6 +29,7 @@ type modReportRow struct {
 	commentID      pgtype.UUID
 	reportedUserID pgtype.UUID
 	remoteVideoID  pgtype.UUID
+	messageID      pgtype.UUID
 	reason         string
 	status         string
 	note           string
@@ -101,6 +102,19 @@ func (f *moderationFakeRepo) CreateAccountReport(_ context.Context, a sqlcgen.Cr
 	f.reports = append(f.reports, modReportRow{
 		id: uuid.New(), reporterID: a.ReporterID, targetType: "account",
 		reportedUserID: a.ReportedUserID, reason: a.Reason, status: "open", createdAt: time.Now(),
+	})
+	return 1, nil
+}
+
+func (f *moderationFakeRepo) CreateMessageReport(_ context.Context, a sqlcgen.CreateMessageReportParams) (int64, error) {
+	for _, r := range f.reports {
+		if r.reporterID == a.ReporterID && r.messageID == a.MessageID {
+			return 0, nil
+		}
+	}
+	f.reports = append(f.reports, modReportRow{
+		id: uuid.New(), reporterID: a.ReporterID, targetType: "message",
+		messageID: a.MessageID, reason: a.Reason, status: "open", createdAt: time.Now(),
 	})
 	return 1, nil
 }

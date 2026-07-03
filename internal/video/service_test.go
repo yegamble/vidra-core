@@ -741,7 +741,7 @@ func TestSearchPublicMatchesTitleAndExcludesPrivate(t *testing.T) {
 	publishDraft(t, svc, ctx, ch, CreateInput{Title: "Rust basics", Privacy: "public"})
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "Go internals", Privacy: "private"})
 
-	res, err := svc.SearchPublic(ctx, "go", uuid.Nil, false, 20, 0)
+	res, err := svc.SearchPublic(ctx, "go", FeedFilter{}, uuid.Nil, false, 20, 0)
 	if err != nil {
 		t.Fatalf("SearchPublic: %v", err)
 	}

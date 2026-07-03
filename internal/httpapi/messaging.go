@@ -51,6 +51,7 @@ type conversationSummaryView struct {
 	OtherDisplayName string    `json:"other_display_name"`
 	LastMessageBody  string    `json:"last_message_body"`
 	LastMessageAt    time.Time `json:"last_message_at"`
+	UnreadCount      int64     `json:"unread_count"`
 }
 
 type conversationListResponse struct {
@@ -77,6 +78,7 @@ const maxEnvelopesPerSend = 40
 // happens in the handler; mixing shapes is rejected here).
 type sendMessageRequest struct {
 	Body             string       `json:"body"`
+	AttachmentIDs    []string     `json:"attachment_ids"`
 	SenderDeviceID   string       `json:"sender_device_id"`
 	Envelopes        []envelopeIn `json:"envelopes"`
 	ExpiresInSeconds *int64       `json:"expires_in_seconds"`
@@ -85,13 +87,14 @@ type sendMessageRequest struct {
 func (r sendMessageRequest) Validate() []FieldError {
 	body := strings.TrimSpace(r.Body)
 	if len(r.Envelopes) == 0 {
-		// Plaintext shape. The rules (and their messages) are unchanged from
-		// before E2EE existed.
+		// Plaintext shape. A message needs a body OR at least one attachment.
 		switch {
-		case body == "":
+		case body == "" && len(r.AttachmentIDs) == 0:
 			return []FieldError{{Field: "body", Message: "is required"}}
 		case len(body) > maxMessageLen:
 			return []FieldError{{Field: "body", Message: "must be at most 5000 characters"}}
+		case len(r.AttachmentIDs) > 4:
+			return []FieldError{{Field: "attachment_ids", Message: "at most 4 attachments"}}
 		case r.SenderDeviceID != "" || r.ExpiresInSeconds != nil:
 			return []FieldError{{Field: "body", Message: "cannot be combined with encrypted-send fields"}}
 		}
@@ -101,6 +104,9 @@ func (r sendMessageRequest) Validate() []FieldError {
 	var errs []FieldError
 	if body != "" {
 		errs = append(errs, FieldError{Field: "body", Message: "cannot be combined with envelopes"})
+	}
+	if len(r.AttachmentIDs) > 0 {
+		errs = append(errs, FieldError{Field: "attachment_ids", Message: "attachments are not supported on encrypted conversations"})
 	}
 	if strings.TrimSpace(r.SenderDeviceID) == "" {
 		errs = append(errs, FieldError{Field: "sender_device_id", Message: "is required with envelopes"})
@@ -117,33 +123,73 @@ func (r sendMessageRequest) Validate() []FieldError {
 	return errs
 }
 
+// attachmentView is a DM attachment on a message (metadata only; the bytes are
+// served participant-gated at GET /api/v1/attachments/{id}).
+type attachmentView struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	ContentType string `json:"content_type"`
+	Filename    string `json:"filename"`
+	SizeBytes   int64  `json:"size_bytes"`
+}
+
+// linkPreviewView is the OpenGraph preview joined onto a message when the async
+// fetch has resolved to ready. Any field may be empty.
+type linkPreviewView struct {
+	URL         string `json:"url"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Image       string `json:"image,omitempty"`
+}
+
 // messageView is the projection of a message.
 type messageView struct {
-	ID                string    `json:"id"`
-	ConversationID    string    `json:"conversation_id"`
-	SenderID          string    `json:"sender_id"`
-	SenderUsername    string    `json:"sender_username,omitempty"`
-	SenderDisplayName string    `json:"sender_display_name,omitempty"`
-	Body              string    `json:"body"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                string           `json:"id"`
+	ConversationID    string           `json:"conversation_id"`
+	SenderID          string           `json:"sender_id"`
+	SenderUsername    string           `json:"sender_username,omitempty"`
+	SenderDisplayName string           `json:"sender_display_name,omitempty"`
+	Body              string           `json:"body"`
+	Deleted           bool             `json:"deleted,omitempty"`
+	CreatedAt         time.Time        `json:"created_at"`
+	Attachments       []attachmentView `json:"attachments,omitempty"`
+	Preview           *linkPreviewView `json:"preview,omitempty"`
 }
 
 func newMessageView(m messaging.Message) messageView {
-	return messageView{
+	v := messageView{
 		ID:                m.ID.String(),
 		ConversationID:    m.ConversationID.String(),
 		SenderID:          m.SenderID.String(),
 		SenderUsername:    m.SenderUsername,
 		SenderDisplayName: m.SenderDisplayName,
 		Body:              m.Body,
+		Deleted:           m.Deleted,
 		CreatedAt:         m.CreatedAt,
 	}
+	for _, a := range m.Attachments {
+		v.Attachments = append(v.Attachments, attachmentView{
+			ID: a.ID.String(), Kind: a.Kind, ContentType: a.ContentType,
+			Filename: a.Filename, SizeBytes: a.SizeBytes,
+		})
+	}
+	if m.Preview != nil {
+		v.Preview = &linkPreviewView{
+			URL: m.Preview.URL, Title: m.Preview.Title,
+			Description: m.Preview.Description, Image: m.Preview.Image,
+		}
+	}
+	return v
 }
 
 type messageListResponse struct {
 	Messages []messageView `json:"messages"`
-	Limit    int           `json:"limit"`
-	Offset   int           `json:"offset"`
+	// PeerLastReadMessageID is the other participant's read watermark (the newest
+	// message id they have read), for a "seen" indicator. Omitted when the peer
+	// has read nothing or disabled read receipts.
+	PeerLastReadMessageID string `json:"peer_last_read_message_id,omitempty"`
+	Limit                 int    `json:"limit"`
+	Offset                int    `json:"offset"`
 }
 
 // handleStartConversation returns (creating if needed) the 1:1 conversation with
@@ -218,6 +264,7 @@ func (s *Server) handleListConversations(c echo.Context) error {
 			ID: it.ID.String(), UpdatedAt: it.UpdatedAt, Encrypted: it.Encrypted, OtherUserID: it.OtherUserID.String(),
 			OtherUsername: it.OtherUsername, OtherDisplayName: it.OtherDisplayName,
 			LastMessageBody: it.LastMessageBody, LastMessageAt: it.LastMessageAt,
+			UnreadCount: it.UnreadCount,
 		})
 	}
 	return c.JSON(http.StatusOK, conversationListResponse{Conversations: views, Limit: limit, Offset: offset})
@@ -266,7 +313,13 @@ func (s *Server) handleListMessages(c echo.Context) error {
 	for _, m := range msgs {
 		views = append(views, newMessageView(m))
 	}
-	return c.JSON(http.StatusOK, messageListResponse{Messages: views, Limit: limit, Offset: offset})
+	resp := messageListResponse{Messages: views, Limit: limit, Offset: offset}
+	// Expose the peer's read watermark for a "seen" indicator (hidden when they
+	// have read nothing or disabled read receipts).
+	if wm, ok, werr := s.messagingsvc.PeerReadWatermark(c.Request().Context(), userID, convID); werr == nil && ok {
+		resp.PeerLastReadMessageID = wm.String()
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 // handleSendMessage posts a message to a conversation. Behind requireAuth. A
@@ -311,13 +364,19 @@ func (s *Server) handleSendMessage(c echo.Context) error {
 	} else if len(in.Envelopes) > 0 {
 		return &ValidationError{Fields: []FieldError{{Field: "envelopes", Message: "encrypted messaging is not available"}}}
 	}
-	msg, err := s.messagingsvc.SendMessage(ctx, userID, convID, strings.TrimSpace(in.Body))
+	attachmentIDs, perr := parseUUIDList(in.AttachmentIDs)
+	if perr != nil {
+		return &ValidationError{Fields: []FieldError{{Field: "attachment_ids", Message: "must be valid ids"}}}
+	}
+	msg, err := s.messagingsvc.SendMessage(ctx, userID, convID, strings.TrimSpace(in.Body), attachmentIDs)
 	if err != nil {
-		if errors.Is(err, messaging.ErrNotParticipant) {
+		switch {
+		case errors.Is(err, messaging.ErrNotParticipant):
 			return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
-		}
-		if errors.Is(err, messaging.ErrBlocked) {
+		case errors.Is(err, messaging.ErrBlocked):
 			return echo.NewHTTPError(http.StatusForbidden, "cannot message this user")
+		case errors.Is(err, messaging.ErrInvalidAttachments):
+			return &ValidationError{Fields: []FieldError{{Field: "attachment_ids", Message: "must reference your own uploads in this conversation, not yet sent"}}}
 		}
 		return err
 	}

@@ -21,6 +21,8 @@ type reportRow struct {
 	commentID      pgtype.UUID
 	reportedUserID pgtype.UUID
 	remoteVideoID  pgtype.UUID
+	messageID      pgtype.UUID
+	messageBody    string
 	reason         string
 	status         string
 	note           string
@@ -83,6 +85,20 @@ func (f *fakeRepo) CreateAccountReport(_ context.Context, a sqlcgen.CreateAccoun
 	return 1, nil
 }
 
+func (f *fakeRepo) CreateMessageReport(_ context.Context, a sqlcgen.CreateMessageReportParams) (int64, error) {
+	for _, r := range f.reports {
+		if r.reporterID == a.ReporterID && r.messageID == a.MessageID {
+			return 0, nil // already reported
+		}
+	}
+	f.reports = append(f.reports, reportRow{
+		id: uuid.New(), reporterID: a.ReporterID, targetType: TargetMessage,
+		messageID: a.MessageID, messageBody: a.MessageBodySnapshot, reason: a.Reason,
+		status: StatusOpen, createdAt: time.Now(),
+	})
+	return 1, nil
+}
+
 func (f *fakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error) {
 	var rows []sqlcgen.ListReportsRow
 	for i := len(f.reports) - 1; i >= 0; i-- { // newest first
@@ -92,7 +108,8 @@ func (f *fakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) (
 		}
 		row := sqlcgen.ListReportsRow{
 			ID: r.id, TargetType: r.targetType, VideoID: r.videoID, CommentID: r.commentID,
-			ReportedUserID: r.reportedUserID, Reason: r.reason, Status: r.status,
+			ReportedUserID: r.reportedUserID, MessageID: r.messageID, MessageBodySnapshot: r.messageBody,
+			Reason: r.reason, Status: r.status,
 			ModeratorNote: r.note, ResolvedAt: r.resolvedAt, CreatedAt: r.createdAt,
 			ReporterUsername: "reporter",
 		}
@@ -301,6 +318,30 @@ func TestReportAccount(t *testing.T) {
 	fkSvc := NewService(&fakeRepo{accountErr: &pgconn.PgError{Code: "23503"}})
 	if err := fkSvc.ReportAccount(ctx, uuid.New(), uuid.New(), "x"); err != ErrInvalidTarget {
 		t.Errorf("unknown target err = %v, want ErrInvalidTarget", err)
+	}
+}
+
+func TestReportMessage(t *testing.T) {
+	ctx := context.Background()
+	reporter, msgID := uuid.New(), uuid.New()
+	svc := NewService(&fakeRepo{})
+
+	if err := svc.ReportMessage(ctx, reporter, msgID, "the reported text", "abuse"); err != nil {
+		t.Fatalf("ReportMessage: %v", err)
+	}
+	// Idempotent per (reporter, message).
+	if err := svc.ReportMessage(ctx, reporter, msgID, "the reported text", "abuse again"); err != nil {
+		t.Fatalf("ReportMessage dup: %v", err)
+	}
+	items, err := svc.List(ctx, false, 20, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("message reports = %d, want 1 (dedup'd)", len(items))
+	}
+	if items[0].TargetType != TargetMessage || items[0].MessageID != msgID.String() || items[0].MessageBody != "the reported text" {
+		t.Errorf("item = %+v, want message report with body snapshot", items[0])
 	}
 }
 

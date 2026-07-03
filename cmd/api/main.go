@@ -33,6 +33,7 @@ import (
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/instancemod"
+	"github.com/vidra/vidra-core/internal/linkpreview"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/media"
@@ -53,6 +54,7 @@ import (
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/upload"
+	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/version"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
@@ -397,7 +399,17 @@ func run() error {
 	auditsvc := audit.NewService(db.Queries())
 	opts = append(opts, httpapi.WithAuditLog(auditsvc))
 
-	messagingsvc := messaging.NewService(db.Queries(), messaging.WithBlocker(blocksvc))
+	// DM completeness (product-decisions.md §14): attachments (scanned fail-closed
+	// when clamd is configured) and SSRF-guarded, best-effort link previews.
+	msgOpts := []messaging.Option{messaging.WithBlocker(blocksvc), messaging.WithLogger(logger)}
+	var attachScanner messaging.Scanner
+	if cfg.MalwareScanEnabled {
+		attachScanner = media.NewClamAV(cfg.ClamAVAddr, blobs)
+	}
+	msgOpts = append(msgOpts, messaging.WithAttachments(blobs, attachScanner, messaging.MaxAttachmentBytes))
+	previewGuard := urlsafety.Guard{AllowPrivate: cfg.ImportAllowPrivateURLs}
+	msgOpts = append(msgOpts, messaging.WithPreviews(linkpreview.NewFetcher(previewGuard, linkpreview.DefaultMaxBytes)))
+	messagingsvc := messaging.NewService(db.Queries(), msgOpts...)
 	opts = append(opts, httpapi.WithMessagingService(messagingsvc))
 
 	// E2EE (P11.2): ciphertext-only encrypted messaging. The server is a dumb

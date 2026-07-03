@@ -58,6 +58,36 @@ func (q *Queries) CreateCommentReport(ctx context.Context, arg CreateCommentRepo
 	return result.RowsAffected(), nil
 }
 
+const createMessageReport = `-- name: CreateMessageReport :execrows
+INSERT INTO reports (reporter_id, target_type, message_id, message_body_snapshot, reason)
+VALUES ($1, 'message', $2, $3, $4)
+ON CONFLICT (reporter_id, message_id) WHERE message_id IS NOT NULL DO NOTHING
+`
+
+type CreateMessageReportParams struct {
+	ReporterID          uuid.UUID   `json:"reporter_id"`
+	MessageID           pgtype.UUID `json:"message_id"`
+	MessageBodySnapshot string      `json:"message_body_snapshot"`
+	Reason              string      `json:"reason"`
+}
+
+// Report a direct-message message (product-decisions.md §14; idempotent per
+// reporter+message). The body snapshot preserves the reported text for the
+// moderator even after the sender tombstones it. The caller has already verified
+// the reporter is a participant of the message's conversation.
+func (q *Queries) CreateMessageReport(ctx context.Context, arg CreateMessageReportParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createMessageReport,
+		arg.ReporterID,
+		arg.MessageID,
+		arg.MessageBodySnapshot,
+		arg.Reason,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createRemoteVideoReport = `-- name: CreateRemoteVideoReport :execrows
 INSERT INTO reports (reporter_id, target_type, remote_video_id, reason)
 VALUES ($1, 'remote_video', $2, $3)
@@ -120,6 +150,7 @@ func (q *Queries) DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
 
 const listReports = `-- name: ListReports :many
 SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.remote_video_id,
+       r.message_id, r.message_body_snapshot,
        r.reason, r.status,
        r.moderator_note, r.resolved_at, r.created_at,
        u.username AS reporter_username,
@@ -147,29 +178,31 @@ type ListReportsParams struct {
 }
 
 type ListReportsRow struct {
-	ID                uuid.UUID          `json:"id"`
-	TargetType        string             `json:"target_type"`
-	VideoID           pgtype.UUID        `json:"video_id"`
-	CommentID         pgtype.UUID        `json:"comment_id"`
-	ReportedUserID    pgtype.UUID        `json:"reported_user_id"`
-	RemoteVideoID     pgtype.UUID        `json:"remote_video_id"`
-	Reason            string             `json:"reason"`
-	Status            string             `json:"status"`
-	ModeratorNote     string             `json:"moderator_note"`
-	ResolvedAt        pgtype.Timestamptz `json:"resolved_at"`
-	CreatedAt         time.Time          `json:"created_at"`
-	ReporterUsername  string             `json:"reporter_username"`
-	VideoTitle        *string            `json:"video_title"`
-	CommentBody       *string            `json:"comment_body"`
-	ReportedUsername  *string            `json:"reported_username"`
-	RemoteVideoTitle  *string            `json:"remote_video_title"`
-	RemoteVideoDomain *string            `json:"remote_video_domain"`
+	ID                  uuid.UUID          `json:"id"`
+	TargetType          string             `json:"target_type"`
+	VideoID             pgtype.UUID        `json:"video_id"`
+	CommentID           pgtype.UUID        `json:"comment_id"`
+	ReportedUserID      pgtype.UUID        `json:"reported_user_id"`
+	RemoteVideoID       pgtype.UUID        `json:"remote_video_id"`
+	MessageID           pgtype.UUID        `json:"message_id"`
+	MessageBodySnapshot string             `json:"message_body_snapshot"`
+	Reason              string             `json:"reason"`
+	Status              string             `json:"status"`
+	ModeratorNote       string             `json:"moderator_note"`
+	ResolvedAt          pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt           time.Time          `json:"created_at"`
+	ReporterUsername    string             `json:"reporter_username"`
+	VideoTitle          *string            `json:"video_title"`
+	CommentBody         *string            `json:"comment_body"`
+	ReportedUsername    *string            `json:"reported_username"`
+	RemoteVideoTitle    *string            `json:"remote_video_title"`
+	RemoteVideoDomain   *string            `json:"remote_video_domain"`
 }
 
 // The moderation queue, newest first, with the reporter's username and the
 // target context (video title / comment body / reported account username /
-// remote video title+domain). When open_only is true, only unresolved
-// (status='open') reports are returned.
+// remote video title+domain / message body snapshot). When open_only is true,
+// only unresolved (status='open') reports are returned.
 func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]ListReportsRow, error) {
 	rows, err := q.db.Query(ctx, listReports, arg.OpenOnly, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
@@ -186,6 +219,8 @@ func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Lis
 			&i.CommentID,
 			&i.ReportedUserID,
 			&i.RemoteVideoID,
+			&i.MessageID,
+			&i.MessageBodySnapshot,
 			&i.Reason,
 			&i.Status,
 			&i.ModeratorNote,

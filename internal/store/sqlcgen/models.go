@@ -127,8 +127,9 @@ type Conversation struct {
 }
 
 type ConversationParticipant struct {
-	ConversationID uuid.UUID `json:"conversation_id"`
-	UserID         uuid.UUID `json:"user_id"`
+	ConversationID    uuid.UUID   `json:"conversation_id"`
+	UserID            uuid.UUID   `json:"user_id"`
+	LastReadMessageID pgtype.UUID `json:"last_read_message_id"`
 }
 
 type DonationAddress struct {
@@ -216,6 +217,17 @@ type ImportJob struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+type LinkPreview struct {
+	UrlHash     string             `json:"url_hash"`
+	Url         string             `json:"url"`
+	State       string             `json:"state"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	ImageUrl    string             `json:"image_url"`
+	FetchedAt   pgtype.Timestamptz `json:"fetched_at"`
+	CreatedAt   time.Time          `json:"created_at"`
+}
+
 type LiveStream struct {
 	ID            uuid.UUID `json:"id"`
 	ChannelID     uuid.UUID `json:"channel_id"`
@@ -231,11 +243,26 @@ type LiveStream struct {
 }
 
 type Message struct {
-	ID             uuid.UUID `json:"id"`
-	ConversationID uuid.UUID `json:"conversation_id"`
-	SenderID       uuid.UUID `json:"sender_id"`
-	Body           string    `json:"body"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID                 uuid.UUID          `json:"id"`
+	ConversationID     uuid.UUID          `json:"conversation_id"`
+	SenderID           uuid.UUID          `json:"sender_id"`
+	Body               string             `json:"body"`
+	CreatedAt          time.Time          `json:"created_at"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+	LinkPreviewUrlHash *string            `json:"link_preview_url_hash"`
+}
+
+type MessageAttachment struct {
+	ID             uuid.UUID   `json:"id"`
+	ConversationID uuid.UUID   `json:"conversation_id"`
+	UploaderID     uuid.UUID   `json:"uploader_id"`
+	MessageID      pgtype.UUID `json:"message_id"`
+	Kind           string      `json:"kind"`
+	ContentType    string      `json:"content_type"`
+	Filename       string      `json:"filename"`
+	SizeBytes      int64       `json:"size_bytes"`
+	StorageKey     string      `json:"storage_key"`
+	CreatedAt      time.Time   `json:"created_at"`
 }
 
 type MfaRecoveryCode struct {
@@ -383,20 +410,22 @@ type RemoteVideoBlock struct {
 }
 
 type Report struct {
-	ID             uuid.UUID          `json:"id"`
-	ReporterID     uuid.UUID          `json:"reporter_id"`
-	TargetType     string             `json:"target_type"`
-	VideoID        pgtype.UUID        `json:"video_id"`
-	CommentID      pgtype.UUID        `json:"comment_id"`
-	Reason         string             `json:"reason"`
-	Status         string             `json:"status"`
-	ModeratorNote  string             `json:"moderator_note"`
-	ResolvedBy     pgtype.UUID        `json:"resolved_by"`
-	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
-	CreatedAt      time.Time          `json:"created_at"`
-	UpdatedAt      time.Time          `json:"updated_at"`
-	ReportedUserID pgtype.UUID        `json:"reported_user_id"`
-	RemoteVideoID  pgtype.UUID        `json:"remote_video_id"`
+	ID                  uuid.UUID          `json:"id"`
+	ReporterID          uuid.UUID          `json:"reporter_id"`
+	TargetType          string             `json:"target_type"`
+	VideoID             pgtype.UUID        `json:"video_id"`
+	CommentID           pgtype.UUID        `json:"comment_id"`
+	Reason              string             `json:"reason"`
+	Status              string             `json:"status"`
+	ModeratorNote       string             `json:"moderator_note"`
+	ResolvedBy          pgtype.UUID        `json:"resolved_by"`
+	ResolvedAt          pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+	ReportedUserID      pgtype.UUID        `json:"reported_user_id"`
+	RemoteVideoID       pgtype.UUID        `json:"remote_video_id"`
+	MessageID           pgtype.UUID        `json:"message_id"`
+	MessageBodySnapshot string             `json:"message_body_snapshot"`
 }
 
 type SavedVideo struct {

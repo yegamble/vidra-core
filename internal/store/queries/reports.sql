@@ -28,12 +28,22 @@ INSERT INTO reports (reporter_id, target_type, remote_video_id, reason)
 VALUES ($1, 'remote_video', $2, $3)
 ON CONFLICT (reporter_id, remote_video_id) WHERE remote_video_id IS NOT NULL DO NOTHING;
 
+-- name: CreateMessageReport :execrows
+-- Report a direct-message message (product-decisions.md §14; idempotent per
+-- reporter+message). The body snapshot preserves the reported text for the
+-- moderator even after the sender tombstones it. The caller has already verified
+-- the reporter is a participant of the message's conversation.
+INSERT INTO reports (reporter_id, target_type, message_id, message_body_snapshot, reason)
+VALUES ($1, 'message', $2, $3, $4)
+ON CONFLICT (reporter_id, message_id) WHERE message_id IS NOT NULL DO NOTHING;
+
 -- name: ListReports :many
 -- The moderation queue, newest first, with the reporter's username and the
 -- target context (video title / comment body / reported account username /
--- remote video title+domain). When open_only is true, only unresolved
--- (status='open') reports are returned.
+-- remote video title+domain / message body snapshot). When open_only is true,
+-- only unresolved (status='open') reports are returned.
 SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.remote_video_id,
+       r.message_id, r.message_body_snapshot,
        r.reason, r.status,
        r.moderator_note, r.resolved_at, r.created_at,
        u.username AS reporter_username,

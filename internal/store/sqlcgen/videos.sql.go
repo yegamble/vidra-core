@@ -96,26 +96,28 @@ func (q *Queries) DeleteVideo(ctx context.Context, id uuid.UUID) error {
 const getVideoByID = `-- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at,
-       c.owner_id
+       c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 WHERE v.id = $1
 `
 
 type GetVideoByIDRow struct {
-	ID          uuid.UUID          `json:"id"`
-	ChannelID   uuid.UUID          `json:"channel_id"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	Privacy     string             `json:"privacy"`
-	State       string             `json:"state"`
-	CreatedAt   time.Time          `json:"created_at"`
-	UpdatedAt   time.Time          `json:"updated_at"`
-	Category    *string            `json:"category"`
-	Language    *string            `json:"language"`
-	License     *string            `json:"license"`
-	PublishAt   pgtype.Timestamptz `json:"publish_at"`
-	OwnerID     uuid.UUID          `json:"owner_id"`
+	ID                 uuid.UUID          `json:"id"`
+	ChannelID          uuid.UUID          `json:"channel_id"`
+	Title              string             `json:"title"`
+	Description        string             `json:"description"`
+	Privacy            string             `json:"privacy"`
+	State              string             `json:"state"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	Category           *string            `json:"category"`
+	Language           *string            `json:"language"`
+	License            *string            `json:"license"`
+	PublishAt          pgtype.Timestamptz `json:"publish_at"`
+	OwnerID            uuid.UUID          `json:"owner_id"`
+	ChannelHandle      string             `json:"channel_handle"`
+	ChannelDisplayName string             `json:"channel_display_name"`
 }
 
 func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDRow, error) {
@@ -135,6 +137,8 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.License,
 		&i.PublishAt,
 		&i.OwnerID,
+		&i.ChannelHandle,
+		&i.ChannelDisplayName,
 	)
 	return i, err
 }
@@ -841,6 +845,13 @@ FROM (
                SELECT 1 FROM video_tags t
                WHERE t.video_id = v.id AND t.tag ILIKE '%' || $1 || '%'
            ))
+      -- Optional facet filters (NULL = off), mirroring the feed: an exact
+      -- free-form tag and the category/language taxonomy ids.
+      AND ($3::text IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $3
+      ))
+      AND ($4::text IS NULL OR v.category = $4)
+      AND ($5::text IS NULL OR v.language = $5)
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
     UNION ALL
@@ -860,7 +871,12 @@ FROM (
            similarity(rv.title, $1) AS search_rank
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
-    WHERE rv.title ILIKE '%' || $1 || '%'
+    -- Remote videos carry no local taxonomy/tags, so any active facet filter
+    -- excludes them (matching the main feed's behavior).
+    WHERE $3::text IS NULL
+      AND $4::text IS NULL
+      AND $5::text IS NULL
+      AND rv.title ILIKE '%' || $1 || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
       AND NOT EXISTS (
@@ -869,12 +885,15 @@ FROM (
       )
 ) AS feed
 ORDER BY feed.search_rank DESC, feed.created_at DESC, feed.id DESC
-LIMIT $4 OFFSET $3
+LIMIT $7 OFFSET $6
 `
 
 type SearchPublicVideosParams struct {
 	Query        string      `json:"query"`
 	ViewerID     pgtype.UUID `json:"viewer_id"`
+	Tag          *string     `json:"tag"`
+	Category     *string     `json:"category"`
+	Language     *string     `json:"language"`
 	ResultOffset int32       `json:"result_offset"`
 	ResultLimit  int32       `json:"result_limit"`
 }
@@ -909,6 +928,9 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 	rows, err := q.db.Query(ctx, searchPublicVideos,
 		arg.Query,
 		arg.ViewerID,
+		arg.Tag,
+		arg.Category,
+		arg.Language,
 		arg.ResultOffset,
 		arg.ResultLimit,
 	)

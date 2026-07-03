@@ -2411,6 +2411,25 @@ paths:
             type: integer
             minimum: 0
             default: 0
+        - name: tag
+          in: query
+          required: false
+          description: Narrow to a free-form tag (matched case-insensitively). Excludes remote results.
+          schema:
+            type: string
+            maxLength: 50
+        - name: category
+          in: query
+          required: false
+          description: Narrow to a taxonomy category id (from GET /videos/config); unknown values are 422. Excludes remote results.
+          schema:
+            type: string
+        - name: language
+          in: query
+          required: false
+          description: Narrow to a taxonomy language id (from GET /videos/config); unknown values are 422. Excludes remote results.
+          schema:
+            type: string
       responses:
         "200":
           description: A page of matching public videos.
@@ -2420,6 +2439,12 @@ paths:
                 $ref: "#/components/schemas/VideoSearchResponse"
         "400":
           description: Missing or too-long q.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: An unknown category or language filter value.
           content:
             application/json:
               schema:
@@ -7212,6 +7237,296 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/conversations/{id}/attachments:
+    post:
+      operationId: uploadDMAttachment
+      summary: Upload a direct-message attachment
+      description: >-
+        Stores an attachment (multipart field "file") for a plaintext
+        conversation the caller participates in and returns an id to reference in
+        a subsequent send (send accepts up to 4 own-uploaded attachment_ids).
+        Behind auth. Allowed kinds: image, video, audio, pdf; capped at 25 MiB;
+        malware-scanned fail-closed when scanning is enabled. Non-participant/
+        unknown conversation → 404; an ENCRYPTED conversation → 422 (attachment
+        ciphertext is exchanged out of band); unsupported type → 415; oversize
+        → 413; failed scan → 422. Returns 503 when blob storage is not
+        configured.
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: The stored attachment's id and metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadAttachmentResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such conversation for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: The attachment exceeds the 25 MiB limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Unsupported attachment type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The conversation is encrypted, or the attachment failed the malware scan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Attachment storage is not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/attachments/{id}:
+    get:
+      operationId: downloadDMAttachment
+      summary: Download a direct-message attachment
+      description: >-
+        Streams an attachment's bytes, gated on participation in the
+        attachment's conversation. Behind auth. Unknown attachment or a caller
+        who is not a participant → 404 (no existence leak).
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The attachment bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such attachment for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/conversations/{id}/read:
+    post:
+      operationId: markConversationRead
+      summary: Mark a conversation read
+      description: >-
+        Advances the caller's read watermark in a conversation (idempotent,
+        advance-only). Behind auth. With a body {message_id} the watermark moves
+        to that message (which must belong to the conversation); without a body
+        it moves to the newest message. The inbox derives unread counts from the
+        watermark and the thread exposes the peer's watermark (subject to their
+        read-receipts toggle). Non-participant/unknown conversation → 404.
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkConversationReadRequest"
+      responses:
+        "204":
+          description: The watermark was advanced (or already current).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such conversation for this caller, or the message is not in it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/messages/{id}:
+    delete:
+      operationId: deleteMessage
+      summary: Delete (tombstone) a message
+      description: >-
+        Sender-only soft delete: the body becomes "[deleted]" and any attachments
+        are removed. Behind auth. A non-sender or unknown message → 404 (authorship
+        is not leaked); an already-deleted message is an idempotent 204.
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The message was tombstoned (or already was).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such message you sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/messages/{id}/report:
+    post:
+      operationId: reportMessage
+      summary: Report a message
+      description: >-
+        Files an abuse report against a direct-message message. Behind auth.
+        Either participant may report; the current body is snapshotted into the
+        report so a moderator keeps context even after a sender tombstone.
+        Idempotent per (reporter, message). A non-participant or unknown message
+        → 404.
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportRequest"
+      responses:
+        "204":
+          description: The report was filed (or already existed).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such message for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/messaging-prefs:
+    get:
+      operationId: getMessagingPrefs
+      summary: Get my messaging privacy preferences
+      description: >-
+        Returns the caller's DM privacy toggles. Behind auth. Currently the
+        read-receipts toggle (default enabled): when disabled, the caller's read
+        watermark is hidden from peers.
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's messaging preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingPrefs"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateMessagingPrefs
+      summary: Update my messaging privacy preferences
+      description: >-
+        Updates the caller's DM privacy toggles (only present fields change).
+        Behind auth.
+      tags: [messaging]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMessagingPrefsRequest"
+      responses:
+        "200":
+          description: The updated messaging preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingPrefs"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/e2ee/devices:
     post:
       operationId: registerE2EEDevice
@@ -9445,7 +9760,7 @@ components:
           format: uuid
         target_type:
           type: string
-          enum: [video, comment, account, remote_video]
+          enum: [video, comment, account, remote_video, message]
         reason:
           type: string
         status:
@@ -9490,6 +9805,13 @@ components:
         remote_video_domain:
           type: string
           description: Origin instance of the reported remote video.
+        message_id:
+          type: string
+          format: uuid
+          description: The reported direct message (message reports); omitted if the message row was later hard-deleted.
+        message_body:
+          type: string
+          description: Snapshot of the reported message body at report time (survives a sender tombstone).
     ReportListResponse:
       type: object
       required: [reports, limit, offset]
@@ -10307,6 +10629,10 @@ components:
         last_message_at:
           type: string
           format: date-time
+        unread_count:
+          type: integer
+          format: int64
+          description: The caller's unread messages (peer messages past their read watermark).
     ConversationListResponse:
       type: object
       required: [conversations, limit, offset]
@@ -10325,13 +10651,19 @@ components:
       type: object
       description: >-
         The PLAINTEXT send shape — valid only on a plaintext conversation
-        (sending it to an encrypted conversation is 422, and vice versa).
-      required: [body]
+        (sending it to an encrypted conversation is 422, and vice versa). A
+        message needs a body OR at least one attachment.
       properties:
         body:
           type: string
-          minLength: 1
           maxLength: 5000
+        attachment_ids:
+          type: array
+          maxItems: 4
+          description: Ids from POST /conversations/{id}/attachments — own-uploaded, in this conversation, not yet sent.
+          items:
+            type: string
+            format: uuid
     EncryptedEnvelope:
       type: object
       description: >-
@@ -10578,9 +10910,88 @@ components:
           type: string
         body:
           type: string
+          description: The message text, or "[deleted]" for a tombstoned message.
+        deleted:
+          type: boolean
+          description: True when the sender has deleted (tombstoned) the message.
         created_at:
           type: string
           format: date-time
+        attachments:
+          type: array
+          description: DM attachments linked to this message (metadata only; fetch the bytes at GET /api/v1/attachments/{id}).
+          items:
+            $ref: "#/components/schemas/DMAttachment"
+        preview:
+          nullable: true
+          description: OpenGraph link preview of the first URL in the body, present only once the async fetch has resolved.
+          allOf:
+            - $ref: "#/components/schemas/LinkPreview"
+    DMAttachment:
+      type: object
+      required: [id, kind, content_type, filename, size_bytes]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [image, video, audio, pdf]
+        content_type:
+          type: string
+        filename:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+    LinkPreview:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        image:
+          type: string
+    UploadAttachmentResponse:
+      type: object
+      required: [attachment_id, kind, content_type, filename, size_bytes]
+      properties:
+        attachment_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [image, video, audio, pdf]
+        content_type:
+          type: string
+        filename:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+    MarkConversationReadRequest:
+      type: object
+      description: Optionally pins the read watermark to a specific message; when absent the newest message is used.
+      properties:
+        message_id:
+          type: string
+          format: uuid
+    MessagingPrefs:
+      type: object
+      required: [read_receipts]
+      properties:
+        read_receipts:
+          type: boolean
+          description: When false, the caller's read watermark is hidden from peers.
+    UpdateMessagingPrefsRequest:
+      type: object
+      properties:
+        read_receipts:
+          type: boolean
     MessageListResponse:
       type: object
       required: [messages, limit, offset]
@@ -10589,6 +11000,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Message"
+        peer_last_read_message_id:
+          type: string
+          format: uuid
+          description: The other participant's read watermark, for a "seen" indicator. Omitted when they have read nothing or disabled read receipts.
         limit:
           type: integer
           example: 20

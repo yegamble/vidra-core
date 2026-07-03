@@ -107,6 +107,11 @@ const uploadRoutePath = "/api/v1/videos/:id/file"
 // the upload service bounds each chunk at the fixed chunk size itself.
 const uploadChunkRoutePath = "/api/v1/uploads/:upload_id/chunks/:n"
 
+// attachmentUploadRoutePath is the Echo route template for a DM attachment
+// upload. Exempted from the default JSON body limit; the messaging service caps
+// each attachment at 25 MiB itself.
+const attachmentUploadRoutePath = "/api/v1/conversations/:id/attachments"
+
 // Option customises the Server during construction.
 type Option func(*Server)
 
@@ -425,6 +430,10 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 		Skipper: func(c echo.Context) bool {
 			r := c.Request()
 			if r.Method == http.MethodPost && c.Path() == uploadRoutePath {
+				return true
+			}
+			// DM attachment uploads carry a bounded (25 MiB) media body.
+			if r.Method == http.MethodPost && c.Path() == attachmentUploadRoutePath {
 				return true
 			}
 			// Resumable chunk PUTs carry raw media bytes (up to the chunk size);
@@ -894,6 +903,18 @@ func (s *Server) routes() {
 		api.GET("/me/conversations", s.handleListConversations, s.requireAuth)
 		api.GET("/conversations/:id/messages", s.handleListMessages, s.requireAuth)
 		api.POST("/conversations/:id/messages", s.handleSendMessage, s.requireAuth)
+		// DM completeness (product-decisions.md §14): read receipts, per-message
+		// delete/report, and the read-receipts privacy toggle.
+		api.POST("/conversations/:id/read", s.handleMarkConversationRead, s.requireAuth)
+		api.DELETE("/messages/:id", s.handleDeleteMessage, s.requireAuth)
+		api.POST("/messages/:id/report", s.handleReportMessage, s.requireAuth)
+		api.GET("/me/messaging-prefs", s.handleGetMessagingPrefs, s.requireAuth)
+		api.PATCH("/me/messaging-prefs", s.handleUpdateMessagingPrefs, s.requireAuth)
+		// Attachments: the upload route carries a bounded (25 MiB) media body
+		// (exempted from the JSON body limit above). Both endpoints return 503
+		// when blob storage is not configured.
+		api.POST("/conversations/:id/attachments", s.handleUploadAttachment, s.requireAuth)
+		api.GET("/attachments/:id", s.handleDownloadAttachment, s.requireAuth)
 	}
 
 	// E2EE key directory (ciphertext-only encrypted messaging, P11.2): own

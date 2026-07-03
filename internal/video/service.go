@@ -1298,12 +1298,17 @@ func (s *Service) ClearHistory(ctx context.Context, userID uuid.UUID) error {
 // SearchPublic returns public, published videos whose title matches query
 // (case-insensitive substring, ranked by trigram similarity then recency),
 // paginated, with discovery-card data. Ingested federated remote videos are
-// UNIONed in by title match, flagged remote (remote-content §4). The caller
-// validates/clamps query, limit, and offset.
-func (s *Service) SearchPublic(ctx context.Context, query string, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
+// UNIONed in by title match, flagged remote (remote-content §4). Optional
+// tag/category/language facet filters narrow the local results (mirroring the
+// feed); any active filter excludes remote videos (they carry no local
+// taxonomy). The caller validates/clamps query, limit, and offset.
+func (s *Service) SearchPublic(ctx context.Context, query string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
 	rows, err := s.repo.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
 		Query:        query,
 		ViewerID:     pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
+		Tag:          nilIfEmpty(strings.ToLower(filter.Tag)),
+		Category:     nilIfEmpty(filter.Category),
+		Language:     nilIfEmpty(filter.Language),
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})

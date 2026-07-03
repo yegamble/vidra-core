@@ -386,6 +386,9 @@ func (f *videoFakeRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.G
 	if !ok {
 		return sqlcgen.GetVideoByIDRow{}, errors.New("not found")
 	}
+	// Mirror the real query's channels JOIN so the detail view carries the
+	// owning channel's identity.
+	v.ChannelHandle, v.ChannelDisplayName = f.channelInfo(v.ChannelID)
 	return v, nil
 }
 
@@ -852,7 +855,8 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		WithBlockService(blocksvc),
 		WithWatchWordService(watchword.NewService(&watchwordFakeRepo{auth: authRepo, videos: repo})),
 		WithAdminService(admin.NewService(authRepo)),
-		WithMessagingService(messaging.NewService(msgRepo, messaging.WithBlocker(blocksvc))),
+		WithMessagingService(messaging.NewService(msgRepo, messaging.WithBlocker(blocksvc),
+			messaging.WithAttachments(blobs, nil, 0))),
 		WithE2EEService(e2ee.NewService(newE2EEFakeRepo(authRepo, msgRepo), e2ee.WithBlocker(blocksvc))),
 		WithLiveService(live.NewService(newLiveFakeRepo(chRepo))),
 		WithQuotaService(quotasvc),
