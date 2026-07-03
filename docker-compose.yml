@@ -125,6 +125,16 @@ services:
       # approve (the registration approval queue). Overridable so approval-mode
       # backed e2e runs can flip it without editing the file. Default off.
       REGISTRATION_REQUIRE_APPROVAL: ${REGISTRATION_REQUIRE_APPROVAL:-false}
+      # Real outbound email over SMTP (password reset / email verification).
+      # SMTP_HOST + SMTP_FROM are required when enabled; SMTP_PASSWORD is a
+      # secret (never commit/log it). DEV_MAIL_CAPTURE_ENABLED wins when both
+      # are on. Default off.
+      MAIL_ENABLED: ${MAIL_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
       # DEV-ONLY: when true, account-security tokens (reset / verify) are captured
       # in memory and retrievable via GET /api/v1/dev/email-token so end-to-end
       # tests can complete the token flows. NEVER enable in production. Default off.

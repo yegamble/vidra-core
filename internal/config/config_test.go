@@ -553,3 +553,64 @@ func TestFederationProductionRequiresKEK(t *testing.T) {
 		t.Fatal("validate(): a non-32-byte KEK must error")
 	}
 }
+
+func TestMailDisabledByDefault(t *testing.T) {
+	for _, k := range []string{"MAIL_ENABLED", "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.MailEnabled {
+		t.Error("MailEnabled = true by default, want false")
+	}
+	if cfg.SMTPPort != 587 {
+		t.Errorf("SMTPPort default = %d, want 587", cfg.SMTPPort)
+	}
+}
+
+func TestMailEnabledValidConfig(t *testing.T) {
+	t.Setenv("MAIL_ENABLED", "true")
+	t.Setenv("SMTP_HOST", "smtp.example.test")
+	t.Setenv("SMTP_PORT", "2525")
+	t.Setenv("SMTP_USERNAME", "mailer")
+	t.Setenv("SMTP_PASSWORD", "relay-secret")
+	t.Setenv("SMTP_FROM", "no-reply@example.test")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.MailEnabled || cfg.SMTPHost != "smtp.example.test" || cfg.SMTPPort != 2525 ||
+		cfg.SMTPUsername != "mailer" || cfg.SMTPPassword != "relay-secret" || cfg.SMTPFrom != "no-reply@example.test" {
+		t.Errorf("SMTP config not loaded: %+v", cfg)
+	}
+}
+
+func TestMailEnabledRequiresHostAndFrom(t *testing.T) {
+	cases := []struct{ name, host, from string }{
+		{"missing host", "", "no-reply@example.test"},
+		{"missing from", "smtp.example.test", ""},
+		{"from not an address", "smtp.example.test", "not-an-address"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("MAIL_ENABLED", "true")
+			t.Setenv("SMTP_HOST", tc.host)
+			t.Setenv("SMTP_FROM", tc.from)
+			if _, err := Load(); err == nil {
+				t.Errorf("Load() accepted MAIL_ENABLED with host=%q from=%q, want error", tc.host, tc.from)
+			}
+		})
+	}
+}
+
+func TestMailEnabledRejectsBadPort(t *testing.T) {
+	t.Setenv("MAIL_ENABLED", "true")
+	t.Setenv("SMTP_HOST", "smtp.example.test")
+	t.Setenv("SMTP_FROM", "no-reply@example.test")
+	t.Setenv("SMTP_PORT", "70000")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SMTP_PORT") {
+		t.Errorf("Load() = %v, want SMTP_PORT range error", err)
+	}
+}

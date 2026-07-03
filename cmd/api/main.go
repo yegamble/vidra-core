@@ -27,6 +27,7 @@ import (
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/live"
+	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -137,8 +138,28 @@ func run() error {
 
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
 	var authOpts []auth.Option
+	if cfg.MailEnabled {
+		// Real outbound email over SMTP. NB: host/port/from are safe to log; the
+		// SMTP credentials are NOT (observability sensitive-key rules).
+		smtpMailer := mail.NewSMTP(mail.Config{
+			Host:         cfg.SMTPHost,
+			Port:         cfg.SMTPPort,
+			Username:     cfg.SMTPUsername,
+			Password:     cfg.SMTPPassword,
+			From:         cfg.SMTPFrom,
+			InstanceName: cfg.InstanceName,
+		})
+		authOpts = append(authOpts, auth.WithMailer(smtpMailer))
+		logger.Info("smtp mailer enabled",
+			"host", cfg.SMTPHost,
+			"port", cfg.SMTPPort,
+			"from", cfg.SMTPFrom,
+		)
+	}
 	var captureMailer *auth.CaptureMailer
 	if cfg.DevMailCaptureEnabled {
+		// The dev capture seam wins over SMTP when both are enabled (WithMailer
+		// options apply in order): tokens are captured, not delivered.
 		captureMailer = auth.NewCaptureMailer()
 		authOpts = append(authOpts, auth.WithMailer(captureMailer))
 		logger.Warn("DEV mail capture ENABLED — account-security tokens are retrievable via GET /api/v1/dev/email-token; NEVER enable this in production (DEV_MAIL_CAPTURE_ENABLED)")

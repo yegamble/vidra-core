@@ -118,6 +118,23 @@ type Config struct {
 	// creating an account directly. Default false.
 	RegistrationRequireApproval bool
 
+	// MailEnabled turns on real outbound email over SMTP: password-reset and
+	// email-verification tokens are delivered to the account's address instead
+	// of being dropped (the no-op default). Requires SMTPHost + SMTPFrom.
+	// DEV_MAIL_CAPTURE_ENABLED still wins when both are set (dev seam).
+	MailEnabled bool
+
+	// SMTP delivery settings (used when MailEnabled). SMTPHost/SMTPPort locate
+	// the relay (STARTTLS is used whenever the server offers it); SMTPUsername/
+	// SMTPPassword are optional AUTH PLAIN credentials — the password is a
+	// secret and must NEVER be logged (observability sensitive-key rules);
+	// SMTPFrom is the sender address on outgoing mail.
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+
 	// DevMailCaptureEnabled turns on the DEVELOPMENT-ONLY in-memory mail capture:
 	// account-security tokens (password reset, email verification) are held in
 	// memory and retrievable via GET /api/v1/dev/email-token instead of being
@@ -224,6 +241,11 @@ func Load() (*Config, error) {
 		InstanceContactEmail:        getEnv("INSTANCE_CONTACT_EMAIL", ""),
 		RegistrationEnabled:         getEnvBool("REGISTRATION_ENABLED", true),
 		RegistrationRequireApproval: getEnvBool("REGISTRATION_REQUIRE_APPROVAL", false),
+		MailEnabled:                 getEnvBool("MAIL_ENABLED", false),
+		SMTPHost:                    getEnv("SMTP_HOST", ""),
+		SMTPUsername:                getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:                getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:                    getEnv("SMTP_FROM", ""),
 		DevMailCaptureEnabled:       getEnvBool("DEV_MAIL_CAPTURE_ENABLED", false),
 		ImportAllowPrivateURLs:      getEnvBool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
 		DatabaseURL:                 getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
@@ -270,6 +292,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.AuthRateLimitRequests = authReqs
+
+	smtpPort, err := getEnvInt("SMTP_PORT", 587)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SMTPPort = smtpPort
 
 	quotaBytes, err := getEnvInt64("INSTANCE_DEFAULT_QUOTA_BYTES", 0)
 	if err != nil {
@@ -384,6 +412,21 @@ func (c *Config) validate() error {
 			if o == "*" {
 				return fmt.Errorf("config: wildcard CORS origin is not allowed in production")
 			}
+		}
+	}
+	if c.MailEnabled {
+		if strings.TrimSpace(c.SMTPHost) == "" {
+			return fmt.Errorf("config: SMTP_HOST is required when MAIL_ENABLED=true")
+		}
+		if c.SMTPPort < 1 || c.SMTPPort > 65535 {
+			return fmt.Errorf("config: SMTP_PORT %d out of range", c.SMTPPort)
+		}
+		from := strings.TrimSpace(c.SMTPFrom)
+		if from == "" {
+			return fmt.Errorf("config: SMTP_FROM is required when MAIL_ENABLED=true")
+		}
+		if !strings.Contains(from, "@") || strings.ContainsAny(from, "\r\n") {
+			return fmt.Errorf("config: SMTP_FROM must be a plain email address")
 		}
 	}
 	if c.MalwareScanEnabled && strings.TrimSpace(c.ClamAVAddr) == "" {

@@ -180,6 +180,13 @@ live role/verification state. A missing, malformed, invalid, or expired token yi
 `PATCH /api/v1/auth/me` updates the profile (`display_name`, `bio`; partial); identity
 fields (username/email) are not editable there pending a re-verification flow.
 
+Email delivery: password-reset and email-verification tokens are handed to a `Mailer`
+adapter. By default nothing is sent (tokens are still generated and consumable). Set
+`MAIL_ENABLED=true` plus `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_FROM`, and
+optional `SMTP_USERNAME`/`SMTP_PASSWORD` (AUTH PLAIN; the password is a secret — never
+logged) to deliver plain-text mail over SMTP, with STARTTLS whenever the relay offers
+it. The dev capture seam (`DEV_MAIL_CAPTURE_ENABLED`) wins over SMTP when both are on.
+
 Request guards: bodies over `HTTP_BODY_LIMIT` (default `8M`) are rejected with `413`;
 each request carries a `HTTP_REQUEST_TIMEOUT` (default `30s`) context deadline that
 handlers and DB/Redis calls observe (a fired deadline renders as a `503`
