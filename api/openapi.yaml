@@ -1362,11 +1362,12 @@ paths:
         (drafts/processing/failed are excluded). Each item carries its view count
         and whether a poster image exists. Auth is optional: an authenticated
         viewer's muted accounts' videos are hidden from the feed (per-viewer);
-        an anonymous viewer sees all. Optional filters narrow the feed: tag
-        (free-form tag, matched case-insensitively against the stored lowercased
-        set), category and language (taxonomy ids from GET /videos/config —
-        unknown values are 422). Ordered by sort and paginated with limit
-        (1–100, default 20) and offset (>= 0).
+        an anonymous viewer sees all. Videos of accounts that opted out of
+        discovery (User.unlisted) never appear. Optional filters narrow the
+        feed: tag (free-form tag, matched case-insensitively against the stored
+        lowercased set), category and language (taxonomy ids from GET
+        /videos/config — unknown values are 422). Ordered by sort and paginated
+        with limit (1–100, default 20) and offset (>= 0).
       tags: [videos]
       security:
         - bearerAuth: []
@@ -1462,7 +1463,8 @@ paths:
         Fuzzy (trigram) search over public, published video titles, ranked by
         similarity then recency. A video also matches when one of its free-form
         tags contains the query (case-insensitive); tag-only matches rank after
-        title matches. Each result carries its view count and whether a
+        title matches. Videos of accounts that opted out of discovery
+        (User.unlisted) never appear. Each result carries its view count and whether a
         poster image exists. Auth is optional: an authenticated viewer's muted
         accounts' videos are hidden from results (per-viewer); an anonymous viewer
         sees all. Requires a non-empty q (<= 100 chars); paginated with limit
@@ -5250,6 +5252,12 @@ components:
         bio:
           type: string
           description: Short free-text description; may be empty.
+        unlisted:
+          type: boolean
+          description: >-
+            Account-level discovery opt-out. When true, the account's channels
+            and videos are excluded from public discovery surfaces (video feed,
+            search) while direct channel/video URLs keep serving. Default false.
         created_at:
           type: string
           format: date-time
@@ -5297,6 +5305,10 @@ components:
         bio:
           type: string
           maxLength: 1000
+        unlisted:
+          type: boolean
+          description: >-
+            Toggle the account-level discovery opt-out (see User.unlisted).
     Channel:
       type: object
       required: [id, owner_id, handle, display_name, description, follower_count, created_at]

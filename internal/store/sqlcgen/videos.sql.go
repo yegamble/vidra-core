@@ -378,6 +378,8 @@ WHERE v.privacy = 'public' AND v.state = 'published'
   ))
   AND ($3::text IS NULL OR v.category = $3)
   AND ($4::text IS NULL OR v.language = $4)
+  -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
 ORDER BY
     CASE WHEN $5::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
     CASE WHEN $5::text = 'trending'
@@ -647,6 +649,8 @@ WHERE v.privacy = 'public' AND v.state = 'published'
            SELECT 1 FROM video_tags t
            WHERE t.video_id = v.id AND t.tag ILIKE '%' || $2 || '%'
        ))
+  -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
 ORDER BY similarity(v.title, $2) DESC, v.created_at DESC, v.id DESC
 LIMIT $4 OFFSET $3
 `

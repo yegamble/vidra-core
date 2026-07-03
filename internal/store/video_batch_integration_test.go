@@ -317,3 +317,88 @@ func TestVideoViewDayRollupAndStats(t *testing.T) {
 		t.Fatalf("empty video totals = (%+v, %v), want zeros", vt2, err)
 	}
 }
+
+// TestUnlistedOwnerExcludedFromDiscovery proves the §16 exclusion against a
+// real PostgreSQL: flipping users.unlisted (via the UpdateUserProfile COALESCE
+// path) removes the owner's videos from the feed and search queries, while the
+// direct channel list query keeps returning them.
+func TestUnlistedOwnerExcludedFromDiscovery(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	userID, channelID := seedOwnerChannel(ctx, t, st, "unl")
+	// Unique title so feed/search assertions are isolated on a shared dev DB.
+	title := "unlisted-probe-" + uuid.NewString()[:8]
+	videoID := seedPublishedVideo(ctx, t, st, channelID, title)
+
+	inSearch := func() bool {
+		rows, err := q.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
+			Query: &title, ViewerID: pgtype.UUID{}, ResultLimit: 10,
+		})
+		if err != nil {
+			t.Fatalf("SearchPublicVideos: %v", err)
+		}
+		for _, r := range rows {
+			if r.ID == videoID {
+				return true
+			}
+		}
+		return false
+	}
+	inFeed := func() bool {
+		// The recent feed could be paginated past our row on a busy dev DB, so
+		// probe with a search-adjacent filter: the feed shares the unlisted
+		// NOT EXISTS with search; use a large page ordered recent.
+		rows, err := q.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
+			Sort: "recent", ResultLimit: 500,
+		})
+		if err != nil {
+			t.Fatalf("ListPublicVideosSorted: %v", err)
+		}
+		for _, r := range rows {
+			if r.ID == videoID {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !inFeed() || !inSearch() {
+		t.Fatalf("baseline: video missing from discovery (feed=%v search=%v)", inFeed(), inSearch())
+	}
+
+	// Flip unlisted through the profile-update query (the PATCH /auth/me path).
+	unlisted := true
+	if _, err := q.UpdateUserProfile(ctx, sqlcgen.UpdateUserProfileParams{ID: userID, Unlisted: &unlisted}); err != nil {
+		t.Fatalf("UpdateUserProfile unlisted: %v", err)
+	}
+	if inFeed() || inSearch() {
+		t.Fatalf("unlisted owner still discoverable (feed=%v search=%v)", inFeed(), inSearch())
+	}
+
+	// Direct channel list still serves the video.
+	direct, err := q.ListPublicVideosByChannel(ctx, channelID)
+	if err != nil || len(direct) != 1 || direct[0].ID != videoID {
+		t.Fatalf("direct channel list while unlisted = (%v, %v), want the video", direct, err)
+	}
+
+	// Relisting restores discovery; an unrelated profile edit keeps the flag.
+	relisted := false
+	if _, err := q.UpdateUserProfile(ctx, sqlcgen.UpdateUserProfileParams{ID: userID, Unlisted: &relisted}); err != nil {
+		t.Fatalf("UpdateUserProfile relist: %v", err)
+	}
+	name := "Unrelated"
+	if u, err := q.UpdateUserProfile(ctx, sqlcgen.UpdateUserProfileParams{ID: userID, DisplayName: &name}); err != nil || u.Unlisted {
+		t.Fatalf("unrelated edit flipped unlisted: (%+v, %v)", u, err)
+	}
+	if !inFeed() || !inSearch() {
+		t.Fatalf("relisted owner not discoverable again")
+	}
+}

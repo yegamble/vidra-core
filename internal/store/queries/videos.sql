@@ -99,6 +99,8 @@ WHERE v.privacy = 'public' AND v.state = 'published'
   ))
   AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
   AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
+  -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
 ORDER BY
     CASE WHEN sqlc.arg('sort')::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
     CASE WHEN sqlc.arg('sort')::text = 'trending'
@@ -164,6 +166,8 @@ WHERE v.privacy = 'public' AND v.state = 'published'
            SELECT 1 FROM video_tags t
            WHERE t.video_id = v.id AND t.tag ILIKE '%' || sqlc.arg('query') || '%'
        ))
+  -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
 ORDER BY similarity(v.title, sqlc.arg('query')) DESC, v.created_at DESC, v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 

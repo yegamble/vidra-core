@@ -120,14 +120,18 @@ func looksLikeEmail(s string) bool {
 
 // userView is the public projection of a user — never includes the password hash.
 type userView struct {
-	ID            string    `json:"id"`
-	Username      string    `json:"username"`
-	Email         string    `json:"email"`
-	Role          string    `json:"role"`
-	EmailVerified bool      `json:"email_verified"`
-	DisplayName   string    `json:"display_name"`
-	Bio           string    `json:"bio"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            string `json:"id"`
+	Username      string `json:"username"`
+	Email         string `json:"email"`
+	Role          string `json:"role"`
+	EmailVerified bool   `json:"email_verified"`
+	DisplayName   string `json:"display_name"`
+	Bio           string `json:"bio"`
+	// Unlisted is the account-level discovery opt-out (§16): when true the
+	// account's channels/videos are hidden from public feed/search surfaces
+	// while direct URLs keep working.
+	Unlisted  bool      `json:"unlisted"`
+	CreatedAt time.Time `json:"created_at"`
 	// HasAvatar/HasBanner are set on GET/PATCH /auth/me (omitted elsewhere);
 	// when true the image is served at GET /users/{id}/avatar | /banner.
 	HasAvatar *bool `json:"has_avatar,omitempty"`
@@ -143,6 +147,7 @@ func newUserView(u sqlcgen.User) userView {
 		EmailVerified: u.EmailVerified,
 		DisplayName:   u.DisplayName,
 		Bio:           u.Bio,
+		Unlisted:      u.Unlisted,
 		CreatedAt:     u.CreatedAt,
 	}
 }
@@ -237,12 +242,14 @@ func (s *Server) handleMe(c echo.Context) error {
 type updateProfileRequest struct {
 	DisplayName *string `json:"display_name"`
 	Bio         *string `json:"bio"`
+	// Unlisted toggles the §16 discovery opt-out.
+	Unlisted *bool `json:"unlisted"`
 }
 
 func (r updateProfileRequest) Validate() []FieldError {
 	var fes []FieldError
-	if r.DisplayName == nil && r.Bio == nil {
-		return []FieldError{{Field: "display_name", Message: "at least one of display_name, bio is required"}}
+	if r.DisplayName == nil && r.Bio == nil && r.Unlisted == nil {
+		return []FieldError{{Field: "display_name", Message: "at least one of display_name, bio, unlisted is required"}}
 	}
 	if r.DisplayName != nil && len(strings.TrimSpace(*r.DisplayName)) > 50 {
 		fes = append(fes, FieldError{Field: "display_name", Message: "must be at most 50 characters"})
@@ -266,6 +273,7 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 	user, err := s.authsvc.UpdateProfile(c.Request().Context(), userID, auth.ProfileInput{
 		DisplayName: in.DisplayName,
 		Bio:         in.Bio,
+		Unlisted:    in.Unlisted,
 	})
 	if err != nil {
 		if errors.Is(err, auth.ErrAccountNotFound) {

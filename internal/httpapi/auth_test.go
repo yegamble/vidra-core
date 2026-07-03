@@ -300,6 +300,9 @@ func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUser
 			if a.Bio != nil {
 				u.Bio = *a.Bio
 			}
+			if a.Unlisted != nil {
+				u.Unlisted = *a.Unlisted
+			}
 			u.UpdatedAt = time.Now()
 			f.users[k] = u
 			return u, nil

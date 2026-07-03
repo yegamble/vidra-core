@@ -303,16 +303,21 @@ func (s *Service) UserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, err
 type ProfileInput struct {
 	DisplayName *string
 	Bio         *string
+	// Unlisted toggles the account-level discovery opt-out (product-decisions
+	// §16): when true, the account's channels/videos are excluded from public
+	// discovery surfaces while direct URLs keep serving.
+	Unlisted *bool
 }
 
 // UpdateProfile updates the authenticated account's presentation fields
-// (display name, bio). Identity fields (username, email) are intentionally not
-// changed here — those need their own re-verification flow.
+// (display name, bio, unlisted flag). Identity fields (username, email) are
+// intentionally not changed here — those need their own re-verification flow.
 func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in ProfileInput) (sqlcgen.User, error) {
 	user, err := s.repo.UpdateUserProfile(ctx, sqlcgen.UpdateUserProfileParams{
 		ID:          id,
 		DisplayName: trimPtr(in.DisplayName),
 		Bio:         trimPtr(in.Bio),
+		Unlisted:    in.Unlisted,
 	})
 	if err != nil {
 		return sqlcgen.User{}, ErrAccountNotFound

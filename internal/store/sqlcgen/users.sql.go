@@ -22,7 +22,7 @@ SET role       = COALESCE($1, role),
                                ELSE storage_quota_bytes END,
     updated_at = now()
 WHERE id = $6
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted
 `
 
 type AdminUpdateUserParams struct {
@@ -62,6 +62,7 @@ func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams
 		&i.DisplayName,
 		&i.Bio,
 		&i.StorageQuotaBytes,
+		&i.Unlisted,
 	)
 	return i, err
 }
@@ -80,7 +81,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted
 `
 
 type CreateUserParams struct {
@@ -111,6 +112,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.DisplayName,
 		&i.Bio,
 		&i.StorageQuotaBytes,
+		&i.Unlisted,
 	)
 	return i, err
 }
@@ -157,7 +159,7 @@ func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (Get
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -178,12 +180,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.DisplayName,
 		&i.Bio,
 		&i.StorageQuotaBytes,
+		&i.Unlisted,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted
 FROM users
 WHERE id = $1
 `
@@ -204,13 +207,14 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.DisplayName,
 		&i.Bio,
 		&i.StorageQuotaBytes,
+		&i.Unlisted,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
 SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.is_active,
-       u.created_at, u.updated_at, u.display_name, u.bio, u.storage_quota_bytes,
+       u.created_at, u.updated_at, u.display_name, u.bio, u.storage_quota_bytes, u.unlisted,
        (SELECT COALESCE(SUM(vf.size_bytes), 0)::bigint
           FROM video_files vf
           JOIN videos v ON v.id = vf.video_id
@@ -243,6 +247,7 @@ type ListUsersRow struct {
 	DisplayName       string    `json:"display_name"`
 	Bio               string    `json:"bio"`
 	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
+	Unlisted          bool      `json:"unlisted"`
 	StorageUsedBytes  int64     `json:"storage_used_bytes"`
 }
 
@@ -272,6 +277,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 			&i.DisplayName,
 			&i.Bio,
 			&i.StorageQuotaBytes,
+			&i.Unlisted,
 			&i.StorageUsedBytes,
 		); err != nil {
 			return nil, err
@@ -288,19 +294,26 @@ const updateUserProfile = `-- name: UpdateUserProfile :one
 UPDATE users
 SET display_name = COALESCE($1, display_name),
     bio          = COALESCE($2, bio),
+    unlisted     = COALESCE($3, unlisted),
     updated_at   = now()
-WHERE id = $3
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
+WHERE id = $4
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted
 `
 
 type UpdateUserProfileParams struct {
 	DisplayName *string   `json:"display_name"`
 	Bio         *string   `json:"bio"`
+	Unlisted    *bool     `json:"unlisted"`
 	ID          uuid.UUID `json:"id"`
 }
 
 func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (User, error) {
-	row := q.db.QueryRow(ctx, updateUserProfile, arg.DisplayName, arg.Bio, arg.ID)
+	row := q.db.QueryRow(ctx, updateUserProfile,
+		arg.DisplayName,
+		arg.Bio,
+		arg.Unlisted,
+		arg.ID,
+	)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -315,6 +328,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.DisplayName,
 		&i.Bio,
 		&i.StorageQuotaBytes,
+		&i.Unlisted,
 	)
 	return i, err
 }

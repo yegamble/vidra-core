@@ -57,6 +57,23 @@ type videoFakeRepo struct {
 	// ratings/commentsRepo mirror the cross-table joins the stats queries do.
 	ratings      *ratingFakeRepo
 	commentsRepo *commentFakeRepo
+	// users mirrors the discovery queries' unlisted-owner exclusion (§16).
+	users *authFakeRepo
+}
+
+// ownerUnlisted mirrors the feed/search queries' NOT EXISTS unlisted check:
+// whether the channel's owning account opted out of discovery.
+func (f *videoFakeRepo) ownerUnlisted(channelID uuid.UUID) bool {
+	if f.users == nil {
+		return false
+	}
+	owner := f.channelOwner(channelID)
+	for _, u := range f.users.users {
+		if u.ID == owner {
+			return u.Unlisted
+		}
+	}
+	return false
 }
 
 func (f *videoFakeRepo) DeleteVideoTags(_ context.Context, videoID uuid.UUID) error {
@@ -507,7 +524,7 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 	for _, r := range f.videos {
 		if r.Privacy == "public" && r.State == "published" &&
 			(strings.Contains(strings.ToLower(r.Title), q) || f.tagMatches(r.ID, q)) &&
-			!f.mutedFromFeed(a.ViewerID, r.ChannelID) {
+			!f.mutedFromFeed(a.ViewerID, r.ChannelID) && !f.ownerUnlisted(r.ChannelID) {
 			all = append(all, sqlcgen.SearchPublicVideosRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
@@ -610,7 +627,8 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 		if a.Language != nil && (r.Language == nil || *r.Language != *a.Language) {
 			continue
 		}
-		if r.Privacy == "public" && r.State == "published" && !f.mutedFromFeed(a.ViewerID, r.ChannelID) {
+		if r.Privacy == "public" && r.State == "published" && !f.mutedFromFeed(a.ViewerID, r.ChannelID) &&
+			!f.ownerUnlisted(r.ChannelID) {
 			ch, cn := f.channelInfo(r.ChannelID)
 			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
@@ -692,6 +710,7 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 	ratingRepo := newRatingFakeRepo()
 	repo.ratings = ratingRepo
 	repo.commentsRepo = cmRepo
+	repo.users = authRepo
 	notifRepo.reports = modRepo
 	msgRepo := newMessagingFakeRepo(authRepo)
 	blocksvc := block.NewService(&blockFakeRepo{auth: authRepo})

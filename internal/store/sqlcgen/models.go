@@ -298,6 +298,7 @@ type User struct {
 	DisplayName       string    `json:"display_name"`
 	Bio               string    `json:"bio"`
 	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
+	Unlisted          bool      `json:"unlisted"`
 }
 
 type UserBlock struct {
