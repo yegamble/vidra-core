@@ -463,6 +463,28 @@ backend exposes no filesystem paths — ffprobe/ffmpeg/clamav read via the temp-
 download fallback, and HTTP Range/206 serving works through its seekable object
 reader. IPFS lands later behind the same interface.
 
+## Observability
+
+Structured logging is always on (`slog`; `LOG_LEVEL`, `LOG_FORMAT=json|text`) with
+one line per request carrying `request_id`/`correlation_id`. Two opt-in layers add
+metrics and tracing at zero cost when off:
+
+- **Metrics** (`METRICS_ENABLED=true`): Prometheus RED metrics at `GET /metrics`
+  — request rate/errors/duration histograms labelled by method + Echo route
+  template + status class (bounded cardinality; never ids/raw URLs), plus a
+  `vidra_queue_depth{queue,state}` gauge. Unauthenticated root ops surface —
+  network-scope it, and it is intentionally excluded from `api/openapi.yaml`.
+- **Tracing** (`OTEL_ENABLED=true`): OTLP spans for HTTP, PostgreSQL queries,
+  Redis commands, and outbound HTTP (federation/import/whisper) with inbound +
+  outbound W3C `traceparent`. Run a local Jaeger with
+  `docker compose --profile core --profile otel up` (collector at
+  `otel-collector:4317`, UI at http://localhost:16686).
+- **Admin ops endpoints**: `GET /api/v1/admin/system` (build/uptime/dependency
+  health) and `GET /api/v1/admin/jobs` (per-queue depth + oldest-pending age +
+  recent failures) back the admin dashboards.
+
+Backups, restore, and production deploy notes: `docs/operations.md`.
+
 ## Local development (without Docker for the app)
 
 ```bash
@@ -496,6 +518,8 @@ lints the spec and runs the same check on every change. Lint locally with
 - API contract: `api/openapi.yaml`
 - Architecture: `.ralph/specs/architecture.md`
 - Security: `.ralph/specs/security.md`
+- Observability: `.ralph/specs/observability.md`
+- Operations (backup/restore/deploy): `docs/operations.md`
 - Testing: `.ralph/specs/testing.md`
 - PeerTube parity ledgers: `.ralph/specs/peertube-*.md`
 

@@ -13,9 +13,16 @@
 > (`NewLogger`) + `LOG_LEVEL`/`LOG_FORMAT` config are built too (P17.1).
 > OpenTelemetry **tracing** is built (P17.3): `SetupTracing` (OTLP, no-op when
 > off), `otelecho` HTTP spans, inbound W3C `traceparent`, and `trace_id`/`span_id`
-> in request logs. Still planned: OTel **metrics** (RED + `METRICS_ENABLED`),
-> datastore/outbound span instrumentation, and propagating the request-scoped
-> logger through the service/store layers via context (P17.1).
+> in request logs. **Datastore + outbound spans are built** (P17.3): pgx query
+> spans (`store.WithTracing`), Redis command spans (`cache.WithTracing`), and
+> outbound client spans + W3C `traceparent` INJECTION on every SSRF-guarded client
+> via `urlsafety.SetTransportWrapper` + `observability.OTelHTTPTransport` — all
+> installed only when `OTEL_ENABLED`, so zero cost off. **RED metrics are built**
+> (P17.3): `observability.Metrics` (prometheus/client_golang) exposes `/metrics`
+> behind `METRICS_ENABLED` with bounded-cardinality request counters/histograms
+> (method + route template + status class) and a `vidra_queue_depth` gauge.
+> Still planned: propagating the request-scoped logger through the service/store
+> layers via context (P17.1).
 
 ## Goals
 
@@ -121,6 +128,17 @@ return to a client:
   URLs (use the route template) as labels; never a secret as a label.
 - A metrics surface (`/metrics` Prometheus scrape or OTLP push) is gated behind
   `METRICS_ENABLED`; document any HTTP route for it in `api/openapi.yaml`.
+  **BUILT** as a `/metrics` Prometheus scrape (prometheus/client_golang): the
+  RED counters/histograms are labelled only by method, the Echo route TEMPLATE
+  (`c.Path()`, never the raw URL), and status class, and the durable-queue depths
+  are a `vidra_queue_depth{queue,state}` gauge. `/metrics` is an ops surface at
+  the root (like the health probes) and is INTENTIONALLY EXCLUDED from
+  `api/openapi.yaml` — same treatment as the federation/AP root routes and the
+  dev-only routes — so the drift guard stays green; documented in README.md and
+  docs/operations.md instead. Operators must network-scope it (do not expose it
+  publicly). The recording rides the request-logger choke point (final,
+  error-handler-resolved status) and is gated by `METRICS_ENABLED`, mirroring how
+  `otelecho` is gated by `OTEL_ENABLED`.
 
 ### Logs ↔ traces
 - When `OTEL_ENABLED`, every slog line emitted within a request must include

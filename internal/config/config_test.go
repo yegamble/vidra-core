@@ -100,6 +100,25 @@ func TestOTelDefaults(t *testing.T) {
 	}
 }
 
+func TestMetricsDefaultAndOverride(t *testing.T) {
+	t.Setenv("METRICS_ENABLED", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.MetricsEnabled {
+		t.Error("MetricsEnabled default should be false")
+	}
+	t.Setenv("METRICS_ENABLED", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.MetricsEnabled {
+		t.Error("MetricsEnabled should be true when METRICS_ENABLED=true")
+	}
+}
+
 func TestOTelEnabledValid(t *testing.T) {
 	t.Setenv("OTEL_ENABLED", "true")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317")

@@ -290,6 +290,13 @@ curl -s 'localhost:8080/api/v1/admin/audit-log?action=auth.login&limit=20' -H 'a
 # Operational system status (admin-only; build info, environment, uptime, overall
 # health, and postgres/redis component status). Always 200 (shows degraded state).
 curl -s localhost:8080/api/v1/admin/system -H 'authorization: Bearer <admin-token>'
+
+# Durable job-queue status (admin-only): per-queue {pending,running,done,failed,
+# oldest_pending_age_seconds} across all queues + a recent-failures list.
+curl -s localhost:8080/api/v1/admin/jobs -H 'authorization: Bearer <admin-token>'
+
+# Prometheus RED metrics (root ops surface; only when METRICS_ENABLED=true).
+curl -s localhost:8080/metrics
 ```
 All non-2xx responses use the `ErrorResponse` envelope
 (`{"error":{"code","message","request_id"}}`; validation failures add a `fields`
@@ -399,8 +406,12 @@ migration; add a new one.
    guard tests (`internal/observability/logging_guard_test.go`:
    `TestNoForbiddenLogging` + `TestNoSensitiveLogKeys`) are built and run under
    `make ci`. OTel **tracing** is built (`OTEL_ENABLED` + `SetupTracing`;
-   otelecho HTTP spans; inbound `traceparent`; `trace_id`/`span_id` in logs); OTel
-   **metrics** + datastore/outbound spans remain a fix_plan P17.3 task.
+   otelecho HTTP spans; pgx/Redis spans via `store.WithTracing`/`cache.WithTracing`;
+   outbound spans + W3C `traceparent` injection on the SSRF-guarded clients via
+   `urlsafety.SetTransportWrapper`; inbound `traceparent`; `trace_id`/`span_id` in
+   logs). RED **metrics** are built behind `METRICS_ENABLED` (`GET /metrics`
+   Prometheus scrape + `vidra_queue_depth` gauge). Local tracing backend:
+   `docker compose --profile core --profile otel up` (Jaeger UI :16686).
 7. branch CI is green (same `make ci`); `ci-guard.yml` passes — a local green alone
    is not done
 

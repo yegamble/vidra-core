@@ -34,6 +34,7 @@ import (
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/instancesettings"
+	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/linkpreview"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mail"
@@ -104,7 +105,16 @@ func run() error {
 		return err
 	}
 	defer func() { _ = otelShutdown(context.Background()) }()
+	// Datastore + outbound-HTTP instrumentation (P17.3). Enabled only with OTel so
+	// it is genuinely zero-cost off: pgx query spans, Redis command spans, and the
+	// outbound client-span + W3C traceparent injection on EVERY SSRF-guarded client
+	// (federation/import/whisper/atproto/link-preview) via one wrapper seam.
+	var storeOpts []store.Option
+	var cacheOpts []cache.Option
 	if cfg.OTelEnabled {
+		storeOpts = append(storeOpts, store.WithTracing())
+		cacheOpts = append(cacheOpts, cache.WithTracing())
+		urlsafety.SetTransportWrapper(observability.OTelHTTPTransport)
 		logger.Info("opentelemetry tracing enabled",
 			"endpoint", cfg.OTelExporterEndpoint,
 			"protocol", cfg.OTelExporterProtocol,
@@ -117,14 +127,14 @@ func run() error {
 	startCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	db, err := store.New(startCtx, cfg.DatabaseURL)
+	db, err := store.New(startCtx, cfg.DatabaseURL, storeOpts...)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 	logger.Info("connected to postgres")
 
-	rdb, err := cache.New(startCtx, cfg.RedisURL)
+	rdb, err := cache.New(startCtx, cfg.RedisURL, cacheOpts...)
 	if err != nil {
 		return err
 	}
@@ -646,6 +656,30 @@ func run() error {
 		defer workerCancel()
 		go runMediaGCWorker(workerCtx, logger, mediagcsvc, auditsvc)
 		logger.Info("media gc worker started")
+	}
+
+	// Admin operations: the durable-queue depth snapshot + recent-failures
+	// endpoint (P17.4) and the queue-depth Prometheus gauge both read from here.
+	jobStatusSvc := jobstatus.NewService(db.Queries())
+	opts = append(opts, httpapi.WithJobStatusService(jobStatusSvc))
+
+	// Prometheus RED metrics (P17.3), gated behind METRICS_ENABLED. The queue-depth
+	// gauge pulls from the jobs snapshot at scrape time. Off by default → zero cost.
+	if cfg.MetricsEnabled {
+		metrics := observability.NewMetrics()
+		metrics.RegisterQueueDepthSource(func(ctx context.Context) ([]observability.QueueDepth, error) {
+			depths, err := jobStatusSvc.Depths(ctx)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]observability.QueueDepth, len(depths))
+			for i, d := range depths {
+				out[i] = observability.QueueDepth{Queue: d.Queue, State: d.State, Count: d.Count}
+			}
+			return out, nil
+		})
+		opts = append(opts, httpapi.WithMetrics(metrics))
+		logger.Info("prometheus metrics enabled", "route", "/metrics")
 	}
 
 	srv := httpapi.New(cfg, db, rdb, opts...)

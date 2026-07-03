@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -18,9 +21,31 @@ type Store struct {
 	Pool *pgxpool.Pool
 }
 
+// Option customises the pool at construction.
+type Option func(*options)
+
+type options struct {
+	tracer pgx.QueryTracer
+}
+
+// WithTracing enables OpenTelemetry spans around every pgx query. Install it only
+// when OpenTelemetry is on (otherwise it is pure overhead): each query becomes a
+// short client span ("postgres.query"). Query ARGUMENTS are never recorded — they
+// can carry secrets/PII — and the span name is a fixed low-cardinality string, so
+// no denylisted data reaches a span attribute.
+func WithTracing() Option {
+	return func(o *options) {
+		o.tracer = &queryTracer{tracer: otel.Tracer("github.com/vidra/vidra-core/internal/store")}
+	}
+}
+
 // New opens a pooled connection to PostgreSQL using the given DSN and verifies
 // connectivity with a ping bounded by ctx.
-func New(ctx context.Context, databaseURL string) (*Store, error) {
+func New(ctx context.Context, databaseURL string, opts ...Option) (*Store, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("store: parse database url: %w", err)
@@ -29,6 +54,9 @@ func New(ctx context.Context, databaseURL string) (*Store, error) {
 	cfg.MinConns = 1
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = 30 * time.Minute
+	if o.tracer != nil {
+		cfg.ConnConfig.Tracer = o.tracer
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -60,4 +88,30 @@ func (s *Store) Close() {
 	if s.Pool != nil {
 		s.Pool.Close()
 	}
+}
+
+// queryTracer implements pgx.QueryTracer, opening a client span per query and
+// closing it when the query completes. It records nothing but the fixed span
+// name and (on failure) the error — never the SQL arguments.
+type queryTracer struct {
+	tracer oteltrace.Tracer
+}
+
+// pgxSpanKey stashes the in-flight span on the query context.
+type pgxSpanKey struct{}
+
+func (t *queryTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	ctx, span := t.tracer.Start(ctx, "postgres.query", oteltrace.WithSpanKind(oteltrace.SpanKindClient))
+	return context.WithValue(ctx, pgxSpanKey{}, span)
+}
+
+func (t *queryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+	span, ok := ctx.Value(pgxSpanKey{}).(oteltrace.Span)
+	if !ok {
+		return
+	}
+	if data.Err != nil {
+		span.RecordError(data.Err)
+	}
+	span.End()
 }

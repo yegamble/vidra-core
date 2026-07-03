@@ -36,6 +36,11 @@ type Config struct {
 	OTelExporterProtocol string
 	OTelServiceName      string
 
+	// MetricsEnabled gates the Prometheus RED-metrics surface (a /metrics scrape
+	// endpoint + the request-metrics middleware). Opt-in and zero-cost when false:
+	// no registry is built, no middleware is mounted, and /metrics is not routed.
+	MetricsEnabled bool
+
 	// HTTP server.
 	HTTPHost            string
 	HTTPPort            int
@@ -333,6 +338,7 @@ func Load() (*Config, error) {
 		OTelExporterEndpoint:        getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		OTelExporterProtocol:        strings.ToLower(getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")),
 		OTelServiceName:             getEnv("OTEL_SERVICE_NAME", "vidra-core"),
+		MetricsEnabled:              getEnvBool("METRICS_ENABLED", false),
 		HTTPHost:                    getEnv("HTTP_HOST", "0.0.0.0"),
 		InstanceName:                getEnv("INSTANCE_NAME", "Vidra (dev)"),
 		PublicBaseURL:               strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),

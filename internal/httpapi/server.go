@@ -34,6 +34,7 @@ import (
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/quota"
@@ -94,6 +95,8 @@ type Server struct {
 	instancemodsvc *instancemod.Service
 	settingssvc    *instancesettings.Service
 	mediagcsvc     *mediagc.Service
+	jobStatusSvc   jobStatusProvider
+	metrics        *observability.Metrics
 	media          storage.Backend
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
 	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
@@ -290,6 +293,22 @@ func WithTranscodeService(svc *transcode.Service) Option {
 // cmd/api.
 func WithMediaGCService(svc *mediagc.Service) Option {
 	return func(s *Server) { s.mediagcsvc = svc }
+}
+
+// WithJobStatusService mounts the admin operations jobs endpoint
+// (GET /admin/jobs) — the per-queue depth snapshot + recent-failures list that
+// backs the admin jobs page (P17.4). When unset, the route is not registered.
+func WithJobStatusService(svc jobStatusProvider) Option {
+	return func(s *Server) { s.jobStatusSvc = svc }
+}
+
+// WithMetrics attaches the Prometheus RED-metrics registry. When set AND
+// cfg.MetricsEnabled is true, the request choke point records per-request
+// counters/histograms and GET /metrics serves the scrape. Mirrors the otelecho
+// gating: off by default, zero cost. When nil, no metrics are recorded and the
+// scrape route is absent.
+func WithMetrics(m *observability.Metrics) Option {
+	return func(s *Server) { s.metrics = m }
 }
 
 // WithUploadService mounts the resumable/chunked upload endpoints (open session,
@@ -497,6 +516,14 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 				attrs = append(attrs, "error", v.Error)
 			}
 			s.logger.Log(c.Request().Context(), level, "request", attrs...)
+			// RED metrics ride this same choke point (gated by METRICS_ENABLED, like
+			// otelecho is gated by OTEL_ENABLED): Echo's RequestLogger runs the error
+			// handler first (HandleError:true), so v.Status is the FINAL status here.
+			// c.Path() is the bounded route TEMPLATE — never the raw URL — so label
+			// cardinality stays small.
+			if s.metrics != nil {
+				s.metrics.ObserveRequest(v.Method, c.Path(), v.Status, v.Latency)
+			}
 			return nil
 		},
 	})
@@ -523,6 +550,17 @@ func (s *Server) routes() {
 	s.echo.GET("/healthz", s.handleLive)
 	s.echo.GET("/readyz", s.handleReady)
 	s.echo.GET("/version", s.handleVersion)
+
+	// Prometheus RED-metrics scrape (request rate/errors/duration + queue-depth
+	// gauge), gated behind METRICS_ENABLED (s.metrics is nil otherwise). This is
+	// an OPERATIONS surface intentionally EXCLUDED from the OpenAPI REST contract —
+	// same treatment as the federation/AP root routes and the dev-only routes.
+	// It lives at the root (not under /api/v1), so it is unthrottled like the
+	// health probes; operators should network-scope it, not expose it publicly.
+	// Documented in README.md and .ralph/specs/observability.md.
+	if s.metrics != nil {
+		s.echo.GET("/metrics", echo.WrapHandler(s.metrics.Handler()))
+	}
 
 	// Fediverse discovery (NodeInfo) lives at the root, outside /api/v1, and is a
 	// federation contract — not part of the REST OpenAPI. Mounted only when
@@ -906,6 +944,11 @@ func (s *Server) routes() {
 	// Admin operational status. Depends only on core wiring; auth guards it.
 	if s.authsvc != nil {
 		api.GET("/admin/system", s.handleSystemStatus, s.requireAuth, s.requireRole("admin"))
+	}
+
+	// Admin operations: durable-queue depth snapshot + recent failures (P17.4).
+	if s.jobStatusSvc != nil {
+		api.GET("/admin/jobs", s.handleListJobs, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// DB-backed instance settings overlay (fix_plan P10): admins read the

@@ -38,6 +38,21 @@ var (
 
 const maxRedirects = 5
 
+// transportWrapper, when non-nil, wraps the outbound http.RoundTripper of every
+// client NewClient builds. It is the seam through which OpenTelemetry client-span
+// creation + W3C traceparent injection is added WITHOUT this security-critical
+// package importing the OTel SDK (the wrapper is a plain stdlib signature). The
+// wrapper only ever decorates the SSRF-guarded transport, so the dial-time IP
+// guard and redirect re-validation still run underneath it. Set once at startup
+// (see cmd/api wiring) before any outbound fetch; nil leaves clients untouched
+// (the zero-cost default when OpenTelemetry is off).
+var transportWrapper func(http.RoundTripper) http.RoundTripper
+
+// SetTransportWrapper installs the outbound-transport decorator described on
+// transportWrapper. Passing nil clears it. Not safe for concurrent use with
+// NewClient; call it once during startup wiring.
+func SetTransportWrapper(w func(http.RoundTripper) http.RoundTripper) { transportWrapper = w }
+
 // Guard applies the SSRF policy. The zero value is the secure default: block
 // every non-public address. Guard{AllowPrivate: true} relaxes ONLY the
 // private/loopback/link-local/CGNAT IP checks — a DEV/TEST escape hatch (e.g.
@@ -143,9 +158,15 @@ func (g Guard) NewClient(timeout time.Duration) *http.Client {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
+	// Decorate the guarded transport with the outbound-span/traceparent wrapper
+	// when one is installed (OpenTelemetry on); the SSRF guard still runs below it.
+	var rt http.RoundTripper = transport
+	if transportWrapper != nil {
+		rt = transportWrapper(transport)
+	}
 	return &http.Client{
 		Timeout:   timeout,
-		Transport: transport,
+		Transport: rt,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxRedirects {
 				return ErrTooManyRedirects

@@ -1,0 +1,32 @@
+# OpenTelemetry Collector config for the local `otel` compose profile.
+#
+# It receives OTLP spans from vidra-core (OTEL_EXPORTER_OTLP_ENDPOINT points the
+# api at otel-collector:4317) and exports them to the Jaeger all-in-one running
+# in the same profile, so you can inspect end-to-end traces at the Jaeger UI
+# (http://localhost:16686). Nothing here is required by the default test suite —
+# tracing is opt-in (OTEL_ENABLED=true) and off by default.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  # Jaeger accepts OTLP directly (all-in-one exposes an OTLP gRPC receiver on
+  # 4317); forward the batched spans there.
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger]

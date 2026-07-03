@@ -7879,6 +7879,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/jobs:
+    get:
+      operationId: listJobs
+      summary: Durable job-queue status (admin)
+      description: >-
+        Returns an operations snapshot of every durable background-work queue
+        (transcode_jobs, federation_deliveries, import_jobs, caption_jobs,
+        account_exports, upload_sessions): per-queue depth counts by state
+        (pending/running/done/failed) plus the age of the oldest still-pending
+        item (a stuck-worker signal), and a merged recent-failures list. This is
+        the backend contract behind the admin jobs page. Failures carry only
+        id/error/attempts — never a source URL, inbox URL, storage key, or any
+        argument. No separate worker heartbeat store exists: a healthy worker
+        keeps pending/oldest_pending_age low, and dead-lettered rows surface in
+        failed + recent_failures. Restricted to admins.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The current durable-queue snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobsOverview"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/instance-settings:
     get:
       operationId: getInstanceSettings
@@ -11217,6 +11254,64 @@ components:
                 description: ok | down | not_configured
               error:
                 type: string
+    JobsOverview:
+      type: object
+      description: >-
+        Durable job-queue operations snapshot (admin jobs page). No secrets/PII.
+      required: [queues, recent_failures]
+      properties:
+        queues:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueueStatus"
+        recent_failures:
+          type: array
+          description: Newest-first, merged across queues, capped.
+          items:
+            $ref: "#/components/schemas/JobFailure"
+    QueueStatus:
+      type: object
+      description: >-
+        One queue's normalised depth. For upload_sessions (no retry model),
+        pending=active, done=completed, failed=cancelled, running=0.
+      required: [queue, pending, running, done, failed, oldest_pending_age_seconds]
+      properties:
+        queue:
+          type: string
+          example: transcode_jobs
+        pending:
+          type: integer
+          format: int64
+        running:
+          type: integer
+          format: int64
+        done:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        oldest_pending_age_seconds:
+          type: integer
+          format: int64
+          description: Age of the oldest still-pending item, or 0 when none pending.
+    JobFailure:
+      type: object
+      description: One dead-lettered job, safe to show an operator (no secrets/URLs).
+      required: [queue, id, error, attempts, failed_at]
+      properties:
+        queue:
+          type: string
+        id:
+          type: string
+          format: uuid
+        error:
+          type: string
+        attempts:
+          type: integer
+        failed_at:
+          type: string
+          format: date-time
     InstanceSetting:
       type: object
       description: >-
