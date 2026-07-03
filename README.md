@@ -118,7 +118,17 @@ rejects it). Re-uploading replaces the prior original, and non-owner/unknown →
 The file extension must be an accepted video container (else `415`) and the body must
 be within `UPLOAD_MAX_SIZE` (else `413`; this route is exempt from the small
 `HTTP_BODY_LIMIT` that guards the JSON API). The stored file is tracked in
-`video_files`. Finalisation runs through an injected `Prober` seam: at startup the server uses
+`video_files`. **Per-user storage quotas**: a user's usage is the summed
+size of their `video_files` rows (originals, renditions, thumbnails) across the
+videos owned via their channels, aggregated live. The effective quota is the
+per-user override when an admin set one, else `INSTANCE_DEFAULT_QUOTA_BYTES`
+(0/unset = unlimited); an upload or URL import that would not fit is rejected
+with `422 quota_exceeded` before storing (imports are also hard-capped while
+streaming, so a lying/absent `Content-Length` can't bypass it). `GET
+/api/v1/me/quota` (auth) returns `{used_bytes, quota_bytes}` (`quota_bytes`
+null = unlimited), and admins manage overrides via `PATCH
+/api/v1/admin/users/{id}` `storage_quota_bytes` (null resets to the instance
+default, 0 = unlimited). Finalisation runs through an injected `Prober` seam: at startup the server uses
 the FFprobe-backed prober when `ffprobe` is on `PATH` (it is in the Docker image),
 extracting technical metadata (duration, width, height) that the detail endpoint
 exposes and persisting it to `video_metadata`; a probe error marks the video

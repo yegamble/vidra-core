@@ -35,6 +35,7 @@ import (
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
+	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/secretbox"
@@ -271,6 +272,14 @@ func run() error {
 
 	imagesvc := profileimage.NewService(db.Queries(), blobs)
 	opts = append(opts, httpapi.WithProfileImageService(imagesvc))
+
+	// Per-user storage quotas: usage is aggregated live from video_files;
+	// uploads/imports that would exceed the effective quota get 422.
+	quotasvc := quota.NewService(db.Queries(), cfg.InstanceDefaultQuotaBytes)
+	opts = append(opts, httpapi.WithQuotaService(quotasvc))
+	if cfg.InstanceDefaultQuotaBytes > 0 {
+		logger.Info("default per-user storage quota enabled", "bytes", cfg.InstanceDefaultQuotaBytes)
+	}
 
 	// Federation (ActivityPub) — the service is always constructed, but its routes
 	// mount only when FEDERATION_ENABLED (gated in httpapi.routes). Actor private

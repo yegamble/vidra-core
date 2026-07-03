@@ -41,6 +41,10 @@ type authFakeRepo struct {
 	resets   map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
 	verifs   map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
 	regReqs  []*regReqRow
+	// usage mirrors SumUserStorageUsage: a user's total stored video-file bytes.
+	// Nil (pure-auth harnesses) means 0; videoServerEnv wires it to sum the
+	// video fake repo's files, mirroring the real aggregate query.
+	usage func(uuid.UUID) int64
 }
 
 func newAuthFakeRepo() *authFakeRepo {
@@ -304,13 +308,30 @@ func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUser
 	return sqlcgen.User{}, errors.New("not found")
 }
 
-// ListUsers + AdminUpdateUser let authFakeRepo also satisfy admin.Repository.
-func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) ([]sqlcgen.User, error) {
-	var out []sqlcgen.User
+// SumUserStorageUsage lets authFakeRepo satisfy quota.Repository (and the
+// admin.Repository usage read). Delegates to the wired usage func (0 when unset).
+func (f *authFakeRepo) SumUserStorageUsage(_ context.Context, ownerID uuid.UUID) (int64, error) {
+	if f.usage == nil {
+		return 0, nil
+	}
+	return f.usage(ownerID), nil
+}
+
+// ListUsers + AdminUpdateUser (+ SumUserStorageUsage above) let authFakeRepo
+// also satisfy admin.Repository.
+func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) ([]sqlcgen.ListUsersRow, error) {
+	var out []sqlcgen.ListUsersRow
 	q := strings.ToLower(a.Query)
 	for _, u := range f.users {
 		if q == "" || strings.Contains(strings.ToLower(u.Username), q) || strings.Contains(strings.ToLower(u.Email), q) {
-			out = append(out, u)
+			used, _ := f.SumUserStorageUsage(context.Background(), u.ID)
+			out = append(out, sqlcgen.ListUsersRow{
+				ID: u.ID, Username: u.Username, Email: u.Email, PasswordHash: u.PasswordHash,
+				Role: u.Role, EmailVerified: u.EmailVerified, IsActive: u.IsActive,
+				CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt,
+				DisplayName: u.DisplayName, Bio: u.Bio,
+				StorageQuotaBytes: u.StorageQuotaBytes, StorageUsedBytes: used,
+			})
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
@@ -333,6 +354,9 @@ func (f *authFakeRepo) AdminUpdateUser(_ context.Context, a sqlcgen.AdminUpdateU
 			}
 			if a.IsActive != nil {
 				u.IsActive = *a.IsActive
+			}
+			if a.SetStorageQuota {
+				u.StorageQuotaBytes = a.StorageQuotaBytes
 			}
 			u.UpdatedAt = time.Now()
 			f.users[k] = u

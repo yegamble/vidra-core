@@ -22,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
+	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/video"
@@ -50,6 +51,7 @@ func fullRouteOptions() []Option {
 		WithMessagingService(messaging.NewService(nil)),
 		WithLiveService(live.NewService(nil)),
 		WithProfileImageService(profileimage.NewService(nil, nil)),
+		WithQuotaService(quota.NewService(nil, 0)),
 		WithTranscodeService(transcode.NewService(nil, nil)),
 	}
 }

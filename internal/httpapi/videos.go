@@ -18,6 +18,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
@@ -519,7 +520,10 @@ type uploadVideoFileResponse struct {
 
 // handleUploadVideoFile stores the original file for a video owned by the
 // authenticated user (multipart form field "file") and moves the video to
-// processing. Non-owner/unknown video → 404 (existence is not leaked).
+// processing. Non-owner/unknown video → 404 (existence is not leaked). When a
+// storage quota applies to the caller, an upload that would not fit is refused
+// up front with 422 quota_exceeded — the multipart part is already buffered by
+// the form parse, so its size is authoritative (not a client-declared header).
 func (s *Server) handleUploadVideoFile(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
@@ -540,6 +544,20 @@ func (s *Server) handleUploadVideoFile(c echo.Context) error {
 	defer func() { _ = f.Close() }()
 
 	ctx := c.Request().Context()
+	// Ownership before the quota check so a non-owner still sees 404, then the
+	// quota BEFORE storing anything. The usage counts the current original even
+	// when this upload replaces it — simple and conservative.
+	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if s.quotasvc != nil {
+		if qerr := s.quotasvc.CheckFits(ctx, userID, fh.Size); qerr != nil {
+			if errors.Is(qerr, quota.ErrExceeded) {
+				return &QuotaExceededError{}
+			}
+			return qerr
+		}
+	}
 	_, file, err := s.videosvc.AttachOriginal(ctx, userID, id, video.UploadInput{
 		Filename:    fh.Filename,
 		ContentType: fh.Header.Get("Content-Type"),
@@ -609,21 +627,28 @@ func (r importVideoRequest) Validate() []FieldError {
 const importFetchTimeout = 60 * time.Second
 
 // errImportTooLarge is returned by maxBytesReader when the fetched body exceeds
-// the configured cap; the handler maps it to 413.
+// the UPLOAD_MAX_SIZE cap; the handler maps it to 413.
 var errImportTooLarge = errors.New("httpapi: imported file exceeds the size limit")
 
-// maxBytesReader caps how many bytes are read from a remote fetch. It reads one
-// byte past the limit to distinguish "exactly at the limit" (ok) from "over"
-// (errImportTooLarge), so a lying/absent Content-Length can't smuggle an
-// oversized file past the cap.
+// errImportOverQuota is returned by maxBytesReader when the fetched body would
+// push the caller past their storage quota; the handler maps it to 422
+// quota_exceeded. It hard-caps the stream so a lying/absent Content-Length
+// can't smuggle an over-quota file past the pre-fetch check.
+var errImportOverQuota = errors.New("httpapi: imported file exceeds the storage quota")
+
+// maxBytesReader caps how many bytes are read from a remote fetch, failing with
+// limitErr once the cap is crossed. It reads one byte past the limit to
+// distinguish "exactly at the limit" (ok) from "over", so a lying/absent
+// Content-Length can't smuggle an oversized file past the cap.
 type maxBytesReader struct {
 	r         io.Reader
 	remaining int64
+	limitErr  error
 }
 
 func (m *maxBytesReader) Read(p []byte) (int, error) {
 	if m.remaining < 0 {
-		return 0, errImportTooLarge
+		return 0, m.limitErr
 	}
 	if int64(len(p)) > m.remaining+1 {
 		p = p[:m.remaining+1]
@@ -631,7 +656,7 @@ func (m *maxBytesReader) Read(p []byte) (int, error) {
 	n, err := m.r.Read(p)
 	m.remaining -= int64(n)
 	if m.remaining < 0 {
-		return n, errImportTooLarge
+		return n, m.limitErr
 	}
 	return n, err
 }
@@ -643,7 +668,11 @@ func (m *maxBytesReader) Read(p []byte) (int, error) {
 // link-local/CGNAT addresses, and DNS-rebinding are refused, at dial time so
 // redirects are covered too) and is hard-bounded by UPLOAD_MAX_SIZE. Ownership is
 // checked BEFORE any fetch, so a non-owner cannot use this to make the server
-// issue requests. Non-owner/unknown video → 404 (existence is not leaked).
+// issue requests. Non-owner/unknown video → 404 (existence is not leaked). When
+// a storage quota applies, a declared Content-Length that would not fit is 422
+// quota_exceeded before any bytes are stored, and the stream itself is
+// hard-capped at the remaining headroom (so an absent/lying length cannot
+// smuggle an over-quota file — same defence as UPLOAD_MAX_SIZE's 413).
 func (s *Server) handleImportVideoFile(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
@@ -674,6 +703,19 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 
 	maxBytes, _ := bytes.Parse(s.cfg.UploadMaxSize) // validated at startup
 
+	// Resolve the caller's storage headroom BEFORE fetching. quotaRemaining < 0
+	// means unlimited (never enforced).
+	quotaRemaining := int64(-1)
+	if s.quotasvc != nil {
+		remaining, limited, qerr := s.quotasvc.Remaining(ctx, userID)
+		if qerr != nil {
+			return qerr
+		}
+		if limited {
+			quotaRemaining = remaining
+		}
+	}
+
 	client := s.importClient
 	if client == nil {
 		client = guard.NewClient(importFetchTimeout)
@@ -695,10 +737,18 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 	if maxBytes > 0 && resp.ContentLength > maxBytes {
 		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "the file is too large")
 	}
+	// Quota pre-check on a declared Content-Length; the streaming cap below is
+	// the authoritative backstop for unknown/lying lengths.
+	if quotaRemaining >= 0 && resp.ContentLength > quotaRemaining {
+		return &QuotaExceededError{}
+	}
 
 	body := io.Reader(resp.Body)
 	if maxBytes > 0 {
-		body = &maxBytesReader{r: resp.Body, remaining: maxBytes}
+		body = &maxBytesReader{r: body, remaining: maxBytes, limitErr: errImportTooLarge}
+	}
+	if quotaRemaining >= 0 {
+		body = &maxBytesReader{r: body, remaining: quotaRemaining, limitErr: errImportOverQuota}
 	}
 	// AttachOriginal enforces the video-container extension allow-list on this
 	// filename (derived from the URL path); a URL without a video extension → 415.
@@ -710,6 +760,9 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 	if err != nil {
 		if errors.Is(err, errImportTooLarge) {
 			return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "the file is too large")
+		}
+		if errors.Is(err, errImportOverQuota) {
+			return &QuotaExceededError{}
 		}
 		return videoError(err)
 	}

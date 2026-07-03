@@ -162,6 +162,15 @@ type Config struct {
 	// so the JSON API stays small while media uploads get headroom. Oversized
 	// uploads are rejected with 413.
 	UploadMaxSize string
+
+	// InstanceDefaultQuotaBytes is the default per-user storage quota in bytes:
+	// the total stored size of a user's video files (originals, renditions,
+	// thumbnails) across the videos owned via their channels. 0 (or unset) =
+	// unlimited. Admins can override per account (nullable
+	// users.storage_quota_bytes; NULL inherits this default, 0 = unlimited).
+	// Uploads/imports that would exceed the effective quota are rejected with
+	// 422 quota_exceeded.
+	InstanceDefaultQuotaBytes int64
 }
 
 // devJWTSecret is the obviously-fake signing key used only for local dev/test.
@@ -240,6 +249,12 @@ func Load() (*Config, error) {
 	}
 	cfg.AuthRateLimitRequests = authReqs
 
+	quotaBytes, err := getEnvInt64("INSTANCE_DEFAULT_QUOTA_BYTES", 0)
+	if err != nil {
+		return nil, err
+	}
+	cfg.InstanceDefaultQuotaBytes = quotaBytes
+
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -315,6 +330,9 @@ func (c *Config) validate() error {
 	if _, err := bytes.Parse(c.UploadMaxSize); err != nil {
 		return fmt.Errorf("config: invalid UPLOAD_MAX_SIZE %q: %w", c.UploadMaxSize, err)
 	}
+	if c.InstanceDefaultQuotaBytes < 0 {
+		return fmt.Errorf("config: INSTANCE_DEFAULT_QUOTA_BYTES must be >= 0 (0 = unlimited), got %d", c.InstanceDefaultQuotaBytes)
+	}
 	if c.Environment == "production" {
 		if c.JWTSecret == devJWTSecret {
 			return fmt.Errorf("config: JWT_SECRET must be set in production (the dev default is not allowed)")
@@ -386,6 +404,18 @@ func getEnvInt(key string, def int) (int, error) {
 		return def, nil
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s must be an integer: %w", key, err)
+	}
+	return n, nil
+}
+
+func getEnvInt64(key string, def int64) (int64, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("config: %s must be an integer: %w", key, err)
 	}

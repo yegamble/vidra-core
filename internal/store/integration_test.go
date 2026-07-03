@@ -223,3 +223,112 @@ func TestUpdateCommentPersists(t *testing.T) {
 		t.Fatalf("GetComment after edit = (%q, %v), want revised", got.Body, err)
 	}
 }
+
+// TestSumUserStorageUsageAggregates proves the quota usage aggregate counts
+// every video_files row (original + rendition + thumbnail) across the videos
+// owned via a user's channels — and nobody else's — against a real PostgreSQL.
+// Also exercises AdminUpdateUser's tri-state storage_quota_bytes (set, keep on
+// unrelated edits, reset to NULL). Seeds the FK chain and cleans up via the
+// users→… ON DELETE CASCADE.
+func TestSumUserStorageUsageAggregates(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	seedUser := func(name string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+			name+"-"+suffix, name+"-"+suffix+"@example.test",
+		).Scan(&id); err != nil {
+			t.Fatalf("seed user %s: %v", name, err)
+		}
+		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+		return id
+	}
+	seedVideo := func(owner uuid.UUID, handle string) uuid.UUID {
+		t.Helper()
+		var channelID uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'Q') RETURNING id`,
+			owner, handle+"_"+suffix,
+		).Scan(&channelID); err != nil {
+			t.Fatalf("seed channel %s: %v", handle, err)
+		}
+		var videoID uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'v', 'public', 'published') RETURNING id`,
+			channelID,
+		).Scan(&videoID); err != nil {
+			t.Fatalf("seed video for %s: %v", handle, err)
+		}
+		return videoID
+	}
+	seedFile := func(videoID uuid.UUID, kind string, size int64) {
+		t.Helper()
+		if _, err := st.Pool.Exec(ctx,
+			`INSERT INTO video_files (video_id, kind, storage_key, size_bytes) VALUES ($1, $2, $3, $4)`,
+			videoID, kind, "quota-test/"+uuid.NewString(), size,
+		); err != nil {
+			t.Fatalf("seed %s file: %v", kind, err)
+		}
+	}
+
+	ada := seedUser("qada")
+	bob := seedUser("qbob")
+	adaV1 := seedVideo(ada, "qada1")
+	adaV2 := seedVideo(ada, "qada2")
+	bobV := seedVideo(bob, "qbob1")
+
+	// Every kind counts: original + thumbnail on one video, a rendition on the
+	// other. Bob's file must not leak into ada's sum.
+	seedFile(adaV1, "original", 100)
+	seedFile(adaV1, "thumbnail", 20)
+	seedFile(adaV2, "rendition", 50)
+	seedFile(bobV, "original", 999)
+
+	if used, err := q.SumUserStorageUsage(ctx, ada); err != nil || used != 170 {
+		t.Errorf("ada usage = (%d, %v), want 170", used, err)
+	}
+	if used, err := q.SumUserStorageUsage(ctx, bob); err != nil || used != 999 {
+		t.Errorf("bob usage = (%d, %v), want 999", used, err)
+	}
+	// A user with no files sums to 0 (COALESCE, not NULL/error).
+	empty := seedUser("qempty")
+	if used, err := q.SumUserStorageUsage(ctx, empty); err != nil || used != 0 {
+		t.Errorf("empty usage = (%d, %v), want 0", used, err)
+	}
+
+	// ListUsers carries the same aggregate per row.
+	rows, err := q.ListUsers(ctx, sqlcgen.ListUsersParams{Query: "qada-" + suffix, ResultLimit: 10})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ListUsers(qada) = (%d rows, %v), want 1", len(rows), err)
+	}
+	if rows[0].StorageUsedBytes != 170 || rows[0].StorageQuotaBytes != nil {
+		t.Errorf("list row = used %d quota %v, want 170/nil", rows[0].StorageUsedBytes, rows[0].StorageQuotaBytes)
+	}
+
+	// Tri-state quota update: set → returned; unrelated edit keeps it; NULL resets.
+	quota := int64(4096)
+	u, err := q.AdminUpdateUser(ctx, sqlcgen.AdminUpdateUserParams{ID: ada, SetStorageQuota: true, StorageQuotaBytes: &quota})
+	if err != nil || u.StorageQuotaBytes == nil || *u.StorageQuotaBytes != 4096 {
+		t.Fatalf("set quota = (%v, %v), want 4096", u.StorageQuotaBytes, err)
+	}
+	role := "moderator"
+	u, err = q.AdminUpdateUser(ctx, sqlcgen.AdminUpdateUserParams{ID: ada, Role: &role})
+	if err != nil || u.StorageQuotaBytes == nil || *u.StorageQuotaBytes != 4096 {
+		t.Fatalf("quota after unrelated edit = (%v, %v), want kept 4096", u.StorageQuotaBytes, err)
+	}
+	u, err = q.AdminUpdateUser(ctx, sqlcgen.AdminUpdateUserParams{ID: ada, SetStorageQuota: true})
+	if err != nil || u.StorageQuotaBytes != nil {
+		t.Fatalf("reset quota = (%v, %v), want NULL", u.StorageQuotaBytes, err)
+	}
+}

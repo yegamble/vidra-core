@@ -50,12 +50,17 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 
 	var he *echo.HTTPError
 	var ve *ValidationError
+	var qe *QuotaExceededError
 	switch {
 	case errors.As(err, &ve):
 		status = http.StatusUnprocessableEntity
 		message = "validation failed"
 		code = "unprocessable_entity"
 		fields = ve.Fields
+	case errors.As(err, &qe):
+		status = http.StatusUnprocessableEntity
+		message = "storing this file would exceed your storage quota"
+		code = "quota_exceeded"
 	case errors.As(err, &he):
 		status = he.Code
 		if he.Message != nil {
@@ -109,6 +114,14 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		s.logger.Error("failed to write error response", "error", writeErr, "request_id", reqID)
 	}
 }
+
+// QuotaExceededError renders as 422 with the stable code "quota_exceeded":
+// storing the incoming file would push the caller past their effective storage
+// quota (per-user override, else INSTANCE_DEFAULT_QUOTA_BYTES). Raised by the
+// upload/import handlers; never raised when the effective quota is unlimited.
+type QuotaExceededError struct{}
+
+func (e *QuotaExceededError) Error() string { return "storage quota exceeded" }
 
 // codeForStatus maps an HTTP status to a stable, snake_case error code. Unknown
 // statuses fall back to a generic code derived from the class.

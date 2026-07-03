@@ -72,6 +72,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       INSTANCE_NAME: ${INSTANCE_NAME:-Vidra (dev)}
+      # Default per-user storage quota in bytes (0/unset = unlimited). Admins can
+      # override per account via PATCH /api/v1/admin/users/{id}.
+      INSTANCE_DEFAULT_QUOTA_BYTES: ${INSTANCE_DEFAULT_QUOTA_BYTES:-0}
       # Rate limiting is on by default. End-to-end / backend-backed test runs set
       # RATE_LIMIT_ENABLED=false so the auth limiter (10/min per IP) doesn't throttle
       # a suite that makes many register/login calls from one host. Rate limiting

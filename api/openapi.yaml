@@ -747,6 +747,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/quota:
+    get:
+      operationId: getMyQuota
+      summary: Get the caller's storage usage and quota
+      description: >-
+        Returns the authenticated user's current storage usage — the total
+        stored bytes of their video files (originals, renditions, thumbnails)
+        across the videos owned via their channels — and the effective storage
+        quota that applies to them: their per-user override when an admin set
+        one, else the instance default (INSTANCE_DEFAULT_QUOTA_BYTES).
+        quota_bytes is null when the caller is unlimited. Uploads and URL
+        imports that would exceed the quota are rejected with 422
+        quota_exceeded.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's storage usage and effective quota.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotaStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/channels/{handle}/avatar:
     get:
       operationId: getChannelAvatar
@@ -1832,8 +1861,10 @@ paths:
         original. A non-owner or unknown id is reported as 404 so a private video's
         existence is not leaked. The file extension must be an accepted video
         container (otherwise 415); the body must be within UPLOAD_MAX_SIZE
-        (otherwise 413). Real transcoding into multiple renditions happens in a
-        later stage; for now the original is the playable source.
+        (otherwise 413); when a storage quota applies to the caller, a file
+        that would not fit is rejected before storing (422 quota_exceeded).
+        Real transcoding into multiple renditions happens in a later stage;
+        for now the original is the playable source.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -1891,6 +1922,14 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "415":
           description: The file extension is not an accepted video container.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Storing the file would exceed the caller's storage quota (code
+            quota_exceeded).
           content:
             application/json:
               schema:
@@ -1964,8 +2003,11 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: >-
-            The URL is missing/malformed/non-public, or the fetch failed (bad
-            status, unreachable, blocked address, timeout).
+            The URL is missing/malformed/non-public, the fetch failed (bad
+            status, unreachable, blocked address, timeout), or storing the file
+            would exceed the caller's storage quota (code quota_exceeded —
+            enforced on the declared Content-Length and by a hard cap on the
+            stream itself, so an absent/lying length cannot bypass it).
           content:
             application/json:
               schema:
@@ -4717,11 +4759,14 @@ paths:
   /api/v1/admin/users/{id}:
     patch:
       operationId: updateUser
-      summary: Edit a user's role / active flag (admin)
+      summary: Edit a user's role / active flag / storage quota (admin)
       description: >-
-        Updates a user's role and/or active flag (partial). Restricted to admins.
-        An admin cannot demote or deactivate their own account (422). An unknown
-        id is 404. Deactivating revokes the user's sessions.
+        Updates a user's role, active flag, and/or storage quota (partial).
+        Restricted to admins. An admin cannot demote or deactivate their own
+        account (422). An unknown id is 404. Deactivating revokes the user's
+        sessions. storage_quota_bytes is tri-state — omitted: unchanged; null:
+        reset to the instance default; a non-negative integer: per-user
+        override (0 = unlimited).
       tags: [admin]
       security:
         - bearerAuth: []
@@ -5949,7 +5994,7 @@ components:
     AdminUser:
       type: object
       description: Admin projection of an account (never includes the password hash).
-      required: [id, username, email, role, is_active, email_verified, display_name, created_at]
+      required: [id, username, email, role, is_active, email_verified, display_name, storage_quota_bytes, storage_used_bytes, created_at]
       properties:
         id:
           type: string
@@ -5967,6 +6012,20 @@ components:
           type: boolean
         display_name:
           type: string
+        storage_quota_bytes:
+          type: [integer, "null"]
+          format: int64
+          description: >-
+            Per-user storage quota override in bytes. null = the instance
+            default (INSTANCE_DEFAULT_QUOTA_BYTES) applies; 0 = unlimited for
+            this account.
+        storage_used_bytes:
+          type: integer
+          format: int64
+          description: >-
+            The account's current storage usage: total stored bytes of its
+            video files (originals, renditions, thumbnails) across the videos
+            owned via its channels.
         created_at:
           type: string
           format: date-time
@@ -5984,6 +6043,24 @@ components:
         offset:
           type: integer
           example: 0
+    QuotaStatus:
+      type: object
+      description: >-
+        The caller's storage picture: bytes currently stored and the effective
+        quota (per-user override, else the instance default). quota_bytes is
+        null when the caller is unlimited.
+      required: [used_bytes, quota_bytes]
+      properties:
+        used_bytes:
+          type: integer
+          format: int64
+          description: >-
+            Total stored bytes of the caller's video files (originals,
+            renditions, thumbnails) across the videos owned via their channels.
+        quota_bytes:
+          type: [integer, "null"]
+          format: int64
+          description: Effective storage quota in bytes; null = unlimited.
     LiveStream:
       type: object
       required: [id, channel_id, title, description, privacy, state, permanent, created_at, updated_at]
@@ -6268,6 +6345,14 @@ components:
           enum: [user, moderator, admin]
         is_active:
           type: boolean
+        storage_quota_bytes:
+          type: [integer, "null"]
+          format: int64
+          minimum: 0
+          description: >-
+            Per-user storage quota in bytes. Omit to leave unchanged; null
+            resets the account to the instance default; 0 makes the account
+            unlimited. Negative or non-integer values are 422.
     VideoFile:
       type: object
       description: >-

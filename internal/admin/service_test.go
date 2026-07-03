@@ -14,11 +14,12 @@ import (
 
 type fakeRepo struct {
 	users   map[uuid.UUID]sqlcgen.User
+	used    map[uuid.UUID]int64
 	revoked map[uuid.UUID]bool
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{users: map[uuid.UUID]sqlcgen.User{}, revoked: map[uuid.UUID]bool{}}
+	return &fakeRepo{users: map[uuid.UUID]sqlcgen.User{}, used: map[uuid.UUID]int64{}, revoked: map[uuid.UUID]bool{}}
 }
 
 func (f *fakeRepo) add(username, role string) uuid.UUID {
@@ -30,11 +31,17 @@ func (f *fakeRepo) add(username, role string) uuid.UUID {
 	return id
 }
 
-func (f *fakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) ([]sqlcgen.User, error) {
-	var out []sqlcgen.User
+func (f *fakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) ([]sqlcgen.ListUsersRow, error) {
+	var out []sqlcgen.ListUsersRow
 	for _, u := range f.users {
 		if a.Query == "" || strings.Contains(u.Username, a.Query) || strings.Contains(u.Email, a.Query) {
-			out = append(out, u)
+			out = append(out, sqlcgen.ListUsersRow{
+				ID: u.ID, Username: u.Username, Email: u.Email, Role: u.Role,
+				EmailVerified: u.EmailVerified, IsActive: u.IsActive,
+				CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt,
+				DisplayName: u.DisplayName, Bio: u.Bio,
+				StorageQuotaBytes: u.StorageQuotaBytes, StorageUsedBytes: f.used[u.ID],
+			})
 		}
 	}
 	return out, nil
@@ -56,6 +63,9 @@ func (f *fakeRepo) AdminUpdateUser(_ context.Context, a sqlcgen.AdminUpdateUserP
 	if a.IsActive != nil {
 		u.IsActive = *a.IsActive
 	}
+	if a.SetStorageQuota {
+		u.StorageQuotaBytes = a.StorageQuotaBytes
+	}
 	f.users[a.ID] = u
 	return u, nil
 }
@@ -65,13 +75,19 @@ func (f *fakeRepo) RevokeAllUserSessions(_ context.Context, userID uuid.UUID) er
 	return nil
 }
 
+func (f *fakeRepo) SumUserStorageUsage(_ context.Context, ownerID uuid.UUID) (int64, error) {
+	return f.used[ownerID], nil
+}
+
 func strptr(s string) *string { return &s }
 func boolptr(b bool) *bool    { return &b }
+func int64ptr(n int64) *int64 { return &n }
 
 func TestListUsersSearch(t *testing.T) {
 	repo := newFakeRepo()
-	repo.add("ada", RoleAdmin)
+	adaID := repo.add("ada", RoleAdmin)
 	repo.add("bob", RoleUser)
+	repo.used[adaID] = 42
 	svc := NewService(repo)
 
 	all, _ := svc.ListUsers(context.Background(), "", 20, 0)
@@ -81,6 +97,11 @@ func TestListUsersSearch(t *testing.T) {
 	only, _ := svc.ListUsers(context.Background(), "bob", 20, 0)
 	if len(only) != 1 || only[0].Username != "bob" {
 		t.Fatalf("search bob = %+v, want [bob]", only)
+	}
+	// The list rows carry storage usage for the admin view.
+	adas, _ := svc.ListUsers(context.Background(), "ada", 20, 0)
+	if len(adas) != 1 || adas[0].StorageUsedBytes != 42 {
+		t.Errorf("ada storage_used_bytes = %+v, want 42", adas)
 	}
 }
 
@@ -92,16 +113,54 @@ func TestUpdateUserRoleAndDeactivate(t *testing.T) {
 	ctx := context.Background()
 
 	// Promote bob to moderator.
-	u, err := svc.UpdateUser(ctx, admin, bob, strptr(RoleModerator), nil)
+	u, err := svc.UpdateUser(ctx, admin, bob, UpdateUserInput{Role: strptr(RoleModerator)})
 	if err != nil || u.Role != RoleModerator {
 		t.Fatalf("promote = (%+v, %v), want moderator", u, err)
 	}
 	// Deactivate bob → sessions revoked.
-	if _, err := svc.UpdateUser(ctx, admin, bob, nil, boolptr(false)); err != nil {
+	if _, err := svc.UpdateUser(ctx, admin, bob, UpdateUserInput{IsActive: boolptr(false)}); err != nil {
 		t.Fatalf("deactivate: %v", err)
 	}
 	if !repo.revoked[bob] {
 		t.Errorf("deactivating bob did not revoke his sessions")
+	}
+}
+
+func TestUpdateUserStorageQuota(t *testing.T) {
+	repo := newFakeRepo()
+	admin := repo.add("ada", RoleAdmin)
+	bob := repo.add("bob", RoleUser)
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	// Set an override.
+	u, err := svc.UpdateUser(ctx, admin, bob, UpdateUserInput{SetStorageQuota: true, StorageQuotaBytes: int64ptr(1024)})
+	if err != nil || u.StorageQuotaBytes == nil || *u.StorageQuotaBytes != 1024 {
+		t.Fatalf("set quota = (%+v, %v), want 1024", u.StorageQuotaBytes, err)
+	}
+	// An update that does not mention the quota leaves it alone.
+	u, err = svc.UpdateUser(ctx, admin, bob, UpdateUserInput{Role: strptr(RoleModerator)})
+	if err != nil || u.StorageQuotaBytes == nil || *u.StorageQuotaBytes != 1024 {
+		t.Fatalf("quota after unrelated edit = (%v, %v), want kept 1024", u.StorageQuotaBytes, err)
+	}
+	// Reset to the instance default (NULL).
+	u, err = svc.UpdateUser(ctx, admin, bob, UpdateUserInput{SetStorageQuota: true})
+	if err != nil || u.StorageQuotaBytes != nil {
+		t.Fatalf("reset quota = (%v, %v), want nil", u.StorageQuotaBytes, err)
+	}
+	// Changing one's OWN quota is allowed (no lockout risk).
+	if _, err := svc.UpdateUser(ctx, admin, admin, UpdateUserInput{SetStorageQuota: true, StorageQuotaBytes: int64ptr(5)}); err != nil {
+		t.Errorf("self quota change = %v, want nil", err)
+	}
+}
+
+func TestStorageUsed(t *testing.T) {
+	repo := newFakeRepo()
+	bob := repo.add("bob", RoleUser)
+	repo.used[bob] = 777
+	svc := NewService(repo)
+	if used, err := svc.StorageUsed(context.Background(), bob); err != nil || used != 777 {
+		t.Errorf("StorageUsed = (%d, %v), want 777", used, err)
 	}
 }
 
@@ -112,18 +171,18 @@ func TestUpdateUserSelfGuardAndNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	// Self-demotion and self-deactivation are rejected.
-	if _, err := svc.UpdateUser(ctx, admin, admin, strptr(RoleUser), nil); !errors.Is(err, ErrSelfChange) {
+	if _, err := svc.UpdateUser(ctx, admin, admin, UpdateUserInput{Role: strptr(RoleUser)}); !errors.Is(err, ErrSelfChange) {
 		t.Errorf("self-demote = %v, want ErrSelfChange", err)
 	}
-	if _, err := svc.UpdateUser(ctx, admin, admin, nil, boolptr(false)); !errors.Is(err, ErrSelfChange) {
+	if _, err := svc.UpdateUser(ctx, admin, admin, UpdateUserInput{IsActive: boolptr(false)}); !errors.Is(err, ErrSelfChange) {
 		t.Errorf("self-deactivate = %v, want ErrSelfChange", err)
 	}
 	// Keeping your own role admin is fine (no-op-ish).
-	if _, err := svc.UpdateUser(ctx, admin, admin, strptr(RoleAdmin), nil); err != nil {
+	if _, err := svc.UpdateUser(ctx, admin, admin, UpdateUserInput{Role: strptr(RoleAdmin)}); err != nil {
 		t.Errorf("self keep-admin = %v, want nil", err)
 	}
 	// Unknown target.
-	if _, err := svc.UpdateUser(ctx, admin, uuid.New(), strptr(RoleModerator), nil); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.UpdateUser(ctx, admin, uuid.New(), UpdateUserInput{Role: strptr(RoleModerator)}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown = %v, want ErrNotFound", err)
 	}
 }

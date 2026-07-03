@@ -29,6 +29,7 @@ import (
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
+	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -69,6 +70,7 @@ type Server struct {
 	messagingsvc  *messaging.Service
 	livesvc       *live.Service
 	imagesvc      *profileimage.Service
+	quotasvc      *quota.Service
 	transcodesvc  *transcode.Service
 	fedsvc        *federation.Service
 	media         storage.Backend
@@ -204,6 +206,14 @@ func WithLiveService(svc *live.Service) Option {
 // service (for handle resolution + ownership); when unset, none are registered.
 func WithProfileImageService(svc *profileimage.Service) Option {
 	return func(s *Server) { s.imagesvc = svc }
+}
+
+// WithQuotaService wires per-user storage quotas: GET /api/v1/me/quota (the
+// caller's usage + effective cap) and enforcement on the original-file upload
+// and URL import (422 quota_exceeded when the incoming file would not fit).
+// When unset, no quota route is registered and uploads are never quota-checked.
+func WithQuotaService(svc *quota.Service) Option {
+	return func(s *Server) { s.quotasvc = svc }
 }
 
 // WithTranscodeService wires the HLS transcoding read side: the video detail's
@@ -538,6 +548,12 @@ func (s *Server) routes() {
 			api.PUT("/videos/:id/rating", s.handlePutVideoRating, s.requireAuth)
 			api.DELETE("/videos/:id/rating", s.handleDeleteVideoRating, s.requireAuth)
 		}
+	}
+
+	// Storage quota: the caller's own usage + effective cap. The same service
+	// gates the upload/import handlers above (422 quota_exceeded).
+	if s.quotasvc != nil {
+		api.GET("/me/quota", s.handleGetMyQuota, s.requireAuth)
 	}
 
 	// Notifications are the caller's own inbox; independent of the other feature

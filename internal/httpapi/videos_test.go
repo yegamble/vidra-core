@@ -30,6 +30,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
+	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -592,6 +593,22 @@ func videoServerEnv(t *testing.T, cfg *config.Config, opts ...video.Option) (*Se
 	msgRepo := newMessagingFakeRepo(authRepo)
 	blocksvc := block.NewService(&blockFakeRepo{auth: authRepo})
 	tcRepo := newTranscodeFakeRepo()
+	// Wire storage-usage aggregation over the video fake's files (mirrors the
+	// SumUserStorageUsage SQL: every file of every video owned via the user's
+	// channels), so the quota service and admin view see real usage.
+	authRepo.usage = func(owner uuid.UUID) int64 {
+		var sum int64
+		for vid, files := range repo.files {
+			v, ok := repo.videos[vid]
+			if !ok || v.OwnerID != owner {
+				continue
+			}
+			for _, vf := range files {
+				sum += vf.SizeBytes
+			}
+		}
+		return sum
+	}
 	srv := New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
@@ -607,6 +624,7 @@ func videoServerEnv(t *testing.T, cfg *config.Config, opts ...video.Option) (*Se
 		WithAdminService(admin.NewService(authRepo)),
 		WithMessagingService(messaging.NewService(msgRepo, messaging.WithBlocker(blocksvc))),
 		WithLiveService(live.NewService(newLiveFakeRepo(chRepo))),
+		WithQuotaService(quota.NewService(authRepo, cfg.InstanceDefaultQuotaBytes)),
 		WithTranscodeService(transcode.NewService(tcRepo, nil)),
 		WithMediaStorage(blobs),
 	)

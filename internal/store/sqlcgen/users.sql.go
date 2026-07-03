@@ -16,20 +16,34 @@ const adminUpdateUser = `-- name: AdminUpdateUser :one
 UPDATE users
 SET role       = COALESCE($1, role),
     is_active  = COALESCE($2, is_active),
+    storage_quota_bytes = CASE WHEN $3::bool
+                               THEN $4::bigint
+                               ELSE storage_quota_bytes END,
     updated_at = now()
-WHERE id = $3
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
+WHERE id = $5
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
 `
 
 type AdminUpdateUserParams struct {
-	Role     *string   `json:"role"`
-	IsActive *bool     `json:"is_active"`
-	ID       uuid.UUID `json:"id"`
+	Role              *string   `json:"role"`
+	IsActive          *bool     `json:"is_active"`
+	SetStorageQuota   bool      `json:"set_storage_quota"`
+	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
+	ID                uuid.UUID `json:"id"`
 }
 
-// Admin edit of a user's role and/or active flag (partial: NULL args unchanged).
+// Admin edit of a user's role, active flag, and/or storage quota (partial:
+// NULL role/is_active args are unchanged). The quota is tri-state — unchanged
+// unless set_storage_quota is true, in which case a NULL value resets the
+// account to the instance default and a value (0 = unlimited) overrides it.
 func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, adminUpdateUser, arg.Role, arg.IsActive, arg.ID)
+	row := q.db.QueryRow(ctx, adminUpdateUser,
+		arg.Role,
+		arg.IsActive,
+		arg.SetStorageQuota,
+		arg.StorageQuotaBytes,
+		arg.ID,
+	)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -43,6 +57,7 @@ func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams
 		&i.UpdatedAt,
 		&i.DisplayName,
 		&i.Bio,
+		&i.StorageQuotaBytes,
 	)
 	return i, err
 }
@@ -61,7 +76,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
 `
 
 type CreateUserParams struct {
@@ -91,6 +106,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.UpdatedAt,
 		&i.DisplayName,
 		&i.Bio,
+		&i.StorageQuotaBytes,
 	)
 	return i, err
 }
@@ -137,7 +153,7 @@ func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (Get
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -157,12 +173,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.UpdatedAt,
 		&i.DisplayName,
 		&i.Bio,
+		&i.StorageQuotaBytes,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
 FROM users
 WHERE id = $1
 `
@@ -182,17 +199,24 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.UpdatedAt,
 		&i.DisplayName,
 		&i.Bio,
+		&i.StorageQuotaBytes,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
-FROM users
+SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.is_active,
+       u.created_at, u.updated_at, u.display_name, u.bio, u.storage_quota_bytes,
+       (SELECT COALESCE(SUM(vf.size_bytes), 0)::bigint
+          FROM video_files vf
+          JOIN videos v ON v.id = vf.video_id
+          JOIN channels c ON c.id = v.channel_id
+         WHERE c.owner_id = u.id) AS storage_used_bytes
+FROM users u
 WHERE ($1::text = ''
-       OR username ILIKE '%' || $1 || '%'
-       OR email ILIKE '%' || $1 || '%')
-ORDER BY created_at DESC, id DESC
+       OR u.username ILIKE '%' || $1 || '%'
+       OR u.email ILIKE '%' || $1 || '%')
+ORDER BY u.created_at DESC, u.id DESC
 LIMIT $3 OFFSET $2
 `
 
@@ -202,17 +226,35 @@ type ListUsersParams struct {
 	ResultLimit  int32  `json:"result_limit"`
 }
 
+type ListUsersRow struct {
+	ID                uuid.UUID `json:"id"`
+	Username          string    `json:"username"`
+	Email             string    `json:"email"`
+	PasswordHash      string    `json:"password_hash"`
+	Role              string    `json:"role"`
+	EmailVerified     bool      `json:"email_verified"`
+	IsActive          bool      `json:"is_active"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	DisplayName       string    `json:"display_name"`
+	Bio               string    `json:"bio"`
+	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
+	StorageUsedBytes  int64     `json:"storage_used_bytes"`
+}
+
 // Admin user list: newest first, optionally filtered by a username/email
-// substring (empty query returns all). Paginated.
-func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error) {
+// substring (empty query returns all). Paginated. Carries each account's
+// current storage usage (SUM of its video_files bytes via channel ownership)
+// so the admin view can show usage next to the quota.
+func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error) {
 	rows, err := q.db.Query(ctx, listUsers, arg.Query, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []User
+	var items []ListUsersRow
 	for rows.Next() {
-		var i User
+		var i ListUsersRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Username,
@@ -225,6 +267,8 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 			&i.UpdatedAt,
 			&i.DisplayName,
 			&i.Bio,
+			&i.StorageQuotaBytes,
+			&i.StorageUsedBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -242,7 +286,7 @@ SET display_name = COALESCE($1, display_name),
     bio          = COALESCE($2, bio),
     updated_at   = now()
 WHERE id = $3
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
 `
 
 type UpdateUserProfileParams struct {
@@ -266,6 +310,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.UpdatedAt,
 		&i.DisplayName,
 		&i.Bio,
+		&i.StorageQuotaBytes,
 	)
 	return i, err
 }

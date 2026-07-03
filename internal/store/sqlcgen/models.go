@@ -278,17 +278,18 @@ type TranscodeJob struct {
 }
 
 type User struct {
-	ID            uuid.UUID `json:"id"`
-	Username      string    `json:"username"`
-	Email         string    `json:"email"`
-	PasswordHash  string    `json:"password_hash"`
-	Role          string    `json:"role"`
-	EmailVerified bool      `json:"email_verified"`
-	IsActive      bool      `json:"is_active"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	DisplayName   string    `json:"display_name"`
-	Bio           string    `json:"bio"`
+	ID                uuid.UUID `json:"id"`
+	Username          string    `json:"username"`
+	Email             string    `json:"email"`
+	PasswordHash      string    `json:"password_hash"`
+	Role              string    `json:"role"`
+	EmailVerified     bool      `json:"email_verified"`
+	IsActive          bool      `json:"is_active"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	DisplayName       string    `json:"display_name"`
+	Bio               string    `json:"bio"`
+	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
 }
 
 type UserBlock struct {

@@ -127,3 +127,21 @@ func (q *Queries) ListVideoFiles(ctx context.Context, videoID uuid.UUID) ([]Vide
 	}
 	return items, nil
 }
+
+const sumUserStorageUsage = `-- name: SumUserStorageUsage :one
+SELECT COALESCE(SUM(vf.size_bytes), 0)::bigint AS used_bytes
+FROM video_files vf
+JOIN videos v ON v.id = vf.video_id
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = $1
+`
+
+// A user's storage usage: the total stored bytes of every video file
+// (originals, renditions, and thumbnails) across the videos owned via their
+// channels. Computed live — correctness over a denormalized counter.
+func (q *Queries) SumUserStorageUsage(ctx context.Context, ownerID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, sumUserStorageUsage, ownerID)
+	var used_bytes int64
+	err := row.Scan(&used_bytes)
+	return used_bytes, err
+}

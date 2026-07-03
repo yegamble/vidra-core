@@ -219,6 +219,36 @@ func TestUploadMaxSizeRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestInstanceDefaultQuotaBytesDefaultAndOverride(t *testing.T) {
+	t.Setenv("INSTANCE_DEFAULT_QUOTA_BYTES", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.InstanceDefaultQuotaBytes != 0 {
+		t.Errorf("InstanceDefaultQuotaBytes = %d, want 0 (unlimited) by default", cfg.InstanceDefaultQuotaBytes)
+	}
+	t.Setenv("INSTANCE_DEFAULT_QUOTA_BYTES", "5368709120") // 5 GiB
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() override error = %v", err)
+	}
+	if cfg.InstanceDefaultQuotaBytes != 5368709120 {
+		t.Errorf("InstanceDefaultQuotaBytes = %d, want 5368709120", cfg.InstanceDefaultQuotaBytes)
+	}
+}
+
+func TestInstanceDefaultQuotaBytesRejectsInvalid(t *testing.T) {
+	t.Setenv("INSTANCE_DEFAULT_QUOTA_BYTES", "not-a-number")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for non-integer INSTANCE_DEFAULT_QUOTA_BYTES, got nil")
+	}
+	t.Setenv("INSTANCE_DEFAULT_QUOTA_BYTES", "-1")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for negative INSTANCE_DEFAULT_QUOTA_BYTES, got nil")
+	}
+}
+
 func TestRateLimitDisabledSkipsValidation(t *testing.T) {
 	t.Setenv("RATE_LIMIT_ENABLED", "false")
 	t.Setenv("RATE_LIMIT_REQUESTS", "0") // invalid, but ignored when disabled
