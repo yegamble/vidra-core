@@ -435,3 +435,82 @@ func TestReportResolutionNotificationPersists(t *testing.T) {
 		t.Errorf("notifications after report delete = %d, want 0 (ON DELETE CASCADE)", len(rows))
 	}
 }
+
+// TestNotificationPrefsPersist proves the 0043 notification_prefs queries
+// against a real PostgreSQL: no row defaults to enabled, upsert flips and
+// re-flips one (user, type), the list returns only stored rows, and deleting
+// the user cascades the pref rows away.
+func TestNotificationPrefsPersist(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	var user uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+		"nprefs-"+suffix, "nprefs-"+suffix+"@example.test",
+	).Scan(&user); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	defer func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, user) }()
+
+	// No stored row → default enabled.
+	if on, err := q.IsNotificationTypeEnabled(ctx, sqlcgen.IsNotificationTypeEnabledParams{
+		UserID: user, Type: "follow",
+	}); err != nil || !on {
+		t.Fatalf("IsNotificationTypeEnabled default = %v/%v, want true/nil", on, err)
+	}
+	if rows, err := q.ListNotificationPrefs(ctx, user); err != nil || len(rows) != 0 {
+		t.Fatalf("ListNotificationPrefs empty = %v/%v, want 0 rows", rows, err)
+	}
+
+	// Disable → false; upsert again to true → true (conflict path).
+	if err := q.UpsertNotificationPref(ctx, sqlcgen.UpsertNotificationPrefParams{
+		UserID: user, Type: "follow", Enabled: false,
+	}); err != nil {
+		t.Fatalf("UpsertNotificationPref insert: %v", err)
+	}
+	if on, _ := q.IsNotificationTypeEnabled(ctx, sqlcgen.IsNotificationTypeEnabledParams{
+		UserID: user, Type: "follow",
+	}); on {
+		t.Fatal("follow still enabled after disable")
+	}
+	// Other types are untouched.
+	if on, _ := q.IsNotificationTypeEnabled(ctx, sqlcgen.IsNotificationTypeEnabledParams{
+		UserID: user, Type: "comment",
+	}); !on {
+		t.Fatal("comment flipped by an unrelated upsert")
+	}
+	if err := q.UpsertNotificationPref(ctx, sqlcgen.UpsertNotificationPrefParams{
+		UserID: user, Type: "follow", Enabled: true,
+	}); err != nil {
+		t.Fatalf("UpsertNotificationPref update: %v", err)
+	}
+	if on, _ := q.IsNotificationTypeEnabled(ctx, sqlcgen.IsNotificationTypeEnabledParams{
+		UserID: user, Type: "follow",
+	}); !on {
+		t.Fatal("follow not re-enabled by the conflict-path upsert")
+	}
+	rows, err := q.ListNotificationPrefs(ctx, user)
+	if err != nil || len(rows) != 1 || rows[0].Type != "follow" || !rows[0].Enabled {
+		t.Fatalf("ListNotificationPrefs = %+v/%v, want one enabled follow row", rows, err)
+	}
+
+	// Deleting the user cascades the pref rows.
+	if _, err := st.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, user); err != nil {
+		t.Fatalf("delete user: %v", err)
+	}
+	var count int
+	if err := st.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM notification_prefs WHERE user_id = $1`, user,
+	).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("pref rows after user delete = %d/%v, want 0", count, err)
+	}
+}

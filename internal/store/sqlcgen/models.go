@@ -163,6 +163,13 @@ type Notification struct {
 	ReportID       pgtype.UUID        `json:"report_id"`
 }
 
+type NotificationPref struct {
+	UserID    uuid.UUID `json:"user_id"`
+	Type      string    `json:"type"`
+	Enabled   bool      `json:"enabled"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type PasswordResetToken struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`

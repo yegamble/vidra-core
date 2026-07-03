@@ -11,9 +11,49 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// fakeRepo is an in-memory notification.Repository.
+// fakeRepo is an in-memory notification.Repository. prefs maps "userID\x00type"
+// → enabled (absent = default enabled), mirroring the real table. prefsErr,
+// when set, fails the pref lookups — for proving the fail-open behaviour.
 type fakeRepo struct {
-	notifs []sqlcgen.Notification
+	notifs   []sqlcgen.Notification
+	prefs    map[string]bool
+	prefsErr error
+}
+
+func prefKey(userID uuid.UUID, typ string) string { return userID.String() + "\x00" + typ }
+
+func (f *fakeRepo) ListNotificationPrefs(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error) {
+	if f.prefsErr != nil {
+		return nil, f.prefsErr
+	}
+	var rows []sqlcgen.ListNotificationPrefsRow
+	for _, typ := range KnownTypes() { // stable order, like ORDER BY type
+		if enabled, ok := f.prefs[prefKey(userID, typ)]; ok {
+			rows = append(rows, sqlcgen.ListNotificationPrefsRow{Type: typ, Enabled: enabled})
+		}
+	}
+	return rows, nil
+}
+
+func (f *fakeRepo) UpsertNotificationPref(_ context.Context, a sqlcgen.UpsertNotificationPrefParams) error {
+	if f.prefsErr != nil {
+		return f.prefsErr
+	}
+	if f.prefs == nil {
+		f.prefs = map[string]bool{}
+	}
+	f.prefs[prefKey(a.UserID, a.Type)] = a.Enabled
+	return nil
+}
+
+func (f *fakeRepo) IsNotificationTypeEnabled(_ context.Context, a sqlcgen.IsNotificationTypeEnabledParams) (bool, error) {
+	if f.prefsErr != nil {
+		return false, f.prefsErr
+	}
+	if enabled, ok := f.prefs[prefKey(a.UserID, a.Type)]; ok {
+		return enabled, nil
+	}
+	return true, nil
 }
 
 func (f *fakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNotificationParams) (sqlcgen.Notification, error) {
@@ -205,5 +245,120 @@ func TestMarkReadAndAll(t *testing.T) {
 	}
 	if unread, _ := svc.List(ctx, owner, true, 20, 0); len(unread) != 0 {
 		t.Errorf("unread-only list = %d, want 0", len(unread))
+	}
+}
+
+func TestPrefsDefaultAllEnabled(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	prefs, err := svc.Prefs(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("Prefs: %v", err)
+	}
+	if len(prefs) != len(KnownTypes()) {
+		t.Fatalf("prefs len = %d, want %d (every known type)", len(prefs), len(KnownTypes()))
+	}
+	for _, typ := range KnownTypes() {
+		if enabled, ok := prefs[typ]; !ok || !enabled {
+			t.Errorf("prefs[%s] = %v/%v, want true (default enabled)", typ, enabled, ok)
+		}
+	}
+}
+
+func TestSetPrefsPartialUpdateAndUnknownType(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	ctx := context.Background()
+	user := uuid.New()
+
+	// Disable one type; the others stay at the default.
+	if err := svc.SetPrefs(ctx, user, map[string]bool{TypeComment: false}); err != nil {
+		t.Fatalf("SetPrefs: %v", err)
+	}
+	prefs, _ := svc.Prefs(ctx, user)
+	if prefs[TypeComment] {
+		t.Error("comment still enabled after disabling it")
+	}
+	for _, typ := range []string{TypeFollow, TypeMessage, TypeReportResolved} {
+		if !prefs[typ] {
+			t.Errorf("prefs[%s] flipped by an unrelated update", typ)
+		}
+	}
+
+	// Re-enable → back to true.
+	if err := svc.SetPrefs(ctx, user, map[string]bool{TypeComment: true}); err != nil {
+		t.Fatalf("SetPrefs re-enable: %v", err)
+	}
+	if prefs, _ := svc.Prefs(ctx, user); !prefs[TypeComment] {
+		t.Error("comment not re-enabled")
+	}
+
+	// Unknown type rejects the whole update; nothing written.
+	err := svc.SetPrefs(ctx, user, map[string]bool{TypeFollow: false, "premium_offers": false})
+	if err != ErrUnknownType {
+		t.Fatalf("SetPrefs unknown type = %v, want ErrUnknownType", err)
+	}
+	if prefs, _ := svc.Prefs(ctx, user); !prefs[TypeFollow] {
+		t.Error("follow was written although the update contained an unknown type")
+	}
+}
+
+func TestDisabledTypeSuppressesCreation(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	ctx := context.Background()
+	owner, fan, conv, report := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+
+	if err := svc.SetPrefs(ctx, owner, map[string]bool{
+		TypeFollow: false, TypeMessage: false, TypeReportResolved: false,
+	}); err != nil {
+		t.Fatalf("SetPrefs: %v", err)
+	}
+
+	// Disabled types create nothing (and return nil — a suppressed notification
+	// is not an error).
+	if err := svc.NotifyFollow(ctx, owner, fan, uuid.New()); err != nil {
+		t.Fatalf("NotifyFollow (disabled): %v", err)
+	}
+	if err := svc.NotifyMessage(ctx, owner, fan, conv); err != nil {
+		t.Fatalf("NotifyMessage (disabled): %v", err)
+	}
+	if err := svc.NotifyReportResolved(ctx, owner, fan, report); err != nil {
+		t.Fatalf("NotifyReportResolved (disabled): %v", err)
+	}
+	if len(repo.notifs) != 0 {
+		t.Fatalf("notifications created = %d, want 0 (all disabled)", len(repo.notifs))
+	}
+
+	// A type left enabled still notifies.
+	if err := svc.NotifyComment(ctx, owner, fan, uuid.New(), uuid.New()); err != nil {
+		t.Fatalf("NotifyComment (enabled): %v", err)
+	}
+	if len(repo.notifs) != 1 || repo.notifs[0].Type != TypeComment {
+		t.Fatalf("notifs = %+v, want exactly one comment notification", repo.notifs)
+	}
+
+	// Re-enabling restores delivery.
+	if err := svc.SetPrefs(ctx, owner, map[string]bool{TypeFollow: true}); err != nil {
+		t.Fatalf("SetPrefs re-enable: %v", err)
+	}
+	if err := svc.NotifyFollow(ctx, owner, fan, uuid.New()); err != nil {
+		t.Fatalf("NotifyFollow (re-enabled): %v", err)
+	}
+	if len(repo.notifs) != 2 {
+		t.Fatalf("notifs after re-enable = %d, want 2", len(repo.notifs))
+	}
+}
+
+func TestPrefLookupFailureFailsOpen(t *testing.T) {
+	repo := &fakeRepo{prefsErr: context.DeadlineExceeded}
+	svc := NewService(repo)
+	ctx := context.Background()
+	owner, fan := uuid.New(), uuid.New()
+
+	// The pref filter is unreadable → the notification is still created.
+	if err := svc.NotifyFollow(ctx, owner, fan, uuid.New()); err != nil {
+		t.Fatalf("NotifyFollow with failing pref lookup: %v", err)
+	}
+	if len(repo.notifs) != 1 {
+		t.Fatalf("notifs = %d, want 1 (fail-open)", len(repo.notifs))
 	}
 }

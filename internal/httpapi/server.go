@@ -564,6 +564,10 @@ func (s *Server) routes() {
 		api.GET("/me/notifications/unread-count", s.handleUnreadNotificationCount, s.requireAuth)
 		api.POST("/me/notifications/read-all", s.handleMarkAllNotificationsRead, s.requireAuth)
 		api.POST("/me/notifications/:id/read", s.handleMarkNotificationRead, s.requireAuth)
+		// Per-type delivery preferences (all types default enabled; the Notify*
+		// side effects consult them at create time).
+		api.GET("/me/notification-prefs", s.handleGetNotificationPrefs, s.requireAuth)
+		api.PATCH("/me/notification-prefs", s.handleUpdateNotificationPrefs, s.requireAuth)
 	}
 
 	// Named playlists. The public get applies optional auth so owners can see

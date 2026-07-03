@@ -2898,6 +2898,72 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/notification-prefs:
+    get:
+      operationId: getNotificationPrefs
+      summary: Get the caller's notification preferences
+      description: >-
+        Returns the caller's per-type notification switchboard: every known
+        notification type (comment, follow, message, report_resolved) mapped to
+        whether it is delivered. Types never configured default to enabled.
+      tags: [notifications]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's notification preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPrefsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateNotificationPrefs
+      summary: Update the caller's notification preferences
+      description: >-
+        Applies a partial preference update: only the types present in the body
+        are changed. Disabling a type suppresses new notifications of that type
+        at creation time (existing notifications are unaffected). An unknown
+        type is 422 and nothing is written. Returns the full updated map.
+      tags: [notifications]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNotificationPrefsRequest"
+      responses:
+        "200":
+          description: The full updated notification preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPrefsResponse"
+        "400":
+          description: Malformed request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Empty update or unknown notification type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/playlists:
     post:
       operationId: createPlaylist
@@ -5698,6 +5764,32 @@ components:
           type: integer
           format: int64
           example: 3
+    NotificationPrefsResponse:
+      type: object
+      required: [prefs]
+      properties:
+        prefs:
+          type: object
+          description: >-
+            Every known notification type mapped to whether it is delivered to
+            this user. Types with no stored preference default to true.
+          additionalProperties:
+            type: boolean
+          example: { comment: true, follow: false, message: true, report_resolved: true }
+    UpdateNotificationPrefsRequest:
+      type: object
+      required: [prefs]
+      properties:
+        prefs:
+          type: object
+          description: >-
+            Partial map of notification type -> enabled. Only the types present
+            are changed. Known types: comment, follow, message, report_resolved.
+            An unknown type rejects the whole update (422).
+          additionalProperties:
+            type: boolean
+          minProperties: 1
+          example: { follow: false }
     Playlist:
       type: object
       required: [id, title, description, visibility, video_count, created_at, updated_at]

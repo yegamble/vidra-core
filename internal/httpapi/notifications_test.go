@@ -11,20 +11,50 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // notifFakeRepo is an in-memory notification.Repository that resolves the actor /
 // channel / video / report join columns from the sibling fakes, mirroring the
 // real query. createErr, when set, fails CreateNotification — for proving the
-// notify side effects are best-effort.
+// notify side effects are best-effort. prefs maps "userID\x00type" → enabled
+// (absent = default enabled), mirroring notification_prefs.
 type notifFakeRepo struct {
 	auth      *authFakeRepo
 	channels  *channelFakeRepo
 	videos    *videoFakeRepo
 	reports   *moderationFakeRepo
 	notifs    []sqlcgen.Notification
+	prefs     map[string]bool
 	createErr error
+}
+
+func notifPrefKey(userID uuid.UUID, typ string) string { return userID.String() + "\x00" + typ }
+
+func (f *notifFakeRepo) ListNotificationPrefs(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error) {
+	var rows []sqlcgen.ListNotificationPrefsRow
+	for _, typ := range notification.KnownTypes() { // stable order, like ORDER BY type
+		if enabled, ok := f.prefs[notifPrefKey(userID, typ)]; ok {
+			rows = append(rows, sqlcgen.ListNotificationPrefsRow{Type: typ, Enabled: enabled})
+		}
+	}
+	return rows, nil
+}
+
+func (f *notifFakeRepo) UpsertNotificationPref(_ context.Context, a sqlcgen.UpsertNotificationPrefParams) error {
+	if f.prefs == nil {
+		f.prefs = map[string]bool{}
+	}
+	f.prefs[notifPrefKey(a.UserID, a.Type)] = a.Enabled
+	return nil
+}
+
+func (f *notifFakeRepo) IsNotificationTypeEnabled(_ context.Context, a sqlcgen.IsNotificationTypeEnabledParams) (bool, error) {
+	if enabled, ok := f.prefs[notifPrefKey(a.UserID, a.Type)]; ok {
+		return enabled, nil
+	}
+	return true, nil
 }
 
 func (f *notifFakeRepo) userByID(id uuid.UUID) (sqlcgen.User, bool) {
@@ -264,5 +294,105 @@ func TestMarkUnknownNotificationIs404(t *testing.T) {
 	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/notifications/"+uuid.New().String()+"/read", "", tok); rec.Code != http.StatusNotFound {
 		t.Errorf("mark unknown = %d, want 404", rec.Code)
+	}
+}
+
+func getPrefs(t *testing.T, srv *Server, token string) map[string]bool {
+	t.Helper()
+	rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/me/notification-prefs", "", token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get prefs = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body notificationPrefsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	return body.Prefs
+}
+
+func TestNotificationPrefsDefaultAllEnabled(t *testing.T) {
+	srv := videoServer(t)
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	prefs := getPrefs(t, srv, tok)
+	if len(prefs) != len(notification.KnownTypes()) {
+		t.Fatalf("prefs len = %d, want %d; prefs=%v", len(prefs), len(notification.KnownTypes()), prefs)
+	}
+	for _, typ := range notification.KnownTypes() {
+		if !prefs[typ] {
+			t.Errorf("prefs[%s] = false, want default enabled", typ)
+		}
+	}
+}
+
+func TestPatchNotificationPrefsFlipsAndValidates(t *testing.T) {
+	srv := videoServer(t)
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	// Disable follow; the response carries the full updated map.
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/me/notification-prefs", `{"prefs":{"follow":false}}`, tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body notificationPrefsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Prefs["follow"] || !body.Prefs["comment"] {
+		t.Errorf("prefs after patch = %v, want follow=false comment=true", body.Prefs)
+	}
+	// Persisted: a fresh GET agrees.
+	if prefs := getPrefs(t, srv, tok); prefs["follow"] {
+		t.Error("follow still enabled on a fresh GET")
+	}
+
+	// Unknown type → 422, and nothing was changed.
+	rec = sendJSONAuth(srv, http.MethodPatch, "/api/v1/me/notification-prefs", `{"prefs":{"comment":false,"premium_offers":true}}`, tok)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown type = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if prefs := getPrefs(t, srv, tok); !prefs["comment"] {
+		t.Error("comment was flipped although the update contained an unknown type")
+	}
+
+	// Empty prefs → 422.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/me/notification-prefs", `{"prefs":{}}`, tok); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("empty prefs = %d, want 422", rec.Code)
+	}
+
+	// Auth required on both routes.
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/me/notification-prefs", "", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anon get prefs = %d, want 401", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/me/notification-prefs", `{"prefs":{"follow":true}}`, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anon patch prefs = %d, want 401", rec.Code)
+	}
+}
+
+// TestDisabledPrefSuppressesFollowNotification proves the Create-side filter
+// end to end: with follow notifications disabled, a real follow creates no
+// notification; re-enabling restores delivery.
+func TestDisabledPrefSuppressesFollowNotification(t *testing.T) {
+	srv := videoServer(t)
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	fanTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	// The owner turns follow notifications off.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/me/notification-prefs", `{"prefs":{"follow":false}}`, ownerTok); rec.Code != http.StatusOK {
+		t.Fatalf("patch prefs = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/ada/follow", "", fanTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("follow = %d", rec.Code)
+	}
+	if got := unreadCount(t, srv, ownerTok); got != 0 {
+		t.Fatalf("unread after suppressed follow = %d, want 0", got)
+	}
+
+	// Re-enable → a new follow (from another account) notifies again.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/me/notification-prefs", `{"prefs":{"follow":true}}`, ownerTok); rec.Code != http.StatusOK {
+		t.Fatalf("re-enable prefs = %d", rec.Code)
+	}
+	carolTok := registerAndToken(t, srv, `{"username":"carol","email":"carol@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/ada/follow", "", carolTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("second follow = %d", rec.Code)
+	}
+	if got := unreadCount(t, srv, ownerTok); got != 1 {
+		t.Errorf("unread after re-enabled follow = %d, want 1", got)
 	}
 }

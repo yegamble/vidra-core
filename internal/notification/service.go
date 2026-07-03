@@ -24,8 +24,28 @@ const (
 	TypeReportResolved = "report_resolved"
 )
 
-// ErrNotFound means no notification matches the lookup for this user.
-var ErrNotFound = errors.New("notification: not found")
+// KnownTypes lists every notification type, in stable order. Preferences may
+// target exactly these; every type defaults to enabled.
+func KnownTypes() []string {
+	return []string{TypeComment, TypeFollow, TypeMessage, TypeReportResolved}
+}
+
+// knownType reports whether t is a recognised notification type.
+func knownType(t string) bool {
+	switch t {
+	case TypeFollow, TypeComment, TypeMessage, TypeReportResolved:
+		return true
+	}
+	return false
+}
+
+// Sentinel errors the HTTP layer maps to status codes.
+var (
+	// ErrNotFound means no notification matches the lookup for this user.
+	ErrNotFound = errors.New("notification: not found")
+	// ErrUnknownType means a preference targets a type that does not exist.
+	ErrUnknownType = errors.New("notification: unknown notification type")
+)
 
 // Repository is the data access the notification service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
@@ -35,6 +55,10 @@ type Repository interface {
 	CountUnreadNotifications(ctx context.Context, userID uuid.UUID) (int64, error)
 	MarkNotificationRead(ctx context.Context, arg sqlcgen.MarkNotificationReadParams) (int64, error)
 	MarkAllNotificationsRead(ctx context.Context, userID uuid.UUID) error
+
+	ListNotificationPrefs(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error)
+	UpsertNotificationPref(ctx context.Context, arg sqlcgen.UpsertNotificationPrefParams) error
+	IsNotificationTypeEnabled(ctx context.Context, arg sqlcgen.IsNotificationTypeEnabledParams) (bool, error)
 }
 
 // Service holds the notification application logic.
@@ -67,11 +91,27 @@ type Item struct {
 	ReportTargetType   string
 }
 
+// typeEnabled reports whether the recipient receives notifications of this
+// type (no stored preference = enabled). Fail-open: preferences are a filter,
+// and an unreadable filter must not silently disable notifications — if the
+// lookup errors, the create proceeds (and surfaces any real storage failure).
+func (s *Service) typeEnabled(ctx context.Context, recipientID uuid.UUID, typ string) bool {
+	on, err := s.repo.IsNotificationTypeEnabled(ctx, sqlcgen.IsNotificationTypeEnabledParams{
+		UserID: recipientID,
+		Type:   typ,
+	})
+	if err != nil {
+		return true
+	}
+	return on
+}
+
 // NotifyFollow records that actorID followed recipientID's channel. Notifying
-// yourself (recipient == actor) is a no-op. Best-effort: the caller treats a
-// returned error as non-fatal.
+// yourself (recipient == actor) is a no-op, as is a recipient who disabled
+// follow notifications. Best-effort: the caller treats a returned error as
+// non-fatal.
 func (s *Service) NotifyFollow(ctx context.Context, recipientID, actorID, channelID uuid.UUID) error {
-	if recipientID == actorID {
+	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeFollow) {
 		return nil
 	}
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
@@ -84,9 +124,10 @@ func (s *Service) NotifyFollow(ctx context.Context, recipientID, actorID, channe
 }
 
 // NotifyComment records that actorID commented on recipientID's video. Notifying
-// yourself is a no-op. Best-effort.
+// yourself is a no-op, as is a recipient who disabled comment notifications.
+// Best-effort.
 func (s *Service) NotifyComment(ctx context.Context, recipientID, actorID, videoID, commentID uuid.UUID) error {
-	if recipientID == actorID {
+	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeComment) {
 		return nil
 	}
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
@@ -100,11 +141,12 @@ func (s *Service) NotifyComment(ctx context.Context, recipientID, actorID, video
 }
 
 // NotifyMessage records that actorID sent recipientID a direct message in a
-// conversation. Notifying yourself is a no-op. Best-effort. The message body is
-// deliberately NOT stored on the notification (no message plaintext leaks into
-// the notification surface).
+// conversation. Notifying yourself is a no-op, as is a recipient who disabled
+// message notifications. Best-effort. The message body is deliberately NOT
+// stored on the notification (no message plaintext leaks into the notification
+// surface).
 func (s *Service) NotifyMessage(ctx context.Context, recipientID, actorID, conversationID uuid.UUID) error {
-	if recipientID == actorID {
+	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeMessage) {
 		return nil
 	}
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
@@ -117,12 +159,13 @@ func (s *Service) NotifyMessage(ctx context.Context, recipientID, actorID, conve
 }
 
 // NotifyReportResolved records that a moderator (actorID) resolved recipientID's
-// abuse report. Resolving your own report is a no-op. Best-effort. The
-// moderator's identity is deliberately NOT stored on the notification (actor_id
-// stays null) so it is never exposed to the reporter — the report's status and
-// target type are resolved from the joined report row at read time.
+// abuse report. Resolving your own report is a no-op, as is a recipient who
+// disabled report_resolved notifications. Best-effort. The moderator's identity
+// is deliberately NOT stored on the notification (actor_id stays null) so it is
+// never exposed to the reporter — the report's status and target type are
+// resolved from the joined report row at read time.
 func (s *Service) NotifyReportResolved(ctx context.Context, recipientID, actorID, reportID uuid.UUID) error {
-	if recipientID == actorID {
+	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeReportResolved) {
 		return nil
 	}
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
@@ -189,6 +232,52 @@ func (s *Service) MarkRead(ctx context.Context, userID, notifID uuid.UUID) error
 // MarkAllRead marks all of the user's unread notifications read (idempotent).
 func (s *Service) MarkAllRead(ctx context.Context, userID uuid.UUID) error {
 	return s.repo.MarkAllNotificationsRead(ctx, userID)
+}
+
+// Prefs returns the user's per-type notification preferences: every known type,
+// defaulting to enabled, overlaid with any stored rows. Stored rows for types
+// that are no longer known are ignored.
+func (s *Service) Prefs(ctx context.Context, userID uuid.UUID) (map[string]bool, error) {
+	prefs := make(map[string]bool, len(KnownTypes()))
+	for _, typ := range KnownTypes() {
+		prefs[typ] = true
+	}
+	rows, err := s.repo.ListNotificationPrefs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if knownType(r.Type) {
+			prefs[r.Type] = r.Enabled
+		}
+	}
+	return prefs, nil
+}
+
+// SetPrefs applies a partial preference update: only the types present in
+// changes are touched. Any unknown type rejects the whole update with
+// ErrUnknownType (nothing is written). Upserts run in KnownTypes order so the
+// write pattern is deterministic.
+func (s *Service) SetPrefs(ctx context.Context, userID uuid.UUID, changes map[string]bool) error {
+	for typ := range changes {
+		if !knownType(typ) {
+			return ErrUnknownType
+		}
+	}
+	for _, typ := range KnownTypes() {
+		enabled, ok := changes[typ]
+		if !ok {
+			continue
+		}
+		if err := s.repo.UpsertNotificationPref(ctx, sqlcgen.UpsertNotificationPrefParams{
+			UserID:  userID,
+			Type:    typ,
+			Enabled: enabled,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // pgUUID wraps a uuid.UUID as a non-null pgtype.UUID for a query parameter.
