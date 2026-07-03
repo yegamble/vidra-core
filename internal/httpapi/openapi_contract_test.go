@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -39,6 +40,7 @@ func fullRouteOptions() []Option {
 	issuer := auth.NewTokenIssuer("contract-test-secret-contract-test-0", "vidra", "vidra", time.Minute)
 	return []Option{
 		WithAuthService(auth.NewService(nil, issuer, time.Hour), time.Minute),
+		WithAccountService(account.NewService(nil, nil, nil)),
 		WithOAuthService(auth.NewOAuthService(nil, nil, nil)),
 		WithChannelService(channel.NewService(nil)),
 		WithVideoService(video.NewService(nil, nil)),

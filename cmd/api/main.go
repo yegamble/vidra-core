@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -381,6 +382,13 @@ func run() error {
 		logger.Info("default per-user storage quota enabled", "bytes", cfg.InstanceDefaultQuotaBytes)
 	}
 
+	// Account lifecycle (P4 export/import + §1 hard delete). Deleting an
+	// account removes its videos through the video service, so the federation
+	// Delete hooks registered above fire for previously-public videos.
+	accountsvc := account.NewService(db.Queries(), blobs, videosvc,
+		account.WithBaseURL(cfg.PublicBaseURL))
+	opts = append(opts, httpapi.WithAccountService(accountsvc))
+
 	// Federation (ActivityPub) — the service is always constructed, but its routes
 	// mount only when FEDERATION_ENABLED (gated in httpapi.routes). Actor private
 	// keys are envelope-encrypted with FEDERATION_KEY_KEK; without it (dev) they are
@@ -436,6 +444,16 @@ func run() error {
 		defer workerCancel()
 		go runTranscodeWorker(workerCtx, logger, transcodesvc)
 		logger.Info("transcode worker started")
+	}
+
+	// Drain the account-export job queue and sweep expired archives in the
+	// background (always on: the due/expiry scans are cheap partial-index
+	// lookups and exports must work on every instance).
+	{
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runAccountExportWorker(workerCtx, logger, accountsvc)
+		logger.Info("account export worker started")
 	}
 
 	// Publish scheduled videos as they come due (product-decisions §17). Always
@@ -537,6 +555,37 @@ func runTranscodeWorker(ctx context.Context, logger *slog.Logger, svc *transcode
 			}
 			if total > 0 {
 				logger.Info("transcode drain completed jobs", "count", total)
+			}
+		}
+	}
+}
+
+// runAccountExportWorker drains the durable account-export queue and sweeps
+// expired archives on a ticker until ctx is canceled (mirrors
+// runTranscodeWorker). Per-job failures are recorded in the queue
+// (retry/backoff/dead-letter); only the claim/sweep query errors are logged.
+func runAccountExportWorker(ctx context.Context, logger *slog.Logger, svc *account.Service) {
+	const (
+		interval   = 10 * time.Second
+		batch      = 2
+		sweepBatch = 50
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := svc.DrainExports(ctx, batch); err != nil {
+				logger.Warn("account export drain failed", "error", err)
+			} else if n > 0 {
+				logger.Info("account export drain completed jobs", "count", n)
+			}
+			if n, err := svc.SweepExpiredExports(ctx, sweepBatch); err != nil {
+				logger.Warn("account export sweep failed", "error", err)
+			} else if n > 0 {
+				logger.Info("account export sweep removed expired archives", "count", n)
 			}
 		}
 	}

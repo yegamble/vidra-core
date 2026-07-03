@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -57,6 +58,7 @@ type Server struct {
 	authLimit      *ratelimit.Limiter
 	authsvc        *auth.Service
 	authTTL        time.Duration
+	accountsvc     *account.Service
 	oauthsvc       *auth.OAuthService
 	channelsvc     *channel.Service
 	videosvc       *video.Service
@@ -110,6 +112,15 @@ func WithAuthService(svc *auth.Service, ttl time.Duration) Option {
 		s.authsvc = svc
 		s.authTTL = ttl
 	}
+}
+
+// WithAccountService mounts the account lifecycle endpoints: the §1 hard
+// delete (self-service DELETE /auth/me + the admin variant), the P4 account
+// export (request/status/download), and the import foundation. The self-delete
+// re-confirms the password through the auth service, so these routes register
+// only when both are wired.
+func WithAccountService(svc *account.Service) Option {
+	return func(s *Server) { s.accountsvc = svc }
 }
 
 // WithOAuthService mounts the OIDC login endpoints (begin/callback per
@@ -505,6 +516,19 @@ func (s *Server) routes() {
 		api.GET("/admin/registration-requests", s.handleListRegistrationRequests, s.requireAuth, s.requireRole("admin"))
 		api.POST("/admin/registration-requests/:id/approve", s.handleApproveRegistration, s.requireAuth, s.requireRole("admin"))
 		api.POST("/admin/registration-requests/:id/reject", s.handleRejectRegistration, s.requireAuth, s.requireRole("admin"))
+	}
+
+	// Account lifecycle (P4 export/import + §1 hard delete). The self-delete
+	// re-confirms the password via the auth service; the admin variant is
+	// admin-only and self-guarded. Export is a durable job: request → status →
+	// download (archives expire after 7 days).
+	if s.accountsvc != nil && s.authsvc != nil {
+		api.DELETE("/auth/me", s.handleDeleteAccount, s.requireAuth)
+		api.DELETE("/admin/users/:id", s.handleAdminDeleteUser, s.requireAuth, s.requireRole("admin"))
+		api.POST("/me/export", s.handleRequestAccountExport, s.requireAuth)
+		api.GET("/me/export", s.handleGetAccountExport, s.requireAuth)
+		api.GET("/me/export/download", s.handleDownloadAccountExport, s.requireAuth)
+		api.POST("/me/import", s.handleImportAccount, s.requireAuth)
 	}
 
 	// DEV-ONLY: expose captured account-security tokens so e2e tests can complete

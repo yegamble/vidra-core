@@ -59,6 +59,8 @@ type S3 struct {
 // compile-time interface checks: S3 is a Backend and must never silently
 // become a PathProvider (callers rely on the temp-download fallback instead).
 var _ Backend = (*S3)(nil)
+var _ PrefixDeleter = (*S3)(nil)
+var _ PrefixDeleter = (*Local)(nil)
 
 // NewS3 validates cfg and builds the client. No network calls are made here;
 // use EnsureBucket at startup to fail fast on unreachable/missing buckets.
@@ -179,6 +181,29 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("storage: s3: delete %q: %w", key, err)
 	}
 	return nil
+}
+
+// DeletePrefix removes every object under prefix (and any object stored at
+// exactly prefix, matching Local's RemoveAll semantics), implementing
+// storage.PrefixDeleter: a recursive list feeds each key to RemoveObject.
+// Missing prefixes are not an error.
+func (s *S3) DeletePrefix(ctx context.Context, prefix string) error {
+	if err := validateKey(prefix); err != nil {
+		return err
+	}
+	bare := strings.TrimSuffix(prefix, "/")
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    bare + "/", // trailing slash scopes strictly to the "directory"
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return fmt.Errorf("storage: s3: list %q: %w", prefix, obj.Err)
+		}
+		if err := s.client.RemoveObject(ctx, s.bucket, obj.Key, minio.RemoveObjectOptions{}); err != nil && !isS3NotFound(err) {
+			return fmt.Errorf("storage: s3: delete %q: %w", obj.Key, err)
+		}
+	}
+	return s.Delete(ctx, bare)
 }
 
 // Exists reports whether an object is stored at key.

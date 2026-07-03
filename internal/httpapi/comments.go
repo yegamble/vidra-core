@@ -37,10 +37,17 @@ type commentView struct {
 	// Edited is true once the body has been edited (updated_at moved past
 	// created_at), so the client can show an "(edited)" marker.
 	Edited bool `json:"edited"`
+	// Deleted marks a tombstone (product-decisions.md §1): the author's account
+	// was hard-deleted, the stored body is empty, and the view renders the
+	// "[deleted]" placeholder while the reply thread stays intact.
+	Deleted bool `json:"deleted"`
 }
 
+// tombstoneBody is what views render in place of a §1-tombstoned comment body.
+const tombstoneBody = "[deleted]"
+
 func newCommentView(c sqlcgen.Comment, authorUsername, authorDisplayName string) commentView {
-	return commentView{
+	v := commentView{
 		ID:                c.ID.String(),
 		VideoID:           c.VideoID.String(),
 		Body:              c.Body,
@@ -53,6 +60,12 @@ func newCommentView(c sqlcgen.Comment, authorUsername, authorDisplayName string)
 		UpdatedAt:         c.UpdatedAt,
 		Edited:            c.UpdatedAt.After(c.CreatedAt),
 	}
+	if c.DeletedAt.Valid {
+		v.Deleted = true
+		v.Body = tombstoneBody
+		v.Edited = false // the tombstoning bump is not a user edit
+	}
+	return v
 }
 
 // uuidPtrString renders a nullable pgtype.UUID as *string: nil when NULL, else

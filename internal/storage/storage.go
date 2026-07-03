@@ -40,6 +40,19 @@ type Backend interface {
 	Exists(ctx context.Context, key string) (bool, error)
 }
 
+// PrefixDeleter is an optional capability implemented by backends that can
+// remove every object under a key prefix (a "directory") in one call — used by
+// best-effort media cleanup (e.g. a deleted video's HLS ladder, whose segment
+// objects are not individually recorded in the database). Both first-party
+// backends implement it; callers must feature-detect and degrade gracefully
+// when a backend does not.
+type PrefixDeleter interface {
+	// DeletePrefix removes all objects stored under prefix. Idempotent: a
+	// prefix with no objects is not an error. The prefix is validated by the
+	// same key rules as every other method.
+	DeletePrefix(ctx context.Context, prefix string) error
+}
+
 // PathProvider is an optional capability implemented by backends that can expose
 // a local filesystem path for an object (the local backend does). Tools that
 // need a seekable file on disk — e.g. ffprobe — use it; backends without it

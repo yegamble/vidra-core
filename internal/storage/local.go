@@ -104,6 +104,18 @@ func (l *Local) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+// DeletePrefix removes the whole "directory" at key (all objects under it),
+// implementing storage.PrefixDeleter. Missing prefixes are not an error. The
+// same traversal-safe resolution as every other method applies, so a hostile
+// prefix can never escape the root.
+func (l *Local) DeletePrefix(_ context.Context, prefix string) error {
+	full, err := l.resolve(prefix)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(full)
+}
+
 // Exists reports whether an object is stored at key.
 func (l *Local) Exists(_ context.Context, key string) (bool, error) {
 	full, err := l.resolve(key)

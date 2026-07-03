@@ -19,6 +19,19 @@ type AccountActorKey struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type AccountExport struct {
+	ID            uuid.UUID          `json:"id"`
+	UserID        uuid.UUID          `json:"user_id"`
+	State         string             `json:"state"`
+	StorageKey    string             `json:"storage_key"`
+	Attempts      int32              `json:"attempts"`
+	NextAttemptAt time.Time          `json:"next_attempt_at"`
+	LastError     string             `json:"last_error"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
+}
+
 type AuditLog struct {
 	ID         uuid.UUID   `json:"id"`
 	Action     string      `json:"action"`
@@ -80,16 +93,17 @@ type ChannelImage struct {
 }
 
 type Comment struct {
-	ID               uuid.UUID   `json:"id"`
-	VideoID          uuid.UUID   `json:"video_id"`
-	UserID           pgtype.UUID `json:"user_id"`
-	Body             string      `json:"body"`
-	CreatedAt        time.Time   `json:"created_at"`
-	UpdatedAt        time.Time   `json:"updated_at"`
-	ParentID         pgtype.UUID `json:"parent_id"`
-	RemoteActorUrl   *string     `json:"remote_actor_url"`
-	RemoteAuthorName *string     `json:"remote_author_name"`
-	RemoteObjectUrl  *string     `json:"remote_object_url"`
+	ID               uuid.UUID          `json:"id"`
+	VideoID          uuid.UUID          `json:"video_id"`
+	UserID           pgtype.UUID        `json:"user_id"`
+	Body             string             `json:"body"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+	ParentID         pgtype.UUID        `json:"parent_id"`
+	RemoteActorUrl   *string            `json:"remote_actor_url"`
+	RemoteAuthorName *string            `json:"remote_author_name"`
+	RemoteObjectUrl  *string            `json:"remote_object_url"`
+	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type Conversation struct {
@@ -353,20 +367,21 @@ type TranscodeJob struct {
 }
 
 type User struct {
-	ID                uuid.UUID `json:"id"`
-	Username          string    `json:"username"`
-	Email             string    `json:"email"`
-	PasswordHash      string    `json:"password_hash"`
-	Role              string    `json:"role"`
-	EmailVerified     bool      `json:"email_verified"`
-	IsActive          bool      `json:"is_active"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	DisplayName       string    `json:"display_name"`
-	Bio               string    `json:"bio"`
-	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
-	Unlisted          bool      `json:"unlisted"`
-	BypassQuarantine  bool      `json:"bypass_quarantine"`
+	ID                uuid.UUID          `json:"id"`
+	Username          string             `json:"username"`
+	Email             string             `json:"email"`
+	PasswordHash      string             `json:"password_hash"`
+	Role              string             `json:"role"`
+	EmailVerified     bool               `json:"email_verified"`
+	IsActive          bool               `json:"is_active"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	DisplayName       string             `json:"display_name"`
+	Bio               string             `json:"bio"`
+	StorageQuotaBytes *int64             `json:"storage_quota_bytes"`
+	Unlisted          bool               `json:"unlisted"`
+	BypassQuarantine  bool               `json:"bypass_quarantine"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type UserBlock struct {

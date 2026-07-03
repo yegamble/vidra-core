@@ -29,6 +29,8 @@ const (
 	ActionEmailVerifyRequest    = "auth.email_verify.request"
 	ActionEmailVerifyConfirm    = "auth.email_verify.confirm"
 	ActionAccountDeactivate     = "auth.account.deactivate"
+	ActionAccountDelete         = "auth.account.delete"
+	ActionAdminUserDelete       = "admin.user.delete"
 	ActionOAuthLink             = "auth.oauth.link"
 	ActionOAuthUnlink           = "auth.oauth.unlink"
 	ActionMFAEnable             = "auth.mfa.enable"

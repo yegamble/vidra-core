@@ -142,3 +142,40 @@ func TestLocalPathResolvesAndRejects(t *testing.T) {
 		t.Errorf("Path(traversal) err = %v, want ErrInvalidKey", err)
 	}
 }
+
+func TestLocalDeletePrefix(t *testing.T) {
+	b, err := NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	inside := []string{
+		"streaming-playlists/vid1/master.m3u8",
+		"streaming-playlists/vid1/720p/playlist.m3u8",
+		"streaming-playlists/vid1/720p/seg_00001.ts",
+	}
+	outside := "streaming-playlists/vid2/master.m3u8"
+	for _, key := range append(inside, outside) {
+		if _, err := b.Put(ctx, key, strings.NewReader("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.DeletePrefix(ctx, "streaming-playlists/vid1"); err != nil {
+		t.Fatalf("DeletePrefix: %v", err)
+	}
+	for _, key := range inside {
+		if ok, _ := b.Exists(ctx, key); ok {
+			t.Errorf("%q survived DeletePrefix", key)
+		}
+	}
+	if ok, _ := b.Exists(ctx, outside); !ok {
+		t.Errorf("%q outside the prefix was deleted", outside)
+	}
+	// Idempotent on a missing prefix; traversal still rejected.
+	if err := b.DeletePrefix(ctx, "streaming-playlists/absent"); err != nil {
+		t.Fatalf("missing prefix: %v", err)
+	}
+	if err := b.DeletePrefix(ctx, "../escape"); err == nil {
+		t.Fatal("traversal prefix accepted")
+	}
+}

@@ -148,7 +148,7 @@ func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, 
 			Comment: sqlcgen.Comment{
 				ID: r.ID, VideoID: r.VideoID, UserID: r.UserID, Body: r.Body,
 				ParentID: r.ParentID, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				RemoteActorUrl: r.RemoteActorUrl,
+				RemoteActorUrl: r.RemoteActorUrl, DeletedAt: r.DeletedAt,
 			},
 			AuthorUsername:    r.AuthorUsername,
 			AuthorDisplayName: r.AuthorDisplayName,
@@ -222,6 +222,9 @@ type AdminComment struct {
 	Remote            bool
 	AuthorDomain      string
 	CreatedAt         time.Time
+	// Deleted marks a §1 tombstone (the author's account was hard-deleted):
+	// the body is empty in storage and views render "[deleted]".
+	Deleted bool
 }
 
 // ListForAdmin returns all comments newest first for the admin/moderator
@@ -250,6 +253,7 @@ func (s *Service) ListForAdmin(ctx context.Context, query string, limit, offset 
 			AuthorUsername:    r.AuthorUsername,
 			AuthorDisplayName: r.AuthorDisplayName,
 			CreatedAt:         r.CreatedAt,
+			Deleted:           r.DeletedAt.Valid,
 		}
 		if r.RemoteActorUrl != nil {
 			ac.Remote = true

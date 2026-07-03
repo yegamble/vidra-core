@@ -30,7 +30,7 @@ const createComment = `-- name: CreateComment :one
 INSERT INTO comments (video_id, user_id, body, parent_id)
 VALUES ($1, $2, $3, $4)
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at
 `
 
 type CreateCommentParams struct {
@@ -61,6 +61,7 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 		&i.RemoteActorUrl,
 		&i.RemoteAuthorName,
 		&i.RemoteObjectUrl,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -72,7 +73,7 @@ VALUES ($1, $2, $3,
 ON CONFLICT (remote_object_url) DO UPDATE
     SET body = EXCLUDED.body, updated_at = now()
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at
 `
 
 type CreateRemoteCommentParams struct {
@@ -109,6 +110,7 @@ func (q *Queries) CreateRemoteComment(ctx context.Context, arg CreateRemoteComme
 		&i.RemoteActorUrl,
 		&i.RemoteAuthorName,
 		&i.RemoteObjectUrl,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -125,7 +127,7 @@ func (q *Queries) DeleteComment(ctx context.Context, id uuid.UUID) error {
 
 const getComment = `-- name: GetComment :one
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
-       remote_actor_url, remote_author_name, remote_object_url
+       remote_actor_url, remote_author_name, remote_object_url, deleted_at
 FROM comments
 WHERE id = $1
 `
@@ -144,13 +146,14 @@ func (q *Queries) GetComment(ctx context.Context, id uuid.UUID) (Comment, error)
 		&i.RemoteActorUrl,
 		&i.RemoteAuthorName,
 		&i.RemoteObjectUrl,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getCommentByRemoteObjectURL = `-- name: GetCommentByRemoteObjectURL :one
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
-       remote_actor_url, remote_author_name, remote_object_url
+       remote_actor_url, remote_author_name, remote_object_url, deleted_at
 FROM comments
 WHERE remote_object_url = $1::text
 `
@@ -172,12 +175,13 @@ func (q *Queries) GetCommentByRemoteObjectURL(ctx context.Context, remoteObjectU
 		&i.RemoteActorUrl,
 		&i.RemoteAuthorName,
 		&i.RemoteObjectUrl,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listAdminComments = `-- name: ListAdminComments :many
-SELECT c.id, c.video_id, c.body, c.created_at,
+SELECT c.id, c.video_id, c.body, c.created_at, c.deleted_at,
        COALESCE(u.username, '')::text AS author_username,
        COALESCE(u.display_name, '')::text AS author_display_name,
        c.remote_actor_url,
@@ -200,16 +204,17 @@ type ListAdminCommentsParams struct {
 }
 
 type ListAdminCommentsRow struct {
-	ID                uuid.UUID `json:"id"`
-	VideoID           uuid.UUID `json:"video_id"`
-	Body              string    `json:"body"`
-	CreatedAt         time.Time `json:"created_at"`
-	AuthorUsername    string    `json:"author_username"`
-	AuthorDisplayName string    `json:"author_display_name"`
-	RemoteActorUrl    *string   `json:"remote_actor_url"`
-	RemoteAuthorName  string    `json:"remote_author_name"`
-	AuthorDomain      string    `json:"author_domain"`
-	VideoTitle        string    `json:"video_title"`
+	ID                uuid.UUID          `json:"id"`
+	VideoID           uuid.UUID          `json:"video_id"`
+	Body              string             `json:"body"`
+	CreatedAt         time.Time          `json:"created_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	AuthorUsername    string             `json:"author_username"`
+	AuthorDisplayName string             `json:"author_display_name"`
+	RemoteActorUrl    *string            `json:"remote_actor_url"`
+	RemoteAuthorName  string             `json:"remote_author_name"`
+	AuthorDomain      string             `json:"author_domain"`
+	VideoTitle        string             `json:"video_title"`
 }
 
 // The admin/moderator comments overview: ALL comments newest first, with the
@@ -229,6 +234,7 @@ func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsPa
 			&i.VideoID,
 			&i.Body,
 			&i.CreatedAt,
+			&i.DeletedAt,
 			&i.AuthorUsername,
 			&i.AuthorDisplayName,
 			&i.RemoteActorUrl,
@@ -247,7 +253,7 @@ func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsPa
 }
 
 const listCommentsByVideo = `-- name: ListCommentsByVideo :many
-SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at,
+SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at,
        COALESCE(u.username, '')::text AS author_username,
        COALESCE(u.display_name, '')::text AS author_display_name,
        c.remote_actor_url,
@@ -284,18 +290,19 @@ type ListCommentsByVideoParams struct {
 }
 
 type ListCommentsByVideoRow struct {
-	ID                uuid.UUID   `json:"id"`
-	VideoID           uuid.UUID   `json:"video_id"`
-	UserID            pgtype.UUID `json:"user_id"`
-	Body              string      `json:"body"`
-	ParentID          pgtype.UUID `json:"parent_id"`
-	CreatedAt         time.Time   `json:"created_at"`
-	UpdatedAt         time.Time   `json:"updated_at"`
-	AuthorUsername    string      `json:"author_username"`
-	AuthorDisplayName string      `json:"author_display_name"`
-	RemoteActorUrl    *string     `json:"remote_actor_url"`
-	RemoteAuthorName  string      `json:"remote_author_name"`
-	AuthorDomain      string      `json:"author_domain"`
+	ID                uuid.UUID          `json:"id"`
+	VideoID           uuid.UUID          `json:"video_id"`
+	UserID            pgtype.UUID        `json:"user_id"`
+	Body              string             `json:"body"`
+	ParentID          pgtype.UUID        `json:"parent_id"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	AuthorUsername    string             `json:"author_username"`
+	AuthorDisplayName string             `json:"author_display_name"`
+	RemoteActorUrl    *string            `json:"remote_actor_url"`
+	RemoteAuthorName  string             `json:"remote_author_name"`
+	AuthorDomain      string             `json:"author_domain"`
 }
 
 // A video's comments, newest first, joined with author identity for display.
@@ -328,6 +335,7 @@ func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVid
 			&i.ParentID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletedAt,
 			&i.AuthorUsername,
 			&i.AuthorDisplayName,
 			&i.RemoteActorUrl,
@@ -344,12 +352,26 @@ func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVid
 	return items, nil
 }
 
+const tombstoneUserComments = `-- name: TombstoneUserComments :exec
+UPDATE comments
+SET body = '', deleted_at = now(), updated_at = now()
+WHERE user_id = $1 AND deleted_at IS NULL
+`
+
+// §1 hard delete: a deleted account's comments become tombstones — the body is
+// emptied and deleted_at stamped, but the rows (and so the reply threads under
+// them) are preserved. Views render "[deleted]" for tombstoned comments.
+func (q *Queries) TombstoneUserComments(ctx context.Context, userID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, tombstoneUserComments, userID)
+	return err
+}
+
 const updateComment = `-- name: UpdateComment :one
 UPDATE comments
 SET body = $1, updated_at = now()
 WHERE id = $2
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at
 `
 
 type UpdateCommentParams struct {
@@ -373,6 +395,7 @@ func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (C
 		&i.RemoteActorUrl,
 		&i.RemoteAuthorName,
 		&i.RemoteObjectUrl,
+		&i.DeletedAt,
 	)
 	return i, err
 }

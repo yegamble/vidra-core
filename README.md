@@ -217,6 +217,35 @@ live role/verification state. A missing, malformed, invalid, or expired token yi
 `PATCH /api/v1/auth/me` updates the profile (`display_name`, `bio`; partial); identity
 fields (username/email) are not editable there pending a re-verification flow.
 
+Account lifecycle: `POST /api/v1/auth/me/deactivate` (`{password}`) reversibly
+disables the account (an admin can re-enable). `DELETE /api/v1/auth/me`
+(`{password}`) is the IRREVERSIBLE hard delete (product-decisions.md §1): owned
+channels/videos are purged (federated `Delete` fan-out for previously-public
+videos; media blobs removed best-effort, including the HLS ladder via the
+storage backends' `DeletePrefix`), the account's comments become `"[deleted]"`
+tombstones with reply threads preserved, per-user rows (ratings, saved videos,
+history, playlists, follows, mutes, blocks, OAuth identities, TOTP, tokens,
+notifications) are erased, all sessions are revoked, and the `users` row is
+anonymised (`deleted-<8char>` username + email sentinel, cleared hash,
+`deleted_at`) rather than removed so audit rows and DM history stay coherent.
+Admins can hard-delete any account except their own via
+`DELETE /api/v1/admin/users/{id}` (self-guard → `422`). Both variants are
+audited (`auth.account.delete` / `admin.user.delete`).
+
+Account export/import (P4): `POST /api/v1/me/export` queues a durable job (one
+active per user → `409`) whose worker writes a JSON archive of the caller's
+data — profile, channels, video metadata incl. taxonomy/tags, playlists,
+comments, follows, saved videos, watch history, notification prefs; NEVER the
+password hash or any token — to `exports/accounts/<user>/<id>.json` in the
+media storage backend. `GET /api/v1/me/export` reports status;
+`GET /api/v1/me/export/download` streams the archive while it lasts (7 days,
+then a sweeper deletes it; expired → `410`). Media files are not bundled in
+v1 — each video entry carries its original's download URL instead.
+`POST /api/v1/me/import` accepts that same archive and re-creates the SAFE
+subsets (profile fields, playlists matched by locally-present video ids,
+follows of local channels, notification prefs); everything else is reported
+per-section as skipped in the response summary.
+
 Email delivery: password-reset and email-verification tokens are handed to a `Mailer`
 adapter. By default nothing is sent (tokens are still generated and consumable). Set
 `MAIL_ENABLED=true` plus `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_FROM`, and

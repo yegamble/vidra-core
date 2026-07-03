@@ -12,16 +12,16 @@ import (
 // of its sessions are revoked, so it is signed out everywhere. Deactivation is
 // reversible by an administrator.
 //
-// Hard deletion (removing or anonymising the account and its content) is a
-// separate flow gated on a data-retention/anonymisation policy and is not done
-// here.
+// Hard deletion (anonymising the account and purging its content) is the
+// separate, irreversible internal/account.Service.Delete flow
+// (product-decisions.md §1).
 func (s *Service) DeactivateAccount(ctx context.Context, userID uuid.UUID, password string) error {
+	if err := s.ConfirmPassword(ctx, userID, password); err != nil {
+		return err
+	}
 	user, err := s.UserByID(ctx, userID)
 	if err != nil {
 		return err
-	}
-	if err := CheckPassword(user.PasswordHash, password); err != nil {
-		return ErrInvalidPassword
 	}
 	if err := s.repo.DeactivateUser(ctx, user.ID); err != nil {
 		return err
@@ -30,5 +30,20 @@ func (s *Service) DeactivateAccount(ctx context.Context, userID uuid.UUID, passw
 	// must not fail the deactivation (a disabled account's tokens stop resolving
 	// anyway).
 	_ = s.repo.RevokeAllUserSessions(ctx, user.ID)
+	return nil
+}
+
+// ConfirmPassword re-verifies the authenticated account's current password
+// before a sensitive action (deactivation, the §1 hard delete). A passwordless
+// account (OAuth-only: empty hash — bcrypt can never verify it) always fails
+// with ErrInvalidPassword; an unknown/inactive subject is ErrAccountNotFound.
+func (s *Service) ConfirmPassword(ctx context.Context, userID uuid.UUID, password string) error {
+	user, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := CheckPassword(user.PasswordHash, password); err != nil {
+		return ErrInvalidPassword
+	}
 	return nil
 }

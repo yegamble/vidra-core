@@ -19,6 +19,8 @@ type adminCommentView struct {
 	Remote            bool      `json:"remote"`
 	AuthorDomain      string    `json:"author_domain,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
+	// Deleted marks a §1 tombstone; the body renders as "[deleted]".
+	Deleted bool `json:"deleted"`
 }
 
 // adminCommentListResponse is the paginated admin comments overview.
@@ -44,7 +46,7 @@ func (s *Server) handleListAdminComments(c echo.Context) error {
 	}
 	views := make([]adminCommentView, 0, len(items))
 	for _, it := range items {
-		views = append(views, adminCommentView{
+		v := adminCommentView{
 			ID:                it.ID.String(),
 			VideoID:           it.VideoID.String(),
 			VideoTitle:        it.VideoTitle,
@@ -54,7 +56,12 @@ func (s *Server) handleListAdminComments(c echo.Context) error {
 			Remote:            it.Remote,
 			AuthorDomain:      it.AuthorDomain,
 			CreatedAt:         it.CreatedAt,
-		})
+			Deleted:           it.Deleted,
+		}
+		if it.Deleted {
+			v.Body = tombstoneBody
+		}
+		views = append(views, v)
 	}
 	return c.JSON(http.StatusOK, adminCommentListResponse{Comments: views, Limit: limit, Offset: offset})
 }

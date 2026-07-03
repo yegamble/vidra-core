@@ -267,6 +267,52 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteCurrentUser
+      summary: Permanently delete the authenticated account (hard delete)
+      description: >-
+        IRREVERSIBLE hard delete of the caller's account after re-confirming
+        the current password. Owned channels and their videos are permanently
+        removed (media blobs deleted best-effort; a federated Delete is fanned
+        out for previously-public videos); the account's comments become
+        "[deleted]" tombstones with reply threads preserved; ratings, saved
+        videos, watch history, playlists, follows, mutes, and blocks are
+        erased; linked OAuth identities and TOTP settings are removed; all
+        sessions are revoked. The account row itself is anonymised (username
+        becomes deleted-XXXXXXXX) so audit and message history stay coherent.
+        Accounts without a password (OAuth-only) cannot self-delete this way —
+        an administrator must use the admin variant. For a reversible
+        alternative, see POST /api/v1/auth/me/deactivate.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteAccountRequest"
+      responses:
+        "204":
+          description: The account was permanently deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Incorrect password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (missing password).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/auth/refresh:
     post:
       operationId: refreshSession
@@ -1139,6 +1185,166 @@ paths:
                 $ref: "#/components/schemas/ChannelListResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/export:
+    post:
+      operationId: requestAccountExport
+      summary: Request an export of the caller's account data
+      description: >-
+        Enqueues a durable background job that assembles the caller's account
+        data — profile, channels, video metadata (including taxonomy and
+        tags), playlists, comments, follows, saved videos, watch history, and
+        notification preferences — into a single JSON archive. The archive
+        NEVER contains the password hash, tokens, or any other credential
+        material. Media files are NOT bundled in v1: each video entry carries
+        its original file's download URL instead. One export may be active per
+        user (409 while one is pending/running); requesting again after
+        completion replaces the previous archive. The finished archive stays
+        downloadable for 7 days, then a sweeper deletes it.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "202":
+          description: The export job was queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountExportStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: An export is already in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: getAccountExport
+      summary: Get the caller's latest export status
+      description: >-
+        Reports the caller's most recent export job: pending/running while the
+        archive is being assembled, done once downloadable (with its expiry),
+        or failed after the job dead-lettered. 404 when no export was ever
+        requested or the expired archive was already cleaned up.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The latest export's status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountExportStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No export found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/export/download:
+    get:
+      operationId: downloadAccountExport
+      summary: Download the caller's finished export archive
+      description: >-
+        Streams the finished JSON archive as an attachment. 409 while the
+        export is still pending/running or after it failed; 410 once the
+        archive passed its 7-day expiry (request a new export); 404 when none
+        exists. The archive is the same shape POST /api/v1/me/import accepts.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The export archive (attachment).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountArchive"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No export found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The export is not ready for download.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: The export has expired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/import:
+    post:
+      operationId: importAccountArchive
+      summary: Import a vidra account archive (safe subsets)
+      description: >-
+        Accepts the JSON archive produced by the account export and re-creates
+        the SAFE subsets for the caller: profile fields (display name, bio),
+        playlists (each item matched by video id and added only when that
+        video exists locally), follows of local channels (matched by handle),
+        and notification preferences. Everything else in the archive —
+        channels, videos, comments, saved videos, watch history — is NOT
+        re-created in v1 and is reported per section in the returned summary's
+        skipped_sections. The import is additive: it never deletes existing
+        data, follows are idempotent, and re-importing creates duplicate
+        playlists. The request body is bounded by the instance's HTTP body
+        limit (default 8 MB).
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountArchive"
+      responses:
+        "200":
+          description: What was imported and what was skipped.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountImportSummary"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: The archive exceeds the request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Not a valid vidra account archive.
           content:
             application/json:
               schema:
@@ -6248,6 +6454,53 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteUser
+      summary: Permanently delete a user's account (admin, hard delete)
+      description: >-
+        IRREVERSIBLE admin variant of the account hard delete, with the same
+        semantics as DELETE /api/v1/auth/me (owned channels/videos purged with
+        federation Delete fan-out and best-effort blob cleanup, comments
+        tombstoned, per-user data erased, sessions revoked, account row
+        anonymised) but no password confirmation. Self-guarded: an admin
+        cannot hard-delete their own account this way (422).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The account was permanently deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such user (or already deleted).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Attempt to hard-delete the caller's own account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -6963,7 +7216,7 @@ components:
             $ref: "#/components/schemas/Caption"
     Comment:
       type: object
-      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, remote, created_at, updated_at, edited]
+      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, remote, created_at, updated_at, edited, deleted]
       properties:
         id:
           type: string
@@ -7007,6 +7260,12 @@ components:
         edited:
           type: boolean
           description: True once the comment has been edited (updated_at moved past created_at).
+        deleted:
+          type: boolean
+          description: >-
+            True for a tombstoned comment: its author's account was
+            permanently deleted, the stored body was erased, and body renders
+            as "[deleted]" while the reply thread stays intact.
     CommentListResponse:
       type: object
       required: [comments, limit, offset]
@@ -7869,7 +8128,7 @@ components:
     AdminComment:
       type: object
       description: A comment in the admin/moderator overview, with author + video context.
-      required: [id, video_id, video_title, body, author_username, author_display_name, remote, created_at]
+      required: [id, video_id, video_title, body, author_username, author_display_name, remote, created_at, deleted]
       properties:
         id:
           type: string
@@ -7894,6 +8153,11 @@ components:
         created_at:
           type: string
           format: date-time
+        deleted:
+          type: boolean
+          description: >-
+            True for a tombstoned comment (its author's account was permanently
+            deleted); body renders as "[deleted]".
     AdminCommentListResponse:
       type: object
       required: [comments, limit, offset]
@@ -8073,6 +8337,285 @@ components:
           type: [integer, "null"]
           format: int64
           description: Effective storage quota in bytes; null = unlimited.
+    DeleteAccountRequest:
+      type: object
+      description: >-
+        Password confirmation for the irreversible account hard delete (a
+        stolen access token alone must not be able to destroy the account).
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+    AccountExportStatus:
+      type: object
+      description: The status of the caller's most recent account export job.
+      required: [id, state, download_ready, requested_at, expires_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [pending, running, done, failed]
+          description: >-
+            pending/running while the archive is being assembled; done once
+            downloadable; failed after the job exhausted its retries.
+        download_ready:
+          type: boolean
+          description: >-
+            True when GET /api/v1/me/export/download will serve the archive
+            (state done and not yet expired).
+        requested_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When the finished archive stops being downloadable (7 days after
+            completion); null while the export has not finished.
+    AccountArchive:
+      type: object
+      description: >-
+        A vidra account export archive (format version 1): the user's own data
+        as one JSON document. Contains NO password hash and NO tokens. Media
+        files are not bundled — each video entry carries
+        original_download_url, the (owner-gated) API URL of its original file,
+        valid while the account and video exist. This same shape is what
+        POST /api/v1/me/import accepts.
+      required: [vidra_export, profile]
+      properties:
+        vidra_export:
+          type: object
+          description: Format marker.
+          required: [version, generated_at]
+          properties:
+            version:
+              type: integer
+              description: Archive format version (currently 1).
+            generated_at:
+              type: string
+              format: date-time
+            instance:
+              type: string
+              description: Public origin of the exporting instance.
+        profile:
+          type: object
+          required: [username, email, display_name, bio, unlisted, email_verified, created_at]
+          properties:
+            username:
+              type: string
+            email:
+              type: string
+            display_name:
+              type: string
+            bio:
+              type: string
+            unlisted:
+              type: boolean
+            email_verified:
+              type: boolean
+            created_at:
+              type: string
+              format: date-time
+        notification_prefs:
+          type: array
+          items:
+            type: object
+            required: [type, enabled]
+            properties:
+              type:
+                type: string
+              enabled:
+                type: boolean
+        channels:
+          type: array
+          description: Owned channels (metadata only; not re-created by import).
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              handle:
+                type: string
+              display_name:
+                type: string
+              description:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+        videos:
+          type: array
+          description: >-
+            Owned videos' metadata including taxonomy and tags (media not
+            bundled; not re-created by import).
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              channel_handle:
+                type: string
+              title:
+                type: string
+              description:
+                type: string
+              privacy:
+                type: string
+              state:
+                type: string
+              category:
+                type: [string, "null"]
+              language:
+                type: [string, "null"]
+              license:
+                type: [string, "null"]
+              tags:
+                type: array
+                items:
+                  type: string
+              publish_at:
+                type: [string, "null"]
+                format: date-time
+              created_at:
+                type: string
+                format: date-time
+              updated_at:
+                type: string
+                format: date-time
+              original_download_url:
+                type: string
+                description: >-
+                  Where the video's original file can be downloaded (media is
+                  not bundled in the archive).
+        playlists:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              title:
+                type: string
+              description:
+                type: string
+              visibility:
+                type: string
+              video_ids:
+                type: array
+                items:
+                  type: string
+              created_at:
+                type: string
+                format: date-time
+        comments:
+          type: array
+          description: The account's own comments (not re-created by import).
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              video_id:
+                type: string
+                format: uuid
+              body:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+              updated_at:
+                type: string
+                format: date-time
+        follows:
+          type: array
+          items:
+            type: object
+            properties:
+              channel_id:
+                type: string
+                format: uuid
+              channel_handle:
+                type: string
+              followed_at:
+                type: string
+                format: date-time
+        saved_videos:
+          type: array
+          description: Watch-later entries (not re-created by import).
+          items:
+            type: object
+            properties:
+              video_id:
+                type: string
+                format: uuid
+              saved_at:
+                type: string
+                format: date-time
+        watch_history:
+          type: array
+          description: Watch history with resume positions (not re-created by import).
+          items:
+            type: object
+            properties:
+              video_id:
+                type: string
+                format: uuid
+              position_seconds:
+                type: integer
+              watched_at:
+                type: string
+                format: date-time
+    AccountImportSummary:
+      type: object
+      description: >-
+        What POST /api/v1/me/import re-created (safe subsets only) and what it
+        skipped.
+      required:
+        - profile_applied
+        - playlists_created
+        - playlist_items_added
+        - playlist_items_skipped
+        - follows_created
+        - follows_skipped
+        - notification_prefs_applied
+        - notification_prefs_skipped
+        - skipped_sections
+      properties:
+        profile_applied:
+          type: boolean
+          description: True when display_name/bio were applied from the archive.
+        playlists_created:
+          type: integer
+        playlist_items_added:
+          type: integer
+        playlist_items_skipped:
+          type: integer
+          description: Items whose video does not exist on this instance.
+        follows_created:
+          type: integer
+        follows_skipped:
+          type: integer
+          description: Follows of channels not present locally.
+        notification_prefs_applied:
+          type: integer
+        notification_prefs_skipped:
+          type: integer
+          description: Preferences for notification types this build does not know.
+        skipped_sections:
+          type: object
+          description: >-
+            Counts of archive entries that are not importable in v1, keyed by
+            section (channels, videos, comments, saved_videos, watch_history,
+            playlists).
+          additionalProperties:
+            type: integer
     LiveStream:
       type: object
       required: [id, channel_id, title, description, privacy, state, permanent, created_at, updated_at]

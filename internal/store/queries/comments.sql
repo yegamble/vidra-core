@@ -4,7 +4,7 @@
 INSERT INTO comments (video_id, user_id, body, parent_id)
 VALUES (sqlc.arg('video_id'), sqlc.arg('user_id'), sqlc.arg('body'), sqlc.narg('parent_id'))
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url;
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at;
 
 -- name: CreateRemoteComment :one
 -- Store an inbound federated Note as a comment (remote-content §6): attributed
@@ -17,7 +17,7 @@ VALUES (sqlc.arg('video_id'), sqlc.arg('body'), sqlc.narg('parent_id'),
 ON CONFLICT (remote_object_url) DO UPDATE
     SET body = EXCLUDED.body, updated_at = now()
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url;
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at;
 
 -- name: ListCommentsByVideo :many
 -- A video's comments, newest first, joined with author identity for display.
@@ -28,7 +28,7 @@ RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
 -- comments from instances that viewer muted are hidden too (§8); when NULL
 -- (anonymous), only the admin instance blocklist filters (it hides for
 -- everyone).
-SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at,
+SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at,
        COALESCE(u.username, '')::text AS author_username,
        COALESCE(u.display_name, '')::text AS author_display_name,
        c.remote_actor_url,
@@ -58,7 +58,7 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: GetComment :one
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
-       remote_actor_url, remote_author_name, remote_object_url
+       remote_actor_url, remote_author_name, remote_object_url, deleted_at
 FROM comments
 WHERE id = $1;
 
@@ -67,7 +67,7 @@ WHERE id = $1;
 -- inbound Update{Note}/Delete use (§6/§7). Local comments never match (their
 -- remote_object_url is NULL).
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
-       remote_actor_url, remote_author_name, remote_object_url
+       remote_actor_url, remote_author_name, remote_object_url, deleted_at
 FROM comments
 WHERE remote_object_url = sqlc.arg('remote_object_url')::text;
 
@@ -78,7 +78,7 @@ UPDATE comments
 SET body = sqlc.arg('body'), updated_at = now()
 WHERE id = sqlc.arg('id')
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url;
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at;
 
 -- name: DeleteComment :exec
 DELETE FROM comments
@@ -93,7 +93,7 @@ SELECT count(*) FROM comments WHERE user_id IS NOT NULL;
 -- The admin/moderator comments overview: ALL comments newest first, with the
 -- author's identity (local user or remote actor + domain, §6) and the video
 -- they're on. An optional case-insensitive body filter (NULL = no filter).
-SELECT c.id, c.video_id, c.body, c.created_at,
+SELECT c.id, c.video_id, c.body, c.created_at, c.deleted_at,
        COALESCE(u.username, '')::text AS author_username,
        COALESCE(u.display_name, '')::text AS author_display_name,
        c.remote_actor_url,
@@ -107,3 +107,11 @@ JOIN videos v ON v.id = c.video_id
 WHERE (sqlc.narg('query')::text IS NULL OR c.body ILIKE '%' || sqlc.narg('query') || '%')
 ORDER BY c.created_at DESC, c.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: TombstoneUserComments :exec
+-- §1 hard delete: a deleted account's comments become tombstones — the body is
+-- emptied and deleted_at stamped, but the rows (and so the reply threads under
+-- them) are preserved. Views render "[deleted]" for tombstoned comments.
+UPDATE comments
+SET body = '', deleted_at = now(), updated_at = now()
+WHERE user_id = sqlc.arg('user_id') AND deleted_at IS NULL;

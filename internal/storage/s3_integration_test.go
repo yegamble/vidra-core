@@ -235,3 +235,32 @@ func TestS3TempDownloadFallbackContract(t *testing.T) {
 		t.Errorf("temp download = %q, want %q", got, content)
 	}
 }
+
+func TestS3DeletePrefix(t *testing.T) {
+	b := newS3TestBackend(t)
+	ctx := context.Background()
+	prefix := fmt.Sprintf("integration/%s/%d/hls", strings.ToLower(t.Name()), time.Now().UnixNano())
+	inside := []string{prefix + "/master.m3u8", prefix + "/720p/seg_00001.ts"}
+	outside := prefix + "-other/master.m3u8"
+	for _, key := range append(inside, outside) {
+		key := key
+		if _, err := b.Put(ctx, key, strings.NewReader("x")); err != nil {
+			t.Fatalf("Put %q: %v", key, err)
+		}
+		t.Cleanup(func() { _ = b.Delete(context.Background(), key) })
+	}
+	if err := b.DeletePrefix(ctx, prefix); err != nil {
+		t.Fatalf("DeletePrefix: %v", err)
+	}
+	for _, key := range inside {
+		if ok, _ := b.Exists(ctx, key); ok {
+			t.Errorf("%q survived DeletePrefix", key)
+		}
+	}
+	if ok, _ := b.Exists(ctx, outside); !ok {
+		t.Errorf("%q outside the prefix was deleted", outside)
+	}
+	if err := b.DeletePrefix(ctx, prefix); err != nil {
+		t.Fatalf("second DeletePrefix (idempotence): %v", err)
+	}
+}

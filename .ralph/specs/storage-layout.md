@@ -26,6 +26,7 @@ PeerTube buckets (from its `storage:` config) and the vidra mapping:
 | `captions/`              | subtitle/caption files                  | `captions/<id>-<lang>.vtt`      | planned (P13 captions) |
 | `avatars/`               | account/channel avatars                 | `avatars/users/<id><ext>`, `avatars/channels/<id><ext>` | **in use** (P5; `user_images`/`channel_images` tables) |
 | `banners/`               | account/channel banners (vidra addition — PeerTube keeps banners inside `avatars/`; a separate kind dir follows the one-dir-per-kind rule) | `banners/users/<id><ext>`, `banners/channels/<id><ext>` | **in use** (P5) |
+| `exports/`               | account export archives (vidra addition — P4 export; no PeerTube bucket equivalent) | `exports/accounts/<user_id>/<export_id>.json` | **in use** (P4; the `account_exports` table tracks the job + 7-day expiry; the sweeper deletes blob + row) |
 | `torrents/`              | .torrent files                          | `torrents/<id>.torrent`         | planned (if/when WebTorrent) |
 | `tmp/`                   | scratch during upload/processing        | `tmp/...`                        | planned |
 
