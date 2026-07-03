@@ -65,13 +65,16 @@ func (s *Service) ListUsers(ctx context.Context, query string, limit, offset int
 	})
 }
 
-// UpdateUserInput is a partial admin edit of an account; nil Role/IsActive are
-// unchanged. The storage quota is tri-state: untouched unless SetStorageQuota
-// is true, in which case a nil StorageQuotaBytes resets the account to the
-// instance default (NULL) and a value overrides it (0 = unlimited).
+// UpdateUserInput is a partial admin edit of an account; nil Role/IsActive/
+// EmailVerified are unchanged. The storage quota is tri-state: untouched unless
+// SetStorageQuota is true, in which case a nil StorageQuotaBytes resets the
+// account to the instance default (NULL) and a value overrides it (0 =
+// unlimited). EmailVerified lets an admin mark an address confirmed without
+// the token round-trip (or revoke that confirmation).
 type UpdateUserInput struct {
 	Role              *string
 	IsActive          *bool
+	EmailVerified     *bool
 	SetStorageQuota   bool
 	StorageQuotaBytes *int64
 }
@@ -97,6 +100,7 @@ func (s *Service) UpdateUser(ctx context.Context, callerID, targetID uuid.UUID, 
 		ID:                targetID,
 		Role:              in.Role,
 		IsActive:          in.IsActive,
+		EmailVerified:     in.EmailVerified,
 		SetStorageQuota:   in.SetStorageQuota,
 		StorageQuotaBytes: in.StorageQuotaBytes,
 	})

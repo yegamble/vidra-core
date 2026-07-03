@@ -1,11 +1,16 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/observability"
 )
 
 func adminUsers(t *testing.T, srv *Server, query, token string) adminUserListResponse {
@@ -102,5 +107,74 @@ func TestAdminUsersRequireAuth(t *testing.T) {
 		if rec := sendJSONAuth(srv, tc.method, tc.path, tc.body, ""); rec.Code != http.StatusUnauthorized {
 			t.Errorf("anon %s %s = %d, want 401", tc.method, tc.path, rec.Code)
 		}
+	}
+}
+
+// TestAdminSetsEmailVerified proves the §10 admin edit: email_verified flips on
+// and off via PATCH /admin/users/{id}, the change survives a fresh read (the
+// target's /auth/me), other fields are untouched, and each edit leaves an audit
+// event naming the flag.
+func TestAdminSetsEmailVerified(t *testing.T) {
+	srv := videoServer(t)
+	var buf bytes.Buffer
+	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bobTok, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	// Fresh accounts start unverified.
+	users := adminUsers(t, srv, "?q=bob", adminTok)
+	if len(users.Users) != 1 || users.Users[0].EmailVerified {
+		t.Fatalf("fresh bob = %+v, want unverified", users.Users)
+	}
+
+	// Flip on: the response and the target's own /auth/me agree.
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+bobID, `{"email_verified":true}`, adminTok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set email_verified = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var updated adminUserView
+	_ = json.Unmarshal(rec.Body.Bytes(), &updated)
+	if !updated.EmailVerified {
+		t.Error("email_verified not true in the PATCH response")
+	}
+	if updated.Role != "user" || !updated.IsActive {
+		t.Errorf("unrelated fields changed: %+v", updated)
+	}
+	var me userView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/auth/me", bobTok).Body.Bytes(), &me)
+	if !me.EmailVerified {
+		t.Error("target /auth/me does not reflect admin-set email_verified=true")
+	}
+
+	// Flip off (revoke the confirmation).
+	rec = sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+bobID, `{"email_verified":false}`, adminTok)
+	_ = json.Unmarshal(rec.Body.Bytes(), &updated)
+	if rec.Code != http.StatusOK || updated.EmailVerified {
+		t.Errorf("revoke = %d verified=%v, want 200/false", rec.Code, updated.EmailVerified)
+	}
+
+	// A non-admin cannot set it.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+bobID, `{"email_verified":true}`, bobTok); rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin set = %d, want 403", rec.Code)
+	}
+
+	// Both edits are audited with the flag value in the reason.
+	events := auditEvents(t, &buf)
+	var sawOn, sawOff bool
+	for _, e := range events {
+		if e["action"] != observability.ActionAdminUserUpdate || e["result"] != observability.ResultSuccess {
+			continue
+		}
+		reason, _ := e["reason"].(string)
+		if strings.Contains(reason, "email_verified=true") {
+			sawOn = true
+		}
+		if strings.Contains(reason, "email_verified=false") {
+			sawOff = true
+		}
+	}
+	if !sawOn || !sawOff {
+		t.Errorf("audit events missing email_verified changes (on=%v off=%v)", sawOn, sawOff)
 	}
 }

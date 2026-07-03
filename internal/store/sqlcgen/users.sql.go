@@ -16,30 +16,34 @@ const adminUpdateUser = `-- name: AdminUpdateUser :one
 UPDATE users
 SET role       = COALESCE($1, role),
     is_active  = COALESCE($2, is_active),
-    storage_quota_bytes = CASE WHEN $3::bool
-                               THEN $4::bigint
+    email_verified = COALESCE($3, email_verified),
+    storage_quota_bytes = CASE WHEN $4::bool
+                               THEN $5::bigint
                                ELSE storage_quota_bytes END,
     updated_at = now()
-WHERE id = $5
+WHERE id = $6
 RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes
 `
 
 type AdminUpdateUserParams struct {
 	Role              *string   `json:"role"`
 	IsActive          *bool     `json:"is_active"`
+	EmailVerified     *bool     `json:"email_verified"`
 	SetStorageQuota   bool      `json:"set_storage_quota"`
 	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
 	ID                uuid.UUID `json:"id"`
 }
 
-// Admin edit of a user's role, active flag, and/or storage quota (partial:
-// NULL role/is_active args are unchanged). The quota is tri-state — unchanged
-// unless set_storage_quota is true, in which case a NULL value resets the
-// account to the instance default and a value (0 = unlimited) overrides it.
+// Admin edit of a user's role, active flag, email_verified flag, and/or storage
+// quota (partial: NULL role/is_active/email_verified args are unchanged). The
+// quota is tri-state — unchanged unless set_storage_quota is true, in which
+// case a NULL value resets the account to the instance default and a value
+// (0 = unlimited) overrides it.
 func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, adminUpdateUser,
 		arg.Role,
 		arg.IsActive,
+		arg.EmailVerified,
 		arg.SetStorageQuota,
 		arg.StorageQuotaBytes,
 		arg.ID,

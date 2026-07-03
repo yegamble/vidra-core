@@ -355,6 +355,9 @@ func (f *authFakeRepo) AdminUpdateUser(_ context.Context, a sqlcgen.AdminUpdateU
 			if a.IsActive != nil {
 				u.IsActive = *a.IsActive
 			}
+			if a.EmailVerified != nil {
+				u.EmailVerified = *a.EmailVerified
+			}
 			if a.SetStorageQuota {
 				u.StorageQuotaBytes = a.StorageQuotaBytes
 			}

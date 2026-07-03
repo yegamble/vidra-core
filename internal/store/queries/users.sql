@@ -57,13 +57,15 @@ ORDER BY u.created_at DESC, u.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: AdminUpdateUser :one
--- Admin edit of a user's role, active flag, and/or storage quota (partial:
--- NULL role/is_active args are unchanged). The quota is tri-state — unchanged
--- unless set_storage_quota is true, in which case a NULL value resets the
--- account to the instance default and a value (0 = unlimited) overrides it.
+-- Admin edit of a user's role, active flag, email_verified flag, and/or storage
+-- quota (partial: NULL role/is_active/email_verified args are unchanged). The
+-- quota is tri-state — unchanged unless set_storage_quota is true, in which
+-- case a NULL value resets the account to the instance default and a value
+-- (0 = unlimited) overrides it.
 UPDATE users
 SET role       = COALESCE(sqlc.narg('role'), role),
     is_active  = COALESCE(sqlc.narg('is_active'), is_active),
+    email_verified = COALESCE(sqlc.narg('email_verified'), email_verified),
     storage_quota_bytes = CASE WHEN sqlc.arg('set_storage_quota')::bool
                                THEN sqlc.narg('storage_quota_bytes')::bigint
                                ELSE storage_quota_bytes END,

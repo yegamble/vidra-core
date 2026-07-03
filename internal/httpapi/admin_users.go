@@ -92,10 +92,12 @@ func (s *Server) handleListUsers(c echo.Context) error {
 // only those present are changed. storage_quota_bytes is tri-state: absent =
 // unchanged, null = reset to the instance default, a non-negative integer =
 // per-user override (0 = unlimited) — hence the RawMessage, which preserves
-// the absent/null distinction JSON pointers cannot.
+// the absent/null distinction JSON pointers cannot. email_verified lets an
+// admin mark an address confirmed without the token round-trip (or revoke it).
 type updateUserRequest struct {
 	Role              *string         `json:"role"`
 	IsActive          *bool           `json:"is_active"`
+	EmailVerified     *bool           `json:"email_verified"`
 	StorageQuotaBytes json.RawMessage `json:"storage_quota_bytes"`
 }
 
@@ -123,8 +125,8 @@ func (r updateUserRequest) Validate() []FieldError {
 	if quotaErr != nil {
 		return []FieldError{*quotaErr}
 	}
-	if r.Role == nil && r.IsActive == nil && !quotaSet {
-		return []FieldError{{Field: "role", Message: "at least one of role, is_active, storage_quota_bytes is required"}}
+	if r.Role == nil && r.IsActive == nil && r.EmailVerified == nil && !quotaSet {
+		return []FieldError{{Field: "role", Message: "at least one of role, is_active, email_verified, storage_quota_bytes is required"}}
 	}
 	if r.Role != nil && !admin.ValidRole(*r.Role) {
 		return []FieldError{{Field: "role", Message: "must be one of user, moderator, admin"}}
@@ -153,6 +155,7 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 	updated, err := s.adminsvc.UpdateUser(c.Request().Context(), callerID, targetID, admin.UpdateUserInput{
 		Role:              in.Role,
 		IsActive:          in.IsActive,
+		EmailVerified:     in.EmailVerified,
 		SetStorageQuota:   quotaSet,
 		StorageQuotaBytes: quotaValue,
 	})
@@ -182,6 +185,9 @@ func adminChangeReason(targetID uuid.UUID, in updateUserRequest) string {
 	}
 	if in.IsActive != nil {
 		parts = append(parts, "is_active="+strconv.FormatBool(*in.IsActive))
+	}
+	if in.EmailVerified != nil {
+		parts = append(parts, "email_verified="+strconv.FormatBool(*in.EmailVerified))
 	}
 	if set, value, _ := in.quotaField(); set {
 		if value == nil {

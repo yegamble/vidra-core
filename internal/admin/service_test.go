@@ -63,6 +63,9 @@ func (f *fakeRepo) AdminUpdateUser(_ context.Context, a sqlcgen.AdminUpdateUserP
 	if a.IsActive != nil {
 		u.IsActive = *a.IsActive
 	}
+	if a.EmailVerified != nil {
+		u.EmailVerified = *a.EmailVerified
+	}
 	if a.SetStorageQuota {
 		u.StorageQuotaBytes = a.StorageQuotaBytes
 	}
@@ -184,5 +187,40 @@ func TestUpdateUserSelfGuardAndNotFound(t *testing.T) {
 	// Unknown target.
 	if _, err := svc.UpdateUser(ctx, admin, uuid.New(), UpdateUserInput{Role: strptr(RoleModerator)}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown = %v, want ErrNotFound", err)
+	}
+}
+
+// TestUpdateUserEmailVerified proves the §10 admin edit at the service layer:
+// email_verified flips on and off, other fields stay untouched, and flipping it
+// on yourself is allowed (no lockout risk, unlike role/is_active).
+func TestUpdateUserEmailVerified(t *testing.T) {
+	repo := newFakeRepo()
+	adminID := repo.add("ada", RoleAdmin)
+	bobID := repo.add("bob", RoleUser)
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	updated, err := svc.UpdateUser(ctx, adminID, bobID, UpdateUserInput{EmailVerified: boolptr(true)})
+	if err != nil {
+		t.Fatalf("UpdateUser email_verified=true: %v", err)
+	}
+	if !updated.EmailVerified {
+		t.Error("email_verified not set")
+	}
+	if updated.Role != RoleUser || !updated.IsActive {
+		t.Errorf("unrelated fields changed: %+v", updated)
+	}
+	if repo.revoked[bobID] {
+		t.Error("sessions revoked by an email_verified edit")
+	}
+
+	updated, err = svc.UpdateUser(ctx, adminID, bobID, UpdateUserInput{EmailVerified: boolptr(false)})
+	if err != nil || updated.EmailVerified {
+		t.Fatalf("revoke = %+v/%v, want verified=false", updated, err)
+	}
+
+	// Self-edit of email_verified is allowed (no lockout risk).
+	if _, err := svc.UpdateUser(ctx, adminID, adminID, UpdateUserInput{EmailVerified: boolptr(true)}); err != nil {
+		t.Errorf("self email_verified edit = %v, want allowed", err)
 	}
 }

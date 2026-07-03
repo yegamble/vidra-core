@@ -6564,6 +6564,12 @@ components:
           enum: [user, moderator, admin]
         is_active:
           type: boolean
+        email_verified:
+          type: boolean
+          description: >-
+            Admin-set email verification state: true marks the address
+            confirmed without the token round-trip; false revokes the
+            confirmation. Omit to leave unchanged.
         storage_quota_bytes:
           type: [integer, "null"]
           format: int64
