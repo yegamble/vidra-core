@@ -27,6 +27,7 @@ import (
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/instancemod"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/messaging"
@@ -91,6 +92,7 @@ type Server struct {
 	fedsvc         *federation.Service
 	remotevideosvc *remotevideo.Service
 	instancemodsvc *instancemod.Service
+	settingssvc    *instancesettings.Service
 	mediagcsvc     *mediagc.Service
 	media          storage.Backend
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
@@ -339,6 +341,16 @@ func WithRemoteVideoService(svc *remotevideo.Service) Option {
 // routes are not registered.
 func WithInstanceModerationService(svc *instancemod.Service) Option {
 	return func(s *Server) { s.instancemodsvc = svc }
+}
+
+// WithSettingsService wires the DB-backed instance-settings overlay (fix_plan
+// P10). When set, GET /api/v1/instance and the registration/upload/import/
+// live-create/comment-create gates consult the effective value (DB override, else
+// config default) instead of the static config, and the admin GET/PATCH
+// /api/v1/admin/instance-settings routes are registered. When unset, those gates
+// fall back to the static config and the admin routes are not mounted.
+func WithSettingsService(svc *instancesettings.Service) Option {
+	return func(s *Server) { s.settingssvc = svc }
 }
 
 // WithAuditLog wires the durable audit-log service. When set, s.audit persists
@@ -894,6 +906,13 @@ func (s *Server) routes() {
 	// Admin operational status. Depends only on core wiring; auth guards it.
 	if s.authsvc != nil {
 		api.GET("/admin/system", s.handleSystemStatus, s.requireAuth, s.requireRole("admin"))
+	}
+
+	// DB-backed instance settings overlay (fix_plan P10): admins read the
+	// effective values + overrides and PATCH the mutable subset. Admin-only.
+	if s.settingssvc != nil {
+		api.GET("/admin/instance-settings", s.handleGetInstanceSettings, s.requireAuth, s.requireRole("admin"))
+		api.PATCH("/admin/instance-settings", s.handleUpdateInstanceSettings, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// Direct messaging (1:1 conversations + messages). All behind requireAuth;

@@ -33,6 +33,7 @@ import (
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/instancemod"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/linkpreview"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mail"
@@ -129,6 +130,30 @@ func run() error {
 	}
 	defer func() { _ = rdb.Close() }()
 	logger.Info("connected to redis")
+
+	// DB-backed instance-settings overlay (fix_plan P10): loads the mutable-key
+	// overrides at boot and caches them. GET /instance and the
+	// registration/upload/import/live/comment gates consult its effective values
+	// (DB override, else the config default supplied here). A boot load failure is
+	// fatal — the overlay must be authoritative before serving traffic.
+	settingssvc := instancesettings.NewService(db.Queries(), instancesettings.Defaults{
+		InstanceName:                cfg.InstanceName,
+		InstanceDescription:         cfg.InstanceDescription,
+		TermsURL:                    cfg.InstanceTermsURL,
+		PrivacyURL:                  cfg.InstancePrivacyURL,
+		ContactEmail:                cfg.InstanceContactEmail,
+		RegistrationEnabled:         cfg.RegistrationEnabled,
+		RegistrationRequireApproval: cfg.RegistrationRequireApproval,
+		QuarantineNewUploads:        cfg.QuarantineNewUploads,
+		UploadsEnabled:              cfg.UploadsEnabled,
+		ImportsEnabled:              cfg.ImportsEnabled,
+		LiveEnabled:                 cfg.LiveEnabled,
+		CommentsEnabled:             cfg.CommentsEnabled,
+	})
+	if err := settingssvc.Load(startCtx); err != nil {
+		return err
+	}
+	opts = append(opts, httpapi.WithSettingsService(settingssvc))
 
 	if cfg.RateLimitEnabled {
 		counter := ratelimit.NewRedisCounter(rdb.Client)
@@ -274,11 +299,15 @@ func run() error {
 	// The scan fallback policy applies whenever a scanner is wired (default
 	// fail-closed); harmless to set when scanning is off.
 	vopts = append(vopts, video.WithScanMode(cfg.MalwareScanMode))
+	// §11 + P10 overlay: non-privileged uploads park in 'quarantined' until a
+	// moderator approves (publish hooks fire then) or rejects them. The gate is
+	// consulted per Process from the instance-settings overlay so an admin can
+	// toggle it at runtime; with no DB override it returns cfg.QuarantineNewUploads.
+	vopts = append(vopts, video.WithQuarantineGate(func() bool {
+		return settingssvc.Bool(instancesettings.KeyQuarantineNewUploads)
+	}))
 	if cfg.QuarantineNewUploads {
-		// §11: non-privileged uploads park in 'quarantined' until a moderator
-		// approves (publish hooks fire then) or rejects them.
-		vopts = append(vopts, video.WithQuarantineNewUploads(true))
-		logger.Info("upload quarantine enabled (QUARANTINE_NEW_UPLOADS)")
+		logger.Info("upload quarantine enabled by default (QUARANTINE_NEW_UPLOADS)")
 	}
 	// HLS transcoding. The read side (playlist/rendition lookups + the /hls
 	// serving routes) is always wired so previously produced playlists keep

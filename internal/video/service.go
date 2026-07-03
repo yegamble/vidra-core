@@ -196,7 +196,7 @@ type Service struct {
 	scanner              Scanner
 	scanMode             ScanMode
 	viewDeduper          ViewDeduper
-	quarantineNewUploads bool
+	quarantineNewUploads func() bool
 	onPublish            func(context.Context, uuid.UUID)
 	onTranscode          func(context.Context, uuid.UUID, string)
 	onUpdate             func(context.Context, uuid.UUID)
@@ -253,7 +253,16 @@ func WithViewDeduper(d ViewDeduper) Option {
 // bypass_quarantine) in the 'quarantined' state instead of publishing. No
 // publish hooks fire until a moderator approves it.
 func WithQuarantineNewUploads(enabled bool) Option {
-	return func(s *Service) { s.quarantineNewUploads = enabled }
+	return func(s *Service) { s.quarantineNewUploads = func() bool { return enabled } }
+}
+
+// WithQuarantineGate wires a dynamic predicate consulted at Process time for the
+// upload quarantine gate, so the effective value can be overridden at runtime
+// via the admin instance-settings overlay (fix_plan P10) rather than being fixed
+// at boot. Supersedes WithQuarantineNewUploads when both are set (last option
+// wins). A nil decider (or neither option) leaves the gate off.
+func WithQuarantineGate(decide func() bool) Option {
+	return func(s *Service) { s.quarantineNewUploads = decide }
 }
 
 // WithPublishHook registers a callback invoked (best-effort, synchronously) after
@@ -506,7 +515,7 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		// (moderation trumps scheduling). No hooks fire — approval publishes
 		// through the same transition below. Fail-closed: an unreadable gate
 		// quarantines rather than silently publishing past moderation.
-		if s.quarantineNewUploads {
+		if s.quarantineNewUploads != nil && s.quarantineNewUploads() {
 			if requires, qerr := s.repo.UploadRequiresQuarantine(ctx, videoID); qerr != nil || requires {
 				return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "quarantined"})
 			}

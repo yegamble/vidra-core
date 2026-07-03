@@ -68,6 +68,9 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
+	if !s.importsEnabled() {
+		return &FeatureDisabledError{Feature: "imports"}
+	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")

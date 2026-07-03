@@ -195,6 +195,17 @@ type Config struct {
 	// Default false. See product-decisions.md §11.
 	QuarantineNewUploads bool
 
+	// Feature toggles (all default true). These are the boot-time defaults for
+	// the runtime-mutable instance feature switches: an admin can override each
+	// live via PATCH /api/v1/admin/instance-settings (the DB overlay), and the
+	// upload/import/live-create/comment-create gates consult the effective
+	// value. When a toggle is off, the corresponding endpoint returns 403
+	// feature_disabled. See fix_plan P10 (admin instance configuration).
+	UploadsEnabled  bool
+	ImportsEnabled  bool
+	LiveEnabled     bool
+	CommentsEnabled bool
+
 	// MailEnabled turns on real outbound email over SMTP: password-reset and
 	// email-verification tokens are delivered to the account's address instead
 	// of being dropped (the no-op default). Requires SMTPHost + SMTPFrom.
@@ -348,6 +359,10 @@ func Load() (*Config, error) {
 		RegistrationEnabled:         getEnvBool("REGISTRATION_ENABLED", true),
 		RegistrationRequireApproval: getEnvBool("REGISTRATION_REQUIRE_APPROVAL", false),
 		QuarantineNewUploads:        getEnvBool("QUARANTINE_NEW_UPLOADS", false),
+		UploadsEnabled:              getEnvBool("FEATURE_UPLOADS_ENABLED", true),
+		ImportsEnabled:              getEnvBool("FEATURE_IMPORTS_ENABLED", true),
+		LiveEnabled:                 getEnvBool("FEATURE_LIVE_ENABLED", true),
+		CommentsEnabled:             getEnvBool("FEATURE_COMMENTS_ENABLED", true),
 		MailEnabled:                 getEnvBool("MAIL_ENABLED", false),
 		SMTPHost:                    getEnv("SMTP_HOST", ""),
 		SMTPUsername:                getEnv("SMTP_USERNAME", ""),

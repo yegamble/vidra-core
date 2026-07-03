@@ -27,6 +27,7 @@ import (
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/instancemod"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/mediagc"
@@ -841,7 +842,16 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 	// videosvc satisfies captionjob.VideoStore.
 	captionjobsvc := captionjob.NewService(newCaptionJobFakeRepo(), videosvc, nil,
 		captionjob.WithEnabled(cfg.WhisperEnabled))
+	// DB-backed instance-settings overlay: an in-memory fake repo, seeded with
+	// the config defaults. With no overrides the effective values equal the
+	// config, so wiring it is behaviour-preserving for existing tests; the
+	// P10 tests flip settings through PATCH /admin/instance-settings.
+	settingssvc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
+	if err := settingssvc.Load(context.Background()); err != nil {
+		t.Fatalf("settings load: %v", err)
+	}
 	srv := New(cfg, nil, nil,
+		WithSettingsService(settingssvc),
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
 		WithVideoService(videosvc),

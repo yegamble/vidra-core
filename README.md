@@ -32,6 +32,19 @@ frontend can hide the form. The instance endpoint also surfaces optional about/l
 metadata — `description`, `terms_url`, `privacy_url`, `contact_email` (from the matching
 `INSTANCE_*` env vars; empty when unset) — for the frontend's footer/about pages.
 
+**Runtime-mutable instance settings.** A defined subset of instance settings is a DB
+overlay on top of config: an admin edits them live via `GET`/`PATCH
+/api/v1/admin/instance-settings` and they take effect without a restart. The mutable
+subset is `instance_name`, `instance_description`, `terms_url`, `privacy_url`,
+`contact_email`, `registration_enabled`, `registration_require_approval`,
+`quarantine_new_uploads`, and the feature toggles `uploads_enabled`, `imports_enabled`,
+`live_enabled`, `comments_enabled` (all default true, from `FEATURE_*_ENABLED`). The
+matching env vars are the boot-time DEFAULTS; a stored override wins. When a toggle is
+off, its endpoint returns `403 feature_disabled` (new upload sessions + direct upload,
+URL import, live-stream create, comment create). Boot-time-only settings — the database
+DSN, the KEKs, the JWT secret, the storage backend — deliberately STAY config-only
+(unsafe to hot-swap and/or secret) and are never represented in the overlay table.
+
 All non-2xx responses share one envelope: `{"error":{"code","message","request_id"}}`
 (see `api/openapi.yaml` → `ErrorResponse`). The readiness probe returns its own
 `ReadinessResponse` on 503. `make build` injects version/commit/date into `/version`

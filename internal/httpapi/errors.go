@@ -51,6 +51,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var he *echo.HTTPError
 	var ve *ValidationError
 	var qe *QuotaExceededError
+	var fd *FeatureDisabledError
 	switch {
 	case errors.As(err, &ve):
 		status = http.StatusUnprocessableEntity
@@ -61,6 +62,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusUnprocessableEntity
 		message = "storing this file would exceed your storage quota"
 		code = "quota_exceeded"
+	case errors.As(err, &fd):
+		status = http.StatusForbidden
+		message = "this feature is disabled on this instance"
+		code = "feature_disabled"
 	case errors.As(err, &he):
 		status = he.Code
 		if he.Message != nil {
@@ -128,6 +133,15 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 type QuotaExceededError struct{}
 
 func (e *QuotaExceededError) Error() string { return "storage quota exceeded" }
+
+// FeatureDisabledError renders as 403 with the stable code "feature_disabled":
+// the instance operator has turned off this feature via the admin
+// instance-settings overlay (uploads/imports/live/comments). Feature names the
+// toggle that is off, for logging/diagnostics; the client-facing message is
+// generic.
+type FeatureDisabledError struct{ Feature string }
+
+func (e *FeatureDisabledError) Error() string { return "feature disabled: " + e.Feature }
 
 // codeForStatus maps an HTTP status to a stable, snake_case error code. Unknown
 // statuses fall back to a generic code derived from the class.

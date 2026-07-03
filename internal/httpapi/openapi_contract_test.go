@@ -21,6 +21,7 @@ import (
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/instancemod"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/messaging"
@@ -71,6 +72,7 @@ func fullRouteOptions() []Option {
 		WithVideoImportService(videoimport.NewService(nil, nil, 0)),
 		WithCaptionJobService(captionjob.NewService(nil, nil, nil)),
 		WithInstanceModerationService(instancemod.NewService(nil)),
+		WithSettingsService(instancesettings.NewService(nil, instancesettings.Defaults{})),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
 		WithMediaGCService(mediagc.NewService(nil, nil)),
 		// Mounts the REST remote-follow routes. The AP root routes stay excluded

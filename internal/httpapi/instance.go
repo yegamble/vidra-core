@@ -5,6 +5,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/version"
 )
 
@@ -38,18 +39,20 @@ type instanceResponse struct {
 
 // handleInstance returns public instance metadata. No auth required; it exposes
 // only operator-configured, non-sensitive fields (provider names, never client
-// credentials).
+// credentials). The name/description/legal-contact metadata and the registration
+// gates reflect the EFFECTIVE values — the DB-backed instance-settings overlay
+// (fix_plan P10) when wired, else the static config.
 func (s *Server) handleInstance(c echo.Context) error {
 	return c.JSON(http.StatusOK, instanceResponse{
-		Name:                         s.cfg.InstanceName,
-		Description:                  s.cfg.InstanceDescription,
+		Name:                         s.settingString(instancesettings.KeyInstanceName, s.cfg.InstanceName),
+		Description:                  s.settingString(instancesettings.KeyInstanceDescription, s.cfg.InstanceDescription),
 		Software:                     instanceSoftware{Name: "vidra", Version: version.Version},
-		RegistrationEnabled:          s.cfg.RegistrationEnabled,
-		RegistrationRequiresApproval: s.cfg.RegistrationRequireApproval,
+		RegistrationEnabled:          s.registrationEnabled(),
+		RegistrationRequiresApproval: s.registrationRequiresApproval(),
 		OAuthProviders:               s.cfg.OAuthProviderNames(),
 		FederationEnabled:            s.cfg.FederationEnabled,
-		TermsURL:                     s.cfg.InstanceTermsURL,
-		PrivacyURL:                   s.cfg.InstancePrivacyURL,
-		ContactEmail:                 s.cfg.InstanceContactEmail,
+		TermsURL:                     s.settingString(instancesettings.KeyTermsURL, s.cfg.InstanceTermsURL),
+		PrivacyURL:                   s.settingString(instancesettings.KeyPrivacyURL, s.cfg.InstancePrivacyURL),
+		ContactEmail:                 s.settingString(instancesettings.KeyContactEmail, s.cfg.InstanceContactEmail),
 	})
 }

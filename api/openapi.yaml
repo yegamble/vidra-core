@@ -7879,6 +7879,101 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instance-settings:
+    get:
+      operationId: getInstanceSettings
+      summary: Get effective instance settings (admin)
+      description: >-
+        Returns every runtime-mutable instance setting's EFFECTIVE value together
+        with its config default and whether the database currently overrides it.
+        This is the DB-backed overlay (fix_plan P10) on top of the static config:
+        the instance name/description and legal-contact metadata, the registration
+        gates (registration_enabled, registration_require_approval), the upload
+        quarantine gate (quarantine_new_uploads), and the feature toggles
+        (uploads_enabled, imports_enabled, live_enabled, comments_enabled).
+        Boot-time-only secrets and infrastructure (database DSN, KEKs, JWT secret,
+        storage backend) are NOT represented here — they stay in config.
+        Restricted to admins.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The effective instance settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceSettingsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateInstanceSettings
+      summary: Update instance settings (admin)
+      description: >-
+        Applies a partial, per-key-validated update to the instance-settings
+        overlay and returns the full effective document. The body is a flat JSON
+        object of setting key → new value: a boolean for the toggle keys
+        (registration_enabled, registration_require_approval,
+        quarantine_new_uploads, uploads_enabled, imports_enabled, live_enabled,
+        comments_enabled) and a string for the text keys (instance_name,
+        instance_description, terms_url, privacy_url, contact_email). A null value
+        clears that override (resets the key to its config default). Only the keys
+        present are changed. An unknown key, a type mismatch, or a content-invalid
+        value (e.g. a malformed URL/email, an empty instance_name) is 422 with
+        field errors and nothing is written. Restricted to admins; audited
+        (admin.instance.update, changed key names only). Changes take effect
+        immediately (the overlay cache reloads), so subsequent GET /api/v1/instance
+        and the upload/import/live/comment/registration gates reflect them.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInstanceSettingsRequest"
+      responses:
+        "200":
+          description: The updated effective instance settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceSettingsResponse"
+        "400":
+          description: Malformed request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: An unknown key or an invalid value.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/media/gc:
     post:
       operationId: adminMediaGC
@@ -11122,6 +11217,56 @@ components:
                 description: ok | down | not_configured
               error:
                 type: string
+    InstanceSetting:
+      type: object
+      description: >-
+        One runtime-mutable instance setting's effective state: its type, the
+        effective value (a string for text keys, a boolean for toggle keys), the
+        config default, and whether the database currently overrides it.
+      required: [key, type, value, default, overridden]
+      properties:
+        key:
+          type: string
+          description: The stable setting key.
+          example: uploads_enabled
+        type:
+          type: string
+          enum: [string, bool]
+        value:
+          description: The effective value (string or boolean, per type).
+          oneOf:
+            - type: string
+            - type: boolean
+        default:
+          description: The config default (string or boolean, per type).
+          oneOf:
+            - type: string
+            - type: boolean
+        overridden:
+          type: boolean
+          description: Whether a database override is currently set for this key.
+    InstanceSettingsResponse:
+      type: object
+      required: [settings]
+      properties:
+        settings:
+          type: array
+          items:
+            $ref: "#/components/schemas/InstanceSetting"
+    UpdateInstanceSettingsRequest:
+      type: object
+      description: >-
+        A flat object of setting key → new value. Toggle keys take a boolean; text
+        keys take a string. A null value clears the override (reset to the config
+        default). Only the keys present are changed. At least one key is required.
+      additionalProperties:
+        description: >-
+          The new value: a string for text keys, a boolean for toggle keys, or
+          null to clear the override (reset to the config default).
+      example:
+        instance_name: My Vidra
+        uploads_enabled: false
+        terms_url: null
     UpdateUserRequest:
       type: object
       description: Partial update; provide at least one field.

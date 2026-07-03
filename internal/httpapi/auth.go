@@ -182,7 +182,7 @@ func (s *Server) authResponse(status int, c echo.Context, user sqlcgen.User, tok
 
 // handleRegister creates an account and returns it with an access + refresh token.
 func (s *Server) handleRegister(c echo.Context) error {
-	if !s.cfg.RegistrationEnabled {
+	if !s.registrationEnabled() {
 		return echo.NewHTTPError(http.StatusForbidden, "registration is disabled on this instance")
 	}
 	var in registerRequest
@@ -193,7 +193,7 @@ func (s *Server) handleRegister(c echo.Context) error {
 
 	// When the instance requires approval, signup files a pending request instead
 	// of creating an account + session. The response reveals no token.
-	if s.cfg.RegistrationRequireApproval {
+	if s.registrationRequiresApproval() {
 		if _, err := s.authsvc.RequestRegistration(c.Request().Context(), regInput, in.Note); err != nil {
 			if errors.Is(err, auth.ErrConflict) {
 				return echo.NewHTTPError(http.StatusConflict, "username or email already taken")

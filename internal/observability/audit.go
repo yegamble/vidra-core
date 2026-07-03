@@ -48,9 +48,13 @@ const (
 	ActionRemoteVideoBlock      = "moderation.remote_video.block"
 	ActionRemoteVideoUnblock    = "moderation.remote_video.unblock"
 	ActionAdminUserUpdate       = "admin.user.update"
-	ActionVideoDelete           = "content.video.delete"
-	ActionChannelDelete         = "content.channel.delete"
-	ActionMediaGC               = "admin.media.gc"
+	// ActionAdminInstanceUpdate records an admin changing the DB-backed instance
+	// settings overlay (fix_plan P10). Reason carries the changed KEY NAMES only
+	// — never the values, which can include the operator contact email.
+	ActionAdminInstanceUpdate = "admin.instance.update"
+	ActionVideoDelete         = "content.video.delete"
+	ActionChannelDelete       = "content.channel.delete"
+	ActionMediaGC             = "admin.media.gc"
 	// ActionDonationVerify records a creator proving control of a donation
 	// address by signing the challenge (P14). Reason carries the safe address
 	// id + network only — never the signature, nonce, or any key material.

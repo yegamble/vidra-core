@@ -29,6 +29,12 @@ func testConfig() *config.Config {
 		HTTPBodyLimit:       "8M",
 		UploadMaxSize:       "64K",
 		JWTRefreshTTL:       720 * time.Hour,
+		// Feature toggles default true (production config default), so the
+		// upload/import/live/comment gates are open unless a test flips them.
+		UploadsEnabled:  true,
+		ImportsEnabled:  true,
+		LiveEnabled:     true,
+		CommentsEnabled: true,
 	}
 }
 

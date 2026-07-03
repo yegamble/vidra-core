@@ -87,6 +87,9 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
+	if !s.uploadsEnabled() {
+		return &FeatureDisabledError{Feature: "uploads"}
+	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")

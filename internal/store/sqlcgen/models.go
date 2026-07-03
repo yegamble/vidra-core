@@ -217,6 +217,13 @@ type ImportJob struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+type InstanceSetting struct {
+	Key       string      `json:"key"`
+	Value     string      `json:"value"`
+	UpdatedBy pgtype.UUID `json:"updated_by"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
 type LinkPreview struct {
 	UrlHash     string             `json:"url_hash"`
 	Url         string             `json:"url"`

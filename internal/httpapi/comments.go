@@ -141,6 +141,11 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
+	// Feature toggle (P10): the instance can turn off new comments. Reading
+	// existing comments stays open; only posting is gated.
+	if !s.commentsEnabled() {
+		return &FeatureDisabledError{Feature: "comments"}
+	}
 	videoID, err := s.publicVideoID(c)
 	if err != nil {
 		return err

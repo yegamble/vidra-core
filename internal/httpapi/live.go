@@ -120,6 +120,9 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
+	if !s.liveEnabled() {
+		return &FeatureDisabledError{Feature: "live"}
+	}
 	var in createLiveStreamRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
