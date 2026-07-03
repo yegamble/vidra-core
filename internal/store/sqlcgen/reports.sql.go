@@ -80,6 +80,21 @@ func (q *Queries) CreateVideoReport(ctx context.Context, arg CreateVideoReportPa
 	return result.RowsAffected(), nil
 }
 
+const deleteReport = `-- name: DeleteReport :execrows
+DELETE FROM reports WHERE id = $1
+`
+
+// Hard-delete a report row (admin purge). Notifications referencing it cascade
+// away (0042 FK). Returns rows deleted so the caller can log 0 vs 1; the
+// endpoint is idempotent either way.
+func (q *Queries) DeleteReport(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteReport, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const listReports = `-- name: ListReports :many
 SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.reason, r.status,
        r.moderator_note, r.resolved_at, r.created_at,

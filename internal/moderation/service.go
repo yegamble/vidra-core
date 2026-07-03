@@ -48,6 +48,7 @@ type Repository interface {
 	CreateAccountReport(ctx context.Context, arg sqlcgen.CreateAccountReportParams) (int64, error)
 	ListReports(ctx context.Context, arg sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error)
 	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (uuid.UUID, error)
+	DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
 	BlockVideo(ctx context.Context, arg sqlcgen.BlockVideoParams) (int64, error)
 	UnblockVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 	IsVideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, error)
@@ -179,6 +180,15 @@ func (s *Service) Resolve(ctx context.Context, moderatorID, reportID uuid.UUID, 
 		return uuid.Nil, err
 	}
 	return reporterID, nil
+}
+
+// Delete hard-deletes a report row (admin purge; moderators only resolve).
+// Idempotent, matching the other admin deletes (watched words, video unblock):
+// deleting an unknown or already-deleted report is a no-op. Notifications
+// referencing the report cascade away (0042 FK).
+func (s *Service) Delete(ctx context.Context, reportID uuid.UUID) error {
+	_, err := s.repo.DeleteReport(ctx, reportID)
+	return err
 }
 
 // BlockVideo blocks a video so it is removed from public surfaces, recording the

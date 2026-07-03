@@ -591,6 +591,8 @@ func (s *Server) routes() {
 		api.POST("/users/:id/report", s.handleReportAccount, s.requireAuth)
 		api.GET("/admin/reports", s.handleListReports, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.POST("/admin/reports/:id/resolve", s.handleResolveReport, s.requireAuth, s.requireRole("admin", "moderator"))
+		// Hard-delete is admin-only: moderators resolve, admins can purge.
+		api.DELETE("/admin/reports/:id", s.handleDeleteReport, s.requireAuth, s.requireRole("admin"))
 		api.GET("/admin/videos", s.handleListAdminVideos, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.GET("/admin/videos/blocked", s.handleListBlockedVideos, s.requireAuth, s.requireRole("admin", "moderator"))
 		api.POST("/admin/videos/:id/block", s.handleBlockVideo, s.requireAuth, s.requireRole("admin", "moderator"))

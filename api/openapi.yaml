@@ -3480,6 +3480,47 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/reports/{id}:
+    delete:
+      operationId: deleteReport
+      summary: Hard-delete a report
+      description: >-
+        Permanently removes a report row (admin purge). Restricted to admins —
+        moderators resolve reports but cannot delete them. Idempotent like the
+        other admin deletes: deleting an unknown or already-deleted report still
+        returns 204. Notifications referencing the report are removed with it.
+        Audited as moderation.report.delete.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The report is gone (deleted now or already absent).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin (moderators cannot purge reports).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Malformed report id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/watched-words:
     get:
       operationId: listWatchedWords

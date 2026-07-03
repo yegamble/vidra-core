@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -143,6 +147,16 @@ func (f *moderationFakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveR
 		}
 	}
 	return uuid.Nil, pgx.ErrNoRows
+}
+
+func (f *moderationFakeRepo) DeleteReport(_ context.Context, id uuid.UUID) (int64, error) {
+	for i := range f.reports {
+		if f.reports[i].id == id {
+			f.reports = append(f.reports[:i], f.reports[i+1:]...)
+			return 1, nil
+		}
+	}
+	return 0, nil
 }
 
 // reportByID resolves one of the fake's report rows (for the notification
@@ -491,5 +505,76 @@ func TestReportValidationAndAuth(t *testing.T) {
 		if rec := sendJSONAuth(srv, tc.method, tc.path, tc.body, ""); rec.Code != http.StatusUnauthorized {
 			t.Errorf("anon %s %s = %d, want 401", tc.method, tc.path, rec.Code)
 		}
+	}
+}
+
+// TestDeleteReportAdminOnly proves the hard-delete: an admin purges a report
+// (it leaves the queue; the delete is idempotent and audited), while a
+// moderator — who can resolve — gets 403, and anonymous callers 401.
+func TestDeleteReportAdminOnly(t *testing.T) {
+	srv := videoServer(t)
+	var buf bytes.Buffer
+	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	modTok, modID := registerAndUser(t, srv, `{"username":"mia","email":"mia@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+modID, `{"role":"moderator"}`, admin); rec.Code != http.StatusOK {
+		t.Fatalf("promote moderator = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"spam"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("report = %d", rec.Code)
+	}
+	var open reportListResponse
+	_ = json.Unmarshal(listReports(srv, "", admin).Body.Bytes(), &open)
+	if len(open.Reports) != 1 {
+		t.Fatalf("reports = %d, want 1", len(open.Reports))
+	}
+	id := open.Reports[0].ID
+
+	// A moderator can see the queue but cannot purge.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/reports/"+id, "", modTok); rec.Code != http.StatusForbidden {
+		t.Errorf("moderator delete = %d, want 403", rec.Code)
+	}
+	// A regular user cannot either; anonymous is 401.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/reports/"+id, "", bob); rec.Code != http.StatusForbidden {
+		t.Errorf("user delete = %d, want 403", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/reports/"+id, "", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anon delete = %d, want 401", rec.Code)
+	}
+
+	// The admin purges it: gone from the queue.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/reports/"+id, "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("admin delete = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var after reportListResponse
+	_ = json.Unmarshal(listReports(srv, "", admin).Body.Bytes(), &after)
+	if len(after.Reports) != 0 {
+		t.Errorf("reports after delete = %d, want 0", len(after.Reports))
+	}
+	// Idempotent: re-delete (and an unknown id) still 204; malformed id 404.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/reports/"+id, "", admin); rec.Code != http.StatusNoContent {
+		t.Errorf("re-delete = %d, want 204 (idempotent)", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/reports/"+uuid.New().String(), "", admin); rec.Code != http.StatusNoContent {
+		t.Errorf("delete unknown = %d, want 204 (idempotent)", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/reports/not-a-uuid", "", admin); rec.Code != http.StatusNotFound {
+		t.Errorf("delete malformed id = %d, want 404", rec.Code)
+	}
+
+	// The purge left an audit trail carrying the acting admin.
+	ev := findAudit(auditEvents(t, &buf), observability.ActionReportDelete, observability.ResultSuccess)
+	if ev == nil {
+		t.Fatalf("no %s audit event emitted", observability.ActionReportDelete)
+	}
+	if ev["actor_id"] == nil || ev["actor_id"] == "" {
+		t.Errorf("report delete audit missing actor_id: %v", ev)
+	}
+	if reason, _ := ev["reason"].(string); !strings.Contains(reason, id) {
+		t.Errorf("report delete audit reason = %v, want it to name report %s", ev["reason"], id)
 	}
 }

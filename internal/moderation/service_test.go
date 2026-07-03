@@ -112,6 +112,16 @@ func (f *fakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveReportParam
 	return uuid.Nil, pgx.ErrNoRows
 }
 
+func (f *fakeRepo) DeleteReport(_ context.Context, id uuid.UUID) (int64, error) {
+	for i := range f.reports {
+		if f.reports[i].id == id {
+			f.reports = append(f.reports[:i], f.reports[i+1:]...)
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
 func (f *fakeRepo) BlockVideo(_ context.Context, a sqlcgen.BlockVideoParams) (int64, error) {
 	if f.blockErr != nil {
 		return 0, f.blockErr
@@ -334,5 +344,37 @@ func TestResolveAndNotFound(t *testing.T) {
 	// Unknown id → ErrNotFound.
 	if _, err := svc.Resolve(ctx, mod, uuid.New(), StatusRejected, ""); err != ErrNotFound {
 		t.Errorf("resolve unknown = %v, want ErrNotFound", err)
+	}
+}
+
+// TestDeleteReport proves the admin purge: the row is gone from the queue, and
+// re-deleting (or deleting an unknown id) is an idempotent no-op.
+func TestDeleteReport(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	ctx := context.Background()
+	reporter, video := uuid.New(), uuid.New()
+
+	if err := svc.ReportVideo(ctx, reporter, video, "spam"); err != nil {
+		t.Fatalf("ReportVideo: %v", err)
+	}
+	items, _ := svc.List(ctx, false, 20, 0)
+	if len(items) != 1 {
+		t.Fatalf("reports = %d, want 1", len(items))
+	}
+	id := items[0].ID
+
+	if err := svc.Delete(ctx, id); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if items, _ := svc.List(ctx, false, 20, 0); len(items) != 0 {
+		t.Fatalf("reports after delete = %d, want 0", len(items))
+	}
+	// Idempotent: unknown/already-deleted ids are a no-op.
+	if err := svc.Delete(ctx, id); err != nil {
+		t.Errorf("re-delete = %v, want nil", err)
+	}
+	if err := svc.Delete(ctx, uuid.New()); err != nil {
+		t.Errorf("delete unknown = %v, want nil", err)
 	}
 }

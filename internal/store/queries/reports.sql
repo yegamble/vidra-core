@@ -39,6 +39,12 @@ WHERE (NOT sqlc.arg('open_only')::bool OR r.status = 'open')
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: DeleteReport :execrows
+-- Hard-delete a report row (admin purge). Notifications referencing it cascade
+-- away (0042 FK). Returns rows deleted so the caller can log 0 vs 1; the
+-- endpoint is idempotent either way.
+DELETE FROM reports WHERE id = $1;
+
 -- name: ResolveReport :one
 -- Mark a report accepted/rejected with a moderator note. Returns the reporter
 -- so the caller can notify them (best-effort); an unknown id yields no rows,

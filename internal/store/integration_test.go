@@ -423,9 +423,13 @@ func TestReportResolutionNotificationPersists(t *testing.T) {
 		t.Errorf("actor resolved on report_resolved notification = %q, want none", *n.ActorUsername)
 	}
 
-	// Deleting the report cascades the notification away (0042 FK).
-	if _, err := st.Pool.Exec(ctx, `DELETE FROM reports WHERE id = $1`, reportID); err != nil {
-		t.Fatalf("delete report: %v", err)
+	// Deleting the report (the admin hard-delete query) cascades the
+	// notification away (0042 FK); re-deleting is an idempotent no-op.
+	if deleted, err := q.DeleteReport(ctx, reportID); err != nil || deleted != 1 {
+		t.Fatalf("DeleteReport = %d/%v, want 1 row deleted", deleted, err)
+	}
+	if deleted, err := q.DeleteReport(ctx, reportID); err != nil || deleted != 0 {
+		t.Fatalf("re-DeleteReport = %d/%v, want 0 rows (idempotent)", deleted, err)
 	}
 	rows, err = q.ListNotifications(ctx, sqlcgen.ListNotificationsParams{UserID: reporter, ResultLimit: 10})
 	if err != nil {

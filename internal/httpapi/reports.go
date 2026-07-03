@@ -225,3 +225,23 @@ func (s *Server) handleResolveReport(c echo.Context) error {
 	}
 	return c.NoContent(http.StatusNoContent)
 }
+
+// handleDeleteReport hard-deletes a report row. Behind requireRole(admin) only —
+// moderators resolve reports, admins can purge them. Idempotent like the other
+// admin deletes (deleting an unknown id still succeeds); a malformed id is 404.
+// Any notification referencing the report cascades away. Emits an audit event.
+func (s *Server) handleDeleteReport(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "report not found")
+	}
+	if err := s.moderationsvc.Delete(c.Request().Context(), id); err != nil {
+		return err
+	}
+	s.audit(c, observability.ActionReportDelete, observability.ResultSuccess, userID.String(), "report="+id.String())
+	return c.NoContent(http.StatusNoContent)
+}

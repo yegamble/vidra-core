@@ -31,6 +31,7 @@ const (
 	ActionAccountDeactivate     = "auth.account.deactivate"
 	ActionRateLimited           = "auth.rate_limited"
 	ActionReportResolve         = "moderation.report.resolve"
+	ActionReportDelete          = "moderation.report.delete"
 	ActionVideoBlock            = "moderation.video.block"
 	ActionVideoUnblock          = "moderation.video.unblock"
 	ActionAdminUserUpdate       = "admin.user.update"
