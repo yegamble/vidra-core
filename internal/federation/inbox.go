@@ -38,6 +38,15 @@ func (s *Service) HandleInbox(ctx context.Context, signerActorURL string, body [
 	if act.ID == "" || act.Type == "" {
 		return ErrBadResource
 	}
+	// Instance blocklist (remote-content §8): activities from actors on a
+	// blocked domain are dropped after signature verification — accepted (202)
+	// but never dispatched, and not marked processed (an unblock lets a
+	// redelivery through).
+	if blocked, err := s.signerDomainBlocked(ctx, signerActorURL); err != nil {
+		return err
+	} else if blocked {
+		return nil
+	}
 	// Idempotency: process each activity id at most once. Dispatch first, then mark,
 	// so a failed dispatch is retried by the remote rather than silently dropped.
 	if seen, err := s.repo.IsActivityProcessed(ctx, act.ID); err != nil {
@@ -57,8 +66,12 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 		return s.handleFollow(ctx, act, signerActorURL)
 	case "Undo":
 		return s.handleUndo(ctx, act, signerActorURL)
+	case "Create":
+		return s.handleCreateVideo(ctx, act, signerActorURL)
+	case "Announce":
+		return s.handleAnnounce(ctx, act, signerActorURL)
 	default:
-		// Create / Announce / Delete land in later slices; accept & ignore.
+		// Update / Delete of remote objects land in a later slice; accept & ignore.
 		return nil
 	}
 }

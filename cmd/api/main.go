@@ -26,6 +26,7 @@ import (
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpapi"
+	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/media"
@@ -39,6 +40,7 @@ import (
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
+	"github.com/vidra/vidra-core/internal/remotevideo"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
@@ -328,6 +330,12 @@ func run() error {
 		// Reuse the outbound-fetch dev knob: when set, remote-actor fetches may reach
 		// loopback/private origins (dev/e2e only; never in production).
 		federation.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
+		// Best-effort remote thumbnail cache (remote-content §5) shares the media
+		// blob backend. NOTE: the inbound Create/Announce ingestion gate
+		// (WithFollowEdgeChecker) is intentionally NOT wired yet — it needs the
+		// outbound remote-channel-follow table from the next slice, so inbound
+		// remote videos are accepted-and-ignored until then.
+		federation.WithMediaStorage(blobs),
 	}
 	if cfg.FederationKeyKEK != "" {
 		cipher, err := secretbox.NewCipherFromBase64(cfg.FederationKeyKEK)
@@ -340,6 +348,15 @@ func run() error {
 	}
 	fedsvc = federation.NewService(db.Queries(), fedOpts...)
 	opts = append(opts, httpapi.WithFederationService(fedsvc))
+
+	// Remote-video read side (metadata + cached thumbnail) and instance-level
+	// moderation (per-user instance mutes + admin blocklist). REST surface, so
+	// wired unconditionally — the tables are simply empty until federation
+	// ingests content.
+	remotevideosvc := remotevideo.NewService(db.Queries(), blobs)
+	opts = append(opts, httpapi.WithRemoteVideoService(remotevideosvc))
+	instancemodsvc := instancemod.NewService(db.Queries())
+	opts = append(opts, httpapi.WithInstanceModerationService(instancemodsvc))
 
 	// Drain the outbound federation delivery queue in the background (signed
 	// Accept/activity delivery with retry + dead-letter). Only when enabled.

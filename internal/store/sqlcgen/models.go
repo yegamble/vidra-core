@@ -29,6 +29,13 @@ type AuditLog struct {
 	OccurredAt time.Time   `json:"occurred_at"`
 }
 
+type BlockedInstance struct {
+	Domain    string      `json:"domain"`
+	Reason    string      `json:"reason"`
+	BlockedBy pgtype.UUID `json:"blocked_by"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
 type Caption struct {
 	ID         uuid.UUID `json:"id"`
 	VideoID    uuid.UUID `json:"video_id"`
@@ -149,6 +156,12 @@ type MutedAccount struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type MutedInstance struct {
+	MuterID   uuid.UUID `json:"muter_id"`
+	Domain    string    `json:"domain"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Notification struct {
 	ID             uuid.UUID          `json:"id"`
 	UserID         uuid.UUID          `json:"user_id"`
@@ -230,6 +243,21 @@ type RemoteFollow struct {
 	State             string    `json:"state"`
 	FollowActivityUrl string    `json:"follow_activity_url"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type RemoteVideo struct {
+	ID              uuid.UUID          `json:"id"`
+	ObjectUrl       string             `json:"object_url"`
+	RemoteActorUrl  string             `json:"remote_actor_url"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	DurationSeconds *int32             `json:"duration_seconds"`
+	PublishedAt     pgtype.Timestamptz `json:"published_at"`
+	WatchUrl        string             `json:"watch_url"`
+	StreamUrl       *string            `json:"stream_url"`
+	ThumbnailKey    *string            `json:"thumbnail_key"`
+	FetchedAt       time.Time          `json:"fetched_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
 type Report struct {

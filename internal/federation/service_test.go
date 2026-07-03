@@ -36,6 +36,15 @@ type fakeRepo struct {
 	remoteFollowerN map[uuid.UUID]int64
 	channelVideoN   map[uuid.UUID]int64
 	outboxVideos    map[uuid.UUID][]sqlcgen.ListChannelOutboxVideosRow
+	remoteVideos    map[string]*fakeRemoteVideo // keyed by object_url
+	blockedDomains  map[string]bool
+}
+
+// fakeRemoteVideo is an in-memory remote_videos row.
+type fakeRemoteVideo struct {
+	id           uuid.UUID
+	params       sqlcgen.UpsertRemoteVideoParams
+	thumbnailKey *string
 }
 
 // fakeDelivery is an in-memory federation_deliveries row.
@@ -43,6 +52,7 @@ type fakeDelivery struct {
 	row         sqlcgen.ClaimDueDeliveriesRow
 	state       string
 	nextAttempt time.Time
+	lastError   string
 }
 
 func (f fakeRepo) CountUsers(context.Context) (int64, error)        { return f.users, f.err }
@@ -220,8 +230,32 @@ func (f fakeRepo) FailDelivery(_ context.Context, arg sqlcgen.FailDeliveryParams
 	if d, ok := f.deliveries[arg.ID]; ok {
 		d.row.Attempts++
 		d.state = "failed"
+		d.lastError = arg.LastError
 	}
 	return nil
+}
+
+func (f fakeRepo) UpsertRemoteVideo(_ context.Context, arg sqlcgen.UpsertRemoteVideoParams) (sqlcgen.UpsertRemoteVideoRow, error) {
+	if rv, ok := f.remoteVideos[arg.ObjectUrl]; ok {
+		rv.params = arg
+		return sqlcgen.UpsertRemoteVideoRow{ID: rv.id, ThumbnailKey: rv.thumbnailKey}, nil
+	}
+	rv := &fakeRemoteVideo{id: uuid.New(), params: arg}
+	f.remoteVideos[arg.ObjectUrl] = rv
+	return sqlcgen.UpsertRemoteVideoRow{ID: rv.id}, nil
+}
+
+func (f fakeRepo) SetRemoteVideoThumbnail(_ context.Context, arg sqlcgen.SetRemoteVideoThumbnailParams) error {
+	for _, rv := range f.remoteVideos {
+		if rv.id == arg.ID {
+			rv.thumbnailKey = arg.ThumbnailKey
+		}
+	}
+	return nil
+}
+
+func (f fakeRepo) IsInstanceBlocked(_ context.Context, domain string) (bool, error) {
+	return f.blockedDomains[domain], nil
 }
 
 func TestNodeInfoUsage(t *testing.T) {

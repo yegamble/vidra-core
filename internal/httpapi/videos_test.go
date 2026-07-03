@@ -23,6 +23,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/messaging"
@@ -810,6 +811,7 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		WithLiveService(live.NewService(newLiveFakeRepo(chRepo))),
 		WithQuotaService(quota.NewService(authRepo, cfg.InstanceDefaultQuotaBytes)),
 		WithTranscodeService(transcode.NewService(tcRepo, nil)),
+		WithInstanceModerationService(instancemod.NewService(newInstanceModFakeRepo())),
 		WithMediaStorage(blobs),
 	)
 	return srv, blobs, tcRepo, notifRepo, repo

@@ -45,6 +45,15 @@ func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
 	}
 	delivered := 0
 	for _, row := range rows {
+		// Instance blocklist (remote-content §8): deliveries to a blocked domain
+		// are cancelled (dead-lettered) instead of sent.
+		if blocked, err := s.repo.IsInstanceBlocked(ctx, hostOf(row.InboxUrl)); err == nil && blocked {
+			_ = s.repo.FailDelivery(ctx, sqlcgen.FailDeliveryParams{
+				ID:        row.ID,
+				LastError: "cancelled: destination instance is blocked",
+			})
+			continue
+		}
 		if err := s.attemptDelivery(ctx, row); err != nil {
 			s.recordDeliveryFailure(ctx, row, err)
 			continue

@@ -15,6 +15,7 @@ import (
 	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
+	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -24,6 +25,7 @@ import (
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/rating"
+	"github.com/vidra/vidra-core/internal/remotevideo"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/watchword"
@@ -53,6 +55,8 @@ func fullRouteOptions() []Option {
 		WithProfileImageService(profileimage.NewService(nil, nil)),
 		WithQuotaService(quota.NewService(nil, 0)),
 		WithTranscodeService(transcode.NewService(nil, nil)),
+		WithInstanceModerationService(instancemod.NewService(nil)),
+		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
 	}
 }
 

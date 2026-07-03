@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/secretbox"
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -52,6 +53,22 @@ type Repository interface {
 	MarkDeliveryDelivered(ctx context.Context, id uuid.UUID) error
 	RescheduleDelivery(ctx context.Context, arg sqlcgen.RescheduleDeliveryParams) error
 	FailDelivery(ctx context.Context, arg sqlcgen.FailDeliveryParams) error
+	// Remote-video ingestion (remote-content Slice 1).
+	UpsertRemoteVideo(ctx context.Context, arg sqlcgen.UpsertRemoteVideoParams) (sqlcgen.UpsertRemoteVideoRow, error)
+	SetRemoteVideoThumbnail(ctx context.Context, arg sqlcgen.SetRemoteVideoThumbnailParams) error
+	// Instance-level moderation (remote-content §8): the inbox drops activities
+	// from blocked domains and the drain cancels deliveries to them.
+	IsInstanceBlocked(ctx context.Context, domain string) (bool, error)
+}
+
+// FollowEdgeChecker reports whether any LOCAL user has an accepted outbound
+// follow edge to the given remote actor — the anti-spam ingestion gate of
+// .ralph/specs/federation-remote-content.md §2 (we only ingest content we asked
+// for by following). The outbound-follow slice (remote_channel_follows)
+// fulfills it; until then it is unset and inbound Create/Announce are
+// accepted-and-ignored. Tests substitute a fake.
+type FollowEdgeChecker interface {
+	HasAcceptedFollow(ctx context.Context, remoteActorURL string) (bool, error)
 }
 
 // NodeInfoUsage is the fediverse NodeInfo "usage" block: total users plus local
@@ -69,6 +86,13 @@ type Service struct {
 	repo    Repository
 	baseURL string            // canonical public origin, e.g. https://videos.example (no trailing slash)
 	cipher  *secretbox.Cipher // nil in dev → private keys stored raw
+
+	// edges gates remote-video ingestion on an accepted local follow edge
+	// (see FollowEdgeChecker). Nil = no edges = ingest nothing.
+	edges FollowEdgeChecker
+	// media stores best-effort cached remote thumbnails
+	// (remote-thumbnails/<id>.jpg). Nil = thumbnails are not cached.
+	media storage.Backend
 
 	// allowPrivateFetch relaxes the SSRF guard for remote-actor fetches so backed
 	// e2e / dev can reach a loopback origin. Never true in production.
@@ -94,6 +118,15 @@ func WithAllowPrivateFetch(v bool) Option { return func(s *Service) { s.allowPri
 
 // WithFetchClient overrides the HTTP client used to fetch remote actors (tests).
 func WithFetchClient(c *http.Client) Option { return func(s *Service) { s.fetchClient = c } }
+
+// WithFollowEdgeChecker wires the accepted-local-follow ingestion gate for
+// inbound Create/Announce (remote-content §2). When unset, no edge exists and
+// remote videos are accepted-and-ignored.
+func WithFollowEdgeChecker(e FollowEdgeChecker) Option { return func(s *Service) { s.edges = e } }
+
+// WithMediaStorage wires the blob backend used to cache remote thumbnails
+// (remote-content §5). When unset, ingestion skips the thumbnail cache.
+func WithMediaStorage(b storage.Backend) Option { return func(s *Service) { s.media = b } }
 
 // NewService builds a federation Service over the given repository.
 func NewService(repo Repository, opts ...Option) *Service {

@@ -22,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -32,6 +33,7 @@ import (
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
+	"github.com/vidra/vidra-core/internal/remotevideo"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/video"
@@ -45,35 +47,37 @@ type Pinger interface {
 
 // Server holds the Echo instance and its dependencies.
 type Server struct {
-	echo          *echo.Echo
-	cfg           *config.Config
-	db            Pinger
-	rdb           Pinger
-	startedAt     time.Time
-	logger        *slog.Logger
-	limiter       *ratelimit.Limiter
-	authLimit     *ratelimit.Limiter
-	authsvc       *auth.Service
-	authTTL       time.Duration
-	channelsvc    *channel.Service
-	videosvc      *video.Service
-	commentsvc    *comment.Service
-	ratingsvc     *rating.Service
-	notifsvc      *notification.Service
-	playlistsvc   *playlist.Service
-	moderationsvc *moderation.Service
-	mutesvc       *mute.Service
-	blocksvc      *block.Service
-	watchwordsvc  *watchword.Service
-	adminsvc      *admin.Service
-	auditLog      *audit.Service
-	messagingsvc  *messaging.Service
-	livesvc       *live.Service
-	imagesvc      *profileimage.Service
-	quotasvc      *quota.Service
-	transcodesvc  *transcode.Service
-	fedsvc        *federation.Service
-	media         storage.Backend
+	echo           *echo.Echo
+	cfg            *config.Config
+	db             Pinger
+	rdb            Pinger
+	startedAt      time.Time
+	logger         *slog.Logger
+	limiter        *ratelimit.Limiter
+	authLimit      *ratelimit.Limiter
+	authsvc        *auth.Service
+	authTTL        time.Duration
+	channelsvc     *channel.Service
+	videosvc       *video.Service
+	commentsvc     *comment.Service
+	ratingsvc      *rating.Service
+	notifsvc       *notification.Service
+	playlistsvc    *playlist.Service
+	moderationsvc  *moderation.Service
+	mutesvc        *mute.Service
+	blocksvc       *block.Service
+	watchwordsvc   *watchword.Service
+	adminsvc       *admin.Service
+	auditLog       *audit.Service
+	messagingsvc   *messaging.Service
+	livesvc        *live.Service
+	imagesvc       *profileimage.Service
+	quotasvc       *quota.Service
+	transcodesvc   *transcode.Service
+	fedsvc         *federation.Service
+	remotevideosvc *remotevideo.Service
+	instancemodsvc *instancemod.Service
+	media          storage.Backend
 	// importClient fetches remote videos for URL import. Nil in production, where
 	// the handler builds an SSRF-safe urlsafety.NewClient per request; tests inject
 	// a plain client so they can reach a loopback httptest server (which the
@@ -230,6 +234,21 @@ func WithTranscodeService(svc *transcode.Service) Option {
 // in the REST OpenAPI contract. See .ralph/specs/federation.md.
 func WithFederationService(svc *federation.Service) Option {
 	return func(s *Server) { s.fedsvc = svc }
+}
+
+// WithRemoteVideoService mounts the remote-video read endpoints (metadata +
+// cached thumbnail of federated videos ingested by the inbox). These are REST
+// contract surface (documented in api/openapi.yaml), unlike the AP root routes.
+// When unset, the routes are not registered.
+func WithRemoteVideoService(svc *remotevideo.Service) Option {
+	return func(s *Server) { s.remotevideosvc = svc }
+}
+
+// WithInstanceModerationService mounts instance-level moderation: the caller's
+// per-user instance mutes and the admin instance blocklist. When unset, the
+// routes are not registered.
+func WithInstanceModerationService(svc *instancemod.Service) Option {
+	return func(s *Server) { s.instancemodsvc = svc }
 }
 
 // WithAuditLog wires the durable audit-log service. When set, s.audit persists
@@ -613,6 +632,26 @@ func (s *Server) routes() {
 		api.GET("/me/mutes/accounts", s.handleListMutedAccounts, s.requireAuth)
 		api.POST("/me/mutes/accounts/:id", s.handleMuteAccount, s.requireAuth)
 		api.DELETE("/me/mutes/accounts/:id", s.handleUnmuteAccount, s.requireAuth)
+	}
+
+	// Instance-level moderation (remote-content §8): per-user instance mutes plus
+	// the admin instance blocklist (drops inbound activities, hides remote
+	// content, cancels outbound deliveries).
+	if s.instancemodsvc != nil {
+		api.GET("/me/mutes/instances", s.handleListMutedInstances, s.requireAuth)
+		api.POST("/me/mutes/instances/:domain", s.handleMuteInstance, s.requireAuth)
+		api.DELETE("/me/mutes/instances/:domain", s.handleUnmuteInstance, s.requireAuth)
+		api.GET("/admin/instances/blocked", s.handleListBlockedInstances, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.POST("/admin/instances/blocked", s.handleBlockInstance, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.DELETE("/admin/instances/blocked/:domain", s.handleUnblockInstance, s.requireAuth, s.requireRole("admin", "moderator"))
+	}
+
+	// Remote videos (federated, metadata-only): the remote-watch surface + the
+	// locally cached thumbnail. Public reads; content from blocked instances is
+	// excluded at the query.
+	if s.remotevideosvc != nil {
+		api.GET("/remote-videos/:id", s.handleGetRemoteVideo)
+		api.GET("/remote-videos/:id/thumbnail", s.handleGetRemoteVideoThumbnail)
 	}
 
 	// Account blocks: a signed-in user blocks/unblocks another account (cutting

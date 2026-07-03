@@ -4303,6 +4303,293 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/mutes/instances:
+    get:
+      operationId: listMutedInstances
+      summary: List muted instances
+      description: >-
+        Returns the remote instances the caller has muted, newest mute first.
+        Remote content from a muted instance is hidden from the caller's
+        surfaces. Requires authentication. Paginated via limit (1–100, default
+        20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of muted instances (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutedInstanceListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/mutes/instances/{domain}:
+    post:
+      operationId: muteInstance
+      summary: Mute an instance
+      description: >-
+        Mutes a whole remote instance so its content becomes hidden from the
+        caller. The domain is a bare hostname (optionally host:port), stored
+        lowercase. Requires authentication. Idempotent. An invalid domain is 422.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: domain
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The instance is muted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid instance domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unmuteInstance
+      summary: Unmute an instance
+      description: >-
+        Lifts the caller's mute of a remote instance. Requires authentication.
+        Idempotent (unmuting a not-muted instance still succeeds). An invalid
+        domain is 422.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: domain
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The instance is not muted (it was unmuted, or already was).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid instance domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocked:
+    get:
+      operationId: listBlockedInstances
+      summary: List blocked instances (admin)
+      description: >-
+        Returns the admin instance blocklist, newest block first. Requires the
+        admin or moderator role. Paginated via limit (1–100, default 20) and
+        offset.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of blocked instances (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockedInstanceListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin or moderator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: blockInstance
+      summary: Block an instance (admin)
+      description: >-
+        Adds a remote instance to the blocklist: inbound federation activities
+        from it are dropped, its existing remote content is hidden from all
+        surfaces, and outbound deliveries to it are cancelled. Requires the
+        admin or moderator role. Idempotent (re-blocking refreshes the reason).
+        Audited. An invalid domain is 422.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockInstanceRequest"
+      responses:
+        "204":
+          description: The instance is blocked.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin or moderator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Missing or invalid instance domain, or reason too long.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instances/blocked/{domain}:
+    delete:
+      operationId: unblockInstance
+      summary: Unblock an instance (admin)
+      description: >-
+        Removes a remote instance from the blocklist. Requires the admin or
+        moderator role. Idempotent. Audited. An invalid domain is 422.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: domain
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The instance is not blocked (it was unblocked, or already was).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an admin or moderator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid instance domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-videos/{id}:
+    get:
+      operationId: getRemoteVideo
+      summary: Get a remote (federated) video
+      description: >-
+        Returns the stored metadata of a federated video ingested from a remote
+        instance. Remote videos are metadata only — playback uses stream_url
+        from the origin when present, and watch_url always links the origin's
+        watch page. A video whose origin instance is admin-blocked is 404.
+        Public.
+      tags: [federation]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The remote video's metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteVideo"
+        "404":
+          description: No such remote video (or its origin instance is blocked).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-videos/{id}/thumbnail:
+    get:
+      operationId: getRemoteVideoThumbnail
+      summary: Get a remote video's cached thumbnail
+      description: >-
+        Streams the locally cached poster of a remote video (cached best-effort
+        at ingestion, capped at 2 MiB). A remote video without a cached
+        thumbnail is 404. Public.
+      tags: [federation]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The cached thumbnail image.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No such remote video or no cached thumbnail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/blocks:
     get:
       operationId: listBlockedUsers
@@ -5954,6 +6241,101 @@ components:
           type: integer
         offset:
           type: integer
+    MutedInstance:
+      type: object
+      required: [domain, muted_at]
+      properties:
+        domain:
+          type: string
+        muted_at:
+          type: string
+          format: date-time
+    MutedInstanceListResponse:
+      type: object
+      required: [instances, limit, offset]
+      properties:
+        instances:
+          type: array
+          items:
+            $ref: "#/components/schemas/MutedInstance"
+        limit:
+          type: integer
+        offset:
+          type: integer
+    BlockInstanceRequest:
+      type: object
+      required: [domain]
+      properties:
+        domain:
+          type: string
+          description: Bare hostname (optionally host:port) of the instance to block.
+        reason:
+          type: string
+          maxLength: 2000
+          description: Recorded on the blocklist and in the audit trail. May be empty.
+    BlockedInstance:
+      type: object
+      required: [domain, reason, blocked_at]
+      properties:
+        domain:
+          type: string
+        reason:
+          type: string
+        blocked_by:
+          type: string
+          format: uuid
+          description: The admin who blocked it. Omitted if that account was deleted.
+        blocked_at:
+          type: string
+          format: date-time
+    BlockedInstanceListResponse:
+      type: object
+      required: [instances, limit, offset]
+      properties:
+        instances:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockedInstance"
+        limit:
+          type: integer
+        offset:
+          type: integer
+    RemoteVideo:
+      type: object
+      required: [id, remote, domain, title, description, object_url, watch_url, has_thumbnail]
+      properties:
+        id:
+          type: string
+          format: uuid
+        remote:
+          type: boolean
+          description: Always true. Distinguishes remote cards from local videos.
+        domain:
+          type: string
+          description: The origin instance's domain.
+        title:
+          type: string
+        description:
+          type: string
+        object_url:
+          type: string
+          description: The ActivityPub object id on the origin.
+        watch_url:
+          type: string
+          description: The origin's human watch page.
+        stream_url:
+          type: string
+          description: >-
+            Best playable URL from the origin (HLS preferred, else direct
+            video file). Omitted when the origin advertised none.
+        duration_seconds:
+          type: integer
+        published_at:
+          type: string
+          format: date-time
+        has_thumbnail:
+          type: boolean
+          description: Whether a locally cached thumbnail is available.
     BlockedUser:
       type: object
       required: [user_id, username, display_name, blocked_at]

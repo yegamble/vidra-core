@@ -36,6 +36,8 @@ const (
 	ActionVideoUnblock          = "moderation.video.unblock"
 	ActionVideoApprove          = "moderation.video.quarantine_approve"
 	ActionVideoReject           = "moderation.video.quarantine_reject"
+	ActionInstanceBlock         = "moderation.instance.block"
+	ActionInstanceUnblock       = "moderation.instance.unblock"
 	ActionAdminUserUpdate       = "admin.user.update"
 	ActionVideoDelete           = "content.video.delete"
 	ActionChannelDelete         = "content.channel.delete"

@@ -158,6 +158,13 @@ func (fakeFedRepo) RescheduleDelivery(context.Context, sqlcgen.RescheduleDeliver
 	return nil
 }
 func (fakeFedRepo) FailDelivery(context.Context, sqlcgen.FailDeliveryParams) error { return nil }
+func (fakeFedRepo) UpsertRemoteVideo(context.Context, sqlcgen.UpsertRemoteVideoParams) (sqlcgen.UpsertRemoteVideoRow, error) {
+	return sqlcgen.UpsertRemoteVideoRow{ID: uuid.New()}, nil
+}
+func (fakeFedRepo) SetRemoteVideoThumbnail(context.Context, sqlcgen.SetRemoteVideoThumbnailParams) error {
+	return nil
+}
+func (fakeFedRepo) IsInstanceBlocked(context.Context, string) (bool, error) { return false, nil }
 
 func fedTestConfig() *config.Config {
 	c := testConfig()
