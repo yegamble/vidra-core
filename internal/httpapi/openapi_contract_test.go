@@ -14,6 +14,7 @@ import (
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/block"
+	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/e2ee"
@@ -66,6 +67,7 @@ func fullRouteOptions() []Option {
 		WithTranscodeService(transcode.NewService(nil, nil)),
 		WithUploadService(upload.NewService(nil, nil)),
 		WithVideoImportService(videoimport.NewService(nil, nil, 0)),
+		WithCaptionJobService(captionjob.NewService(nil, nil, nil)),
 		WithInstanceModerationService(instancemod.NewService(nil)),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
 		WithMediaGCService(mediagc.NewService(nil, nil)),

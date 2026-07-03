@@ -100,6 +100,39 @@ services:
       retries: 20
       start_period: 120s
 
+  # Whisper transcription server (captions profile). When enabled, run with the
+  # "captions" profile and point the api at it:
+  #   WHISPER_ENABLED=true WHISPER_ENDPOINT=http://whisper:8080 \
+  #     docker compose --profile core --profile captions up
+  # This uses the whisper.cpp server image, which exposes the /inference endpoint
+  # the WhisperClient POSTs audio to. It needs a GGML model file: on first run,
+  # download one into the whisper_models volume, e.g.
+  #   docker compose run --rm --entrypoint sh whisper -c \
+  #     "wget -O /models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+  # then start the profile. The command below serves that ggml-base model on :8080.
+  # The profile is OPTIONAL and not required by any default test.
+  whisper:
+    image: ghcr.io/ggml-org/whisper.cpp:main
+    profiles: ["captions"]
+    ports:
+      - "${WHISPER_PORT:-8090}:8080"
+    volumes:
+      - whisper_models:/models
+    command:
+      - "whisper-server"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--model"
+      - "/models/ggml-base.bin"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
   migrate:
     image: migrate/migrate:v4.17.1
     profiles: ["core"]
@@ -132,6 +165,10 @@ services:
         required: false
       # Waits for clamav only when the scan profile is active.
       clamav:
+        condition: service_healthy
+        required: false
+      # Waits for whisper only when the captions profile is active.
+      whisper:
         condition: service_healthy
         required: false
     environment:
@@ -194,6 +231,15 @@ services:
       # TRANSCODING_VP9_ENABLED additionally emits a progressive VP9/WebM alternate
       # per video (surfaced via /download). AV1 is deferred and rejected if enabled.
       TRANSCODING_VP9_ENABLED: ${TRANSCODING_VP9_ENABLED:-false}
+      # Auto-caption (Whisper): when WHISPER_ENABLED=true, video owners can request
+      # an auto-generated WebVTT caption track; an in-process worker extracts the
+      # audio (ffmpeg) and POSTs it to WHISPER_ENDPOINT (whisper.cpp /inference-
+      # compatible). Run the bundled whisper.cpp server with the "captions" profile
+      # (WHISPER_ENDPOINT=http://whisper:8080) or point at your own. Off by default.
+      WHISPER_ENABLED: ${WHISPER_ENABLED:-false}
+      WHISPER_ENDPOINT: ${WHISPER_ENDPOINT:-}
+      # Caption language used when a request omits one (also the transcription hint).
+      WHISPER_DEFAULT_LANGUAGE: ${WHISPER_DEFAULT_LANGUAGE:-en}
       # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
       # freshly minted stream key (informational; empty by default).
       LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}
@@ -278,3 +324,4 @@ volumes:
   minio_data:
   clamav_data:
   live_hls:
+  whisper_models:

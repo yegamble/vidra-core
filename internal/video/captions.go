@@ -24,6 +24,14 @@ var langPattern = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$`)
 // canonicalisation (the tag is validated against langPattern and stored as given).
 func normalizeLang(lang string) string { return strings.TrimSpace(lang) }
 
+// ValidCaptionLanguage reports whether lang is an accepted caption language tag
+// (the same BCP-47-ish pattern AddCaption enforces). Exposed so the auto-caption
+// job (internal/captionjob) can reject a bad language at request time — before
+// any async work — rather than only when the caption is finally upserted.
+func ValidCaptionLanguage(lang string) bool {
+	return langPattern.MatchString(normalizeLang(lang))
+}
+
 // captionKey is the storage object key for a video's caption in a language.
 func captionKey(videoID uuid.UUID, language string) string {
 	return fmt.Sprintf("captions/%s/%s.vtt", videoID, language)

@@ -104,6 +104,27 @@ type Config struct {
 	// true fails config validation with a documented defer note.
 	TranscodingAV1Enabled bool
 
+	// WhisperEnabled turns on auto-caption generation (fix_plan P13): a video
+	// owner may request an auto-generated WebVTT caption track, produced by
+	// extracting the audio (ffmpeg → 16 kHz mono WAV) and POSTing it to an
+	// external Whisper transcription service. Requires WhisperEndpoint. Default
+	// false — the auto-caption endpoints then answer 503 and no worker runs.
+	WhisperEnabled bool
+
+	// WhisperEndpoint is the base URL of the Whisper transcription service. The
+	// worker POSTs the extracted audio to <endpoint>/inference as multipart/form-
+	// data (`file` + `response_format=verbose_json` [+ `language` hint]) and
+	// expects an OpenAI-/whisper.cpp-compatible verbose_json body with a
+	// `segments` array of {start,end,text} (seconds), which it renders to WebVTT.
+	// It is an OPERATOR-configured internal service (not user input), so it is
+	// trusted and not SSRF-guarded. Required when WhisperEnabled.
+	WhisperEndpoint string
+
+	// WhisperDefaultLanguage is the BCP-47-ish caption language tag used when an
+	// auto-caption request omits one — it is both the tag the caption is stored
+	// under and the language hint passed to Whisper. Default "en".
+	WhisperDefaultLanguage string
+
 	// FederationKeyKEK is the base64 (standard) 32-byte key-encryption key used to
 	// envelope-encrypt actor private keys at rest (AES-256-GCM via internal/secretbox).
 	// Required in production when FederationEnabled; empty in dev stores keys raw
@@ -314,6 +335,9 @@ func Load() (*Config, error) {
 		TranscodingEnabled:          getEnvBool("TRANSCODING_ENABLED", false),
 		TranscodingVP9Enabled:       getEnvBool("TRANSCODING_VP9_ENABLED", false),
 		TranscodingAV1Enabled:       getEnvBool("TRANSCODING_AV1_ENABLED", false),
+		WhisperEnabled:              getEnvBool("WHISPER_ENABLED", false),
+		WhisperEndpoint:             strings.TrimRight(getEnv("WHISPER_ENDPOINT", ""), "/"),
+		WhisperDefaultLanguage:      strings.TrimSpace(getEnv("WHISPER_DEFAULT_LANGUAGE", "en")),
 		LiveRTMPURL:                 getEnv("LIVE_RTMP_URL", ""),
 		LiveIngestSecret:            getEnv("LIVE_INGEST_SECRET", ""),
 		LiveHLSRoot:                 strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
@@ -540,6 +564,15 @@ func (c *Config) validate() error {
 	if c.TranscodingAV1Enabled {
 		return fmt.Errorf("config: TRANSCODING_AV1_ENABLED is not supported yet — AV1 transcoding is deferred (see fix_plan P6.3); leave it false")
 	}
+	if c.WhisperEnabled {
+		u, err := url.Parse(c.WhisperEndpoint)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("config: WHISPER_ENDPOINT must be a valid http(s) URL when WHISPER_ENABLED=true")
+		}
+	}
+	if c.WhisperDefaultLanguage != "" && !languageTag.MatchString(c.WhisperDefaultLanguage) {
+		return fmt.Errorf("config: WHISPER_DEFAULT_LANGUAGE %q must be a BCP-47-ish language tag (e.g. en, pt-BR)", c.WhisperDefaultLanguage)
+	}
 	if c.MFAKeyKEK != "" {
 		if k, err := base64.StdEncoding.DecodeString(c.MFAKeyKEK); err != nil || len(k) != 32 {
 			return fmt.Errorf("config: MFA_KEY_KEK must be base64 of exactly 32 bytes")
@@ -573,6 +606,11 @@ func (c *Config) validate() error {
 // oauthProviderName constrains provider names to URL-path- and env-var-safe
 // identifiers: lowercase letters/digits, dash-separated.
 var oauthProviderName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// languageTag is a permissive BCP-47-ish caption language tag (mirrors the
+// pattern internal/video enforces on caption languages), used to validate
+// WHISPER_DEFAULT_LANGUAGE at load time.
+var languageTag = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$`)
 
 // validateOAuth checks the configured OIDC providers. Providers are disabled
 // by default (no OAUTH_PROVIDERS); each configured provider must be complete,

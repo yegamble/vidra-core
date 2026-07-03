@@ -451,6 +451,59 @@ func TestLoadRejectsAV1(t *testing.T) {
 	}
 }
 
+func TestWhisperDefaultsAndOverride(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.WhisperEnabled {
+		t.Errorf("WhisperEnabled default = true, want false")
+	}
+	if cfg.WhisperDefaultLanguage != "en" {
+		t.Errorf("WhisperDefaultLanguage default = %q, want en", cfg.WhisperDefaultLanguage)
+	}
+
+	t.Setenv("WHISPER_ENABLED", "true")
+	t.Setenv("WHISPER_ENDPOINT", "http://whisper:8080/")
+	t.Setenv("WHISPER_DEFAULT_LANGUAGE", "pt-BR")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load enabled: %v", err)
+	}
+	if !cfg.WhisperEnabled {
+		t.Errorf("WhisperEnabled = false, want true")
+	}
+	if cfg.WhisperEndpoint != "http://whisper:8080" { // trailing slash trimmed
+		t.Errorf("WhisperEndpoint = %q, want http://whisper:8080", cfg.WhisperEndpoint)
+	}
+	if cfg.WhisperDefaultLanguage != "pt-BR" {
+		t.Errorf("WhisperDefaultLanguage = %q, want pt-BR", cfg.WhisperDefaultLanguage)
+	}
+}
+
+func TestLoadRejectsWhisperEnabledWithoutEndpoint(t *testing.T) {
+	t.Setenv("WHISPER_ENABLED", "true")
+	t.Setenv("WHISPER_ENDPOINT", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for WHISPER_ENABLED=true without WHISPER_ENDPOINT, got nil")
+	}
+}
+
+func TestLoadRejectsWhisperNonHTTPEndpoint(t *testing.T) {
+	t.Setenv("WHISPER_ENABLED", "true")
+	t.Setenv("WHISPER_ENDPOINT", "ftp://whisper:8080")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for a non-http(s) WHISPER_ENDPOINT, got nil")
+	}
+}
+
+func TestLoadRejectsBadWhisperDefaultLanguage(t *testing.T) {
+	t.Setenv("WHISPER_DEFAULT_LANGUAGE", "not a tag!")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for a malformed WHISPER_DEFAULT_LANGUAGE, got nil")
+	}
+}
+
 func TestVP9DefaultOff(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {

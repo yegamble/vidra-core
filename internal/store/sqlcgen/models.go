@@ -59,6 +59,18 @@ type Caption struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+type CaptionJob struct {
+	ID            uuid.UUID `json:"id"`
+	VideoID       uuid.UUID `json:"video_id"`
+	Language      string    `json:"language"`
+	State         string    `json:"state"`
+	Error         string    `json:"error"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type Channel struct {
 	ID          uuid.UUID `json:"id"`
 	OwnerID     uuid.UUID `json:"owner_id"`

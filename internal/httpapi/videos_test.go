@@ -21,6 +21,7 @@ import (
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/block"
+	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
@@ -831,6 +832,12 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		videoimport.WithHTTPClient(&http.Client{}),
 	)
 	uploadsvc := upload.NewService(uploadRepo, blobs, upload.WithChunkSize(16))
+	// Auto-caption (Whisper) service: enabled follows cfg.WhisperEnabled so the
+	// request endpoint returns 202 (enabled) or 503 (disabled). The transcriber is
+	// nil — handler tests exercise only enqueue/status, never the worker; the
+	// videosvc satisfies captionjob.VideoStore.
+	captionjobsvc := captionjob.NewService(newCaptionJobFakeRepo(), videosvc, nil,
+		captionjob.WithEnabled(cfg.WhisperEnabled))
 	srv := New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
@@ -852,6 +859,7 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		WithTranscodeService(transcode.NewService(tcRepo, nil)),
 		WithUploadService(uploadsvc),
 		WithVideoImportService(importsvc),
+		WithCaptionJobService(captionjobsvc),
 		WithInstanceModerationService(instancemod.NewService(newInstanceModFakeRepo())),
 		WithMediaStorage(blobs),
 	)

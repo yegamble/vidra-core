@@ -19,6 +19,7 @@ import (
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/block"
+	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
@@ -84,6 +85,7 @@ type Server struct {
 	transcodesvc   *transcode.Service
 	uploadsvc      *upload.Service
 	importsvc      *videoimport.Service
+	captionjobsvc  *captionjob.Service
 	fedsvc         *federation.Service
 	remotevideosvc *remotevideo.Service
 	instancemodsvc *instancemod.Service
@@ -287,6 +289,15 @@ func WithUploadService(svc *upload.Service) Option {
 // routes are not registered.
 func WithVideoImportService(svc *videoimport.Service) Option {
 	return func(s *Server) { s.importsvc = svc }
+}
+
+// WithCaptionJobService mounts the auto-caption (Whisper) endpoints (request +
+// status). The routes are always registered when the service is present — even
+// when auto-captioning is disabled, in which case the request endpoint answers
+// 503 — so the documented contract surface stays stable. The enqueue authorises
+// the video via the video service.
+func WithCaptionJobService(svc *captionjob.Service) Option {
+	return func(s *Server) { s.captionjobsvc = svc }
 }
 
 // WithFederationService wires the ActivityPub federation service. The AP root
@@ -672,6 +683,13 @@ func (s *Server) routes() {
 		if s.importsvc != nil {
 			api.POST("/videos/:id/import", s.handleImportVideoFile, s.requireAuth)
 			api.GET("/videos/:id/import", s.handleGetVideoImport, s.requireAuth)
+		}
+
+		// Auto-caption / Whisper (P13): request an auto-generated caption track
+		// (202, or 503 when auto-captioning is disabled) and poll its status.
+		if s.captionjobsvc != nil {
+			api.POST("/videos/:id/captions/auto", s.handleRequestAutoCaption, s.requireAuth)
+			api.GET("/videos/:id/captions/auto", s.handleGetAutoCaption, s.requireAuth)
 		}
 
 		// Captions: the owner uploads/removes WebVTT tracks (any state); anyone

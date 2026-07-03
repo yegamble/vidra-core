@@ -937,6 +937,17 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoBy
 	return v, nil
 }
 
+// OriginalFileKey returns the storage key of a video's stored original file, or
+// ErrNotFound when it has none (never uploaded / already GC'd). The auto-caption
+// worker uses it to locate the source media it extracts audio from.
+func (s *Service) OriginalFileKey(ctx context.Context, videoID uuid.UUID) (string, error) {
+	f, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "original"})
+	if err != nil {
+		return "", ErrNotFound
+	}
+	return f.StorageKey, nil
+}
+
 // UpdateInput is a partial video update: nil fields are left unchanged. Privacy,
 // when set, is already validated by the HTTP layer.
 type UpdateInput struct {

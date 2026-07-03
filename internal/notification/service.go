@@ -23,18 +23,19 @@ const (
 	TypeMessage        = "message"
 	TypeReportResolved = "report_resolved"
 	TypeVideoRejected  = "video_rejected"
+	TypeCaptionReady   = "caption_ready"
 )
 
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeComment, TypeFollow, TypeMessage, TypeReportResolved, TypeVideoRejected}
+	return []string{TypeCaptionReady, TypeComment, TypeFollow, TypeMessage, TypeReportResolved, TypeVideoRejected}
 }
 
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeMessage, TypeReportResolved, TypeVideoRejected:
+	case TypeFollow, TypeComment, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeCaptionReady:
 		return true
 	}
 	return false
@@ -190,6 +191,25 @@ func (s *Service) NotifyVideoRejected(ctx context.Context, recipientID, actorID,
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
 		UserID:  recipientID,
 		Type:    TypeVideoRejected,
+		VideoID: pgUUID(videoID),
+	})
+	return err
+}
+
+// NotifyCaptionReady records that an auto-generated caption track finished for
+// recipientID's video (fix_plan P13). Unlike the other notifications this has no
+// actor — it is a system event addressed to the video's owner — so there is no
+// self-notify skip; it is suppressed only when the recipient disabled
+// caption_ready notifications. Best-effort: the caption is stored regardless of
+// whether the notification records. The video's title is resolved from the
+// joined video row at read time (no caption text is stored on the notification).
+func (s *Service) NotifyCaptionReady(ctx context.Context, recipientID, videoID uuid.UUID) error {
+	if !s.typeEnabled(ctx, recipientID, TypeCaptionReady) {
+		return nil
+	}
+	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:  recipientID,
+		Type:    TypeCaptionReady,
 		VideoID: pgUUID(videoID),
 	})
 	return err

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/cache"
+	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
@@ -440,6 +442,25 @@ func run() error {
 	)
 	opts = append(opts, httpapi.WithVideoImportService(importsvc))
 
+	// Auto-caption / Whisper (P13). The endpoints are ALWAYS mounted (so the
+	// documented contract is stable); the service's Enabled() flag gates the
+	// request endpoint (503 when off) and the worker. When WHISPER_ENABLED, the
+	// transcriber extracts audio via ffmpeg and POSTs it to WHISPER_ENDPOINT.
+	var transcriber captionjob.Transcriber
+	if cfg.WhisperEnabled {
+		if _, lookErr := exec.LookPath("ffmpeg"); lookErr != nil {
+			logger.Warn("WHISPER_ENABLED but ffmpeg is not on PATH — auto-caption jobs will fail until it is installed")
+		}
+		transcriber = media.NewWhisperClient(blobs, cfg.WhisperEndpoint)
+	}
+	captionjobsvc := captionjob.NewService(db.Queries(), videosvc, transcriber,
+		captionjob.WithEnabled(cfg.WhisperEnabled),
+		captionjob.WithDefaultLanguage(cfg.WhisperDefaultLanguage),
+		captionjob.WithNotifier(notifsvc),
+		captionjob.WithLogger(logger),
+	)
+	opts = append(opts, httpapi.WithCaptionJobService(captionjobsvc))
+
 	// Account lifecycle (P4 export/import + §1 hard delete). Deleting an
 	// account removes its videos through the video service, so the federation
 	// Delete hooks registered above fire for previously-public videos.
@@ -543,6 +564,16 @@ func run() error {
 		defer workerCancel()
 		go runVideoImportWorker(workerCtx, logger, importsvc)
 		logger.Info("video import worker started")
+	}
+
+	// Drain the auto-caption (Whisper) queue in the background: extract audio →
+	// transcribe → upsert the caption via the shared AddCaption path → notify the
+	// owner, with retry + dead-letter. Only when auto-captioning is enabled.
+	if captionjobsvc.Enabled() {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runCaptionJobWorker(workerCtx, logger, captionjobsvc)
+		logger.Info("auto-caption worker started")
 	}
 
 	// Sweep expired/cancelled resumable-upload sessions (the failed-upload
@@ -772,6 +803,42 @@ func runVideoImportWorker(ctx context.Context, logger *slog.Logger, svc *videoim
 			}
 			if total > 0 {
 				logger.Info("video import drain completed jobs", "count", total)
+			}
+		}
+	}
+}
+
+// runCaptionJobWorker drains the durable auto-caption (Whisper) queue on a ticker
+// until ctx is canceled (mirrors runTranscodeWorker). A small batch keeps at most
+// a couple of ffmpeg-extract + transcription round-trips in flight per tick;
+// per-job failures are recorded in the queue (retry/backoff/dead-letter) rather
+// than logged.
+func runCaptionJobWorker(ctx context.Context, logger *slog.Logger, svc *captionjob.Service) {
+	const (
+		interval = 10 * time.Second
+		batch    = 2
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			total := 0
+			for {
+				n, err := svc.DrainJobs(ctx, batch)
+				if err != nil {
+					logger.Warn("auto-caption drain failed", "error", err)
+					break
+				}
+				total += n
+				if n == 0 {
+					break
+				}
+			}
+			if total > 0 {
+				logger.Info("auto-caption drain completed jobs", "count", total)
 			}
 		}
 	}

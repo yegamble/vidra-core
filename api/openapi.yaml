@@ -3189,6 +3189,114 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/captions/auto:
+    post:
+      operationId: requestAutoCaption
+      summary: Request an auto-generated caption track (Whisper)
+      description: >-
+        Enqueues an ASYNCHRONOUS auto-caption job for a video (owner only) and
+        returns 202 with the queued job. A background worker extracts the audio
+        (ffmpeg → 16 kHz mono WAV), sends it to the configured Whisper
+        transcription service, renders the result to WebVTT, and stores it via
+        the same replace-by-language path as a manual caption upload — then
+        notifies the owner (a caption_ready notification, honoring preferences).
+        `language` is optional (defaults to WHISPER_DEFAULT_LANGUAGE); it is both
+        the caption's language tag and the transcription hint. Ownership is
+        checked before any job is created, so a non-owner or unknown video is
+        404. Auto-captioning disabled on this server → 503; a malformed language
+        tag → 422; a job already pending/running for the video → 409. Poll GET
+        /api/v1/videos/{id}/captions/auto for progress.
+      tags: [captions]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutoCaptionRequest"
+      responses:
+        "202":
+          description: The auto-caption job was enqueued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptionJobResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: An auto-caption job is already in progress for this video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The language tag is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Auto-captioning is not enabled on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: getAutoCaption
+      summary: Get a video's auto-caption job status
+      description: >-
+        Returns the most recent auto-caption (Whisper) job for a video (owner
+        only). state is pending, running, done, or failed; on failure `error` is
+        a safe, human-readable reason (never a raw internal error or the Whisper
+        endpoint URL). Non-owner/unknown video → 404; a video that never
+        requested auto-captioning → 404.
+      tags: [captions]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video's latest auto-caption job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptionJobResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video (or not owned by the caller), or no auto-caption job exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/captions:
     get:
       operationId: listCaptions
@@ -4046,9 +4154,9 @@ paths:
       summary: Get the caller's notification preferences
       description: >-
         Returns the caller's per-type notification switchboard: every known
-        notification type (comment, follow, message, report_resolved,
-        video_rejected) mapped to whether it is delivered. Types never
-        configured default to enabled.
+        notification type (caption_ready, comment, follow, message,
+        report_resolved, video_rejected) mapped to whether it is delivered.
+        Types never configured default to enabled.
       tags: [notifications]
       security:
         - bearerAuth: []
@@ -8681,8 +8789,8 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment, message, report_resolved, video_rejected]
-          description: What happened. follow = someone followed your channel; comment = someone commented on your video; message = someone sent you a direct message; report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one; the moderator's identity is never included).
+          enum: [follow, comment, message, report_resolved, video_rejected, caption_ready]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video; message = someone sent you a direct message; report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one; the moderator's identity is never included); caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
         read:
           type: boolean
         created_at:
@@ -8759,7 +8867,7 @@ components:
             this user. Types with no stored preference default to true.
           additionalProperties:
             type: boolean
-          example: { comment: true, follow: false, message: true, report_resolved: true, video_rejected: true }
+          example: { caption_ready: true, comment: true, follow: false, message: true, report_resolved: true, video_rejected: true }
     UpdateNotificationPrefsRequest:
       type: object
       required: [prefs]
@@ -8768,8 +8876,9 @@ components:
           type: object
           description: >-
             Partial map of notification type -> enabled. Only the types present
-            are changed. Known types: comment, follow, message, report_resolved,
-            video_rejected. An unknown type rejects the whole update (422).
+            are changed. Known types: caption_ready, comment, follow, message,
+            report_resolved, video_rejected. An unknown type rejects the whole
+            update (422).
           additionalProperties:
             type: boolean
           minProperties: 1
@@ -10333,6 +10442,56 @@ components:
       properties:
         import_job:
           $ref: "#/components/schemas/ImportJob"
+    AutoCaptionRequest:
+      type: object
+      description: >-
+        Optional body for an auto-caption request. When language is omitted the
+        server uses WHISPER_DEFAULT_LANGUAGE.
+      properties:
+        language:
+          type: string
+          description: >-
+            BCP-47-ish caption language tag (e.g. en, pt-BR). It is both the tag
+            the generated track is stored under and the transcription hint.
+          example: en
+    CaptionJob:
+      type: object
+      description: An asynchronous auto-caption (Whisper) job for a video.
+      required: [id, video_id, language, state, attempts, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        language:
+          type: string
+          description: The caption language tag the generated track is stored under.
+        state:
+          type: string
+          enum: [pending, running, done, failed]
+        error:
+          type: string
+          description: >-
+            A safe, human-readable failure reason (present only when state is
+            failed or a retry is pending). Never a raw internal error or the
+            Whisper endpoint URL.
+        attempts:
+          type: integer
+          description: How many times the auto-caption has been attempted.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CaptionJobResponse:
+      type: object
+      required: [caption_job]
+      properties:
+        caption_job:
+          $ref: "#/components/schemas/CaptionJob"
     CreateUploadSessionRequest:
       type: object
       required: [size, filename]

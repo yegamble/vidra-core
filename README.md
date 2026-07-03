@@ -254,6 +254,24 @@ reference. It defaults to a dry run (`{"dry_run":false}` deletes); it never
 lists or touches an unknown prefix, and it is audited. A daily in-process worker
 runs the same sweep.
 
+**Captions** (P13). A video owner uploads WebVTT tracks with
+`POST /api/v1/videos/{id}/captions` (multipart `file` + `language` [+ `label`]);
+anyone lists them (`GET …/captions`) and downloads a track by language
+(`GET …/captions/{lang}`, `text/vtt`). **Auto-captions (Whisper)**
+(`WHISPER_ENABLED=true`, default off; requires `WHISPER_ENDPOINT`): the owner
+requests an auto-generated track with `POST /api/v1/videos/{id}/captions/auto`
+(body `{language?}`, default `WHISPER_DEFAULT_LANGUAGE`). It enqueues a
+`caption_jobs` row and returns `202 {caption_job}` (`503` when disabled, `409`
+while a job is already pending/running, `422` for a bad language tag). A
+background worker extracts the audio (`ffmpeg` → 16 kHz mono WAV), POSTs it to
+`WHISPER_ENDPOINT` (whisper.cpp `/inference`-compatible, trusted operator config
+— not SSRF-guarded), renders the response to WebVTT, and stores it through the
+same replace-by-language path a manual upload uses — then sends the owner a
+`caption_ready` notification (honoring prefs). Poll
+`GET /api/v1/videos/{id}/captions/auto` for the job status (retry/backoff,
+dead-letter after 5; a safe `error` reason on failure). Run the bundled server
+with the `captions` compose profile.
+
 **Live streaming** (P12). A channel owner creates a live stream with
 `POST /api/v1/channels/{handle}/live` (`{title, description?, privacy?,
 permanent?, replay_enabled?}`) and receives a stream key ONCE plus the RTMP URL;
