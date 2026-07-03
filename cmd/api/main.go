@@ -46,6 +46,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/peertubeimport"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/quota"
@@ -713,6 +714,72 @@ func run() error {
 	jobStatusSvc := jobstatus.NewService(db.Queries())
 	opts = append(opts, httpapi.WithJobStatusService(jobStatusSvc))
 
+	// PeerTube import / migration (fix_plan P18). The admin API is ALWAYS wired
+	// (stable contract for the vidra-user import UI); the launch endpoint answers
+	// 503 until a source is configured (PEERTUBE_IMPORT_ENABLED +
+	// PEERTUBE_SOURCE_DATABASE_URL). The source connection is built from SERVER
+	// CONFIG per run — never from a request; the browser never sends a DSN.
+	defaultImportPolicy, _ := peertubeimport.ParseConflictPolicy(cfg.PeerTubeImportConflictPolicy)
+	ptImportOpts := []peertubeimport.Option{
+		peertubeimport.WithLogger(logger),
+		peertubeimport.WithDefaultPolicy(defaultImportPolicy),
+		peertubeimport.WithAudit(func(ctx context.Context, ev observability.AuditEvent) {
+			_ = auditsvc.Record(ctx, audit.Event{Action: ev.Action, Result: ev.Result, ActorID: ev.ActorID, Reason: ev.Reason, RequestID: ev.RequestID})
+		}),
+	}
+	if cfg.PeerTubeImportConfigured() {
+		// Actor-key sealer reuses the federation KEK so imported account/channel
+		// private keys are sealed exactly like the server seals them at rest.
+		var ptSeal func(string) (string, error)
+		if cfg.FederationKeyKEK != "" {
+			ptCipher, err := secretbox.NewCipherFromBase64(cfg.FederationKeyKEK)
+			if err != nil {
+				return err
+			}
+			ptSeal = func(pem string) (string, error) { return ptCipher.Seal([]byte(pem)) }
+		}
+		srcStorageCfg := peertubeimport.SourceStorageConfig{
+			Backend:          cfg.PeerTubeSourceStorageBackend,
+			LocalRoot:        cfg.PeerTubeSourceStorageLocalRoot,
+			S3Endpoint:       cfg.PeerTubeSourceS3Endpoint,
+			S3Bucket:         cfg.PeerTubeSourceS3Bucket,
+			S3AccessKey:      cfg.PeerTubeSourceS3AccessKey,
+			S3SecretKey:      cfg.PeerTubeSourceS3SecretKey,
+			S3Region:         cfg.PeerTubeSourceS3Region,
+			S3UseSSL:         cfg.PeerTubeSourceS3UseSSL,
+			S3ForcePathStyle: cfg.PeerTubeSourceS3ForcePathStyle,
+		}
+		ptImportOpts = append(ptImportOpts, peertubeimport.WithImporterFactory(
+			func(ctx context.Context, policy peertubeimport.ConflictPolicy) (*peertubeimport.Importer, func(), error) {
+				src, err := peertubeimport.OpenSource(ctx, cfg.PeerTubeSourceDatabaseURL)
+				if err != nil {
+					return nil, nil, err
+				}
+				srcMedia, err := peertubeimport.OpenSourceStorage(srcStorageCfg)
+				if err != nil {
+					src.Close()
+					return nil, nil, err
+				}
+				imp := peertubeimport.NewImporter(db.Pool, src, peertubeimport.Options{
+					Policy:    policy,
+					SrcMedia:  srcMedia,
+					DestMedia: blobs,
+					SealKey:   ptSeal,
+					Logger:    logger,
+				})
+				return imp, func() { src.Close() }, nil
+			}))
+		logger.Info("peertube import configured", "source_storage", cfg.PeerTubeSourceStorageBackend)
+	}
+	ptImportSvc := peertubeimport.NewService(db.Queries(), ptImportOpts...)
+	opts = append(opts, httpapi.WithPeerTubeImportService(ptImportSvc))
+	if ptImportSvc.Configured() {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runPeerTubeImportWorker(workerCtx, logger, ptImportSvc)
+		logger.Info("peertube import worker started")
+	}
+
 	// Prometheus RED metrics (P17.3), gated behind METRICS_ENABLED. The queue-depth
 	// gauge pulls from the jobs snapshot at scrape time. Off by default → zero cost.
 	if cfg.MetricsEnabled {
@@ -1057,6 +1124,25 @@ func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Ser
 					Result: observability.ResultSuccess,
 					Reason: fmt.Sprintf("mode=delete scanned=%d orphans=%d deleted=%d", res.Scanned, len(res.Orphans), res.Deleted),
 				})
+			}
+		}
+	}
+}
+
+// runPeerTubeImportWorker claims and executes due PeerTube import runs (fix_plan
+// P18). Only one run is ever active (the single-active DB constraint), so it
+// drains at most one per tick; per-run outcomes are persisted to the run row.
+func runPeerTubeImportWorker(ctx context.Context, logger *slog.Logger, svc *peertubeimport.Service) {
+	const interval = 15 * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := svc.DrainDueRuns(ctx, 1); err != nil {
+				logger.Warn("peertube import drain failed", "error", err)
 			}
 		}
 	}

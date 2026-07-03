@@ -30,6 +30,7 @@ import (
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
+	"github.com/vidra/vidra-core/internal/peertubeimport"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/quota"
@@ -78,6 +79,7 @@ func fullRouteOptions() []Option {
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
 		WithMediaGCService(mediagc.NewService(nil, nil)),
 		WithJobStatusService(jobstatus.NewService(nil)),
+		WithPeerTubeImportService(peertubeimport.NewService(nil)),
 		// Mounts the REST remote-follow routes. The AP root routes stay excluded
 		// from the drift guard: they additionally require cfg.FederationEnabled,
 		// which testConfig leaves false.

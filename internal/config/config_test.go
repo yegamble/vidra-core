@@ -880,3 +880,61 @@ func bytesRepeat(b byte, n int) []byte {
 	}
 	return out
 }
+
+func TestPeerTubeImportConfig(t *testing.T) {
+	clean := func(t *testing.T) {
+		for _, k := range []string{
+			"VIDRA_ENV", "DATABASE_URL", "REDIS_URL", "CORS_ALLOWED_ORIGINS",
+			"PEERTUBE_IMPORT_ENABLED", "PEERTUBE_SOURCE_DATABASE_URL",
+			"PEERTUBE_IMPORT_CONFLICT_POLICY", "PEERTUBE_SOURCE_STORAGE_BACKEND",
+		} {
+			t.Setenv(k, "")
+		}
+	}
+
+	t.Run("off by default", func(t *testing.T) {
+		clean(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() = %v", err)
+		}
+		if cfg.PeerTubeImportEnabled {
+			t.Error("import must be off by default")
+		}
+		if cfg.PeerTubeImportConflictPolicy != "skip" {
+			t.Errorf("default policy = %q, want skip", cfg.PeerTubeImportConflictPolicy)
+		}
+		if cfg.PeerTubeImportConfigured() {
+			t.Error("must not be configured by default")
+		}
+	})
+
+	t.Run("invalid conflict policy is rejected", func(t *testing.T) {
+		clean(t)
+		t.Setenv("PEERTUBE_IMPORT_CONFLICT_POLICY", "bogus")
+		if _, err := Load(); err == nil {
+			t.Error("expected error for invalid conflict policy")
+		}
+	})
+
+	t.Run("enabled requires a source DSN", func(t *testing.T) {
+		clean(t)
+		t.Setenv("PEERTUBE_IMPORT_ENABLED", "true")
+		if _, err := Load(); err == nil {
+			t.Error("enabling import without a source DSN must error")
+		}
+	})
+
+	t.Run("enabled with a source DSN is configured", func(t *testing.T) {
+		clean(t)
+		t.Setenv("PEERTUBE_IMPORT_ENABLED", "true")
+		t.Setenv("PEERTUBE_SOURCE_DATABASE_URL", "postgres://ro:pw@oldhost:5432/peertube?sslmode=disable")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() = %v", err)
+		}
+		if !cfg.PeerTubeImportConfigured() {
+			t.Error("must be configured when enabled with a source DSN")
+		}
+	})
+}

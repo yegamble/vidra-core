@@ -331,6 +331,7 @@ parser is unit-tested in `make ci`, while the real-ffprobe test is gated behind
 make build     # build the api binary into ./bin
 make run       # run the api locally (needs Postgres + Redis)
 go build ./...
+go build -o bin/peertube-import ./cmd/peertube-import  # PeerTube migration CLI (P18; see docs/peertube-migration.md)
 ```
 
 ## Tests

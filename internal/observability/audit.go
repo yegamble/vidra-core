@@ -66,6 +66,11 @@ const (
 	// E2EE one-time-key claims are audited with COUNTS ONLY (never key
 	// material): key exhaustion/abuse is a security-relevant signal.
 	ActionE2EEClaim = "e2ee.otk.claim"
+	// PeerTube import (P18): an admin launching/finishing a migration run. Reason
+	// carries only safe metadata (mode, detected version, per-entity counts) —
+	// never the source DSN, credentials, or any imported PII/secret.
+	ActionPeerTubeImportStart  = "admin.peertube_import.start"
+	ActionPeerTubeImportFinish = "admin.peertube_import.finish"
 )
 
 // sensitiveKeys is the canonical denylist of structured-log field names that
@@ -113,6 +118,13 @@ var sensitiveKeys = map[string]bool{
 	"one_time_keys": true,
 	"identity_key":  true,
 	"signing_key":   true,
+	// PeerTube import (P18): the read-only SOURCE database DSN carries a password,
+	// and the source S3 credentials are secrets — never log the source connection.
+	"source_dsn":          true,
+	"source_database_url": true,
+	"peertube_source_dsn": true,
+	"source_secret_key":   true,
+	"source_access_key":   true,
 }
 
 // IsSensitiveKey reports whether a structured-log key is on the denylist

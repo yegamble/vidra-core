@@ -8129,6 +8129,138 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/peertube-import:
+    post:
+      operationId: launchPeerTubeImport
+      summary: Launch a PeerTube import run (admin)
+      description: >-
+        Launches a one-way PeerTube→Vidra migration run and returns it (202) so
+        the UI can poll its progress (fix_plan P18). mode is "dry_run" (report
+        counts + mapping plan + conflicts, writes NOTHING) or "run" (perform the
+        import). conflict_policy (skip|rename|merge|fail, default skip) resolves
+        username/handle/email/slug collisions. The import is idempotent and
+        resumable — a re-run skips already-imported rows via a durable ledger.
+        The SOURCE PeerTube database + storage connection is taken from SERVER
+        CONFIG only; the browser NEVER sends a DSN or credential. Only one run may
+        be active at a time (409 otherwise). 503 when import is not configured on
+        the instance. Restricted to admins; audited (no secrets).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeerTubeImportLaunchRequest"
+      responses:
+        "202":
+          description: The launched run (poll it for progress).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeerTubeImportRun"
+        "400":
+          description: Invalid mode or conflict policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: An import run is already in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: PeerTube import is not configured on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: listPeerTubeImports
+      summary: List recent PeerTube import runs (admin)
+      description: >-
+        Returns recent import runs newest-first, each with its state, detected
+        source schema version, and per-entity progress report — the admin import
+        history + the active run's live progress. Restricted to admins.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Recent import runs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeerTubeImportRunList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/peertube-import/{id}:
+    get:
+      operationId: getPeerTubeImport
+      summary: Get one PeerTube import run (admin)
+      description: >-
+        Returns one import run by id — the progress-poll endpoint. Restricted to
+        admins.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeerTubeImportRun"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No run with that id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/media/gc:
     post:
       operationId: adminMediaGC
@@ -11517,6 +11649,111 @@ components:
         overridden:
           type: boolean
           description: Whether a database override is currently set for this key.
+    PeerTubeImportLaunchRequest:
+      type: object
+      description: >-
+        Launch parameters for a PeerTube import run. The source connection is
+        NOT here — it comes from server config only.
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [dry_run, run]
+          description: dry_run reports the plan and writes nothing; run performs the import.
+        conflict_policy:
+          type: string
+          enum: [skip, rename, merge, fail]
+          description: >-
+            How username/handle/email/slug collisions with existing Vidra rows
+            are resolved. Defaults to skip (safest, non-destructive).
+    PeerTubeImportCounts:
+      type: object
+      description: Per-entity outcome tally.
+      required: [planned, imported, skipped, failed, unsupported]
+      properties:
+        planned:
+          type: integer
+        imported:
+          type: integer
+        skipped:
+          type: integer
+        failed:
+          type: integer
+        unsupported:
+          type: integer
+    PeerTubeImportReport:
+      type: object
+      description: >-
+        Machine-readable summary of a plan (dry-run) or run. Carries only counts,
+        the detected source version, and safe conflict notes — never secrets/PII.
+      required: [dry_run, conflict_policy, entities]
+      properties:
+        source_version:
+          type: integer
+          description: Detected PeerTube schema version (application.migrationVersion).
+        dry_run:
+          type: boolean
+        conflict_policy:
+          type: string
+        entities:
+          type: object
+          description: Per-entity-kind counts, keyed by entity kind (user, channel, video, …).
+          additionalProperties:
+            $ref: "#/components/schemas/PeerTubeImportCounts"
+        deferred:
+          type: array
+          description: Entity families intentionally not migrated (regenerate/reconcile by hand).
+          items:
+            type: string
+        conflicts:
+          type: array
+          description: Safe, human-readable notes about resolved collisions.
+          items:
+            type: string
+    PeerTubeImportRun:
+      type: object
+      description: Status view of one PeerTube import run.
+      required: [id, mode, state, conflict_policy, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        mode:
+          type: string
+          enum: [dry_run, run]
+        state:
+          type: string
+          enum: [pending, running, done, failed]
+        conflict_policy:
+          type: string
+          enum: [skip, rename, merge, fail]
+        source_version:
+          type: [integer, "null"]
+        report:
+          $ref: "#/components/schemas/PeerTubeImportReport"
+        error:
+          type: string
+          description: Safe, client-visible failure reason (never a DSN/credential).
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+    PeerTubeImportRunList:
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/PeerTubeImportRun"
     InstanceSettingsResponse:
       type: object
       required: [settings]

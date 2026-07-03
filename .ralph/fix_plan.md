@@ -970,32 +970,32 @@
 
 ## P18.1 Preflight and source connection
 
-- [ ] Add read-only source-DB config (DSN) and source-storage config (local/S3) to `internal/config` + `.env.example` (off by default; source creds are secrets, never committed/logged).
-- [ ] Detect PeerTube schema/version on preflight; pin supported version range in `.ralph/specs/peertube-reference.md`; refuse unverified versions without `--force`.
-- [ ] Verify source DB reachability, storage reachability, and free disk space before any write.
+- [x] Add read-only source-DB config (DSN) and source-storage config (local/S3) to `internal/config` + `.env.example` (off by default; source creds are secrets, never committed/logged). (core-peertube-import slice. `PEERTUBE_IMPORT_ENABLED` + `PEERTUBE_SOURCE_DATABASE_URL` (secret) + `PEERTUBE_SOURCE_STORAGE_*` (local/S3; S3 keys secret) + `PEERTUBE_IMPORT_CONFLICT_POLICY` in `internal/config`, validated (`validatePeerTubeImport`), documented in `.env.example`. Denylist extended with `source_dsn`/`source_database_url`/`peertube_source_dsn`/`source_secret_key`/`source_access_key`. `TestPeerTubeImportConfig`.)
+- [x] Detect PeerTube schema/version on preflight; pin supported version range in `.ralph/specs/peertube-reference.md`; refuse unverified versions without `--force`. (`Source.DetectVersion` reads `application.migrationVersion`; `ClassifyVersion`/`IsSupported`/`VersionError` (range **700–900** ≈ PT 5.x–6.x, pinned in peertube-reference.md). `Importer.Preflight` refuses outside the range unless `Force`; the admin path NEVER self-forces (agents must not). `TestClassifyVersion`, `TestPeerTubeImportPreflightVersionGate` (refuses v500, proceeds with force).)
+- [x] Verify source DB reachability, storage reachability, and free disk space before any write. (`Preflight` pings source+dest; free-disk check (`freeDiskBytes`, unix `statfs`) against a local destination vs the summed source video sizes.)
 
 ## P18.2 Mapping ledger and dry-run
 
-- [ ] Fill in the entity mapping ledger (PeerTube entity → Vidra model → status → notes) per the spec.
-- [ ] Implement a durable import ledger mapping source UUID/id → Vidra id with per-row status (enables idempotency + resume).
-- [ ] Implement `--dry-run`: report counts, mapping plan, conflicts, and unsupported/partial entities; write nothing.
+- [x] Fill in the entity mapping ledger (PeerTube entity → Vidra model → status → notes) per the spec. (Filled table in `.ralph/specs/peertube-import.md`: user/channel/video/videoFile/thumbnail/caption/comment/playlist/tag/follow → supported/partial; HLS/moderation/prefs → deferred.)
+- [x] Implement a durable import ledger mapping source UUID/id → Vidra id with per-row status (enables idempotency + resume). (Migration **0067** `peertube_import_ledger` `(entity_kind, source_id) → vidra_id + status`; sqlc `UpsertImportLedgerEntry`/`GetImportLedgerEntry`; each entity insert + its ledger upsert share ONE transaction. `TestPeerTubeImportEndToEnd` proves idempotency: re-run imports 0, row counts unchanged.)
+- [x] Implement `--dry-run`: report counts, mapping plan, conflicts, and unsupported/partial entities; write nothing. (`Importer.Plan` → `Report` (per-kind `planned`, `conflicts`, `deferred`); writes nothing — `TestPeerTubeImportEndToEnd` asserts 0 users/ledger rows after a plan. CLI `--dry-run`; admin `mode=dry_run`.)
 
 ## P18.3 Entity import (incremental, idempotent)
 
-- [ ] Import users/accounts/actors, including identity; bcrypt password-hash strategy (keep if compatible, else disable + force reset). Never log hashes.
-- [ ] Import channels (+ ActivityPub actor handles/keypairs for federation continuity; see P10).
-- [ ] Import videos + `videoFile`/`videoStreamingPlaylist` (HLS) + thumbnails + captions, with media copy/re-probe (streaming, checksummed, resumable).
-- [ ] Import comments (threaded), playlists + elements, tags/categories/metadata.
-- [ ] Import follows/subscriptions; moderation data (blacklists/blocklists/abuse) where in scope, else mark `deferred`.
-- [ ] Apply the configured conflict policy (skip|rename|merge|fail) for username/handle/email/slug collisions.
+- [x] Import users/accounts/actors, including identity; bcrypt password-hash strategy (keep if compatible, else disable + force reset). Never log hashes. (`importUsers`: local users only (remote excluded); bcrypt hash carried verbatim — self-describing cost verifies under Vidra bcrypt (`TestPeerTubeImportEndToEnd` verifies the carried hash against the plaintext); role 0/1/2 → admin/mod/user; actor keypair → `account_actor_keys` (private sealed under KEK or raw in dev). No hash/key logged — asserted.)
+- [x] Import channels (+ ActivityPub actor handles/keypairs for federation continuity; see P10). (`importChannels`: handle = channel actor `preferredUsername`, owner via `account.userId`; keypair → `channel_actor_keys`.)
+- [x] Import videos + `videoFile`/`videoStreamingPlaylist` (HLS) + thumbnails + captions, with media copy/re-probe (streaming, checksummed, resumable). (`importVideos`: metadata (privacy/state/category/licence/language/duration) + highest-res web file → `web-videos/`, thumbnail → `thumbnails/`, captions → `captions/` via `copyMedia` (streaming + sha-256, overwrite-idempotent, size-capped, ext-allowlisted). HLS renditions **deferred** — regenerate via Vidra transcoding (documented). `TestPeerTubeImportEndToEnd` asserts copied bytes match source.)
+- [x] Import comments (threaded), playlists + elements, tags/categories/metadata. (`importComments` (local, non-deleted, `inReplyToCommentId` → `parent_id`), `importPlaylists` (REGULAR only, items via numeric→uuid resolve), tags → `video_tags`, category/licence as text (0025). Tested.)
+- [x] Import follows/subscriptions; moderation data (blacklists/blocklists/abuse) where in scope, else mark `deferred`. (`importFollows`: accepted local→local → `channel_follows`. Moderation state marked **deferred** in the mapping ledger + report `deferred`.)
+- [x] Apply the configured conflict policy (skip|rename|merge|fail) for username/handle/email/slug collisions. (`decideUser`/`importOneChannel` + `dedupeUsername/Handle/Email`; `TestPeerTubeImportConflictPolicies` proves skip keeps one alice, rename imports `alice-2`. `fail` aborts with `ErrConflictFail`.)
 
 ## P18.4 Surface, safety, tests, docs
 
-- [ ] Add the `cmd/peertube-import` CLI (source DSN, storage, conflict policy, `--dry-run`, `--resume`).
-- [ ] Optional admin API endpoint to launch/monitor an import — if added, document it in `api/openapi.yaml` (drift guard) as the contract for the `vidra-user` admin import UI.
-- [ ] Emit audit events for import start/finish/summary (no secrets); apply SSRF + path-traversal + file-type/size protections on source storage reads.
-- [ ] Add import tests: seed a known-version PeerTube schema + fixtures, assert mapping/idempotency (re-run is a no-op)/dry-run/conflict handling and that no secret is logged.
-- [ ] Write an operator migration guide (prereqs, read-only source setup, dry-run, run/resume, what is imported vs deferred, post-import verification).
+- [x] Add the `cmd/peertube-import` CLI (source DSN, storage, conflict policy, `--dry-run`, `--resume`). (`cmd/peertube-import/main.go`: `--source-dsn`, `--source-storage`/`--source-local-root`/`--source-s3-*`, `--conflict-policy`, `--dry-run`, `--resume`, `--force` (human-only), `--no-media`; dest DB/storage/KEK from the server env; prints the JSON report.)
+- [x] Optional admin API endpoint to launch/monitor an import — if added, document it in `api/openapi.yaml` (drift guard) as the contract for the `vidra-user` admin import UI. (`POST /api/v1/admin/peertube-import` (dry_run|run), `GET /api/v1/admin/peertube-import`, `GET /api/v1/admin/peertube-import/{id}` — admin-only, backed by `peertube_import_runs` (0067) + an in-process worker; single-active guard → 409; 503 when unconfigured; source is server-config-only (never the browser). Documented in openapi (drift guard green). `TestPeerTubeImportLaunch`/`…Errors`/`…ListAndGet`, `TestServiceRunLifecycle`.)
+- [x] Emit audit events for import start/finish/summary (no secrets); apply SSRF + path-traversal + file-type/size protections on source storage reads. (`admin.peertube_import.start` (handler) + `.finish` (worker, carries the safe count summary) via `s.audit`/`auditsvc`. Path-traversal via the key-validated storage backend + `path.Base`; file-type allowlists + 16 GiB size cap; source storage is operator config (no SSRF surface — no URL following). No-secret-logged asserted in `TestPeerTubeImportEndToEnd`.)
+- [x] Add import tests: seed a known-version PeerTube schema + fixtures, assert mapping/idempotency (re-run is a no-op)/dry-run/conflict handling and that no secret is logged. (`internal/peertubeimport/importer_integration_test.go` seeds a v800 PeerTube schema subset + fixture graph (users/channels/videos/files/thumbs/captions/tags/comments/playlists/follows + a remote actor that must be excluded), runs against a fresh migrated Vidra DB + temp media; asserts mapping, media bytes, idempotency, dry-run-writes-nothing, conflict policies, version gate, and NO secret logged. Plus unit tests (version/conflict/mapping/report) + the service lifecycle integration test. All green under `make ci` + integration.)
+- [x] Write an operator migration guide (prereqs, read-only source setup, dry-run, run/resume, what is imported vs deferred, post-import verification). (`docs/peertube-migration.md`.)
 
 ---
 

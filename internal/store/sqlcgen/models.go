@@ -354,6 +354,34 @@ type PasswordResetToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type PeertubeImportLedger struct {
+	ID         uuid.UUID   `json:"id"`
+	EntityKind string      `json:"entity_kind"`
+	SourceID   string      `json:"source_id"`
+	VidraID    pgtype.UUID `json:"vidra_id"`
+	Status     string      `json:"status"`
+	Note       string      `json:"note"`
+	CreatedAt  time.Time   `json:"created_at"`
+	UpdatedAt  time.Time   `json:"updated_at"`
+}
+
+type PeertubeImportRun struct {
+	ID             uuid.UUID          `json:"id"`
+	Mode           string             `json:"mode"`
+	State          string             `json:"state"`
+	ConflictPolicy string             `json:"conflict_policy"`
+	SourceVersion  *int32             `json:"source_version"`
+	Progress       []byte             `json:"progress"`
+	Error          string             `json:"error"`
+	StartedBy      pgtype.UUID        `json:"started_by"`
+	Attempts       int32              `json:"attempts"`
+	NextAttemptAt  time.Time          `json:"next_attempt_at"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+}
+
 type Playlist struct {
 	ID           uuid.UUID `json:"id"`
 	OwnerID      uuid.UUID `json:"owner_id"`

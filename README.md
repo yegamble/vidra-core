@@ -503,6 +503,24 @@ metrics and tracing at zero cost when off:
 
 Backups, restore, and production deploy notes: `docs/operations.md`.
 
+## Migrating from PeerTube
+
+A one-way import brings an existing **PeerTube** instance (its PostgreSQL DB +
+media storage) into Vidra: accounts (bcrypt passwords kept working), channels,
+videos + files/thumbnails/captions, threaded comments, playlists, tags, and
+subscriptions. It is read-only on the source, idempotent, resumable, dry-runnable,
+and audited.
+
+- CLI: `cmd/peertube-import` (`--source-dsn`, `--source-storage`, `--conflict-policy`,
+  `--dry-run`, `--resume`, `--force`).
+- Admin API (server-configured source only — the browser never sends a DSN):
+  `POST /api/v1/admin/peertube-import` (`dry_run`|`run`), `GET /api/v1/admin/peertube-import`,
+  `GET /api/v1/admin/peertube-import/{id}`. Gated by `PEERTUBE_IMPORT_ENABLED` +
+  `PEERTUBE_SOURCE_DATABASE_URL` (see `.env.example`; source creds are secrets).
+- Supported PeerTube schema versions and what is imported vs. deferred (HLS/
+  moderation/history are regenerated/reconciled afterwards): see the operator
+  guide **`docs/peertube-migration.md`**.
+
 ## Local development (without Docker for the app)
 
 ```bash
@@ -538,6 +556,7 @@ lints the spec and runs the same check on every change. Lint locally with
 - Security: `.ralph/specs/security.md`
 - Observability: `.ralph/specs/observability.md`
 - Operations (backup/restore/deploy): `docs/operations.md`
+- PeerTube migration guide: `docs/peertube-migration.md`
 - Testing: `.ralph/specs/testing.md`
 - PeerTube parity ledgers: `.ralph/specs/peertube-*.md`
 

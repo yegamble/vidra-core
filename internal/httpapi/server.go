@@ -57,49 +57,50 @@ type Pinger interface {
 
 // Server holds the Echo instance and its dependencies.
 type Server struct {
-	echo           *echo.Echo
-	cfg            *config.Config
-	db             Pinger
-	rdb            Pinger
-	startedAt      time.Time
-	logger         *slog.Logger
-	limiter        *ratelimit.Limiter
-	authLimit      *ratelimit.Limiter
-	authsvc        *auth.Service
-	authTTL        time.Duration
-	accountsvc     *account.Service
-	oauthsvc       *auth.OAuthService
-	channelsvc     *channel.Service
-	donationsvc    *donation.Service
-	videosvc       *video.Service
-	commentsvc     *comment.Service
-	ratingsvc      *rating.Service
-	notifsvc       *notification.Service
-	playlistsvc    *playlist.Service
-	moderationsvc  *moderation.Service
-	mutesvc        *mute.Service
-	blocksvc       *block.Service
-	watchwordsvc   *watchword.Service
-	adminsvc       *admin.Service
-	auditLog       *audit.Service
-	messagingsvc   *messaging.Service
-	e2eesvc        *e2ee.Service
-	livesvc        *live.Service
-	imagesvc       *profileimage.Service
-	quotasvc       *quota.Service
-	transcodesvc   *transcode.Service
-	uploadsvc      *upload.Service
-	importsvc      *videoimport.Service
-	captionjobsvc  *captionjob.Service
-	fedsvc         *federation.Service
-	atprotosvc     *atproto.Service
-	remotevideosvc *remotevideo.Service
-	instancemodsvc *instancemod.Service
-	settingssvc    *instancesettings.Service
-	mediagcsvc     *mediagc.Service
-	jobStatusSvc   jobStatusProvider
-	metrics        *observability.Metrics
-	media          storage.Backend
+	echo              *echo.Echo
+	cfg               *config.Config
+	db                Pinger
+	rdb               Pinger
+	startedAt         time.Time
+	logger            *slog.Logger
+	limiter           *ratelimit.Limiter
+	authLimit         *ratelimit.Limiter
+	authsvc           *auth.Service
+	authTTL           time.Duration
+	accountsvc        *account.Service
+	oauthsvc          *auth.OAuthService
+	channelsvc        *channel.Service
+	donationsvc       *donation.Service
+	videosvc          *video.Service
+	commentsvc        *comment.Service
+	ratingsvc         *rating.Service
+	notifsvc          *notification.Service
+	playlistsvc       *playlist.Service
+	moderationsvc     *moderation.Service
+	mutesvc           *mute.Service
+	blocksvc          *block.Service
+	watchwordsvc      *watchword.Service
+	adminsvc          *admin.Service
+	auditLog          *audit.Service
+	messagingsvc      *messaging.Service
+	e2eesvc           *e2ee.Service
+	livesvc           *live.Service
+	imagesvc          *profileimage.Service
+	quotasvc          *quota.Service
+	transcodesvc      *transcode.Service
+	uploadsvc         *upload.Service
+	importsvc         *videoimport.Service
+	captionjobsvc     *captionjob.Service
+	fedsvc            *federation.Service
+	atprotosvc        *atproto.Service
+	remotevideosvc    *remotevideo.Service
+	instancemodsvc    *instancemod.Service
+	settingssvc       *instancesettings.Service
+	mediagcsvc        *mediagc.Service
+	jobStatusSvc      jobStatusProvider
+	peertubeimportsvc peerTubeImportProvider
+	metrics           *observability.Metrics
+	media             storage.Backend
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
 	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
 	devMailCapture *auth.CaptureMailer
@@ -302,6 +303,16 @@ func WithMediaGCService(svc *mediagc.Service) Option {
 // backs the admin jobs page (P17.4). When unset, the route is not registered.
 func WithJobStatusService(svc jobStatusProvider) Option {
 	return func(s *Server) { s.jobStatusSvc = svc }
+}
+
+// WithPeerTubeImportService mounts the admin PeerTube-import endpoints (launch a
+// dry-run/run, list runs, poll one run). The routes are ALWAYS registered when
+// the service is wired (stable contract for the vidra-user admin "Import from
+// PeerTube" UI); the launch endpoint answers 503 when no source is configured on
+// the server. The source connection is server-config-only — the browser never
+// sends a DSN or credential. When unset, the routes are not registered.
+func WithPeerTubeImportService(svc peerTubeImportProvider) Option {
+	return func(s *Server) { s.peertubeimportsvc = svc }
 }
 
 // WithMetrics attaches the Prometheus RED-metrics registry. When set AND
@@ -978,6 +989,17 @@ func (s *Server) routes() {
 	if s.settingssvc != nil {
 		api.GET("/admin/instance-settings", s.handleGetInstanceSettings, s.requireAuth, s.requireRole("admin"))
 		api.PATCH("/admin/instance-settings", s.handleUpdateInstanceSettings, s.requireAuth, s.requireRole("admin"))
+	}
+
+	// PeerTube import / migration (fix_plan P18). Admin-only: launch a
+	// dry-run/run, list runs, poll one run. The source connection is taken from
+	// SERVER CONFIG only — the browser never sends a DSN or credential. Always
+	// mounted when the service is wired (stable contract); the launch answers 503
+	// when no source is configured. This is the vidra-user admin import UI contract.
+	if s.peertubeimportsvc != nil {
+		api.POST("/admin/peertube-import", s.handleLaunchPeerTubeImport, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/peertube-import", s.handleListPeerTubeImports, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/peertube-import/:id", s.handleGetPeerTubeImport, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// Direct messaging (1:1 conversations + messages). All behind requireAuth;

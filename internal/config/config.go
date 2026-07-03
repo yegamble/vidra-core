@@ -303,6 +303,51 @@ type Config struct {
 	// uploads are rejected with 413.
 	UploadMaxSize string
 
+	// PeerTube import / migration (fix_plan P18, .ralph/specs/peertube-import.md).
+	// A one-way tool that reads an existing PeerTube instance's PostgreSQL DB +
+	// media storage and maps it into Vidra. Everything here is OFF BY DEFAULT and
+	// read-only on the source. The source DSN and S3 keys are SECRETS — never
+	// committed, never logged (see internal/observability sensitive-key denylist).
+
+	// PeerTubeImportEnabled gates the admin import API surface (POST/GET
+	// /api/v1/admin/peertube-import). When false (default) those endpoints answer
+	// 503 and no import worker runs. The cmd/peertube-import CLI is independent of
+	// this flag (it takes its own source flags). Requires PeerTubeSourceDatabaseURL.
+	PeerTubeImportEnabled bool
+
+	// PeerTubeSourceDatabaseURL is the READ-ONLY DSN of the source PeerTube
+	// PostgreSQL database (a dump restored to a scratch DB, or a read-only
+	// replica). Connect with a least-privilege read-only role. SECRET: never
+	// commit or log it. Empty (default) disables the admin import path.
+	PeerTubeSourceDatabaseURL string
+
+	// PeerTubeSourceStorageBackend selects where the source instance's media
+	// lives: "local" (a mounted filesystem copy) or "s3" (an S3-compatible store).
+	// Default "local".
+	PeerTubeSourceStorageBackend string
+	// PeerTubeSourceStorageLocalRoot is the directory the source instance's media
+	// tree is mounted at (read-only), used when the source storage backend is
+	// "local". Path-traversal-guarded on every read.
+	PeerTubeSourceStorageLocalRoot string
+	// PeerTubeSourceS3* address the source instance's S3-compatible media store
+	// (read-only). Endpoint is host[:port] WITHOUT a scheme; AccessKey/SecretKey
+	// are SECRETS (never logged, same rules as the primary STORAGE_S3_* keys).
+	PeerTubeSourceS3Endpoint       string
+	PeerTubeSourceS3Bucket         string
+	PeerTubeSourceS3AccessKey      string
+	PeerTubeSourceS3SecretKey      string
+	PeerTubeSourceS3Region         string
+	PeerTubeSourceS3UseSSL         bool
+	PeerTubeSourceS3ForcePathStyle bool
+
+	// PeerTubeImportConflictPolicy is the default resolution for username/handle/
+	// email/slug collisions between the source and this instance: "skip" (default,
+	// safest — leave the existing Vidra row, map the source entity to it),
+	// "rename" (import under a de-duplicated identifier), "merge" (attach the
+	// source entity's children to the existing Vidra row), or "fail" (abort on any
+	// collision). The CLI / admin request may override it per run.
+	PeerTubeImportConflictPolicy string
+
 	// InstanceDefaultQuotaBytes is the default per-user storage quota in bytes:
 	// the total stored size of a user's video files (originals, renditions,
 	// thumbnails) across the videos owned via their channels. 0 (or unset) =
@@ -346,78 +391,90 @@ func Load() (*Config, error) {
 	env := getEnv("VIDRA_ENV", "development")
 
 	cfg := &Config{
-		Environment:                 env,
-		LogLevel:                    strings.ToLower(getEnv("LOG_LEVEL", "info")),
-		LogFormat:                   strings.ToLower(getEnv("LOG_FORMAT", "json")),
-		OTelEnabled:                 getEnvBool("OTEL_ENABLED", false),
-		OTelExporterEndpoint:        getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-		OTelExporterProtocol:        strings.ToLower(getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")),
-		OTelServiceName:             getEnv("OTEL_SERVICE_NAME", "vidra-core"),
-		MetricsEnabled:              getEnvBool("METRICS_ENABLED", false),
-		HTTPHost:                    getEnv("HTTP_HOST", "0.0.0.0"),
-		InstanceName:                getEnv("INSTANCE_NAME", "Vidra (dev)"),
-		PublicBaseURL:               strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
-		FederationEnabled:           getEnvBool("FEDERATION_ENABLED", false),
-		FederationKeyKEK:            getEnv("FEDERATION_KEY_KEK", ""),
-		ATProtoEnabled:              getEnvBool("ATPROTO_ENABLED", false),
-		ATProtoKeyKEK:               getEnv("ATPROTO_KEY_KEK", ""),
-		MFAKeyKEK:                   getEnv("MFA_KEY_KEK", ""),
-		TOTPIssuer:                  getEnv("TOTP_ISSUER", ""),
-		MalwareScanEnabled:          getEnvBool("MALWARE_SCAN_ENABLED", false),
-		ClamAVAddr:                  getEnv("CLAMAV_ADDR", ""),
-		MalwareScanMode:             getEnv("MALWARE_SCAN_MODE", "fail-closed"),
-		TranscodingEnabled:          getEnvBool("TRANSCODING_ENABLED", false),
-		TranscodingVP9Enabled:       getEnvBool("TRANSCODING_VP9_ENABLED", false),
-		TranscodingAV1Enabled:       getEnvBool("TRANSCODING_AV1_ENABLED", false),
-		WhisperEnabled:              getEnvBool("WHISPER_ENABLED", false),
-		WhisperEndpoint:             strings.TrimRight(getEnv("WHISPER_ENDPOINT", ""), "/"),
-		WhisperDefaultLanguage:      strings.TrimSpace(getEnv("WHISPER_DEFAULT_LANGUAGE", "en")),
-		LiveRTMPURL:                 getEnv("LIVE_RTMP_URL", ""),
-		LiveIngestSecret:            getEnv("LIVE_INGEST_SECRET", ""),
-		LiveHLSRoot:                 strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
-		InstanceDescription:         getEnv("INSTANCE_DESCRIPTION", ""),
-		InstanceTermsURL:            getEnv("INSTANCE_TERMS_URL", ""),
-		InstancePrivacyURL:          getEnv("INSTANCE_PRIVACY_URL", ""),
-		InstanceContactEmail:        getEnv("INSTANCE_CONTACT_EMAIL", ""),
-		RegistrationEnabled:         getEnvBool("REGISTRATION_ENABLED", true),
-		RegistrationRequireApproval: getEnvBool("REGISTRATION_REQUIRE_APPROVAL", false),
-		QuarantineNewUploads:        getEnvBool("QUARANTINE_NEW_UPLOADS", false),
-		UploadsEnabled:              getEnvBool("FEATURE_UPLOADS_ENABLED", true),
-		ImportsEnabled:              getEnvBool("FEATURE_IMPORTS_ENABLED", true),
-		LiveEnabled:                 getEnvBool("FEATURE_LIVE_ENABLED", true),
-		CommentsEnabled:             getEnvBool("FEATURE_COMMENTS_ENABLED", true),
-		MailEnabled:                 getEnvBool("MAIL_ENABLED", false),
-		SMTPHost:                    getEnv("SMTP_HOST", ""),
-		SMTPUsername:                getEnv("SMTP_USERNAME", ""),
-		SMTPPassword:                getEnv("SMTP_PASSWORD", ""),
-		SMTPFrom:                    getEnv("SMTP_FROM", ""),
-		DevMailCaptureEnabled:       getEnvBool("DEV_MAIL_CAPTURE_ENABLED", false),
-		ImportAllowPrivateURLs:      getEnvBool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
-		DatabaseURL:                 getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
-		RedisURL:                    getEnv("REDIS_URL", "redis://localhost:6379/0"),
-		CORSAllowedOrigins:          splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
-		HTTPReadTimeout:             getEnvDuration("HTTP_READ_TIMEOUT", 15*time.Second),
-		HTTPWriteTimeout:            getEnvDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
-		HTTPShutdownTimeout:         getEnvDuration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
-		HTTPRequestTimeout:          getEnvDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
-		HTTPBodyLimit:               getEnv("HTTP_BODY_LIMIT", "8M"),
-		RateLimitEnabled:            getEnvBool("RATE_LIMIT_ENABLED", true),
-		RateLimitWindow:             getEnvDuration("RATE_LIMIT_WINDOW", time.Minute),
-		JWTSecret:                   getEnv("JWT_SECRET", devJWTSecret),
-		JWTIssuer:                   getEnv("JWT_ISSUER", "vidra"),
-		JWTAudience:                 getEnv("JWT_AUDIENCE", "vidra"),
-		JWTAccessTTL:                getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
-		JWTRefreshTTL:               getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
-		StorageBackend:              getEnv("STORAGE_BACKEND", "local"),
-		StorageLocalRoot:            getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
-		StorageS3Endpoint:           getEnv("STORAGE_S3_ENDPOINT", ""),
-		StorageS3Bucket:             getEnv("STORAGE_S3_BUCKET", ""),
-		StorageS3AccessKey:          getEnv("STORAGE_S3_ACCESS_KEY", ""),
-		StorageS3SecretKey:          getEnv("STORAGE_S3_SECRET_KEY", ""),
-		StorageS3Region:             getEnv("STORAGE_S3_REGION", ""),
-		StorageS3UseSSL:             getEnvBool("STORAGE_S3_USE_SSL", true),
-		StorageS3ForcePathStyle:     getEnvBool("STORAGE_S3_FORCE_PATH_STYLE", false),
-		UploadMaxSize:               getEnv("UPLOAD_MAX_SIZE", "2G"),
+		Environment:                    env,
+		LogLevel:                       strings.ToLower(getEnv("LOG_LEVEL", "info")),
+		LogFormat:                      strings.ToLower(getEnv("LOG_FORMAT", "json")),
+		OTelEnabled:                    getEnvBool("OTEL_ENABLED", false),
+		OTelExporterEndpoint:           getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		OTelExporterProtocol:           strings.ToLower(getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")),
+		OTelServiceName:                getEnv("OTEL_SERVICE_NAME", "vidra-core"),
+		MetricsEnabled:                 getEnvBool("METRICS_ENABLED", false),
+		HTTPHost:                       getEnv("HTTP_HOST", "0.0.0.0"),
+		InstanceName:                   getEnv("INSTANCE_NAME", "Vidra (dev)"),
+		PublicBaseURL:                  strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
+		FederationEnabled:              getEnvBool("FEDERATION_ENABLED", false),
+		FederationKeyKEK:               getEnv("FEDERATION_KEY_KEK", ""),
+		ATProtoEnabled:                 getEnvBool("ATPROTO_ENABLED", false),
+		ATProtoKeyKEK:                  getEnv("ATPROTO_KEY_KEK", ""),
+		MFAKeyKEK:                      getEnv("MFA_KEY_KEK", ""),
+		TOTPIssuer:                     getEnv("TOTP_ISSUER", ""),
+		MalwareScanEnabled:             getEnvBool("MALWARE_SCAN_ENABLED", false),
+		ClamAVAddr:                     getEnv("CLAMAV_ADDR", ""),
+		MalwareScanMode:                getEnv("MALWARE_SCAN_MODE", "fail-closed"),
+		TranscodingEnabled:             getEnvBool("TRANSCODING_ENABLED", false),
+		TranscodingVP9Enabled:          getEnvBool("TRANSCODING_VP9_ENABLED", false),
+		TranscodingAV1Enabled:          getEnvBool("TRANSCODING_AV1_ENABLED", false),
+		WhisperEnabled:                 getEnvBool("WHISPER_ENABLED", false),
+		WhisperEndpoint:                strings.TrimRight(getEnv("WHISPER_ENDPOINT", ""), "/"),
+		WhisperDefaultLanguage:         strings.TrimSpace(getEnv("WHISPER_DEFAULT_LANGUAGE", "en")),
+		LiveRTMPURL:                    getEnv("LIVE_RTMP_URL", ""),
+		LiveIngestSecret:               getEnv("LIVE_INGEST_SECRET", ""),
+		LiveHLSRoot:                    strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
+		InstanceDescription:            getEnv("INSTANCE_DESCRIPTION", ""),
+		InstanceTermsURL:               getEnv("INSTANCE_TERMS_URL", ""),
+		InstancePrivacyURL:             getEnv("INSTANCE_PRIVACY_URL", ""),
+		InstanceContactEmail:           getEnv("INSTANCE_CONTACT_EMAIL", ""),
+		RegistrationEnabled:            getEnvBool("REGISTRATION_ENABLED", true),
+		RegistrationRequireApproval:    getEnvBool("REGISTRATION_REQUIRE_APPROVAL", false),
+		QuarantineNewUploads:           getEnvBool("QUARANTINE_NEW_UPLOADS", false),
+		UploadsEnabled:                 getEnvBool("FEATURE_UPLOADS_ENABLED", true),
+		ImportsEnabled:                 getEnvBool("FEATURE_IMPORTS_ENABLED", true),
+		LiveEnabled:                    getEnvBool("FEATURE_LIVE_ENABLED", true),
+		CommentsEnabled:                getEnvBool("FEATURE_COMMENTS_ENABLED", true),
+		MailEnabled:                    getEnvBool("MAIL_ENABLED", false),
+		SMTPHost:                       getEnv("SMTP_HOST", ""),
+		SMTPUsername:                   getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:                   getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:                       getEnv("SMTP_FROM", ""),
+		DevMailCaptureEnabled:          getEnvBool("DEV_MAIL_CAPTURE_ENABLED", false),
+		ImportAllowPrivateURLs:         getEnvBool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
+		DatabaseURL:                    getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
+		RedisURL:                       getEnv("REDIS_URL", "redis://localhost:6379/0"),
+		CORSAllowedOrigins:             splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
+		HTTPReadTimeout:                getEnvDuration("HTTP_READ_TIMEOUT", 15*time.Second),
+		HTTPWriteTimeout:               getEnvDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
+		HTTPShutdownTimeout:            getEnvDuration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
+		HTTPRequestTimeout:             getEnvDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+		HTTPBodyLimit:                  getEnv("HTTP_BODY_LIMIT", "8M"),
+		RateLimitEnabled:               getEnvBool("RATE_LIMIT_ENABLED", true),
+		RateLimitWindow:                getEnvDuration("RATE_LIMIT_WINDOW", time.Minute),
+		JWTSecret:                      getEnv("JWT_SECRET", devJWTSecret),
+		JWTIssuer:                      getEnv("JWT_ISSUER", "vidra"),
+		JWTAudience:                    getEnv("JWT_AUDIENCE", "vidra"),
+		JWTAccessTTL:                   getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
+		JWTRefreshTTL:                  getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
+		StorageBackend:                 getEnv("STORAGE_BACKEND", "local"),
+		StorageLocalRoot:               getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
+		StorageS3Endpoint:              getEnv("STORAGE_S3_ENDPOINT", ""),
+		StorageS3Bucket:                getEnv("STORAGE_S3_BUCKET", ""),
+		StorageS3AccessKey:             getEnv("STORAGE_S3_ACCESS_KEY", ""),
+		StorageS3SecretKey:             getEnv("STORAGE_S3_SECRET_KEY", ""),
+		StorageS3Region:                getEnv("STORAGE_S3_REGION", ""),
+		StorageS3UseSSL:                getEnvBool("STORAGE_S3_USE_SSL", true),
+		StorageS3ForcePathStyle:        getEnvBool("STORAGE_S3_FORCE_PATH_STYLE", false),
+		UploadMaxSize:                  getEnv("UPLOAD_MAX_SIZE", "2G"),
+		PeerTubeImportEnabled:          getEnvBool("PEERTUBE_IMPORT_ENABLED", false),
+		PeerTubeSourceDatabaseURL:      getEnv("PEERTUBE_SOURCE_DATABASE_URL", ""),
+		PeerTubeSourceStorageBackend:   getEnv("PEERTUBE_SOURCE_STORAGE_BACKEND", "local"),
+		PeerTubeSourceStorageLocalRoot: getEnv("PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT", ""),
+		PeerTubeSourceS3Endpoint:       getEnv("PEERTUBE_SOURCE_S3_ENDPOINT", ""),
+		PeerTubeSourceS3Bucket:         getEnv("PEERTUBE_SOURCE_S3_BUCKET", ""),
+		PeerTubeSourceS3AccessKey:      getEnv("PEERTUBE_SOURCE_S3_ACCESS_KEY", ""),
+		PeerTubeSourceS3SecretKey:      getEnv("PEERTUBE_SOURCE_S3_SECRET_KEY", ""),
+		PeerTubeSourceS3Region:         getEnv("PEERTUBE_SOURCE_S3_REGION", ""),
+		PeerTubeSourceS3UseSSL:         getEnvBool("PEERTUBE_SOURCE_S3_USE_SSL", true),
+		PeerTubeSourceS3ForcePathStyle: getEnvBool("PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE", false),
+		PeerTubeImportConflictPolicy:   strings.ToLower(getEnv("PEERTUBE_IMPORT_CONFLICT_POLICY", "skip")),
 	}
 
 	port, err := getEnvInt("HTTP_PORT", 8080)
@@ -646,7 +703,50 @@ func (c *Config) validate() error {
 	if c.ATProtoEnabled && c.Environment == "production" && c.ATProtoKEK() == "" {
 		return fmt.Errorf("config: ATPROTO_KEY_KEK (or FEDERATION_KEY_KEK) is required in production when ATPROTO_ENABLED=true")
 	}
+	if err := c.validatePeerTubeImport(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validatePeerTubeImport checks the PeerTube import (P18) configuration. The
+// conflict policy and source storage backend are always validated (they have
+// defaults); the source DSN + S3 credentials are only required when the admin
+// import API is enabled — the CLI supplies its own source flags.
+func (c *Config) validatePeerTubeImport() error {
+	switch c.PeerTubeImportConflictPolicy {
+	case "", "skip", "rename", "merge", "fail": // "" = default skip (Load defaults it)
+	default:
+		return fmt.Errorf("config: PEERTUBE_IMPORT_CONFLICT_POLICY %q must be one of skip, rename, merge, fail", c.PeerTubeImportConflictPolicy)
+	}
+	switch c.PeerTubeSourceStorageBackend {
+	case "", "local", "s3": // "" = default local (Load defaults it)
+	default:
+		return fmt.Errorf("config: PEERTUBE_SOURCE_STORAGE_BACKEND %q must be local or s3", c.PeerTubeSourceStorageBackend)
+	}
+	if strings.Contains(c.PeerTubeSourceS3Endpoint, "://") {
+		return fmt.Errorf("config: PEERTUBE_SOURCE_S3_ENDPOINT must be host[:port] without a scheme (got %q)", c.PeerTubeSourceS3Endpoint)
+	}
+	if !c.PeerTubeImportEnabled {
+		return nil
+	}
+	// The admin import path needs a source to read from.
+	if strings.TrimSpace(c.PeerTubeSourceDatabaseURL) == "" {
+		return fmt.Errorf("config: PEERTUBE_SOURCE_DATABASE_URL is required when PEERTUBE_IMPORT_ENABLED=true")
+	}
+	if c.PeerTubeSourceStorageBackend == "s3" {
+		if strings.TrimSpace(c.PeerTubeSourceS3Endpoint) == "" || strings.TrimSpace(c.PeerTubeSourceS3Bucket) == "" {
+			return fmt.Errorf("config: PEERTUBE_SOURCE_S3_ENDPOINT and PEERTUBE_SOURCE_S3_BUCKET are required when the source storage backend is s3")
+		}
+	}
+	return nil
+}
+
+// PeerTubeImportConfigured reports whether a source PeerTube database DSN is set
+// — the minimum needed to run an import. The admin API surface mounts only when
+// PeerTubeImportEnabled AND this is true.
+func (c *Config) PeerTubeImportConfigured() bool {
+	return c.PeerTubeImportEnabled && strings.TrimSpace(c.PeerTubeSourceDatabaseURL) != ""
 }
 
 // oauthProviderName constrains provider names to URL-path- and env-var-safe
