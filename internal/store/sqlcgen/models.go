@@ -386,6 +386,12 @@ type VideoViewCount struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type VideoViewDay struct {
+	VideoID uuid.UUID   `json:"video_id"`
+	Day     pgtype.Date `json:"day"`
+	Views   int64       `json:"views"`
+}
+
 type WatchHistory struct {
 	UserID          uuid.UUID `json:"user_id"`
 	VideoID         uuid.UUID `json:"video_id"`

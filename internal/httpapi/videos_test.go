@@ -53,6 +53,10 @@ type videoFakeRepo struct {
 	history  map[string]historyMark     // "userID|videoID" -> resume position + last-watched
 	captions map[string]sqlcgen.Caption // "videoID|lang" -> caption
 	tags     map[uuid.UUID][]string     // video ID -> normalized tag set
+	viewDays map[string]int64           // "videoID|YYYY-MM-DD" -> rolled-up views
+	// ratings/commentsRepo mirror the cross-table joins the stats queries do.
+	ratings      *ratingFakeRepo
+	commentsRepo *commentFakeRepo
 }
 
 func (f *videoFakeRepo) DeleteVideoTags(_ context.Context, videoID uuid.UUID) error {
@@ -685,6 +689,9 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 	cmRepo := &commentFakeRepo{users: authRepo, mutes: muteRepo, videos: repo}
 	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
 	repo.blocks = modRepo
+	ratingRepo := newRatingFakeRepo()
+	repo.ratings = ratingRepo
+	repo.commentsRepo = cmRepo
 	notifRepo.reports = modRepo
 	msgRepo := newMessagingFakeRepo(authRepo)
 	blocksvc := block.NewService(&blockFakeRepo{auth: authRepo})
@@ -710,7 +717,7 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		WithChannelService(channel.NewService(chRepo)),
 		WithVideoService(video.NewService(repo, blobs, opts...)),
 		WithCommentService(comment.NewService(cmRepo)),
-		WithRatingService(rating.NewService(newRatingFakeRepo())),
+		WithRatingService(rating.NewService(ratingRepo)),
 		WithNotificationService(notification.NewService(notifRepo)),
 		WithPlaylistService(playlist.NewService(plRepo)),
 		WithModerationService(moderation.NewService(modRepo)),

@@ -92,6 +92,11 @@ type Repository interface {
 	GetVideoMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error)
 	IncrementVideoViews(ctx context.Context, videoID uuid.UUID) (int64, error)
 	GetVideoViews(ctx context.Context, videoID uuid.UUID) (int64, error)
+	IncrementVideoViewDay(ctx context.Context, videoID uuid.UUID) error
+	ListVideoViewDays(ctx context.Context, arg sqlcgen.ListVideoViewDaysParams) ([]sqlcgen.ListVideoViewDaysRow, error)
+	ListChannelViewDays(ctx context.Context, arg sqlcgen.ListChannelViewDaysParams) ([]sqlcgen.ListChannelViewDaysRow, error)
+	GetVideoEngagementTotals(ctx context.Context, videoID uuid.UUID) (sqlcgen.GetVideoEngagementTotalsRow, error)
+	GetChannelEngagementTotals(ctx context.Context, channelID uuid.UUID) (sqlcgen.GetChannelEngagementTotalsRow, error)
 	UpsertWatchProgress(ctx context.Context, arg sqlcgen.UpsertWatchProgressParams) (sqlcgen.WatchHistory, error)
 	GetWatchProgress(ctx context.Context, arg sqlcgen.GetWatchProgressParams) (sqlcgen.WatchHistory, error)
 	ListWatchHistory(ctx context.Context, arg sqlcgen.ListWatchHistoryParams) ([]sqlcgen.ListWatchHistoryRow, error)
@@ -492,8 +497,11 @@ func (s *Service) RecordView(ctx context.Context, videoID, viewerID uuid.UUID, a
 			return nil // already counted this viewer in the window
 		}
 	}
-	_, err = s.repo.IncrementVideoViews(ctx, videoID)
-	return err
+	if _, err = s.repo.IncrementVideoViews(ctx, videoID); err != nil {
+		return err
+	}
+	// The per-day rollup rides the same deduped write (§8 creator stats).
+	return s.repo.IncrementVideoViewDay(ctx, videoID)
 }
 
 // Views returns a video's current view count (0 when none recorded).

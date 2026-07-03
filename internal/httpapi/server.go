@@ -522,6 +522,9 @@ func (s *Server) routes() {
 		api.GET("/videos/:id/thumbnail", s.handleGetVideoThumbnail, s.optionalAuth)
 		api.POST("/videos/:id/thumbnail", s.handleSetVideoThumbnail, s.requireAuth)
 		api.POST("/videos/:id/view", s.handleRecordVideoView, s.optionalAuth)
+		// Creator statistics (owner-only; non-owners get 404).
+		api.GET("/videos/:id/stats", s.handleGetVideoStats, s.requireAuth)
+		api.GET("/channels/:handle/stats", s.handleGetChannelStats, s.requireAuth)
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
 		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, middleware.BodyLimit(s.cfg.UploadMaxSize))

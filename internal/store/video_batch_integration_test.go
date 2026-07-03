@@ -232,3 +232,88 @@ func TestScheduledPublishPersists(t *testing.T) {
 		}
 	}
 }
+
+// TestVideoViewDayRollupAndStats proves the §8 stats queries against a real
+// PostgreSQL: the per-day upsert accumulates, the video/channel series filter
+// by cutoff, and the engagement-totals one-shots count ratings + comments.
+func TestVideoViewDayRollupAndStats(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	userID, channelID := seedOwnerChannel(ctx, t, st, "stats")
+	v1 := seedPublishedVideo(ctx, t, st, channelID, "one")
+	v2 := seedPublishedVideo(ctx, t, st, channelID, "two")
+
+	// Today's rollup accumulates via the upsert.
+	for i := 0; i < 3; i++ {
+		if err := q.IncrementVideoViewDay(ctx, v1); err != nil {
+			t.Fatalf("IncrementVideoViewDay: %v", err)
+		}
+	}
+	if err := q.IncrementVideoViewDay(ctx, v2); err != nil {
+		t.Fatalf("IncrementVideoViewDay v2: %v", err)
+	}
+	// An old row outside the window must not surface in the series.
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO video_view_days (video_id, day, views) VALUES ($1, (now() AT TIME ZONE 'utc')::date - 60, 9)`, v1,
+	); err != nil {
+		t.Fatalf("seed old day: %v", err)
+	}
+
+	since := pgtype.Date{Time: time.Now().UTC().AddDate(0, 0, -29), Valid: true}
+	days, err := q.ListVideoViewDays(ctx, sqlcgen.ListVideoViewDaysParams{VideoID: v1, Since: since})
+	if err != nil {
+		t.Fatalf("ListVideoViewDays: %v", err)
+	}
+	if len(days) != 1 || days[0].Views != 3 {
+		t.Fatalf("video series = %+v, want one day with 3 views", days)
+	}
+	chDays, err := q.ListChannelViewDays(ctx, sqlcgen.ListChannelViewDaysParams{ChannelID: channelID, Since: since})
+	if err != nil {
+		t.Fatalf("ListChannelViewDays: %v", err)
+	}
+	if len(chDays) != 1 || chDays[0].Views != 4 {
+		t.Fatalf("channel series = %+v, want one day with 4 aggregated views", chDays)
+	}
+
+	// Engagement totals: total views counter + a like + a comment.
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO video_view_counts (video_id, views) VALUES ($1, 3)`, v1); err != nil {
+		t.Fatalf("seed view count: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO video_ratings (video_id, user_id, rating) VALUES ($1, $2, 'like')`, v1, userID); err != nil {
+		t.Fatalf("seed rating: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO comments (video_id, user_id, body) VALUES ($1, $2, 'hi')`, v1, userID); err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+
+	vt, err := q.GetVideoEngagementTotals(ctx, v1)
+	if err != nil {
+		t.Fatalf("GetVideoEngagementTotals: %v", err)
+	}
+	if vt.Views != 3 || vt.Likes != 1 || vt.Dislikes != 0 || vt.Comments != 1 {
+		t.Fatalf("video totals = %+v", vt)
+	}
+	ct, err := q.GetChannelEngagementTotals(ctx, channelID)
+	if err != nil {
+		t.Fatalf("GetChannelEngagementTotals: %v", err)
+	}
+	if ct.Views != 3 || ct.Likes != 1 || ct.Comments != 1 || ct.Videos != 2 {
+		t.Fatalf("channel totals = %+v", ct)
+	}
+
+	// A totals-free video reports clean zeros (COALESCE paths).
+	if vt2, err := q.GetVideoEngagementTotals(ctx, v2); err != nil || vt2.Views != 0 || vt2.Likes != 0 || vt2.Comments != 0 {
+		t.Fatalf("empty video totals = (%+v, %v), want zeros", vt2, err)
+	}
+}

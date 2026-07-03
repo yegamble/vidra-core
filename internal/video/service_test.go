@@ -29,6 +29,10 @@ type fakeRepo struct {
 	history  map[uuid.UUID]historyMark  // video ID -> resume position + last-watched
 	captions map[string]sqlcgen.Caption // "videoID|lang" -> caption
 	tags     map[uuid.UUID][]string     // video ID -> normalized tag set
+	viewDays map[dayEntry]int64         // (video, day) -> rolled-up views
+	likes    map[uuid.UUID]int64        // seedable stats totals
+	dislikes map[uuid.UUID]int64
+	comments map[uuid.UUID]int64
 	owner    uuid.UUID
 }
 

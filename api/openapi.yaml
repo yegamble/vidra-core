@@ -1617,6 +1617,81 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/stats:
+    get:
+      operationId: getVideoStats
+      summary: Creator statistics for a video (owner only)
+      description: >-
+        Engagement totals (views, likes, dislikes, comments) plus a 30-day
+        daily-views series (zero-filled, oldest first, UTC days) for one video.
+        Owner only: a non-owner or unknown id is reported as 404 so the video's
+        existence is not leaked.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video's statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoStatsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/stats:
+    get:
+      operationId: getChannelStats
+      summary: Creator statistics for a channel (owner only)
+      description: >-
+        Aggregated engagement totals across all the channel's videos (views,
+        likes, dislikes, comments), the follower and video counts, and a 30-day
+        daily-views series (zero-filled, oldest first, UTC days). Owner only:
+        a non-owner or unknown handle is reported as 404.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The channel's statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelStatsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such channel, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/original:
     get:
       operationId: streamVideoOriginal
@@ -5418,6 +5493,67 @@ components:
         width:
           type: integer
           example: 1280
+    DailyViews:
+      type: object
+      description: One day of a stats series (UTC calendar day).
+      required: [day, views]
+      properties:
+        day:
+          type: string
+          format: date
+          example: "2026-07-03"
+        views:
+          type: integer
+          format: int64
+    VideoStatsResponse:
+      type: object
+      required: [views, likes, dislikes, comments, daily_views]
+      properties:
+        views:
+          type: integer
+          format: int64
+        likes:
+          type: integer
+          format: int64
+        dislikes:
+          type: integer
+          format: int64
+        comments:
+          type: integer
+          format: int64
+        daily_views:
+          type: array
+          description: Dense 30-day series, oldest first, zero-filled.
+          items:
+            $ref: "#/components/schemas/DailyViews"
+    ChannelStatsResponse:
+      type: object
+      required: [views, likes, dislikes, comments, followers, videos, daily_views]
+      properties:
+        views:
+          type: integer
+          format: int64
+        likes:
+          type: integer
+          format: int64
+        dislikes:
+          type: integer
+          format: int64
+        comments:
+          type: integer
+          format: int64
+        followers:
+          type: integer
+          format: int64
+        videos:
+          type: integer
+          format: int64
+          description: Total videos on the channel (any privacy/state).
+        daily_views:
+          type: array
+          description: Dense 30-day series aggregated across the channel's videos.
+          items:
+            $ref: "#/components/schemas/DailyViews"
     VideoDownloadFile:
       type: object
       description: >-
