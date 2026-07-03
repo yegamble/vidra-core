@@ -273,7 +273,7 @@ func TestBlockHidesContentFilters(t *testing.T) {
 	}
 	inSearch := func(as pgtype.UUID) bool {
 		rows, err := q.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
-			Query: &title, ViewerID: as, ResultLimit: 10,
+			Query: title, ViewerID: as, ResultLimit: 10,
 		})
 		if err != nil {
 			t.Fatalf("SearchPublicVideos: %v", err)

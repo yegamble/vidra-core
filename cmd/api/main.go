@@ -331,10 +331,9 @@ func run() error {
 		// loopback/private origins (dev/e2e only; never in production).
 		federation.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
 		// Best-effort remote thumbnail cache (remote-content §5) shares the media
-		// blob backend. NOTE: the inbound Create/Announce ingestion gate
-		// (WithFollowEdgeChecker) is intentionally NOT wired yet — it needs the
-		// outbound remote-channel-follow table from the next slice, so inbound
-		// remote videos are accepted-and-ignored until then.
+		// blob backend. The inbound Create/Announce ingestion gate consults the
+		// repository's accepted remote_channel_follows edges by default (§2) —
+		// no extra wiring needed.
 		federation.WithMediaStorage(blobs),
 	}
 	if cfg.FederationKeyKEK != "" {

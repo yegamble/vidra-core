@@ -64,12 +64,21 @@ func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
 	return delivered, nil
 }
 
-// attemptDelivery signs the queued payload as its signing channel and POSTs it.
+// attemptDelivery signs the queued payload as its signing actor (a local
+// channel, or a local user's ACCOUNT actor for follow activities) and POSTs it.
 func (s *Service) attemptDelivery(ctx context.Context, row sqlcgen.ClaimDueDeliveriesRow) error {
-	if !row.SigningChannelID.Valid {
-		return errors.New("federation: delivery has no signing channel")
+	var (
+		signer httpsig.Signer
+		err    error
+	)
+	switch {
+	case row.SigningChannelID.Valid:
+		signer, err = s.channelActorSigner(ctx, uuid.UUID(row.SigningChannelID.Bytes), row.SigningChannelHandle)
+	case row.SigningUserID.Valid:
+		signer, err = s.accountActorSigner(ctx, uuid.UUID(row.SigningUserID.Bytes), row.SigningUsername)
+	default:
+		return errors.New("federation: delivery has no signing actor")
 	}
-	signer, err := s.channelActorSigner(ctx, uuid.UUID(row.SigningChannelID.Bytes), row.SigningChannelHandle)
 	if err != nil {
 		return err
 	}
@@ -114,6 +123,18 @@ func (s *Service) enqueueChannelDelivery(ctx context.Context, channelID uuid.UUI
 		Payload:              payload,
 		SigningChannelID:     pgtype.UUID{Bytes: channelID, Valid: true},
 		SigningChannelHandle: channelHandle,
+	})
+}
+
+// enqueueAccountDelivery queues an activity payload to inboxURL, to be signed as
+// the given local user's ACCOUNT actor at send time (outbound remote-channel
+// Follow/Undo — remote-content §3).
+func (s *Service) enqueueAccountDelivery(ctx context.Context, userID uuid.UUID, username, inboxURL string, payload []byte) error {
+	return s.repo.EnqueueDelivery(ctx, sqlcgen.EnqueueDeliveryParams{
+		InboxUrl:        inboxURL,
+		Payload:         payload,
+		SigningUserID:   pgtype.UUID{Bytes: userID, Valid: true},
+		SigningUsername: username,
 	})
 }
 
@@ -175,6 +196,26 @@ func (s *Service) channelActorSigner(ctx context.Context, channelID uuid.UUID, c
 	}
 	return httpsig.Signer{
 		KeyID: s.baseURL + "/video-channels/" + channelHandle + "#main-key",
+		Priv:  priv,
+	}, nil
+}
+
+// accountActorSigner is channelActorSigner for a local user's ACCOUNT (Person)
+// actor — outbound follows are attributed to the user, not a channel.
+func (s *Service) accountActorSigner(ctx context.Context, userID uuid.UUID, username string) (httpsig.Signer, error) {
+	if _, err := s.ensureAccountKey(ctx, userID); err != nil {
+		return httpsig.Signer{}, err
+	}
+	row, err := s.repo.GetAccountActorKey(ctx, userID)
+	if err != nil {
+		return httpsig.Signer{}, err
+	}
+	priv, err := s.unlockPrivateKey(row.PrivateKeyPem)
+	if err != nil {
+		return httpsig.Signer{}, err
+	}
+	return httpsig.Signer{
+		KeyID: s.baseURL + "/accounts/" + username + "#main-key",
 		Priv:  priv,
 	}, nil
 }

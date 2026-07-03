@@ -62,6 +62,12 @@ type videoFakeRepo struct {
 	commentsRepo *commentFakeRepo
 	// users mirrors the discovery queries' unlisted-owner exclusion (§16).
 	users *authFakeRepo
+	// Seeded REMOTE cards, mirroring the UNION branches of the subscription /
+	// feed / search queries (remote-content §3-4). Tests append rows with
+	// Remote:true + domain/watch_url/stream_url set.
+	remoteSubs   []sqlcgen.ListSubscriptionVideosRow
+	remoteFeed   []sqlcgen.ListPublicVideosSortedRow
+	remoteSearch []sqlcgen.SearchPublicVideosRow
 }
 
 // ownerUnlisted mirrors the feed/search queries' NOT EXISTS unlisted check:
@@ -303,6 +309,8 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 			})
 		}
 	}
+	// Remote branch of the UNION (remote-content §3): seeded remote cards.
+	rows = append(rows, f.remoteSubs...)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
 	return rows, nil
 }
@@ -567,10 +575,7 @@ func (f *videoFakeRepo) SetVideoState(_ context.Context, a sqlcgen.SetVideoState
 }
 
 func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error) {
-	q := ""
-	if a.Query != nil {
-		q = strings.ToLower(*a.Query)
-	}
+	q := strings.ToLower(a.Query)
 	var all []sqlcgen.SearchPublicVideosRow
 	for _, r := range f.videos {
 		if r.Privacy == "public" && r.State == "published" &&
@@ -581,6 +586,13 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			})
+		}
+	}
+	// Remote branch of the UNION (remote-content §4): seeded remote cards,
+	// title-matched like the SQL.
+	for _, rr := range f.remoteSearch {
+		if strings.Contains(strings.ToLower(rr.Title), q) {
+			all = append(all, rr)
 		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
@@ -696,6 +708,11 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 				ChannelHandle: ch, ChannelDisplayName: cn,
 			})
 		}
+	}
+	// Remote branch of the UNION (remote-content §4): only with scope=all
+	// (IncludeRemote) and no local-taxonomy filters, like the SQL.
+	if a.IncludeRemote && a.Tag == nil && a.Category == nil && a.Language == nil {
+		rows = append(rows, f.remoteFeed...)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		switch a.Sort {

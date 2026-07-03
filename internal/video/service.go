@@ -918,6 +918,13 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID) 
 // poster image is available, and the probed duration (nil when unknown) so a
 // card can show a length badge / resume progress bar. PublishAt is populated
 // only on the owner (studio) channel list, where scheduled videos are visible.
+//
+// A FeedItem may also be a REMOTE video card (remote-content §3-4): Remote is
+// true, Domain names the origin instance, WatchURL/StreamURL point at the
+// origin (Vidra never mirrors remote media; the cached poster is served at
+// GET /remote-videos/{id}/thumbnail), ChannelHandle carries the remote
+// channel's name@domain identity, and Video.ChannelID/Privacy/State are zero
+// values (a remote video has no local channel or lifecycle).
 type FeedItem struct {
 	Video              sqlcgen.Video
 	Views              int64
@@ -926,6 +933,11 @@ type FeedItem struct {
 	ChannelDisplayName string
 	DurationSeconds    *int32
 	PublishAt          *time.Time
+
+	Remote    bool
+	Domain    string
+	WatchURL  string
+	StreamURL *string
 }
 
 // newFeedItem packages a video's columns and card data into a FeedItem. It lets
@@ -945,6 +957,17 @@ func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state str
 	}
 }
 
+// remoteCard stamps the remote-card fields (remote-content §3-4) onto a
+// FeedItem built from one of the UNION feed queries. Local rows carry empty
+// remote fields, so this is a no-op for them.
+func remoteCard(it FeedItem, remote bool, domain, watchURL string, streamURL *string) FeedItem {
+	it.Remote = remote
+	it.Domain = domain
+	it.WatchURL = watchURL
+	it.StreamURL = streamURL
+	return it
+}
+
 // feedSorts are the accepted feed ordering modes.
 var feedSorts = map[string]bool{"recent": true, "popular": true, "trending": true}
 
@@ -954,6 +977,19 @@ func NormalizeFeedSort(sort string) string {
 		return sort
 	}
 	return "recent"
+}
+
+// FeedScopeAll is the feed ?scope value that adds federated remote videos to
+// the public feed (remote-content §4); the default scope is local-only.
+const FeedScopeAll = "all"
+
+// NormalizeFeedScope returns "all" when asked for it, else "local" (the
+// default; unknown values fall back like NormalizeFeedSort).
+func NormalizeFeedScope(scope string) string {
+	if scope == FeedScopeAll {
+		return FeedScopeAll
+	}
+	return "local"
 }
 
 // FeedFilter narrows the public feed. Zero values mean "no filter". Tag is
@@ -967,31 +1003,37 @@ type FeedFilter struct {
 
 // ListPublic returns the cross-channel public feed in the requested order
 // (recent|popular|trending; unknown → recent), optionally narrowed by filter,
-// each item carrying its view count and poster availability. The caller clamps
+// each item carrying its view count and poster availability. scope=all
+// (remote-content §4) adds federated remote videos (excluded whenever a
+// tag/category/language filter is active — remote videos carry no local
+// taxonomy); the default local scope never includes them. The caller clamps
 // limit/offset.
-func (s *Service) ListPublic(ctx context.Context, sort string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
+func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
 	rows, err := s.repo.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
-		Sort:         NormalizeFeedSort(sort),
-		ViewerID:     pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
-		Tag:          nilIfEmpty(strings.ToLower(filter.Tag)),
-		Category:     nilIfEmpty(filter.Category),
-		Language:     nilIfEmpty(filter.Language),
-		ResultLimit:  limit,
-		ResultOffset: offset,
+		Sort:          NormalizeFeedSort(sort),
+		IncludeRemote: NormalizeFeedScope(scope) == FeedScopeAll,
+		ViewerID:      pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
+		Tag:           nilIfEmpty(strings.ToLower(filter.Tag)),
+		Category:      nilIfEmpty(filter.Category),
+		Language:      nilIfEmpty(filter.Language),
+		ResultLimit:   limit,
+		ResultOffset:  offset,
 	})
 	if err != nil {
 		return nil, err
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds)
+		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, nil
 }
 
-// ListSubscriptions returns public, published videos from the channels the user
-// follows, newest first, each carrying its view count and poster availability.
-// The caller clamps limit/offset.
+// ListSubscriptions returns the user's subscriptions feed (remote-content §3):
+// public, published videos from the LOCAL channels they follow UNIONed with the
+// ingested remote videos of their ACCEPTED remote-channel follows, newest
+// first, each carrying discovery-card data. The caller clamps limit/offset.
 func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, error) {
 	rows, err := s.repo.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{
 		FollowerID:   userID,
@@ -1003,7 +1045,8 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds)
+		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, nil
 }
@@ -1106,12 +1149,12 @@ func (s *Service) ClearHistory(ctx context.Context, userID uuid.UUID) error {
 
 // SearchPublic returns public, published videos whose title matches query
 // (case-insensitive substring, ranked by trigram similarity then recency),
-// paginated, with discovery-card data. The caller validates/clamps query,
-// limit, and offset.
+// paginated, with discovery-card data. Ingested federated remote videos are
+// UNIONed in by title match, flagged remote (remote-content §4). The caller
+// validates/clamps query, limit, and offset.
 func (s *Service) SearchPublic(ctx context.Context, query string, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
-	q := query
 	rows, err := s.repo.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
-		Query:        &q,
+		Query:        query,
 		ViewerID:     pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
 		ResultLimit:  limit,
 		ResultOffset: offset,
@@ -1121,7 +1164,8 @@ func (s *Service) SearchPublic(ctx context.Context, query string, viewerID uuid.
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds)
+		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, nil
 }

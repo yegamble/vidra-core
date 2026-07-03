@@ -14,7 +14,8 @@ import (
 )
 
 const claimDueDeliveries = `-- name: ClaimDueDeliveries :many
-SELECT id, inbox_url, payload, signing_channel_id, signing_channel_handle, attempts
+SELECT id, inbox_url, payload, signing_channel_id, signing_channel_handle,
+       signing_user_id, signing_username, attempts
 FROM federation_deliveries
 WHERE state = 'pending' AND next_attempt_at <= now()
 ORDER BY next_attempt_at
@@ -27,6 +28,8 @@ type ClaimDueDeliveriesRow struct {
 	Payload              []byte      `json:"payload"`
 	SigningChannelID     pgtype.UUID `json:"signing_channel_id"`
 	SigningChannelHandle string      `json:"signing_channel_handle"`
+	SigningUserID        pgtype.UUID `json:"signing_user_id"`
+	SigningUsername      string      `json:"signing_username"`
 	Attempts             int32       `json:"attempts"`
 }
 
@@ -47,6 +50,8 @@ func (q *Queries) ClaimDueDeliveries(ctx context.Context, limit int32) ([]ClaimD
 			&i.Payload,
 			&i.SigningChannelID,
 			&i.SigningChannelHandle,
+			&i.SigningUserID,
+			&i.SigningUsername,
 			&i.Attempts,
 		); err != nil {
 			return nil, err
@@ -61,8 +66,11 @@ func (q *Queries) ClaimDueDeliveries(ctx context.Context, limit int32) ([]ClaimD
 
 const enqueueDelivery = `-- name: EnqueueDelivery :exec
 
-INSERT INTO federation_deliveries (inbox_url, payload, signing_channel_id, signing_channel_handle)
-VALUES ($1, $2, $3, $4)
+INSERT INTO federation_deliveries (
+    inbox_url, payload, signing_channel_id, signing_channel_handle,
+    signing_user_id, signing_username
+)
+VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type EnqueueDeliveryParams struct {
@@ -70,15 +78,22 @@ type EnqueueDeliveryParams struct {
 	Payload              []byte      `json:"payload"`
 	SigningChannelID     pgtype.UUID `json:"signing_channel_id"`
 	SigningChannelHandle string      `json:"signing_channel_handle"`
+	SigningUserID        pgtype.UUID `json:"signing_user_id"`
+	SigningUsername      string      `json:"signing_username"`
 }
 
 // Outbound federation delivery queue (migration 0038, .ralph/specs/federation.md §8).
+// Exactly one signer is set per row: the channel columns (a channel actor
+// signs, e.g. video fan-out) or the user columns (the user's ACCOUNT actor
+// signs, e.g. an outbound remote-channel Follow/Undo — migration 0052).
 func (q *Queries) EnqueueDelivery(ctx context.Context, arg EnqueueDeliveryParams) error {
 	_, err := q.db.Exec(ctx, enqueueDelivery,
 		arg.InboxUrl,
 		arg.Payload,
 		arg.SigningChannelID,
 		arg.SigningChannelHandle,
+		arg.SigningUserID,
+		arg.SigningUsername,
 	)
 	return err
 }

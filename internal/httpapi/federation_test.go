@@ -166,6 +166,33 @@ func (fakeFedRepo) SetRemoteVideoThumbnail(context.Context, sqlcgen.SetRemoteVid
 }
 func (fakeFedRepo) IsInstanceBlocked(context.Context, string) (bool, error) { return false, nil }
 
+// Remote-channel follow stubs: the federation handler suite doesn't exercise
+// follows (see remote_follows_test.go, whose fake overrides these).
+func (fakeFedRepo) GetUserActorByID(context.Context, uuid.UUID) (sqlcgen.GetUserActorByIDRow, error) {
+	return sqlcgen.GetUserActorByIDRow{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) UpsertRemoteChannelFollow(context.Context, sqlcgen.UpsertRemoteChannelFollowParams) (sqlcgen.RemoteChannelFollow, error) {
+	return sqlcgen.RemoteChannelFollow{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) GetRemoteChannelFollowByID(context.Context, sqlcgen.GetRemoteChannelFollowByIDParams) (sqlcgen.GetRemoteChannelFollowByIDRow, error) {
+	return sqlcgen.GetRemoteChannelFollowByIDRow{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) ListRemoteChannelFollows(context.Context, sqlcgen.ListRemoteChannelFollowsParams) ([]sqlcgen.ListRemoteChannelFollowsRow, error) {
+	return nil, nil
+}
+func (fakeFedRepo) DeleteRemoteChannelFollowByID(context.Context, sqlcgen.DeleteRemoteChannelFollowByIDParams) (int64, error) {
+	return 0, nil
+}
+func (fakeFedRepo) AcceptRemoteChannelFollowByActivity(context.Context, sqlcgen.AcceptRemoteChannelFollowByActivityParams) (int64, error) {
+	return 0, nil
+}
+func (fakeFedRepo) DeleteRemoteChannelFollowByActivity(context.Context, sqlcgen.DeleteRemoteChannelFollowByActivityParams) (int64, error) {
+	return 0, nil
+}
+func (fakeFedRepo) HasAcceptedRemoteChannelFollow(context.Context, string) (bool, error) {
+	return false, nil
+}
+
 func fedTestConfig() *config.Config {
 	c := testConfig()
 	c.FederationEnabled = true

@@ -15,6 +15,7 @@ import (
 	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
+	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/messaging"
@@ -57,6 +58,10 @@ func fullRouteOptions() []Option {
 		WithTranscodeService(transcode.NewService(nil, nil)),
 		WithInstanceModerationService(instancemod.NewService(nil)),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
+		// Mounts the REST remote-follow routes. The AP root routes stay excluded
+		// from the drift guard: they additionally require cfg.FederationEnabled,
+		// which testConfig leaves false.
+		WithFederationService(federation.NewService(nil)),
 	}
 }
 

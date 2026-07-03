@@ -38,6 +38,8 @@ type fakeRepo struct {
 	outboxVideos    map[uuid.UUID][]sqlcgen.ListChannelOutboxVideosRow
 	remoteVideos    map[string]*fakeRemoteVideo // keyed by object_url
 	blockedDomains  map[string]bool
+	usersByID       map[uuid.UUID]sqlcgen.GetUserActorByIDRow
+	rcFollows       map[uuid.UUID]*sqlcgen.RemoteChannelFollow // keyed by row id
 }
 
 // fakeRemoteVideo is an in-memory remote_videos row.
@@ -192,6 +194,8 @@ func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDelivery
 			Payload:              arg.Payload,
 			SigningChannelID:     arg.SigningChannelID,
 			SigningChannelHandle: arg.SigningChannelHandle,
+			SigningUserID:        arg.SigningUserID,
+			SigningUsername:      arg.SigningUsername,
 		},
 		state: "pending",
 	}
@@ -256,6 +260,100 @@ func (f fakeRepo) SetRemoteVideoThumbnail(_ context.Context, arg sqlcgen.SetRemo
 
 func (f fakeRepo) IsInstanceBlocked(_ context.Context, domain string) (bool, error) {
 	return f.blockedDomains[domain], nil
+}
+
+func (f fakeRepo) GetUserActorByID(_ context.Context, id uuid.UUID) (sqlcgen.GetUserActorByIDRow, error) {
+	if u, ok := f.usersByID[id]; ok {
+		return u, nil
+	}
+	return sqlcgen.GetUserActorByIDRow{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) UpsertRemoteChannelFollow(_ context.Context, arg sqlcgen.UpsertRemoteChannelFollowParams) (sqlcgen.RemoteChannelFollow, error) {
+	for _, row := range f.rcFollows {
+		if row.UserID == arg.UserID && row.RemoteActorUrl == arg.RemoteActorUrl {
+			return *row, nil // conflict: keep the existing row untouched
+		}
+	}
+	row := &sqlcgen.RemoteChannelFollow{
+		ID:                uuid.New(),
+		UserID:            arg.UserID,
+		RemoteActorUrl:    arg.RemoteActorUrl,
+		State:             "pending",
+		FollowActivityUrl: arg.FollowActivityUrl,
+		CreatedAt:         time.Now(),
+	}
+	f.rcFollows[row.ID] = row
+	return *row, nil
+}
+
+func (f fakeRepo) GetRemoteChannelFollowByID(_ context.Context, arg sqlcgen.GetRemoteChannelFollowByIDParams) (sqlcgen.GetRemoteChannelFollowByIDRow, error) {
+	row, ok := f.rcFollows[arg.ID]
+	if !ok || row.UserID != arg.UserID {
+		return sqlcgen.GetRemoteChannelFollowByIDRow{}, pgx.ErrNoRows
+	}
+	ra := f.remoteActors[row.RemoteActorUrl]
+	inbox := ra.InboxUrl
+	if ra.SharedInboxUrl != nil && *ra.SharedInboxUrl != "" {
+		inbox = *ra.SharedInboxUrl
+	}
+	return sqlcgen.GetRemoteChannelFollowByIDRow{
+		ID: row.ID, UserID: row.UserID, RemoteActorUrl: row.RemoteActorUrl,
+		State: row.State, FollowActivityUrl: row.FollowActivityUrl, CreatedAt: row.CreatedAt,
+		PreferredUsername: ra.PreferredUsername, Domain: ra.Domain, InboxUrl: inbox,
+	}, nil
+}
+
+func (f fakeRepo) ListRemoteChannelFollows(_ context.Context, arg sqlcgen.ListRemoteChannelFollowsParams) ([]sqlcgen.ListRemoteChannelFollowsRow, error) {
+	var out []sqlcgen.ListRemoteChannelFollowsRow
+	for _, row := range f.rcFollows {
+		if row.UserID != arg.UserID {
+			continue
+		}
+		ra := f.remoteActors[row.RemoteActorUrl]
+		out = append(out, sqlcgen.ListRemoteChannelFollowsRow{
+			ID: row.ID, RemoteActorUrl: row.RemoteActorUrl, State: row.State,
+			CreatedAt: row.CreatedAt, PreferredUsername: ra.PreferredUsername, Domain: ra.Domain,
+		})
+	}
+	return out, nil
+}
+
+func (f fakeRepo) DeleteRemoteChannelFollowByID(_ context.Context, arg sqlcgen.DeleteRemoteChannelFollowByIDParams) (int64, error) {
+	if row, ok := f.rcFollows[arg.ID]; ok && row.UserID == arg.UserID {
+		delete(f.rcFollows, arg.ID)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f fakeRepo) AcceptRemoteChannelFollowByActivity(_ context.Context, arg sqlcgen.AcceptRemoteChannelFollowByActivityParams) (int64, error) {
+	for _, row := range f.rcFollows {
+		if row.FollowActivityUrl == arg.FollowActivityUrl && row.RemoteActorUrl == arg.RemoteActorUrl {
+			row.State = "accepted"
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func (f fakeRepo) DeleteRemoteChannelFollowByActivity(_ context.Context, arg sqlcgen.DeleteRemoteChannelFollowByActivityParams) (int64, error) {
+	for id, row := range f.rcFollows {
+		if row.FollowActivityUrl == arg.FollowActivityUrl && row.RemoteActorUrl == arg.RemoteActorUrl {
+			delete(f.rcFollows, id)
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func (f fakeRepo) HasAcceptedRemoteChannelFollow(_ context.Context, remoteActorURL string) (bool, error) {
+	for _, row := range f.rcFollows {
+		if row.RemoteActorUrl == remoteActorURL && row.State == "accepted" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func TestNodeInfoUsage(t *testing.T) {

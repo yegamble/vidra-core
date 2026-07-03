@@ -59,14 +59,24 @@ type Repository interface {
 	// Instance-level moderation (remote-content §8): the inbox drops activities
 	// from blocked domains and the drain cancels deliveries to them.
 	IsInstanceBlocked(ctx context.Context, domain string) (bool, error)
+	// Outbound remote-channel follows (remote-content §3): a local user follows
+	// a remote channel; the accepted edges also gate remote-video ingestion.
+	GetUserActorByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetUserActorByIDRow, error)
+	UpsertRemoteChannelFollow(ctx context.Context, arg sqlcgen.UpsertRemoteChannelFollowParams) (sqlcgen.RemoteChannelFollow, error)
+	GetRemoteChannelFollowByID(ctx context.Context, arg sqlcgen.GetRemoteChannelFollowByIDParams) (sqlcgen.GetRemoteChannelFollowByIDRow, error)
+	ListRemoteChannelFollows(ctx context.Context, arg sqlcgen.ListRemoteChannelFollowsParams) ([]sqlcgen.ListRemoteChannelFollowsRow, error)
+	DeleteRemoteChannelFollowByID(ctx context.Context, arg sqlcgen.DeleteRemoteChannelFollowByIDParams) (int64, error)
+	AcceptRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.AcceptRemoteChannelFollowByActivityParams) (int64, error)
+	DeleteRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.DeleteRemoteChannelFollowByActivityParams) (int64, error)
+	HasAcceptedRemoteChannelFollow(ctx context.Context, remoteActorURL string) (bool, error)
 }
 
 // FollowEdgeChecker reports whether any LOCAL user has an accepted outbound
 // follow edge to the given remote actor — the anti-spam ingestion gate of
 // .ralph/specs/federation-remote-content.md §2 (we only ingest content we asked
-// for by following). The outbound-follow slice (remote_channel_follows)
-// fulfills it; until then it is unset and inbound Create/Announce are
-// accepted-and-ignored. Tests substitute a fake.
+// for by following). By default the gate consults the repository's
+// remote_channel_follows edges directly; this interface exists so tests can
+// substitute a fake via WithFollowEdgeChecker.
 type FollowEdgeChecker interface {
 	HasAcceptedFollow(ctx context.Context, remoteActorURL string) (bool, error)
 }
@@ -88,7 +98,8 @@ type Service struct {
 	cipher  *secretbox.Cipher // nil in dev → private keys stored raw
 
 	// edges gates remote-video ingestion on an accepted local follow edge
-	// (see FollowEdgeChecker). Nil = no edges = ingest nothing.
+	// (see FollowEdgeChecker). Nil = consult the repository's
+	// remote_channel_follows edges directly (the production wiring).
 	edges FollowEdgeChecker
 	// media stores best-effort cached remote thumbnails
 	// (remote-thumbnails/<id>.jpg). Nil = thumbnails are not cached.
@@ -119,9 +130,10 @@ func WithAllowPrivateFetch(v bool) Option { return func(s *Service) { s.allowPri
 // WithFetchClient overrides the HTTP client used to fetch remote actors (tests).
 func WithFetchClient(c *http.Client) Option { return func(s *Service) { s.fetchClient = c } }
 
-// WithFollowEdgeChecker wires the accepted-local-follow ingestion gate for
-// inbound Create/Announce (remote-content §2). When unset, no edge exists and
-// remote videos are accepted-and-ignored.
+// WithFollowEdgeChecker overrides the accepted-local-follow ingestion gate for
+// inbound Create/Announce (remote-content §2). When unset, the gate consults
+// the repository's remote_channel_follows edges (the production default);
+// tests substitute a fake here.
 func WithFollowEdgeChecker(e FollowEdgeChecker) Option { return func(s *Service) { s.edges = e } }
 
 // WithMediaStorage wires the blob backend used to cache remote thumbnails

@@ -165,6 +165,50 @@ func TestDrainDeliveriesSignsDeliversAndMarks(t *testing.T) {
 	}
 }
 
+func TestDrainDeliveriesSignsAsAccountActor(t *testing.T) {
+	userID := uuid.New()
+	repo := fakeRepo{
+		acctKeys:   map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
+		deliveries: map[uuid.UUID]*fakeDelivery{},
+	}
+	var (
+		verifiedKey string
+		verifyErr   error
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		pub, err := parseRSAPublicKey(repo.acctKeys[userID].PublicKeyPem)
+		if err != nil {
+			t.Errorf("parse minted account key: %v", err)
+		}
+		verifiedKey, verifyErr = httpsigVerifier(pub)(r, body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := NewService(repo, WithBaseURL("https://videos.example"), WithAllowPrivateFetch(true))
+	// Mint the account key first (as FollowRemoteChannel does before enqueue).
+	if _, err := svc.ensureAccountKey(context.Background(), userID); err != nil {
+		t.Fatalf("ensureAccountKey: %v", err)
+	}
+	if err := svc.enqueueAccountDelivery(context.Background(), userID, "ada", srv.URL, []byte(`{"type":"Follow"}`)); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	n, err := svc.DrainDeliveries(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("DrainDeliveries: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("delivered = %d, want 1", n)
+	}
+	if verifyErr != nil {
+		t.Fatalf("inbox could not verify the account-actor signature: %v", verifyErr)
+	}
+	if want := "https://videos.example/accounts/ada#main-key"; verifiedKey != want {
+		t.Errorf("signed by %q, want %q", verifiedKey, want)
+	}
+}
+
 func TestDrainDeliveriesReschedulesOnFailure(t *testing.T) {
 	channelID := uuid.New()
 	repo := fakeRepo{

@@ -70,6 +70,10 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 		return s.handleCreateVideo(ctx, act, signerActorURL)
 	case "Announce":
 		return s.handleAnnounce(ctx, act, signerActorURL)
+	case "Accept":
+		return s.handleAccept(ctx, act, signerActorURL)
+	case "Reject":
+		return s.handleReject(ctx, act, signerActorURL)
 	default:
 		// Update / Delete of remote objects land in a later slice; accept & ignore.
 		return nil

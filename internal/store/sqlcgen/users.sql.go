@@ -134,6 +134,35 @@ func (q *Queries) DeactivateUser(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const getUserActorByID = `-- name: GetUserActorByID :one
+SELECT id, username, display_name, bio, created_at
+FROM users
+WHERE id = $1 AND is_active = true
+`
+
+type GetUserActorByIDRow struct {
+	ID          uuid.UUID `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	Bio         string    `json:"bio"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// GetUserActorByUsername keyed by id — resolves the authenticated caller's
+// actor identity (username) for outbound account-actor activities.
+func (q *Queries) GetUserActorByID(ctx context.Context, id uuid.UUID) (GetUserActorByIDRow, error) {
+	row := q.db.QueryRow(ctx, getUserActorByID, id)
+	var i GetUserActorByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.DisplayName,
+		&i.Bio,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getUserActorByUsername = `-- name: GetUserActorByUsername :one
 SELECT id, username, display_name, bio, created_at
 FROM users

@@ -228,10 +228,12 @@ func WithTranscodeService(svc *transcode.Service) Option {
 	return func(s *Server) { s.transcodesvc = svc }
 }
 
-// WithFederationService wires the ActivityPub federation service. The federation
-// routes (currently NodeInfo discovery) are mounted only when this is set AND
-// cfg.FederationEnabled is true — so they are absent by default and never appear
-// in the REST OpenAPI contract. See .ralph/specs/federation.md.
+// WithFederationService wires the ActivityPub federation service. The AP root
+// routes (NodeInfo/WebFinger/actors/inboxes/collections) are mounted only when
+// this is set AND cfg.FederationEnabled is true — so they are absent by default
+// and never appear in the REST OpenAPI contract. The REST remote-follow routes
+// (/api/v1/me/remote-follows, remote-content §3) mount whenever the service is
+// wired and ARE part of the OpenAPI contract. See .ralph/specs/federation.md.
 func WithFederationService(svc *federation.Service) Option {
 	return func(s *Server) { s.fedsvc = svc }
 }
@@ -652,6 +654,17 @@ func (s *Server) routes() {
 	if s.remotevideosvc != nil {
 		api.GET("/remote-videos/:id", s.handleGetRemoteVideo)
 		api.GET("/remote-videos/:id/thumbnail", s.handleGetRemoteVideoThumbnail)
+	}
+
+	// Outbound remote-channel follows (remote-content §3). REST contract
+	// surface, mounted whenever the federation service is wired (like the
+	// remote-video reads — unlike the AP root routes, which additionally need
+	// FEDERATION_ENABLED); the POST itself refuses with 503 while federation
+	// is disabled so no outbound fetches happen on a non-federating instance.
+	if s.fedsvc != nil {
+		api.POST("/me/remote-follows", s.handleCreateRemoteFollow, s.requireAuth)
+		api.GET("/me/remote-follows", s.handleListRemoteFollows, s.requireAuth)
+		api.DELETE("/me/remote-follows/:id", s.handleDeleteRemoteFollow, s.requireAuth)
 	}
 
 	// Account blocks: a signed-in user blocks/unblocks another account (cutting

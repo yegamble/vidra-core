@@ -122,6 +122,8 @@ type FederationDelivery struct {
 	LastError            string      `json:"last_error"`
 	CreatedAt            time.Time   `json:"created_at"`
 	UpdatedAt            time.Time   `json:"updated_at"`
+	SigningUserID        pgtype.UUID `json:"signing_user_id"`
+	SigningUsername      string      `json:"signing_username"`
 }
 
 type FederationInboxActivity struct {
@@ -235,6 +237,15 @@ type RemoteActor struct {
 	FollowersUrl      string    `json:"followers_url"`
 	FetchedAt         time.Time `json:"fetched_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type RemoteChannelFollow struct {
+	ID                uuid.UUID `json:"id"`
+	UserID            uuid.UUID `json:"user_id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	State             string    `json:"state"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type RemoteFollow struct {

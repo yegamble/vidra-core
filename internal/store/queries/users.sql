@@ -10,6 +10,13 @@ SELECT id, username, display_name, bio, created_at
 FROM users
 WHERE lower(username) = lower($1) AND is_active = true;
 
+-- name: GetUserActorByID :one
+-- GetUserActorByUsername keyed by id — resolves the authenticated caller's
+-- actor identity (username) for outbound account-actor activities.
+SELECT id, username, display_name, bio, created_at
+FROM users
+WHERE id = $1 AND is_active = true;
+
 -- name: GetUserByEmail :one
 SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine
 FROM users

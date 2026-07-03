@@ -125,12 +125,14 @@ func (s *Service) handleAnnounce(ctx context.Context, act inboxActivity, signerA
 	return s.storeRemoteVideo(ctx, owner, obj)
 }
 
-// hasAcceptedFollowEdge consults the ingestion gate; no checker wired = no edge.
+// hasAcceptedFollowEdge consults the ingestion gate (remote-content §2): by
+// default the repository's accepted remote_channel_follows edges; a wired
+// FollowEdgeChecker (tests) overrides it.
 func (s *Service) hasAcceptedFollowEdge(ctx context.Context, remoteActorURL string) (bool, error) {
-	if s.edges == nil {
-		return false, nil
+	if s.edges != nil {
+		return s.edges.HasAcceptedFollow(ctx, remoteActorURL)
 	}
-	return s.edges.HasAcceptedFollow(ctx, remoteActorURL)
+	return s.repo.HasAcceptedRemoteChannelFollow(ctx, remoteActorURL)
 }
 
 // storeRemoteVideo bounds the object's fields, upserts it by object_url

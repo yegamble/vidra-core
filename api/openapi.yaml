@@ -1235,9 +1235,14 @@ paths:
       summary: List videos from the channels the user follows
       description: >-
         The authenticated user's "subscriptions" feed: public, published videos
-        from the channels they follow, newest first, with discovery-card data.
-        Videos from accounts the user has muted are hidden. Paginated via limit
-        (1–100, default 20) and offset.
+        from the LOCAL channels they follow UNIONed with the ingested remote
+        videos of their ACCEPTED remote-channel follows (see
+        /me/remote-follows), newest first, with discovery-card data. Remote
+        entries are remote:true cards carrying the origin domain and
+        watch/stream URLs. Videos from accounts the user has muted are hidden;
+        remote videos from instances the user has muted (or that the admin has
+        blocked) are hidden too. Paginated via limit (1–100, default 20) and
+        offset.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -1363,11 +1368,16 @@ paths:
         and whether a poster image exists. Auth is optional: an authenticated
         viewer's muted accounts' videos are hidden from the feed (per-viewer);
         an anonymous viewer sees all. Videos of accounts that opted out of
-        discovery (User.unlisted) never appear. Optional filters narrow the
-        feed: tag (free-form tag, matched case-insensitively against the stored
-        lowercased set), category and language (taxonomy ids from GET
-        /videos/config — unknown values are 422). Ordered by sort and paginated
-        with limit (1–100, default 20) and offset (>= 0).
+        discovery (User.unlisted) never appear. scope=all additionally mixes in
+        federated remote videos (remote:true cards with origin domain and
+        watch/stream URLs); remote cards respect the admin instance blocklist
+        and an authenticated viewer's instance mutes, and drop out whenever a
+        tag/category/language filter is active (remote videos carry no local
+        taxonomy). Optional filters narrow the feed: tag (free-form tag,
+        matched case-insensitively against the stored lowercased set),
+        category and language (taxonomy ids from GET /videos/config — unknown
+        values are 422). Ordered by sort and paginated with limit (1–100,
+        default 20) and offset (>= 0).
       tags: [videos]
       security:
         - bearerAuth: []
@@ -1383,6 +1393,17 @@ paths:
             type: string
             enum: [recent, popular, trending]
             default: recent
+        - name: scope
+          in: query
+          required: false
+          description: >-
+            Feed scope: local (this instance's videos only) or all (adds
+            federated remote videos for discovery). Unknown values fall back
+            to local.
+          schema:
+            type: string
+            enum: [local, all]
+            default: local
         - name: tag
           in: query
           required: false
@@ -1464,11 +1485,15 @@ paths:
         similarity then recency. A video also matches when one of its free-form
         tags contains the query (case-insensitive); tag-only matches rank after
         title matches. Videos of accounts that opted out of discovery
-        (User.unlisted) never appear. Each result carries its view count and whether a
-        poster image exists. Auth is optional: an authenticated viewer's muted
-        accounts' videos are hidden from results (per-viewer); an anonymous viewer
-        sees all. Requires a non-empty q (<= 100 chars); paginated with limit
-        (1–100, default 20) and offset (>= 0).
+        (User.unlisted) never appear. Ingested federated remote videos are
+        UNIONed in by title match as remote:true cards (origin domain +
+        watch/stream URLs); they respect the admin instance blocklist and an
+        authenticated viewer's instance mutes. Each result carries its view
+        count and whether a poster image exists. Auth is optional: an
+        authenticated viewer's muted accounts' videos are hidden from results
+        (per-viewer); an anonymous viewer sees all. Requires a non-empty q
+        (<= 100 chars); paginated with limit (1–100, default 20) and offset
+        (>= 0).
       tags: [videos]
       security:
         - bearerAuth: []
@@ -4590,6 +4615,135 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/remote-follows:
+    post:
+      operationId: createRemoteFollow
+      summary: Follow a remote channel
+      description: >-
+        Follows a federated remote channel as the caller. The target is named
+        either by handle ("name@domain", leading @ tolerated) or by full actor
+        URL — exactly one of the two. The backend resolves the target
+        (WebFinger on the remote domain, then the actor document — both
+        SSRF-guarded), caches the actor, records the follow as "pending", and
+        queues a signed Follow activity AS THE CALLER'S ACCOUNT ACTOR. The
+        follow flips to "accepted" when the remote's Accept arrives; a remote
+        Reject removes it. Idempotent: re-following returns the existing
+        follow without sending a second Follow. Requires authentication. An
+        unresolvable/invalid/local target is 422; when federation is disabled
+        on this instance the endpoint is 503 (no outbound fetches are made).
+      tags: [federation]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRemoteFollowRequest"
+      responses:
+        "201":
+          description: The follow row (freshly created, or the existing one).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteFollow"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Invalid target (neither handle nor actor_url, or both), a target
+            on this instance (follow local channels via
+            POST /channels/{handle}/follow), or a handle/actor URL that could
+            not be resolved to a remote channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Federation is disabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: listRemoteFollows
+      summary: List the caller's remote-channel follows
+      description: >-
+        Returns the caller's outbound remote-channel follows, newest first,
+        each with the followed actor's identity (name@domain handle, actor
+        URL, origin domain) and follow state (pending until the remote
+        accepts, then accepted). Requires authentication. Paginated via limit
+        (1–100, default 20) and offset.
+      tags: [federation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of remote follows (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteFollowListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/remote-follows/{id}:
+    delete:
+      operationId: deleteRemoteFollow
+      summary: Unfollow a remote channel
+      description: >-
+        Removes the caller's remote-channel follow by its row id (from the
+        list/create responses). The row is deleted immediately — local intent
+        wins — and a signed Undo{Follow} is queued to the remote inbox.
+        Requires authentication. An unknown (or another user's) id is 404.
+      tags: [federation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The follow is removed and the Undo is queued.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such remote follow for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/blocks:
     get:
       operationId: listBlockedUsers
@@ -5833,19 +5987,34 @@ components:
             $ref: "#/components/schemas/Channel"
     Video:
       type: object
-      required: [id, channel_id, title, description, privacy, state, created_at]
+      required: [id, remote, title, description, created_at]
       properties:
         id:
           type: string
           format: uuid
+        remote:
+          type: boolean
+          description: >-
+            Whether this card is a federated REMOTE video. Local videos are
+            always false. Remote cards (subscriptions feed, search, and the
+            public feed with scope=all) omit the local-only fields
+            (channel_id, privacy, state) and instead carry domain, watch_url,
+            and optionally stream_url; their metadata detail lives at GET
+            /remote-videos/{id} and their cached poster at GET
+            /remote-videos/{id}/thumbnail.
         channel_id:
           type: string
           format: uuid
+          description: >-
+            The owning local channel. Present on every local video; omitted on
+            remote cards (a remote video has no local channel).
         channel_handle:
           type: string
           description: >-
             The owning channel's handle, present on card/feed views so the client
-            can link to /channels/{handle}. Omitted on the detail view.
+            can link to /channels/{handle}. Omitted on the detail view. On a
+            remote card this is the remote channel's "name@domain" identity
+            (not a local route).
         channel_display_name:
           type: string
           description: The owning channel's display name; present alongside channel_handle on card/feed views.
@@ -5857,6 +6026,7 @@ components:
         privacy:
           type: string
           enum: [public, unlisted, private]
+          description: Present on every local video; omitted on remote cards.
         state:
           type: string
           enum: [draft, processing, scheduled, quarantined, published, failed]
@@ -5867,10 +6037,29 @@ components:
             like any non-published video. "quarantined" means the instance
             holds new uploads for moderator review (QUARANTINE_NEW_UPLOADS):
             only the owner (studio badge) and moderators can see the video
-            until it is approved (published) or rejected (failed).
+            until it is approved (published) or rejected (failed). Present on
+            every local video; omitted on remote cards.
         created_at:
           type: string
           format: date-time
+          description: >-
+            Creation time. On a remote card this is the origin's published
+            time (falling back to when the video was fetched).
+        domain:
+          type: string
+          description: >-
+            REMOTE cards only: the origin instance's domain.
+        watch_url:
+          type: string
+          description: >-
+            REMOTE cards only: the origin's human watch page (always present
+            on remote cards; the card links out here).
+        stream_url:
+          type: string
+          description: >-
+            REMOTE cards only: best playable URL from the origin (HLS
+            preferred, else a direct video file). Omitted when the origin
+            advertised none — the card then links out via watch_url.
         publish_at:
           type: string
           format: date-time
@@ -6336,6 +6525,62 @@ components:
         has_thumbnail:
           type: boolean
           description: Whether a locally cached thumbnail is available.
+    CreateRemoteFollowRequest:
+      type: object
+      description: >-
+        Names the remote channel to follow — exactly one of handle or
+        actor_url.
+      properties:
+        handle:
+          type: string
+          maxLength: 2000
+          description: The remote channel's WebFinger handle, "name@domain" (leading @ tolerated).
+          example: films@videos.example
+        actor_url:
+          type: string
+          maxLength: 2000
+          description: The remote channel's ActivityPub actor URL.
+          example: https://videos.example/video-channels/films
+    RemoteFollow:
+      type: object
+      required: [id, actor_url, handle, domain, state, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The follow row id (the DELETE /me/remote-follows/{id} key).
+        actor_url:
+          type: string
+          description: The followed remote channel's ActivityPub actor URL.
+        handle:
+          type: string
+          description: The followed channel's "name@domain" identity.
+          example: films@videos.example
+        domain:
+          type: string
+          description: The origin instance's domain.
+        state:
+          type: string
+          enum: [pending, accepted]
+          description: >-
+            pending until the remote instance Accepts the follow, then
+            accepted (only accepted follows feed the subscriptions feed and
+            the ingestion gate). A remote Reject removes the follow.
+        created_at:
+          type: string
+          format: date-time
+    RemoteFollowListResponse:
+      type: object
+      required: [follows, limit, offset]
+      properties:
+        follows:
+          type: array
+          items:
+            $ref: "#/components/schemas/RemoteFollow"
+        limit:
+          type: integer
+        offset:
+          type: integer
     BlockedUser:
       type: object
       required: [user_id, username, display_name, blocked_at]
@@ -6431,6 +6676,13 @@ components:
           type: string
           enum: [recent, popular, trending]
           description: The ordering actually applied (normalised from the request).
+        scope:
+          type: string
+          enum: [local, all]
+          description: >-
+            The feed scope actually applied (normalised from the request);
+            present on the public feed only. "all" mixes federated remote
+            videos (remote:true cards) into the feed.
         limit:
           type: integer
           example: 20

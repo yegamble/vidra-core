@@ -354,59 +354,98 @@ func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.
 }
 
 const listPublicVideosSorted = `-- name: ListPublicVideosSorted :many
-SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.created_at, v.updated_at,
-       COALESCE(vc.views, 0)::bigint AS views,
-       EXISTS (
-           SELECT 1 FROM video_files f
-           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name,
-       vm.duration_seconds
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-LEFT JOIN video_view_counts vc ON vc.video_id = v.id
-LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.privacy = 'public' AND v.state = 'published'
-  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-  AND NOT EXISTS (
-      SELECT 1 FROM muted_accounts m
-      WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
-  )
-  -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
-  AND NOT EXISTS (
-      SELECT 1 FROM user_blocks ub
-      WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
-  )
-  AND ($2::text IS NULL OR EXISTS (
-      SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $2
-  ))
-  AND ($3::text IS NULL OR v.category = $3)
-  AND ($4::text IS NULL OR v.language = $4)
-  -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
-  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
+       feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
+       feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
+       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
+      )
+      AND ($2::text IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $2
+      ))
+      AND ($3::text IS NULL OR v.category = $3)
+      AND ($4::text IS NULL OR v.language = $4)
+      -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    WHERE $5::bool
+      AND $2::text IS NULL
+      AND $3::text IS NULL
+      AND $4::text IS NULL
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = $1 AND mi.domain = ra.domain
+      )
+) AS feed
 ORDER BY
-    CASE WHEN $5::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
-    CASE WHEN $5::text = 'trending'
-         THEN COALESCE(vc.views, 0)::float8
-              / power(EXTRACT(EPOCH FROM (now() - v.created_at)) / 3600.0 + 2.0, 1.5)
+    CASE WHEN $6::text = 'popular' THEN feed.views END DESC,
+    CASE WHEN $6::text = 'trending'
+         THEN feed.views::float8
+              / power(EXTRACT(EPOCH FROM (now() - feed.created_at)) / 3600.0 + 2.0, 1.5)
     END DESC,
-    v.created_at DESC, v.id DESC
-LIMIT $7 OFFSET $6
+    feed.created_at DESC, feed.id DESC
+LIMIT $8 OFFSET $7
 `
 
 type ListPublicVideosSortedParams struct {
-	ViewerID     pgtype.UUID `json:"viewer_id"`
-	Tag          *string     `json:"tag"`
-	Category     *string     `json:"category"`
-	Language     *string     `json:"language"`
-	Sort         string      `json:"sort"`
-	ResultOffset int32       `json:"result_offset"`
-	ResultLimit  int32       `json:"result_limit"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	Tag           *string     `json:"tag"`
+	Category      *string     `json:"category"`
+	Language      *string     `json:"language"`
+	IncludeRemote bool        `json:"include_remote"`
+	Sort          string      `json:"sort"`
+	ResultOffset  int32       `json:"result_offset"`
+	ResultLimit   int32       `json:"result_limit"`
 }
 
 type ListPublicVideosSortedRow struct {
 	ID                 uuid.UUID `json:"id"`
+	Remote             bool      `json:"remote"`
 	ChannelID          uuid.UUID `json:"channel_id"`
 	Title              string    `json:"title"`
 	Description        string    `json:"description"`
@@ -419,6 +458,9 @@ type ListPublicVideosSortedRow struct {
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
 	DurationSeconds    *int32    `json:"duration_seconds"`
+	Domain             string    `json:"domain"`
+	WatchUrl           string    `json:"watch_url"`
+	StreamUrl          *string   `json:"stream_url"`
 }
 
 // The public feed, joined with view counts and thumbnail availability so cards
@@ -430,12 +472,19 @@ type ListPublicVideosSortedRow struct {
 //
 // Optional filters (NULL = off): tag (exact, tags are stored lowercased),
 // category, and language (taxonomy ids; validated by the HTTP layer).
+// include_remote (feed ?scope=all, remote-content §4) UNIONs in federated
+// remote videos (metadata-only cards flagged remote, carrying origin domain +
+// watch/stream URLs). Remote videos have no local taxonomy/tags, so any active
+// tag/category/language filter excludes them; they have no local views, so
+// popular/trending sort them after viewed local videos. Blocked instances hide
+// remote rows for everyone; a signed-in viewer's muted instances hide them too.
 func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVideosSortedParams) ([]ListPublicVideosSortedRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosSorted,
 		arg.ViewerID,
 		arg.Tag,
 		arg.Category,
 		arg.Language,
+		arg.IncludeRemote,
 		arg.Sort,
 		arg.ResultOffset,
 		arg.ResultLimit,
@@ -449,6 +498,7 @@ func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVide
 		var i ListPublicVideosSortedRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Remote,
 			&i.ChannelID,
 			&i.Title,
 			&i.Description,
@@ -461,6 +511,9 @@ func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVide
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
 			&i.DurationSeconds,
+			&i.Domain,
+			&i.WatchUrl,
+			&i.StreamUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -532,34 +585,73 @@ func (q *Queries) ListQuarantinedVideos(ctx context.Context, arg ListQuarantined
 }
 
 const listSubscriptionVideos = `-- name: ListSubscriptionVideos :many
-SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.created_at, v.updated_at,
-       COALESCE(vc.views, 0)::bigint AS views,
-       EXISTS (
-           SELECT 1 FROM video_files f
-           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name,
-       vm.duration_seconds
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-LEFT JOIN video_view_counts vc ON vc.video_id = v.id
-LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.privacy = 'public' AND v.state = 'published'
-  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-  AND NOT EXISTS (
-      SELECT 1 FROM muted_accounts m
-      WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
-  )
-  -- §13: owners the follower has BLOCKED are hidden too.
-  AND NOT EXISTS (
-      SELECT 1 FROM user_blocks ub
-      WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
-  )
-  AND v.channel_id IN (
-      SELECT channel_id FROM channel_follows WHERE follower_id = $1
-  )
-ORDER BY v.created_at DESC, v.id DESC
+SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
+       feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
+       feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
+       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the follower has BLOCKED are hidden too.
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
+      )
+      AND v.channel_id IN (
+          SELECT channel_id FROM channel_follows WHERE follower_id = $1
+      )
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    WHERE EXISTS (
+          SELECT 1 FROM remote_channel_follows rcf
+          WHERE rcf.user_id = $1
+            AND rcf.remote_actor_url = rv.remote_actor_url
+            AND rcf.state = 'accepted'
+      )
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = $1 AND mi.domain = ra.domain
+      )
+) AS feed
+ORDER BY feed.created_at DESC, feed.id DESC
 LIMIT $3 OFFSET $2
 `
 
@@ -571,6 +663,7 @@ type ListSubscriptionVideosParams struct {
 
 type ListSubscriptionVideosRow struct {
 	ID                 uuid.UUID `json:"id"`
+	Remote             bool      `json:"remote"`
 	ChannelID          uuid.UUID `json:"channel_id"`
 	Title              string    `json:"title"`
 	Description        string    `json:"description"`
@@ -583,10 +676,17 @@ type ListSubscriptionVideosRow struct {
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
 	DurationSeconds    *int32    `json:"duration_seconds"`
+	Domain             string    `json:"domain"`
+	WatchUrl           string    `json:"watch_url"`
+	StreamUrl          *string   `json:"stream_url"`
 }
 
-// The "subscriptions" feed: public, published videos from the channels the given
-// user follows, newest first, with the same discovery-card data as the main feed.
+// The "subscriptions" feed (remote-content §3): a UNION of public, published
+// videos from the LOCAL channels the user follows and the ingested remote
+// videos of their ACCEPTED remote-channel follows, newest first, with the same
+// discovery-card shape as the main feed. Remote cards are flagged remote and
+// carry the origin domain + watch/stream URLs; instance mutes (the user's) and
+// the admin instance blocklist hide remote rows.
 func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscriptionVideosParams) ([]ListSubscriptionVideosRow, error) {
 	rows, err := q.db.Query(ctx, listSubscriptionVideos, arg.FollowerID, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
@@ -598,6 +698,7 @@ func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscripti
 		var i ListSubscriptionVideosRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Remote,
 			&i.ChannelID,
 			&i.Title,
 			&i.Description,
@@ -610,6 +711,9 @@ func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscripti
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
 			&i.DurationSeconds,
+			&i.Domain,
+			&i.WatchUrl,
+			&i.StreamUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -694,50 +798,87 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) 
 }
 
 const searchPublicVideos = `-- name: SearchPublicVideos :many
-SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.created_at, v.updated_at,
-       COALESCE(vc.views, 0)::bigint AS views,
-       EXISTS (
-           SELECT 1 FROM video_files f
-           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name,
-       vm.duration_seconds
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-LEFT JOIN video_view_counts vc ON vc.video_id = v.id
-LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.privacy = 'public' AND v.state = 'published'
-  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-  AND NOT EXISTS (
-      SELECT 1 FROM muted_accounts m
-      WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
-  )
-  -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
-  AND NOT EXISTS (
-      SELECT 1 FROM user_blocks ub
-      WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
-  )
-  AND (v.title ILIKE '%' || $2 || '%'
-       OR EXISTS (
-           SELECT 1 FROM video_tags t
-           WHERE t.video_id = v.id AND t.tag ILIKE '%' || $2 || '%'
-       ))
-  -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
-  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
-ORDER BY similarity(v.title, $2) DESC, v.created_at DESC, v.id DESC
+SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
+       feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
+       feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
+       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url,
+           similarity(v.title, $1) AS search_rank
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = $2 AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
+      )
+      AND (v.title ILIKE '%' || $1 || '%'
+           OR EXISTS (
+               SELECT 1 FROM video_tags t
+               WHERE t.video_id = v.id AND t.tag ILIKE '%' || $1 || '%'
+           ))
+      -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url,
+           similarity(rv.title, $1) AS search_rank
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    WHERE rv.title ILIKE '%' || $1 || '%'
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = $2 AND mi.domain = ra.domain
+      )
+) AS feed
+ORDER BY feed.search_rank DESC, feed.created_at DESC, feed.id DESC
 LIMIT $4 OFFSET $3
 `
 
 type SearchPublicVideosParams struct {
+	Query        string      `json:"query"`
 	ViewerID     pgtype.UUID `json:"viewer_id"`
-	Query        *string     `json:"query"`
 	ResultOffset int32       `json:"result_offset"`
 	ResultLimit  int32       `json:"result_limit"`
 }
 
 type SearchPublicVideosRow struct {
 	ID                 uuid.UUID `json:"id"`
+	Remote             bool      `json:"remote"`
 	ChannelID          uuid.UUID `json:"channel_id"`
 	Title              string    `json:"title"`
 	Description        string    `json:"description"`
@@ -750,15 +891,21 @@ type SearchPublicVideosRow struct {
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
 	DurationSeconds    *int32    `json:"duration_seconds"`
+	Domain             string    `json:"domain"`
+	WatchUrl           string    `json:"watch_url"`
+	StreamUrl          *string   `json:"stream_url"`
 }
 
-// Public, published title search with discovery-card data. A video also
+// Public, published title search with discovery-card data. A local video also
 // matches when one of its (lowercased) tags contains the query substring;
 // ranking stays title-similarity first, so tag-only matches sort later.
+// Ingested remote videos are UNIONed in by title match (remote-content §4),
+// flagged remote with origin domain + watch/stream URLs; blocked instances
+// hide them for everyone and a signed-in viewer's instance mutes hide them too.
 func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideosParams) ([]SearchPublicVideosRow, error) {
 	rows, err := q.db.Query(ctx, searchPublicVideos,
-		arg.ViewerID,
 		arg.Query,
+		arg.ViewerID,
 		arg.ResultOffset,
 		arg.ResultLimit,
 	)
@@ -771,6 +918,7 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 		var i SearchPublicVideosRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Remote,
 			&i.ChannelID,
 			&i.Title,
 			&i.Description,
@@ -783,6 +931,9 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
 			&i.DurationSeconds,
+			&i.Domain,
+			&i.WatchUrl,
+			&i.StreamUrl,
 		); err != nil {
 			return nil, err
 		}

@@ -125,7 +125,7 @@ func TestVideoTagsPersistAndFilter(t *testing.T) {
 	// Search matches by tag even when the title does not contain the query.
 	query := uniqueTag
 	found, err := q.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
-		Query: &query, ViewerID: pgtype.UUID{}, ResultLimit: 10,
+		Query: query, ViewerID: pgtype.UUID{}, ResultLimit: 10,
 	})
 	if err != nil {
 		t.Fatalf("SearchPublicVideos: %v", err)
@@ -340,7 +340,7 @@ func TestUnlistedOwnerExcludedFromDiscovery(t *testing.T) {
 
 	inSearch := func() bool {
 		rows, err := q.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
-			Query: &title, ViewerID: pgtype.UUID{}, ResultLimit: 10,
+			Query: title, ViewerID: pgtype.UUID{}, ResultLimit: 10,
 		})
 		if err != nil {
 			t.Fatalf("SearchPublicVideos: %v", err)

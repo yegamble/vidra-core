@@ -75,115 +75,240 @@ ORDER BY v.created_at DESC;
 --   trending -> views decayed by age (Hacker-News-style gravity)
 -- Optional filters (NULL = off): tag (exact, tags are stored lowercased),
 -- category, and language (taxonomy ids; validated by the HTTP layer).
-SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.created_at, v.updated_at,
-       COALESCE(vc.views, 0)::bigint AS views,
-       EXISTS (
-           SELECT 1 FROM video_files f
-           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name,
-       vm.duration_seconds
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-LEFT JOIN video_view_counts vc ON vc.video_id = v.id
-LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.privacy = 'public' AND v.state = 'published'
-  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-  AND NOT EXISTS (
-      SELECT 1 FROM muted_accounts m
-      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
-  )
-  -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
-  AND NOT EXISTS (
-      SELECT 1 FROM user_blocks ub
-      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
-  )
-  AND (sqlc.narg('tag')::text IS NULL OR EXISTS (
-      SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = sqlc.narg('tag')
-  ))
-  AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
-  AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
-  -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
-  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+-- include_remote (feed ?scope=all, remote-content §4) UNIONs in federated
+-- remote videos (metadata-only cards flagged remote, carrying origin domain +
+-- watch/stream URLs). Remote videos have no local taxonomy/tags, so any active
+-- tag/category/language filter excludes them; they have no local views, so
+-- popular/trending sort them after viewed local videos. Blocked instances hide
+-- remote rows for everyone; a signed-in viewer's muted instances hide them too.
+SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
+       feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
+       feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
+       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+      )
+      AND (sqlc.narg('tag')::text IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = sqlc.narg('tag')
+      ))
+      AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
+      AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
+      -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    WHERE sqlc.arg('include_remote')::bool
+      AND sqlc.narg('tag')::text IS NULL
+      AND sqlc.narg('category')::text IS NULL
+      AND sqlc.narg('language')::text IS NULL
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
+      )
+) AS feed
 ORDER BY
-    CASE WHEN sqlc.arg('sort')::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'popular' THEN feed.views END DESC,
     CASE WHEN sqlc.arg('sort')::text = 'trending'
-         THEN COALESCE(vc.views, 0)::float8
-              / power(EXTRACT(EPOCH FROM (now() - v.created_at)) / 3600.0 + 2.0, 1.5)
+         THEN feed.views::float8
+              / power(EXTRACT(EPOCH FROM (now() - feed.created_at)) / 3600.0 + 2.0, 1.5)
     END DESC,
-    v.created_at DESC, v.id DESC
+    feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: ListSubscriptionVideos :many
--- The "subscriptions" feed: public, published videos from the channels the given
--- user follows, newest first, with the same discovery-card data as the main feed.
-SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.created_at, v.updated_at,
-       COALESCE(vc.views, 0)::bigint AS views,
-       EXISTS (
-           SELECT 1 FROM video_files f
-           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name,
-       vm.duration_seconds
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-LEFT JOIN video_view_counts vc ON vc.video_id = v.id
-LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.privacy = 'public' AND v.state = 'published'
-  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-  AND NOT EXISTS (
-      SELECT 1 FROM muted_accounts m
-      WHERE m.muter_id = sqlc.arg('follower_id') AND m.muted_id = c.owner_id
-  )
-  -- §13: owners the follower has BLOCKED are hidden too.
-  AND NOT EXISTS (
-      SELECT 1 FROM user_blocks ub
-      WHERE ub.blocker_id = sqlc.arg('follower_id') AND ub.blocked_id = c.owner_id
-  )
-  AND v.channel_id IN (
-      SELECT channel_id FROM channel_follows WHERE follower_id = sqlc.arg('follower_id')
-  )
-ORDER BY v.created_at DESC, v.id DESC
+-- The "subscriptions" feed (remote-content §3): a UNION of public, published
+-- videos from the LOCAL channels the user follows and the ingested remote
+-- videos of their ACCEPTED remote-channel follows, newest first, with the same
+-- discovery-card shape as the main feed. Remote cards are flagged remote and
+-- carry the origin domain + watch/stream URLs; instance mutes (the user's) and
+-- the admin instance blocklist hide remote rows.
+SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
+       feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
+       feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
+       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = sqlc.arg('follower_id') AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the follower has BLOCKED are hidden too.
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = sqlc.arg('follower_id') AND ub.blocked_id = c.owner_id
+      )
+      AND v.channel_id IN (
+          SELECT channel_id FROM channel_follows WHERE follower_id = sqlc.arg('follower_id')
+      )
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    WHERE EXISTS (
+          SELECT 1 FROM remote_channel_follows rcf
+          WHERE rcf.user_id = sqlc.arg('follower_id')
+            AND rcf.remote_actor_url = rv.remote_actor_url
+            AND rcf.state = 'accepted'
+      )
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = sqlc.arg('follower_id') AND mi.domain = ra.domain
+      )
+) AS feed
+ORDER BY feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: SearchPublicVideos :many
--- Public, published title search with discovery-card data. A video also
+-- Public, published title search with discovery-card data. A local video also
 -- matches when one of its (lowercased) tags contains the query substring;
 -- ranking stays title-similarity first, so tag-only matches sort later.
-SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.created_at, v.updated_at,
-       COALESCE(vc.views, 0)::bigint AS views,
-       EXISTS (
-           SELECT 1 FROM video_files f
-           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
-       ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name,
-       vm.duration_seconds
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-LEFT JOIN video_view_counts vc ON vc.video_id = v.id
-LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.privacy = 'public' AND v.state = 'published'
-  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-  AND NOT EXISTS (
-      SELECT 1 FROM muted_accounts m
-      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
-  )
-  -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
-  AND NOT EXISTS (
-      SELECT 1 FROM user_blocks ub
-      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
-  )
-  AND (v.title ILIKE '%' || sqlc.arg('query') || '%'
-       OR EXISTS (
-           SELECT 1 FROM video_tags t
-           WHERE t.video_id = v.id AND t.tag ILIKE '%' || sqlc.arg('query') || '%'
-       ))
-  -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
-  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
-ORDER BY similarity(v.title, sqlc.arg('query')) DESC, v.created_at DESC, v.id DESC
+-- Ingested remote videos are UNIONed in by title match (remote-content §4),
+-- flagged remote with origin domain + watch/stream URLs; blocked instances
+-- hide them for everyone and a signed-in viewer's instance mutes hide them too.
+SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
+       feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
+       feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
+       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url,
+           similarity(v.title, sqlc.arg('query')) AS search_rank
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+      )
+      AND (v.title ILIKE '%' || sqlc.arg('query') || '%'
+           OR EXISTS (
+               SELECT 1 FROM video_tags t
+               WHERE t.video_id = v.id AND t.tag ILIKE '%' || sqlc.arg('query') || '%'
+           ))
+      -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url,
+           similarity(rv.title, sqlc.arg('query')) AS search_rank
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    WHERE rv.title ILIKE '%' || sqlc.arg('query') || '%'
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
+      )
+) AS feed
+ORDER BY feed.search_rank DESC, feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: UpdateVideo :one

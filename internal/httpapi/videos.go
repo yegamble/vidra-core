@@ -109,17 +109,32 @@ func validateTaxonomy(category, language, license string) []FieldError {
 // videoView is the public projection of a video. The technical metadata fields
 // are populated on the detail endpoint once a probe has recorded them; they are
 // omitted when unknown.
+//
+// A feed/search/subscriptions card may also be a REMOTE video
+// (remote-content §3-4): Remote is true, Domain names the origin instance,
+// WatchURL/StreamURL point at the origin, and the local-only fields
+// (channel_id, privacy, state) are omitted. Its metadata detail lives at
+// GET /remote-videos/{id} and its cached poster at
+// GET /remote-videos/{id}/thumbnail.
 type videoView struct {
 	ID              string    `json:"id"`
-	ChannelID       string    `json:"channel_id"`
+	Remote          bool      `json:"remote"`
+	ChannelID       string    `json:"channel_id,omitempty"`
 	Title           string    `json:"title"`
 	Description     string    `json:"description"`
-	Privacy         string    `json:"privacy"`
-	State           string    `json:"state"`
+	Privacy         string    `json:"privacy,omitempty"`
+	State           string    `json:"state,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	DurationSeconds *int32    `json:"duration_seconds,omitempty"`
 	Width           *int32    `json:"width,omitempty"`
 	Height          *int32    `json:"height,omitempty"`
+	// Domain, WatchURL, and StreamURL are the remote-card fields (set only when
+	// Remote): the origin instance's domain, its human watch page, and the best
+	// playable origin stream URL (HLS preferred; absent when the origin
+	// advertises none — the card then links out via WatchURL).
+	Domain    string  `json:"domain,omitempty"`
+	WatchURL  string  `json:"watch_url,omitempty"`
+	StreamURL *string `json:"stream_url,omitempty"`
 	// HasThumbnail is set on the detail endpoint (nil/omitted on list/feed views,
 	// which do not look it up); when set it reports whether a poster image is
 	// available at GET /videos/{id}/thumbnail.
@@ -298,10 +313,13 @@ type videoListResponse struct {
 	Videos []videoView `json:"videos"`
 }
 
-// videoFeedResponse is the paginated cross-channel public feed.
+// videoFeedResponse is the paginated cross-channel public feed. Scope is set on
+// the public feed only ("local" or "all", remote-content §4); the
+// subscriptions feed reuses this shape without it.
 type videoFeedResponse struct {
 	Videos []videoView `json:"videos"`
 	Sort   string      `json:"sort"`
+	Scope  string      `json:"scope,omitempty"`
 	Limit  int         `json:"limit"`
 	Offset int         `json:"offset"`
 }
@@ -312,7 +330,9 @@ const (
 )
 
 // feedItemView projects a feed item, including its discovery-card data (view
-// count and poster availability).
+// count and poster availability). Remote cards (remote-content §3-4) carry
+// remote/domain/watch_url/stream_url and omit the local-only channel_id/
+// privacy/state (zero values, dropped by omitempty).
 func feedItemView(it video.FeedItem) videoView {
 	v := newVideoView(it.Video)
 	views := it.Views
@@ -327,19 +347,33 @@ func feedItemView(it video.FeedItem) videoView {
 	if it.PublishAt != nil {
 		v.PublishAt = it.PublishAt // owner (studio) list: scheduled badge
 	}
+	if it.Remote {
+		v.Remote = true
+		v.ChannelID = "" // no local channel; omitted from the JSON
+		v.Domain = it.Domain
+		v.WatchURL = it.WatchURL
+		v.StreamURL = it.StreamURL
+	}
 	return v
 }
 
 // handleListPublicVideos returns the public cross-channel feed. No auth
 // required. Ordered by ?sort (recent|popular|trending, default recent; unknown
-// values fall back to recent). Optional filters: ?tag (free-form tag, matched
-// case-insensitively against the stored lowercased set), ?category and
-// ?language (taxonomy ids from GET /videos/config; unknown values are 422 —
-// the frontend filter-controls contract). Each item carries its view count and
-// whether a poster image exists. Pagination via ?limit (1–100, default 20) and
-// ?offset (>=0).
+// values fall back to recent). ?scope=local|all (default local; unknown values
+// fall back to local): "all" adds federated remote videos to the feed for
+// discovery (remote-content §4), flagged remote with origin domain +
+// watch/stream URLs; remote cards respect the admin instance blocklist and a
+// signed-in viewer's instance mutes, and drop out whenever a
+// tag/category/language filter is active (remote videos carry no local
+// taxonomy). Optional filters: ?tag (free-form tag, matched case-insensitively
+// against the stored lowercased set), ?category and ?language (taxonomy ids
+// from GET /videos/config; unknown values are 422 — the frontend
+// filter-controls contract). Each item carries its view count and whether a
+// poster image exists. Pagination via ?limit (1–100, default 20) and ?offset
+// (>=0).
 func (s *Server) handleListPublicVideos(c echo.Context) error {
 	sort := video.NormalizeFeedSort(c.QueryParam("sort"))
+	scope := video.NormalizeFeedScope(c.QueryParam("scope"))
 	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
 	offset := queryInt(c, "offset", 0)
 	if offset < 0 {
@@ -364,7 +398,7 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 		return &ValidationError{Fields: fes}
 	}
 	viewerID, _, authed := principalFromContext(c)
-	items, err := s.videosvc.ListPublic(c.Request().Context(), sort, filter, viewerID, authed, int32(limit), int32(offset))
+	items, err := s.videosvc.ListPublic(c.Request().Context(), sort, scope, filter, viewerID, authed, int32(limit), int32(offset))
 	if err != nil {
 		return err
 	}
@@ -372,7 +406,7 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, feedItemView(it))
 	}
-	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: sort, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: sort, Scope: scope, Limit: limit, Offset: offset})
 }
 
 // handleListSubscriptionVideos returns the authenticated user's "subscriptions"
