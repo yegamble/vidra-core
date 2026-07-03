@@ -715,7 +715,7 @@
 
 - [ ] Add unit test pattern and examples.
 - [ ] Add integration test pattern with PostgreSQL and Redis.
-- [ ] Add smoke test for API startup.
+- [x] Add smoke test for API startup. (`cmd/api/smoke_integration_test.go` `TestAPIStartupSmoke` (`-tags=integration`; self-skips without `DATABASE_URL`/`REDIS_URL`): `go build`s the REAL api binary and exec's it against the live PostgreSQL + Redis on a reserved loopback port (tempdir `STORAGE_LOCAL_ROOT`), proving the full production wiring end to end — config load, store/cache connections, service construction, route registration — not the fakes unit tests use. Polls `/readyz` until 200 (asserting `postgres`+`redis` components both `ok`; a boot crash surfaces immediately with captured logs instead of a poll timeout), asserts `/healthz` → `{status:ok}` and `/version` → `{name:vidra, version, go}`, then SIGTERMs and requires a clean exit 0 with "shutdown complete" in the logs. Race-safe (mutex'd log sink; exit result consumed exactly once; killed on test failure so nothing leaks). Runs in `make test-integration` / the backend-integration workflow (`./...` includes `cmd/api`); passed locally in ~4.5s under `-race` against the compose PG/Redis.)
 - [ ] Add Postman collection and environment for live DB tests.
 - [ ] Add fuzz test target list.
 - [ ] Add benchmark target list.
