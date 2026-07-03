@@ -38,6 +38,9 @@ var (
 	ErrCaptionNotFound = errors.New("video: caption not found")
 	// ErrInvalidCaption means the caption language or file is invalid (not WebVTT).
 	ErrInvalidCaption = errors.New("video: invalid caption")
+	// ErrPublished means the operation only applies to a video that has not yet
+	// been published (e.g. scheduling a publish time after publication).
+	ErrPublished = errors.New("video: already published")
 )
 
 // acceptedVideoExts is the allow-list of original-upload file extensions. It is
@@ -84,6 +87,7 @@ type Repository interface {
 	DeleteVideoTags(ctx context.Context, videoID uuid.UUID) error
 	InsertVideoTags(ctx context.Context, arg sqlcgen.InsertVideoTagsParams) error
 	ListVideoTags(ctx context.Context, videoID uuid.UUID) ([]string, error)
+	ListDueScheduledVideos(ctx context.Context, limit int32) ([]sqlcgen.ListDueScheduledVideosRow, error)
 	UpsertVideoMetadata(ctx context.Context, arg sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error)
 	GetVideoMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error)
 	IncrementVideoViews(ctx context.Context, videoID uuid.UUID) (int64, error)
@@ -234,6 +238,11 @@ type CreateInput struct {
 	// Tags is the video's free-form tag set (the HTTP layer validates count and
 	// length limits; normalization happens here via NormalizeTags).
 	Tags []string
+	// PublishAt optionally schedules the publish transition: once the upload is
+	// processed the video parks in the 'scheduled' state until this time (the
+	// HTTP layer validates it lies in the future). Nil = publish immediately on
+	// processing.
+	PublishAt *time.Time
 }
 
 // CreateDraft creates a new draft video under the given channel. Ownership is
@@ -247,6 +256,7 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 		Category:    nilIfEmpty(in.Category),
 		Language:    nilIfEmpty(in.Language),
 		License:     nilIfEmpty(in.License),
+		PublishAt:   timestamptz(in.PublishAt),
 	})
 	if err != nil {
 		return sqlcgen.Video{}, err
@@ -388,7 +398,25 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		// Thumbnail generation is best-effort: a failure must not block publish.
 		s.generateThumbnail(ctx, videoID, originalKey, durationHint)
 	}
-	v, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
+	if state == "published" {
+		// Scheduled-publish hold (§17): a future publish_at parks the processed
+		// video in 'scheduled' instead of publishing. No hooks fire yet — the
+		// sweeper (PublishDue) runs them when the video comes due, through the
+		// same publish transition below.
+		if v, err := s.GetByID(ctx, videoID); err == nil && v.PublishAt.Valid && v.PublishAt.Time.After(time.Now()) {
+			return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "scheduled"})
+		}
+		return s.publish(ctx, videoID, originalKey)
+	}
+	return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
+}
+
+// publish is THE publish transition: it flips the state and fires the
+// federation-announce and transcode-enqueue hooks. Both Process (immediate
+// publish) and PublishDue (scheduled publish coming due) run through it, so
+// scheduled videos get the exact same side effects as direct ones.
+func (s *Service) publish(ctx context.Context, videoID uuid.UUID, originalKey string) (sqlcgen.Video, error) {
+	v, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "published"})
 	if err == nil && v.State == "published" {
 		if s.onPublish != nil {
 			s.onPublish(ctx, videoID)
@@ -400,6 +428,25 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		}
 	}
 	return v, err
+}
+
+// PublishDue transitions scheduled videos whose publish_at has arrived to
+// published, through the same publish transition Process uses (federation
+// announce + transcode enqueue hooks fire per video). It returns how many were
+// published this pass; a per-video failure is skipped (the row stays
+// 'scheduled', so the next sweep retries it) rather than aborting the batch.
+func (s *Service) PublishDue(ctx context.Context, limit int32) (int, error) {
+	rows, err := s.repo.ListDueScheduledVideos(ctx, limit)
+	if err != nil {
+		return 0, err
+	}
+	published := 0
+	for _, r := range rows {
+		if _, err := s.publish(ctx, r.ID, r.StorageKey); err == nil {
+			published++
+		}
+	}
+	return published, nil
 }
 
 // FileForView authorises serving a stored file of the given kind ("original",
@@ -654,6 +701,10 @@ type UpdateInput struct {
 	// Tags: nil leaves the tag set unchanged; a non-nil slice replaces it in
 	// full (an empty slice clears all tags).
 	Tags *[]string
+	// PublishAt: nil leaves the schedule unchanged; a non-nil (future — the
+	// HTTP layer validates) time sets it. Only accepted while the video is not
+	// yet published (ErrPublished otherwise).
+	PublishAt *time.Time
 }
 
 // Update changes a video's mutable metadata. Only the owner may update; a
@@ -666,6 +717,10 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 	if v.OwnerID != ownerID {
 		return sqlcgen.Video{}, ErrForbidden
 	}
+	if in.PublishAt != nil && v.State == "published" {
+		// A publish time only makes sense before publication (§17).
+		return sqlcgen.Video{}, ErrPublished
+	}
 	updated, err := s.repo.UpdateVideo(ctx, sqlcgen.UpdateVideoParams{
 		ID:          id,
 		Title:       trimPtr(in.Title),
@@ -674,6 +729,7 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 		Category:    in.Category,
 		Language:    in.Language,
 		License:     in.License,
+		PublishAt:   timestamptz(in.PublishAt),
 	})
 	if err != nil {
 		return sqlcgen.Video{}, err
@@ -723,7 +779,9 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]Fee
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds)
+		it.PublishAt = TimePtr(r.PublishAt) // studio view: badge scheduled videos
+		items = append(items, it)
 	}
 	return items, nil
 }
@@ -744,7 +802,8 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID) 
 
 // FeedItem is a video plus discovery-card data: its view count, whether a
 // poster image is available, and the probed duration (nil when unknown) so a
-// card can show a length badge / resume progress bar.
+// card can show a length badge / resume progress bar. PublishAt is populated
+// only on the owner (studio) channel list, where scheduled videos are visible.
 type FeedItem struct {
 	Video              sqlcgen.Video
 	Views              int64
@@ -752,6 +811,7 @@ type FeedItem struct {
 	ChannelHandle      string
 	ChannelDisplayName string
 	DurationSeconds    *int32
+	PublishAt          *time.Time
 }
 
 // newFeedItem packages a video's columns and card data into a FeedItem. It lets
@@ -1017,4 +1077,23 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// timestamptz maps an optional time to its nullable column value (nil = NULL,
+// which COALESCE-updates leave unchanged).
+func timestamptz(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *t, Valid: true}
+}
+
+// TimePtr converts a nullable database timestamp to a *time.Time for JSON
+// views (nil when NULL).
+func TimePtr(ts pgtype.Timestamptz) *time.Time {
+	if !ts.Valid {
+		return nil
+	}
+	t := ts.Time
+	return &t
 }

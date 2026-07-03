@@ -39,19 +39,20 @@ func (q *Queries) CountPublicVideosByChannel(ctx context.Context, channelID uuid
 }
 
 const createVideo = `-- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at
 `
 
 type CreateVideoParams struct {
-	ChannelID   uuid.UUID `json:"channel_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Privacy     string    `json:"privacy"`
-	Category    *string   `json:"category"`
-	Language    *string   `json:"language"`
-	License     *string   `json:"license"`
+	ChannelID   uuid.UUID          `json:"channel_id"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	Privacy     string             `json:"privacy"`
+	Category    *string            `json:"category"`
+	Language    *string            `json:"language"`
+	License     *string            `json:"license"`
+	PublishAt   pgtype.Timestamptz `json:"publish_at"`
 }
 
 func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video, error) {
@@ -63,6 +64,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		arg.Category,
 		arg.Language,
 		arg.License,
+		arg.PublishAt,
 	)
 	var i Video
 	err := row.Scan(
@@ -77,6 +79,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		&i.Category,
 		&i.Language,
 		&i.License,
+		&i.PublishAt,
 	)
 	return i, err
 }
@@ -92,7 +95,7 @@ func (q *Queries) DeleteVideo(ctx context.Context, id uuid.UUID) error {
 
 const getVideoByID = `-- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
-       v.category, v.language, v.license,
+       v.category, v.language, v.license, v.publish_at,
        c.owner_id
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
@@ -100,18 +103,19 @@ WHERE v.id = $1
 `
 
 type GetVideoByIDRow struct {
-	ID          uuid.UUID `json:"id"`
-	ChannelID   uuid.UUID `json:"channel_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Privacy     string    `json:"privacy"`
-	State       string    `json:"state"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Category    *string   `json:"category"`
-	Language    *string   `json:"language"`
-	License     *string   `json:"license"`
-	OwnerID     uuid.UUID `json:"owner_id"`
+	ID          uuid.UUID          `json:"id"`
+	ChannelID   uuid.UUID          `json:"channel_id"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	Privacy     string             `json:"privacy"`
+	State       string             `json:"state"`
+	CreatedAt   time.Time          `json:"created_at"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+	Category    *string            `json:"category"`
+	Language    *string            `json:"language"`
+	License     *string            `json:"license"`
+	PublishAt   pgtype.Timestamptz `json:"publish_at"`
+	OwnerID     uuid.UUID          `json:"owner_id"`
 }
 
 func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDRow, error) {
@@ -129,6 +133,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.Category,
 		&i.Language,
 		&i.License,
+		&i.PublishAt,
 		&i.OwnerID,
 	)
 	return i, err
@@ -231,6 +236,43 @@ func (q *Queries) ListChannelOutboxVideos(ctx context.Context, arg ListChannelOu
 	for rows.Next() {
 		var i ListChannelOutboxVideosRow
 		if err := rows.Scan(&i.ID, &i.Title, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDueScheduledVideos = `-- name: ListDueScheduledVideos :many
+SELECT v.id, f.storage_key
+FROM videos v
+JOIN video_files f ON f.video_id = v.id AND f.kind = 'original'
+WHERE v.state = 'scheduled' AND v.publish_at <= now()
+ORDER BY v.publish_at, v.id
+LIMIT $1
+`
+
+type ListDueScheduledVideosRow struct {
+	ID         uuid.UUID `json:"id"`
+	StorageKey string    `json:"storage_key"`
+}
+
+// Videos whose scheduled publish time has arrived, joined with their stored
+// original (a scheduled video always has one — it went through processing).
+// The sweeper feeds each row through the same publish transition Process uses.
+func (q *Queries) ListDueScheduledVideos(ctx context.Context, limit int32) ([]ListDueScheduledVideosRow, error) {
+	rows, err := q.db.Query(ctx, listDueScheduledVideos, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDueScheduledVideosRow
+	for rows.Next() {
+		var i ListDueScheduledVideosRow
+		if err := rows.Scan(&i.ID, &i.StorageKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -510,7 +552,7 @@ func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscripti
 
 const listVideosByChannel = `-- name: ListVideosByChannel :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.created_at, v.updated_at,
+       v.created_at, v.updated_at, v.publish_at,
        COALESCE(vc.views, 0)::bigint AS views,
        EXISTS (
            SELECT 1 FROM video_files f
@@ -527,22 +569,24 @@ ORDER BY v.created_at DESC
 `
 
 type ListVideosByChannelRow struct {
-	ID                 uuid.UUID `json:"id"`
-	ChannelID          uuid.UUID `json:"channel_id"`
-	Title              string    `json:"title"`
-	Description        string    `json:"description"`
-	Privacy            string    `json:"privacy"`
-	State              string    `json:"state"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	Views              int64     `json:"views"`
-	HasThumbnail       bool      `json:"has_thumbnail"`
-	ChannelHandle      string    `json:"channel_handle"`
-	ChannelDisplayName string    `json:"channel_display_name"`
-	DurationSeconds    *int32    `json:"duration_seconds"`
+	ID                 uuid.UUID          `json:"id"`
+	ChannelID          uuid.UUID          `json:"channel_id"`
+	Title              string             `json:"title"`
+	Description        string             `json:"description"`
+	Privacy            string             `json:"privacy"`
+	State              string             `json:"state"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	PublishAt          pgtype.Timestamptz `json:"publish_at"`
+	Views              int64              `json:"views"`
+	HasThumbnail       bool               `json:"has_thumbnail"`
+	ChannelHandle      string             `json:"channel_handle"`
+	ChannelDisplayName string             `json:"channel_display_name"`
+	DurationSeconds    *int32             `json:"duration_seconds"`
 }
 
-// A channel's videos (owner view, all states) with discovery-card data.
+// A channel's videos (owner view, all states) with discovery-card data plus
+// publish_at so the studio can badge scheduled videos.
 func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]ListVideosByChannelRow, error) {
 	rows, err := q.db.Query(ctx, listVideosByChannel, channelID)
 	if err != nil {
@@ -561,6 +605,7 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) 
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PublishAt,
 			&i.Views,
 			&i.HasThumbnail,
 			&i.ChannelHandle,
@@ -676,7 +721,7 @@ UPDATE videos
 SET state      = $1,
     updated_at = now()
 WHERE id = $2
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at
 `
 
 type SetVideoStateParams struct {
@@ -699,6 +744,7 @@ func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (V
 		&i.Category,
 		&i.Language,
 		&i.License,
+		&i.PublishAt,
 	)
 	return i, err
 }
@@ -711,19 +757,21 @@ SET title       = COALESCE($1, title),
     category    = COALESCE($4, category),
     language    = COALESCE($5, language),
     license     = COALESCE($6, license),
+    publish_at  = COALESCE($7, publish_at),
     updated_at  = now()
-WHERE id = $7
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license
+WHERE id = $8
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at
 `
 
 type UpdateVideoParams struct {
-	Title       *string   `json:"title"`
-	Description *string   `json:"description"`
-	Privacy     *string   `json:"privacy"`
-	Category    *string   `json:"category"`
-	Language    *string   `json:"language"`
-	License     *string   `json:"license"`
-	ID          uuid.UUID `json:"id"`
+	Title       *string            `json:"title"`
+	Description *string            `json:"description"`
+	Privacy     *string            `json:"privacy"`
+	Category    *string            `json:"category"`
+	Language    *string            `json:"language"`
+	License     *string            `json:"license"`
+	PublishAt   pgtype.Timestamptz `json:"publish_at"`
+	ID          uuid.UUID          `json:"id"`
 }
 
 func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video, error) {
@@ -734,6 +782,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		arg.Category,
 		arg.Language,
 		arg.License,
+		arg.PublishAt,
 		arg.ID,
 	)
 	var i Video
@@ -749,6 +798,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		&i.Category,
 		&i.Language,
 		&i.License,
+		&i.PublishAt,
 	)
 	return i, err
 }

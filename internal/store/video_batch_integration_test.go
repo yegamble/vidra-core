@@ -143,3 +143,92 @@ func TestVideoTagsPersistAndFilter(t *testing.T) {
 		t.Fatalf("tags after video delete = %v, want none (cascade)", got)
 	}
 }
+
+// TestScheduledPublishPersists proves the §17 storage pieces against a real
+// PostgreSQL: publish_at persists through CreateVideo/UpdateVideo, the widened
+// state CHECK accepts 'scheduled', and ListDueScheduledVideos returns exactly
+// the due scheduled videos (with their original's storage key).
+func TestScheduledPublishPersists(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	_, channelID := seedOwnerChannel(ctx, t, st, "sched")
+
+	// CreateVideo persists publish_at.
+	future := time.Now().Add(1 * time.Hour).UTC()
+	created, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{
+		ChannelID: channelID, Title: "premiere", Privacy: "public",
+		PublishAt: pgtype.Timestamptz{Time: future, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("CreateVideo: %v", err)
+	}
+	if !created.PublishAt.Valid || !created.PublishAt.Time.Equal(future) {
+		t.Fatalf("created publish_at = %+v, want %v", created.PublishAt, future)
+	}
+
+	// The widened CHECK accepts the scheduled state; an original file joins in.
+	if _, err := q.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: created.ID, State: "scheduled"}); err != nil {
+		t.Fatalf("SetVideoState scheduled: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO video_files (video_id, kind, storage_key, content_type, original_name, size_bytes)
+		 VALUES ($1, 'original', $2, 'video/mp4', 'clip.mp4', 4)`,
+		created.ID, "web-videos/"+created.ID.String()+".mp4",
+	); err != nil {
+		t.Fatalf("seed original: %v", err)
+	}
+
+	// Future-scheduled: not due.
+	due, err := q.ListDueScheduledVideos(ctx, 50)
+	if err != nil {
+		t.Fatalf("ListDueScheduledVideos: %v", err)
+	}
+	for _, r := range due {
+		if r.ID == created.ID {
+			t.Fatalf("future-scheduled video reported due")
+		}
+	}
+
+	// Rewind via UpdateVideo's COALESCE path, then it must be due with its key.
+	past := time.Now().Add(-1 * time.Minute).UTC()
+	if _, err := q.UpdateVideo(ctx, sqlcgen.UpdateVideoParams{
+		ID: created.ID, PublishAt: pgtype.Timestamptz{Time: past, Valid: true},
+	}); err != nil {
+		t.Fatalf("UpdateVideo publish_at: %v", err)
+	}
+	due, err = q.ListDueScheduledVideos(ctx, 50)
+	if err != nil {
+		t.Fatalf("ListDueScheduledVideos (due): %v", err)
+	}
+	found := false
+	for _, r := range due {
+		if r.ID == created.ID {
+			found = true
+			if r.StorageKey != "web-videos/"+created.ID.String()+".mp4" {
+				t.Fatalf("due storage key = %q", r.StorageKey)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("due-scheduled video missing from ListDueScheduledVideos")
+	}
+
+	// Published videos leave the due scan even with a past publish_at.
+	if _, err := q.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: created.ID, State: "published"}); err != nil {
+		t.Fatalf("SetVideoState published: %v", err)
+	}
+	due, _ = q.ListDueScheduledVideos(ctx, 50)
+	for _, r := range due {
+		if r.ID == created.ID {
+			t.Fatalf("published video still reported due")
+		}
+	}
+}

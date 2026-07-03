@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license;
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -23,16 +23,17 @@ LIMIT $2 OFFSET $3;
 
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
-       v.category, v.language, v.license,
+       v.category, v.language, v.license, v.publish_at,
        c.owner_id
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 WHERE v.id = $1;
 
 -- name: ListVideosByChannel :many
--- A channel's videos (owner view, all states) with discovery-card data.
+-- A channel's videos (owner view, all states) with discovery-card data plus
+-- publish_at so the studio can badge scheduled videos.
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.created_at, v.updated_at,
+       v.created_at, v.updated_at, v.publish_at,
        COALESCE(vc.views, 0)::bigint AS views,
        EXISTS (
            SELECT 1 FROM video_files f
@@ -174,16 +175,28 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     category    = COALESCE(sqlc.narg('category'), category),
     language    = COALESCE(sqlc.narg('language'), language),
     license     = COALESCE(sqlc.narg('license'), license),
+    publish_at  = COALESCE(sqlc.narg('publish_at'), publish_at),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at;
+
+-- name: ListDueScheduledVideos :many
+-- Videos whose scheduled publish time has arrived, joined with their stored
+-- original (a scheduled video always has one — it went through processing).
+-- The sweeper feeds each row through the same publish transition Process uses.
+SELECT v.id, f.storage_key
+FROM videos v
+JOIN video_files f ON f.video_id = v.id AND f.kind = 'original'
+WHERE v.state = 'scheduled' AND v.publish_at <= now()
+ORDER BY v.publish_at, v.id
+LIMIT $1;
 
 -- name: DeleteVideo :exec
 DELETE FROM videos WHERE id = $1;

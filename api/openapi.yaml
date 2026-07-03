@@ -5321,10 +5321,23 @@ components:
           enum: [public, unlisted, private]
         state:
           type: string
-          enum: [draft, processing, published, failed]
+          enum: [draft, processing, scheduled, published, failed]
+          description: >-
+            Publish lifecycle. "scheduled" means the upload finished processing
+            but publish_at lies in the future; public surfaces (feed, search,
+            channel lists) only show "published", while direct links behave
+            like any non-published video.
         created_at:
           type: string
           format: date-time
+        publish_at:
+          type: string
+          format: date-time
+          description: >-
+            The scheduled publish time. Present on the detail, create/update,
+            and owner (studio) channel-list views once a schedule was set;
+            omitted otherwise. The server publishes the video (running the
+            same side effects as a direct publish) when this time arrives.
         duration_seconds:
           type:
             - integer
@@ -5477,6 +5490,13 @@ components:
           items:
             type: string
             maxLength: 50
+        publish_at:
+          type: string
+          format: date-time
+          description: >-
+            Schedule the publish: after processing, the video parks in the
+            "scheduled" state until this time, then publishes automatically.
+            Must lie in the future -> 422 otherwise.
     UpdateVideoRequest:
       type: object
       description: Partial update; provide at least one field.
@@ -5509,6 +5529,13 @@ components:
           items:
             type: string
             maxLength: 50
+        publish_at:
+          type: string
+          format: date-time
+          description: >-
+            Set (or move) the scheduled publish time. Only accepted while the
+            video is not yet published, and must lie in the future -> 422
+            otherwise.
     Caption:
       type: object
       description: A WebVTT caption track's metadata (the file is fetched separately).

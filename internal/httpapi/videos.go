@@ -31,13 +31,14 @@ var validVideoPrivacy = map[string]bool{"public": true, "unlisted": true, "priva
 
 // createVideoRequest is the POST /api/v1/channels/{handle}/videos body.
 type createVideoRequest struct {
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Privacy     string   `json:"privacy"`
-	Category    string   `json:"category"`
-	Language    string   `json:"language"`
-	License     string   `json:"license"`
-	Tags        []string `json:"tags"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Privacy     string     `json:"privacy"`
+	Category    string     `json:"category"`
+	Language    string     `json:"language"`
+	License     string     `json:"license"`
+	Tags        []string   `json:"tags"`
+	PublishAt   *time.Time `json:"publish_at"`
 }
 
 func (r createVideoRequest) Validate() []FieldError {
@@ -56,7 +57,17 @@ func (r createVideoRequest) Validate() []FieldError {
 	}
 	fes = append(fes, validateTaxonomy(r.Category, r.Language, r.License)...)
 	fes = append(fes, validateTags(r.Tags)...)
+	fes = append(fes, validatePublishAt(r.PublishAt)...)
 	return fes
+}
+
+// validatePublishAt requires a provided scheduled-publish time to lie in the
+// future (§17). Nil (absent) is fine.
+func validatePublishAt(t *time.Time) []FieldError {
+	if t != nil && !t.After(time.Now()) {
+		return []FieldError{{Field: "publish_at", Message: "must be in the future"}}
+	}
+	return nil
 }
 
 // validateTags enforces the free-form tag limits (product-decisions §18): at
@@ -130,6 +141,11 @@ type videoView struct {
 	// Tags is the video's free-form tag set (lowercased, alphabetical).
 	// Populated on the create/update/detail views; omitted on list/feed views.
 	Tags []string `json:"tags,omitempty"`
+	// PublishAt is the scheduled publish time (§17), set on the detail,
+	// create/update, and owner (studio) channel-list views while a schedule
+	// exists; omitted when never scheduled. State stays 'scheduled' (public
+	// surfaces filter on state=published) until the sweeper publishes it.
+	PublishAt *time.Time `json:"publish_at,omitempty"`
 	// HLSURL is the master-playlist path for HLS playback, set on the detail
 	// endpoint only once the transcoded playlist is ready (omitted otherwise).
 	// Renditions lists the available ladder rungs alongside it.
@@ -149,6 +165,7 @@ func newVideoView(v sqlcgen.Video) videoView {
 		Category:    v.Category,
 		Language:    v.Language,
 		License:     v.License,
+		PublishAt:   video.TimePtr(v.PublishAt),
 	}
 }
 
@@ -164,6 +181,7 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 		Category:    v.Category,
 		Language:    v.Language,
 		License:     v.License,
+		PublishAt:   video.TimePtr(v.PublishAt),
 	}
 }
 
@@ -199,6 +217,7 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 		Language:    in.Language,
 		License:     in.License,
 		Tags:        in.Tags,
+		PublishAt:   in.PublishAt,
 	})
 	if err != nil {
 		return err
@@ -289,6 +308,9 @@ func feedItemView(it video.FeedItem) videoView {
 	name := it.ChannelDisplayName
 	v.ChannelDisplayName = &name
 	v.DurationSeconds = it.DurationSeconds
+	if it.PublishAt != nil {
+		v.PublishAt = it.PublishAt // owner (studio) list: scheduled badge
+	}
 	return v
 }
 
@@ -451,18 +473,20 @@ func (s *Server) handleListChannelVideos(c echo.Context) error {
 // updateVideoRequest is the PATCH /api/v1/videos/{id} body. Fields are optional;
 // only those present are changed.
 type updateVideoRequest struct {
-	Title       *string   `json:"title"`
-	Description *string   `json:"description"`
-	Privacy     *string   `json:"privacy"`
-	Category    *string   `json:"category"`
-	Language    *string   `json:"language"`
-	License     *string   `json:"license"`
-	Tags        *[]string `json:"tags"`
+	Title       *string    `json:"title"`
+	Description *string    `json:"description"`
+	Privacy     *string    `json:"privacy"`
+	Category    *string    `json:"category"`
+	Language    *string    `json:"language"`
+	License     *string    `json:"license"`
+	Tags        *[]string  `json:"tags"`
+	PublishAt   *time.Time `json:"publish_at"`
 }
 
 func (r updateVideoRequest) Validate() []FieldError {
 	if r.Title == nil && r.Description == nil && r.Privacy == nil &&
-		r.Category == nil && r.Language == nil && r.License == nil && r.Tags == nil {
+		r.Category == nil && r.Language == nil && r.License == nil && r.Tags == nil &&
+		r.PublishAt == nil {
 		return []FieldError{{Field: "title", Message: "at least one updatable field is required"}}
 	}
 	var fes []FieldError
@@ -495,6 +519,7 @@ func (r updateVideoRequest) Validate() []FieldError {
 	if r.Tags != nil {
 		fes = append(fes, validateTags(*r.Tags)...)
 	}
+	fes = append(fes, validatePublishAt(r.PublishAt)...)
 	return fes
 }
 
@@ -529,8 +554,12 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		Language:    in.Language,
 		License:     in.License,
 		Tags:        in.Tags,
+		PublishAt:   in.PublishAt,
 	})
 	if err != nil {
+		if errors.Is(err, video.ErrPublished) {
+			return &ValidationError{Fields: []FieldError{{Field: "publish_at", Message: "cannot be set after the video is published"}}}
+		}
 		return videoError(err)
 	}
 	view := newVideoView(v)

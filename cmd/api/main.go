@@ -353,6 +353,17 @@ func run() error {
 		logger.Info("transcode worker started")
 	}
 
+	// Publish scheduled videos as they come due (product-decisions §17). Always
+	// on: the due scan is a cheap partial-index lookup, and the transition runs
+	// the same publish hooks (federation announce, transcode enqueue) as a
+	// direct publish.
+	{
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runScheduledPublishWorker(workerCtx, logger, videosvc)
+		logger.Info("scheduled publish worker started")
+	}
+
 	srv := httpapi.New(cfg, db, rdb, opts...)
 
 	// Run the server in the background so we can wait for a shutdown signal.
@@ -441,6 +452,36 @@ func runTranscodeWorker(ctx context.Context, logger *slog.Logger, svc *transcode
 			}
 			if total > 0 {
 				logger.Info("transcode drain completed jobs", "count", total)
+			}
+		}
+	}
+}
+
+// runScheduledPublishWorker transitions scheduled videos to published as their
+// publish_at comes due, on a ticker until ctx is canceled (mirrors
+// runTranscodeWorker). PublishDue runs each due video through the same publish
+// transition Process uses, so the federation-announce and transcode-enqueue
+// hooks fire exactly as they would on a direct publish. Per-video failures stay
+// 'scheduled' and are retried next tick; only the claim-query error is logged.
+func runScheduledPublishWorker(ctx context.Context, logger *slog.Logger, svc *video.Service) {
+	const (
+		interval = 10 * time.Second
+		batch    = 20
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := svc.PublishDue(ctx, batch)
+			if err != nil {
+				logger.Warn("scheduled publish sweep failed", "error", err)
+				continue
+			}
+			if n > 0 {
+				logger.Info("scheduled publish sweep published videos", "count", n)
 			}
 		}
 	}

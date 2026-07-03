@@ -330,13 +330,15 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		ID: uuid.New(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
+		PublishAt: a.PublishAt,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
 		ID: v.ID, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 		Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 		Category: v.Category, Language: v.Language, License: v.License,
-		OwnerID: owner,
+		PublishAt: v.PublishAt,
+		OwnerID:   owner,
 	}
 	return v, nil
 }
@@ -353,7 +355,7 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 	return sqlcgen.Video{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-		Category: r.Category, Language: r.Language, License: r.License,
+		Category: r.Category, Language: r.Language, License: r.License, PublishAt: r.PublishAt,
 	}
 }
 
@@ -364,12 +366,33 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UU
 			out = append(out, sqlcgen.ListVideosByChannelRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				PublishAt: r.PublishAt,
+				Views:     f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			})
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
+}
+
+func (f *videoFakeRepo) ListDueScheduledVideos(_ context.Context, limit int32) ([]sqlcgen.ListDueScheduledVideosRow, error) {
+	var rows []sqlcgen.ListDueScheduledVideosRow
+	now := time.Now()
+	for _, r := range f.videos {
+		if r.State != "scheduled" || !r.PublishAt.Valid || r.PublishAt.Time.After(now) {
+			continue
+		}
+		for _, vf := range f.files[r.ID] {
+			if vf.Kind == "original" {
+				rows = append(rows, sqlcgen.ListDueScheduledVideosRow{ID: r.ID, StorageKey: vf.StorageKey})
+				break
+			}
+		}
+	}
+	if limit > 0 && int(limit) < len(rows) {
+		rows = rows[:limit]
+	}
+	return rows, nil
 }
 
 func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error) {
@@ -409,6 +432,9 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	}
 	if a.License != nil {
 		r.License = a.License
+	}
+	if a.PublishAt.Valid {
+		r.PublishAt = a.PublishAt
 	}
 	f.videos[a.ID] = r
 	return vidRowToVideo(r), nil
@@ -628,6 +654,14 @@ func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Ser
 // can seed stored media / playlist state directly (the HLS tests need the first
 // two) or inject notification failures (the report-resolution test).
 func videoServerEnv(t *testing.T, cfg *config.Config, opts ...video.Option) (*Server, storage.Backend, *transcodeFakeRepo, *notifFakeRepo) {
+	srv, blobs, tcRepo, notifRepo, _ := videoServerFull(t, cfg, opts...)
+	return srv, blobs, tcRepo, notifRepo
+}
+
+// videoServerFull is videoServerEnv plus the in-memory video repo, for tests
+// that need to manipulate stored video state directly (e.g. rewinding a
+// scheduled publish_at so the sweeper sees it as due).
+func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*Server, storage.Backend, *transcodeFakeRepo, *notifFakeRepo, *videoFakeRepo) {
 	t.Helper()
 	chRepo := newChannelFakeRepo()
 	authRepo := newAuthFakeRepo()
@@ -690,7 +724,7 @@ func videoServerEnv(t *testing.T, cfg *config.Config, opts ...video.Option) (*Se
 		WithTranscodeService(transcode.NewService(tcRepo, nil)),
 		WithMediaStorage(blobs),
 	)
-	return srv, blobs, tcRepo, notifRepo
+	return srv, blobs, tcRepo, notifRepo, repo
 }
 
 // fakeProber lets handler tests drive the publish/fail outcome and metadata of
