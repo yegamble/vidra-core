@@ -215,7 +215,7 @@
 - [x] Generate typed queries for messaging. (`internal/store/queries/messaging.sql` — CreateConversation (ON CONFLICT DO NOTHING by dm_key) / GetConversationByDMKey / AddConversationParticipant / IsConversationParticipant / CreateMessage / TouchConversation / ListMessages (sender join, newest-first) / ListConversations (LATERAL last-message + other participant, COALESCE for empty threads).)
 - [ ] Generate typed queries for moderation.
 - [ ] Add sqlc generation command to Makefile/task runner.
-- [ ] Add CI check that generated sqlc output is current.
+- [x] Add CI check that generated sqlc output is current. (`make sqlc-verify` — non-mutating `sqlc diff` that fails (with the diff + a "run `make sqlc`" hint) when `internal/store/sqlcgen` is stale w.r.t. `internal/store/queries/*.sql` + `migrations/`. Version-pinned (`SQLC_VERSION := v1.31.1`, matching the generated-code headers): uses the local `sqlc` binary only when its version matches the pin, else falls back to `go run github.com/sqlc-dev/sqlc/cmd/sqlc@pin` so the check is reproducible on any machine. Wired into the canonical gate — `ci: fmt-check vet openapi-verify sqlc-verify test-race` — so `backend-ci.yml` runs it automatically via `make ci` (a pinned-binary install step was added there so CI takes the fast path instead of compiling sqlc each run; ci-guard still green). Verified manually: passes on the current tree; editing `CountUnreadNotifications` without regenerating fails the target with the exact codegen diff; restored clean. README + `.ralph/AGENT.md` document the target and the widened gate.)
 - [ ] Add tests for critical query behavior.
 
 ---

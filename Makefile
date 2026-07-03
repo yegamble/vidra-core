@@ -59,9 +59,23 @@ build: ## Build the api binary into ./bin (injects version metadata)
 run: ## Run the api server locally (needs Postgres + Redis)
 	go run ./cmd/api
 
+# Pinned sqlc release. sqlc-verify enforces this version so "current" means the
+# same thing on every machine and in CI; keep it in lock-step with the version
+# headers in internal/store/sqlcgen/*.go and the install step in backend-ci.yml.
+SQLC_VERSION := v1.31.1
+
 .PHONY: sqlc
 sqlc: ## Generate typed query code (requires sqlc installed)
 	sqlc generate
+
+.PHONY: sqlc-verify
+sqlc-verify: ## Fail if internal/store/sqlcgen is stale vs queries/migrations (non-mutating sqlc diff)
+	@if command -v sqlc >/dev/null 2>&1 && [ "$$(sqlc version)" = "$(SQLC_VERSION)" ]; then \
+		sqlc diff || { echo "sqlc-verify: generated code is STALE — run 'make sqlc' and commit internal/store/sqlcgen."; exit 1; }; \
+	else \
+		echo "sqlc-verify: pinned sqlc $(SQLC_VERSION) not on PATH; falling back to 'go run' (slower)"; \
+		go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) diff || { echo "sqlc-verify: generated code is STALE — run 'make sqlc' and commit internal/store/sqlcgen."; exit 1; }; \
+	fi
 
 .PHONY: openapi-lint
 openapi-lint: ## Lint the OpenAPI contract (requires npx; uses Redocly CLI)
@@ -100,5 +114,5 @@ check: fmt vet test ## Run the standard local gate (fmt, vet, test)
 # lock-step by adding any new required check here, never only in the workflow.
 # Assumes Postgres/Redis are reachable (run `make up` locally; CI provides them).
 .PHONY: ci
-ci: fmt-check vet openapi-verify test-race ## Canonical CI gate (run locally to mirror GitHub exactly)
-	@echo "ci: gate passed (fmt-check, vet, openapi-verify, test-race)."
+ci: fmt-check vet openapi-verify sqlc-verify test-race ## Canonical CI gate (run locally to mirror GitHub exactly)
+	@echo "ci: gate passed (fmt-check, vet, openapi-verify, sqlc-verify, test-race)."

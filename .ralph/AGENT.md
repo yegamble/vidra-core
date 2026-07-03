@@ -329,8 +329,9 @@ make fmt           # gofmt / go fmt ./...
 make fmt-check     # fail if not gofmt-clean (non-mutating, used by make ci)
 make vet           # go vet ./...
 make check         # fmt + vet + test (quick local gate)
-make ci            # CANONICAL gate: fmt-check + vet + openapi-verify + test-race
+make ci            # CANONICAL gate: fmt-check + vet + openapi-verify + sqlc-verify + test-race
 make sqlc          # regenerate typed SQL access code (requires sqlc)
+make sqlc-verify   # fail if internal/store/sqlcgen is stale (non-mutating sqlc diff; pinned version, go run fallback)
 golangci-lint run  # if installed
 staticcheck ./...  # if installed
 ```
@@ -358,8 +359,9 @@ Migrations live in `migrations/`, numbered and ordered. Never edit an applied
 migration; add a new one.
 
 ## Backend quality gate (run before declaring completion)
-1. `make ci` is green — fmt-check + vet + openapi-verify + test-race (the exact
-   gate CI runs; "passes locally" must equal "passes in GitHub")
+1. `make ci` is green — fmt-check + vet + openapi-verify + sqlc-verify +
+   test-race (the exact gate CI runs; "passes locally" must equal "passes in
+   GitHub")
 2. `staticcheck` / `golangci-lint` if available
 3. migration test against a fresh DB
 4. integration smoke profile up

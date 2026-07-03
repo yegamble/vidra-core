@@ -222,7 +222,7 @@ make run          # runs the API against local Postgres/Redis
 ## Developer commands
 
 Run `make help` for the full list (fmt, vet, test, test-race, cover, build,
-run, sqlc, migrate-up, up/down).
+run, sqlc, sqlc-verify, migrate-up, up/down).
 
 ## Tech stack
 
