@@ -8,21 +8,18 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/gommon/bytes"
 
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
-	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -758,170 +755,6 @@ func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
 		return videoError(err)
 	}
 	return c.JSON(http.StatusCreated, newVideoFileView(file))
-}
-
-// importVideoRequest is the POST /videos/:id/import body.
-type importVideoRequest struct {
-	URL string `json:"url"`
-}
-
-func (r importVideoRequest) Validate() []FieldError {
-	if strings.TrimSpace(r.URL) == "" {
-		return []FieldError{{Field: "url", Message: "is required"}}
-	}
-	return nil
-}
-
-const importFetchTimeout = 60 * time.Second
-
-// errImportTooLarge is returned by maxBytesReader when the fetched body exceeds
-// the UPLOAD_MAX_SIZE cap; the handler maps it to 413.
-var errImportTooLarge = errors.New("httpapi: imported file exceeds the size limit")
-
-// errImportOverQuota is returned by maxBytesReader when the fetched body would
-// push the caller past their storage quota; the handler maps it to 422
-// quota_exceeded. It hard-caps the stream so a lying/absent Content-Length
-// can't smuggle an over-quota file past the pre-fetch check.
-var errImportOverQuota = errors.New("httpapi: imported file exceeds the storage quota")
-
-// maxBytesReader caps how many bytes are read from a remote fetch, failing with
-// limitErr once the cap is crossed. It reads one byte past the limit to
-// distinguish "exactly at the limit" (ok) from "over", so a lying/absent
-// Content-Length can't smuggle an oversized file past the cap.
-type maxBytesReader struct {
-	r         io.Reader
-	remaining int64
-	limitErr  error
-}
-
-func (m *maxBytesReader) Read(p []byte) (int, error) {
-	if m.remaining < 0 {
-		return 0, m.limitErr
-	}
-	if int64(len(p)) > m.remaining+1 {
-		p = p[:m.remaining+1]
-	}
-	n, err := m.r.Read(p)
-	m.remaining -= int64(n)
-	if m.remaining < 0 {
-		return n, m.limitErr
-	}
-	return n, err
-}
-
-// handleImportVideoFile fetches a remote video by URL and stores it as the
-// original for a video owned by the caller, then moves the video to processing —
-// the URL-import counterpart of handleUploadVideoFile. The outbound fetch goes
-// through the SSRF-safe urlsafety client (non-http schemes, private/loopback/
-// link-local/CGNAT addresses, and DNS-rebinding are refused, at dial time so
-// redirects are covered too) and is hard-bounded by UPLOAD_MAX_SIZE. Ownership is
-// checked BEFORE any fetch, so a non-owner cannot use this to make the server
-// issue requests. Non-owner/unknown video → 404 (existence is not leaked). When
-// a storage quota applies, a declared Content-Length that would not fit is 422
-// quota_exceeded before any bytes are stored, and the stream itself is
-// hard-capped at the remaining headroom (so an absent/lying length cannot
-// smuggle an over-quota file — same defence as UPLOAD_MAX_SIZE's 413).
-func (s *Server) handleImportVideoFile(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
-	}
-	var in importVideoRequest
-	if err := bindAndValidate(c, &in); err != nil {
-		return err
-	}
-	// The guard is secure by default; ImportAllowPrivateURLs (dev/test only) relaxes
-	// the private-address block so backed e2e can import from a loopback origin.
-	guard := urlsafety.Guard{AllowPrivate: s.cfg.ImportAllowPrivateURLs}
-	target, err := guard.ValidateURL(strings.TrimSpace(in.URL))
-	if err != nil {
-		return &ValidationError{Fields: []FieldError{{Field: "url", Message: "must be a public http(s) URL"}}}
-	}
-
-	ctx := c.Request().Context()
-	// Authorize before any outbound request: a non-owner (or unknown video) gets
-	// 404 and the server never fetches on their behalf.
-	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
-	}
-
-	maxBytes, _ := bytes.Parse(s.cfg.UploadMaxSize) // validated at startup
-
-	// Resolve the caller's storage headroom BEFORE fetching. quotaRemaining < 0
-	// means unlimited (never enforced).
-	quotaRemaining := int64(-1)
-	if s.quotasvc != nil {
-		remaining, limited, qerr := s.quotasvc.Remaining(ctx, userID)
-		if qerr != nil {
-			return qerr
-		}
-		if limited {
-			quotaRemaining = remaining
-		}
-	}
-
-	client := s.importClient
-	if client == nil {
-		client = guard.NewClient(importFetchTimeout)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
-	if err != nil {
-		return &ValidationError{Fields: []FieldError{{Field: "url", Message: "must be a public http(s) URL"}}}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		// A blocked address (SSRF guard), DNS failure, timeout, TLS error, etc.
-		// The URL is not echoed back (avoids reflecting attacker-controlled input).
-		return echo.NewHTTPError(http.StatusUnprocessableEntity, "could not fetch the URL")
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return echo.NewHTTPError(http.StatusUnprocessableEntity, "the URL did not return a downloadable file")
-	}
-	if maxBytes > 0 && resp.ContentLength > maxBytes {
-		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "the file is too large")
-	}
-	// Quota pre-check on a declared Content-Length; the streaming cap below is
-	// the authoritative backstop for unknown/lying lengths.
-	if quotaRemaining >= 0 && resp.ContentLength > quotaRemaining {
-		return &QuotaExceededError{}
-	}
-
-	body := io.Reader(resp.Body)
-	if maxBytes > 0 {
-		body = &maxBytesReader{r: body, remaining: maxBytes, limitErr: errImportTooLarge}
-	}
-	if quotaRemaining >= 0 {
-		body = &maxBytesReader{r: body, remaining: quotaRemaining, limitErr: errImportOverQuota}
-	}
-	// AttachOriginal enforces the video-container extension allow-list on this
-	// filename (derived from the URL path); a URL without a video extension → 415.
-	_, file, err := s.videosvc.AttachOriginal(ctx, userID, id, video.UploadInput{
-		Filename:    path.Base(target.Path),
-		ContentType: resp.Header.Get("Content-Type"),
-		Reader:      body,
-	})
-	if err != nil {
-		if errors.Is(err, errImportTooLarge) {
-			return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "the file is too large")
-		}
-		if errors.Is(err, errImportOverQuota) {
-			return &QuotaExceededError{}
-		}
-		return videoError(err)
-	}
-	v, err := s.videosvc.Process(ctx, id, file.StorageKey)
-	if err != nil {
-		return err
-	}
-	return c.JSON(http.StatusCreated, uploadVideoFileResponse{
-		Video: newVideoView(v),
-		File:  newVideoFileView(file),
-	})
 }
 
 // handleStreamVideoOriginal serves a video's stored original file. Behind

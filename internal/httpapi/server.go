@@ -38,7 +38,9 @@ import (
 	"github.com/vidra/vidra-core/internal/remotevideo"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/transcode"
+	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
+	"github.com/vidra/vidra-core/internal/videoimport"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -79,15 +81,12 @@ type Server struct {
 	imagesvc       *profileimage.Service
 	quotasvc       *quota.Service
 	transcodesvc   *transcode.Service
+	uploadsvc      *upload.Service
+	importsvc      *videoimport.Service
 	fedsvc         *federation.Service
 	remotevideosvc *remotevideo.Service
 	instancemodsvc *instancemod.Service
 	media          storage.Backend
-	// importClient fetches remote videos for URL import. Nil in production, where
-	// the handler builds an SSRF-safe urlsafety.NewClient per request; tests inject
-	// a plain client so they can reach a loopback httptest server (which the
-	// production guard correctly refuses).
-	importClient *http.Client
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
 	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
 	devMailCapture *auth.CaptureMailer
@@ -96,6 +95,11 @@ type Server struct {
 // uploadRoutePath is the Echo route template for the original-file upload. It is
 // exempted from the default body limit (which gets its own larger one).
 const uploadRoutePath = "/api/v1/videos/:id/file"
+
+// uploadChunkRoutePath is the Echo route template for a resumable-upload chunk
+// PUT. Like uploadRoutePath it is exempted from the default JSON body limit —
+// the upload service bounds each chunk at the fixed chunk size itself.
+const uploadChunkRoutePath = "/api/v1/uploads/:upload_id/chunks/:n"
 
 // Option customises the Server during construction.
 type Option func(*Server)
@@ -259,6 +263,23 @@ func WithTranscodeService(svc *transcode.Service) Option {
 	return func(s *Server) { s.transcodesvc = svc }
 }
 
+// WithUploadService mounts the resumable/chunked upload endpoints (open session,
+// PUT chunk, GET progress, complete, cancel). Completion runs the assembled file
+// through the same video pipeline as a direct upload, so the routes register
+// only when the video service is also present. When unset, the routes are absent
+// (direct multipart upload still works).
+func WithUploadService(svc *upload.Service) Option {
+	return func(s *Server) { s.uploadsvc = svc }
+}
+
+// WithVideoImportService mounts the asynchronous URL-import endpoints (enqueue +
+// status). The enqueue authorises the video via the video service, so the routes
+// register only when the video service is also present. When unset, the import
+// routes are not registered.
+func WithVideoImportService(svc *videoimport.Service) Option {
+	return func(s *Server) { s.importsvc = svc }
+}
+
 // WithFederationService wires the ActivityPub federation service. The AP root
 // routes (NodeInfo/WebFinger/actors/inboxes/collections) are mounted only when
 // this is set AND cfg.FederationEnabled is true — so they are absent by default
@@ -371,7 +392,13 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// registration, so media uploads have headroom without widening the rest.
 	e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{
 		Skipper: func(c echo.Context) bool {
-			return c.Request().Method == http.MethodPost && c.Path() == uploadRoutePath
+			r := c.Request()
+			if r.Method == http.MethodPost && c.Path() == uploadRoutePath {
+				return true
+			}
+			// Resumable chunk PUTs carry raw media bytes (up to the chunk size);
+			// the upload service bounds each chunk itself.
+			return r.Method == http.MethodPut && c.Path() == uploadChunkRoutePath
 		},
 		Limit: cfg.HTTPBodyLimit,
 	}))
@@ -613,7 +640,24 @@ func (s *Server) routes() {
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
 		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, middleware.BodyLimit(s.cfg.UploadMaxSize))
-		api.POST("/videos/:id/import", s.handleImportVideoFile, s.requireAuth)
+
+		// Resumable/chunked upload (P6.1): open a session, PUT fixed-size chunks
+		// (each bounded by the upload service, hence exempt from the JSON body
+		// limit), GET progress, complete (→ the same AttachOriginal → Process
+		// pipeline as a direct upload), or cancel.
+		if s.uploadsvc != nil {
+			api.POST("/videos/:id/upload-session", s.handleCreateUploadSession, s.requireAuth)
+			api.PUT("/uploads/:upload_id/chunks/:n", s.handlePutUploadChunk, s.requireAuth)
+			api.GET("/uploads/:upload_id", s.handleGetUploadSession, s.requireAuth)
+			api.POST("/uploads/:upload_id/complete", s.handleCompleteUploadSession, s.requireAuth)
+			api.DELETE("/uploads/:upload_id", s.handleCancelUploadSession, s.requireAuth)
+		}
+
+		// Asynchronous URL import (P2.2): enqueue → 202, then poll the job status.
+		if s.importsvc != nil {
+			api.POST("/videos/:id/import", s.handleImportVideoFile, s.requireAuth)
+			api.GET("/videos/:id/import", s.handleGetVideoImport, s.requireAuth)
+		}
 
 		// Captions: the owner uploads/removes WebVTT tracks (any state); anyone
 		// lists/downloads them on a public, published video.

@@ -2709,23 +2709,298 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/upload-session:
+    post:
+      operationId: createUploadSession
+      summary: Open a resumable (chunked) upload session
+      description: >-
+        Opens a chunked/resumable upload for a video's original file (owner
+        only). The declared size, filename extension, and the caller's storage
+        quota are validated UP FRONT: a non-video extension is 415, a size beyond
+        UPLOAD_MAX_SIZE is 413, and a size that would exceed the caller's quota is
+        422 (code quota_exceeded). Returns the upload id, the fixed chunk size to
+        send (every chunk but the last must be exactly this many bytes), the total
+        number of chunks, and the 24h session expiry. Upload each chunk with PUT
+        /api/v1/uploads/{upload_id}/chunks/{n}, then POST
+        /api/v1/uploads/{upload_id}/complete to assemble and finalise the video
+        through the same pipeline as a direct upload. Non-owner/unknown video → 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUploadSessionRequest"
+      responses:
+        "201":
+          description: The resumable upload session was opened.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSessionResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: The declared size exceeds UPLOAD_MAX_SIZE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: The filename extension is not an accepted video container.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The body is invalid (size must be > 0, filename required) or the file
+            would exceed the caller's storage quota (code quota_exceeded).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/uploads/{upload_id}:
+    get:
+      operationId: getUploadSession
+      summary: Get a resumable upload's progress (the resume contract)
+      description: >-
+        Returns which chunk indices have landed and the byte total so far — the
+        contract a client reads to know which chunks to (re)send after an
+        interruption. Owner only; non-owner/unknown session → 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The session's received-chunk status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadStatusResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such session, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: cancelUploadSession
+      summary: Cancel a resumable upload
+      description: >-
+        Cancels an in-progress upload and drops its chunk blobs. Owner only;
+        non-owner/unknown → 404. Idempotent (cancelling an already-finished
+        session still 204s).
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The session was cancelled (or was already finished).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such session, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/uploads/{upload_id}/chunks/{n}:
+    put:
+      operationId: putUploadChunk
+      summary: Upload one chunk of a resumable upload
+      description: >-
+        Stores one chunk (the raw request body) at index n for a session the
+        caller owns. Every chunk but the last must be exactly chunk_size bytes;
+        the last is the remainder. Idempotent: re-PUTting an index overwrites it.
+        Returns the updated received-chunk status. Non-owner/unknown session →
+        404; a session that already completed/cancelled → 409; an out-of-range
+        index or wrong-sized chunk → 422; a chunk larger than its slot → 413.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: n
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+          description: The zero-based chunk index.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: The raw chunk bytes.
+      responses:
+        "200":
+          description: The chunk was stored; the updated received-chunk status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadStatusResponse"
+        "400":
+          description: The chunk index is not an integer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such session, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The session already completed or was cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: The chunk is larger than the required size for its index.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The chunk index is out of range or its size does not match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/uploads/{upload_id}/complete:
+    post:
+      operationId: completeUploadSession
+      summary: Complete a resumable upload
+      description: >-
+        Assembles the session's chunks in order and runs them through the same
+        AttachOriginal → Process pipeline as a direct upload (probe/scan/
+        quarantine/transcode), then marks the session completed and drops its
+        chunk blobs. Returns the finalised video exactly like the direct upload
+        (video.state is "published", or "failed" if a configured probe rejected
+        it). Owner only; non-owner/unknown → 404; already finished → 409;
+        missing/mismatched chunks → 422.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "201":
+          description: The upload was assembled and the video finalised.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadVideoFileResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such session, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The session already completed or was cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            One or more chunks are missing or the wrong size, or completing would
+            exceed the caller's storage quota (code quota_exceeded).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/import:
     post:
       operationId: importVideoFile
-      summary: Import a video's original file from a URL
+      summary: Enqueue a URL import of a video's original file
       description: >-
-        Fetches a remote media file by URL (owner only) and stores it as the
-        video's original, then finalises the video exactly like the multipart
-        upload (published, or failed if a configured probe rejects it). The
-        outbound fetch is SSRF-guarded: only http/https URLs are allowed, and the
-        server refuses to connect to non-public addresses (loopback, private,
-        link-local, CGNAT, cloud-metadata) — enforced at connection time, so DNS
-        rebinding and internal redirects are blocked too. The download is bounded
-        by UPLOAD_MAX_SIZE (413 if exceeded). The container type must be an accepted
-        video type, taken from the URL's file extension or — when the path has none
-        (e.g. /download?id=…) — from the response Content-Type; otherwise 415.
-        Ownership is checked before any fetch; a non-owner or unknown id is 404.
-        Re-importing replaces the previous original.
+        Enqueues an ASYNCHRONOUS import of a remote media file by URL (owner
+        only) and returns 202 with the queued job — it no longer blocks on the
+        fetch. Ownership is checked before any job is created, so a non-owner or
+        unknown video is 404 and nothing runs on their behalf. The URL is
+        validated up front (http/https only, no literal non-public address); a
+        missing/malformed/non-public URL is 422. A background worker then performs
+        the SSRF-guarded fetch (loopback, private, link-local, CGNAT, and
+        cloud-metadata addresses refused at connection time, so DNS rebinding and
+        internal redirects are blocked too), enforces UPLOAD_MAX_SIZE and the
+        caller's storage quota, and runs the bytes through the same
+        AttachOriginal → Process pipeline as a direct upload
+        (probe/scan/quarantine/transcode). Poll GET /api/v1/videos/{id}/import
+        for progress. A single import runs per video at a time: while one is in
+        flight, re-posting returns the same job.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -2743,15 +3018,12 @@ paths:
             schema:
               $ref: "#/components/schemas/ImportVideoRequest"
       responses:
-        "201":
-          description: >-
-            The remote file was fetched and stored and the video finalised.
-            video.state is "published" on success, or "failed" if the probe
-            rejected it.
+        "202":
+          description: The import was enqueued (or the in-flight job was returned).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UploadVideoFileResponse"
+                $ref: "#/components/schemas/ImportJobResponse"
         "401":
           description: Missing, invalid, or expired token.
           content:
@@ -2764,25 +3036,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "413":
-          description: The fetched file exceeds UPLOAD_MAX_SIZE.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "415":
-          description: The URL's file extension is not an accepted video container.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: >-
-            The URL is missing/malformed/non-public, the fetch failed (bad
-            status, unreachable, blocked address, timeout), or storing the file
-            would exceed the caller's storage quota (code quota_exceeded —
-            enforced on the declared Content-Length and by a hard cap on the
-            stream itself, so an absent/lying length cannot bypass it).
+          description: The URL is missing, malformed, or not a public http(s) URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: getVideoImport
+      summary: Get a video's URL-import status
+      description: >-
+        Returns the most recent URL-import job for a video (owner only). state is
+        pending, running, done, or failed; on failure `error` is a safe,
+        human-readable reason (never a raw internal error or the source URL).
+        Non-owner/unknown video → 404; a video that was never imported → 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video's latest import job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJobResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video (or not owned by the caller), or no import exists.
           content:
             application/json:
               schema:
@@ -9504,6 +9796,123 @@ components:
             Public http/https URL of the media file to import. The server refuses
             non-http schemes and non-public addresses (SSRF-guarded).
           example: https://example.com/clip.mp4
+    ImportJob:
+      type: object
+      description: An asynchronous URL-import job for a video's original file.
+      required: [id, video_id, state, attempts, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [pending, running, done, failed]
+        error:
+          type: string
+          description: >-
+            A safe, human-readable failure reason (present only when state is
+            failed or a retry is pending). Never a raw internal error or the
+            source URL.
+        attempts:
+          type: integer
+          description: How many times the import has been attempted.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ImportJobResponse:
+      type: object
+      required: [import_job]
+      properties:
+        import_job:
+          $ref: "#/components/schemas/ImportJob"
+    CreateUploadSessionRequest:
+      type: object
+      required: [size, filename]
+      properties:
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The total size of the file to upload, in bytes.
+          example: 104857600
+        filename:
+          type: string
+          description: >-
+            The client filename; its extension must be an accepted video
+            container (validated up front).
+          example: clip.mp4
+    UploadSessionResponse:
+      type: object
+      description: The opened resumable upload session.
+      required: [upload_id, chunk_size, total_chunks, size, expires_at]
+      properties:
+        upload_id:
+          type: string
+          format: uuid
+        chunk_size:
+          type: integer
+          description: >-
+            The fixed chunk size in bytes (8 MiB). Every chunk but the last must
+            be exactly this many bytes.
+        total_chunks:
+          type: integer
+          description: How many chunks to upload (indices 0 … total_chunks-1).
+        size:
+          type: integer
+          format: int64
+          description: The declared total size, echoed back.
+        expires_at:
+          type: string
+          format: date-time
+          description: When the session (and its uploaded chunks) expire (24h).
+    UploadStatusResponse:
+      type: object
+      description: A resumable upload's received-chunk status (the resume contract).
+      required:
+        - upload_id
+        - video_id
+        - state
+        - size
+        - chunk_size
+        - total_chunks
+        - received_chunks
+        - bytes_received
+        - expires_at
+      properties:
+        upload_id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [active, completed, cancelled]
+        size:
+          type: integer
+          format: int64
+        chunk_size:
+          type: integer
+        total_chunks:
+          type: integer
+        received_chunks:
+          type: array
+          items:
+            type: integer
+          description: The chunk indices that have landed, ascending.
+        bytes_received:
+          type: integer
+          format: int64
+          description: The total bytes received across all landed chunks.
+        expires_at:
+          type: string
+          format: date-time
     RegisterRequest:
       type: object
       required: [username, email, password]

@@ -159,13 +159,36 @@ be within `UPLOAD_MAX_SIZE` (else `413`; this route is exempt from the small
 size of their `video_files` rows (originals, renditions, thumbnails) across the
 videos owned via their channels, aggregated live. The effective quota is the
 per-user override when an admin set one, else `INSTANCE_DEFAULT_QUOTA_BYTES`
-(0/unset = unlimited); an upload or URL import that would not fit is rejected
-with `422 quota_exceeded` before storing (imports are also hard-capped while
-streaming, so a lying/absent `Content-Length` can't bypass it). `GET
+(0/unset = unlimited); a direct or resumable upload that would not fit is
+rejected with `422 quota_exceeded` before storing, and an async URL import that
+would not fit fails its job with a quota reason (the fetch is also hard-capped
+while streaming, so a lying/absent `Content-Length` can't bypass it). `GET
 /api/v1/me/quota` (auth) returns `{used_bytes, quota_bytes}` (`quota_bytes`
 null = unlimited), and admins manage overrides via `PATCH
 /api/v1/admin/users/{id}` `storage_quota_bytes` (null resets to the instance
-default, 0 = unlimited). Finalisation runs through an injected `Prober` seam: at startup the server uses
+default, 0 = unlimited).
+
+**Chunked/resumable upload** (P6.1): `POST /api/v1/videos/{id}/upload-session`
+(owner; body `{size, filename}` validated up front — extension `415`, size vs
+`UPLOAD_MAX_SIZE` `413`, quota `422`) returns `{upload_id, chunk_size (8 MiB),
+total_chunks, expires_at}`; the client PUTs each fixed-size chunk to `PUT
+/api/v1/uploads/{upload_id}/chunks/{n}` (raw body, idempotent re-PUT),
+reads progress from `GET /api/v1/uploads/{upload_id}` (the received-chunk ledger
+— the resume contract, no Redis needed), then `POST
+/api/v1/uploads/{upload_id}/complete` assembles the chunks in order through the
+same `AttachOriginal → Process` pipeline as a direct upload. `DELETE
+/api/v1/uploads/{upload_id}` cancels. Chunk bytes live in the storage backend at
+`uploads/<session>/<n>` (so S3 works too); sessions expire after 24h and a
+background sweeper deletes expired/cancelled sessions' chunks (the failed-upload
+cleanup). **Async URL import** (P2.2): `POST /api/v1/videos/{id}/import` (owner,
+body `{url}`) now enqueues an `import_jobs` row and returns `202 {import_job}`
+instead of blocking on the fetch; a background worker performs the SSRF-guarded
+fetch and runs the bytes through the same pipeline (retry/backoff, dead-letter
+after 5). Poll `GET /api/v1/videos/{id}/import` for the job status (`state`
+pending/running/done/failed, plus a safe `error` reason on failure). A single
+import runs per video at a time; re-posting while one is in flight returns it.
+
+Finalisation runs through an injected `Prober` seam: at startup the server uses
 the FFprobe-backed prober when `ffprobe` is on `PATH` (it is in the Docker image),
 extracting technical metadata (duration, width, height) that the detail endpoint
 exposes and persisting it to `video_metadata`; a probe error marks the video

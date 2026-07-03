@@ -1,0 +1,265 @@
+package httpapi
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/gommon/bytes"
+
+	"github.com/vidra/vidra-core/internal/quota"
+	"github.com/vidra/vidra-core/internal/upload"
+	"github.com/vidra/vidra-core/internal/video"
+)
+
+// createUploadSessionRequest is the POST /videos/:id/upload-session body: the
+// total file size and the client filename (its extension is validated up front
+// against the same video-container allow-list a direct upload enforces).
+type createUploadSessionRequest struct {
+	Size     int64  `json:"size"`
+	Filename string `json:"filename"`
+}
+
+func (r createUploadSessionRequest) Validate() []FieldError {
+	var fes []FieldError
+	if strings.TrimSpace(r.Filename) == "" {
+		fes = append(fes, FieldError{Field: "filename", Message: "is required"})
+	}
+	if r.Size <= 0 {
+		fes = append(fes, FieldError{Field: "size", Message: "must be greater than zero"})
+	}
+	return fes
+}
+
+// uploadSessionResponse is returned when a resumable upload is opened.
+type uploadSessionResponse struct {
+	UploadID    string    `json:"upload_id"`
+	ChunkSize   int       `json:"chunk_size"`
+	TotalChunks int       `json:"total_chunks"`
+	Size        int64     `json:"size"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+// uploadStatusResponse is the resume/progress contract (GET /uploads/:id and the
+// PUT-chunk ack): which chunk indices have landed and the byte total so far.
+type uploadStatusResponse struct {
+	UploadID       string    `json:"upload_id"`
+	VideoID        string    `json:"video_id"`
+	State          string    `json:"state"`
+	Size           int64     `json:"size"`
+	ChunkSize      int       `json:"chunk_size"`
+	TotalChunks    int       `json:"total_chunks"`
+	ReceivedChunks []int     `json:"received_chunks"`
+	BytesReceived  int64     `json:"bytes_received"`
+	ExpiresAt      time.Time `json:"expires_at"`
+}
+
+func uploadStatusView(st upload.Status) uploadStatusResponse {
+	received := st.ReceivedChunks
+	if received == nil {
+		received = []int{}
+	}
+	return uploadStatusResponse{
+		UploadID:       st.Session.ID.String(),
+		VideoID:        st.Session.VideoID.String(),
+		State:          st.Session.State,
+		Size:           st.Session.TotalSize,
+		ChunkSize:      int(st.Session.ChunkSize),
+		TotalChunks:    st.TotalChunks,
+		ReceivedChunks: received,
+		BytesReceived:  st.BytesReceived,
+		ExpiresAt:      st.Session.ExpiresAt,
+	}
+}
+
+// handleCreateUploadSession opens a chunked/resumable upload for a video the
+// caller owns (owner only; non-owner/unknown → 404). The size, filename
+// extension, and storage quota are validated up front: a non-video extension is
+// 415, a size beyond UPLOAD_MAX_SIZE is 413, and a size that would exceed the
+// caller's storage quota is 422 quota_exceeded. Returns the upload id, the fixed
+// chunk size to send, and the 24h expiry.
+func (s *Server) handleCreateUploadSession(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	var in createUploadSessionRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	// Extension allow-list up front (same gate AttachOriginal enforces on complete).
+	if _, ok := video.AcceptedVideoExt(in.Filename); !ok {
+		return echo.NewHTTPError(http.StatusUnsupportedMediaType, "unsupported media type")
+	}
+	// Size vs UPLOAD_MAX_SIZE up front (413).
+	if maxBytes, _ := bytes.Parse(s.cfg.UploadMaxSize); maxBytes > 0 && in.Size > maxBytes {
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "the file is too large")
+	}
+	// Quota up front (422 quota_exceeded).
+	if s.quotasvc != nil {
+		if qerr := s.quotasvc.CheckFits(ctx, userID, in.Size); qerr != nil {
+			if errors.Is(qerr, quota.ErrExceeded) {
+				return &QuotaExceededError{}
+			}
+			return qerr
+		}
+	}
+	sess, err := s.uploadsvc.CreateSession(ctx, id, userID, strings.TrimSpace(in.Filename), in.Size)
+	if err != nil {
+		return err
+	}
+	total := int((sess.TotalSize + int64(sess.ChunkSize) - 1) / int64(sess.ChunkSize))
+	return c.JSON(http.StatusCreated, uploadSessionResponse{
+		UploadID:    sess.ID.String(),
+		ChunkSize:   int(sess.ChunkSize),
+		TotalChunks: total,
+		Size:        sess.TotalSize,
+		ExpiresAt:   sess.ExpiresAt,
+	})
+}
+
+// handlePutUploadChunk stores one chunk (raw request body) at index n for a
+// session the caller owns. Idempotent re-PUT. Returns the updated received-chunk
+// status. Non-owner/unknown session → 404; a session that already
+// completed/cancelled → 409; an out-of-range index or wrong-sized chunk → 422; a
+// chunk larger than its slot → 413.
+func (s *Server) handlePutUploadChunk(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	uploadID, err := uuid.Parse(c.Param("upload_id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "upload session not found")
+	}
+	n, err := strconv.Atoi(c.Param("n"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid chunk index")
+	}
+	st, err := s.uploadsvc.PutChunk(c.Request().Context(), uploadID, userID, n, c.Request().Body)
+	if err != nil {
+		return uploadError(err)
+	}
+	return c.JSON(http.StatusOK, uploadStatusView(st))
+}
+
+// handleGetUploadSession returns a session's received-chunk status — the resume
+// contract a client reads to know which chunks to (re)send. Owner only;
+// non-owner/unknown → 404.
+func (s *Server) handleGetUploadSession(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	uploadID, err := uuid.Parse(c.Param("upload_id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "upload session not found")
+	}
+	st, err := s.uploadsvc.StatusFor(c.Request().Context(), uploadID, userID)
+	if err != nil {
+		return uploadError(err)
+	}
+	return c.JSON(http.StatusOK, uploadStatusView(st))
+}
+
+// handleCompleteUploadSession assembles a session's chunks in order and runs
+// them through the same AttachOriginal → Process pipeline a direct upload uses
+// (probe/scan/quarantine/transcode), then marks the session completed and drops
+// its now-consumed chunk blobs. Owner only; non-owner/unknown → 404; already
+// finished → 409; missing/mismatched chunks → 422. Returns the finalised video
+// exactly like the direct upload.
+func (s *Server) handleCompleteUploadSession(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	uploadID, err := uuid.Parse(c.Param("upload_id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "upload session not found")
+	}
+	ctx := c.Request().Context()
+	sess, reader, err := s.uploadsvc.PrepareComplete(ctx, uploadID, userID)
+	if err != nil {
+		return uploadError(err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	// Re-check the quota against the assembled size before storing (the session
+	// may have sat while other uploads consumed headroom).
+	if s.quotasvc != nil {
+		if qerr := s.quotasvc.CheckFits(ctx, userID, sess.TotalSize); qerr != nil {
+			if errors.Is(qerr, quota.ErrExceeded) {
+				return &QuotaExceededError{}
+			}
+			return qerr
+		}
+	}
+	_, file, err := s.videosvc.AttachOriginal(ctx, userID, sess.VideoID, video.UploadInput{
+		Filename: sess.Filename,
+		Reader:   reader,
+	})
+	if err != nil {
+		return videoError(err)
+	}
+	v, err := s.videosvc.Process(ctx, sess.VideoID, file.StorageKey)
+	if err != nil {
+		return err
+	}
+	if err := s.uploadsvc.MarkCompleted(ctx, uploadID); err != nil {
+		return err
+	}
+	return c.JSON(http.StatusCreated, uploadVideoFileResponse{
+		Video: newVideoView(v),
+		File:  newVideoFileView(file),
+	})
+}
+
+// handleCancelUploadSession cancels an in-progress upload and drops its chunk
+// blobs. Owner only; non-owner/unknown → 404. Idempotent (cancelling an
+// already-finished session still 204s).
+func (s *Server) handleCancelUploadSession(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	uploadID, err := uuid.Parse(c.Param("upload_id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "upload session not found")
+	}
+	if err := s.uploadsvc.Cancel(c.Request().Context(), uploadID, userID); err != nil {
+		return uploadError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// uploadError maps upload service sentinels to HTTP error envelopes.
+func uploadError(err error) error {
+	switch {
+	case errors.Is(err, upload.ErrNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, "upload session not found")
+	case errors.Is(err, upload.ErrNotActive):
+		return echo.NewHTTPError(http.StatusConflict, "upload session is no longer active")
+	case errors.Is(err, upload.ErrChunkRange):
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, "chunk index out of range")
+	case errors.Is(err, upload.ErrChunkSize):
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, "chunk size does not match the expected size for its index")
+	case errors.Is(err, upload.ErrChunkTooLarge):
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "the chunk is too large")
+	case errors.Is(err, upload.ErrIncomplete):
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, "the upload is missing one or more chunks")
+	default:
+		return err
+	}
+}

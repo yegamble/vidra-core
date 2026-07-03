@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/labstack/gommon/bytes"
 
 	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/admin"
@@ -47,8 +48,10 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/transcode"
+	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/version"
 	"github.com/vidra/vidra-core/internal/video"
+	"github.com/vidra/vidra-core/internal/videoimport"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -389,6 +392,25 @@ func run() error {
 		logger.Info("default per-user storage quota enabled", "bytes", cfg.InstanceDefaultQuotaBytes)
 	}
 
+	// Resumable/chunked upload sessions (P6.1). Chunk bytes go to the same blob
+	// backend at uploads/<session>/<n>; completion assembles them through the
+	// same AttachOriginal → Process pipeline as a direct upload, and a background
+	// sweeper cleans up expired/cancelled sessions' chunks (failed-upload cleanup).
+	uploadsvc := upload.NewService(db.Queries(), blobs)
+	opts = append(opts, httpapi.WithUploadService(uploadsvc))
+
+	// Asynchronous URL import (P2.2). POST /videos/:id/import now enqueues a job
+	// and returns 202; a background worker performs the SSRF-guarded fetch and
+	// runs it through the same pipeline, with the same UPLOAD_MAX_SIZE cap and
+	// per-user quota enforcement the synchronous path had.
+	importMaxBytes, _ := bytes.Parse(cfg.UploadMaxSize) // validated at startup
+	importsvc := videoimport.NewService(db.Queries(), videosvc, importMaxBytes,
+		videoimport.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
+		videoimport.WithQuota(quotasvc),
+		videoimport.WithLogger(logger),
+	)
+	opts = append(opts, httpapi.WithVideoImportService(importsvc))
+
 	// Account lifecycle (P4 export/import + §1 hard delete). Deleting an
 	// account removes its videos through the video service, so the federation
 	// Delete hooks registered above fire for previously-public videos.
@@ -482,6 +504,26 @@ func run() error {
 		defer workerCancel()
 		go runScheduledPublishWorker(workerCtx, logger, videosvc)
 		logger.Info("scheduled publish worker started")
+	}
+
+	// Drain the URL-import queue in the background (SSRF-guarded fetch → the same
+	// AttachOriginal → Process pipeline, with retry + dead-letter). Always on: the
+	// due scan is a cheap partial-index lookup.
+	{
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runVideoImportWorker(workerCtx, logger, importsvc)
+		logger.Info("video import worker started")
+	}
+
+	// Sweep expired/cancelled resumable-upload sessions (the failed-upload
+	// cleanup): removes the chunk blobs then the row. Always on: the sweep scan
+	// is a cheap indexed lookup.
+	{
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runUploadSweepWorker(workerCtx, logger, uploadsvc)
+		logger.Info("upload session sweep worker started")
 	}
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
@@ -657,6 +699,64 @@ func runScheduledPublishWorker(ctx context.Context, logger *slog.Logger, svc *vi
 			}
 			if n > 0 {
 				logger.Info("scheduled publish sweep published videos", "count", n)
+			}
+		}
+	}
+}
+
+// runVideoImportWorker drains the durable URL-import queue on a ticker until
+// ctx is canceled (mirrors runTranscodeWorker). Per-job failures are recorded
+// in the queue (retry/backoff/dead-letter); only the claim-query error is logged.
+func runVideoImportWorker(ctx context.Context, logger *slog.Logger, svc *videoimport.Service) {
+	const (
+		interval = 10 * time.Second
+		batch    = 2
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			total := 0
+			for {
+				n, err := svc.DrainJobs(ctx, batch)
+				if err != nil {
+					logger.Warn("video import drain failed", "error", err)
+					break
+				}
+				total += n
+				if n == 0 {
+					break
+				}
+			}
+			if total > 0 {
+				logger.Info("video import drain completed jobs", "count", total)
+			}
+		}
+	}
+}
+
+// runUploadSweepWorker deletes expired/cancelled resumable-upload sessions and
+// their chunk blobs on a ticker until ctx is canceled (mirrors the account
+// export sweep). Only the sweep-query error is logged.
+func runUploadSweepWorker(ctx context.Context, logger *slog.Logger, svc *upload.Service) {
+	const (
+		interval   = time.Minute
+		sweepBatch = 50
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := svc.Sweep(ctx, sweepBatch); err != nil {
+				logger.Warn("upload session sweep failed", "error", err)
+			} else if n > 0 {
+				logger.Info("upload session sweep removed sessions", "count", n)
 			}
 		}
 	}

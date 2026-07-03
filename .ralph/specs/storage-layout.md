@@ -27,6 +27,7 @@ PeerTube buckets (from its `storage:` config) and the vidra mapping:
 | `avatars/`               | account/channel avatars                 | `avatars/users/<id><ext>`, `avatars/channels/<id><ext>` | **in use** (P5; `user_images`/`channel_images` tables) |
 | `banners/`               | account/channel banners (vidra addition — PeerTube keeps banners inside `avatars/`; a separate kind dir follows the one-dir-per-kind rule) | `banners/users/<id><ext>`, `banners/channels/<id><ext>` | **in use** (P5) |
 | `exports/`               | account export archives (vidra addition — P4 export; no PeerTube bucket equivalent) | `exports/accounts/<user_id>/<export_id>.json` | **in use** (P4; the `account_exports` table tracks the job + 7-day expiry; the sweeper deletes blob + row) |
+| `uploads/`               | resumable-upload chunks in flight (vidra addition — P6.1 chunked upload; no PeerTube bucket equivalent) | `uploads/<session_id>/<n>` | **in use** (P6.1; the `upload_sessions`/`upload_chunks` tables track the session + received-chunk ledger; complete assembles the chunks in order into `web-videos/`, then the chunk prefix is dropped; a 24h sweeper deletes expired/cancelled sessions' chunk prefixes — the failed-upload cleanup) |
 | `torrents/`              | .torrent files                          | `torrents/<id>.torrent`         | planned (if/when WebTorrent) |
 | `tmp/`                   | scratch during upload/processing        | `tmp/...`                        | planned |
 

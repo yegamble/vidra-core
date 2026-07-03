@@ -740,6 +740,14 @@ func posInt32(n int) *int32 {
 	return &v
 }
 
+// AcceptedVideoExt reports the normalized (lowercased) extension of filename
+// when it is an accepted video container, else ("", false). Exposed so the
+// resumable-upload session (internal/upload) validates a declared filename up
+// front against the exact same allow-list AttachOriginal enforces.
+func AcceptedVideoExt(filename string) (string, bool) {
+	return acceptedExt(filename)
+}
+
 // acceptedExt returns the normalized (lowercased) extension of filename when it
 // is an accepted video container, and false otherwise. It is the upload type gate.
 func acceptedExt(filename string) (string, bool) {

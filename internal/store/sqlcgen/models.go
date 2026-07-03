@@ -179,6 +179,18 @@ type FederationInboxActivity struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 
+type ImportJob struct {
+	ID            uuid.UUID `json:"id"`
+	VideoID       uuid.UUID `json:"video_id"`
+	Url           string    `json:"url"`
+	State         string    `json:"state"`
+	Error         string    `json:"error"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type LiveStream struct {
 	ID            uuid.UUID `json:"id"`
 	ChannelID     uuid.UUID `json:"channel_id"`
@@ -395,6 +407,27 @@ type TranscodeJob struct {
 	LastError     string    `json:"last_error"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type UploadChunk struct {
+	UploadID  uuid.UUID `json:"upload_id"`
+	N         int32     `json:"n"`
+	SizeBytes int64     `json:"size_bytes"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type UploadSession struct {
+	ID        uuid.UUID `json:"id"`
+	VideoID   uuid.UUID `json:"video_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Filename  string    `json:"filename"`
+	TotalSize int64     `json:"total_size"`
+	ChunkSize int32     `json:"chunk_size"`
+	State     string    `json:"state"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type User struct {

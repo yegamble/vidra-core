@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	gommonbytes "github.com/labstack/gommon/bytes"
 
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -37,7 +38,9 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/transcode"
+	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
+	"github.com/vidra/vidra-core/internal/videoimport"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -796,6 +799,8 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 	msgRepo := newMessagingFakeRepo(authRepo)
 	blocksvc := block.NewService(userBlockRepo)
 	tcRepo := newTranscodeFakeRepo()
+	uploadRepo := newUploadFakeRepo()
+	importRepo := newImportFakeRepo()
 	// Wire storage-usage aggregation over the video fake's files (mirrors the
 	// SumUserStorageUsage SQL: every file of every video owned via the user's
 	// channels), so the quota service and admin view see real usage.
@@ -812,10 +817,23 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		}
 		return sum
 	}
+	videosvc := video.NewService(repo, blobs, opts...)
+	quotasvc := quota.NewService(authRepo, cfg.InstanceDefaultQuotaBytes)
+	importMaxBytes, _ := gommonbytes.Parse(cfg.UploadMaxSize)
+	// The import service uses a plain client so unit tests reach the loopback
+	// httptest origin (the production SSRF guard, tested in the videoimport
+	// package, refuses it). A tiny chunk size lets small fixtures exercise the
+	// multi-chunk resumable path over HTTP.
+	importsvc := videoimport.NewService(importRepo, videosvc, importMaxBytes,
+		videoimport.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
+		videoimport.WithQuota(quotasvc),
+		videoimport.WithHTTPClient(&http.Client{}),
+	)
+	uploadsvc := upload.NewService(uploadRepo, blobs, upload.WithChunkSize(16))
 	srv := New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
-		WithVideoService(video.NewService(repo, blobs, opts...)),
+		WithVideoService(videosvc),
 		WithCommentService(comment.NewService(cmRepo)),
 		WithRatingService(rating.NewService(ratingRepo)),
 		WithNotificationService(notification.NewService(notifRepo)),
@@ -828,8 +846,10 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		WithMessagingService(messaging.NewService(msgRepo, messaging.WithBlocker(blocksvc))),
 		WithE2EEService(e2ee.NewService(newE2EEFakeRepo(authRepo, msgRepo), e2ee.WithBlocker(blocksvc))),
 		WithLiveService(live.NewService(newLiveFakeRepo(chRepo))),
-		WithQuotaService(quota.NewService(authRepo, cfg.InstanceDefaultQuotaBytes)),
+		WithQuotaService(quotasvc),
 		WithTranscodeService(transcode.NewService(tcRepo, nil)),
+		WithUploadService(uploadsvc),
+		WithVideoImportService(importsvc),
 		WithInstanceModerationService(instancemod.NewService(newInstanceModFakeRepo())),
 		WithMediaStorage(blobs),
 	)

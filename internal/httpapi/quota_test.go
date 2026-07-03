@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/vidra/vidra-core/internal/config"
@@ -188,43 +190,51 @@ func quotaImportServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// TestImportBlockedWhenOverQuota: the async import worker enforces the quota —
+// both a declared Content-Length over the headroom and a chunked body with no
+// length (caught by the streaming hard cap) fail the job, and nothing is stored.
 func TestImportBlockedWhenOverQuota(t *testing.T) {
 	srv := videoServerCfg(t, quotaCfg(10))
-	srv.importClient = &http.Client{} // reach loopback; prod uses urlsafety.NewClient
 	media := quotaImportServer(t)
 
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	idSized := createVideo(t, srv, tok, "ada", `{"title":"Sized"}`)
+	idChunked := createVideo(t, srv, tok, "ada", `{"title":"Chunked"}`)
 
-	// Declared Content-Length over the headroom → 422 before storing.
-	id := createVideo(t, srv, tok, "ada", `{"title":"Sized"}`)
-	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
-		`{"url":"`+loopbackAsLocalhost(media.URL)+`/sized.mp4"}`, tok)
-	if rec.Code != http.StatusUnprocessableEntity || errorCode(t, rec) != "quota_exceeded" {
-		t.Fatalf("sized import = %d (%s), want 422 quota_exceeded", rec.Code, rec.Body.String())
+	enqueueImport(t, srv, idSized, loopbackAsLocalhost(media.URL)+"/sized.mp4", tok)
+	enqueueImport(t, srv, idChunked, loopbackAsLocalhost(media.URL)+"/chunked.mp4", tok)
+	if _, err := srv.importsvc.DrainJobs(context.Background(), 10); err != nil {
+		t.Fatalf("drain: %v", err)
 	}
 
-	// No Content-Length (chunked): the streaming hard cap rejects mid-transfer.
-	rec = sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
-		`{"url":"`+loopbackAsLocalhost(media.URL)+`/chunked.mp4"}`, tok)
-	if rec.Code != http.StatusUnprocessableEntity || errorCode(t, rec) != "quota_exceeded" {
-		t.Fatalf("chunked import = %d (%s), want 422 quota_exceeded", rec.Code, rec.Body.String())
+	for _, id := range []string{idSized, idChunked} {
+		job := getImportStatus(t, srv, id, tok)
+		if job.State == "done" {
+			t.Errorf("over-quota import (%s) state = done, want a failure state", id)
+		}
+		if !strings.Contains(job.Error, "quota") {
+			t.Errorf("over-quota import (%s) error = %q, want a quota reason", id, job.Error)
+		}
 	}
 	if st := getMyQuota(t, srv, tok); st.UsedBytes != 0 {
 		t.Errorf("used after rejected imports = %d, want 0", st.UsedBytes)
 	}
 }
 
+// TestImportAllowedWhenUnlimited: with no quota the async import stores the file
+// and the usage reflects it.
 func TestImportAllowedWhenUnlimited(t *testing.T) {
 	srv := videoServer(t) // unlimited
-	srv.importClient = &http.Client{}
 	media := quotaImportServer(t)
 
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createVideo(t, srv, tok, "ada", `{"title":"Free"}`)
-	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
-		`{"url":"`+loopbackAsLocalhost(media.URL)+`/chunked.mp4"}`, tok)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("unlimited chunked import = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	enqueueImport(t, srv, id, loopbackAsLocalhost(media.URL)+"/chunked.mp4", tok)
+	if _, err := srv.importsvc.DrainJobs(context.Background(), 5); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if job := getImportStatus(t, srv, id, tok); job.State != "done" {
+		t.Fatalf("unlimited import state = %q (err=%q), want done", job.State, job.Error)
 	}
 	if st := getMyQuota(t, srv, tok); st.UsedBytes != 64 {
 		t.Errorf("used = %d, want 64", st.UsedBytes)

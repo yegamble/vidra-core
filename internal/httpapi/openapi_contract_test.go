@@ -30,7 +30,9 @@ import (
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/remotevideo"
 	"github.com/vidra/vidra-core/internal/transcode"
+	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
+	"github.com/vidra/vidra-core/internal/videoimport"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
@@ -61,6 +63,8 @@ func fullRouteOptions() []Option {
 		WithProfileImageService(profileimage.NewService(nil, nil)),
 		WithQuotaService(quota.NewService(nil, 0)),
 		WithTranscodeService(transcode.NewService(nil, nil)),
+		WithUploadService(upload.NewService(nil, nil)),
+		WithVideoImportService(videoimport.NewService(nil, nil, 0)),
 		WithInstanceModerationService(instancemod.NewService(nil)),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
 		// Mounts the REST remote-follow routes. The AP root routes stay excluded
