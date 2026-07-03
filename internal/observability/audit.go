@@ -51,6 +51,10 @@ const (
 	ActionVideoDelete           = "content.video.delete"
 	ActionChannelDelete         = "content.channel.delete"
 	ActionMediaGC               = "admin.media.gc"
+	// ActionLiveReplay records the best-effort republish of a recorded live
+	// session as a VOD on ingest-stop (P12). Reason carries safe ids/outcome
+	// only — never the stream key.
+	ActionLiveReplay = "content.live.replay"
 	// E2EE one-time-key claims are audited with COUNTS ONLY (never key
 	// material): key exhaustion/abuse is a security-relevant signal.
 	ActionE2EEClaim = "e2ee.otk.claim"

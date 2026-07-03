@@ -872,8 +872,14 @@ func (s *Server) routes() {
 		api.POST("/channels/:handle/live", s.handleCreateLiveStream, s.requireAuth)
 		api.GET("/channels/:handle/live", s.handleListLiveStreams, s.requireAuth)
 		api.GET("/live/:id", s.handleGetLiveStream, s.optionalAuth)
+		api.PATCH("/live/:id", s.handleUpdateLiveStream, s.requireAuth)
 		api.POST("/live/:id/key", s.handleRegenerateLiveStreamKey, s.requireAuth)
 		api.DELETE("/live/:id", s.handleDeleteLiveStream, s.requireAuth)
+		// Live HLS serving: the media server writes segments into LIVE_HLS_ROOT
+		// keyed by stream ID; the api serves them privacy/state-gated (404 when
+		// LIVE_HLS_ROOT is unset). Mirrors the VOD /hls routes.
+		api.GET("/live/:id/hls/master.m3u8", s.handleGetLiveHLSMaster, s.optionalAuth)
+		api.GET("/live/:id/hls/:file", s.handleGetLiveHLSFile, s.optionalAuth)
 		// RTMP ingest boundary (media-server-facing): authenticated by the ingest
 		// shared secret, not a user token. 404 unless LIVE_INGEST_SECRET is set.
 		api.POST("/live/ingest/start", s.handleLiveIngestStart)

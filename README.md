@@ -254,6 +254,40 @@ reference. It defaults to a dry run (`{"dry_run":false}` deletes); it never
 lists or touches an unknown prefix, and it is audited. A daily in-process worker
 runs the same sweep.
 
+**Live streaming** (P12). A channel owner creates a live stream with
+`POST /api/v1/channels/{handle}/live` (`{title, description?, privacy?,
+permanent?, replay_enabled?}`) and receives a stream key ONCE plus the RTMP URL;
+only the key's SHA-256 hash is stored. `GET/PATCH/DELETE /api/v1/live/{id}` read/
+edit/delete it (`PATCH` edits title/description/privacy/permanent/replay_enabled),
+`POST /api/v1/live/{id}/key` rotates the key, and `GET /api/v1/channels/{handle}/live`
+lists a channel's streams (owner only; keys are never returned).
+
+The RTMP boundary is the `media` compose profile: an nginx-rtmp server ingests
+RTMP, packages HLS, records sessions, and drives the api via media-server-facing
+hooks `POST /api/v1/live/ingest/{start,stop}` (authenticated by the
+`X-Ingest-Secret: $LIVE_INGEST_SECRET` header — 404 when the secret is unset).
+On publish the api returns a 302 that renames the RTMP session to the **stream
+ID**, so the raw key never lands in a file path/URL; on-publish flips the stream
+`live`, on-publish-done returns it to `offline` (permanent) or `ended` (one-shot).
+While live, the api serves HLS from `LIVE_HLS_ROOT` (the shared volume) keyed by
+ID at `GET /api/v1/live/{id}/hls/master.m3u8` and `…/hls/{file}` — same privacy
+gating as VOD HLS, and only while `state=live`; the live view carries `hls_url`
+then.
+
+**Replay → VOD** (`replay_enabled`): the media server records each session; on
+ingest-stop the api best-effort creates a draft video on the stream's channel
+(titled `"<stream title> (replay)"`, privacy inherited) and runs the recording
+through the normal pipeline (scan/probe/thumbnail/transcode), so the replay
+appears as an ordinary published video. It is fully best-effort — a replay
+failure never breaks the stop hook — and each outcome is logged + audited
+(`content.live.replay`). To run the whole live plane locally:
+
+```bash
+LIVE_INGEST_SECRET=$(openssl rand -hex 24) LIVE_HLS_ROOT=/live-hls \
+  docker compose --profile core --profile media up --build
+# publish to rtmp://localhost:1935/live/<stream-key>
+```
+
 `POST /api/v1/videos/{id}/view` records a view (same visibility as detail; only
 published videos accrue views), de-duplicated per viewer per hour in Redis
 (`SETNX` over the authenticated user id, else the client IP, hashed — raw

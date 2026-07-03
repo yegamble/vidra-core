@@ -29,13 +29,30 @@ func (f *fakeRepo) CreateLiveStream(_ context.Context, a sqlcgen.CreateLiveStrea
 	now := time.Now()
 	f.rows[id] = sqlcgen.GetLiveStreamByIDRow{
 		ID: id, ChannelID: a.ChannelID, Title: a.Title, Description: a.Description,
-		Privacy: a.Privacy, State: "offline", Permanent: a.Permanent, CreatedAt: now, UpdatedAt: now,
+		Privacy: a.Privacy, State: "offline", Permanent: a.Permanent, ReplayEnabled: a.ReplayEnabled,
+		CreatedAt: now, UpdatedAt: now,
 		OwnerID: f.owner, ChannelHandle: "ch", ChannelDisplayName: "Ch",
 	}
 	f.hashes[id] = a.StreamKeyHash
 	return sqlcgen.CreateLiveStreamRow{
 		ID: id, ChannelID: a.ChannelID, Title: a.Title, Description: a.Description,
-		Privacy: a.Privacy, State: "offline", Permanent: a.Permanent, CreatedAt: now, UpdatedAt: now,
+		Privacy: a.Privacy, State: "offline", Permanent: a.Permanent, ReplayEnabled: a.ReplayEnabled,
+		CreatedAt: now, UpdatedAt: now,
+	}, nil
+}
+
+func (f *fakeRepo) UpdateLiveStream(_ context.Context, a sqlcgen.UpdateLiveStreamParams) (sqlcgen.UpdateLiveStreamRow, error) {
+	r, ok := f.rows[a.ID]
+	if !ok {
+		return sqlcgen.UpdateLiveStreamRow{}, errors.New("not found")
+	}
+	r.Title, r.Description, r.Privacy, r.Permanent, r.ReplayEnabled = a.Title, a.Description, a.Privacy, a.Permanent, a.ReplayEnabled
+	r.UpdatedAt = time.Now()
+	f.rows[a.ID] = r
+	return sqlcgen.UpdateLiveStreamRow{
+		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}, nil
 }
 
@@ -192,6 +209,76 @@ func TestIngestStartStop(t *testing.T) {
 	// An unknown key is denied.
 	if _, err := svc.StartIngest(ctx, "not-a-real-key"); err != ErrNotFound {
 		t.Errorf("StartIngest(unknown) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestStartStopByIdentity(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo(uuid.New())
+	svc := NewService(repo)
+
+	s, key, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Show"})
+
+	// First publish presents the raw key → needs a rename to the id.
+	id, needsRename, err := svc.StartByIdentity(ctx, key)
+	if err != nil || id != s.ID || !needsRename {
+		t.Fatalf("StartByIdentity(key) = (%v,%v,%v), want (%v,true,nil)", id, needsRename, err, s.ID)
+	}
+	// Re-invocation with the renamed id must be idempotent and NOT ask to rename
+	// again (avoids the nginx-rtmp redirect loop).
+	id2, needsRename2, err := svc.StartByIdentity(ctx, s.ID.String())
+	if err != nil || id2 != s.ID || needsRename2 {
+		t.Fatalf("StartByIdentity(id) = (%v,%v,%v), want (%v,false,nil)", id2, needsRename2, err, s.ID)
+	}
+	if got := repo.rows[s.ID].State; got != StateLive {
+		t.Errorf("state = %q, want live", got)
+	}
+
+	// Stop resolves by the stream id (post-rename media-server path).
+	st, err := svc.StopByIdentity(ctx, s.ID.String())
+	if err != nil || st.ID != s.ID {
+		t.Fatalf("StopByIdentity(id) = (%+v,%v), want the stream", st, err)
+	}
+	if got := repo.rows[s.ID].State; got != StateEnded {
+		t.Errorf("state after stop = %q, want ended", got)
+	}
+	// An unknown identity (neither a live id nor a known key) is denied.
+	if _, err := svc.StopByIdentity(ctx, uuid.New().String()); err != ErrNotFound {
+		t.Errorf("StopByIdentity(unknown id) = %v, want ErrNotFound", err)
+	}
+	if _, _, err := svc.StartByIdentity(ctx, "not-a-key"); err != ErrNotFound {
+		t.Errorf("StartByIdentity(garbage) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUpdate(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo(uuid.New())
+	svc := NewService(repo)
+
+	s, _, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Before", Privacy: "public"})
+	updated, err := svc.Update(ctx, s.ID, UpdateInput{
+		Title: "After", Description: "d", Privacy: "unlisted", Permanent: true, ReplayEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Title != "After" || updated.Privacy != "unlisted" || !updated.Permanent || !updated.ReplayEnabled {
+		t.Fatalf("updated = %+v, want the edited fields", updated)
+	}
+	// Persisted (a subsequent Get reflects it).
+	got, _ := svc.Get(ctx, s.ID)
+	if got.Title != "After" || !got.ReplayEnabled {
+		t.Errorf("Get after update = %+v, want persisted edits", got)
+	}
+	// Empty privacy defaults to public.
+	back, _ := svc.Update(ctx, s.ID, UpdateInput{Title: "x"})
+	if back.Privacy != "public" {
+		t.Errorf("default privacy = %q, want public", back.Privacy)
+	}
+	// Unknown id → ErrNotFound.
+	if _, err := svc.Update(ctx, uuid.New(), UpdateInput{Title: "x"}); err != ErrNotFound {
+		t.Errorf("Update(unknown) = %v, want ErrNotFound", err)
 	}
 }
 

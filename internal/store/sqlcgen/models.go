@@ -202,6 +202,7 @@ type LiveStream struct {
 	StreamKeyHash string    `json:"stream_key_hash"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	ReplayEnabled bool      `json:"replay_enabled"`
 }
 
 type Message struct {

@@ -6,6 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +44,8 @@ func (f *liveFakeRepo) CreateLiveStream(_ context.Context, a sqlcgen.CreateLiveS
 	now := time.Now()
 	row := sqlcgen.CreateLiveStreamRow{
 		ID: uuid.New(), ChannelID: a.ChannelID, Title: a.Title, Description: a.Description,
-		Privacy: a.Privacy, State: "offline", Permanent: a.Permanent, CreatedAt: now, UpdatedAt: now,
+		Privacy: a.Privacy, State: "offline", Permanent: a.Permanent, ReplayEnabled: a.ReplayEnabled,
+		CreatedAt: now, UpdatedAt: now,
 	}
 	f.rows[row.ID] = row
 	f.hashes[row.ID] = a.StreamKeyHash
@@ -56,7 +60,8 @@ func (f *liveFakeRepo) GetLiveStreamByID(_ context.Context, id uuid.UUID) (sqlcg
 	ch, _ := f.channelByID(r.ChannelID)
 	return sqlcgen.GetLiveStreamByIDRow{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
-		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		OwnerID: ch.OwnerID, ChannelHandle: ch.Handle, ChannelDisplayName: ch.DisplayName,
 	}, nil
 }
@@ -67,7 +72,8 @@ func (f *liveFakeRepo) ListLiveStreamsByChannel(_ context.Context, channelID uui
 		if r.ChannelID == channelID {
 			out = append(out, sqlcgen.ListLiveStreamsByChannelRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
-				Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
+				CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			})
 		}
 	}
@@ -77,6 +83,21 @@ func (f *liveFakeRepo) ListLiveStreamsByChannel(_ context.Context, channelID uui
 func (f *liveFakeRepo) UpdateLiveStreamKey(_ context.Context, a sqlcgen.UpdateLiveStreamKeyParams) error {
 	f.hashes[a.ID] = a.StreamKeyHash
 	return nil
+}
+
+func (f *liveFakeRepo) UpdateLiveStream(_ context.Context, a sqlcgen.UpdateLiveStreamParams) (sqlcgen.UpdateLiveStreamRow, error) {
+	r, ok := f.rows[a.ID]
+	if !ok {
+		return sqlcgen.UpdateLiveStreamRow{}, errors.New("not found")
+	}
+	r.Title, r.Description, r.Privacy, r.Permanent, r.ReplayEnabled = a.Title, a.Description, a.Privacy, a.Permanent, a.ReplayEnabled
+	r.UpdatedAt = time.Now()
+	f.rows[a.ID] = r
+	return sqlcgen.UpdateLiveStreamRow{
+		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}, nil
 }
 
 func (f *liveFakeRepo) GetLiveStreamByKeyHash(_ context.Context, h string) (sqlcgen.GetLiveStreamByKeyHashRow, error) {
@@ -259,6 +280,207 @@ func TestLiveIngestFlow(t *testing.T) {
 	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+id, tok).Body.Bytes(), &ended)
 	if ended.State != "ended" {
 		t.Errorf("state after ingest stop = %q, want ended", ended.State)
+	}
+}
+
+// ingestForm posts an nginx-rtmp style form callback (name=<key|id>) with the
+// ingest secret header, mirroring the media server. It disables redirect
+// following so the 302 rename is observable.
+func ingestForm(srv *Server, path, name, secret string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	body := url.Values{"name": {name}, "call": {"publish"}}.Encode()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	if secret != "" {
+		req.Header.Set("X-Ingest-Secret", secret)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// TestLiveIngestFormRedirectRename: the nginx-rtmp form callback flips the stream
+// live AND receives a 302 whose last path segment is the stream ID (the rename
+// that keeps the raw key off disk); a post-rename re-invocation with the id is
+// allowed (200) without another redirect.
+func TestLiveIngestFormRedirectRename(t *testing.T) {
+	cfg := testConfig()
+	cfg.LiveIngestSecret = "s3cret"
+	srv := videoServerCfg(t, cfg)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	var created createLiveStreamResponse
+	_ = json.Unmarshal(createLiveStream(srv, "ada", `{"title":"Show"}`, tok).Body.Bytes(), &created)
+	id, key := created.LiveStream.ID, created.StreamKey
+
+	r := ingestForm(srv, "/api/v1/live/ingest/start", key, "s3cret")
+	if r.Code != http.StatusFound {
+		t.Fatalf("form start = %d, want 302; body=%s", r.Code, r.Body.String())
+	}
+	loc := r.Header().Get("Location")
+	if !strings.HasSuffix(loc, "/"+id) {
+		t.Errorf("redirect Location = %q, want it to rename to the stream id %q", loc, id)
+	}
+	// State flipped live.
+	var live liveStreamView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+id, tok).Body.Bytes(), &live)
+	if live.State != "live" {
+		t.Errorf("state = %q, want live", live.State)
+	}
+	// Re-invocation with the renamed id → 200 (allow), no second redirect.
+	if r := ingestForm(srv, "/api/v1/live/ingest/start", id, "s3cret"); r.Code != http.StatusOK {
+		t.Errorf("re-publish by id = %d, want 200 (no redirect loop)", r.Code)
+	}
+	// Stop by the id (post-rename media-server path) ends the one-shot stream.
+	if r := ingestForm(srv, "/api/v1/live/ingest/stop", id, "s3cret"); r.Code != http.StatusNoContent {
+		t.Fatalf("form stop by id = %d, want 204", r.Code)
+	}
+	var ended liveStreamView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+id, tok).Body.Bytes(), &ended)
+	if ended.State != "ended" {
+		t.Errorf("state after stop = %q, want ended", ended.State)
+	}
+}
+
+// liveHLSServer builds a server whose LIVE_HLS_ROOT is a temp dir, returns it +
+// the root so tests can seed HLS files, and configures the ingest secret so a
+// stream can be flipped live.
+func liveHLSServer(t *testing.T) (*Server, string) {
+	t.Helper()
+	cfg := testConfig()
+	cfg.LiveHLSRoot = t.TempDir()
+	cfg.LiveIngestSecret = "s3cret"
+	return videoServerCfg(t, cfg), cfg.LiveHLSRoot
+}
+
+func TestLiveHLSServing(t *testing.T) {
+	srv, root := liveHLSServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	var created createLiveStreamResponse
+	_ = json.Unmarshal(createLiveStream(srv, "ada", `{"title":"Show"}`, tok).Body.Bytes(), &created)
+	id, key := created.LiveStream.ID, created.StreamKey
+
+	// Seed the media server's HLS output for this stream id.
+	if err := os.WriteFile(filepath.Join(root, id+".m3u8"), []byte("#EXTM3U\n"+id+"-0.ts\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, id+"-0.ts"), []byte("TSDATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before going live: HLS is 404 (only served while live).
+	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8", ""); g.Code != http.StatusNotFound {
+		t.Errorf("hls before live = %d, want 404", g.Code)
+	}
+
+	// Flip live via the ingest hook.
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+key+`"}`, "s3cret"); r.Code != http.StatusOK {
+		t.Fatalf("ingest start = %d", r.Code)
+	}
+
+	// The live view now advertises hls_url.
+	var lv liveStreamView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+id, "").Body.Bytes(), &lv)
+	if lv.HLSURL != "/api/v1/live/"+id+"/hls/master.m3u8" {
+		t.Errorf("hls_url = %q, want the live playlist path", lv.HLSURL)
+	}
+
+	// Master playlist + segment serve from LIVE_HLS_ROOT.
+	m := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8", "")
+	if m.Code != http.StatusOK || !strings.Contains(m.Body.String(), "#EXTM3U") {
+		t.Fatalf("master = %d body=%q", m.Code, m.Body.String())
+	}
+	if ct := m.Header().Get("Content-Type"); !strings.Contains(ct, "mpegurl") {
+		t.Errorf("master content-type = %q, want an m3u8 type", ct)
+	}
+	seg := getWithAuth(srv, "/api/v1/live/"+id+"/hls/"+id+"-0.ts", "")
+	if seg.Code != http.StatusOK || seg.Body.String() != "TSDATA" {
+		t.Fatalf("segment = %d body=%q", seg.Code, seg.Body.String())
+	}
+
+	// A file name that is not this stream's playlist/segment is 404.
+	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/"+uuid.New().String()+"-0.ts", ""); g.Code != http.StatusNotFound {
+		t.Errorf("foreign segment = %d, want 404", g.Code)
+	}
+	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/evil.ts", ""); g.Code != http.StatusNotFound {
+		t.Errorf("non-id segment = %d, want 404", g.Code)
+	}
+}
+
+func TestLiveHLSDisabledWithoutRoot(t *testing.T) {
+	// testConfig has no LIVE_HLS_ROOT: even a live stream's HLS is 404.
+	cfg := testConfig()
+	cfg.LiveIngestSecret = "s3cret"
+	srv := videoServerCfg(t, cfg)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	var created createLiveStreamResponse
+	_ = json.Unmarshal(createLiveStream(srv, "ada", `{"title":"Show"}`, tok).Body.Bytes(), &created)
+	id, key := created.LiveStream.ID, created.StreamKey
+	_ = ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+key+`"}`, "s3cret")
+
+	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8", ""); g.Code != http.StatusNotFound {
+		t.Errorf("hls without LIVE_HLS_ROOT = %d, want 404", g.Code)
+	}
+	// And the view omits hls_url.
+	var lv liveStreamView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+id, "").Body.Bytes(), &lv)
+	if lv.HLSURL != "" {
+		t.Errorf("hls_url = %q, want empty when serving is not configured", lv.HLSURL)
+	}
+}
+
+func TestLiveHLSPrivacyGate(t *testing.T) {
+	srv, root := liveHLSServer(t)
+	ada := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	var created createLiveStreamResponse
+	_ = json.Unmarshal(createLiveStream(srv, "ada", `{"title":"secret","privacy":"private"}`, ada).Body.Bytes(), &created)
+	id, key := created.LiveStream.ID, created.StreamKey
+	_ = os.WriteFile(filepath.Join(root, id+".m3u8"), []byte("#EXTM3U\n"), 0o644)
+	_ = ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+key+`"}`, "s3cret")
+
+	// Private live HLS: anon + other → 404, owner → 200.
+	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8", ""); g.Code != http.StatusNotFound {
+		t.Errorf("anon private hls = %d, want 404", g.Code)
+	}
+	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8", bob); g.Code != http.StatusNotFound {
+		t.Errorf("other private hls = %d, want 404", g.Code)
+	}
+	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8", ada); g.Code != http.StatusOK {
+		t.Errorf("owner private hls = %d, want 200", g.Code)
+	}
+}
+
+func TestLiveStreamEdit(t *testing.T) {
+	srv := videoServer(t)
+	ada := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	var created createLiveStreamResponse
+	_ = json.Unmarshal(createLiveStream(srv, "ada", `{"title":"Before"}`, ada).Body.Bytes(), &created)
+	id := created.LiveStream.ID
+	if created.LiveStream.ReplayEnabled {
+		t.Fatal("new stream should default replay_enabled=false")
+	}
+
+	// Owner edits title + turns on replay.
+	patch := sendJSONAuth(srv, http.MethodPatch, "/api/v1/live/"+id,
+		`{"title":"After","privacy":"unlisted","permanent":true,"replay_enabled":true}`, ada)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("patch = %d, want 200; body=%s", patch.Code, patch.Body.String())
+	}
+	var edited liveStreamView
+	_ = json.Unmarshal(patch.Body.Bytes(), &edited)
+	if edited.Title != "After" || edited.Privacy != "unlisted" || !edited.Permanent || !edited.ReplayEnabled {
+		t.Fatalf("edited = %+v, want the updated fields", edited)
+	}
+
+	// Non-owner / anon / bad body.
+	if r := sendJSONAuth(srv, http.MethodPatch, "/api/v1/live/"+id, `{"title":"x"}`, bob); r.Code != http.StatusNotFound {
+		t.Errorf("non-owner patch = %d, want 404", r.Code)
+	}
+	if r := sendJSONAuth(srv, http.MethodPatch, "/api/v1/live/"+id, `{"title":""}`, ada); r.Code != http.StatusUnprocessableEntity {
+		t.Errorf("empty title patch = %d, want 422", r.Code)
 	}
 }
 

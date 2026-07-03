@@ -13,9 +13,9 @@ import (
 )
 
 const createLiveStream = `-- name: CreateLiveStream :one
-INSERT INTO live_streams (channel_id, title, description, privacy, permanent, stream_key_hash)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, channel_id, title, description, privacy, state, permanent, created_at, updated_at
+INSERT INTO live_streams (channel_id, title, description, privacy, permanent, replay_enabled, stream_key_hash)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, created_at, updated_at
 `
 
 type CreateLiveStreamParams struct {
@@ -24,19 +24,21 @@ type CreateLiveStreamParams struct {
 	Description   string    `json:"description"`
 	Privacy       string    `json:"privacy"`
 	Permanent     bool      `json:"permanent"`
+	ReplayEnabled bool      `json:"replay_enabled"`
 	StreamKeyHash string    `json:"stream_key_hash"`
 }
 
 type CreateLiveStreamRow struct {
-	ID          uuid.UUID `json:"id"`
-	ChannelID   uuid.UUID `json:"channel_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Privacy     string    `json:"privacy"`
-	State       string    `json:"state"`
-	Permanent   bool      `json:"permanent"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID            uuid.UUID `json:"id"`
+	ChannelID     uuid.UUID `json:"channel_id"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description"`
+	Privacy       string    `json:"privacy"`
+	State         string    `json:"state"`
+	Permanent     bool      `json:"permanent"`
+	ReplayEnabled bool      `json:"replay_enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Create a live stream for a channel with a pre-hashed stream key. The raw key is
@@ -48,6 +50,7 @@ func (q *Queries) CreateLiveStream(ctx context.Context, arg CreateLiveStreamPara
 		arg.Description,
 		arg.Privacy,
 		arg.Permanent,
+		arg.ReplayEnabled,
 		arg.StreamKeyHash,
 	)
 	var i CreateLiveStreamRow
@@ -59,6 +62,7 @@ func (q *Queries) CreateLiveStream(ctx context.Context, arg CreateLiveStreamPara
 		&i.Privacy,
 		&i.State,
 		&i.Permanent,
+		&i.ReplayEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -79,7 +83,7 @@ func (q *Queries) DeleteLiveStream(ctx context.Context, id uuid.UUID) (int64, er
 
 const getLiveStreamByID = `-- name: GetLiveStreamByID :one
 SELECT ls.id, ls.channel_id, ls.title, ls.description, ls.privacy, ls.state, ls.permanent,
-       ls.created_at, ls.updated_at,
+       ls.replay_enabled, ls.created_at, ls.updated_at,
        ch.owner_id, ch.handle AS channel_handle, ch.display_name AS channel_display_name
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
@@ -94,6 +98,7 @@ type GetLiveStreamByIDRow struct {
 	Privacy            string    `json:"privacy"`
 	State              string    `json:"state"`
 	Permanent          bool      `json:"permanent"`
+	ReplayEnabled      bool      `json:"replay_enabled"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 	OwnerID            uuid.UUID `json:"owner_id"`
@@ -114,6 +119,7 @@ func (q *Queries) GetLiveStreamByID(ctx context.Context, id uuid.UUID) (GetLiveS
 		&i.Privacy,
 		&i.State,
 		&i.Permanent,
+		&i.ReplayEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerID,
@@ -152,22 +158,23 @@ func (q *Queries) GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash stri
 }
 
 const listLiveStreamsByChannel = `-- name: ListLiveStreamsByChannel :many
-SELECT id, channel_id, title, description, privacy, state, permanent, created_at, updated_at
+SELECT id, channel_id, title, description, privacy, state, permanent, replay_enabled, created_at, updated_at
 FROM live_streams
 WHERE channel_id = $1
 ORDER BY created_at DESC, id
 `
 
 type ListLiveStreamsByChannelRow struct {
-	ID          uuid.UUID `json:"id"`
-	ChannelID   uuid.UUID `json:"channel_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Privacy     string    `json:"privacy"`
-	State       string    `json:"state"`
-	Permanent   bool      `json:"permanent"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID            uuid.UUID `json:"id"`
+	ChannelID     uuid.UUID `json:"channel_id"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description"`
+	Privacy       string    `json:"privacy"`
+	State         string    `json:"state"`
+	Permanent     bool      `json:"permanent"`
+	ReplayEnabled bool      `json:"replay_enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // A channel's live streams, newest first (owner management list). No key hash.
@@ -188,6 +195,7 @@ func (q *Queries) ListLiveStreamsByChannel(ctx context.Context, channelID uuid.U
 			&i.Privacy,
 			&i.State,
 			&i.Permanent,
+			&i.ReplayEnabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -214,6 +222,63 @@ type SetLiveStreamStateParams struct {
 func (q *Queries) SetLiveStreamState(ctx context.Context, arg SetLiveStreamStateParams) error {
 	_, err := q.db.Exec(ctx, setLiveStreamState, arg.ID, arg.State)
 	return err
+}
+
+const updateLiveStream = `-- name: UpdateLiveStream :one
+UPDATE live_streams
+SET title = $2, description = $3, privacy = $4, permanent = $5, replay_enabled = $6, updated_at = now()
+WHERE id = $1
+RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, created_at, updated_at
+`
+
+type UpdateLiveStreamParams struct {
+	ID            uuid.UUID `json:"id"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description"`
+	Privacy       string    `json:"privacy"`
+	Permanent     bool      `json:"permanent"`
+	ReplayEnabled bool      `json:"replay_enabled"`
+}
+
+type UpdateLiveStreamRow struct {
+	ID            uuid.UUID `json:"id"`
+	ChannelID     uuid.UUID `json:"channel_id"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description"`
+	Privacy       string    `json:"privacy"`
+	State         string    `json:"state"`
+	Permanent     bool      `json:"permanent"`
+	ReplayEnabled bool      `json:"replay_enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// Edit a stream's mutable metadata (title/description/privacy/permanent/
+// replay_enabled). The caller has already authorised ownership. Never touches the
+// stream key or live state.
+func (q *Queries) UpdateLiveStream(ctx context.Context, arg UpdateLiveStreamParams) (UpdateLiveStreamRow, error) {
+	row := q.db.QueryRow(ctx, updateLiveStream,
+		arg.ID,
+		arg.Title,
+		arg.Description,
+		arg.Privacy,
+		arg.Permanent,
+		arg.ReplayEnabled,
+	)
+	var i UpdateLiveStreamRow
+	err := row.Scan(
+		&i.ID,
+		&i.ChannelID,
+		&i.Title,
+		&i.Description,
+		&i.Privacy,
+		&i.State,
+		&i.Permanent,
+		&i.ReplayEnabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateLiveStreamKey = `-- name: UpdateLiveStreamKey :exec

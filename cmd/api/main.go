@@ -393,7 +393,21 @@ func run() error {
 	e2eesvc := e2ee.NewService(db.Queries(), e2ee.WithBlocker(blocksvc))
 	opts = append(opts, httpapi.WithE2EEService(e2eesvc))
 
-	livesvc := live.NewService(db.Queries())
+	// Live streaming. When a media server volume is configured (LIVE_HLS_ROOT),
+	// the api serves live HLS by stream ID from it and — for replay-enabled
+	// streams — republishes a finished session's recording as a normal VOD
+	// through the shared video pipeline (best-effort, audited). Without the root,
+	// replay stays dormant and live HLS serving 404s.
+	liveOpts := []live.Option{live.WithLogger(logger)}
+	if cfg.LiveHLSRoot != "" {
+		liveOpts = append(liveOpts,
+			live.WithReplayPipeline(videosvc),
+			live.WithRecordingStore(live.NewDirRecordingStore(cfg.LiveHLSRoot)),
+			live.WithAuditor(auditsvc),
+		)
+		logger.Info("live HLS serving + replay-to-VOD enabled", "hls_root", cfg.LiveHLSRoot)
+	}
+	livesvc := live.NewService(db.Queries(), liveOpts...)
 	opts = append(opts, httpapi.WithLiveService(livesvc))
 
 	imagesvc := profileimage.NewService(db.Queries(), blobs)

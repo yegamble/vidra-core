@@ -1,0 +1,82 @@
+# Vidra live media server (RTMP ingest + HLS packaging + session recording).
+#
+# This is the config for the `media` Docker Compose profile: an nginx build with
+# the RTMP module (Arut's nginx-rtmp-module). It ingests RTMP, packages HLS into a
+# volume the api serves, records each session for replay-to-VOD, and drives the
+# api's live lifecycle through the existing ingest hooks.
+#
+# Secret handling: nginx-rtmp callbacks cannot set custom request headers, and the
+# api authenticates the ingest hooks with the `X-Ingest-Secret` header. So the
+# RTMP callbacks target a LOCAL http shim in this same nginx (`:8082`) that injects
+# the shared secret header before proxying to the api. `__LIVE_INGEST_SECRET__` is
+# a placeholder substituted at container start from the LIVE_INGEST_SECRET env var
+# (see the compose `media` service command) — never commit a real secret here.
+#
+# Key privacy: OBS publishes to rtmp://host/live/<stream-key>. The api's
+# on-publish hook returns a 302 whose last path segment is the stream ID, so
+# nginx-rtmp renames the session to the ID. Every on-disk path (HLS + recording)
+# is then keyed by the stream ID and the raw stream key never touches the volume.
+
+worker_processes auto;
+error_log /dev/stderr info;
+events {
+    worker_connections 1024;
+}
+
+rtmp {
+    server {
+        listen 1935;
+        chunk_size 4096;
+
+        application live {
+            live on;
+            # Viewers watch via HLS served by the api, not RTMP playback.
+            deny play all;
+
+            # Authenticate + register the publish with the api, which redirects to
+            # rename the session to the stream ID. on-publish-done drives the
+            # offline/ended transition and (for replay-enabled streams) the VOD.
+            on_publish http://127.0.0.1:8082/ingest/start;
+            on_publish_done http://127.0.0.1:8082/ingest/stop;
+
+            # HLS output, keyed by the (renamed) stream name = stream ID:
+            #   /data/hls/<id>.m3u8 + /data/hls/<id>-<n>.ts
+            hls on;
+            hls_path /data/hls;
+            hls_nested off;
+            hls_fragment 2s;
+            hls_playlist_length 12s;
+
+            # Record each session for replay-to-VOD:
+            #   /data/hls/rec/<id>-<unixtime>.flv
+            # The api reads the newest recording for the stream on ingest-stop.
+            recorder replay {
+                record all;
+                record_path /data/hls/rec;
+                record_suffix -%s.flv;
+                record_unique off;
+            }
+        }
+    }
+}
+
+http {
+    access_log off;
+    server {
+        listen 8082;
+
+        # Local shim: inject the shared secret header the api requires, then proxy
+        # the nginx-rtmp callback to the api. The api's 302 rename is passed back
+        # to nginx-rtmp unchanged (proxy_redirect off).
+        location /ingest/start {
+            proxy_set_header X-Ingest-Secret "__LIVE_INGEST_SECRET__";
+            proxy_redirect off;
+            proxy_pass http://api:8080/api/v1/live/ingest/start;
+        }
+        location /ingest/stop {
+            proxy_set_header X-Ingest-Secret "__LIVE_INGEST_SECRET__";
+            proxy_redirect off;
+            proxy_pass http://api:8080/api/v1/live/ingest/stop;
+        }
+    }
+}

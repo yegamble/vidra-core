@@ -6296,6 +6296,55 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateLiveStream
+      summary: Edit a live stream
+      description: >-
+        Edits a live stream the caller owns (title, description, privacy,
+        permanent, replay_enabled). Behind auth; a non-owner or unknown id is 404
+        (existence is not leaked). Never rotates the stream key or changes the
+        live state.
+      tags: [live]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLiveStreamRequest"
+      responses:
+        "200":
+          description: The updated live stream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveStream"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such live stream, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (title/privacy).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: deleteLiveStream
       summary: Delete a live stream
@@ -6363,6 +6412,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/live/{id}/hls/master.m3u8:
+    get:
+      operationId: getLiveHLSMaster
+      summary: Get a live stream's HLS playlist
+      description: >-
+        Serves a live stream's HLS playlist while it is live. The media server
+        writes segments into LIVE_HLS_ROOT keyed by stream ID; the api serves them
+        gated by the stream's privacy (private → owner only) and state (only while
+        live). 404 when LIVE_HLS_ROOT is not configured, the stream is not live, or
+        it is private and not yours — the get response's hls_url tells clients when
+        a live playlist exists.
+      tags: [live]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The live HLS playlist.
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+        "404":
+          description: >-
+            No such/visible live stream, not currently live, or live HLS serving
+            is not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/live/{id}/hls/{file}:
+    get:
+      operationId: getLiveHLSFile
+      summary: Get a live HLS playlist or segment
+      description: >-
+        Serves one live HLS file: the media playlist ("<id>.m3u8", served as
+        application/vnd.apple.mpegurl) or a numbered MPEG-TS segment
+        ("<id>-<n>.ts", served as video/mp2t). Names outside that id-scoped shape
+        are 404. Same privacy/state gate as the master playlist.
+      tags: [live]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: file
+          in: path
+          required: true
+          description: '"<id>.m3u8" or a segment such as "<id>-0.ts".'
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The live playlist or segment.
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+            video/mp2t:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: >-
+            No such/visible live stream, not currently live, no such file, or live
+            HLS serving is not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/live/ingest/start:
     post:
       operationId: liveIngestStart
@@ -6371,8 +6502,12 @@ paths:
         The RTMP ingest boundary calls this when a publisher connects, presenting
         the publisher's stream key; the matching stream is flipped to "live" (allow
         the publish). Authenticated by the X-Ingest-Secret shared secret, NOT a
-        user token. Returns 404 when LIVE_INGEST_SECRET is not configured (the hook
-        is disabled), 401 on a bad secret, and 404 when no stream matches the key.
+        user token. Accepts either a JSON {stream_key} body (curl/harness) or the
+        nginx-rtmp `name` form field. For the nginx-rtmp form callback the response
+        is a 302 redirect whose last path segment is the stream ID, renaming the
+        RTMP session so HLS segments and the recording are keyed by the ID and the
+        raw key never lands on disk. Returns 404 when LIVE_INGEST_SECRET is not
+        configured (disabled), 401 on a bad secret, and 404 when no stream matches.
       tags: [live]
       parameters:
         - name: X-Ingest-Secret
@@ -6389,7 +6524,7 @@ paths:
               $ref: "#/components/schemas/LiveIngestRequest"
       responses:
         "200":
-          description: The stream is now live.
+          description: The stream is now live (JSON caller).
           content:
             application/json:
               schema:
@@ -6400,6 +6535,10 @@ paths:
                     format: uuid
                   state:
                     type: string
+        "302":
+          description: >-
+            The stream is now live; nginx-rtmp form callers are redirected to
+            rename the session to the stream ID (Location's last path segment).
         "400":
           description: Missing stream_key.
           content:
@@ -6424,8 +6563,12 @@ paths:
       summary: Live ingest "on-publish-done" hook (media-server-facing)
       description: >-
         Called by the RTMP ingest boundary when a publish session ends: the stream
-        identified by the key returns to "offline" (permanent) or "ended" (one-shot).
-        Same X-Ingest-Secret auth as the start hook.
+        identified by the key (harness/pre-rename) or by the stream ID (media
+        server, post-rename) returns to "offline" (permanent) or "ended"
+        (one-shot). Accepts a JSON {stream_key} body or the nginx-rtmp `name` form
+        field. When the stream has replay enabled, its recorded session is
+        republished as a normal on-demand video best-effort in the background
+        (never blocking or failing this hook). Same X-Ingest-Secret auth as start.
       tags: [live]
       parameters:
         - name: X-Ingest-Secret
@@ -9521,6 +9664,12 @@ components:
         permanent:
           type: boolean
           description: A permanent/recurring live keeps its key across sessions.
+        replay_enabled:
+          type: boolean
+          description: >-
+            When true, the media server records each session and the api
+            republishes the recording as a normal on-demand video on ingest-stop
+            (privacy inherited). Default false.
         created_at:
           type: string
           format: date-time
@@ -9532,6 +9681,11 @@ components:
           description: Owning channel handle (on the single-stream get).
         channel_display_name:
           type: string
+        hls_url:
+          type: string
+          description: >-
+            Live HLS playlist path, present only while the stream is live and a
+            media server (LIVE_HLS_ROOT) is configured to serve it.
     CreateLiveStreamRequest:
       type: object
       required: [title]
@@ -9547,6 +9701,30 @@ components:
           enum: [public, unlisted, private]
           default: public
         permanent:
+          type: boolean
+          default: false
+        replay_enabled:
+          type: boolean
+          default: false
+          description: Record sessions and republish them as VODs (see LiveStream.replay_enabled).
+    UpdateLiveStreamRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        privacy:
+          type: string
+          enum: [public, unlisted, private]
+          default: public
+        permanent:
+          type: boolean
+          default: false
+        replay_enabled:
           type: boolean
           default: false
     CreateLiveStreamResponse:

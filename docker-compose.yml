@@ -3,6 +3,11 @@
 # Profiles let you run subsets of the stack:
 #   core    -> postgres, redis, migrate, api  (default for `docker compose up`)
 #   storage -> minio (S3-compatible object storage for STORAGE_BACKEND=s3)
+#   scan    -> clamav (virus scanning for MALWARE_SCAN_ENABLED=true)
+#   media   -> rtmp (nginx-rtmp live ingest + HLS + session recording; P12).
+#              Run with LIVE_INGEST_SECRET set and LIVE_HLS_ROOT=/live-hls, e.g.
+#              LIVE_INGEST_SECRET=$(openssl rand -hex 24) LIVE_HLS_ROOT=/live-hls \
+#                docker compose --profile core --profile media up --build
 #
 # Usage:
 #   cp .env.example .env
@@ -24,7 +29,7 @@
 # `make run` or the -tags=integration storage tests) use
 # STORAGE_S3_ENDPOINT=localhost:9000 / S3_TEST_ENDPOINT=localhost:9000 instead.
 #
-# Additional profiles (media, federation) will be added as those subsystems land.
+# A federation profile will be added as that subsystem's local deps land.
 
 services:
   postgres:
@@ -197,6 +202,13 @@ services:
       # are disabled (404). Set it to enable them (dev/test harnesses; a real deploy
       # sets a strong value). NEVER commit a real secret here.
       LIVE_INGEST_SECRET: ${LIVE_INGEST_SECRET:-}
+      # LIVE_HLS_ROOT is the directory the RTMP media server (the `media` profile)
+      # writes live HLS + session recordings into, shared with the api. When set,
+      # the api serves live HLS by stream ID at /api/v1/live/{id}/hls/* and
+      # republishes replay-enabled sessions as VODs. For the media profile use
+      # /live-hls (the shared live_hls volume mount below). Empty (default) leaves
+      # live HLS serving + replay off.
+      LIVE_HLS_ROOT: ${LIVE_HLS_ROOT:-}
       # ActivityPub federation. Off by default; when FEDERATION_ENABLED=true, set
       # PUBLIC_BASE_URL to this instance's canonical origin. See .ralph/specs/federation.md.
       FEDERATION_ENABLED: ${FEDERATION_ENABLED:-false}
@@ -223,8 +235,46 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "${HTTP_PORT:-8080}:8080"
+    # Shared with the `media` profile's rtmp server: it writes live HLS +
+    # recordings here, the api serves/reads them. Harmless (empty) without the
+    # media profile. Point LIVE_HLS_ROOT at /live-hls to enable live serving.
+    volumes:
+      - live_hls:/live-hls
+
+  # Live RTMP media server (media profile): ingests RTMP, packages HLS, records
+  # sessions, and drives the api's live lifecycle via the ingest hooks. Uses
+  # Arut's nginx-rtmp module. Run with the media profile AND a shared secret +
+  # HLS root, e.g.:
+  #   LIVE_INGEST_SECRET=$(openssl rand -hex 24) LIVE_HLS_ROOT=/live-hls \
+  #   docker compose --profile core --profile media up --build
+  # Then publish to rtmp://localhost:1935/live/<stream-key> (the key from
+  # POST /api/v1/channels/{handle}/live). Viewers watch via the api's
+  # GET /api/v1/live/{id}/hls/master.m3u8 while the stream is live.
+  rtmp:
+    image: alfg/nginx-rtmp:latest
+    profiles: ["media"]
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      # In-container secret used to render the config's X-Ingest-Secret shim.
+      # $$ escapes compose substitution so the CONTAINER env is read at runtime.
+      LIVE_INGEST_SECRET: ${LIVE_INGEST_SECRET:-}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        sed "s|__LIVE_INGEST_SECRET__|$$LIVE_INGEST_SECRET|g" \
+          /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
+        exec nginx -g 'daemon off;'
+    volumes:
+      - ./deploy/media/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - live_hls:/data/hls
+    ports:
+      - "${RTMP_PORT:-1935}:1935"
 
 volumes:
   postgres_data:
   minio_data:
   clamav_data:
+  live_hls:

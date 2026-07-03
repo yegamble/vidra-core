@@ -134,6 +134,15 @@ type Config struct {
 	// only safe to expose when a secret is set.
 	LiveIngestSecret string
 
+	// LiveHLSRoot is the filesystem directory the RTMP media server writes live
+	// HLS output (and session recordings) into — a volume shared read-only with
+	// the api. When set, the api serves a live stream's playlist/segments from it
+	// (keyed by stream ID) at GET /api/v1/live/{id}/hls/* and, for replay-enabled
+	// streams, reads the recorded session from its `rec/` subdirectory to
+	// republish as a VOD. Empty (default) disables live HLS serving and replay —
+	// both surface as 404 / no-op until a media server is provisioned.
+	LiveHLSRoot string
+
 	// Instance about/legal metadata surfaced at GET /api/v1/instance. All
 	// optional (empty when unset).
 	InstanceDescription  string
@@ -307,6 +316,7 @@ func Load() (*Config, error) {
 		TranscodingAV1Enabled:       getEnvBool("TRANSCODING_AV1_ENABLED", false),
 		LiveRTMPURL:                 getEnv("LIVE_RTMP_URL", ""),
 		LiveIngestSecret:            getEnv("LIVE_INGEST_SECRET", ""),
+		LiveHLSRoot:                 strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
 		InstanceDescription:         getEnv("INSTANCE_DESCRIPTION", ""),
 		InstanceTermsURL:            getEnv("INSTANCE_TERMS_URL", ""),
 		InstancePrivacyURL:          getEnv("INSTANCE_PRIVACY_URL", ""),

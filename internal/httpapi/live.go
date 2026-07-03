@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/subtle"
 	"net/http"
 	"strings"
@@ -16,25 +17,46 @@ const maxLiveTitleLen = 200
 
 // createLiveStreamRequest is the POST /channels/{handle}/live body.
 type createLiveStreamRequest struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Privacy     string `json:"privacy"`
-	Permanent   bool   `json:"permanent"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	Privacy       string `json:"privacy"`
+	Permanent     bool   `json:"permanent"`
+	ReplayEnabled bool   `json:"replay_enabled"`
 }
 
 func (r createLiveStreamRequest) Validate() []FieldError {
+	return validateLiveFields(r.Title, r.Privacy)
+}
+
+// validateLiveFields is the shared create/edit validation for a live stream's
+// title and privacy.
+func validateLiveFields(title, privacy string) []FieldError {
 	var errs []FieldError
-	if strings.TrimSpace(r.Title) == "" {
+	if strings.TrimSpace(title) == "" {
 		errs = append(errs, FieldError{Field: "title", Message: "is required"})
-	} else if len(r.Title) > maxLiveTitleLen {
+	} else if len(title) > maxLiveTitleLen {
 		errs = append(errs, FieldError{Field: "title", Message: "must be at most 200 characters"})
 	}
-	switch r.Privacy {
+	switch privacy {
 	case "", "public", "unlisted", "private":
 	default:
 		errs = append(errs, FieldError{Field: "privacy", Message: "must be public, unlisted, or private"})
 	}
 	return errs
+}
+
+// updateLiveStreamRequest is the PATCH /live/{id} body — the editable metadata of
+// an existing live stream (never the key or live state).
+type updateLiveStreamRequest struct {
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	Privacy       string `json:"privacy"`
+	Permanent     bool   `json:"permanent"`
+	ReplayEnabled bool   `json:"replay_enabled"`
+}
+
+func (r updateLiveStreamRequest) Validate() []FieldError {
+	return validateLiveFields(r.Title, r.Privacy)
 }
 
 // liveStreamView is the public projection of a live stream. The stream key is
@@ -47,18 +69,28 @@ type liveStreamView struct {
 	Privacy            string    `json:"privacy"`
 	State              string    `json:"state"`
 	Permanent          bool      `json:"permanent"`
+	ReplayEnabled      bool      `json:"replay_enabled"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 	ChannelHandle      string    `json:"channel_handle,omitempty"`
 	ChannelDisplayName string    `json:"channel_display_name,omitempty"`
+	// HLSURL is the live playlist path, present only while the stream is live and
+	// a media server (LIVE_HLS_ROOT) is configured to serve it.
+	HLSURL string `json:"hls_url,omitempty"`
 }
 
-func newLiveStreamView(s live.Stream) liveStreamView {
+// newLiveStreamView projects a stream. The server is passed so the view can add
+// the live HLS URL when the stream is live and HLS serving is configured.
+func (s *Server) newLiveStreamView(st live.Stream) liveStreamView {
 	v := liveStreamView{
-		ID: s.ID.String(), ChannelID: s.ChannelID.String(), Title: s.Title,
-		Description: s.Description, Privacy: s.Privacy, State: s.State, Permanent: s.Permanent,
-		CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
-		ChannelHandle: s.ChannelHandle, ChannelDisplayName: s.ChannelDisplayName,
+		ID: st.ID.String(), ChannelID: st.ChannelID.String(), Title: st.Title,
+		Description: st.Description, Privacy: st.Privacy, State: st.State, Permanent: st.Permanent,
+		ReplayEnabled: st.ReplayEnabled,
+		CreatedAt:     st.CreatedAt, UpdatedAt: st.UpdatedAt,
+		ChannelHandle: st.ChannelHandle, ChannelDisplayName: st.ChannelDisplayName,
+	}
+	if st.State == live.StateLive && s.cfg.LiveHLSRoot != "" {
+		v.HLSURL = "/api/v1/live/" + st.ID.String() + "/hls/master.m3u8"
 	}
 	return v
 }
@@ -101,19 +133,55 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "you do not own this channel")
 	}
 	stream, key, err := s.livesvc.Create(ctx, ch.ID, live.CreateInput{
-		Title:       strings.TrimSpace(in.Title),
-		Description: strings.TrimSpace(in.Description),
-		Privacy:     in.Privacy,
-		Permanent:   in.Permanent,
+		Title:         strings.TrimSpace(in.Title),
+		Description:   strings.TrimSpace(in.Description),
+		Privacy:       in.Privacy,
+		Permanent:     in.Permanent,
+		ReplayEnabled: in.ReplayEnabled,
 	})
 	if err != nil {
 		return err
 	}
 	return c.JSON(http.StatusCreated, createLiveStreamResponse{
-		LiveStream: newLiveStreamView(stream),
+		LiveStream: s.newLiveStreamView(stream),
 		StreamKey:  key,
 		RTMPURL:    s.cfg.LiveRTMPURL,
 	})
+}
+
+// handleUpdateLiveStream edits a live stream the caller owns (title, description,
+// privacy, permanent, replay_enabled). Behind requireAuth; a non-owner or unknown
+// id is 404 (existence is not leaked). It never rotates the key or changes the
+// live state.
+func (s *Server) handleUpdateLiveStream(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+	}
+	var in updateLiveStreamRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	stream, err := s.livesvc.Get(ctx, id)
+	if err != nil || stream.OwnerID != userID {
+		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+	}
+	updated, err := s.livesvc.Update(ctx, id, live.UpdateInput{
+		Title:         strings.TrimSpace(in.Title),
+		Description:   strings.TrimSpace(in.Description),
+		Privacy:       in.Privacy,
+		Permanent:     in.Permanent,
+		ReplayEnabled: in.ReplayEnabled,
+	})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+	}
+	return c.JSON(http.StatusOK, s.newLiveStreamView(updated))
 }
 
 // handleListLiveStreams lists the caller's live streams for a channel they own.
@@ -137,7 +205,7 @@ func (s *Server) handleListLiveStreams(c echo.Context) error {
 	}
 	views := make([]liveStreamView, 0, len(streams))
 	for _, st := range streams {
-		views = append(views, newLiveStreamView(st))
+		views = append(views, s.newLiveStreamView(st))
 	}
 	return c.JSON(http.StatusOK, liveStreamListResponse{LiveStreams: views})
 }
@@ -160,7 +228,7 @@ func (s *Server) handleGetLiveStream(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 		}
 	}
-	return c.JSON(http.StatusOK, newLiveStreamView(stream))
+	return c.JSON(http.StatusOK, s.newLiveStreamView(stream))
 }
 
 // handleRegenerateLiveStreamKey rotates a live stream's key and returns the new
@@ -186,13 +254,18 @@ func (s *Server) handleRegenerateLiveStreamKey(c echo.Context) error {
 	return c.JSON(http.StatusOK, liveStreamKeyView{StreamKey: key, RTMPURL: s.cfg.LiveRTMPURL})
 }
 
-// liveIngestRequest is the body of the internal RTMP ingest hooks — the media
-// server presents the raw stream key of the publisher.
+// liveIngestRequest is the JSON body of the internal RTMP ingest hooks — the
+// media server (or a harness) presents the raw stream key of the publisher.
 type liveIngestRequest struct {
 	StreamKey string `json:"stream_key"`
 }
 
 const ingestSecretHeader = "X-Ingest-Secret"
+
+// liveRTMPApp is the RTMP application name the media server publishes into; it is
+// the constant path segment of the on-publish redirect target used to rename a
+// session to its stream ID (so the raw key never lands in HLS/recording paths).
+const liveRTMPApp = "live"
 
 // ingestAuthorized gates the ingest hooks: they are disabled (404) unless an
 // ingest secret is configured, and require the media server to present it
@@ -208,38 +281,77 @@ func (s *Server) ingestAuthorized(c echo.Context) *echo.HTTPError {
 	return nil
 }
 
+// ingestIdentity extracts the publisher identity the media server presents. It
+// accepts BOTH the nginx-rtmp callback form (application/x-www-form-urlencoded
+// with a `name` field) and a JSON `{stream_key}` body (curl/harness). At publish
+// time `name` is the raw stream key; after the on-publish redirect renames the
+// session it is the stream ID (see handleLiveIngestStart). isForm reports whether
+// the request is the nginx-rtmp form callback (which expects a redirect rename).
+func ingestIdentity(c echo.Context) (ident string, isForm bool) {
+	if v := strings.TrimSpace(c.FormValue("name")); v != "" {
+		return v, true
+	}
+	var in liveIngestRequest
+	_ = c.Bind(&in)
+	return strings.TrimSpace(in.StreamKey), false
+}
+
 // handleLiveIngestStart is the RTMP ingest "on-publish" hook: the media server
 // posts the publisher's stream key; a matching stream is flipped to live (allow
 // the publish). Authenticated by the ingest shared secret, NOT a user token. An
 // unknown/invalid key is 404 (deny). Not enabled (404) without LIVE_INGEST_SECRET.
+//
+// For the nginx-rtmp form callback the response is a 302 redirect whose last path
+// segment is the stream ID: nginx-rtmp renames the RTMP session to that name, so
+// every downstream path (HLS segments, the recording) is keyed by the stream ID
+// and the raw stream key never touches the filesystem. A JSON caller (harness)
+// gets a 200 with the resolved id instead.
 func (s *Server) handleLiveIngestStart(c echo.Context) error {
 	if err := s.ingestAuthorized(c); err != nil {
 		return err
 	}
-	var in liveIngestRequest
-	if err := c.Bind(&in); err != nil || strings.TrimSpace(in.StreamKey) == "" {
+	ident, isForm := ingestIdentity(c)
+	if ident == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "stream_key is required")
 	}
-	id, err := s.livesvc.StartIngest(c.Request().Context(), strings.TrimSpace(in.StreamKey))
+	id, needsRename, err := s.livesvc.StartByIdentity(c.Request().Context(), ident)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "no live stream for that key")
+	}
+	if isForm && needsRename {
+		// Rename the nginx-rtmp session to the stream ID (only the last path
+		// segment is significant to the module); keeps the key out of paths. A
+		// post-rename re-invocation (needsRename=false) is allowed without
+		// redirecting again, so the module does not loop.
+		return c.Redirect(http.StatusFound, "rtmp://localhost/"+liveRTMPApp+"/"+id.String())
+	}
+	if isForm {
+		return c.NoContent(http.StatusOK) // allow the (already-renamed) publish
 	}
 	return c.JSON(http.StatusOK, map[string]string{"id": id.String(), "state": live.StateLive})
 }
 
 // handleLiveIngestStop is the RTMP "on-publish-done" hook: the stream identified
-// by the key returns to offline (permanent) or ended (one-shot). Same auth as
-// start.
+// by the key (harness/pre-rename) or the stream ID (media server, post-rename)
+// returns to offline (permanent) or ended (one-shot). Same auth as start. When
+// the stream has replay enabled, the finished recording is republished as a VOD
+// best-effort in the background (never blocking or failing this hook).
 func (s *Server) handleLiveIngestStop(c echo.Context) error {
 	if err := s.ingestAuthorized(c); err != nil {
 		return err
 	}
-	var in liveIngestRequest
-	if err := c.Bind(&in); err != nil || strings.TrimSpace(in.StreamKey) == "" {
+	ident, _ := ingestIdentity(c)
+	if ident == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "stream_key is required")
 	}
-	if _, err := s.livesvc.StopIngest(c.Request().Context(), strings.TrimSpace(in.StreamKey)); err != nil {
+	stream, err := s.livesvc.StopByIdentity(c.Request().Context(), ident)
+	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "no live stream for that key")
+	}
+	if stream.ReplayEnabled {
+		// Detached: the recording ingest + transcode outlive this request, and a
+		// replay must never delay or fail the stop hook.
+		go s.livesvc.RunReplay(context.WithoutCancel(c.Request().Context()), stream.ID)
 	}
 	return c.NoContent(http.StatusNoContent)
 }
