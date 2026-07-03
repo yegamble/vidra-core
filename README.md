@@ -309,6 +309,24 @@ same replace-by-language path a manual upload uses — then sends the owner a
 dead-letter after 5; a safe `error` reason on failure). Run the bundled server
 with the `captions` compose profile.
 
+**ATProto / Bluesky cross-posting** (P10.2, a Vidra extension; see
+`.ralph/specs/atproto.md`). Gated by `ATPROTO_ENABLED` (default off) and
+INDEPENDENT of ActivityPub — an instance may enable either, both, or neither.
+v1 is OUTBOUND ONLY: a creator links a Bluesky account with
+`PUT /api/v1/me/atproto` (`{handle, app_password, pds_url?, auto_post?}` — an
+*app* password, never the main password). The backend verifies the credentials
+via `com.atproto.server.createSession` on the (https, public, SSRF-guarded) PDS,
+resolves the DID, and stores the app password SEALED at rest with
+`ATPROTO_KEY_KEK` (falls back to `FEDERATION_KEY_KEK`; required in production when
+enabled, raw in dev with a boot warning). `GET /api/v1/me/atproto` returns the
+status (handle/DID/auto-post/last-post — never the password); `DELETE` unlinks.
+When a PUBLIC video whose owner has `auto_post` is published, an
+`atproto_posts` row is enqueued (via the video publish-hook); a background worker
+creates a fresh session and posts an `app.bsky.feed.post` with the title and an
+external-link embed to the public watch URL (thumbnail uploaded when ≤1 MiB),
+recording the post URI. One post per video (`video_id` UNIQUE), 429 backoff,
+dead-letter after 6. The endpoints answer `503` while the extension is disabled.
+
 **Live streaming** (P12). A channel owner creates a live stream with
 `POST /api/v1/channels/{handle}/live` (`{title, description?, privacy?,
 permanent?, replay_enabled?}`) and receives a stream key ONCE plus the RTMP URL;

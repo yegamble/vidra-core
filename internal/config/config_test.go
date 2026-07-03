@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/base64"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -775,4 +777,106 @@ func TestTOTPIssuerDefaultsToInstanceName(t *testing.T) {
 	if cfg.TOTPIssuer != "Custom Label" {
 		t.Errorf("TOTPIssuer = %q, want the explicit override", cfg.TOTPIssuer)
 	}
+}
+
+func TestATProtoDefaults(t *testing.T) {
+	for _, k := range []string{"ATPROTO_ENABLED", "ATPROTO_KEY_KEK", "FEDERATION_KEY_KEK"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if cfg.ATProtoEnabled {
+		t.Errorf("ATProtoEnabled default = true, want false")
+	}
+	if cfg.ATProtoKEK() != "" {
+		t.Errorf("ATProtoKEK() default = %q, want empty", cfg.ATProtoKEK())
+	}
+}
+
+func TestATProtoKEKFallsBackToFederationKEK(t *testing.T) {
+	fedKEK := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	t.Setenv("ATPROTO_KEY_KEK", "")
+	t.Setenv("FEDERATION_KEY_KEK", fedKEK)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if cfg.ATProtoKEK() != fedKEK {
+		t.Errorf("ATProtoKEK() = %q, want the federation KEK fallback", cfg.ATProtoKEK())
+	}
+
+	// An explicit ATProto KEK wins over the federation fallback.
+	own := base64.StdEncoding.EncodeToString(bytesRepeat(1, 32))
+	t.Setenv("ATPROTO_KEY_KEK", own)
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if cfg.ATProtoKEK() != own {
+		t.Errorf("ATProtoKEK() = %q, want the explicit ATProto KEK", cfg.ATProtoKEK())
+	}
+}
+
+func TestATProtoRejectsBadKEK(t *testing.T) {
+	t.Setenv("ATPROTO_KEY_KEK", "not-base64-of-32-bytes")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() accepted a malformed ATPROTO_KEY_KEK")
+	}
+}
+
+func TestATProtoProductionRequiresKEKWhenEnabled(t *testing.T) {
+	t.Setenv("VIDRA_ENV", "production")
+	t.Setenv("JWT_SECRET", "a-strong-production-secret-32bytes-long")
+	t.Setenv("ATPROTO_ENABLED", "true")
+	t.Setenv("ATPROTO_KEY_KEK", "")
+	t.Setenv("FEDERATION_KEY_KEK", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("production + ATPROTO_ENABLED without a KEK must fail validation")
+	}
+
+	// Supplying a valid KEK unblocks it.
+	t.Setenv("ATPROTO_KEY_KEK", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if _, err := Load(); err != nil {
+		t.Fatalf("production ATProto with a KEK failed: %v", err)
+	}
+}
+
+// TestFederationATProtoEnableMatrix asserts ActivityPub and ATProto enable
+// independently: all four on/off combinations boot (config loads) cleanly.
+func TestFederationATProtoEnableMatrix(t *testing.T) {
+	kek := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	for _, fed := range []bool{false, true} {
+		for _, at := range []bool{false, true} {
+			name := fmt.Sprintf("fed=%v_atproto=%v", fed, at)
+			t.Run(name, func(t *testing.T) {
+				t.Setenv("VIDRA_ENV", "development")
+				t.Setenv("PUBLIC_BASE_URL", "https://videos.example")
+				t.Setenv("FEDERATION_ENABLED", strconv.FormatBool(fed))
+				t.Setenv("ATPROTO_ENABLED", strconv.FormatBool(at))
+				t.Setenv("FEDERATION_KEY_KEK", kek)
+				t.Setenv("ATPROTO_KEY_KEK", kek)
+				cfg, err := Load()
+				if err != nil {
+					t.Fatalf("combo %s failed to boot: %v", name, err)
+				}
+				if cfg.FederationEnabled != fed {
+					t.Errorf("FederationEnabled = %v, want %v", cfg.FederationEnabled, fed)
+				}
+				if cfg.ATProtoEnabled != at {
+					t.Errorf("ATProtoEnabled = %v, want %v", cfg.ATProtoEnabled, at)
+				}
+			})
+		}
+	}
+}
+
+// bytesRepeat returns a byte slice of n copies of b (test helper).
+func bytesRepeat(b byte, n int) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = b
+	}
+	return out
 }

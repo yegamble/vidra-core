@@ -6480,6 +6480,124 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/atproto:
+    put:
+      operationId: linkATProtoAccount
+      summary: Link a Bluesky account for cross-posting
+      description: >-
+        Links (or re-links) the caller's Bluesky account so Vidra can announce
+        their newly published PUBLIC videos on Bluesky (ATProto extension,
+        P10.2 — outbound cross-posting only). The caller supplies their handle
+        and a Bluesky APP PASSWORD (Settings → App Passwords on Bluesky) — never
+        their main account password. The backend verifies the credentials by
+        creating a session on the PDS (com.atproto.server.createSession, over an
+        https, public, SSRF-guarded client), resolves the DID, and stores the
+        app password sealed at rest; it is never returned, logged, or exported.
+        Re-linking overwrites the previous link. Requires authentication. When
+        the extension is disabled on this instance the endpoint is 503.
+      tags: [atproto]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ATProtoLinkRequest"
+      responses:
+        "200":
+          description: The linked-account status (never the app password).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ATProtoStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Missing/invalid handle or app password, a non-https/private PDS URL,
+            or credentials the PDS rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The Bluesky PDS could not be reached; try again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Bluesky cross-posting is not enabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: getATProtoAccount
+      summary: Get the caller's linked Bluesky account
+      description: >-
+        Returns the caller's linked Bluesky account status — handle, resolved
+        DID, PDS, auto-post setting, and last-post timestamp. The app password
+        is NEVER included. Requires authentication. 404 when nothing is linked;
+        503 when the extension is disabled.
+      tags: [atproto]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The linked-account status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ATProtoStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No Bluesky account is linked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Bluesky cross-posting is not enabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unlinkATProtoAccount
+      summary: Unlink the caller's Bluesky account
+      description: >-
+        Removes the caller's linked Bluesky account (no further auto cross-posts
+        are made). Idempotent: unlinking when nothing is linked still succeeds.
+        Requires authentication. 503 when the extension is disabled.
+      tags: [atproto]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: The account is unlinked (or was not linked).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Bluesky cross-posting is not enabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/blocks:
     get:
       operationId: listBlockedUsers
@@ -9361,6 +9479,65 @@ components:
         has_thumbnail:
           type: boolean
           description: Whether a locally cached thumbnail is available.
+    ATProtoLinkRequest:
+      type: object
+      required: [handle, app_password]
+      description: >-
+        Credentials for linking a Bluesky account. app_password must be a
+        Bluesky APP PASSWORD (Settings → App Passwords), never the account's
+        main password — the backend never returns it.
+      properties:
+        handle:
+          type: string
+          maxLength: 253
+          description: The Bluesky handle, e.g. "alice.bsky.social" (leading @ tolerated).
+          example: alice.bsky.social
+        app_password:
+          type: string
+          description: A Bluesky app password (write-only; never returned).
+          example: xxxx-xxxx-xxxx-xxxx
+        pds_url:
+          type: string
+          maxLength: 2000
+          description: >-
+            Optional PDS base URL; defaults to https://bsky.social. Must be an
+            https, public origin.
+          example: https://bsky.social
+        auto_post:
+          type: boolean
+          default: false
+          description: >-
+            When true, newly published PUBLIC videos owned by the caller are
+            announced on Bluesky.
+    ATProtoStatus:
+      type: object
+      required: [handle, did, pds_url, auto_post, created_at]
+      description: >-
+        The caller's linked Bluesky account. Deliberately excludes the app
+        password (sealed or raw) — it is never exposed.
+      properties:
+        handle:
+          type: string
+          description: The linked Bluesky handle (as resolved by the PDS).
+          example: alice.bsky.social
+        did:
+          type: string
+          description: The resolved decentralized identifier.
+          example: did:plc:abc123
+        pds_url:
+          type: string
+          description: The PDS the account is hosted on.
+          example: https://bsky.social
+        auto_post:
+          type: boolean
+          description: Whether newly published public videos are auto-announced.
+        created_at:
+          type: string
+          format: date-time
+        last_posted_at:
+          type: string
+          format: date-time
+          description: When the last successful auto-post was made (absent if never).
     CreateRemoteFollowRequest:
       type: object
       description: >-

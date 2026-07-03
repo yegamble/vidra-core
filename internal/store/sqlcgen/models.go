@@ -32,6 +32,29 @@ type AccountExport struct {
 	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
+type AtprotoAccount struct {
+	UserID            uuid.UUID          `json:"user_id"`
+	Handle            string             `json:"handle"`
+	Did               string             `json:"did"`
+	PdsUrl            string             `json:"pds_url"`
+	AppPasswordSealed string             `json:"app_password_sealed"`
+	AutoPost          bool               `json:"auto_post"`
+	CreatedAt         time.Time          `json:"created_at"`
+	LastPostedAt      pgtype.Timestamptz `json:"last_posted_at"`
+}
+
+type AtprotoPost struct {
+	ID            uuid.UUID `json:"id"`
+	VideoID       uuid.UUID `json:"video_id"`
+	State         string    `json:"state"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	Error         string    `json:"error"`
+	PostUri       string    `json:"post_uri"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type AuditLog struct {
 	ID         uuid.UUID   `json:"id"`
 	Action     string      `json:"action"`

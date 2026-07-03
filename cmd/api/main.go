@@ -20,6 +20,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/admin"
+	"github.com/vidra/vidra-core/internal/atproto"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/block"
@@ -347,6 +348,21 @@ func run() error {
 	// followers. fedsvc is assigned below; the hook only runs post-startup so the
 	// closure sees the built service (nil-guarded regardless).
 	var fedsvc *federation.Service
+	// When ATProto is on, enqueue an auto cross-post for a published PUBLIC video
+	// whose owner has auto_post. Same deferred-service seam as fedsvc: atprotosvc
+	// is assigned below and the closure is nil-guarded. Publish hooks are additive
+	// (video.WithPublishHook appends), so federation + ATProto register
+	// independently and both run.
+	var atprotosvc *atproto.Service
+	if cfg.ATProtoEnabled {
+		vopts = append(vopts, video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
+			if atprotosvc != nil {
+				if err := atprotosvc.EnqueueForVideo(ctx, videoID); err != nil {
+					logger.Warn("atproto auto-post enqueue failed", "video_id", videoID, "error", err)
+				}
+			}
+		}))
+	}
 	if cfg.FederationEnabled {
 		vopts = append(vopts,
 			video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
@@ -560,6 +576,31 @@ func run() error {
 	fedsvc = federation.NewService(db.Queries(), fedOpts...)
 	opts = append(opts, httpapi.WithFederationService(fedsvc))
 
+	// ATProto / Bluesky extension (P10.2, .ralph/specs/atproto.md) — v1 outbound
+	// cross-posting only. Always constructed so the /me/atproto routes are a stable
+	// contract; the Enabled() flag (ATPROTO_ENABLED) gates them at request time and
+	// the worker only runs when enabled. Linked app passwords are sealed with the
+	// ATProto KEK (ATPROTO_KEY_KEK, falling back to FEDERATION_KEY_KEK).
+	atprotoOpts := []atproto.Option{
+		atproto.WithEnabled(cfg.ATProtoEnabled),
+		atproto.WithBaseURL(cfg.PublicBaseURL),
+		atproto.WithThumbnails(videosvc),
+		atproto.WithLogger(logger),
+		// Reuse the outbound-fetch dev knob so backed e2e can reach a loopback PDS.
+		atproto.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
+	}
+	if kek := cfg.ATProtoKEK(); kek != "" {
+		atprotoCipher, err := secretbox.NewCipherFromBase64(kek)
+		if err != nil {
+			return err
+		}
+		atprotoOpts = append(atprotoOpts, atproto.WithCipher(atprotoCipher))
+	} else if cfg.ATProtoEnabled {
+		logger.Warn("ATPROTO_KEY_KEK/FEDERATION_KEY_KEK unset — Bluesky app passwords are stored UNENCRYPTED; set a KEK outside dev")
+	}
+	atprotosvc = atproto.NewService(db.Queries(), atprotoOpts...)
+	opts = append(opts, httpapi.WithATProtoService(atprotosvc))
+
 	// Remote-video read side (metadata + cached thumbnail) and instance-level
 	// moderation (per-user instance mutes + admin blocklist). REST surface, so
 	// wired unconditionally — the tables are simply empty until federation
@@ -576,6 +617,15 @@ func run() error {
 		defer workerCancel()
 		go runFederationDeliveryWorker(workerCtx, logger, fedsvc)
 		logger.Info("federation delivery worker started")
+	}
+
+	// Drain the outbound ATProto auto-post queue in the background (fresh session
+	// + app.bsky.feed.post with retry/backoff + dead-letter). Only when enabled.
+	if cfg.ATProtoEnabled {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runATProtoPostWorker(workerCtx, logger, atprotosvc)
+		logger.Info("atproto auto-post worker started")
 	}
 
 	// Drain the transcode job queue in the background (ffmpeg HLS ladder with
@@ -730,6 +780,30 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 		case <-ticker.C:
 			if _, err := fedsvc.DrainDeliveries(ctx, batch); err != nil {
 				logger.Warn("federation delivery drain failed", "error", err)
+			}
+		}
+	}
+}
+
+// runATProtoPostWorker drains the durable ATProto auto-post queue on a ticker
+// until ctx is canceled (mirrors runFederationDeliveryWorker). A single worker
+// with a small batch keeps at most a couple of PDS round-trips in flight per
+// tick; it logs only claim-query errors — per-post failures are recorded in the
+// queue (retry/backoff/dead-letter) rather than logged.
+func runATProtoPostWorker(ctx context.Context, logger *slog.Logger, svc *atproto.Service) {
+	const (
+		interval = 15 * time.Second
+		batch    = 10
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := svc.DrainPosts(ctx, batch); err != nil {
+				logger.Warn("atproto auto-post drain failed", "error", err)
 			}
 		}
 	}

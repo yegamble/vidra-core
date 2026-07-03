@@ -197,7 +197,7 @@ type Service struct {
 	scanMode             ScanMode
 	viewDeduper          ViewDeduper
 	quarantineNewUploads func() bool
-	onPublish            func(context.Context, uuid.UUID)
+	onPublish            []func(context.Context, uuid.UUID)
 	onTranscode          func(context.Context, uuid.UUID, string)
 	onUpdate             func(context.Context, uuid.UUID)
 	onDelete             func(context.Context, uuid.UUID, uuid.UUID, bool)
@@ -267,10 +267,12 @@ func WithQuarantineGate(decide func() bool) Option {
 
 // WithPublishHook registers a callback invoked (best-effort, synchronously) after
 // a video transitions to the "published" state in Process — the seam federation
-// uses to fan a Create out to remote followers, without this package depending on
-// federation. Without it, Process does no post-publish work.
+// uses to fan a Create out to remote followers, and ATProto uses to enqueue an
+// auto cross-post, without this package depending on either. Multiple hooks may
+// be registered (each WithPublishHook appends); they run in registration order.
+// Without any, Process does no post-publish work.
 func WithPublishHook(fn func(context.Context, uuid.UUID)) Option {
-	return func(s *Service) { s.onPublish = fn }
+	return func(s *Service) { s.onPublish = append(s.onPublish, fn) }
 }
 
 // WithTranscodeHook registers a callback invoked (best-effort, synchronously)
@@ -539,8 +541,8 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 func (s *Service) publish(ctx context.Context, videoID uuid.UUID, originalKey string) (sqlcgen.Video, error) {
 	v, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "published"})
 	if err == nil && v.State == "published" {
-		if s.onPublish != nil {
-			s.onPublish(ctx, videoID)
+		for _, hook := range s.onPublish {
+			hook(ctx, videoID)
 		}
 		// Best-effort HLS transcode enqueue: only after a successful publish (a
 		// failed scan/probe never reaches here) and never able to block it.
@@ -714,6 +716,39 @@ func (s *Service) Views(ctx context.Context, videoID uuid.UUID) int64 {
 func (s *Service) HasThumbnail(ctx context.Context, videoID uuid.UUID) bool {
 	_, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "thumbnail"})
 	return err == nil
+}
+
+// thumbnailReadCap bounds ReadThumbnail's in-memory read so a caller never loads
+// an unexpectedly large blob. It is generous (5 MiB) so downstream callers (e.g.
+// the ATProto embed's own ≤1 MiB rule) remain the authority on what to attach.
+const thumbnailReadCap = 5 << 20
+
+// ReadThumbnail returns a video's stored poster image bytes and content type, or
+// ok=false when none exists (a missing thumbnail is not an error). It satisfies
+// the atproto.Thumbnails seam without that package depending on the storage-key
+// layout. The read is bounded at thumbnailReadCap.
+func (s *Service) ReadThumbnail(ctx context.Context, videoID uuid.UUID) ([]byte, string, bool, error) {
+	if s.blobs == nil {
+		return nil, "", false, nil
+	}
+	f, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "thumbnail"})
+	if err != nil {
+		return nil, "", false, nil
+	}
+	rc, err := s.blobs.Open(ctx, f.StorageKey)
+	if err != nil {
+		return nil, "", false, nil
+	}
+	defer func() { _ = rc.Close() }()
+	data, err := io.ReadAll(io.LimitReader(rc, thumbnailReadCap))
+	if err != nil {
+		return nil, "", false, err
+	}
+	ct := f.ContentType
+	if ct == "" {
+		ct = "image/jpeg"
+	}
+	return data, ct, true, nil
 }
 
 // generateThumbnail extracts a poster for the video and stores it as a

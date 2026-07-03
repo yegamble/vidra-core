@@ -16,6 +16,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/admin"
+	"github.com/vidra/vidra-core/internal/atproto"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/block"
@@ -91,6 +92,7 @@ type Server struct {
 	importsvc      *videoimport.Service
 	captionjobsvc  *captionjob.Service
 	fedsvc         *federation.Service
+	atprotosvc     *atproto.Service
 	remotevideosvc *remotevideo.Service
 	instancemodsvc *instancemod.Service
 	settingssvc    *instancesettings.Service
@@ -345,6 +347,16 @@ func WithCaptionJobService(svc *captionjob.Service) Option {
 // wired and ARE part of the OpenAPI contract. See .ralph/specs/federation.md.
 func WithFederationService(svc *federation.Service) Option {
 	return func(s *Server) { s.fedsvc = svc }
+}
+
+// WithATProtoService mounts the ATProto / Bluesky link/status/unlink endpoints
+// (/api/v1/me/atproto, P10.2 — a Vidra extension). The routes ARE part of the
+// REST OpenAPI contract and mount whenever the service is wired; the service's
+// own Enabled() flag (ATPROTO_ENABLED) gates them at request time (503 when off),
+// so the documented surface is stable regardless of the toggle. See
+// .ralph/specs/atproto.md.
+func WithATProtoService(svc *atproto.Service) Option {
+	return func(s *Server) { s.atprotosvc = svc }
 }
 
 // WithRemoteVideoService mounts the remote-video read endpoints (metadata +
@@ -912,6 +924,16 @@ func (s *Server) routes() {
 		api.POST("/me/remote-follows", s.handleCreateRemoteFollow, s.requireAuth)
 		api.GET("/me/remote-follows", s.handleListRemoteFollows, s.requireAuth)
 		api.DELETE("/me/remote-follows/:id", s.handleDeleteRemoteFollow, s.requireAuth)
+	}
+
+	// ATProto / Bluesky link (P10.2 extension): the caller links/inspects/unlinks
+	// their Bluesky account for outbound auto cross-posting. Always mounted when
+	// the service is wired (stable contract); the handlers answer 503 while
+	// ATPROTO_ENABLED is off.
+	if s.atprotosvc != nil {
+		api.PUT("/me/atproto", s.handleLinkATProto, s.requireAuth)
+		api.GET("/me/atproto", s.handleGetATProto, s.requireAuth)
+		api.DELETE("/me/atproto", s.handleUnlinkATProto, s.requireAuth)
 	}
 
 	// Account blocks: a signed-in user blocks/unblocks another account (cutting

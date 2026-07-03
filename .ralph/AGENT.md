@@ -41,6 +41,15 @@ curl 'localhost:8080/.well-known/webfinger?resource=acct:ada@your.domain' # -> s
 curl -H 'accept: application/activity+json' localhost:8080/accounts/ada           # Person actor (keypair minted on first fetch)
 curl -H 'accept: application/activity+json' localhost:8080/video-channels/myhandle # Group actor
 
+# ATProto / Bluesky link (P10.2 extension) — mounted always, but 503 unless ATPROTO_ENABLED=true.
+# Independent of ActivityPub. v1 = outbound cross-posting only. app_password is a Bluesky APP
+# password (never the main one); it is sealed with ATPROTO_KEY_KEK (falls back to FEDERATION_KEY_KEK):
+curl -sX PUT localhost:8080/api/v1/me/atproto -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' \
+  -d '{"handle":"ada.bsky.social","app_password":"xxxx-xxxx-xxxx-xxxx","auto_post":true}'
+curl -s localhost:8080/api/v1/me/atproto -H 'authorization: Bearer <token>'       # status (never the password)
+curl -sX DELETE localhost:8080/api/v1/me/atproto -H 'authorization: Bearer <token>' # unlink
+
 # Auth (returns {token, token_type, expires_in, user}):
 curl -sX POST localhost:8080/api/v1/auth/register \
   -H 'content-type: application/json' \

@@ -58,7 +58,7 @@
 - [ ] Create a config mapping table: PeerTube setting → Vidra config key/env var/admin setting → status.
 - [ ] Create a moderation mapping table: PeerTube moderation behavior → Vidra behavior → status.
 - [ ] Create federation protocol mapping: ActivityPub behavior → Vidra implementation → status.
-- [ ] Add ATProto/Bluesky as a Vidra extension, not PeerTube parity.
+- [x] Add ATProto/Bluesky as a Vidra extension, not PeerTube parity. (core-atproto slice, 2026-07-03 — v1 outbound cross-posting; see P10.2 below.)
 
 ## P0.3 Route and Button-Level Parity Discipline
 
@@ -114,7 +114,7 @@
 - [x] Add config for RTMP/HLS. (RTMP ingest: `LIVE_INGEST_SECRET` + `LIVE_RTMP_URL` — P12; live HLS serving + replay: `LIVE_HLS_ROOT` — P12 core-live-plane; VOD HLS: `TRANSCODING_ENABLED` — P6.3)
 - [x] Add config for Whisper captions, disabled by default. (`WHISPER_ENABLED` default false + `WHISPER_ENDPOINT` (required + http(s)-validated when enabled; trusted operator config, not SSRF-guarded) + `WHISPER_DEFAULT_LANGUAGE` (default `en`, BCP-47-validated). Tested: `TestWhisperDefaultsAndOverride` + enabled-without-endpoint / non-http-endpoint / bad-default-language validation-failure tests. See P13.)
 - [x] Add config for ActivityPub, disabled/enabled per instance. (`FEDERATION_ENABLED` default false + `PUBLIC_BASE_URL` + `FEDERATION_KEY_KEK`, validated — P10 Slices 1/2a)
-- [ ] Add config for ATProto/Bluesky, disabled by default.
+- [x] Add config for ATProto/Bluesky, disabled by default. (`ATPROTO_ENABLED` default false + `ATPROTO_KEY_KEK` with FEDERATION_KEY_KEK fallback; core-atproto slice — see P10.2.)
 - [x] Add config tests for defaults, env override, validation failure, and secret redaction. (39 tests in `config_test.go` cover defaults/override/validation-failure; secret redaction is enforced module-wide by the `TestNoSensitiveLogKeys` guard — P17.2)
 
 ## P1.3 Docker-First Development
@@ -194,7 +194,7 @@
 - [x] Add admin audit log table. (migration 0029 `audit_log` — append-only, actor stored without an FK so the trail survives account deletion — see P9)
 - [x] Add federation actors table. (migrations 0035 `account_actor_keys`/`channel_actor_keys` (local actor keypairs, sealed at rest) + 0036 `remote_actors` cache — see P10)
 - [x] Add federation activities/inbox/outbox table. (migration 0037 `federation_inbox_activities` dedup log + `remote_follows`; 0038 `federation_deliveries` outbound queue; the outbox collection is intentionally derived from `videos` rather than stored — P10 Slice 5f)
-- [ ] Add ATProto identities/events tables.
+- [x] Add ATProto identities/events tables. (Migration 0066: `atproto_accounts` + `atproto_posts` durable queue; core-atproto slice — see P10.2.)
 - [x] Add direct messages conversations table. (migration 0031: `conversations` + `conversation_participants`)
 - [x] Add direct messages table. (migration 0031: `messages`, index on `(conversation_id, created_at DESC)`)
 - [x] Add encrypted message device/prekey/session tables if E2EE is enabled. (migration 0058: `e2ee_devices` (public identity/signing keys per user device), `e2ee_one_time_keys` (claim-once prekeys, partial index for the unclaimed scan), `e2ee_messages` (per-recipient-device ciphertext envelopes, 64KiB CHECK, expiry partial index) + `conversations.encrypted` immutable flag. Sessions are CLIENT-side by design (Olm pickles in IndexedDB) — the server stores no session state. See P11.2.)
@@ -765,11 +765,42 @@
 
 ## P10.2 ATProto / Bluesky Extension
 
-- [ ] Add ATProto settings table/config.
-- [ ] Document ActivityPub and ATProto can be enabled independently.
-- [ ] Implement identity linking placeholder or first slice.
-- [ ] Implement posting/syndication strategy spec before code.
-- [ ] Implement tests only after protocol behavior is specified.
+- [x] Add ATProto settings table/config. (core-atproto slice, 2026-07-03. Migration
+  `0066_atproto` adds `atproto_accounts` (user_id PK FK users CASCADE, handle, did,
+  pds_url default https://bsky.social, `app_password_sealed`, auto_post, created_at,
+  last_posted_at) + `atproto_posts` durable queue (video_id UNIQUE dedupe, state/
+  attempts/next_attempt_at/error/post_uri, partial due index). Config `ATPROTO_ENABLED`
+  (default false, validated) + `ATPROTO_KEY_KEK` (base64-32, `cfg.ATProtoKEK()` falls
+  back to `FEDERATION_KEY_KEK`; REQUIRED in production when enabled, dev raw with a boot
+  warning). `app_password`/`app_password_sealed` added to the observability sensitive-key
+  denylist. sqlc regenerated + committed.)
+- [x] Document ActivityPub and ATProto can be enabled independently. (Config validates
+  `ATPROTO_ENABLED` independently of `FEDERATION_ENABLED`; `TestFederationATProtoEnableMatrix`
+  asserts all four on/off combos boot. Documented in README, .env.example, AGENT.md, and
+  `.ralph/specs/atproto.md`.)
+- [x] Implement identity linking placeholder or first slice. (v1 outbound cross-posting:
+  `internal/atproto` service — `PUT/GET/DELETE /api/v1/me/atproto` (requireAuth). Link
+  verifies via `com.atproto.server.createSession` on an https+public SSRF-guarded PDS
+  client, resolves the DID, seals the app password (secretbox). Status returns handle/
+  did/pds/auto_post/last_posted_at — NEVER the password. Documented in `api/openapi.yaml`
+  (linkATProtoAccount/getATProtoAccount/unlinkATProtoAccount; TestOpenAPIContract green).)
+- [x] Implement posting/syndication strategy spec before code. (Followed `.ralph/specs/
+  atproto.md`: on the published transition of a PUBLIC video whose owner has auto_post,
+  the existing video publish-hook enqueues `atproto_posts` (video→atproto decoupled;
+  publish hooks are now additive so federation + atproto register independently). A ticker
+  worker creates a fresh session then `com.atproto.repo.createRecord` (app.bsky.feed.post)
+  with the title + external-link embed to the public watch URL (thumbnail blob uploaded
+  when ≤1 MiB); records post_uri; 429/transient backoff; permanent-cancel on non-public/
+  unlinked/auto_post-off; dead-letter after 6.)
+- [x] Implement tests only after protocol behavior is specified. (Unit: sealing round-trip,
+  post-record building + truncation, queue state machine via a fake XRPC (success/429-
+  reschedule/permanent-cancel/dead-letter/thumbnail), enqueue gating + dedupe. Handler:
+  link via an httptest fake PDS (asserts the createSession call + credentials, hides the
+  password), status hides secrets, unlink, disabled→503, validation. Config matrix (4
+  combos) + KEK fallback/production-required/bad-KEK. Integration: `atproto_accounts` +
+  `atproto_posts` queries against real PG (dedupe, claim/reschedule/done, context join,
+  ON DELETE CASCADE). No live-network tests. `make ci` + touched-package `-tags=integration
+  -race` both green.)
 
 ---
 

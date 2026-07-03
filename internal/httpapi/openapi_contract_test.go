@@ -11,6 +11,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/admin"
+	"github.com/vidra/vidra-core/internal/atproto"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/block"
@@ -81,6 +82,9 @@ func fullRouteOptions() []Option {
 		// from the drift guard: they additionally require cfg.FederationEnabled,
 		// which testConfig leaves false.
 		WithFederationService(federation.NewService(nil)),
+		// Mounts the REST /me/atproto link routes (P10.2). Always part of the
+		// contract; ATPROTO_ENABLED only gates them at request time.
+		WithATProtoService(atproto.NewService(nil)),
 	}
 }
 

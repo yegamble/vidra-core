@@ -77,6 +77,21 @@ type Config struct {
 	// when off. See .ralph/specs/federation.md.
 	FederationEnabled bool
 
+	// ATProtoEnabled is the master switch for the ATProto / Bluesky extension
+	// (P10.2, .ralph/specs/atproto.md) — v1 outbound cross-posting only. When
+	// false (default) the /me/atproto link/status/unlink endpoints answer 503 and
+	// no auto-post worker runs. Independent of FederationEnabled: an instance may
+	// enable ActivityPub only, ATProto only, both, or neither.
+	ATProtoEnabled bool
+
+	// ATProtoKeyKEK is the base64 (standard) 32-byte key-encryption key used to
+	// envelope-encrypt linked Bluesky app passwords at rest (same secretbox
+	// envelope as FederationKeyKEK). Deployments already running a federation KEK
+	// can share it: ATProtoKEK() falls back to FederationKeyKEK when this is unset.
+	// Required in production when ATProtoEnabled; with neither set (dev) app
+	// passwords are stored raw with a loud boot warning. NEVER commit a real value.
+	ATProtoKeyKEK string
+
 	// MalwareScanEnabled turns on ClamAV scanning of uploaded originals before
 	// publish (fail-closed: infected or unscannable media is not published).
 	// Requires ClamAVAddr. Default false.
@@ -344,6 +359,8 @@ func Load() (*Config, error) {
 		PublicBaseURL:               strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
 		FederationEnabled:           getEnvBool("FEDERATION_ENABLED", false),
 		FederationKeyKEK:            getEnv("FEDERATION_KEY_KEK", ""),
+		ATProtoEnabled:              getEnvBool("ATPROTO_ENABLED", false),
+		ATProtoKeyKEK:               getEnv("ATPROTO_KEY_KEK", ""),
 		MFAKeyKEK:                   getEnv("MFA_KEY_KEK", ""),
 		TOTPIssuer:                  getEnv("TOTP_ISSUER", ""),
 		MalwareScanEnabled:          getEnvBool("MALWARE_SCAN_ENABLED", false),
@@ -621,6 +638,14 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: FEDERATION_KEY_KEK is required in production when FEDERATION_ENABLED=true")
 		}
 	}
+	if c.ATProtoKeyKEK != "" {
+		if k, err := base64.StdEncoding.DecodeString(c.ATProtoKeyKEK); err != nil || len(k) != 32 {
+			return fmt.Errorf("config: ATPROTO_KEY_KEK must be base64 of exactly 32 bytes")
+		}
+	}
+	if c.ATProtoEnabled && c.Environment == "production" && c.ATProtoKEK() == "" {
+		return fmt.Errorf("config: ATPROTO_KEY_KEK (or FEDERATION_KEY_KEK) is required in production when ATPROTO_ENABLED=true")
+	}
 	return nil
 }
 
@@ -702,6 +727,17 @@ func (c *Config) CookieSecure() bool {
 		return true
 	}
 	return c.Environment == "production"
+}
+
+// ATProtoKEK returns the key-encryption key that seals linked Bluesky app
+// passwords at rest: ATPROTO_KEY_KEK when set, otherwise FEDERATION_KEY_KEK (so a
+// deployment already running a federation KEK covers ATProto without a second
+// secret). Empty means no sealing (dev-only; cmd/api warns loudly).
+func (c *Config) ATProtoKEK() string {
+	if c.ATProtoKeyKEK != "" {
+		return c.ATProtoKeyKEK
+	}
+	return c.FederationKeyKEK
 }
 
 // MFAKEK returns the key-encryption key that seals TOTP secrets at rest:
