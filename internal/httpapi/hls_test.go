@@ -146,7 +146,7 @@ func getHLS(srv *Server, path, token string) *httptest.ResponseRecorder {
 }
 
 func TestHLSServesMasterVariantAndSegment(t *testing.T) {
-	srv, blobs, tcRepo := videoServerEnv(t, testConfig())
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
 	seedReadyHLS(t, tcRepo, blobs, id)
@@ -186,7 +186,7 @@ func TestHLSServesMasterVariantAndSegment(t *testing.T) {
 }
 
 func TestHLSNotReadyIs404(t *testing.T) {
-	srv, blobs, tcRepo := videoServerEnv(t, testConfig())
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
 
@@ -214,7 +214,7 @@ func TestHLSNotReadyIs404(t *testing.T) {
 }
 
 func TestHLSPrivateVideoOwnerOnly(t *testing.T) {
-	srv, blobs, tcRepo := videoServerEnv(t, testConfig())
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createVideo(t, srv, tok, "ada", `{"title":"Secret","privacy":"private"}`)
 	if rec := uploadVideoFile(srv, id, "clip.mp4", "video/mp4", "tiny", tok); rec.Code != http.StatusCreated {
@@ -237,7 +237,7 @@ func TestHLSPrivateVideoOwnerOnly(t *testing.T) {
 }
 
 func TestHLSRejectsNonCanonicalNames(t *testing.T) {
-	srv, blobs, tcRepo := videoServerEnv(t, testConfig())
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
 	seedReadyHLS(t, tcRepo, blobs, id)
@@ -258,7 +258,7 @@ func TestHLSRejectsNonCanonicalNames(t *testing.T) {
 }
 
 func TestVideoDetailCarriesHLSWhenReady(t *testing.T) {
-	srv, blobs, tcRepo := videoServerEnv(t, testConfig())
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
 

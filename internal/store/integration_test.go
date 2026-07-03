@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -330,5 +331,107 @@ func TestSumUserStorageUsageAggregates(t *testing.T) {
 	u, err = q.AdminUpdateUser(ctx, sqlcgen.AdminUpdateUserParams{ID: ada, SetStorageQuota: true})
 	if err != nil || u.StorageQuotaBytes != nil {
 		t.Fatalf("reset quota = (%v, %v), want NULL", u.StorageQuotaBytes, err)
+	}
+}
+
+// TestReportResolutionNotificationPersists proves the 0042 report context on
+// notifications against a real PostgreSQL: ResolveReport returns the reporter,
+// a report_resolved notification can reference the report (FK), and
+// ListNotifications resolves the joined report status/target type. Seeds the FK
+// chain and cleans up via the users→… ON DELETE CASCADE.
+func TestReportResolutionNotificationPersists(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	seedUser := func(prefix string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+			prefix+"-"+suffix, prefix+"-"+suffix+"@example.test",
+		).Scan(&id); err != nil {
+			t.Fatalf("seed user %s: %v", prefix, err)
+		}
+		return id
+	}
+	reporter := seedUser("nrep")
+	reported := seedUser("ntgt")
+	moderator := seedUser("nmod")
+	defer func() {
+		for _, id := range []uuid.UUID{reporter, reported, moderator} {
+			_, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id)
+		}
+	}()
+
+	// File an account report and resolve it: the reporter comes back.
+	var reportID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO reports (reporter_id, target_type, reported_user_id, reason)
+		 VALUES ($1, 'account', $2, 'impersonation') RETURNING id`,
+		reporter, reported,
+	).Scan(&reportID); err != nil {
+		t.Fatalf("seed report: %v", err)
+	}
+	gotReporter, err := q.ResolveReport(ctx, sqlcgen.ResolveReportParams{
+		ID:            reportID,
+		Status:        "accepted",
+		ModeratorNote: "handled",
+		ResolvedBy:    pgtype.UUID{Bytes: moderator, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("ResolveReport: %v", err)
+	}
+	if gotReporter != reporter {
+		t.Fatalf("ResolveReport reporter = %s, want %s", gotReporter, reporter)
+	}
+
+	// The notification stores the report FK (no actor: the moderator's identity
+	// must not be recorded) and the list view joins its status/target back.
+	if _, err := q.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:   reporter,
+		Type:     "report_resolved",
+		ReportID: pgtype.UUID{Bytes: reportID, Valid: true},
+	}); err != nil {
+		t.Fatalf("CreateNotification: %v", err)
+	}
+	rows, err := q.ListNotifications(ctx, sqlcgen.ListNotificationsParams{
+		UserID: reporter, ResultLimit: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListNotifications: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(rows))
+	}
+	n := rows[0]
+	if n.Type != "report_resolved" || !n.ReportID.Valid || uuid.UUID(n.ReportID.Bytes) != reportID {
+		t.Errorf("row = {type:%s report:%v}, want {report_resolved %s}", n.Type, n.ReportID, reportID)
+	}
+	if n.ReportStatus == nil || *n.ReportStatus != "accepted" ||
+		n.ReportTargetType == nil || *n.ReportTargetType != "account" {
+		t.Errorf("report context = (%v, %v), want (accepted, account)", n.ReportStatus, n.ReportTargetType)
+	}
+	if n.ActorUsername != nil {
+		t.Errorf("actor resolved on report_resolved notification = %q, want none", *n.ActorUsername)
+	}
+
+	// Deleting the report cascades the notification away (0042 FK).
+	if _, err := st.Pool.Exec(ctx, `DELETE FROM reports WHERE id = $1`, reportID); err != nil {
+		t.Fatalf("delete report: %v", err)
+	}
+	rows, err = q.ListNotifications(ctx, sqlcgen.ListNotificationsParams{UserID: reporter, ResultLimit: 10})
+	if err != nil {
+		t.Fatalf("ListNotifications after delete: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("notifications after report delete = %d, want 0 (ON DELETE CASCADE)", len(rows))
 	}
 }

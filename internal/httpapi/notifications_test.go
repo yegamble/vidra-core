@@ -15,12 +15,16 @@ import (
 )
 
 // notifFakeRepo is an in-memory notification.Repository that resolves the actor /
-// channel / video join columns from the sibling fakes, mirroring the real query.
+// channel / video / report join columns from the sibling fakes, mirroring the
+// real query. createErr, when set, fails CreateNotification — for proving the
+// notify side effects are best-effort.
 type notifFakeRepo struct {
-	auth     *authFakeRepo
-	channels *channelFakeRepo
-	videos   *videoFakeRepo
-	notifs   []sqlcgen.Notification
+	auth      *authFakeRepo
+	channels  *channelFakeRepo
+	videos    *videoFakeRepo
+	reports   *moderationFakeRepo
+	notifs    []sqlcgen.Notification
+	createErr error
 }
 
 func (f *notifFakeRepo) userByID(id uuid.UUID) (sqlcgen.User, bool) {
@@ -42,10 +46,13 @@ func (f *notifFakeRepo) channelByID(id uuid.UUID) (sqlcgen.Channel, bool) {
 }
 
 func (f *notifFakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNotificationParams) (sqlcgen.Notification, error) {
+	if f.createErr != nil {
+		return sqlcgen.Notification{}, f.createErr
+	}
 	n := sqlcgen.Notification{
 		ID: uuid.New(), UserID: a.UserID, Type: a.Type,
 		ActorID: a.ActorID, ChannelID: a.ChannelID, VideoID: a.VideoID, CommentID: a.CommentID,
-		ConversationID: a.ConversationID, CreatedAt: time.Now(),
+		ConversationID: a.ConversationID, ReportID: a.ReportID, CreatedAt: time.Now(),
 	}
 	f.notifs = append(f.notifs, n)
 	return n, nil
@@ -64,7 +71,7 @@ func (f *notifFakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotif
 		row := sqlcgen.ListNotificationsRow{
 			ID: n.ID, Type: n.Type, ActorID: n.ActorID, ChannelID: n.ChannelID,
 			VideoID: n.VideoID, CommentID: n.CommentID, ConversationID: n.ConversationID,
-			ReadAt: n.ReadAt, CreatedAt: n.CreatedAt,
+			ReportID: n.ReportID, ReadAt: n.ReadAt, CreatedAt: n.CreatedAt,
 		}
 		if n.ActorID.Valid {
 			if u, ok := f.userByID(uuid.UUID(n.ActorID.Bytes)); ok {
@@ -82,6 +89,12 @@ func (f *notifFakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotif
 			if v, ok := f.videos.videos[uuid.UUID(n.VideoID.Bytes)]; ok {
 				tt := v.Title
 				row.VideoTitle = &tt
+			}
+		}
+		if n.ReportID.Valid && f.reports != nil {
+			if r, ok := f.reports.reportByID(uuid.UUID(n.ReportID.Bytes)); ok {
+				st, tt := r.status, r.targetType
+				row.ReportStatus, row.ReportTargetType = &st, &tt
 			}
 		}
 		rows = append(rows, row)

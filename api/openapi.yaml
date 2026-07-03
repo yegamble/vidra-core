@@ -5557,8 +5557,8 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment, message]
-          description: What happened. follow = someone followed your channel; comment = someone commented on your video; message = someone sent you a direct message.
+          enum: [follow, comment, message, report_resolved]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video; message = someone sent you a direct message; report_resolved = a moderator resolved an abuse report you filed.
         read:
           type: boolean
         created_at:
@@ -5587,6 +5587,18 @@ components:
           type: string
           format: uuid
           description: The conversation's id (message notifications) — link to the thread.
+        report_id:
+          type: string
+          format: uuid
+          description: The resolved report's id (report_resolved notifications). The resolving moderator's identity is never included (actor is absent for this type).
+        report_status:
+          type: string
+          enum: [open, accepted, rejected]
+          description: The report's resolution outcome (report_resolved notifications).
+        report_target_type:
+          type: string
+          enum: [video, comment, account]
+          description: What the resolved report targeted (report_resolved notifications).
     NotificationListResponse:
       type: object
       required: [notifications, unread_count, limit, offset]

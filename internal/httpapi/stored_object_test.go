@@ -54,7 +54,7 @@ func (b *seekableFakeBackend) Exists(_ context.Context, key string) (bool, error
 // is the unit-level counterpart of the MinIO-backed
 // storage.TestS3ServeContentRange integration test.
 func TestStreamOriginalRangeViaSeekableBackend(t *testing.T) {
-	srv, blobs, _ := videoServerEnv(t, testConfig())
+	srv, blobs, _, _ := videoServerEnv(t, testConfig())
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
 
@@ -103,7 +103,7 @@ func TestStreamOriginalRangeViaSeekableBackend(t *testing.T) {
 // TestStreamOriginalMissingObjectViaSeekableBackend keeps the 404 contract for
 // path-less backends: a recorded file whose object vanished is a clean 404.
 func TestStreamOriginalMissingObjectViaSeekableBackend(t *testing.T) {
-	srv, _, _ := videoServerEnv(t, testConfig())
+	srv, _, _, _ := videoServerEnv(t, testConfig())
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
 

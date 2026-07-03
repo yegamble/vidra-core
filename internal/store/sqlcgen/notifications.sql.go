@@ -26,9 +26,9 @@ func (q *Queries) CountUnreadNotifications(ctx context.Context, userID uuid.UUID
 }
 
 const createNotification = `-- name: CreateNotification :one
-INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id
+INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id, report_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id
 `
 
 type CreateNotificationParams struct {
@@ -39,6 +39,7 @@ type CreateNotificationParams struct {
 	VideoID        pgtype.UUID `json:"video_id"`
 	CommentID      pgtype.UUID `json:"comment_id"`
 	ConversationID pgtype.UUID `json:"conversation_id"`
+	ReportID       pgtype.UUID `json:"report_id"`
 }
 
 // Record a notification for a recipient (user_id). Context columns are optional
@@ -52,6 +53,7 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		arg.VideoID,
 		arg.CommentID,
 		arg.ConversationID,
+		arg.ReportID,
 	)
 	var i Notification
 	err := row.Scan(
@@ -65,20 +67,23 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		&i.ReadAt,
 		&i.CreatedAt,
 		&i.ConversationID,
+		&i.ReportID,
 	)
 	return i, err
 }
 
 const listNotifications = `-- name: ListNotifications :many
 SELECT n.id, n.type, n.actor_id, n.channel_id, n.video_id, n.comment_id,
-       n.conversation_id, n.read_at, n.created_at,
+       n.conversation_id, n.report_id, n.read_at, n.created_at,
        a.username AS actor_username, a.display_name AS actor_display_name,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
-       v.title AS video_title
+       v.title AS video_title,
+       r.status AS report_status, r.target_type AS report_target_type
 FROM notifications n
 LEFT JOIN users a ON a.id = n.actor_id
 LEFT JOIN channels c ON c.id = n.channel_id
 LEFT JOIN videos v ON v.id = n.video_id
+LEFT JOIN reports r ON r.id = n.report_id
 WHERE n.user_id = $1
   AND (NOT $2::bool OR n.read_at IS NULL)
 ORDER BY n.created_at DESC, n.id DESC
@@ -100,6 +105,7 @@ type ListNotificationsRow struct {
 	VideoID            pgtype.UUID        `json:"video_id"`
 	CommentID          pgtype.UUID        `json:"comment_id"`
 	ConversationID     pgtype.UUID        `json:"conversation_id"`
+	ReportID           pgtype.UUID        `json:"report_id"`
 	ReadAt             pgtype.Timestamptz `json:"read_at"`
 	CreatedAt          time.Time          `json:"created_at"`
 	ActorUsername      *string            `json:"actor_username"`
@@ -107,12 +113,15 @@ type ListNotificationsRow struct {
 	ChannelHandle      *string            `json:"channel_handle"`
 	ChannelDisplayName *string            `json:"channel_display_name"`
 	VideoTitle         *string            `json:"video_title"`
+	ReportStatus       *string            `json:"report_status"`
+	ReportTargetType   *string            `json:"report_target_type"`
 }
 
 // A user's notifications, newest first, joined with the actor's identity and the
-// context (channel handle/name for follows, video title for comments). The
-// joined columns are nullable because the context depends on the type. When
-// unread_only is true, only unread (read_at IS NULL) rows are returned.
+// context (channel handle/name for follows, video title for comments, report
+// status/target for report resolutions). The joined columns are nullable because
+// the context depends on the type. When unread_only is true, only unread
+// (read_at IS NULL) rows are returned.
 func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsParams) ([]ListNotificationsRow, error) {
 	rows, err := q.db.Query(ctx, listNotifications,
 		arg.UserID,
@@ -135,6 +144,7 @@ func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsPa
 			&i.VideoID,
 			&i.CommentID,
 			&i.ConversationID,
+			&i.ReportID,
 			&i.ReadAt,
 			&i.CreatedAt,
 			&i.ActorUsername,
@@ -142,6 +152,8 @@ func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsPa
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
 			&i.VideoTitle,
+			&i.ReportStatus,
+			&i.ReportTargetType,
 		); err != nil {
 			return nil, err
 		}

@@ -18,9 +18,10 @@ import (
 
 // Notification type discriminators.
 const (
-	TypeFollow  = "follow"
-	TypeComment = "comment"
-	TypeMessage = "message"
+	TypeFollow         = "follow"
+	TypeComment        = "comment"
+	TypeMessage        = "message"
+	TypeReportResolved = "report_resolved"
 )
 
 // ErrNotFound means no notification matches the lookup for this user.
@@ -61,6 +62,9 @@ type Item struct {
 	VideoTitle         string
 	CommentID          string
 	ConversationID     string
+	ReportID           string
+	ReportStatus       string
+	ReportTargetType   string
 }
 
 // NotifyFollow records that actorID followed recipientID's channel. Notifying
@@ -112,6 +116,23 @@ func (s *Service) NotifyMessage(ctx context.Context, recipientID, actorID, conve
 	return err
 }
 
+// NotifyReportResolved records that a moderator (actorID) resolved recipientID's
+// abuse report. Resolving your own report is a no-op. Best-effort. The
+// moderator's identity is deliberately NOT stored on the notification (actor_id
+// stays null) so it is never exposed to the reporter — the report's status and
+// target type are resolved from the joined report row at read time.
+func (s *Service) NotifyReportResolved(ctx context.Context, recipientID, actorID, reportID uuid.UUID) error {
+	if recipientID == actorID {
+		return nil
+	}
+	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:   recipientID,
+		Type:     TypeReportResolved,
+		ReportID: pgUUID(reportID),
+	})
+	return err
+}
+
 // List returns the user's notifications, newest first. When unreadOnly is true,
 // only unread notifications are returned. The caller clamps limit/offset.
 func (s *Service) List(ctx context.Context, userID uuid.UUID, unreadOnly bool, limit, offset int32) ([]Item, error) {
@@ -139,6 +160,9 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, unreadOnly bool, l
 			VideoTitle:         deref(r.VideoTitle),
 			CommentID:          uuidString(r.CommentID),
 			ConversationID:     uuidString(r.ConversationID),
+			ReportID:           uuidString(r.ReportID),
+			ReportStatus:       deref(r.ReportStatus),
+			ReportTargetType:   deref(r.ReportTargetType),
 		})
 	}
 	return items, nil

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -99,16 +100,16 @@ func (f *fakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) (
 	return rows, nil
 }
 
-func (f *fakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveReportParams) (int64, error) {
+func (f *fakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveReportParams) (uuid.UUID, error) {
 	for i := range f.reports {
 		if f.reports[i].id == a.ID {
 			f.reports[i].status = a.Status
 			f.reports[i].note = a.ModeratorNote
 			f.reports[i].resolvedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-			return 1, nil
+			return f.reports[i].reporterID, nil
 		}
 	}
-	return 0, nil
+	return uuid.Nil, pgx.ErrNoRows
 }
 
 func (f *fakeRepo) BlockVideo(_ context.Context, a sqlcgen.BlockVideoParams) (int64, error) {
@@ -318,15 +319,20 @@ func TestResolveAndNotFound(t *testing.T) {
 	items, _ := svc.List(ctx, true, 20, 0)
 	id := items[0].ID
 
-	if err := svc.Resolve(ctx, mod, id, StatusAccepted, "actioned"); err != nil {
+	got, err := svc.Resolve(ctx, mod, id, StatusAccepted, "actioned")
+	if err != nil {
 		t.Fatalf("Resolve: %v", err)
+	}
+	// The reporter comes back so the caller can notify them.
+	if got != reporter {
+		t.Errorf("Resolve reporter = %s, want %s", got, reporter)
 	}
 	// It's no longer in the open queue.
 	if open, _ := svc.List(ctx, true, 20, 0); len(open) != 0 {
 		t.Errorf("open after resolve = %d, want 0", len(open))
 	}
 	// Unknown id → ErrNotFound.
-	if err := svc.Resolve(ctx, mod, uuid.New(), StatusRejected, ""); err != ErrNotFound {
+	if _, err := svc.Resolve(ctx, mod, uuid.New(), StatusRejected, ""); err != ErrNotFound {
 		t.Errorf("resolve unknown = %v, want ErrNotFound", err)
 	}
 }

@@ -158,7 +158,7 @@ func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Lis
 	return items, nil
 }
 
-const resolveReport = `-- name: ResolveReport :execrows
+const resolveReport = `-- name: ResolveReport :one
 UPDATE reports
 SET status         = $1,
     moderator_note = $2,
@@ -166,6 +166,7 @@ SET status         = $1,
     resolved_at    = now(),
     updated_at     = now()
 WHERE id = $4
+RETURNING reporter_id
 `
 
 type ResolveReportParams struct {
@@ -175,17 +176,17 @@ type ResolveReportParams struct {
 	ID            uuid.UUID   `json:"id"`
 }
 
-// Mark a report accepted/rejected with a moderator note. Returns the number of
-// rows matched so the caller can 404 on an unknown id.
-func (q *Queries) ResolveReport(ctx context.Context, arg ResolveReportParams) (int64, error) {
-	result, err := q.db.Exec(ctx, resolveReport,
+// Mark a report accepted/rejected with a moderator note. Returns the reporter
+// so the caller can notify them (best-effort); an unknown id yields no rows,
+// which the service maps to "not found".
+func (q *Queries) ResolveReport(ctx context.Context, arg ResolveReportParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, resolveReport,
 		arg.Status,
 		arg.ModeratorNote,
 		arg.ResolvedBy,
 		arg.ID,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var reporter_id uuid.UUID
+	err := row.Scan(&reporter_id)
+	return reporter_id, err
 }

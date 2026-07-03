@@ -160,6 +160,7 @@ type Notification struct {
 	ReadAt         pgtype.Timestamptz `json:"read_at"`
 	CreatedAt      time.Time          `json:"created_at"`
 	ConversationID pgtype.UUID        `json:"conversation_id"`
+	ReportID       pgtype.UUID        `json:"report_id"`
 }
 
 type PasswordResetToken struct {

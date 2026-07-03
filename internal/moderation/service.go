@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -46,7 +47,7 @@ type Repository interface {
 	CreateCommentReport(ctx context.Context, arg sqlcgen.CreateCommentReportParams) (int64, error)
 	CreateAccountReport(ctx context.Context, arg sqlcgen.CreateAccountReportParams) (int64, error)
 	ListReports(ctx context.Context, arg sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error)
-	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (int64, error)
+	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (uuid.UUID, error)
 	BlockVideo(ctx context.Context, arg sqlcgen.BlockVideoParams) (int64, error)
 	UnblockVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 	IsVideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, error)
@@ -160,23 +161,24 @@ func (s *Service) List(ctx context.Context, openOnly bool, limit, offset int32) 
 	return items, nil
 }
 
-// Resolve marks a report accepted/rejected with a moderator note. status must be
-// StatusAccepted or StatusRejected (validated by the caller). An unknown id →
-// ErrNotFound.
-func (s *Service) Resolve(ctx context.Context, moderatorID, reportID uuid.UUID, status, note string) error {
-	n, err := s.repo.ResolveReport(ctx, sqlcgen.ResolveReportParams{
+// Resolve marks a report accepted/rejected with a moderator note and returns
+// the reporter's user id so the caller can notify them (best-effort). status
+// must be StatusAccepted or StatusRejected (validated by the caller). An
+// unknown id → ErrNotFound.
+func (s *Service) Resolve(ctx context.Context, moderatorID, reportID uuid.UUID, status, note string) (uuid.UUID, error) {
+	reporterID, err := s.repo.ResolveReport(ctx, sqlcgen.ResolveReportParams{
 		ID:            reportID,
 		Status:        status,
 		ModeratorNote: note,
 		ResolvedBy:    pgUUID(moderatorID),
 	})
 	if err != nil {
-		return err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrNotFound
+		}
+		return uuid.Nil, err
 	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return reporterID, nil
 }
 
 // BlockVideo blocks a video so it is removed from public surfaces, recording the

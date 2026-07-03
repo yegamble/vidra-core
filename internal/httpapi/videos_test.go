@@ -559,14 +559,15 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 func videoServer(t *testing.T) *Server { return videoServerCfg(t, testConfig()) }
 
 func videoServerCfg(t *testing.T, cfg *config.Config, opts ...video.Option) *Server {
-	srv, _, _ := videoServerEnv(t, cfg, opts...)
+	srv, _, _, _ := videoServerEnv(t, cfg, opts...)
 	return srv
 }
 
-// videoServerEnv builds the full test server and also returns the blob backend
-// and the in-memory transcode repo so tests can seed stored media / playlist
-// state directly (the HLS tests need both).
-func videoServerEnv(t *testing.T, cfg *config.Config, opts ...video.Option) (*Server, storage.Backend, *transcodeFakeRepo) {
+// videoServerEnv builds the full test server and also returns the blob backend,
+// the in-memory transcode repo, and the in-memory notification repo so tests
+// can seed stored media / playlist state directly (the HLS tests need the first
+// two) or inject notification failures (the report-resolution test).
+func videoServerEnv(t *testing.T, cfg *config.Config, opts ...video.Option) (*Server, storage.Backend, *transcodeFakeRepo, *notifFakeRepo) {
 	t.Helper()
 	chRepo := newChannelFakeRepo()
 	authRepo := newAuthFakeRepo()
@@ -590,6 +591,7 @@ func videoServerEnv(t *testing.T, cfg *config.Config, opts ...video.Option) (*Se
 	cmRepo := &commentFakeRepo{users: authRepo, mutes: muteRepo, videos: repo}
 	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
 	repo.blocks = modRepo
+	notifRepo.reports = modRepo
 	msgRepo := newMessagingFakeRepo(authRepo)
 	blocksvc := block.NewService(&blockFakeRepo{auth: authRepo})
 	tcRepo := newTranscodeFakeRepo()
@@ -628,7 +630,7 @@ func videoServerEnv(t *testing.T, cfg *config.Config, opts ...video.Option) (*Se
 		WithTranscodeService(transcode.NewService(tcRepo, nil)),
 		WithMediaStorage(blobs),
 	)
-	return srv, blobs, tcRepo
+	return srv, blobs, tcRepo, notifRepo
 }
 
 // fakeProber lets handler tests drive the publish/fail outcome and metadata of

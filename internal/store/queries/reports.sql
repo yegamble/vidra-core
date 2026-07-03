@@ -39,13 +39,15 @@ WHERE (NOT sqlc.arg('open_only')::bool OR r.status = 'open')
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
--- name: ResolveReport :execrows
--- Mark a report accepted/rejected with a moderator note. Returns the number of
--- rows matched so the caller can 404 on an unknown id.
+-- name: ResolveReport :one
+-- Mark a report accepted/rejected with a moderator note. Returns the reporter
+-- so the caller can notify them (best-effort); an unknown id yields no rows,
+-- which the service maps to "not found".
 UPDATE reports
 SET status         = sqlc.arg('status'),
     moderator_note = sqlc.arg('moderator_note'),
     resolved_by    = sqlc.arg('resolved_by'),
     resolved_at    = now(),
     updated_at     = now()
-WHERE id = sqlc.arg('id');
+WHERE id = sqlc.arg('id')
+RETURNING reporter_id;

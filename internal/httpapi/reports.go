@@ -206,7 +206,9 @@ func (s *Server) handleResolveReport(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	if err := s.moderationsvc.Resolve(c.Request().Context(), userID, id, in.Status, strings.TrimSpace(in.Note)); err != nil {
+	ctx := c.Request().Context()
+	reporterID, err := s.moderationsvc.Resolve(ctx, userID, id, in.Status, strings.TrimSpace(in.Note))
+	if err != nil {
 		if errors.Is(err, moderation.ErrNotFound) {
 			s.audit(c, observability.ActionReportResolve, observability.ResultFailure, userID.String(), "not_found")
 			return echo.NewHTTPError(http.StatusNotFound, "report not found")
@@ -214,5 +216,12 @@ func (s *Server) handleResolveReport(c echo.Context) error {
 		return err
 	}
 	s.audit(c, observability.ActionReportResolve, observability.ResultSuccess, userID.String(), in.Status)
+	// Tell the reporter their report was handled (best-effort; skipped when no
+	// notifier is wired or the resolving moderator reported it themselves).
+	if s.notifsvc != nil {
+		if nerr := s.notifsvc.NotifyReportResolved(ctx, reporterID, userID, id); nerr != nil {
+			s.logger.WarnContext(ctx, "notify report resolved failed", "error", nerr, "report_id", id)
+		}
+	}
 	return c.NoContent(http.StatusNoContent)
 }

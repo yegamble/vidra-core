@@ -34,6 +34,10 @@ type notificationView struct {
 	CommentID  string `json:"comment_id,omitempty"`
 	// Message context.
 	ConversationID string `json:"conversation_id,omitempty"`
+	// Report-resolution context. The moderator's identity is never exposed.
+	ReportID         string `json:"report_id,omitempty"`
+	ReportStatus     string `json:"report_status,omitempty"`
+	ReportTargetType string `json:"report_target_type,omitempty"`
 }
 
 func newNotificationView(it notification.Item) notificationView {
@@ -48,6 +52,9 @@ func newNotificationView(it notification.Item) notificationView {
 		VideoTitle:         it.VideoTitle,
 		CommentID:          it.CommentID,
 		ConversationID:     it.ConversationID,
+		ReportID:           it.ReportID,
+		ReportStatus:       it.ReportStatus,
+		ReportTargetType:   it.ReportTargetType,
 	}
 	if it.ActorUsername != "" || it.ActorDisplayName != "" {
 		v.Actor = &notificationActorView{Username: it.ActorUsername, DisplayName: it.ActorDisplayName}

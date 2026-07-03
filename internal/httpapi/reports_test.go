@@ -3,12 +3,14 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -131,16 +133,27 @@ func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReport
 	return rows, nil
 }
 
-func (f *moderationFakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveReportParams) (int64, error) {
+func (f *moderationFakeRepo) ResolveReport(_ context.Context, a sqlcgen.ResolveReportParams) (uuid.UUID, error) {
 	for i := range f.reports {
 		if f.reports[i].id == a.ID {
 			f.reports[i].status = a.Status
 			f.reports[i].note = a.ModeratorNote
 			f.reports[i].resolvedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-			return 1, nil
+			return f.reports[i].reporterID, nil
 		}
 	}
-	return 0, nil
+	return uuid.Nil, pgx.ErrNoRows
+}
+
+// reportByID resolves one of the fake's report rows (for the notification
+// fake's report-context join).
+func (f *moderationFakeRepo) reportByID(id uuid.UUID) (modReportRow, bool) {
+	for _, r := range f.reports {
+		if r.id == id {
+			return r, true
+		}
+	}
+	return modReportRow{}, false
 }
 
 func (f *moderationFakeRepo) BlockVideo(_ context.Context, a sqlcgen.BlockVideoParams) (int64, error) {
@@ -333,6 +346,117 @@ func TestReportAccountAndModerate(t *testing.T) {
 	// Auth required.
 	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/users/"+adminID+"/report", `{"reason":"x"}`, ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anon report account = %d, want 401", rec.Code)
+	}
+}
+
+// TestResolveReportNotifiesReporter proves the reporter is told when a
+// moderator resolves their report — for both outcomes — with the report context
+// resolved on the notification and no moderator identity leaked.
+func TestResolveReportNotifiesReporter(t *testing.T) {
+	srv := videoServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	resolveNth := func(status string) string {
+		t.Helper()
+		var open reportListResponse
+		_ = json.Unmarshal(listReports(srv, "?status=open", admin).Body.Bytes(), &open)
+		if len(open.Reports) != 1 {
+			t.Fatalf("open reports = %d, want 1", len(open.Reports))
+		}
+		id := open.Reports[0].ID
+		if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/reports/"+id+"/resolve", `{"status":"`+status+`","note":"handled"}`, admin); rec.Code != http.StatusNoContent {
+			t.Fatalf("resolve %s = %d; body=%s", status, rec.Code, rec.Body.String())
+		}
+		return id
+	}
+
+	// Accepted: bob reports the video, the admin accepts → bob is notified.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"spam"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("report video = %d", rec.Code)
+	}
+	acceptedID := resolveNth("accepted")
+
+	// Rejected: bob reports the admin's account, the admin rejects → notified too.
+	var me userView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/auth/me", admin).Body.Bytes(), &me)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/users/"+me.ID+"/report", `{"reason":"impersonation"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("report account = %d", rec.Code)
+	}
+	rejectedID := resolveNth("rejected")
+
+	rec := listNotifications(srv, bob)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list notifications = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body notificationListResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if len(body.Notifications) != 2 {
+		t.Fatalf("notifications = %d, want 2; body=%s", len(body.Notifications), rec.Body.String())
+	}
+	// Newest first: the rejected account report, then the accepted video report.
+	first, second := body.Notifications[0], body.Notifications[1]
+	if first.Type != "report_resolved" || first.ReportID != rejectedID ||
+		first.ReportStatus != "rejected" || first.ReportTargetType != "account" {
+		t.Errorf("first = %+v, want report_resolved/%s/rejected/account", first, rejectedID)
+	}
+	if second.Type != "report_resolved" || second.ReportID != acceptedID ||
+		second.ReportStatus != "accepted" || second.ReportTargetType != "video" {
+		t.Errorf("second = %+v, want report_resolved/%s/accepted/video", second, acceptedID)
+	}
+	// The resolving moderator's identity must not be exposed to the reporter.
+	if first.Actor != nil || second.Actor != nil {
+		t.Errorf("actor leaked on report_resolved notification: %+v / %+v", first.Actor, second.Actor)
+	}
+}
+
+// TestResolveOwnReportDoesNotSelfNotify covers the self case: a moderator
+// resolving a report they filed themselves gets no notification.
+func TestResolveOwnReportDoesNotSelfNotify(t *testing.T) {
+	srv := videoServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"spam"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("report = %d", rec.Code)
+	}
+	var open reportListResponse
+	_ = json.Unmarshal(listReports(srv, "?status=open", admin).Body.Bytes(), &open)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/reports/"+open.Reports[0].ID+"/resolve", `{"status":"accepted"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("resolve own report = %d", rec.Code)
+	}
+	if got := unreadCount(t, srv, admin); got != 0 {
+		t.Errorf("unread after resolving own report = %d, want 0", got)
+	}
+}
+
+// TestResolveReportSurvivesNotifyFailure covers the absent case: notification
+// persistence failing must never fail the resolve (best-effort side effect).
+func TestResolveReportSurvivesNotifyFailure(t *testing.T) {
+	srv, _, _, notifRepo := videoServerEnv(t, testConfig())
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"spam"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("report = %d", rec.Code)
+	}
+	var open reportListResponse
+	_ = json.Unmarshal(listReports(srv, "?status=open", admin).Body.Bytes(), &open)
+
+	notifRepo.createErr = errors.New("notification store down")
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/reports/"+open.Reports[0].ID+"/resolve", `{"status":"accepted"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("resolve with failing notifier = %d, want 204 (best-effort)", rec.Code)
+	}
+	// The report is resolved even though no notification could be written.
+	var after reportListResponse
+	_ = json.Unmarshal(listReports(srv, "?status=open", admin).Body.Bytes(), &after)
+	if len(after.Reports) != 0 {
+		t.Errorf("open after resolve = %d, want 0", len(after.Reports))
+	}
+	if got := unreadCount(t, srv, bob); got != 0 {
+		t.Errorf("unread for reporter = %d, want 0 (create failed)", got)
 	}
 }
 

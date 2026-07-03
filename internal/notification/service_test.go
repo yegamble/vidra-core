@@ -20,7 +20,7 @@ func (f *fakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNotific
 	n := sqlcgen.Notification{
 		ID: uuid.New(), UserID: a.UserID, Type: a.Type,
 		ActorID: a.ActorID, ChannelID: a.ChannelID, VideoID: a.VideoID, CommentID: a.CommentID,
-		ConversationID: a.ConversationID, CreatedAt: time.Now(),
+		ConversationID: a.ConversationID, ReportID: a.ReportID, CreatedAt: time.Now(),
 	}
 	f.notifs = append(f.notifs, n)
 	return n, nil
@@ -39,7 +39,7 @@ func (f *fakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotificati
 		rows = append(rows, sqlcgen.ListNotificationsRow{
 			ID: n.ID, Type: n.Type, ActorID: n.ActorID, ChannelID: n.ChannelID,
 			VideoID: n.VideoID, CommentID: n.CommentID, ConversationID: n.ConversationID,
-			ReadAt: n.ReadAt, CreatedAt: n.CreatedAt,
+			ReportID: n.ReportID, ReadAt: n.ReadAt, CreatedAt: n.CreatedAt,
 		})
 	}
 	return rows, nil
@@ -133,6 +133,36 @@ func TestNotifyMessage(t *testing.T) {
 	}
 	if items[0].Type != TypeMessage || items[0].ConversationID != conv.String() {
 		t.Errorf("item = {type:%s conversation:%s}, want {message %s}", items[0].Type, items[0].ConversationID, conv)
+	}
+}
+
+func TestNotifyReportResolved(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	ctx := context.Background()
+	reporter, moderator, report := uuid.New(), uuid.New(), uuid.New()
+
+	if err := svc.NotifyReportResolved(ctx, reporter, moderator, report); err != nil {
+		t.Fatalf("NotifyReportResolved: %v", err)
+	}
+	// Resolving your own report never notifies.
+	if err := svc.NotifyReportResolved(ctx, reporter, reporter, report); err != nil {
+		t.Fatalf("self NotifyReportResolved: %v", err)
+	}
+
+	items, err := svc.List(ctx, reporter, false, 20, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("list len = %d, want 1 (self-notification skipped)", len(items))
+	}
+	if items[0].Type != TypeReportResolved || items[0].ReportID != report.String() {
+		t.Errorf("item = {type:%s report:%s}, want {report_resolved %s}", items[0].Type, items[0].ReportID, report)
+	}
+	// The moderator's identity must never be recorded on the notification row.
+	if repo.notifs[0].ActorID.Valid {
+		t.Errorf("actor_id stored on report_resolved notification = %v, want null (moderator identity must not leak)", repo.notifs[0].ActorID)
 	}
 }
 

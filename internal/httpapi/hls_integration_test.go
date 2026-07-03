@@ -38,7 +38,7 @@ func TestHLSPipelineEndToEnd(t *testing.T) {
 	// backend), so the publish hook closes over a late-bound pointer — exactly
 	// how cmd/api wires it, minus the ticker.
 	var tcsvc *transcode.Service
-	srv, blobs, tcRepo := videoServerEnv(t, testConfig(),
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig(),
 		video.WithTranscodeHook(func(ctx context.Context, videoID uuid.UUID, sourceKey string) {
 			if tcsvc != nil {
 				_ = tcsvc.Enqueue(ctx, videoID, sourceKey)
