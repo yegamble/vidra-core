@@ -50,6 +50,9 @@ const (
 	ActionAdminUserUpdate       = "admin.user.update"
 	ActionVideoDelete           = "content.video.delete"
 	ActionChannelDelete         = "content.channel.delete"
+	// E2EE one-time-key claims are audited with COUNTS ONLY (never key
+	// material): key exhaustion/abuse is a security-relevant signal.
+	ActionE2EEClaim = "e2ee.otk.claim"
 )
 
 // sensitiveKeys is the canonical denylist of structured-log field names that
@@ -83,6 +86,16 @@ var sensitiveKeys = map[string]bool{
 	"mfa_token":          true,
 	"recovery_code":      true,
 	"recovery_codes":     true,
+	// E2EE (P11.2): envelope ciphertext and one-time prekeys are opaque
+	// client material — never log them. (identity_key/signing_key are public
+	// keys, but logging them serves no purpose either; keep them out too.)
+	"ciphertext":    true,
+	"envelope":      true,
+	"envelopes":     true,
+	"one_time_key":  true,
+	"one_time_keys": true,
+	"identity_key":  true,
+	"signing_key":   true,
 }
 
 // IsSensitiveKey reports whether a structured-log key is on the denylist

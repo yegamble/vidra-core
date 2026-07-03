@@ -14,9 +14,14 @@ import (
 
 const maxMessageLen = 5000
 
-// startConversationRequest is the POST /conversations body.
+// startConversationRequest is the POST /conversations body. encrypted chooses
+// the conversation type AT CREATION, immutably: an encrypted conversation
+// stores only opaque ciphertext envelopes (see internal/e2ee), a plaintext one
+// only {body} messages. The two live in distinct dm_key namespaces, so a pair
+// of users can have one of each.
 type startConversationRequest struct {
 	RecipientID string `json:"recipient_id"`
+	Encrypted   bool   `json:"encrypted"`
 }
 
 func (r startConversationRequest) Validate() []FieldError {
@@ -29,15 +34,18 @@ func (r startConversationRequest) Validate() []FieldError {
 // conversationView is the projection of a conversation.
 type conversationView struct {
 	ID        string    `json:"id"`
+	Encrypted bool      `json:"encrypted"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // conversationSummaryView is a conversation in the inbox list: the other
-// participant + last message preview.
+// participant + last message preview (empty for encrypted conversations —
+// envelopes are opaque).
 type conversationSummaryView struct {
 	ID               string    `json:"id"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	Encrypted        bool      `json:"encrypted"`
 	OtherUserID      string    `json:"other_user_id"`
 	OtherUsername    string    `json:"other_username"`
 	OtherDisplayName string    `json:"other_display_name"`
@@ -51,20 +59,62 @@ type conversationListResponse struct {
 	Offset        int                       `json:"offset"`
 }
 
-// sendMessageRequest is the POST /conversations/{id}/messages body.
+// envelopeIn is one per-recipient-device ciphertext blob of an encrypted send.
+type envelopeIn struct {
+	RecipientDeviceID string `json:"recipient_device_id"`
+	MessageType       int32  `json:"message_type"`
+	Ciphertext        string `json:"ciphertext"`
+}
+
+// maxEnvelopesPerSend bounds the client fan-out of one encrypted send (each
+// participant has at most 20 devices, so 40 covers every legitimate send).
+const maxEnvelopesPerSend = 40
+
+// sendMessageRequest is the POST /conversations/{id}/messages body. Exactly
+// one shape is valid per conversation type: plaintext conversations take
+// {body}; encrypted conversations take {sender_device_id, envelopes,
+// expires_in_seconds?} (the shape check against the conversation's type
+// happens in the handler; mixing shapes is rejected here).
 type sendMessageRequest struct {
-	Body string `json:"body"`
+	Body             string       `json:"body"`
+	SenderDeviceID   string       `json:"sender_device_id"`
+	Envelopes        []envelopeIn `json:"envelopes"`
+	ExpiresInSeconds *int64       `json:"expires_in_seconds"`
 }
 
 func (r sendMessageRequest) Validate() []FieldError {
 	body := strings.TrimSpace(r.Body)
-	switch {
-	case body == "":
-		return []FieldError{{Field: "body", Message: "is required"}}
-	case len(body) > maxMessageLen:
-		return []FieldError{{Field: "body", Message: "must be at most 5000 characters"}}
+	if len(r.Envelopes) == 0 {
+		// Plaintext shape. The rules (and their messages) are unchanged from
+		// before E2EE existed.
+		switch {
+		case body == "":
+			return []FieldError{{Field: "body", Message: "is required"}}
+		case len(body) > maxMessageLen:
+			return []FieldError{{Field: "body", Message: "must be at most 5000 characters"}}
+		case r.SenderDeviceID != "" || r.ExpiresInSeconds != nil:
+			return []FieldError{{Field: "body", Message: "cannot be combined with encrypted-send fields"}}
+		}
+		return nil
 	}
-	return nil
+	// Encrypted shape.
+	var errs []FieldError
+	if body != "" {
+		errs = append(errs, FieldError{Field: "body", Message: "cannot be combined with envelopes"})
+	}
+	if strings.TrimSpace(r.SenderDeviceID) == "" {
+		errs = append(errs, FieldError{Field: "sender_device_id", Message: "is required with envelopes"})
+	}
+	if len(r.Envelopes) > maxEnvelopesPerSend {
+		errs = append(errs, FieldError{Field: "envelopes", Message: "too many envelopes"})
+	}
+	for _, env := range r.Envelopes {
+		if strings.TrimSpace(env.RecipientDeviceID) == "" || env.Ciphertext == "" {
+			errs = append(errs, FieldError{Field: "envelopes", Message: "each envelope needs recipient_device_id and ciphertext"})
+			break
+		}
+	}
+	return errs
 }
 
 // messageView is the projection of a message.
@@ -112,6 +162,23 @@ func (s *Server) handleStartConversation(c echo.Context) error {
 	if err != nil {
 		return &ValidationError{Fields: []FieldError{{Field: "recipient_id", Message: "must be a valid id"}}}
 	}
+	// Encrypted conversations live in the e2ee service (distinct dm_key
+	// namespace, ciphertext-only storage); everything else is unchanged.
+	if in.Encrypted {
+		if s.e2eesvc == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "encrypted messaging is not available")
+		}
+		conv, err := s.e2eesvc.StartConversation(c.Request().Context(), userID, recipientID)
+		if err != nil {
+			if herr := e2eeError(err); herr != nil {
+				return herr
+			}
+			return err
+		}
+		return c.JSON(http.StatusCreated, conversationView{
+			ID: conv.ID.String(), Encrypted: true, CreatedAt: conv.CreatedAt, UpdatedAt: conv.UpdatedAt,
+		})
+	}
 	conv, err := s.messagingsvc.StartConversation(c.Request().Context(), userID, recipientID)
 	if err != nil {
 		switch {
@@ -125,7 +192,7 @@ func (s *Server) handleStartConversation(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusCreated, conversationView{
-		ID: conv.ID.String(), CreatedAt: conv.CreatedAt, UpdatedAt: conv.UpdatedAt,
+		ID: conv.ID.String(), Encrypted: false, CreatedAt: conv.CreatedAt, UpdatedAt: conv.UpdatedAt,
 	})
 }
 
@@ -148,7 +215,7 @@ func (s *Server) handleListConversations(c echo.Context) error {
 	views := make([]conversationSummaryView, 0, len(items))
 	for _, it := range items {
 		views = append(views, conversationSummaryView{
-			ID: it.ID.String(), UpdatedAt: it.UpdatedAt, OtherUserID: it.OtherUserID.String(),
+			ID: it.ID.String(), UpdatedAt: it.UpdatedAt, Encrypted: it.Encrypted, OtherUserID: it.OtherUserID.String(),
 			OtherUsername: it.OtherUsername, OtherDisplayName: it.OtherDisplayName,
 			LastMessageBody: it.LastMessageBody, LastMessageAt: it.LastMessageAt,
 		})
@@ -172,6 +239,21 @@ func (s *Server) handleListMessages(c echo.Context) error {
 	offset := queryInt(c, "offset", 0)
 	if offset < 0 {
 		offset = 0
+	}
+	// Encrypted conversations return only the CALLER's devices' envelopes;
+	// plaintext ones are exactly as before E2EE existed. The participant check
+	// runs first either way, so existence is never leaked.
+	if s.e2eesvc != nil {
+		encrypted, err := s.e2eesvc.ConversationEncrypted(c.Request().Context(), userID, convID)
+		if err != nil {
+			if herr := e2eeError(err); herr != nil {
+				return herr
+			}
+			return err
+		}
+		if encrypted {
+			return s.listEncryptedMessages(c, userID, convID, limit, offset)
+		}
 	}
 	msgs, err := s.messagingsvc.ListMessages(c.Request().Context(), userID, convID, int32(limit), int32(offset))
 	if err != nil {
@@ -204,6 +286,31 @@ func (s *Server) handleSendMessage(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
+	// Route by the conversation's type (chosen at creation, immutable): an
+	// encrypted conversation takes ONLY the envelopes shape, a plaintext one
+	// ONLY {body} — the wrong shape for the type is 422 in both directions.
+	// The participant check runs before the shape check so a non-participant
+	// stays 404 (no existence leak).
+	if s.e2eesvc != nil {
+		encrypted, err := s.e2eesvc.ConversationEncrypted(ctx, userID, convID)
+		if err != nil {
+			if herr := e2eeError(err); herr != nil {
+				return herr
+			}
+			return err
+		}
+		if encrypted {
+			if len(in.Envelopes) == 0 {
+				return &ValidationError{Fields: []FieldError{{Field: "envelopes", Message: "this conversation is encrypted; send envelopes, not body"}}}
+			}
+			return s.sendEncryptedMessage(c, userID, convID, in)
+		}
+		if len(in.Envelopes) > 0 {
+			return &ValidationError{Fields: []FieldError{{Field: "body", Message: "this conversation is not encrypted; send body, not envelopes"}}}
+		}
+	} else if len(in.Envelopes) > 0 {
+		return &ValidationError{Fields: []FieldError{{Field: "envelopes", Message: "encrypted messaging is not available"}}}
+	}
 	msg, err := s.messagingsvc.SendMessage(ctx, userID, convID, strings.TrimSpace(in.Body))
 	if err != nil {
 		if errors.Is(err, messaging.ErrNotParticipant) {

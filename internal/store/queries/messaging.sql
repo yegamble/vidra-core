@@ -51,8 +51,9 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: ListConversations :many
 -- The caller's 1:1 conversations, most-recently-active first, with the other
--- participant's identity and the last message preview.
-SELECT c.id, c.updated_at,
+-- participant's identity and the last message preview. Encrypted conversations
+-- appear too (flagged); their preview is empty — envelopes are opaque.
+SELECT c.id, c.updated_at, c.encrypted,
        other.user_id AS other_user_id,
        ou.username AS other_username,
        ou.display_name AS other_display_name,

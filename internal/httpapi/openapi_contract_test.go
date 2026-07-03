@@ -16,6 +16,7 @@ import (
 	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
+	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/live"
@@ -55,6 +56,7 @@ func fullRouteOptions() []Option {
 		WithAdminService(admin.NewService(nil)),
 		WithAuditLog(audit.NewService(nil)),
 		WithMessagingService(messaging.NewService(nil)),
+		WithE2EEService(e2ee.NewService(nil)),
 		WithLiveService(live.NewService(nil)),
 		WithProfileImageService(profileimage.NewService(nil, nil)),
 		WithQuotaService(quota.NewService(nil, 0)),

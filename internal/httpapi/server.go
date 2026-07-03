@@ -22,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/live"
@@ -73,6 +74,7 @@ type Server struct {
 	adminsvc       *admin.Service
 	auditLog       *audit.Service
 	messagingsvc   *messaging.Service
+	e2eesvc        *e2ee.Service
 	livesvc        *live.Service
 	imagesvc       *profileimage.Service
 	quotasvc       *quota.Service
@@ -217,6 +219,14 @@ func WithAdminService(svc *admin.Service) Option {
 // conversations, send/list messages). When unset, the routes are not registered.
 func WithMessagingService(svc *messaging.Service) Option {
 	return func(s *Server) { s.messagingsvc = svc }
+}
+
+// WithE2EEService mounts the E2EE endpoints (device registry, one-time-key
+// upload/count/claim) and enables the encrypted branch of the conversation
+// endpoints (start {encrypted:true}, envelope send/read). When unset, none of
+// that surface exists and plaintext messaging behaves exactly as before.
+func WithE2EEService(svc *e2ee.Service) Option {
+	return func(s *Server) { s.e2eesvc = svc }
 }
 
 // WithLiveService mounts the live-stream endpoints (create/list/get/delete +
@@ -770,6 +780,21 @@ func (s *Server) routes() {
 		api.GET("/me/conversations", s.handleListConversations, s.requireAuth)
 		api.GET("/conversations/:id/messages", s.handleListMessages, s.requireAuth)
 		api.POST("/conversations/:id/messages", s.handleSendMessage, s.requireAuth)
+	}
+
+	// E2EE key directory (ciphertext-only encrypted messaging, P11.2): own
+	// device registry + one-time prekey upload/count, and the participant-gated
+	// peer endpoints (device listing, atomic key claim). The encrypted
+	// conversation/envelope surface itself rides the /conversations routes
+	// above, branched by the conversation's immutable encrypted flag.
+	if s.e2eesvc != nil {
+		api.POST("/e2ee/devices", s.handleRegisterE2EEDevice, s.requireAuth)
+		api.GET("/e2ee/devices", s.handleListMyE2EEDevices, s.requireAuth)
+		api.DELETE("/e2ee/devices/:id", s.handleDeleteE2EEDevice, s.requireAuth)
+		api.POST("/e2ee/devices/:id/one-time-keys", s.handleUploadOneTimeKeys, s.requireAuth)
+		api.GET("/e2ee/devices/:id/one-time-keys/count", s.handleCountOneTimeKeys, s.requireAuth)
+		api.GET("/users/:id/e2ee/devices", s.handleListUserE2EEDevices, s.requireAuth)
+		api.POST("/users/:id/e2ee/claim", s.handleClaimOneTimeKeys, s.requireAuth)
 	}
 
 	// Live streams: a channel owner manages live streams + their stream keys.

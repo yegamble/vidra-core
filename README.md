@@ -246,6 +246,29 @@ subsets (profile fields, playlists matched by locally-present video ids,
 follows of local channels, notification prefs); everything else is reported
 per-section as skipped in the response summary.
 
+Direct messaging: `POST /api/v1/conversations` starts (or idempotently returns)
+the 1:1 conversation with a recipient; `GET /api/v1/me/conversations` is the
+inbox; `POST`/`GET /api/v1/conversations/{id}/messages` send/list. A user block
+in either direction refuses messaging with `403`.
+
+Encrypted messaging (E2EE, `.ralph/specs/e2ee.md`): pass `{"encrypted": true}`
+at conversation creation for a ciphertext-only thread — the type is immutable
+and distinct from the pair's plaintext conversation. ALL cryptography is
+client-side (Olm); the backend is a key directory + envelope store and cannot
+decrypt. Devices register PUBLIC keys via `POST/GET /api/v1/e2ee/devices` and
+`DELETE /api/v1/e2ee/devices/{id}`; one-time prekeys are uploaded/counted via
+`POST /api/v1/e2ee/devices/{id}/one-time-keys[/count]` and claimed atomically
+(single-use, `FOR UPDATE SKIP LOCKED`) via `POST /api/v1/users/{id}/e2ee/claim`;
+peer keys are readable via `GET /api/v1/users/{id}/e2ee/devices` — both peer
+endpoints are participant-gated (404 without a shared conversation) and refused
+across blocks. Sends carry one ≤64KiB opaque envelope per recipient device
+(`{sender_device_id, envelopes[], expires_in_seconds?}`); the wrong body shape
+for a conversation's type is `422` in both directions; reads return only the
+caller's devices' envelopes, byte-identical to what was posted. Optional
+disappearing messages (30s–90d) are filtered from reads at expiry and
+hard-deleted by a background sweeper. One-time-key claims are audited with
+counts only; ciphertext/keys never appear in logs.
+
 Email delivery: password-reset and email-verification tokens are handed to a `Mailer`
 adapter. By default nothing is sent (tokens are still generated and consumable). Set
 `MAIL_ENABLED=true` plus `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_FROM`, and

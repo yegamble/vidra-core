@@ -197,7 +197,7 @@
 - [ ] Add ATProto identities/events tables.
 - [x] Add direct messages conversations table. (migration 0031: `conversations` + `conversation_participants`)
 - [x] Add direct messages table. (migration 0031: `messages`, index on `(conversation_id, created_at DESC)`)
-- [ ] Add encrypted message device/prekey/session tables if E2EE is enabled.
+- [x] Add encrypted message device/prekey/session tables if E2EE is enabled. (migration 0058: `e2ee_devices` (public identity/signing keys per user device), `e2ee_one_time_keys` (claim-once prekeys, partial index for the unclaimed scan), `e2ee_messages` (per-recipient-device ciphertext envelopes, 64KiB CHECK, expiry partial index) + `conversations.encrypted` immutable flag. Sessions are CLIENT-side by design (Olm pickles in IndexedDB) — the server stores no session state. See P11.2.)
 - [ ] Add attachments table.
 - [ ] Add link previews table.
 - [ ] Add crypto donation addresses table.
@@ -788,16 +788,16 @@
 
 ## P11.2 Encrypted Messaging
 
-- [ ] Write E2EE threat model before implementation.
-- [ ] Choose audited protocol/library; do not invent crypto.
-- [ ] Implement device registration model.
-- [ ] Implement public identity/prekey endpoints.
-- [ ] Store ciphertext only for encrypted messages.
-- [ ] Implement disappearing message expiry metadata.
-- [ ] Implement deletion/expiry worker.
-- [ ] Ensure backend cannot decrypt encrypted messages.
-- [ ] Add tests for storage invariants and expiry behavior.
-- [ ] Block completion if no acceptable audited crypto approach is selected.
+- [x] Write E2EE threat model before implementation. (`.ralph/specs/e2ee.md` §1 — protects against server compromise/subpoena of content and passive network observers; explicitly NOT against metadata, key-substitution MITM (v1 mitigates via user-visible fingerprints), compromised endpoints, or history for new devices.)
+- [x] Choose audited protocol/library; do not invent crypto. (`.ralph/specs/e2ee.md` §2 — Olm double ratchet via `@matrix-org/olm` (NCC Group audit 2016), 1:1 sessions only, CLIENT-side in vidra-user; vidra-core implements zero cryptography and treats all E2EE payloads as opaque bounded strings; migration path vodozemac.)
+- [x] Implement device registration model. (migration 0058 `e2ee_devices` + `internal/e2ee` service: `POST/GET /api/v1/e2ee/devices` (register with public Curve25519 identity + Ed25519 signing keys, bounded name; list own = frontend availability probe), `DELETE /api/v1/e2ee/devices/:id` (owner-scoped, cascades OTKs + envelopes both directions), 20-device cap, `last_seen_at` bumped on OTK upload/send.)
+- [x] Implement public identity/prekey endpoints. (`GET /api/v1/users/:id/e2ee/devices` (peer public keys) + `POST /api/v1/users/:id/e2ee/claim` — both participant-gated (404 without a shared conversation → no account/device enumeration) and refused across blocks (403). OTK upload `POST /api/v1/e2ee/devices/:id/one-time-keys` (batch ≤100, unclaimed pool ≤500, idempotent per key_id) + `GET .../one-time-keys/count` (owner replenish signal). Claim is ATOMIC single-use — `UPDATE … WHERE claimed_at IS NULL … FOR UPDATE SKIP LOCKED … RETURNING`, one key per device of the target, `one_time_key: null` when exhausted; audited COUNTS-ONLY (`e2ee.otk.claim`).)
+- [x] Store ciphertext only for encrypted messages. (`conversations.encrypted` chosen at creation (`POST /conversations` `{encrypted:true}`), immutable, distinct `"e2ee:"` dm_key namespace so a pair can have both thread types. `POST /conversations/:id/messages` on an encrypted conversation accepts ONLY `{sender_device_id, envelopes:[{recipient_device_id, message_type, ciphertext}], expires_in_seconds?}` — one row per recipient device (client fans out), ciphertext opaque ≤64KiB (also a DB CHECK), recipient devices must belong to participants, sender device to the caller. `GET` returns ONLY the caller's devices' envelopes. Wrong shape per conversation type → 422 BOTH directions; plaintext endpoints otherwise completely unaffected (all pre-existing messaging tests pass unchanged with the e2ee service wired). Blocks apply unchanged via the same `messaging.Blocker` (start/send/claim/peer-list → 403).)
+- [x] Implement disappearing message expiry metadata. (`expires_in_seconds` 30s–90d on encrypted sends → `expires_at` stamp; out-of-range → 422. Reads filter `expires_at > now()` so expiry is correct BETWEEN sweeps.)
+- [x] Implement deletion/expiry worker. (`e2ee.SweepExpired` + `runE2EESweepWorker` in cmd/api — 10s ticker mirroring the transcode/account-export workers, batch 200, partial index `e2ee_messages_expiry_idx`, always on.)
+- [x] Ensure backend cannot decrypt encrypted messages. (No key material beyond PUBLIC keys is ever accepted or stored; handlers/service never parse ciphertext; sensitive-key denylist extended (`ciphertext`, `envelope(s)`, `one_time_key(s)`, `identity_key`, `signing_key`) so the banned-logging guards fail any attempt to log envelope/key fields.)
+- [x] Add tests for storage invariants and expiry behavior. (Unit `internal/e2ee/service_test.go`: start/idempotency/namespace, device caps + owner-scoping, OTK caps/idempotent upload/FIFO single-use claim/exhaustion-null/self-claim, send validation (plaintext-conversation refusal, foreign sender, outside recipient, duplicate, bad type, >64KiB, expiry bounds), per-recipient-device reads, block enforcement, deterministic-clock expiry filter + sweeper. Handler `internal/httpapi/e2ee_test.go`: full two-user device+OTK+claim+send+read round trip with fake ciphertext asserting BYTE-IDENTICAL return, shape-mismatch 422s both directions (+ plaintext still works), anon 401s on all 7 routes, ownership 404s, participant gating, blocks 403 + unblock restore, encrypted-flagged inbox with empty preview, notification parity. Integration `internal/e2ee/integration_test.go` (real PG): `TestE2EESchemaCiphertextOnly` (information_schema — E2EE tables carry EXACTLY the documented columns, no body/plaintext/content column anywhere), `TestE2EEClaimAtomicityUnderConcurrentClaims` (35 goroutines racing 20 keys → exactly 20 unique claims, 15 misses, pool drained), `TestE2EERoundTripAndExpiryOnRealPG` (byte-identical round trip + expired-row read filter + sweeper hard-delete). `make ci` + focused integration suite (e2ee/httpapi/store/messaging) green 2026-07-03; migration 0058 down/up round-trip verified.)
+- [x] Block completion if no acceptable audited crypto approach is selected. (Satisfied by the Olm decision in `.ralph/specs/e2ee.md` §2/§6 — gate lifted. Frontend work (device setup UX, Olm sessions, fingerprints) is vidra-user's P8.2.)
 
 ---
 

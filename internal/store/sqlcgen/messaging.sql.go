@@ -134,7 +134,7 @@ func (q *Queries) IsConversationParticipant(ctx context.Context, arg IsConversat
 }
 
 const listConversations = `-- name: ListConversations :many
-SELECT c.id, c.updated_at,
+SELECT c.id, c.updated_at, c.encrypted,
        other.user_id AS other_user_id,
        ou.username AS other_username,
        ou.display_name AS other_display_name,
@@ -165,6 +165,7 @@ type ListConversationsParams struct {
 type ListConversationsRow struct {
 	ID               uuid.UUID `json:"id"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	Encrypted        bool      `json:"encrypted"`
 	OtherUserID      uuid.UUID `json:"other_user_id"`
 	OtherUsername    string    `json:"other_username"`
 	OtherDisplayName string    `json:"other_display_name"`
@@ -173,7 +174,8 @@ type ListConversationsRow struct {
 }
 
 // The caller's 1:1 conversations, most-recently-active first, with the other
-// participant's identity and the last message preview.
+// participant's identity and the last message preview. Encrypted conversations
+// appear too (flagged); their preview is empty — envelopes are opaque.
 func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]ListConversationsRow, error) {
 	rows, err := q.db.Query(ctx, listConversations, arg.UserID, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
@@ -186,6 +188,7 @@ func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsPa
 		if err := rows.Scan(
 			&i.ID,
 			&i.UpdatedAt,
+			&i.Encrypted,
 			&i.OtherUserID,
 			&i.OtherUsername,
 			&i.OtherDisplayName,

@@ -5934,7 +5934,10 @@ paths:
       description: >-
         Returns the 1:1 conversation with the recipient, creating it if it does
         not exist (idempotent). Behind auth. Messaging yourself is 422; an unknown
-        recipient is 404.
+        recipient is 404. Pass {encrypted: true} to start the pair's ENCRYPTED
+        conversation instead — a distinct thread whose type is immutable and
+        which stores only opaque per-device ciphertext envelopes (see the E2EE
+        endpoints; the server holds no keys and cannot decrypt).
       tags: [messaging]
       security:
         - bearerAuth: []
@@ -6021,6 +6024,10 @@ paths:
         Returns a conversation's messages, newest first. Behind auth. A
         non-participant (or unknown conversation) is 404 so a conversation's
         existence is not leaked. Paginated via limit (1–100, default 20)/offset.
+        On an ENCRYPTED conversation the response is an
+        EncryptedMessageListResponse instead, containing ONLY the envelopes
+        addressed to the caller's own devices (expired disappearing messages
+        filtered).
       tags: [messaging]
       security:
         - bearerAuth: []
@@ -6046,11 +6053,15 @@ paths:
             default: 0
       responses:
         "200":
-          description: A page of messages (possibly empty).
+          description: >-
+            A page of messages (possibly empty). Plaintext conversations return
+            MessageListResponse; encrypted ones EncryptedMessageListResponse.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessageListResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/MessageListResponse"
+                  - $ref: "#/components/schemas/EncryptedMessageListResponse"
         "401":
           description: Missing, invalid, or expired token.
           content:
@@ -6068,7 +6079,12 @@ paths:
       summary: Send a message
       description: >-
         Posts a message to a conversation. Behind auth. A non-participant (or
-        unknown conversation) is 404.
+        unknown conversation) is 404. The valid body shape is fixed by the
+        conversation's immutable type: plaintext conversations take
+        SendMessageRequest ({body}); ENCRYPTED conversations take
+        SendEncryptedMessageRequest (per-recipient-device ciphertext envelopes,
+        optionally with a disappearing-message timer). The wrong shape for the
+        conversation type is 422 in both directions.
       tags: [messaging]
       security:
         - bearerAuth: []
@@ -6084,14 +6100,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SendMessageRequest"
+              oneOf:
+                - $ref: "#/components/schemas/SendMessageRequest"
+                - $ref: "#/components/schemas/SendEncryptedMessageRequest"
       responses:
         "201":
-          description: The message was sent.
+          description: >-
+            The message was sent. Plaintext sends return the Message; encrypted
+            sends a SendEncryptedResponse summary (envelopes are not echoed).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Message"
+                oneOf:
+                  - $ref: "#/components/schemas/Message"
+                  - $ref: "#/components/schemas/SendEncryptedResponse"
         "401":
           description: Missing, invalid, or expired token.
           content:
@@ -6112,6 +6134,276 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/e2ee/devices:
+    post:
+      operationId: registerE2EEDevice
+      summary: Register an E2EE device
+      description: >-
+        Registers a device in the caller's E2EE key directory: a user-visible
+        name plus the device's PUBLIC identity (Curve25519) and signing
+        (Ed25519) keys. All cryptography is client-side (Olm); the server never
+        sees private keys and treats key material as opaque bounded strings.
+        At most 20 devices per user (422 beyond).
+      tags: [e2ee]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterE2EEDeviceRequest"
+      responses:
+        "201":
+          description: The registered device.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/E2EEDevice"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed, or the device limit is reached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: listMyE2EEDevices
+      summary: List my E2EE devices
+      description: >-
+        Returns the caller's registered devices, oldest first. Also serves as
+        the client's E2EE availability probe.
+      tags: [e2ee]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's devices (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/E2EEDeviceListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/e2ee/devices/{id}:
+    delete:
+      operationId: deleteE2EEDevice
+      summary: Delete one of my E2EE devices
+      description: >-
+        Removes one of the caller's devices, cascading its one-time keys and
+        its stored envelopes (both directions — envelopes TO a deleted device
+        are undecryptable by anyone else, and envelopes FROM it are dropped
+        with it). Unknown or not-owned devices are 404 (ownership is not
+        leaked).
+      tags: [e2ee]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The device was deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such device for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/e2ee/devices/{id}/one-time-keys:
+    post:
+      operationId: uploadE2EEOneTimeKeys
+      summary: Upload one-time prekeys
+      description: >-
+        Uploads a batch of PUBLIC one-time prekeys for one of the caller's
+        devices (idempotent per key_id). At most 100 per upload and 500
+        unclaimed per device (422 beyond). Not-owned devices are 404.
+      tags: [e2ee]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadOneTimeKeysRequest"
+      responses:
+        "201":
+          description: The keys were stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadOneTimeKeysResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such device for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed, or a key cap is exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/e2ee/devices/{id}/one-time-keys/count:
+    get:
+      operationId: countE2EEOneTimeKeys
+      summary: Count unclaimed one-time prekeys
+      description: >-
+        Returns the unclaimed one-time-key count of one of the caller's devices
+        so the client knows when to replenish. Not-owned devices are 404.
+      tags: [e2ee]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The unclaimed count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OneTimeKeyCountResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such device for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/users/{id}/e2ee/devices:
+    get:
+      operationId: listUserE2EEDevices
+      summary: List a peer's E2EE devices
+      description: >-
+        Returns the PUBLIC keys of a user's devices. Participant-gated to limit
+        enumeration: unless the target is the caller, the two must share at
+        least one conversation — otherwise 404 (indistinguishable from an
+        unknown user). A block in either direction is 403.
+      tags: [e2ee]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The user's devices (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/E2EEDeviceListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A block exists between you and this user (either direction).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown user, or no shared conversation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/users/{id}/e2ee/claim:
+    post:
+      operationId: claimE2EEOneTimeKeys
+      summary: Claim one-time prekeys
+      description: >-
+        Atomically claims ONE one-time key per device of the target user (for
+        establishing an Olm session per device pair). Each key is single-use;
+        concurrent claimers can never receive the same key. Devices with no
+        keys left appear with one_time_key null. Participant-gated like the
+        device listing; claiming your own devices' keys is allowed. Audited
+        with counts only — key material never reaches logs or the audit trail.
+      tags: [e2ee]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: One claim result per device of the target user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/E2EEClaimResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A block exists between you and this user (either direction).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown user, or no shared conversation.
           content:
             application/json:
               schema:
@@ -8711,13 +9003,25 @@ components:
         recipient_id:
           type: string
           format: uuid
+        encrypted:
+          type: boolean
+          default: false
+          description: >-
+            Choose the conversation type AT CREATION, immutably. An encrypted
+            conversation stores only opaque per-device ciphertext envelopes
+            (the server holds no keys and cannot decrypt); a plaintext one only
+            {body} messages. A pair of users can have one of each — the two
+            types are distinct conversations.
     Conversation:
       type: object
-      required: [id, created_at, updated_at]
+      required: [id, encrypted, created_at, updated_at]
       properties:
         id:
           type: string
           format: uuid
+        encrypted:
+          type: boolean
+          description: Immutable conversation type, chosen at creation.
         created_at:
           type: string
           format: date-time
@@ -8726,8 +9030,8 @@ components:
           format: date-time
     ConversationSummary:
       type: object
-      description: "A conversation in the inbox: the other participant + last message preview."
-      required: [id, updated_at, other_user_id, other_username, other_display_name, last_message_body, last_message_at]
+      description: "A conversation in the inbox: the other participant + last message preview (always empty for encrypted conversations — envelopes are opaque)."
+      required: [id, updated_at, encrypted, other_user_id, other_username, other_display_name, last_message_body, last_message_at]
       properties:
         id:
           type: string
@@ -8735,6 +9039,8 @@ components:
         updated_at:
           type: string
           format: date-time
+        encrypted:
+          type: boolean
         other_user_id:
           type: string
           format: uuid
@@ -8744,7 +9050,7 @@ components:
           type: string
         last_message_body:
           type: string
-          description: Empty when the conversation has no messages yet.
+          description: Empty when the conversation has no messages yet, and always empty for encrypted conversations.
         last_message_at:
           type: string
           format: date-time
@@ -8764,12 +9070,242 @@ components:
           example: 0
     SendMessageRequest:
       type: object
+      description: >-
+        The PLAINTEXT send shape — valid only on a plaintext conversation
+        (sending it to an encrypted conversation is 422, and vice versa).
       required: [body]
       properties:
         body:
           type: string
           minLength: 1
           maxLength: 5000
+    EncryptedEnvelope:
+      type: object
+      description: >-
+        One per-recipient-device ciphertext blob. The CLIENT encrypts once per
+        device pair (Olm session) and fans out; the server stores each blob
+        opaquely and returns it byte-identical.
+      required: [recipient_device_id, message_type, ciphertext]
+      properties:
+        recipient_device_id:
+          type: string
+          format: uuid
+        message_type:
+          type: integer
+          enum: [0, 1]
+          description: "Olm message type: 0 = prekey message, 1 = normal message."
+        ciphertext:
+          type: string
+          maxLength: 65536
+          description: Opaque ciphertext, at most 64 KiB. Never inspected or logged by the server.
+    SendEncryptedMessageRequest:
+      type: object
+      description: >-
+        The ENCRYPTED send shape — valid only on an encrypted conversation.
+        One envelope per recipient device (including the sender's other
+        devices); every recipient device must belong to a participant of the
+        conversation, and the sender device to the caller.
+      required: [sender_device_id, envelopes]
+      properties:
+        sender_device_id:
+          type: string
+          format: uuid
+          description: One of the caller's registered E2EE devices.
+        envelopes:
+          type: array
+          minItems: 1
+          maxItems: 40
+          items:
+            $ref: "#/components/schemas/EncryptedEnvelope"
+        expires_in_seconds:
+          type: integer
+          format: int64
+          minimum: 30
+          maximum: 7776000
+          description: >-
+            Optional disappearing-message timer (30 seconds to 90 days). Stamps
+            expires_at on every envelope; expired envelopes vanish from reads
+            immediately and are hard-deleted by a background sweeper.
+    SendEncryptedResponse:
+      type: object
+      description: Summary of an accepted encrypted send (the envelopes are not echoed back).
+      required: [conversation_id, envelope_count, created_at]
+      properties:
+        conversation_id:
+          type: string
+          format: uuid
+        envelope_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: Present when a disappearing-message timer was set.
+    EncryptedMessage:
+      type: object
+      description: >-
+        A stored envelope, returned only to the owner of its recipient device.
+        The ciphertext is byte-identical to what the sender posted — the server
+        cannot decrypt it.
+      required: [id, conversation_id, sender_user_id, sender_device_id, recipient_device_id, message_type, ciphertext, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        sender_user_id:
+          type: string
+          format: uuid
+        sender_device_id:
+          type: string
+          format: uuid
+        recipient_device_id:
+          type: string
+          format: uuid
+        message_type:
+          type: integer
+          enum: [0, 1]
+        ciphertext:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: Present on disappearing messages.
+    EncryptedMessageListResponse:
+      type: object
+      description: A page of the CALLER's devices' envelopes, newest first (expired ones filtered).
+      required: [envelopes, limit, offset]
+      properties:
+        envelopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/EncryptedMessage"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+    RegisterE2EEDeviceRequest:
+      type: object
+      required: [device_name, identity_key, signing_key]
+      properties:
+        device_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: User-visible label ("Ada's laptop").
+        identity_key:
+          type: string
+          maxLength: 512
+          description: The device's PUBLIC Curve25519 identity key (base64). Private keys never leave the device.
+        signing_key:
+          type: string
+          maxLength: 512
+          description: The device's PUBLIC Ed25519 signing key (base64).
+    E2EEDevice:
+      type: object
+      description: A registered E2EE device. Carries PUBLIC key material only.
+      required: [id, user_id, device_name, identity_key, signing_key, created_at, last_seen_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        device_name:
+          type: string
+        identity_key:
+          type: string
+        signing_key:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+    E2EEDeviceListResponse:
+      type: object
+      required: [devices]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/E2EEDevice"
+    E2EEOneTimeKey:
+      type: object
+      description: One public one-time prekey (client-assigned key_id).
+      required: [key_id, key]
+      properties:
+        key_id:
+          type: string
+          maxLength: 64
+        key:
+          type: string
+          maxLength: 512
+    UploadOneTimeKeysRequest:
+      type: object
+      required: [one_time_keys]
+      properties:
+        one_time_keys:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/E2EEOneTimeKey"
+    UploadOneTimeKeysResponse:
+      type: object
+      required: [unclaimed]
+      properties:
+        unclaimed:
+          type: integer
+          format: int64
+          description: The device's unclaimed one-time-key count after the upload.
+    OneTimeKeyCountResponse:
+      type: object
+      required: [count]
+      properties:
+        count:
+          type: integer
+          format: int64
+    E2EEClaim:
+      type: object
+      description: >-
+        One device's claim result: its public identity plus one ATOMICALLY
+        claimed (single-use) one-time key — null when the device has none left.
+      required: [device_id, identity_key, signing_key, one_time_key]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        identity_key:
+          type: string
+        signing_key:
+          type: string
+        one_time_key:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/E2EEOneTimeKey"
+    E2EEClaimResponse:
+      type: object
+      required: [user_id, claims]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        claims:
+          type: array
+          items:
+            $ref: "#/components/schemas/E2EEClaim"
     Message:
       type: object
       required: [id, conversation_id, sender_id, body, created_at]

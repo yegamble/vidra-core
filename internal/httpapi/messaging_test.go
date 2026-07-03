@@ -21,6 +21,7 @@ type messagingFakeRepo struct {
 	auth         *authFakeRepo
 	convByKey    map[string]uuid.UUID
 	convs        map[uuid.UUID]time.Time // conversation id -> updated_at
+	encrypted    map[uuid.UUID]bool      // conversation id -> encrypted flag (set by the e2ee fake)
 	participants map[uuid.UUID]map[uuid.UUID]bool
 	messages     []sqlcgen.Message
 }
@@ -30,6 +31,7 @@ func newMessagingFakeRepo(auth *authFakeRepo) *messagingFakeRepo {
 		auth:         auth,
 		convByKey:    map[string]uuid.UUID{},
 		convs:        map[uuid.UUID]time.Time{},
+		encrypted:    map[uuid.UUID]bool{},
 		participants: map[uuid.UUID]map[uuid.UUID]bool{},
 	}
 }
@@ -129,7 +131,7 @@ func (f *messagingFakeRepo) ListConversations(ctx context.Context, a sqlcgen.Lis
 		}
 		u, _ := f.auth.GetUserByID(ctx, other)
 		row := sqlcgen.ListConversationsRow{
-			ID: id, UpdatedAt: updated, OtherUserID: other,
+			ID: id, UpdatedAt: updated, Encrypted: f.encrypted[id], OtherUserID: other,
 			OtherUsername: u.Username, OtherDisplayName: u.DisplayName, LastMessageAt: updated,
 		}
 		for i := len(f.messages) - 1; i >= 0; i-- {

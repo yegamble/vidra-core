@@ -23,6 +23,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/media"
@@ -825,6 +826,7 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		WithWatchWordService(watchword.NewService(&watchwordFakeRepo{auth: authRepo, videos: repo})),
 		WithAdminService(admin.NewService(authRepo)),
 		WithMessagingService(messaging.NewService(msgRepo, messaging.WithBlocker(blocksvc))),
+		WithE2EEService(e2ee.NewService(newE2EEFakeRepo(authRepo, msgRepo), e2ee.WithBlocker(blocksvc))),
 		WithLiveService(live.NewService(newLiveFakeRepo(chRepo))),
 		WithQuotaService(quota.NewService(authRepo, cfg.InstanceDefaultQuotaBytes)),
 		WithTranscodeService(transcode.NewService(tcRepo, nil)),

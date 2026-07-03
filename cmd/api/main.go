@@ -25,6 +25,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/instancemod"
@@ -368,6 +369,12 @@ func run() error {
 	messagingsvc := messaging.NewService(db.Queries(), messaging.WithBlocker(blocksvc))
 	opts = append(opts, httpapi.WithMessagingService(messagingsvc))
 
+	// E2EE (P11.2): ciphertext-only encrypted messaging. The server is a dumb
+	// key directory + envelope store — no cryptography here. Blocks apply
+	// unchanged via the same Blocker as plaintext messaging.
+	e2eesvc := e2ee.NewService(db.Queries(), e2ee.WithBlocker(blocksvc))
+	opts = append(opts, httpapi.WithE2EEService(e2eesvc))
+
 	livesvc := live.NewService(db.Queries())
 	opts = append(opts, httpapi.WithLiveService(livesvc))
 
@@ -454,6 +461,16 @@ func run() error {
 		defer workerCancel()
 		go runAccountExportWorker(workerCtx, logger, accountsvc)
 		logger.Info("account export worker started")
+	}
+
+	// Hard-delete expired disappearing E2EE messages in the background (always
+	// on: the expiry scan is a cheap partial-index lookup; reads additionally
+	// filter expired rows so expiry is correct between sweeps).
+	{
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runE2EESweepWorker(workerCtx, logger, e2eesvc)
+		logger.Info("e2ee expiry sweep worker started")
 	}
 
 	// Publish scheduled videos as they come due (product-decisions §17). Always
@@ -586,6 +603,30 @@ func runAccountExportWorker(ctx context.Context, logger *slog.Logger, svc *accou
 				logger.Warn("account export sweep failed", "error", err)
 			} else if n > 0 {
 				logger.Info("account export sweep removed expired archives", "count", n)
+			}
+		}
+	}
+}
+
+// runE2EESweepWorker hard-deletes expired disappearing E2EE messages on a
+// ticker until ctx is canceled (mirrors runTranscodeWorker). Only the sweep
+// query error is logged — never message contents (which are ciphertext anyway).
+func runE2EESweepWorker(ctx context.Context, logger *slog.Logger, svc *e2ee.Service) {
+	const (
+		interval   = 10 * time.Second
+		sweepBatch = 200
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := svc.SweepExpired(ctx, sweepBatch); err != nil {
+				logger.Warn("e2ee expiry sweep failed", "error", err)
+			} else if n > 0 {
+				logger.Info("e2ee expiry sweep removed expired messages", "count", n)
 			}
 		}
 	}

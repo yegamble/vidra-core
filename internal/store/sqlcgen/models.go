@@ -111,11 +111,42 @@ type Conversation struct {
 	DmKey     *string   `json:"dm_key"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	Encrypted bool      `json:"encrypted"`
 }
 
 type ConversationParticipant struct {
 	ConversationID uuid.UUID `json:"conversation_id"`
 	UserID         uuid.UUID `json:"user_id"`
+}
+
+type E2eeDevice struct {
+	ID          uuid.UUID `json:"id"`
+	UserID      uuid.UUID `json:"user_id"`
+	DeviceName  string    `json:"device_name"`
+	IdentityKey string    `json:"identity_key"`
+	SigningKey  string    `json:"signing_key"`
+	CreatedAt   time.Time `json:"created_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
+}
+
+type E2eeMessage struct {
+	ID                uuid.UUID          `json:"id"`
+	ConversationID    uuid.UUID          `json:"conversation_id"`
+	SenderDeviceID    uuid.UUID          `json:"sender_device_id"`
+	RecipientDeviceID uuid.UUID          `json:"recipient_device_id"`
+	MessageType       int32              `json:"message_type"`
+	Ciphertext        string             `json:"ciphertext"`
+	CreatedAt         time.Time          `json:"created_at"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+}
+
+type E2eeOneTimeKey struct {
+	ID        uuid.UUID          `json:"id"`
+	DeviceID  uuid.UUID          `json:"device_id"`
+	KeyID     string             `json:"key_id"`
+	Key       string             `json:"key"`
+	ClaimedAt pgtype.Timestamptz `json:"claimed_at"`
+	CreatedAt time.Time          `json:"created_at"`
 }
 
 type EmailVerificationToken struct {

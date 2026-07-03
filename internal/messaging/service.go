@@ -83,10 +83,12 @@ type Conversation struct {
 }
 
 // Summary is a conversation as shown in the caller's inbox: the other
-// participant and the last message preview.
+// participant and the last message preview. Encrypted conversations appear
+// too (Encrypted true) with an empty preview — envelopes are opaque.
 type Summary struct {
 	ID               uuid.UUID
 	UpdatedAt        time.Time
+	Encrypted        bool
 	OtherUserID      uuid.UUID
 	OtherUsername    string
 	OtherDisplayName string
@@ -185,7 +187,7 @@ func (s *Service) ListConversations(ctx context.Context, meID uuid.UUID, limit, 
 	out := make([]Summary, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, Summary{
-			ID: r.ID, UpdatedAt: r.UpdatedAt, OtherUserID: r.OtherUserID,
+			ID: r.ID, UpdatedAt: r.UpdatedAt, Encrypted: r.Encrypted, OtherUserID: r.OtherUserID,
 			OtherUsername: r.OtherUsername, OtherDisplayName: r.OtherDisplayName,
 			LastMessageBody: r.LastMessageBody, LastMessageAt: r.LastMessageAt,
 		})
