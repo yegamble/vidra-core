@@ -1189,6 +1189,295 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/donation-addresses:
+    post:
+      operationId: addDonationAddress
+      summary: Add a crypto donation address
+      description: >-
+        Adds a public crypto wallet address the caller wants displayed for
+        donations, either on their account (profile) or on a channel they own
+        (channel_id). This is a NON-CUSTODIAL, display-only feature: Vidra
+        never holds funds, balances, or private keys, and processes no
+        payments, payouts, escrow, or taxes. Viewers send funds peer-to-peer,
+        entirely outside Vidra. The network must be one of the supported set
+        (bitcoin, ethereum, litecoin, monero) and the address must match that
+        network's format. A newly added address is unverified until ownership
+        is proven via the challenge/verify flow (where supported).
+      tags: [donations]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddDonationAddressRequest"
+      responses:
+        "201":
+          description: The created donation address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DonationAddress"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The referenced channel is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The referenced channel does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: This donation address already exists for the owner/scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unsupported network or malformed address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: listMyDonationAddresses
+      summary: List the caller's donation addresses
+      description: >-
+        Lists every donation address the caller owns, both account-level and
+        channel-scoped, with each address's verified flag.
+      tags: [donations]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's donation addresses (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DonationAddressListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/donation-addresses/{id}:
+    delete:
+      operationId: deleteDonationAddress
+      summary: Delete one of the caller's donation addresses
+      tags: [donations]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The donation address was deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller does not own this address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such donation address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/donation-addresses/{id}/challenge:
+    post:
+      operationId: challengeDonationAddress
+      summary: Request an ownership-verification challenge
+      description: >-
+        Issues a one-time challenge message the owner signs with the address's
+        private key to prove control, plus a 10-minute expiry. Only networks
+        with a practical message-signing standard are supported: ethereum
+        (EIP-191 personal_sign). Bitcoin (BIP-137) is intentionally deferred
+        and monero/litecoin have no practical standard, so those networks
+        return 501 and remain unverified-only. No key material is ever handled
+        or stored by the server — the challenge nonce is a public random value.
+      tags: [donations]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "201":
+          description: The challenge message to sign and its expiry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DonationChallengeResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller does not own this address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such donation address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Ownership verification is not supported for this network.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/donation-addresses/{id}/verify:
+    post:
+      operationId: verifyDonationAddress
+      summary: Verify address ownership with a signed challenge
+      description: >-
+        Submits the signature of the most recent challenge message. On success
+        the address is marked verified and the challenge is cleared. A
+        well-formed but wrong signature returns 422; an expired or missing
+        challenge returns 409; a network without a signing path returns 501.
+        The signature is verified, never stored or logged.
+      tags: [donations]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyDonationAddressRequest"
+      responses:
+        "200":
+          description: The now-verified donation address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DonationAddress"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller does not own this address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such donation address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: No active challenge, or it expired; request a new one.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The signature is malformed or did not verify.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Ownership verification is not supported for this network.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/users/{id}/donation-addresses:
+    get:
+      operationId: listUserDonationAddresses
+      summary: List a user's public donation addresses
+      description: >-
+        Public read of a user's account-level (profile) donation addresses —
+        only what the owner added, each with its verified flag. Channel-scoped
+        addresses are not included here. No authentication required.
+      tags: [donations]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The user's public donation addresses (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DonationAddressListResponse"
+  /api/v1/channels/{handle}/donation-addresses:
+    get:
+      operationId: listChannelDonationAddresses
+      summary: List a channel's public donation addresses
+      description: >-
+        Public read of a channel's donation addresses — only what the owner
+        added, each with its verified flag. No authentication required.
+      tags: [donations]
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The channel's public donation addresses (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DonationAddressListResponse"
+        "404":
+          description: No such channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/export:
     post:
       operationId: requestAccountExport
@@ -7974,6 +8263,94 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Channel"
+    DonationAddress:
+      type: object
+      description: >-
+        A public crypto wallet address displayed for NON-CUSTODIAL donations.
+        Vidra never holds funds or private keys and there is deliberately no
+        balance/amount field. The internal verification nonce/expiry are never
+        exposed.
+      required: [id, owner_id, network, address, label, verified, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+          description: >-
+            The channel this address is scoped to. Omitted for account-level
+            (profile) addresses.
+        network:
+          type: string
+          enum: [bitcoin, ethereum, litecoin, monero]
+        address:
+          type: string
+          example: 0x52908400098527886E0F7030069857D2E4169EE7
+        label:
+          type: string
+          maxLength: 60
+          example: Tips
+        verified:
+          type: boolean
+          description: >-
+            Whether the owner cryptographically proved control of this address
+            via the challenge/verify flow.
+        created_at:
+          type: string
+          format: date-time
+    DonationAddressListResponse:
+      type: object
+      required: [addresses]
+      properties:
+        addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/DonationAddress"
+    AddDonationAddressRequest:
+      type: object
+      required: [network, address]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+          description: >-
+            Optional. When set, scopes the address to a channel the caller
+            owns; omit or leave empty for an account-level (profile) address.
+        network:
+          type: string
+          enum: [bitcoin, ethereum, litecoin, monero]
+        address:
+          type: string
+          maxLength: 128
+        label:
+          type: string
+          maxLength: 60
+    DonationChallengeResponse:
+      type: object
+      required: [message, expires_at]
+      properties:
+        message:
+          type: string
+          description: >-
+            The exact message to sign with the address's private key. For
+            ethereum, sign it as an EIP-191 personal_sign message.
+        expires_at:
+          type: string
+          format: date-time
+    VerifyDonationAddressRequest:
+      type: object
+      required: [signature]
+      properties:
+        signature:
+          type: string
+          description: >-
+            The signature of the challenge message. For ethereum, the 65-byte
+            [r||s||v] personal_sign signature, hex-encoded (0x-prefixed
+            accepted).
     Video:
       type: object
       required: [id, remote, title, description, created_at]

@@ -17,6 +17,7 @@ import (
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
+	"github.com/vidra/vidra-core/internal/donation"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/instancemod"
@@ -48,6 +49,7 @@ func fullRouteOptions() []Option {
 		WithAccountService(account.NewService(nil, nil, nil)),
 		WithOAuthService(auth.NewOAuthService(nil, nil, nil)),
 		WithChannelService(channel.NewService(nil)),
+		WithDonationService(donation.NewService(nil, "vidra.test")),
 		WithVideoService(video.NewService(nil, nil)),
 		WithCommentService(comment.NewService(nil)),
 		WithRatingService(rating.NewService(nil)),

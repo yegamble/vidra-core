@@ -28,6 +28,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/donation"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpapi"
@@ -213,6 +214,16 @@ func run() error {
 
 	channelsvc := channel.NewService(db.Queries())
 	opts = append(opts, httpapi.WithChannelService(channelsvc))
+
+	// Simple crypto donation addresses (P14). The instance identifier is bound
+	// into the verification challenge message so a signature can't be replayed
+	// to another instance; prefer the canonical public origin, else the name.
+	donationInstance := cfg.PublicBaseURL
+	if donationInstance == "" {
+		donationInstance = cfg.InstanceName
+	}
+	donationsvc := donation.NewService(db.Queries(), donationInstance)
+	opts = append(opts, httpapi.WithDonationService(donationsvc))
 
 	blobs, err := newStorageBackend(startCtx, cfg)
 	if err != nil {

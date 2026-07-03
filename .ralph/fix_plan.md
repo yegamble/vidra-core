@@ -833,13 +833,19 @@
 
 # P14 — Simple Crypto Donations
 
-- [ ] Add user/channel donation address fields.
-- [ ] Support address type/network metadata.
-- [ ] Add signed challenge flow to verify address ownership where feasible.
-- [ ] Display verified/unverified status via API.
-- [ ] Do not custody funds.
-- [ ] Do not implement premium subscriptions, payouts, balances, escrow, or payment processing.
-- [ ] Add tests for wallet validation and verification state.
+> Implemented in the `core-donations` slice: `internal/donation` (service +
+> `networks.go` validators + `verify.go` EIP-191), `internal/httpapi/donations.go`,
+> migration `0063_donation_addresses`, sqlc `donation_addresses.sql`, and the
+> `donations` OpenAPI tag. NON-CUSTODIAL and display-only by design — there is no
+> balance/payment/payout column or code anywhere.
+
+- [x] Add user/channel donation address fields. (`donation_addresses` table, migration 0063: `owner_id` FK users CASCADE, optional `channel_id` FK channels CASCADE (NULL = account-level), `network`, `address`, `label`, `verified`, challenge fields, `created_at`. A COALESCE-based unique index makes `(owner, channel-scope, network, address)` unique even for NULL channel_ids — verified by `TestDonationAddressQueriesPersist` against real PostgreSQL, incl. the account-level duplicate → unique violation. CRUD at `POST`/`GET`/`DELETE /api/v1/me/donation-addresses[/:id]` (requireAuth); a channel-scoped add authorises the caller owns the channel (`GetChannelByID` → `ErrForbidden`/`ErrChannelNotFound`).)
+- [x] Support address type/network metadata. (Curated closed set `bitcoin|ethereum|litecoin|monero` — a DB CHECK backstop plus per-network address-format regexes in `donation.ValidAddress` (`networks.go`); an unknown network or malformed address → `422` with field errors. Tabled in `TestValidAddressPerNetwork` (P2PKH/P2SH/bech32 btc, checksummed+lowercase eth, ltc legacy+bech32, 95-char monero, cross-network paste rejects).)
+- [x] Add signed challenge flow to verify address ownership where feasible. (`POST /api/v1/me/donation-addresses/:id/challenge` → `{message, expires_at}` — a nonce + instance + network + address message, 10-min expiry, nonce is a PUBLIC random challenge (never a key). `POST .../verify {signature}` verifies for **ethereum** (EIP-191 `personal_sign`: keccak256 prefix hash → secp256k1 pubkey recovery via the minimal vetted `github.com/decred/dcrd/dcrec/secp256k1/v4` lib, chosen over the heavyweight go-ethereum since we need only recovery + keccak256; address = last 20 bytes of keccak256(pubkey), case-insensitive compare). **bitcoin** (BIP-137) is intentionally deferred and **monero/litecoin** have no practical message-signing standard, so `SupportsVerification` is ethereum-only and those networks' challenge/verify return `501 not_implemented` — honest, never faked crypto. Tested: eth round-trip (in-test keygen → sign → verify → verified) at both service and HTTP layers, wrong-signer → `ErrSignatureMismatch`/`422`, malformed sig → `ErrBadSignature`, stale-nonce → mismatch, 10-min expiry via injected clock → `ErrChallengeExpired`, no-challenge → `409`, bitcoin challenge+verify → `501`.)
+- [x] Display verified/unverified status via API. (Public reads `GET /api/v1/users/:id/donation-addresses` (account-level only) and `GET /api/v1/channels/:handle/donation-addresses` expose `verified` per address — only what the owner added — and NEVER the internal nonce/expiry (`donationAddressView` omits them). `TestDonationAddressCRUDAndPublicRead` + `TestDonationAddressChannelScopeAndPublicChannelRead` assert account vs channel scoping and that a channel-scoped address does not leak onto the account read.)
+- [x] Do not custody funds. (Nothing in the schema, service, or API references a balance, amount, transaction, invoice, or settlement; documented in the migration header, the `donation` package doc, the openapi descriptions, and README.)
+- [x] Do not implement premium subscriptions, payouts, balances, escrow, or payment processing. (None added — the slice is address display + optional ownership proof only.)
+- [x] Add tests for wallet validation and verification state. (`internal/donation/service_test.go` — validation tables + verify round-trip/expiry/nonce-mismatch; `internal/httpapi/donations_test.go` — CRUD, public reads, channel scope, eth verify over HTTP, btc `501`, and a no-secrets audit assertion (verify emits `content.donation.verify` with no denylisted key, signature never in logs); `internal/store/donation_addresses_integration_test.go` — real-DB queries + unique index + cascade. All green under `make ci` and `-tags=integration -race`.)
 
 ---
 

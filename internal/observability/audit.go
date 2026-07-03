@@ -51,6 +51,10 @@ const (
 	ActionVideoDelete           = "content.video.delete"
 	ActionChannelDelete         = "content.channel.delete"
 	ActionMediaGC               = "admin.media.gc"
+	// ActionDonationVerify records a creator proving control of a donation
+	// address by signing the challenge (P14). Reason carries the safe address
+	// id + network only — never the signature, nonce, or any key material.
+	ActionDonationVerify = "content.donation.verify"
 	// ActionLiveReplay records the best-effort republish of a recorded live
 	// session as a VOD on ingest-stop (P12). Reason carries safe ids/outcome
 	// only — never the stream key.

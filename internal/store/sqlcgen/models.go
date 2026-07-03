@@ -131,6 +131,19 @@ type ConversationParticipant struct {
 	UserID         uuid.UUID `json:"user_id"`
 }
 
+type DonationAddress struct {
+	ID                    uuid.UUID          `json:"id"`
+	OwnerID               uuid.UUID          `json:"owner_id"`
+	ChannelID             pgtype.UUID        `json:"channel_id"`
+	Network               string             `json:"network"`
+	Address               string             `json:"address"`
+	Label                 string             `json:"label"`
+	Verified              bool               `json:"verified"`
+	VerificationNonce     *string            `json:"verification_nonce"`
+	VerificationExpiresAt pgtype.Timestamptz `json:"verification_expires_at"`
+	CreatedAt             time.Time          `json:"created_at"`
+}
+
 type E2eeDevice struct {
 	ID          uuid.UUID `json:"id"`
 	UserID      uuid.UUID `json:"user_id"`

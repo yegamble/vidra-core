@@ -23,6 +23,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/donation"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/instancemod"
@@ -66,6 +67,7 @@ type Server struct {
 	accountsvc     *account.Service
 	oauthsvc       *auth.OAuthService
 	channelsvc     *channel.Service
+	donationsvc    *donation.Service
 	videosvc       *video.Service
 	commentsvc     *comment.Service
 	ratingsvc      *rating.Service
@@ -154,6 +156,15 @@ func WithAuthRateLimiter(l *ratelimit.Limiter) Option {
 // When unset, the channel routes are not registered.
 func WithChannelService(svc *channel.Service) Option {
 	return func(s *Server) { s.channelsvc = svc }
+}
+
+// WithDonationService mounts the simple, NON-CUSTODIAL crypto donation-address
+// endpoints (P14): the caller's CRUD under /me/donation-addresses, the
+// signed-challenge verification flow, and the public per-user/per-channel
+// reads. The public channel read resolves a handle, so it registers only when
+// the channel service is also present. When unset, none are registered.
+func WithDonationService(svc *donation.Service) Option {
+	return func(s *Server) { s.donationsvc = svc }
 }
 
 // WithVideoService mounts the video endpoints (create draft, get by id). Video
@@ -603,6 +614,23 @@ func (s *Server) routes() {
 		api.POST("/channels/:handle/follow", s.handleFollowChannel, s.requireAuth)
 		api.DELETE("/channels/:handle/follow", s.handleUnfollowChannel, s.requireAuth)
 		api.GET("/me/channels", s.handleListMyChannels, s.requireAuth)
+	}
+
+	// Simple crypto donation addresses (P14): the owner manages their own
+	// (account-level or channel-scoped) addresses and optionally proves control
+	// via a signed challenge; anyone may read a user's or channel's addresses.
+	// NON-CUSTODIAL and display-only — Vidra never holds funds or processes
+	// payments. The public channel read needs the channel service (handle → id).
+	if s.donationsvc != nil {
+		api.POST("/me/donation-addresses", s.handleAddDonationAddress, s.requireAuth)
+		api.GET("/me/donation-addresses", s.handleListMyDonationAddresses, s.requireAuth)
+		api.DELETE("/me/donation-addresses/:id", s.handleDeleteDonationAddress, s.requireAuth)
+		api.POST("/me/donation-addresses/:id/challenge", s.handleChallengeDonationAddress, s.requireAuth)
+		api.POST("/me/donation-addresses/:id/verify", s.handleVerifyDonationAddress, s.requireAuth)
+		api.GET("/users/:id/donation-addresses", s.handleListUserDonationAddresses)
+		if s.channelsvc != nil {
+			api.GET("/channels/:handle/donation-addresses", s.handleListChannelDonationAddresses)
+		}
 	}
 
 	// Avatars/banners: the caller manages their own account images; a channel

@@ -132,6 +132,25 @@ deterministic PeerTube-style keys (`avatars/users/<id><ext>`,
 `banners/channels/<id><ext>`, …) recorded in the `user_images`/`channel_images`
 tables.
 
+Donation addresses (simple, NON-CUSTODIAL crypto tips): a creator lists public
+wallet addresses on their account or a channel they own; viewers see them and send
+funds peer-to-peer, entirely outside Vidra. Vidra never holds funds, balances, or
+private keys and processes no payments, payouts, escrow, or taxes. `POST`/`GET`/
+`DELETE /api/v1/me/donation-addresses[/{id}]` (auth) manage the caller's own
+addresses (`network` ∈ `bitcoin|ethereum|litecoin|monero`, each validated against
+its address format → `422`; an optional `channel_id` scopes it to a channel the
+caller owns → `403`/`404`; duplicates → `409`). `GET /api/v1/users/{id}/donation-addresses`
+(account-level only) and `GET /api/v1/channels/{handle}/donation-addresses` are the
+public reads, exposing each address's `verified` flag but never the internal
+challenge state. Ownership can be proven where a practical message-signing standard
+exists: `POST /api/v1/me/donation-addresses/{id}/challenge` returns a nonce-bearing
+message (10-min expiry) and `POST .../verify` checks the signature — **ethereum**
+(EIP-191 `personal_sign`, verified with the minimal `decred/dcrd` secp256k1 library
++ keccak256, no go-ethereum dependency) is supported; **bitcoin** (BIP-137) is
+intentionally deferred and **monero/litecoin** have no practical standard, so those
+networks return `501` and stay unverified-only. Backed by the `donation_addresses`
+table (migration 0063).
+
 Videos: `POST /api/v1/channels/{handle}/videos` (owner-only) creates a draft video
 (`title`, optional `description`/`privacy`; starts `state: draft`, `privacy` defaults
 `private`). `GET /api/v1/videos/{id}` returns public/unlisted videos to anyone with the

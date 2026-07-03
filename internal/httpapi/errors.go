@@ -69,6 +69,12 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		if he.Internal != nil {
 			err = he.Internal
 		}
+		// 501 Not Implemented is a documented, client-safe response (e.g. a
+		// donation network without a signing path). Give it a stable code so
+		// its message survives the generic 5xx message-scrubbing below.
+		if status == http.StatusNotImplemented {
+			code = "not_implemented"
+		}
 	case errors.Is(err, context.DeadlineExceeded):
 		status = http.StatusServiceUnavailable
 		message = "the request timed out"
@@ -147,6 +153,8 @@ func codeForStatus(status int) string {
 		return "rate_limited"
 	case http.StatusServiceUnavailable:
 		return "service_unavailable"
+	case http.StatusNotImplemented:
+		return "not_implemented"
 	case http.StatusInternalServerError:
 		return "internal_error"
 	}
