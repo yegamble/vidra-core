@@ -510,6 +510,7 @@ func (s *Server) routes() {
 		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
+		api.GET("/videos/:id/download", s.handleGetVideoDownloads, s.optionalAuth)
 
 		// HLS playback (transcoded ladder): the master playlist plus per-rendition
 		// variant playlists/segments, same visibility as /original. Registered only

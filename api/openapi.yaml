@@ -1629,6 +1629,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/download:
+    get:
+      operationId: getVideoDownloads
+      summary: List a video's downloadable files
+      description: >-
+        Returns download metadata for a video: the stored original (with its
+        size, content type and probed dimensions when known) plus any ready HLS
+        renditions (variant playlist URLs; segmented, so no single size).
+        Visibility mirrors the detail endpoint: public/unlisted to anyone,
+        private only to its owner; otherwise 404. A visible video with no
+        stored files yet (e.g. a draft) returns an empty list.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video's downloadable files (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoDownloadResponse"
+        "404":
+          description: No such video (or private and not yours).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/hls/master.m3u8:
     get:
       operationId: getVideoHLSMaster
@@ -5218,6 +5253,45 @@ components:
         width:
           type: integer
           example: 1280
+    VideoDownloadFile:
+      type: object
+      description: >-
+        One downloadable representation of a video: the stored original, or an
+        HLS rendition's variant playlist.
+      required: [kind, url, content_type]
+      properties:
+        kind:
+          type: string
+          enum: [original, hls]
+        url:
+          type: string
+          description: API path serving this file, e.g. "/api/v1/videos/{id}/original" or "/api/v1/videos/{id}/hls/720p/playlist.m3u8".
+        content_type:
+          type: string
+          example: video/mp4
+        size_bytes:
+          type: integer
+          format: int64
+          description: Stored size in bytes. Omitted when unknown (HLS renditions are segmented, so no single size applies).
+        original_name:
+          type: string
+          description: The upload's original filename (original entries only).
+        height:
+          type: integer
+          description: Pixel height, when known (probed for the original; the rung height for HLS renditions).
+          example: 720
+        width:
+          type: integer
+          description: Pixel width, when known.
+          example: 1280
+    VideoDownloadResponse:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoDownloadFile"
     CreateVideoRequest:
       type: object
       required: [title]
