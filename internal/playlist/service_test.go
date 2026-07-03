@@ -37,7 +37,7 @@ func (f *fakeRepo) GetPlaylistByID(_ context.Context, id uuid.UUID) (sqlcgen.Get
 	}
 	return sqlcgen.GetPlaylistByIDRow{
 		ID: p.ID, OwnerID: p.OwnerID, Title: p.Title, Description: p.Description,
-		Visibility: p.Visibility, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+		Visibility: p.Visibility, ThumbnailExt: p.ThumbnailExt, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		VideoCount: int64(len(f.items[id])),
 	}, nil
 }
@@ -114,6 +114,20 @@ func (f *fakeRepo) ListPlaylistItemVideoIDs(_ context.Context, playlistID uuid.U
 
 func (f *fakeRepo) ReorderPlaylistItems(_ context.Context, a sqlcgen.ReorderPlaylistItemsParams) error {
 	f.items[a.PlaylistID] = append([]uuid.UUID(nil), a.VideoIds...)
+	return nil
+}
+
+func (f *fakeRepo) SetPlaylistThumbnail(_ context.Context, a sqlcgen.SetPlaylistThumbnailParams) error {
+	p := f.playlists[a.ID]
+	p.ThumbnailExt = a.ThumbnailExt
+	f.playlists[a.ID] = p
+	return nil
+}
+
+func (f *fakeRepo) ClearPlaylistThumbnail(_ context.Context, id uuid.UUID) error {
+	p := f.playlists[id]
+	p.ThumbnailExt = nil
+	f.playlists[id] = p
 	return nil
 }
 

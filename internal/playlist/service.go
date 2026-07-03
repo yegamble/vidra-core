@@ -6,11 +6,15 @@ package playlist
 import (
 	"context"
 	"errors"
+	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -23,7 +27,17 @@ var (
 	// ErrInvalidOrder means a reorder request's video ids are not exactly the
 	// playlist's current item set (a missing, extra, or duplicated id).
 	ErrInvalidOrder = errors.New("playlist: reorder ids do not match the playlist items")
+	// ErrUnsupportedMedia means an uploaded cover image is not an accepted type.
+	ErrUnsupportedMedia = errors.New("playlist: unsupported image type")
+	// ErrStorageUnavailable means no blob backend is configured for cover uploads.
+	ErrStorageUnavailable = errors.New("playlist: storage backend not configured")
 )
+
+// acceptedImageExts maps an accepted playlist-cover upload extension to the
+// content type served for it (authoritative — not the client-declared type).
+var acceptedImageExts = map[string]string{
+	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
+}
 
 // Repository is the data access the playlist service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
@@ -38,16 +52,32 @@ type Repository interface {
 	ListPlaylistItems(ctx context.Context, playlistID uuid.UUID) ([]sqlcgen.ListPlaylistItemsRow, error)
 	ListPlaylistItemVideoIDs(ctx context.Context, playlistID uuid.UUID) ([]uuid.UUID, error)
 	ReorderPlaylistItems(ctx context.Context, arg sqlcgen.ReorderPlaylistItemsParams) error
+	SetPlaylistThumbnail(ctx context.Context, arg sqlcgen.SetPlaylistThumbnailParams) error
+	ClearPlaylistThumbnail(ctx context.Context, id uuid.UUID) error
 }
 
-// Service holds the playlist application logic.
+// Service holds the playlist application logic. blobs is the media backend used
+// by cover-image uploads; it may be nil when covers are not wired.
 type Service struct {
-	repo Repository
+	repo  Repository
+	blobs storage.Backend
+}
+
+// Option customises the Service.
+type Option func(*Service)
+
+// WithStorage wires the blob backend used for playlist cover uploads.
+func WithStorage(b storage.Backend) Option {
+	return func(s *Service) { s.blobs = b }
 }
 
 // NewService builds the playlist service.
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo Repository, opts ...Option) *Service {
+	s := &Service{repo: repo}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // VideoCard is a playlist item projected as discovery-card data (the same shape
@@ -232,6 +262,74 @@ func (s *Service) ListItems(ctx context.Context, playlistID uuid.UUID) ([]VideoC
 		})
 	}
 	return cards, nil
+}
+
+// UploadInput is an uploaded cover image: its declared filename (used only to
+// derive the accepted extension) and the byte stream.
+type UploadInput struct {
+	Filename string
+	Reader   io.Reader
+}
+
+// SetThumbnail stores an owner-uploaded cover image for a playlist, replacing any
+// previous cover. Owner-only (non-owner → ErrForbidden, unknown id → ErrNotFound);
+// a non-image extension → ErrUnsupportedMedia. Returns the stored bare extension
+// (e.g. "jpg"). The blob lives at playlist-thumbnails/<id>.<ext>; when the new
+// extension differs from an existing one the stale blob is removed.
+func (s *Service) SetThumbnail(ctx context.Context, ownerID, playlistID uuid.UUID, in UploadInput) (string, error) {
+	if s.blobs == nil {
+		return "", ErrStorageUnavailable
+	}
+	p, err := s.GetByID(ctx, playlistID)
+	if err != nil {
+		return "", err
+	}
+	if p.OwnerID != ownerID {
+		return "", ErrForbidden
+	}
+	dotExt := strings.ToLower(filepath.Ext(in.Filename))
+	if _, ok := acceptedImageExts[dotExt]; !ok {
+		return "", ErrUnsupportedMedia
+	}
+	ext := strings.TrimPrefix(dotExt, ".")
+	if ext == "jpeg" {
+		ext = "jpg" // canonicalize so the served key/extension is stable
+	}
+	key := media.PlaylistThumbnailKey(playlistID, ext)
+	if _, err := s.blobs.Put(ctx, key, in.Reader); err != nil {
+		return "", err
+	}
+	// Remove a stale cover left at a different extension.
+	if p.ThumbnailExt != nil && *p.ThumbnailExt != "" && *p.ThumbnailExt != ext {
+		_ = s.blobs.Delete(ctx, media.PlaylistThumbnailKey(playlistID, *p.ThumbnailExt))
+	}
+	if err := s.repo.SetPlaylistThumbnail(ctx, sqlcgen.SetPlaylistThumbnailParams{ID: playlistID, ThumbnailExt: &ext}); err != nil {
+		return "", err
+	}
+	return ext, nil
+}
+
+// ClearThumbnail removes a playlist's cover (blob + column). Owner-only;
+// idempotent when no cover is set.
+func (s *Service) ClearThumbnail(ctx context.Context, ownerID, playlistID uuid.UUID) error {
+	p, err := s.GetByID(ctx, playlistID)
+	if err != nil {
+		return err
+	}
+	if p.OwnerID != ownerID {
+		return ErrForbidden
+	}
+	if p.ThumbnailExt != nil && *p.ThumbnailExt != "" && s.blobs != nil {
+		_ = s.blobs.Delete(ctx, media.PlaylistThumbnailKey(playlistID, *p.ThumbnailExt))
+	}
+	return s.repo.ClearPlaylistThumbnail(ctx, playlistID)
+}
+
+// ThumbnailContentType returns the served content type for a stored cover
+// extension, and ok=false when the extension is not an accepted image type.
+func ThumbnailContentType(ext string) (string, bool) {
+	ct, ok := acceptedImageExts["."+strings.TrimPrefix(strings.ToLower(ext), ".")]
+	return ct, ok
 }
 
 // trimPtr trims a non-nil string pointer's value, leaving nil untouched so a

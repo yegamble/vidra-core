@@ -179,3 +179,48 @@ func TestLocalDeletePrefix(t *testing.T) {
 		t.Fatal("traversal prefix accepted")
 	}
 }
+
+func TestLocalListKeys(t *testing.T) {
+	b, err := NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	keys := []string{
+		"web-videos/a.mp4",
+		"thumbnails/a.jpg",
+		"streaming-playlists/v1/master.m3u8",
+		"streaming-playlists/v1/720p/seg_00000.ts",
+	}
+	for _, k := range keys {
+		if _, err := b.Put(ctx, k, strings.NewReader("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := b.ListKeys(ctx, "streaming-playlists")
+	if err != nil {
+		t.Fatalf("ListKeys: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListKeys(streaming-playlists) = %v, want 2 keys", got)
+	}
+	for _, k := range got {
+		if !strings.HasPrefix(k, "streaming-playlists/v1/") {
+			t.Errorf("key %q outside the listed prefix", k)
+		}
+	}
+	// A single-file prefix lists just that object.
+	one, err := b.ListKeys(ctx, "web-videos")
+	if err != nil || len(one) != 1 || one[0] != "web-videos/a.mp4" {
+		t.Fatalf("ListKeys(web-videos) = %v (err %v), want [web-videos/a.mp4]", one, err)
+	}
+	// A missing prefix returns no keys, not an error.
+	none, err := b.ListKeys(ctx, "captions")
+	if err != nil || len(none) != 0 {
+		t.Fatalf("ListKeys(missing) = %v (err %v), want empty", none, err)
+	}
+	// Traversal is rejected.
+	if _, err := b.ListKeys(ctx, "../escape"); err == nil {
+		t.Fatal("traversal prefix accepted by ListKeys")
+	}
+}

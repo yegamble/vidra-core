@@ -61,6 +61,8 @@ type S3 struct {
 var _ Backend = (*S3)(nil)
 var _ PrefixDeleter = (*S3)(nil)
 var _ PrefixDeleter = (*Local)(nil)
+var _ ObjectLister = (*S3)(nil)
+var _ ObjectLister = (*Local)(nil)
 
 // NewS3 validates cfg and builds the client. No network calls are made here;
 // use EnsureBucket at startup to fail fast on unreachable/missing buckets.
@@ -204,6 +206,27 @@ func (s *S3) DeletePrefix(ctx context.Context, prefix string) error {
 		}
 	}
 	return s.Delete(ctx, bare)
+}
+
+// ListKeys returns every object key stored under prefix (recursively),
+// implementing storage.ObjectLister. Missing prefixes return no keys. Keys are
+// the object names as stored (the same forward-slash keys Put accepts).
+func (s *S3) ListKeys(ctx context.Context, prefix string) ([]string, error) {
+	if err := validateKey(prefix); err != nil {
+		return nil, err
+	}
+	bare := strings.TrimSuffix(prefix, "/")
+	var keys []string
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    bare + "/", // trailing slash scopes strictly to the "directory"
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("storage: s3: list %q: %w", prefix, obj.Err)
+		}
+		keys = append(keys, obj.Key)
+	}
+	return keys, nil
 }
 
 // Exists reports whether an object is stored at key.

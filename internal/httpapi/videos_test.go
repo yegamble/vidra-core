@@ -28,6 +28,7 @@ import (
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
@@ -837,7 +838,8 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		WithCommentService(comment.NewService(cmRepo)),
 		WithRatingService(rating.NewService(ratingRepo)),
 		WithNotificationService(notification.NewService(notifRepo)),
-		WithPlaylistService(playlist.NewService(plRepo)),
+		WithPlaylistService(playlist.NewService(plRepo, playlist.WithStorage(blobs))),
+		WithMediaGCService(mediagc.NewService(&mediagcFakeRepo{}, blobs)),
 		WithModerationService(moderation.NewService(modRepo)),
 		WithMuteService(mute.NewService(muteRepo)),
 		WithBlockService(blocksvc),

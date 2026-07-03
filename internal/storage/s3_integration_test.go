@@ -264,3 +264,46 @@ func TestS3DeletePrefix(t *testing.T) {
 		t.Fatalf("second DeletePrefix (idempotence): %v", err)
 	}
 }
+
+// TestS3ListKeys proves the ObjectLister capability the media GC relies on
+// against a live MinIO: recursive listing scoped to a prefix, and empty for a
+// missing prefix.
+func TestS3ListKeys(t *testing.T) {
+	b := newS3TestBackend(t)
+	ctx := context.Background()
+	root := fmt.Sprintf("integration/%s/%d", strings.ToLower(t.Name()), time.Now().UnixNano())
+	prefix := root + "/streaming-playlists"
+	inside := []string{prefix + "/v1/master.m3u8", prefix + "/v1/720p/seg_00000.ts"}
+	outside := root + "/web-videos/a.mp4"
+	for _, key := range append(append([]string{}, inside...), outside) {
+		key := key
+		if _, err := b.Put(ctx, key, strings.NewReader("x")); err != nil {
+			t.Fatalf("Put %q: %v", key, err)
+		}
+		t.Cleanup(func() { _ = b.Delete(context.Background(), key) })
+	}
+
+	keys, err := b.ListKeys(ctx, prefix)
+	if err != nil {
+		t.Fatalf("ListKeys: %v", err)
+	}
+	if len(keys) != 2 {
+		t.Fatalf("ListKeys(%q) = %v, want 2 keys", prefix, keys)
+	}
+	for _, k := range keys {
+		if !strings.HasPrefix(k, prefix+"/") {
+			t.Errorf("listed key %q outside the prefix", k)
+		}
+		if k == outside {
+			t.Errorf("listed key %q from a sibling prefix", k)
+		}
+	}
+	// A missing prefix returns no keys, not an error.
+	empty, err := b.ListKeys(ctx, root+"/absent-prefix")
+	if err != nil {
+		t.Fatalf("ListKeys(missing): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("ListKeys(missing) = %v, want empty", empty)
+	}
+}

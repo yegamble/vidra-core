@@ -33,10 +33,19 @@ func (q *Queries) AddPlaylistItem(ctx context.Context, arg AddPlaylistItemParams
 	return err
 }
 
+const clearPlaylistThumbnail = `-- name: ClearPlaylistThumbnail :exec
+UPDATE playlists SET thumbnail_ext = NULL, updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) ClearPlaylistThumbnail(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearPlaylistThumbnail, id)
+	return err
+}
+
 const createPlaylist = `-- name: CreatePlaylist :one
 INSERT INTO playlists (owner_id, title, description, visibility)
 VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, title, description, visibility, created_at, updated_at
+RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext
 `
 
 type CreatePlaylistParams struct {
@@ -62,6 +71,7 @@ func (q *Queries) CreatePlaylist(ctx context.Context, arg CreatePlaylistParams) 
 		&i.Visibility,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ThumbnailExt,
 	)
 	return i, err
 }
@@ -76,7 +86,7 @@ func (q *Queries) DeletePlaylist(ctx context.Context, id uuid.UUID) error {
 }
 
 const getPlaylistByID = `-- name: GetPlaylistByID :one
-SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.created_at, p.updated_at,
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
         WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
@@ -85,14 +95,15 @@ WHERE p.id = $1
 `
 
 type GetPlaylistByIDRow struct {
-	ID          uuid.UUID `json:"id"`
-	OwnerID     uuid.UUID `json:"owner_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Visibility  string    `json:"visibility"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	VideoCount  int64     `json:"video_count"`
+	ID           uuid.UUID `json:"id"`
+	OwnerID      uuid.UUID `json:"owner_id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Visibility   string    `json:"visibility"`
+	ThumbnailExt *string   `json:"thumbnail_ext"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	VideoCount   int64     `json:"video_count"`
 }
 
 // A single playlist with its public+published video count (matches what
@@ -106,6 +117,7 @@ func (q *Queries) GetPlaylistByID(ctx context.Context, id uuid.UUID) (GetPlaylis
 		&i.Title,
 		&i.Description,
 		&i.Visibility,
+		&i.ThumbnailExt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.VideoCount,
@@ -211,7 +223,7 @@ func (q *Queries) ListPlaylistItems(ctx context.Context, playlistID uuid.UUID) (
 }
 
 const listPlaylistsByOwner = `-- name: ListPlaylistsByOwner :many
-SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.created_at, p.updated_at,
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
         WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
@@ -221,14 +233,15 @@ ORDER BY p.created_at DESC, p.id DESC
 `
 
 type ListPlaylistsByOwnerRow struct {
-	ID          uuid.UUID `json:"id"`
-	OwnerID     uuid.UUID `json:"owner_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Visibility  string    `json:"visibility"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	VideoCount  int64     `json:"video_count"`
+	ID           uuid.UUID `json:"id"`
+	OwnerID      uuid.UUID `json:"owner_id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Visibility   string    `json:"visibility"`
+	ThumbnailExt *string   `json:"thumbnail_ext"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	VideoCount   int64     `json:"video_count"`
 }
 
 // The user's playlists, newest first, each with its public+published video count.
@@ -247,6 +260,7 @@ func (q *Queries) ListPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) (
 			&i.Title,
 			&i.Description,
 			&i.Visibility,
+			&i.ThumbnailExt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.VideoCount,
@@ -300,6 +314,22 @@ func (q *Queries) ReorderPlaylistItems(ctx context.Context, arg ReorderPlaylistI
 	return err
 }
 
+const setPlaylistThumbnail = `-- name: SetPlaylistThumbnail :exec
+UPDATE playlists SET thumbnail_ext = $2, updated_at = now() WHERE id = $1
+`
+
+type SetPlaylistThumbnailParams struct {
+	ID           uuid.UUID `json:"id"`
+	ThumbnailExt *string   `json:"thumbnail_ext"`
+}
+
+// Record the extension of an owner-uploaded playlist cover (blob stored at
+// playlist-thumbnails/<id>.<ext>). Owner authorization is enforced in the service.
+func (q *Queries) SetPlaylistThumbnail(ctx context.Context, arg SetPlaylistThumbnailParams) error {
+	_, err := q.db.Exec(ctx, setPlaylistThumbnail, arg.ID, arg.ThumbnailExt)
+	return err
+}
+
 const updatePlaylist = `-- name: UpdatePlaylist :one
 UPDATE playlists
 SET title       = COALESCE($1, title),
@@ -307,7 +337,7 @@ SET title       = COALESCE($1, title),
     visibility  = COALESCE($3, visibility),
     updated_at  = now()
 WHERE id = $4
-RETURNING id, owner_id, title, description, visibility, created_at, updated_at
+RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext
 `
 
 type UpdatePlaylistParams struct {
@@ -334,6 +364,7 @@ func (q *Queries) UpdatePlaylist(ctx context.Context, arg UpdatePlaylistParams) 
 		&i.Visibility,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ThumbnailExt,
 	)
 	return i, err
 }

@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -138,6 +139,40 @@ type Thumbnailer interface {
 	Thumbnail(ctx context.Context, storageKey string, durationSeconds int) ([]byte, error)
 }
 
+// Storyboarder produces a seek-preview sprite sheet (JPEG bytes) plus its WebVTT
+// sprite map (bytes) for the media at storageKey. durationSeconds (0 if unknown)
+// hints the layout. It is the seam for FFmpeg storyboard generation; when none
+// is configured videos publish without a storyboard.
+type Storyboarder interface {
+	Storyboard(ctx context.Context, storageKey string, durationSeconds int) (sprite, vtt []byte, err error)
+}
+
+// ScanMode is the malware-scan fallback policy (MALWARE_SCAN_MODE): what to do
+// when the scanner cannot complete (a dial/protocol/IO error). An INFECTED
+// result always fails the publish, in every mode.
+type ScanMode string
+
+const (
+	// ScanModeFailClosed (default) keeps unscannable media out of published:
+	// a scan error is treated exactly like an infection (state 'failed').
+	ScanModeFailClosed ScanMode = "fail-closed"
+	// ScanModeFailOpen publishes anyway on a scan error (logged loudly). An
+	// infected result still fails. For dev / degraded-scanner operation.
+	ScanModeFailOpen ScanMode = "fail-open"
+	// ScanModeQuarantine parks unscannable media in the 'quarantined' state for
+	// moderator review instead of publishing or failing it outright.
+	ScanModeQuarantine ScanMode = "quarantine"
+)
+
+// ValidScanMode reports whether s is one of the three policies.
+func ValidScanMode(s string) bool {
+	switch ScanMode(s) {
+	case ScanModeFailClosed, ScanModeFailOpen, ScanModeQuarantine:
+		return true
+	}
+	return false
+}
+
 // viewDedupeWindow is how long a single viewer's repeated views of a video are
 // collapsed into one counted view.
 const viewDedupeWindow = time.Hour
@@ -157,7 +192,9 @@ type Service struct {
 	blobs                storage.Backend
 	prober               Prober
 	thumbnailer          Thumbnailer
+	storyboarder         Storyboarder
 	scanner              Scanner
+	scanMode             ScanMode
 	viewDeduper          ViewDeduper
 	quarantineNewUploads bool
 	onPublish            func(context.Context, uuid.UUID)
@@ -185,6 +222,23 @@ func WithThumbnailer(t Thumbnailer) Option {
 // it, uploads are not scanned.
 func WithScanner(sc Scanner) Option {
 	return func(s *Service) { s.scanner = sc }
+}
+
+// WithScanMode sets the malware-scan fallback policy honored by Process on a
+// scan error (fail-closed default). Invalid values are ignored (fail-closed
+// stays in effect); the config layer validates the string.
+func WithScanMode(mode string) Option {
+	return func(s *Service) {
+		if ValidScanMode(mode) {
+			s.scanMode = ScanMode(mode)
+		}
+	}
+}
+
+// WithStoryboarder wires a storyboard generator used by Process. Without it,
+// videos publish without a seek-preview storyboard.
+func WithStoryboarder(sb Storyboarder) Option {
+	return func(s *Service) { s.storyboarder = sb }
 }
 
 // WithViewDeduper wires per-viewer view de-duplication. Without it, every
@@ -237,7 +291,7 @@ func WithDeleteHook(fn func(context.Context, uuid.UUID, uuid.UUID, bool)) Option
 // NewService builds the video service. blobs is the media storage backend used
 // by uploads; it may be nil when uploads are not wired (e.g. some tests).
 func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service {
-	s := &Service{repo: repo, blobs: blobs}
+	s := &Service{repo: repo, blobs: blobs, scanMode: ScanModeFailClosed}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -397,9 +451,27 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey string) (sqlcgen.Video, error) {
 	state := "published"
 	durationHint := 0
+	// scanQuarantine records that the scan could not complete and MALWARE_SCAN_MODE
+	// is 'quarantine' — the finished upload is parked for moderator review below
+	// (after probe/thumbnail so the reviewer has metadata) rather than published.
+	scanQuarantine := false
 	if s.scanner != nil {
-		// Fail-closed: infected OR unscannable media never reaches "published".
-		if clean, err := s.scanner.Scan(ctx, originalKey); err != nil || !clean {
+		clean, err := s.scanner.Scan(ctx, originalKey)
+		switch {
+		case err != nil:
+			// The scan could not complete — MALWARE_SCAN_MODE decides.
+			switch s.scanMode {
+			case ScanModeFailOpen:
+				// Publish anyway, but log loudly: the upload is unscanned.
+				slog.WarnContext(ctx, "malware scan failed; publishing anyway (MALWARE_SCAN_MODE=fail-open)",
+					"video_id", videoID.String(), "error", err.Error())
+			case ScanModeQuarantine:
+				scanQuarantine = true
+			default: // fail-closed
+				state = "failed"
+			}
+		case !clean:
+			// Infected media ALWAYS fails, regardless of mode.
 			state = "failed"
 		}
 	}
@@ -418,7 +490,17 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		// Thumbnail generation is best-effort: a failure must not block publish.
 		s.generateThumbnail(ctx, videoID, originalKey, durationHint)
 	}
+	if state == "published" && s.storyboarder != nil {
+		// Storyboard generation is best-effort: a failure must not block publish.
+		s.generateStoryboard(ctx, videoID, originalKey, durationHint)
+	}
 	if state == "published" {
+		// A scan error under MALWARE_SCAN_MODE=quarantine parks the upload for
+		// moderator review (the existing quarantine queue) instead of publishing.
+		// No hooks fire — a moderator approve/reject runs the publish transition.
+		if scanQuarantine {
+			return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "quarantined"})
+		}
 		// Quarantine hold (§11): with QUARANTINE_NEW_UPLOADS on, a non-privileged
 		// owner's finished upload parks in 'quarantined' before any scheduled hold
 		// (moderation trumps scheduling). No hooks fire — approval publishes
@@ -648,6 +730,53 @@ func (s *Service) generateThumbnail(ctx context.Context, videoID uuid.UUID, orig
 		ContentType:  "image/jpeg",
 		OriginalName: "thumbnail.jpg",
 		SizeBytes:    int64(len(jpg)),
+	})
+}
+
+// HasStoryboard reports whether a storyboard sprite sheet has been stored for
+// the video (a kind='storyboard' video_file).
+func (s *Service) HasStoryboard(ctx context.Context, videoID uuid.UUID) bool {
+	_, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "storyboard"})
+	return err == nil
+}
+
+// generateStoryboard renders the seek-preview sprite sheet + WebVTT map for the
+// video and stores them as kind='storyboard'/'storyboard_vtt' files, replacing
+// any previous pair. Best-effort: any failure is swallowed so it never blocks
+// publishing.
+func (s *Service) generateStoryboard(ctx context.Context, videoID uuid.UUID, originalKey string, durationHint int) {
+	if s.blobs == nil {
+		return
+	}
+	sprite, vtt, err := s.storyboarder.Storyboard(ctx, originalKey, durationHint)
+	if err != nil || len(sprite) == 0 || len(vtt) == 0 {
+		return
+	}
+	jpgKey := media.StoryboardKeyJPG(videoID)
+	vttKey := media.StoryboardKeyVTT(videoID)
+	if _, err := s.blobs.Put(ctx, jpgKey, bytes.NewReader(sprite)); err != nil {
+		return
+	}
+	if _, err := s.blobs.Put(ctx, vttKey, bytes.NewReader(vtt)); err != nil {
+		return
+	}
+	_ = s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{VideoID: videoID, Kind: "storyboard"})
+	_ = s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{VideoID: videoID, Kind: "storyboard_vtt"})
+	_, _ = s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+		VideoID:      videoID,
+		Kind:         "storyboard",
+		StorageKey:   jpgKey,
+		ContentType:  "image/jpeg",
+		OriginalName: "storyboard.jpg",
+		SizeBytes:    int64(len(sprite)),
+	})
+	_, _ = s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+		VideoID:      videoID,
+		Kind:         "storyboard_vtt",
+		StorageKey:   vttKey,
+		ContentType:  "text/vtt",
+		OriginalName: "storyboard.vtt",
+		SizeBytes:    int64(len(vtt)),
 	})
 }
 

@@ -114,6 +114,17 @@ func (f *transcodeFakeRepo) ListVideoRenditions(_ context.Context, videoID uuid.
 	return f.renditions[videoID], nil
 }
 
+func (f *transcodeFakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error) {
+	return sqlcgen.VideoFile{
+		ID: uuid.New(), VideoID: a.VideoID, Kind: a.Kind, StorageKey: a.StorageKey,
+		ContentType: a.ContentType, OriginalName: a.OriginalName, SizeBytes: a.SizeBytes,
+	}, nil
+}
+
+func (f *transcodeFakeRepo) DeleteVideoFilesByVideoAndKind(_ context.Context, _ sqlcgen.DeleteVideoFilesByVideoAndKindParams) error {
+	return nil
+}
+
 // seedReadyHLS marks videoID's playlist ready with one 240p rendition and
 // writes the master playlist, variant playlist, and one segment into blobs
 // under the canonical key layout.

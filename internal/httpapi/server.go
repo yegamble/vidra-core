@@ -26,6 +26,7 @@ import (
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/live"
+	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
@@ -86,6 +87,7 @@ type Server struct {
 	fedsvc         *federation.Service
 	remotevideosvc *remotevideo.Service
 	instancemodsvc *instancemod.Service
+	mediagcsvc     *mediagc.Service
 	media          storage.Backend
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
 	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
@@ -261,6 +263,13 @@ func WithQuotaService(svc *quota.Service) Option {
 // enqueue hook + worker) is wired in cmd/api, gated by TRANSCODING_ENABLED.
 func WithTranscodeService(svc *transcode.Service) Option {
 	return func(s *Server) { s.transcodesvc = svc }
+}
+
+// WithMediaGCService mounts the admin media garbage-collection endpoint
+// (POST /admin/media/gc). The scheduled daily sweep is wired separately in
+// cmd/api.
+func WithMediaGCService(svc *mediagc.Service) Option {
+	return func(s *Server) { s.mediagcsvc = svc }
 }
 
 // WithUploadService mounts the resumable/chunked upload endpoints (open session,
@@ -633,6 +642,12 @@ func (s *Server) routes() {
 		}
 		api.GET("/videos/:id/thumbnail", s.handleGetVideoThumbnail, s.optionalAuth)
 		api.POST("/videos/:id/thumbnail", s.handleSetVideoThumbnail, s.requireAuth)
+		// Seek-preview storyboard (sprite sheet + WebVTT map), same visibility as
+		// the detail endpoint. detail exposes has_storyboard.
+		api.GET("/videos/:id/storyboard.jpg", s.handleGetVideoStoryboardImage, s.optionalAuth)
+		api.GET("/videos/:id/storyboard.vtt", s.handleGetVideoStoryboardVTT, s.optionalAuth)
+		// Progressive VP9/WebM alternate (TRANSCODING_VP9_ENABLED); 404 when absent.
+		api.GET("/videos/:id/webm", s.handleStreamVideoWebM, s.optionalAuth)
 		api.POST("/videos/:id/view", s.handleRecordVideoView, s.optionalAuth)
 		// Creator statistics (owner-only; non-owners get 404).
 		api.GET("/videos/:id/stats", s.handleGetVideoStats, s.requireAuth)
@@ -713,6 +728,15 @@ func (s *Server) routes() {
 		api.POST("/playlists/:id/videos", s.handleAddPlaylistItem, s.requireAuth)
 		api.PUT("/playlists/:id/videos", s.handleReorderPlaylistItems, s.requireAuth)
 		api.DELETE("/playlists/:id/videos/:videoId", s.handleRemovePlaylistItem, s.requireAuth)
+		// Playlist cover image: owner upload/remove + public (visibility-gated) get.
+		api.GET("/playlists/:id/thumbnail", s.handleGetPlaylistThumbnail, s.optionalAuth)
+		api.POST("/playlists/:id/thumbnail", s.handleSetPlaylistThumbnail, s.requireAuth)
+		api.DELETE("/playlists/:id/thumbnail", s.handleDeletePlaylistThumbnail, s.requireAuth)
+	}
+
+	// Media garbage collection: admin-triggered sweep of orphaned storage blobs.
+	if s.mediagcsvc != nil {
+		api.POST("/admin/media/gc", s.handleAdminMediaGC, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// Abuse reports: any authed user can file one; the queue + resolution are

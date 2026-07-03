@@ -327,14 +327,23 @@ go test ./internal/config/...   # focused package run
 Integration tests expect a live PostgreSQL + Redis (use `make up` or the `core`
 Compose profile). Migration tests must apply cleanly against a fresh database.
 
-S3 storage backend integration tests (MinIO; self-skip when the env is unset):
+S3 storage backend + media-GC integration tests (MinIO; self-skip when the env
+is unset):
 ```bash
 docker compose --profile storage up -d minio
-S3_TEST_ENDPOINT=localhost:9000 go test -tags=integration ./internal/storage/...
+S3_TEST_ENDPOINT=localhost:9000 go test -tags=integration ./internal/storage/... ./internal/mediagc/...
 ```
 To run the whole api against MinIO instead of local disk, see the env block at
 the top of `docker-compose.yml` (`STORAGE_BACKEND=s3` + `STORAGE_S3_*`; the
 bucket is auto-created at boot).
+
+Virus scanning (compose `scan` profile ships a clamd; first boot downloads
+signature DBs — the healthcheck has a 120s start_period):
+```bash
+docker compose --profile scan up -d clamav
+# then run the api with: MALWARE_SCAN_ENABLED=true CLAMAV_ADDR=clamav:3310
+# MALWARE_SCAN_MODE = fail-closed (default) | fail-open | quarantine
+```
 
 Password hashing: production uses bcrypt cost 12, but test binaries call
 `auth.UseFastPasswordHashingForTests()` (from an `init()` in `internal/auth` and

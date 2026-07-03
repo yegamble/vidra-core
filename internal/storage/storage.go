@@ -53,6 +53,19 @@ type PrefixDeleter interface {
 	DeletePrefix(ctx context.Context, prefix string) error
 }
 
+// ObjectLister is an optional capability implemented by backends that can
+// enumerate the object keys stored under a prefix — used by the media
+// garbage-collector to find orphaned blobs. Both first-party backends implement
+// it; callers must feature-detect and skip GC of a prefix when a backend does
+// not support listing.
+type ObjectLister interface {
+	// ListKeys returns every object key stored under prefix (recursively), as
+	// forward-slash keys relative to the backend root (i.e. the same keys Put
+	// accepts). An empty/absent prefix returns no keys, not an error. The prefix
+	// is validated by the same key rules as every other method.
+	ListKeys(ctx context.Context, prefix string) ([]string, error)
+}
+
 // PathProvider is an optional capability implemented by backends that can expose
 // a local filesystem path for an object (the local backend does). Tools that
 // need a seekable file on disk — e.g. ffprobe — use it; backends without it

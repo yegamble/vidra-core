@@ -417,6 +417,50 @@ func TestLoadInvalidEnv(t *testing.T) {
 	}
 }
 
+func TestMalwareScanModeDefaultAndOverride(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.MalwareScanMode != "fail-closed" {
+		t.Errorf("default MalwareScanMode = %q, want fail-closed", cfg.MalwareScanMode)
+	}
+	for _, mode := range []string{"fail-open", "quarantine", "fail-closed"} {
+		t.Setenv("MALWARE_SCAN_MODE", mode)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load %q: %v", mode, err)
+		}
+		if cfg.MalwareScanMode != mode {
+			t.Errorf("MalwareScanMode = %q, want %q", cfg.MalwareScanMode, mode)
+		}
+	}
+}
+
+func TestLoadRejectsInvalidMalwareScanMode(t *testing.T) {
+	t.Setenv("MALWARE_SCAN_MODE", "yolo")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for invalid MALWARE_SCAN_MODE, got nil")
+	}
+}
+
+func TestLoadRejectsAV1(t *testing.T) {
+	t.Setenv("TRANSCODING_AV1_ENABLED", "true")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for TRANSCODING_AV1_ENABLED=true (deferred), got nil")
+	}
+}
+
+func TestVP9DefaultOff(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TranscodingVP9Enabled {
+		t.Error("TranscodingVP9Enabled should default false")
+	}
+}
+
 func TestProductionRejectsWildcardCORS(t *testing.T) {
 	t.Setenv("VIDRA_ENV", "production")
 	t.Setenv("CORS_ALLOWED_ORIGINS", "*")

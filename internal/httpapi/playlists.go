@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -18,36 +19,39 @@ var validPlaylistVisibility = map[string]bool{"public": true, "unlisted": true, 
 
 // playlistView is the public projection of a playlist.
 type playlistView struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Visibility  string    `json:"visibility"`
-	VideoCount  int64     `json:"video_count"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Visibility   string    `json:"visibility"`
+	VideoCount   int64     `json:"video_count"`
+	HasThumbnail bool      `json:"has_thumbnail"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func newPlaylistView(p sqlcgen.Playlist, count int64) playlistView {
 	return playlistView{
-		ID:          p.ID.String(),
-		Title:       p.Title,
-		Description: p.Description,
-		Visibility:  p.Visibility,
-		VideoCount:  count,
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
+		ID:           p.ID.String(),
+		Title:        p.Title,
+		Description:  p.Description,
+		Visibility:   p.Visibility,
+		VideoCount:   count,
+		HasThumbnail: p.ThumbnailExt != nil && *p.ThumbnailExt != "",
+		CreatedAt:    p.CreatedAt,
+		UpdatedAt:    p.UpdatedAt,
 	}
 }
 
 func playlistViewRow(r sqlcgen.GetPlaylistByIDRow) playlistView {
 	return playlistView{
-		ID:          r.ID.String(),
-		Title:       r.Title,
-		Description: r.Description,
-		Visibility:  r.Visibility,
-		VideoCount:  r.VideoCount,
-		CreatedAt:   r.CreatedAt,
-		UpdatedAt:   r.UpdatedAt,
+		ID:           r.ID.String(),
+		Title:        r.Title,
+		Description:  r.Description,
+		Visibility:   r.Visibility,
+		VideoCount:   r.VideoCount,
+		HasThumbnail: r.ThumbnailExt != nil && *r.ThumbnailExt != "",
+		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.UpdatedAt,
 	}
 }
 
@@ -140,13 +144,14 @@ func (s *Server) handleListMyPlaylists(c echo.Context) error {
 	views := make([]playlistView, 0, len(rows))
 	for _, r := range rows {
 		views = append(views, playlistView{
-			ID:          r.ID.String(),
-			Title:       r.Title,
-			Description: r.Description,
-			Visibility:  r.Visibility,
-			VideoCount:  r.VideoCount,
-			CreatedAt:   r.CreatedAt,
-			UpdatedAt:   r.UpdatedAt,
+			ID:           r.ID.String(),
+			Title:        r.Title,
+			Description:  r.Description,
+			Visibility:   r.Visibility,
+			VideoCount:   r.VideoCount,
+			HasThumbnail: r.ThumbnailExt != nil && *r.ThumbnailExt != "",
+			CreatedAt:    r.CreatedAt,
+			UpdatedAt:    r.UpdatedAt,
 		})
 	}
 	return c.JSON(http.StatusOK, playlistListResponse{Playlists: views})
@@ -378,6 +383,93 @@ func (s *Server) handleReorderPlaylistItems(c echo.Context) error {
 		return playlistError(err)
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// handleSetPlaylistThumbnail stores an owner-uploaded cover image (multipart
+// form field "file") for a playlist, replacing any previous cover. Behind
+// requireAuth; non-owner/unknown → 404; a non-image extension → 415. The 8M
+// global body limit bounds the upload.
+func (s *Server) handleSetPlaylistThumbnail(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+	}
+	fh, err := c.FormFile("file")
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, `multipart form field "file" is required`)
+	}
+	f, err := fh.Open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := s.playlistsvc.SetThumbnail(c.Request().Context(), userID, id, playlist.UploadInput{
+		Filename: fh.Filename,
+		Reader:   f,
+	}); err != nil {
+		if errors.Is(err, playlist.ErrUnsupportedMedia) {
+			return echo.NewHTTPError(http.StatusUnsupportedMediaType, "cover must be a JPEG, PNG, or WebP image")
+		}
+		return playlistError(err)
+	}
+	// Re-read so the response carries has_thumbnail=true + the current count.
+	row, err := s.playlistsvc.GetByID(c.Request().Context(), id)
+	if err != nil {
+		return playlistError(err)
+	}
+	return c.JSON(http.StatusCreated, playlistViewRow(row))
+}
+
+// handleDeletePlaylistThumbnail removes a playlist's cover (owner-only,
+// idempotent).
+func (s *Server) handleDeletePlaylistThumbnail(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+	}
+	if err := s.playlistsvc.ClearThumbnail(c.Request().Context(), userID, id); err != nil {
+		return playlistError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// handleGetPlaylistThumbnail serves a playlist's cover image. Behind
+// optionalAuth: public/unlisted playlists' covers are visible to anyone; a
+// private playlist's cover is visible only to its owner (else 404). A playlist
+// without a cover is 404.
+func (s *Server) handleGetPlaylistThumbnail(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+	}
+	ctx := c.Request().Context()
+	p, err := s.playlistsvc.GetByID(ctx, id)
+	if err != nil {
+		return playlistError(err)
+	}
+	if p.Visibility == "private" {
+		userID, _, authed := principalFromContext(c)
+		if !authed || userID != p.OwnerID {
+			return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+		}
+	}
+	if p.ThumbnailExt == nil || *p.ThumbnailExt == "" {
+		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+	}
+	ct, ok := playlist.ThumbnailContentType(*p.ThumbnailExt)
+	if !ok {
+		ct = "application/octet-stream"
+	}
+	return s.serveStoredObjectNamed(c, media.PlaylistThumbnailKey(id, *p.ThumbnailExt), ct, "playlist not found")
 }
 
 // playlistError maps playlist service sentinels to HTTP error envelopes. A

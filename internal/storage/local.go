@@ -116,6 +116,39 @@ func (l *Local) DeletePrefix(_ context.Context, prefix string) error {
 	return os.RemoveAll(full)
 }
 
+// ListKeys returns every object key stored under prefix (recursively), as
+// forward-slash keys relative to the root, implementing storage.ObjectLister. A
+// missing prefix directory returns no keys (not an error). The same
+// traversal-safe resolution as every other method applies.
+func (l *Local) ListKeys(_ context.Context, prefix string) ([]string, error) {
+	full, err := l.resolve(prefix)
+	if err != nil {
+		return nil, err
+	}
+	var keys []string
+	err = filepath.WalkDir(full, func(p string, d os.DirEntry, werr error) error {
+		if werr != nil {
+			if os.IsNotExist(werr) {
+				return nil // missing prefix: no keys
+			}
+			return werr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(l.root, p)
+		if rerr != nil {
+			return rerr
+		}
+		keys = append(keys, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
 // Exists reports whether an object is stored at key.
 func (l *Local) Exists(_ context.Context, key string) (bool, error) {
 	full, err := l.resolve(key)

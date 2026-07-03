@@ -154,10 +154,15 @@ type HLSRendition struct {
 }
 
 // HLSResult is a completed transcode: the master playlist's storage key and
-// the renditions written under it.
+// the renditions written under it. When VP9 is enabled it also carries the
+// progressive VP9/WebM alternate's storage key + size (empty/zero otherwise).
 type HLSResult struct {
 	MasterKey  string
 	Renditions []HLSRendition
+	WebMKey    string
+	WebMHeight int
+	WebMWidth  int
+	WebMBytes  int64
 }
 
 // HLSKeyPrefix is the storage-key directory holding a video's HLS output
@@ -176,6 +181,7 @@ type HLSTranscoder struct {
 	blobs storage.Backend
 	probe *FFProbe
 	bin   string
+	vp9   bool // also emit a progressive VP9/WebM alternate (SetVP9)
 }
 
 // NewHLSTranscoder builds an HLSTranscoder reading/writing objects on blobs via
@@ -250,6 +256,18 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 			Width:     r.Width,
 			KeyPrefix: prefix + "/" + r.Name(),
 		})
+	}
+	if t.vp9 {
+		// Progressive VP9/WebM alternate at the top rung. Best-effort: a VP9
+		// failure must not fail the H.264 HLS transcode (VP9 is an extra codec
+		// option, not the primary deliverable).
+		top := rungs[0]
+		if key, size, verr := t.encodeVP9(ctx, videoID, src, top); verr == nil {
+			res.WebMKey = key
+			res.WebMBytes = size
+			res.WebMHeight = top.Height
+			res.WebMWidth = top.Width
+		}
 	}
 	return res, nil
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
@@ -244,11 +245,20 @@ func run() error {
 	} else {
 		logger.Warn("thumbnail generation disabled (ffmpeg not on PATH); videos publish without a poster")
 	}
+	if sb, ok := media.DetectStoryboarder(blobs); ok {
+		vopts = append(vopts, video.WithStoryboarder(sb))
+		logger.Info("storyboard generation enabled (ffmpeg + ffprobe found)")
+	} else {
+		logger.Warn("storyboard generation disabled (ffmpeg/ffprobe not on PATH); videos publish without a storyboard")
+	}
 	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
 	if cfg.MalwareScanEnabled {
 		vopts = append(vopts, video.WithScanner(media.NewClamAV(cfg.ClamAVAddr, blobs)))
-		logger.Info("malware scanning enabled (clamd)", "addr", cfg.ClamAVAddr)
+		logger.Info("malware scanning enabled (clamd)", "addr", cfg.ClamAVAddr, "mode", cfg.MalwareScanMode)
 	}
+	// The scan fallback policy applies whenever a scanner is wired (default
+	// fail-closed); harmless to set when scanning is off.
+	vopts = append(vopts, video.WithScanMode(cfg.MalwareScanMode))
 	if cfg.QuarantineNewUploads {
 		// §11: non-privileged uploads park in 'quarantined' until a moderator
 		// approves (publish hooks fire then) or rejects them.
@@ -262,8 +272,9 @@ func run() error {
 	var hlsTranscoder transcode.Transcoder
 	if cfg.TranscodingEnabled {
 		if tc, ok := media.DetectHLSTranscoder(blobs); ok {
+			tc.SetVP9(cfg.TranscodingVP9Enabled)
 			hlsTranscoder = tc
-			logger.Info("hls transcoding enabled (ffmpeg + ffprobe found)")
+			logger.Info("hls transcoding enabled (ffmpeg + ffprobe found)", "vp9", cfg.TranscodingVP9Enabled)
 		} else {
 			logger.Warn("TRANSCODING_ENABLED=true but ffmpeg/ffprobe not on PATH; transcoding disabled")
 		}
@@ -348,8 +359,12 @@ func run() error {
 	notifsvc := notification.NewService(db.Queries())
 	opts = append(opts, httpapi.WithNotificationService(notifsvc))
 
-	playlistsvc := playlist.NewService(db.Queries())
+	playlistsvc := playlist.NewService(db.Queries(), playlist.WithStorage(blobs))
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))
+
+	// Media garbage collection: admin-triggered sweep + a daily scheduled sweep.
+	mediagcsvc := mediagc.NewService(db.Queries(), blobs)
+	opts = append(opts, httpapi.WithMediaGCService(mediagcsvc))
 
 	moderationsvc := moderation.NewService(db.Queries())
 	opts = append(opts, httpapi.WithModerationService(moderationsvc))
@@ -524,6 +539,16 @@ func run() error {
 		defer workerCancel()
 		go runUploadSweepWorker(workerCtx, logger, uploadsvc)
 		logger.Info("upload session sweep worker started")
+	}
+
+	// Media garbage collection: a daily sweep of orphaned storage blobs. Always
+	// on (dry-run-free deletion) — the reference queries are cheap and the sweep
+	// never touches unknown prefixes.
+	{
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runMediaGCWorker(workerCtx, logger, mediagcsvc, auditsvc)
+		logger.Info("media gc worker started")
 	}
 
 	srv := httpapi.New(cfg, db, rdb, opts...)
@@ -757,6 +782,40 @@ func runUploadSweepWorker(ctx context.Context, logger *slog.Logger, svc *upload.
 				logger.Warn("upload session sweep failed", "error", err)
 			} else if n > 0 {
 				logger.Info("upload session sweep removed sessions", "count", n)
+			}
+		}
+	}
+}
+
+// runMediaGCWorker runs the media garbage collector once a day (deleting
+// orphaned storage blobs) until ctx is canceled. Each run is audited with its
+// counts (actor "" = system). A listing-unsupported backend disables the sweep
+// after one warning.
+func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Service, auditsvc *audit.Service) {
+	const interval = 24 * time.Hour
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			res, err := svc.Sweep(ctx, false)
+			if err != nil {
+				if errors.Is(err, mediagc.ErrListingUnsupported) {
+					logger.Warn("media gc disabled: storage backend does not support listing")
+					return
+				}
+				logger.Warn("media gc sweep failed", "error", err)
+				continue
+			}
+			logger.Info("media gc sweep completed", "scanned", res.Scanned, "orphans", len(res.Orphans), "deleted", res.Deleted)
+			if auditsvc != nil {
+				_ = auditsvc.Record(ctx, audit.Event{
+					Action: observability.ActionMediaGC,
+					Result: observability.ResultSuccess,
+					Reason: fmt.Sprintf("mode=delete scanned=%d orphans=%d deleted=%d", res.Scanned, len(res.Orphans), res.Deleted),
+				})
 			}
 		}
 	}

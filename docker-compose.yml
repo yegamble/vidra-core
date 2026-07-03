@@ -76,6 +76,25 @@ services:
       timeout: 5s
       retries: 10
 
+  # ClamAV virus scanner (scan profile). When enabled, run with the "scan"
+  # profile and point the api at it: MALWARE_SCAN_ENABLED=true CLAMAV_ADDR=clamav:3310.
+  # The clamav/clamav image bundles clamd; the first boot downloads signature
+  # databases (freshclam) which can take a minute — the healthcheck waits for the
+  # daemon to accept connections.
+  clamav:
+    image: clamav/clamav:1.4
+    profiles: ["scan"]
+    ports:
+      - "${CLAMAV_PORT:-3310}:3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
   migrate:
     image: migrate/migrate:v4.17.1
     profiles: ["core"]
@@ -104,6 +123,10 @@ services:
       # Waits for minio only when the storage profile is active (required: false
       # skips the dependency when the service is not enabled).
       minio:
+        condition: service_healthy
+        required: false
+      # Waits for clamav only when the scan profile is active.
+      clamav:
         condition: service_healthy
         required: false
     environment:
@@ -150,14 +173,22 @@ services:
       # public origin isn't reachable in CI). NEVER enable in production. Default off.
       HTTP_IMPORT_ALLOW_PRIVATE_URLS: ${HTTP_IMPORT_ALLOW_PRIVATE_URLS:-false}
       # Malware scanning: when MALWARE_SCAN_ENABLED=true, uploaded originals are
-      # streamed to the clamd at CLAMAV_ADDR before publish (fail-closed). Provide a
-      # clamd yourself (an operator-run service); off by default.
+      # streamed to the clamd at CLAMAV_ADDR before publish. Run the bundled clamd
+      # with the "scan" profile (CLAMAV_ADDR=clamav:3310) or point at your own.
       MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-false}
       CLAMAV_ADDR: ${CLAMAV_ADDR:-}
+      # MALWARE_SCAN_MODE: fallback policy on a scan ERROR — fail-closed (default;
+      # unscannable media is not published), fail-open (publish anyway, logged
+      # loudly), or quarantine (park for moderator review). Infected media always
+      # fails, in every mode.
+      MALWARE_SCAN_MODE: ${MALWARE_SCAN_MODE:-fail-closed}
       # HLS transcoding: when TRANSCODING_ENABLED=true, published videos are
       # transcoded to an H.264/AAC HLS ladder by an in-process worker (ffmpeg is
       # in the image) and served at /api/v1/videos/{id}/hls/*. Off by default.
       TRANSCODING_ENABLED: ${TRANSCODING_ENABLED:-false}
+      # TRANSCODING_VP9_ENABLED additionally emits a progressive VP9/WebM alternate
+      # per video (surfaced via /download). AV1 is deferred and rejected if enabled.
+      TRANSCODING_VP9_ENABLED: ${TRANSCODING_VP9_ENABLED:-false}
       # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
       # freshly minted stream key (informational; empty by default).
       LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}
@@ -196,3 +227,4 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  clamav_data:

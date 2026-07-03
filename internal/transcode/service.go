@@ -50,6 +50,8 @@ type Repository interface {
 	CreateVideoRendition(ctx context.Context, arg sqlcgen.CreateVideoRenditionParams) (sqlcgen.VideoRendition, error)
 	DeleteVideoRenditions(ctx context.Context, videoID uuid.UUID) error
 	ListVideoRenditions(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.VideoRendition, error)
+	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
+	DeleteVideoFilesByVideoAndKind(ctx context.Context, arg sqlcgen.DeleteVideoFilesByVideoAndKindParams) error
 }
 
 // Transcoder produces the HLS ladder for a stored original. It is the seam the
@@ -129,6 +131,27 @@ func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.
 			Height:    int32(r.Height),
 			Width:     int32(r.Width),
 			KeyPrefix: r.KeyPrefix,
+		}); err != nil {
+			return err
+		}
+	}
+	// Progressive VP9/WebM alternate (when TRANSCODING_VP9_ENABLED): recorded as a
+	// single kind='webm' video_file, replacing any prior one, so /download can
+	// surface it. Absent when VP9 is off.
+	if res.WebMKey != "" {
+		if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
+			VideoID: videoID,
+			Kind:    "webm",
+		}); err != nil {
+			return err
+		}
+		if _, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+			VideoID:      videoID,
+			Kind:         "webm",
+			StorageKey:   res.WebMKey,
+			ContentType:  media.WebMContentType,
+			OriginalName: "vp9.webm",
+			SizeBytes:    res.WebMBytes,
 		}); err != nil {
 			return err
 		}

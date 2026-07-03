@@ -19,11 +19,12 @@ PeerTube buckets (from its `storage:` config) and the vidra mapping:
 |--------------------------|-----------------------------------------|----------------------------------|--------|
 | `web-videos/`            | the video file served for web playback  | `web-videos/<id><ext>`           | **in use** (the served upload; `video_files.kind='original'`) |
 | `thumbnails/`            | poster/thumbnail images                 | `thumbnails/<id>.jpg`            | **in use** (`kind='thumbnail'`) |
-| `streaming-playlists/`   | HLS playlists + segments                | `streaming-playlists/<id>/...`   | **in use** (P6 transcoding: `master.m3u8` + `<height>p/playlist.m3u8` + `<height>p/seg_NNNNN.ts`; relative URIs so the API proxies them) |
+| `streaming-playlists/`   | HLS playlists + segments (+ VP9 alt)    | `streaming-playlists/<id>/...`   | **in use** (P6 transcoding: `master.m3u8` + `<height>p/playlist.m3u8` + `<height>p/seg_NNNNN.ts`; relative URIs so the API proxies them; the optional progressive VP9/WebM alternate lives at `streaming-playlists/<id>/vp9.webm`, `video_files.kind='webm'`) |
 | `original-video-files/`  | archived original upload (keep-original)| `original-video-files/<id><ext>` | planned (when transcoding + keep-original land) |
-| `previews/`              | large preview images                    | `previews/<id>.jpg`             | planned |
-| `storyboards/`           | scrubbing storyboards                   | `storyboards/<id>.jpg`          | planned |
-| `captions/`              | subtitle/caption files                  | `captions/<id>-<lang>.vtt`      | planned (P13 captions) |
+| `previews/`              | large preview images                    | `previews/<id>.jpg`             | INTENTIONAL_DIFFERENCE — the thumbnail IS the preview; no separate animated preview |
+| `storyboards/`           | scrubbing storyboards + WebVTT map      | `storyboards/<id>.jpg`, `storyboards/<id>.vtt` | **in use** (P6.3: sprite sheet `kind='storyboard'` + WebVTT map `kind='storyboard_vtt'`; served at `/videos/{id}/storyboard.{jpg,vtt}`) |
+| `playlist-thumbnails/`   | playlist cover images (vidra addition)  | `playlist-thumbnails/<id>.<ext>` | **in use** (P5 gap: owner-uploaded playlist cover; `playlists.thumbnail_ext`) |
+| `captions/`              | subtitle/caption files                  | `captions/<id>/<lang>.vtt`      | **in use** (P13 captions; `captions.storage_key`) |
 | `avatars/`               | account/channel avatars                 | `avatars/users/<id><ext>`, `avatars/channels/<id><ext>` | **in use** (P5; `user_images`/`channel_images` tables) |
 | `banners/`               | account/channel banners (vidra addition — PeerTube keeps banners inside `avatars/`; a separate kind dir follows the one-dir-per-kind rule) | `banners/users/<id><ext>`, `banners/channels/<id><ext>` | **in use** (P5) |
 | `exports/`               | account export archives (vidra addition — P4 export; no PeerTube bucket equivalent) | `exports/accounts/<user_id>/<export_id>.json` | **in use** (P4; the `account_exports` table tracks the job + 7-day expiry; the sweeper deletes blob + row) |
@@ -56,3 +57,13 @@ new top-level directory or revert to per-video directories
   share one top-level dir. Because the key varies with the extension, a re-upload that
   changes type deletes the previously recorded object before storing the new one
   (`internal/profileimage`), so no orphan blob is left behind.
+- **Media garbage collection** (`internal/mediagc`, P6.2) sweeps ONLY a fixed set
+  of known prefixes — `web-videos/`, `thumbnails/`, `storyboards/`, `captions/`,
+  `streaming-playlists/`, `playlist-thumbnails/` — deleting objects with no DB
+  reference. The flat prefixes match against the exact keys the DB records; the
+  id-partitioned HLS tree (`streaming-playlists/<id>/…`) is kept per LIVE video id
+  (its segments aren't individually in the DB). GC **never lists or touches** any
+  other prefix (`avatars/`, `banners/`, `exports/`, `uploads/`, `tmp/`, …) — those
+  are managed by their own lifecycles. When adding a new GC-eligible prefix, add it
+  to `sweptPrefixes` AND a reference query, or its objects will be treated as
+  orphans and deleted.

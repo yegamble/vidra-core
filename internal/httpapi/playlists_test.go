@@ -56,7 +56,7 @@ func (f *playlistFakeRepo) GetPlaylistByID(_ context.Context, id uuid.UUID) (sql
 	}
 	return sqlcgen.GetPlaylistByIDRow{
 		ID: p.ID, OwnerID: p.OwnerID, Title: p.Title, Description: p.Description,
-		Visibility: p.Visibility, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+		Visibility: p.Visibility, ThumbnailExt: p.ThumbnailExt, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		VideoCount: f.publicCount(id),
 	}, nil
 }
@@ -67,7 +67,7 @@ func (f *playlistFakeRepo) ListPlaylistsByOwner(_ context.Context, ownerID uuid.
 		if p.OwnerID == ownerID {
 			rows = append(rows, sqlcgen.ListPlaylistsByOwnerRow{
 				ID: p.ID, OwnerID: p.OwnerID, Title: p.Title, Description: p.Description,
-				Visibility: p.Visibility, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+				Visibility: p.Visibility, ThumbnailExt: p.ThumbnailExt, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 				VideoCount: f.publicCount(p.ID),
 			})
 		}
@@ -143,6 +143,20 @@ func (f *playlistFakeRepo) ListPlaylistItemVideoIDs(_ context.Context, playlistI
 
 func (f *playlistFakeRepo) ReorderPlaylistItems(_ context.Context, a sqlcgen.ReorderPlaylistItemsParams) error {
 	f.items[a.PlaylistID] = append([]uuid.UUID(nil), a.VideoIds...)
+	return nil
+}
+
+func (f *playlistFakeRepo) SetPlaylistThumbnail(_ context.Context, a sqlcgen.SetPlaylistThumbnailParams) error {
+	p := f.playlists[a.ID]
+	p.ThumbnailExt = a.ThumbnailExt
+	f.playlists[a.ID] = p
+	return nil
+}
+
+func (f *playlistFakeRepo) ClearPlaylistThumbnail(_ context.Context, id uuid.UUID) error {
+	p := f.playlists[id]
+	p.ThumbnailExt = nil
+	f.playlists[id] = p
 	return nil
 }
 

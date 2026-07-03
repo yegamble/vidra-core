@@ -136,6 +136,9 @@ type videoView struct {
 	// which do not look it up); when set it reports whether a poster image is
 	// available at GET /videos/{id}/thumbnail.
 	HasThumbnail *bool `json:"has_thumbnail,omitempty"`
+	// HasStoryboard is set on the detail endpoint; when true a seek-preview
+	// storyboard is available at GET /videos/{id}/storyboard.jpg (+ .vtt map).
+	HasStoryboard *bool `json:"has_storyboard,omitempty"`
 	// Views is the recorded view count, set on the detail endpoint (omitted on
 	// list/feed views, which do not look it up).
 	Views *int64 `json:"views,omitempty"`
@@ -298,6 +301,8 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	}
 	has := s.videosvc.HasThumbnail(c.Request().Context(), id)
 	view.HasThumbnail = &has
+	hasSB := s.videosvc.HasStoryboard(c.Request().Context(), id)
+	view.HasStoryboard = &hasSB
 	views := s.videosvc.Views(c.Request().Context(), id)
 	view.Views = &views
 	s.attachVideoTags(c.Request().Context(), &view, id)

@@ -152,6 +152,11 @@ same `views`/`has_thumbnail` card data as the feed, so every video grid is consi
 `file` part) stores the original through the storage backend, then finalises the
 video: `draft → processing → published` (or `failed` if a configured media probe
 rejects it). Re-uploading replaces the prior original, and non-owner/unknown → `404`.
+**Malware scanning** (`MALWARE_SCAN_ENABLED=true`, streams the original to the
+clamd at `CLAMAV_ADDR` — the compose `scan` profile ships one): an INFECTED file
+always fails. `MALWARE_SCAN_MODE` decides the fallback on a scan *error*:
+`fail-closed` (default — not published), `fail-open` (published anyway, logged
+loudly), or `quarantine` (parked in the moderator review queue).
 The file extension must be an accepted video container (else `415`) and the body must
 be within `UPLOAD_MAX_SIZE` (else `413`; this route is exempt from the small
 `HTTP_BODY_LIMIT` that guards the JSON API). The stored file is tracked in
@@ -220,11 +225,34 @@ with exponential backoff and dead-letter after 5 attempts. Once the
 segments; all playlist URIs are relative so proxying works). Progressive
 playback of the original remains available regardless.
 
+**VP9 alternate** (`TRANSCODING_VP9_ENABLED=true`, needs transcoding on): the
+transcoder additionally emits a progressive VP9/WebM file at the top ladder rung
+(`libvpx-vp9`/`libopus`, best-effort — a VP9 failure never fails the H.264 HLS).
+It is stored as a `webm` file and surfaced by `GET /api/v1/videos/{id}/download`
+(kind `webm`) and served with Range/206 at `GET /api/v1/videos/{id}/webm`. VP9 is
+a progressive **download alternate** rather than an HLS variant on purpose
+(HLS+VP9 needs fMP4/CMAF with patchy client support). **AV1** is deferred:
+`TRANSCODING_AV1_ENABLED=true` fails config validation with a defer note.
+
 During finalisation an FFmpeg-backed thumbnailer (when `ffmpeg` is on `PATH`)
 extracts a poster frame and stores it as a `thumbnail` file;
 `GET /api/v1/videos/{id}/thumbnail` serves the JPEG (same visibility as the
 detail endpoint), and the detail response carries a `has_thumbnail` flag.
-Thumbnail generation is best-effort — a failure never blocks publishing.
+Thumbnail generation is best-effort — a failure never blocks publishing. The
+**preview** is this thumbnail (there is no separate animated preview).
+
+**Storyboard** (seek-preview sprite sheet; needs `ffmpeg` + `ffprobe`): a
+sprite sheet of up to 100 160×90 tiles plus a WebVTT sprite map are generated
+best-effort during finalisation and stored at `storyboards/<id>.{jpg,vtt}`.
+`GET /api/v1/videos/{id}/storyboard.jpg` and `…/storyboard.vtt` serve them
+(same visibility as the detail endpoint), and the detail carries a
+`has_storyboard` flag.
+
+**Media garbage collection**: `POST /api/v1/admin/media/gc` (admin) lists stored
+objects under the known media prefixes and deletes those with no database
+reference. It defaults to a dry run (`{"dry_run":false}` deletes); it never
+lists or touches an unknown prefix, and it is audited. A daily in-process worker
+runs the same sweep.
 
 `POST /api/v1/videos/{id}/view` records a view (same visibility as detail; only
 published videos accrue views), de-duplicated per viewer per hour in Redis

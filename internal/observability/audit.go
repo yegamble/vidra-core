@@ -50,6 +50,7 @@ const (
 	ActionAdminUserUpdate       = "admin.user.update"
 	ActionVideoDelete           = "content.video.delete"
 	ActionChannelDelete         = "content.channel.delete"
+	ActionMediaGC               = "admin.media.gc"
 	// E2EE one-time-key claims are audited with COUNTS ONLY (never key
 	// material): key exhaustion/abuse is a security-relevant signal.
 	ActionE2EEClaim = "e2ee.otk.claim"

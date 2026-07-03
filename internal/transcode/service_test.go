@@ -19,6 +19,7 @@ type fakeRepo struct {
 	jobs       map[uuid.UUID]*sqlcgen.TranscodeJob
 	playlists  map[uuid.UUID]sqlcgen.StreamingPlaylist
 	renditions map[uuid.UUID][]sqlcgen.VideoRendition
+	videoFiles map[uuid.UUID][]sqlcgen.VideoFile
 }
 
 func newFakeRepo() *fakeRepo {
@@ -26,7 +27,29 @@ func newFakeRepo() *fakeRepo {
 		jobs:       map[uuid.UUID]*sqlcgen.TranscodeJob{},
 		playlists:  map[uuid.UUID]sqlcgen.StreamingPlaylist{},
 		renditions: map[uuid.UUID][]sqlcgen.VideoRendition{},
+		videoFiles: map[uuid.UUID][]sqlcgen.VideoFile{},
 	}
+}
+
+func (f *fakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error) {
+	vf := sqlcgen.VideoFile{
+		ID: uuid.New(), VideoID: a.VideoID, Kind: a.Kind, StorageKey: a.StorageKey,
+		ContentType: a.ContentType, OriginalName: a.OriginalName, SizeBytes: a.SizeBytes,
+	}
+	f.videoFiles[a.VideoID] = append(f.videoFiles[a.VideoID], vf)
+	return vf, nil
+}
+
+func (f *fakeRepo) DeleteVideoFilesByVideoAndKind(_ context.Context, a sqlcgen.DeleteVideoFilesByVideoAndKindParams) error {
+	cur := f.videoFiles[a.VideoID]
+	out := cur[:0:0]
+	for _, vf := range cur {
+		if vf.Kind != a.Kind {
+			out = append(out, vf)
+		}
+	}
+	f.videoFiles[a.VideoID] = out
+	return nil
 }
 
 func (f *fakeRepo) EnqueueTranscodeJob(_ context.Context, a sqlcgen.EnqueueTranscodeJobParams) error {
@@ -181,6 +204,51 @@ func TestDrainJobsSuccessStoresPlaylistAndRenditions(t *testing.T) {
 	// Nothing left due.
 	if n, _ := svc.DrainJobs(context.Background(), 10); n != 0 {
 		t.Errorf("second drain completed %d jobs, want 0", n)
+	}
+}
+
+func TestDrainJobsStoresVP9WebMAlternate(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	webmKey := "streaming-playlists/" + videoID.String() + "/vp9.webm"
+	tc := &fakeTranscoder{res: media.HLSResult{
+		MasterKey:  "streaming-playlists/" + videoID.String() + "/master.m3u8",
+		Renditions: []media.HLSRendition{{Height: 360, Width: 640, KeyPrefix: "streaming-playlists/" + videoID.String() + "/360p"}},
+		WebMKey:    webmKey,
+		WebMHeight: 360,
+		WebMWidth:  640,
+		WebMBytes:  4096,
+	}}
+	svc := NewService(repo, tc)
+	if err := svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4"); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
+	}
+	files := repo.videoFiles[videoID]
+	if len(files) != 1 {
+		t.Fatalf("stored %d video files, want 1 (the webm alternate)", len(files))
+	}
+	if got := files[0]; got.Kind != "webm" || got.StorageKey != webmKey || got.ContentType != media.WebMContentType || got.SizeBytes != 4096 {
+		t.Errorf("webm video_file = %+v, want kind=webm key=%q ct=%q size=4096", got, webmKey, media.WebMContentType)
+	}
+}
+
+func TestDrainJobsNoWebMWhenAbsent(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTranscoder{res: media.HLSResult{
+		MasterKey:  "streaming-playlists/" + videoID.String() + "/master.m3u8",
+		Renditions: []media.HLSRendition{{Height: 360, Width: 640, KeyPrefix: "streaming-playlists/" + videoID.String() + "/360p"}},
+	}}
+	svc := NewService(repo, tc)
+	_ = svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4")
+	if _, err := svc.DrainJobs(context.Background(), 10); err != nil {
+		t.Fatalf("DrainJobs: %v", err)
+	}
+	if len(repo.videoFiles[videoID]) != 0 {
+		t.Errorf("stored webm video_file when VP9 was off: %+v", repo.videoFiles[videoID])
 	}
 }
 

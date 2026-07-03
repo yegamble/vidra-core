@@ -272,13 +272,14 @@ type PasswordResetToken struct {
 }
 
 type Playlist struct {
-	ID          uuid.UUID `json:"id"`
-	OwnerID     uuid.UUID `json:"owner_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Visibility  string    `json:"visibility"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           uuid.UUID `json:"id"`
+	OwnerID      uuid.UUID `json:"owner_id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Visibility   string    `json:"visibility"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	ThumbnailExt *string   `json:"thumbnail_ext"`
 }
 
 type PlaylistItem struct {

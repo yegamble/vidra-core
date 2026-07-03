@@ -85,6 +85,17 @@ func (s *Server) handleGetVideoDownloads(c echo.Context) error {
 		files = append(files, entry)
 	}
 
+	// Progressive VP9/WebM alternate (TRANSCODING_VP9_ENABLED), when produced.
+	if f, ferr := s.videosvc.FileForView(ctx, id, viewerID, authed, "webm"); ferr == nil {
+		files = append(files, videoDownloadFileView{
+			Kind:         "webm",
+			URL:          "/api/v1/videos/" + id.String() + "/webm",
+			ContentType:  f.ContentType,
+			SizeBytes:    f.SizeBytes,
+			OriginalName: f.OriginalName,
+		})
+	}
+
 	// Ready HLS renditions (variant playlists; players fetch segments relative
 	// to them). Mirrors the detail's hls_url gating: only a ready playlist.
 	if s.transcodesvc != nil {
@@ -102,4 +113,25 @@ func (s *Server) handleGetVideoDownloads(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, videoDownloadResponse{Files: files})
+}
+
+// handleStreamVideoWebM streams a video's progressive VP9/WebM alternate with
+// Range/206 support. Same visibility as /original; absent (VP9 off or not yet
+// produced) is 404.
+func (s *Server) handleStreamVideoWebM(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if hidden, err := s.videoHiddenFromViewer(c, id); err != nil {
+		return err
+	} else if hidden {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	viewerID, _, authed := principalFromContext(c)
+	f, err := s.videosvc.FileForView(c.Request().Context(), id, viewerID, authed, "webm")
+	if err != nil {
+		return videoError(err)
+	}
+	return s.serveStoredObject(c, f.StorageKey, f.ContentType)
 }

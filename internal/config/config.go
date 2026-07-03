@@ -80,12 +80,29 @@ type Config struct {
 	// ClamAVAddr is the clamd TCP address (host:port) used when MalwareScanEnabled.
 	ClamAVAddr string
 
+	// MalwareScanMode is the ClamAV fallback policy applied when a scan cannot
+	// complete (a dial/protocol/IO error): "fail-closed" (default — unscannable
+	// media is not published), "fail-open" (publish anyway, logged loudly), or
+	// "quarantine" (park for moderator review). An INFECTED result always fails
+	// the publish regardless of mode. Validated to one of the three.
+	MalwareScanMode string
+
 	// TranscodingEnabled turns on the HLS transcoding pipeline: publishing a
 	// video enqueues a durable transcode job and an in-process worker produces
 	// an H.264/AAC HLS ladder served at /api/v1/videos/{id}/hls/*. Requires
 	// ffmpeg + ffprobe on PATH (detected at boot; a missing binary logs a
 	// warning and leaves transcoding off). Default false.
 	TranscodingEnabled bool
+
+	// TranscodingVP9Enabled additionally emits a progressive VP9/WebM alternate
+	// alongside the H.264 HLS ladder (surfaced via the video /download list).
+	// Only meaningful with TranscodingEnabled. Default false.
+	TranscodingVP9Enabled bool
+
+	// TranscodingAV1Enabled is accepted only as false: AV1 transcoding is
+	// deferred (see fix_plan P6.3, mirrors the IPFS-storage defer). Setting it
+	// true fails config validation with a documented defer note.
+	TranscodingAV1Enabled bool
 
 	// FederationKeyKEK is the base64 (standard) 32-byte key-encryption key used to
 	// envelope-encrypt actor private keys at rest (AES-256-GCM via internal/secretbox).
@@ -284,7 +301,10 @@ func Load() (*Config, error) {
 		TOTPIssuer:                  getEnv("TOTP_ISSUER", ""),
 		MalwareScanEnabled:          getEnvBool("MALWARE_SCAN_ENABLED", false),
 		ClamAVAddr:                  getEnv("CLAMAV_ADDR", ""),
+		MalwareScanMode:             getEnv("MALWARE_SCAN_MODE", "fail-closed"),
 		TranscodingEnabled:          getEnvBool("TRANSCODING_ENABLED", false),
+		TranscodingVP9Enabled:       getEnvBool("TRANSCODING_VP9_ENABLED", false),
+		TranscodingAV1Enabled:       getEnvBool("TRANSCODING_AV1_ENABLED", false),
 		LiveRTMPURL:                 getEnv("LIVE_RTMP_URL", ""),
 		LiveIngestSecret:            getEnv("LIVE_INGEST_SECRET", ""),
 		InstanceDescription:         getEnv("INSTANCE_DESCRIPTION", ""),
@@ -501,6 +521,14 @@ func (c *Config) validate() error {
 	}
 	if c.MalwareScanEnabled && strings.TrimSpace(c.ClamAVAddr) == "" {
 		return fmt.Errorf("config: CLAMAV_ADDR is required when MALWARE_SCAN_ENABLED=true")
+	}
+	switch c.MalwareScanMode {
+	case "", "fail-closed", "fail-open", "quarantine": // "" = default fail-closed
+	default:
+		return fmt.Errorf("config: MALWARE_SCAN_MODE %q must be one of fail-closed, fail-open, quarantine", c.MalwareScanMode)
+	}
+	if c.TranscodingAV1Enabled {
+		return fmt.Errorf("config: TRANSCODING_AV1_ENABLED is not supported yet — AV1 transcoding is deferred (see fix_plan P6.3); leave it false")
 	}
 	if c.MFAKeyKEK != "" {
 		if k, err := base64.StdEncoding.DecodeString(c.MFAKeyKEK); err != nil || len(k) != 32 {

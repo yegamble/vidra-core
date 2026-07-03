@@ -1,12 +1,12 @@
 -- name: CreatePlaylist :one
 INSERT INTO playlists (owner_id, title, description, visibility)
 VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, title, description, visibility, created_at, updated_at;
+RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext;
 
 -- name: GetPlaylistByID :one
 -- A single playlist with its public+published video count (matches what
 -- ListPlaylistItems returns, so the count and the listed items agree).
-SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.created_at, p.updated_at,
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
         WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
@@ -15,7 +15,7 @@ WHERE p.id = $1;
 
 -- name: ListPlaylistsByOwner :many
 -- The user's playlists, newest first, each with its public+published video count.
-SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.created_at, p.updated_at,
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
        (SELECT count(*) FROM playlist_items pi
         JOIN videos v ON v.id = pi.video_id
         WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
@@ -31,7 +31,15 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     visibility  = COALESCE(sqlc.narg('visibility'), visibility),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, owner_id, title, description, visibility, created_at, updated_at;
+RETURNING id, owner_id, title, description, visibility, created_at, updated_at, thumbnail_ext;
+
+-- name: SetPlaylistThumbnail :exec
+-- Record the extension of an owner-uploaded playlist cover (blob stored at
+-- playlist-thumbnails/<id>.<ext>). Owner authorization is enforced in the service.
+UPDATE playlists SET thumbnail_ext = $2, updated_at = now() WHERE id = $1;
+
+-- name: ClearPlaylistThumbnail :exec
+UPDATE playlists SET thumbnail_ext = NULL, updated_at = now() WHERE id = $1;
 
 -- name: DeletePlaylist :exec
 DELETE FROM playlists WHERE id = $1;
