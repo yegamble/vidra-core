@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -30,12 +31,13 @@ var validVideoPrivacy = map[string]bool{"public": true, "unlisted": true, "priva
 
 // createVideoRequest is the POST /api/v1/channels/{handle}/videos body.
 type createVideoRequest struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Privacy     string `json:"privacy"`
-	Category    string `json:"category"`
-	Language    string `json:"language"`
-	License     string `json:"license"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Privacy     string   `json:"privacy"`
+	Category    string   `json:"category"`
+	Language    string   `json:"language"`
+	License     string   `json:"license"`
+	Tags        []string `json:"tags"`
 }
 
 func (r createVideoRequest) Validate() []FieldError {
@@ -53,6 +55,26 @@ func (r createVideoRequest) Validate() []FieldError {
 		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private"})
 	}
 	fes = append(fes, validateTaxonomy(r.Category, r.Language, r.License)...)
+	fes = append(fes, validateTags(r.Tags)...)
+	return fes
+}
+
+// validateTags enforces the free-form tag limits (product-decisions §18): at
+// most video.MaxTagsPerVideo distinct tags after normalization, each at most
+// video.MaxTagLen characters. Empty/duplicate entries are dropped silently by
+// normalization, not rejected.
+func validateTags(tags []string) []FieldError {
+	var fes []FieldError
+	normalized := video.NormalizeTags(tags)
+	if len(normalized) > video.MaxTagsPerVideo {
+		fes = append(fes, FieldError{Field: "tags", Message: "at most 5 tags are allowed"})
+	}
+	for _, t := range normalized {
+		if len(t) > video.MaxTagLen {
+			fes = append(fes, FieldError{Field: "tags", Message: "each tag must be at most 50 characters"})
+			break
+		}
+	}
 	return fes
 }
 
@@ -105,6 +127,9 @@ type videoView struct {
 	Category *string `json:"category,omitempty"`
 	Language *string `json:"language,omitempty"`
 	License  *string `json:"license,omitempty"`
+	// Tags is the video's free-form tag set (lowercased, alphabetical).
+	// Populated on the create/update/detail views; omitted on list/feed views.
+	Tags []string `json:"tags,omitempty"`
 	// HLSURL is the master-playlist path for HLS playback, set on the detail
 	// endpoint only once the transcoded playlist is ready (omitted otherwise).
 	// Renditions lists the available ladder rungs alongside it.
@@ -173,11 +198,22 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 		Category:    in.Category,
 		Language:    in.Language,
 		License:     in.License,
+		Tags:        in.Tags,
 	})
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusCreated, newVideoView(v))
+	view := newVideoView(v)
+	s.attachVideoTags(ctx, &view, v.ID)
+	return c.JSON(http.StatusCreated, view)
+}
+
+// attachVideoTags populates view.Tags from the stored tag set (best-effort: a
+// lookup failure leaves tags absent rather than failing the request).
+func (s *Server) attachVideoTags(ctx context.Context, view *videoView, videoID uuid.UUID) {
+	if tags, err := s.videosvc.Tags(ctx, videoID); err == nil {
+		view.Tags = tags
+	}
 }
 
 // handleGetVideo returns a video by id. Runs behind optionalAuth: public and
@@ -217,6 +253,7 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	view.HasThumbnail = &has
 	views := s.videosvc.Views(c.Request().Context(), id)
 	view.Views = &views
+	s.attachVideoTags(c.Request().Context(), &view, id)
 	view.HLSURL, view.Renditions = s.hlsDetail(c, id)
 	return c.JSON(http.StatusOK, view)
 }
@@ -257,8 +294,12 @@ func feedItemView(it video.FeedItem) videoView {
 
 // handleListPublicVideos returns the public cross-channel feed. No auth
 // required. Ordered by ?sort (recent|popular|trending, default recent; unknown
-// values fall back to recent). Each item carries its view count and whether a
-// poster image exists. Pagination via ?limit (1–100, default 20) and ?offset (>=0).
+// values fall back to recent). Optional filters: ?tag (free-form tag, matched
+// case-insensitively against the stored lowercased set), ?category and
+// ?language (taxonomy ids from GET /videos/config; unknown values are 422 —
+// the frontend filter-controls contract). Each item carries its view count and
+// whether a poster image exists. Pagination via ?limit (1–100, default 20) and
+// ?offset (>=0).
 func (s *Server) handleListPublicVideos(c echo.Context) error {
 	sort := video.NormalizeFeedSort(c.QueryParam("sort"))
 	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
@@ -266,8 +307,26 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 	if offset < 0 {
 		offset = 0
 	}
+	filter := video.FeedFilter{
+		Tag:      strings.TrimSpace(c.QueryParam("tag")),
+		Category: strings.TrimSpace(c.QueryParam("category")),
+		Language: strings.TrimSpace(c.QueryParam("language")),
+	}
+	var fes []FieldError
+	if len(filter.Tag) > video.MaxTagLen {
+		fes = append(fes, FieldError{Field: "tag", Message: "must be at most 50 characters"})
+	}
+	if filter.Category != "" && !video.IsCategory(filter.Category) {
+		fes = append(fes, FieldError{Field: "category", Message: "unknown category"})
+	}
+	if filter.Language != "" && !video.IsLanguage(filter.Language) {
+		fes = append(fes, FieldError{Field: "language", Message: "unknown language"})
+	}
+	if len(fes) > 0 {
+		return &ValidationError{Fields: fes}
+	}
 	viewerID, _, authed := principalFromContext(c)
-	items, err := s.videosvc.ListPublic(c.Request().Context(), sort, viewerID, authed, int32(limit), int32(offset))
+	items, err := s.videosvc.ListPublic(c.Request().Context(), sort, filter, viewerID, authed, int32(limit), int32(offset))
 	if err != nil {
 		return err
 	}
@@ -392,17 +451,18 @@ func (s *Server) handleListChannelVideos(c echo.Context) error {
 // updateVideoRequest is the PATCH /api/v1/videos/{id} body. Fields are optional;
 // only those present are changed.
 type updateVideoRequest struct {
-	Title       *string `json:"title"`
-	Description *string `json:"description"`
-	Privacy     *string `json:"privacy"`
-	Category    *string `json:"category"`
-	Language    *string `json:"language"`
-	License     *string `json:"license"`
+	Title       *string   `json:"title"`
+	Description *string   `json:"description"`
+	Privacy     *string   `json:"privacy"`
+	Category    *string   `json:"category"`
+	Language    *string   `json:"language"`
+	License     *string   `json:"license"`
+	Tags        *[]string `json:"tags"`
 }
 
 func (r updateVideoRequest) Validate() []FieldError {
 	if r.Title == nil && r.Description == nil && r.Privacy == nil &&
-		r.Category == nil && r.Language == nil && r.License == nil {
+		r.Category == nil && r.Language == nil && r.License == nil && r.Tags == nil {
 		return []FieldError{{Field: "title", Message: "at least one updatable field is required"}}
 	}
 	var fes []FieldError
@@ -431,6 +491,9 @@ func (r updateVideoRequest) Validate() []FieldError {
 	}
 	if r.License != nil && *r.License == "" {
 		fes = append(fes, FieldError{Field: "license", Message: "unknown license"})
+	}
+	if r.Tags != nil {
+		fes = append(fes, validateTags(*r.Tags)...)
 	}
 	return fes
 }
@@ -465,11 +528,14 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		Category:    in.Category,
 		Language:    in.Language,
 		License:     in.License,
+		Tags:        in.Tags,
 	})
 	if err != nil {
 		return videoError(err)
 	}
-	return c.JSON(http.StatusOK, newVideoView(v))
+	view := newVideoView(v)
+	s.attachVideoTags(c.Request().Context(), &view, v.ID)
+	return c.JSON(http.StatusOK, view)
 }
 
 // handleDeleteVideo deletes a video owned by the authenticated user.

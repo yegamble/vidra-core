@@ -373,6 +373,12 @@ type VideoRendition struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type VideoTag struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	Tag       string    `json:"tag"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type VideoViewCount struct {
 	VideoID   uuid.UUID `json:"video_id"`
 	Views     int64     `json:"views"`

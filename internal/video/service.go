@@ -81,6 +81,9 @@ type Repository interface {
 	GetCaptionByLang(ctx context.Context, arg sqlcgen.GetCaptionByLangParams) (sqlcgen.Caption, error)
 	DeleteCaption(ctx context.Context, arg sqlcgen.DeleteCaptionParams) (int64, error)
 	SetVideoState(ctx context.Context, arg sqlcgen.SetVideoStateParams) (sqlcgen.Video, error)
+	DeleteVideoTags(ctx context.Context, videoID uuid.UUID) error
+	InsertVideoTags(ctx context.Context, arg sqlcgen.InsertVideoTagsParams) error
+	ListVideoTags(ctx context.Context, videoID uuid.UUID) ([]string, error)
 	UpsertVideoMetadata(ctx context.Context, arg sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error)
 	GetVideoMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error)
 	IncrementVideoViews(ctx context.Context, videoID uuid.UUID) (int64, error)
@@ -228,12 +231,15 @@ type CreateInput struct {
 	Category string
 	Language string
 	License  string
+	// Tags is the video's free-form tag set (the HTTP layer validates count and
+	// length limits; normalization happens here via NormalizeTags).
+	Tags []string
 }
 
 // CreateDraft creates a new draft video under the given channel. Ownership is
 // enforced by the caller (the HTTP layer checks channel ownership first).
 func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in CreateInput) (sqlcgen.Video, error) {
-	return s.repo.CreateVideo(ctx, sqlcgen.CreateVideoParams{
+	v, err := s.repo.CreateVideo(ctx, sqlcgen.CreateVideoParams{
 		ChannelID:   channelID,
 		Title:       strings.TrimSpace(in.Title),
 		Description: strings.TrimSpace(in.Description),
@@ -242,6 +248,44 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 		Language:    nilIfEmpty(in.Language),
 		License:     nilIfEmpty(in.License),
 	})
+	if err != nil {
+		return sqlcgen.Video{}, err
+	}
+	if tags := NormalizeTags(in.Tags); len(tags) > 0 {
+		if err := s.repo.InsertVideoTags(ctx, sqlcgen.InsertVideoTagsParams{VideoID: v.ID, Tags: tags}); err != nil {
+			return sqlcgen.Video{}, err
+		}
+	}
+	return v, nil
+}
+
+// MaxTagsPerVideo and MaxTagLen are the free-form tag limits (product-decisions
+// §18): at most 5 tags of at most 50 characters each (after normalization).
+const (
+	MaxTagsPerVideo = 5
+	MaxTagLen       = 50
+)
+
+// NormalizeTags lowercases and trims tags, dropping empties and duplicates
+// while preserving first-seen order. It is the single normalization used on
+// both write paths, so stored tags are always exact-matchable lowercased.
+func NormalizeTags(tags []string) []string {
+	seen := make(map[string]bool, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// Tags returns a video's tag set (alphabetical; empty when none).
+func (s *Service) Tags(ctx context.Context, videoID uuid.UUID) ([]string, error) {
+	return s.repo.ListVideoTags(ctx, videoID)
 }
 
 // UploadInput is a video's original file as read from the request: the declared
@@ -607,6 +651,9 @@ type UpdateInput struct {
 	Category *string
 	Language *string
 	License  *string
+	// Tags: nil leaves the tag set unchanged; a non-nil slice replaces it in
+	// full (an empty slice clears all tags).
+	Tags *[]string
 }
 
 // Update changes a video's mutable metadata. Only the owner may update; a
@@ -628,10 +675,24 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 		Language:    in.Language,
 		License:     in.License,
 	})
-	if err == nil && s.onUpdate != nil {
+	if err != nil {
+		return sqlcgen.Video{}, err
+	}
+	if in.Tags != nil {
+		// Full replace: clear then insert the normalized set.
+		if err := s.repo.DeleteVideoTags(ctx, id); err != nil {
+			return sqlcgen.Video{}, err
+		}
+		if tags := NormalizeTags(*in.Tags); len(tags) > 0 {
+			if err := s.repo.InsertVideoTags(ctx, sqlcgen.InsertVideoTagsParams{VideoID: id, Tags: tags}); err != nil {
+				return sqlcgen.Video{}, err
+			}
+		}
+	}
+	if s.onUpdate != nil {
 		s.onUpdate(ctx, id)
 	}
-	return updated, err
+	return updated, nil
 }
 
 // Delete removes a video. Only the owner may delete; non-owner → ErrForbidden,
@@ -721,13 +782,26 @@ func NormalizeFeedSort(sort string) string {
 	return "recent"
 }
 
+// FeedFilter narrows the public feed. Zero values mean "no filter". Tag is
+// matched exactly against the stored (lowercased) tag set; Category and
+// Language are taxonomy ids the HTTP layer has already validated.
+type FeedFilter struct {
+	Tag      string
+	Category string
+	Language string
+}
+
 // ListPublic returns the cross-channel public feed in the requested order
-// (recent|popular|trending; unknown → recent), each item carrying its view
-// count and poster availability. The caller clamps limit/offset.
-func (s *Service) ListPublic(ctx context.Context, sort string, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
+// (recent|popular|trending; unknown → recent), optionally narrowed by filter,
+// each item carrying its view count and poster availability. The caller clamps
+// limit/offset.
+func (s *Service) ListPublic(ctx context.Context, sort string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
 	rows, err := s.repo.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
 		Sort:         NormalizeFeedSort(sort),
 		ViewerID:     pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
+		Tag:          nilIfEmpty(strings.ToLower(filter.Tag)),
+		Category:     nilIfEmpty(filter.Category),
+		Language:     nilIfEmpty(filter.Language),
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})

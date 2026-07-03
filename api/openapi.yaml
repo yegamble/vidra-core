@@ -1362,7 +1362,10 @@ paths:
         (drafts/processing/failed are excluded). Each item carries its view count
         and whether a poster image exists. Auth is optional: an authenticated
         viewer's muted accounts' videos are hidden from the feed (per-viewer);
-        an anonymous viewer sees all. Ordered by sort and paginated with limit
+        an anonymous viewer sees all. Optional filters narrow the feed: tag
+        (free-form tag, matched case-insensitively against the stored lowercased
+        set), category and language (taxonomy ids from GET /videos/config —
+        unknown values are 422). Ordered by sort and paginated with limit
         (1–100, default 20) and offset (>= 0).
       tags: [videos]
       security:
@@ -1379,6 +1382,31 @@ paths:
             type: string
             enum: [recent, popular, trending]
             default: recent
+        - name: tag
+          in: query
+          required: false
+          description: >-
+            Only videos carrying this free-form tag (case-insensitive exact
+            match; at most 50 characters).
+          schema:
+            type: string
+            maxLength: 50
+        - name: category
+          in: query
+          required: false
+          description: >-
+            Only videos with this subject-category id (see GET /videos/config).
+            Unknown value -> 422.
+          schema:
+            type: string
+        - name: language
+          in: query
+          required: false
+          description: >-
+            Only videos with this content-language code (see GET /videos/config).
+            Unknown value -> 422.
+          schema:
+            type: string
         - name: limit
           in: query
           required: false
@@ -1401,6 +1429,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VideoFeedResponse"
+        "422":
+          description: Unknown category/language, or an over-long tag.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/config:
     get:
       operationId: getVideoConfig
@@ -1423,10 +1457,12 @@ paths:
   /api/v1/videos/search:
     get:
       operationId: searchVideos
-      summary: Search public videos by title
+      summary: Search public videos by title or tag
       description: >-
         Fuzzy (trigram) search over public, published video titles, ranked by
-        similarity then recency. Each result carries its view count and whether a
+        similarity then recency. A video also matches when one of its free-form
+        tags contains the query (case-insensitive); tag-only matches rank after
+        title matches. Each result carries its view count and whether a
         poster image exists. Auth is optional: an authenticated viewer's muted
         accounts' videos are hidden from results (per-viewer); an anonymous viewer
         sees all. Requires a non-empty q (<= 100 chars); paginated with limit
@@ -5334,6 +5370,15 @@ components:
           description: >-
             Optional content-license id from GET /videos/config; omitted when
             unset.
+        tags:
+          type: array
+          description: >-
+            The video's free-form tags (lowercased, alphabetical; at most 5).
+            Present on the create/update/detail views; omitted when empty and
+            on list/feed views.
+          items:
+            type: string
+            maxLength: 50
         hls_url:
           type: string
           description: >-
@@ -5423,6 +5468,15 @@ components:
         license:
           type: string
           description: Optional content-license id (see GET /videos/config). Unknown value -> 422.
+        tags:
+          type: array
+          description: >-
+            Free-form tags. Lowercased, trimmed, and deduped server-side; at
+            most 5 distinct tags of at most 50 characters each -> 422 otherwise.
+          maxItems: 5
+          items:
+            type: string
+            maxLength: 50
     UpdateVideoRequest:
       type: object
       description: Partial update; provide at least one field.
@@ -5446,6 +5500,15 @@ components:
         license:
           type: string
           description: Set the content-license id (see GET /videos/config). Unknown/empty value -> 422.
+        tags:
+          type: array
+          description: >-
+            Replaces the video's whole tag set (an empty array clears it; omit
+            the field to leave tags unchanged). Same limits as create.
+          maxItems: 5
+          items:
+            type: string
+            maxLength: 50
     Caption:
       type: object
       description: A WebVTT caption track's metadata (the file is fetched separately).

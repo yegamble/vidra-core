@@ -72,6 +72,8 @@ ORDER BY v.created_at DESC;
 --   recent   -> newest first (the NULL CASE terms fall through to created_at)
 --   popular  -> most all-time views first
 --   trending -> views decayed by age (Hacker-News-style gravity)
+-- Optional filters (NULL = off): tag (exact, tags are stored lowercased),
+-- category, and language (taxonomy ids; validated by the HTTP layer).
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,
        COALESCE(vc.views, 0)::bigint AS views,
@@ -91,6 +93,11 @@ WHERE v.privacy = 'public' AND v.state = 'published'
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
   )
+  AND (sqlc.narg('tag')::text IS NULL OR EXISTS (
+      SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = sqlc.narg('tag')
+  ))
+  AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
+  AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
 ORDER BY
     CASE WHEN sqlc.arg('sort')::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
     CASE WHEN sqlc.arg('sort')::text = 'trending'
@@ -129,7 +136,9 @@ ORDER BY v.created_at DESC, v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: SearchPublicVideos :many
--- Public, published title search with discovery-card data.
+-- Public, published title search with discovery-card data. A video also
+-- matches when one of its (lowercased) tags contains the query substring;
+-- ranking stays title-similarity first, so tag-only matches sort later.
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,
        COALESCE(vc.views, 0)::bigint AS views,
@@ -149,7 +158,11 @@ WHERE v.privacy = 'public' AND v.state = 'published'
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
   )
-  AND v.title ILIKE '%' || sqlc.arg('query') || '%'
+  AND (v.title ILIKE '%' || sqlc.arg('query') || '%'
+       OR EXISTS (
+           SELECT 1 FROM video_tags t
+           WHERE t.video_id = v.id AND t.tag ILIKE '%' || sqlc.arg('query') || '%'
+       ))
 ORDER BY similarity(v.title, sqlc.arg('query')) DESC, v.created_at DESC, v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 

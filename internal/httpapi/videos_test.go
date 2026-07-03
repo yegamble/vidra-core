@@ -52,6 +52,56 @@ type videoFakeRepo struct {
 	saved    map[string]time.Time       // "userID|videoID" -> saved-at
 	history  map[string]historyMark     // "userID|videoID" -> resume position + last-watched
 	captions map[string]sqlcgen.Caption // "videoID|lang" -> caption
+	tags     map[uuid.UUID][]string     // video ID -> normalized tag set
+}
+
+func (f *videoFakeRepo) DeleteVideoTags(_ context.Context, videoID uuid.UUID) error {
+	delete(f.tags, videoID)
+	return nil
+}
+
+func (f *videoFakeRepo) InsertVideoTags(_ context.Context, a sqlcgen.InsertVideoTagsParams) error {
+	if f.tags == nil {
+		f.tags = map[uuid.UUID][]string{}
+	}
+	existing := map[string]bool{}
+	for _, t := range f.tags[a.VideoID] {
+		existing[t] = true
+	}
+	for _, t := range a.Tags {
+		if !existing[t] {
+			f.tags[a.VideoID] = append(f.tags[a.VideoID], t)
+			existing[t] = true
+		}
+	}
+	return nil
+}
+
+func (f *videoFakeRepo) ListVideoTags(_ context.Context, videoID uuid.UUID) ([]string, error) {
+	out := append([]string(nil), f.tags[videoID]...)
+	sort.Strings(out)
+	return out, nil
+}
+
+// hasTag mirrors the feed query's exact-match tag EXISTS clause.
+func (f *videoFakeRepo) hasTag(videoID uuid.UUID, tag string) bool {
+	for _, t := range f.tags[videoID] {
+		if t == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// tagMatches mirrors the search query's substring tag clause (tags are stored
+// lowercased, the query is matched case-insensitively).
+func (f *videoFakeRepo) tagMatches(videoID uuid.UUID, q string) bool {
+	for _, t := range f.tags[videoID] {
+		if strings.Contains(t, strings.ToLower(q)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *videoFakeRepo) UpsertCaption(_ context.Context, a sqlcgen.UpsertCaptionParams) (sqlcgen.Caption, error) {
@@ -425,7 +475,8 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 	}
 	var all []sqlcgen.SearchPublicVideosRow
 	for _, r := range f.videos {
-		if r.Privacy == "public" && r.State == "published" && strings.Contains(strings.ToLower(r.Title), q) &&
+		if r.Privacy == "public" && r.State == "published" &&
+			(strings.Contains(strings.ToLower(r.Title), q) || f.tagMatches(r.ID, q)) &&
 			!f.mutedFromFeed(a.ViewerID, r.ChannelID) {
 			all = append(all, sqlcgen.SearchPublicVideosRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
@@ -520,6 +571,15 @@ func (f *videoFakeRepo) mutedFromFeed(viewer pgtype.UUID, channelID uuid.UUID) b
 func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error) {
 	var rows []sqlcgen.ListPublicVideosSortedRow
 	for _, r := range f.videos {
+		if a.Tag != nil && !f.hasTag(r.ID, *a.Tag) {
+			continue
+		}
+		if a.Category != nil && (r.Category == nil || *r.Category != *a.Category) {
+			continue
+		}
+		if a.Language != nil && (r.Language == nil || *r.Language != *a.Language) {
+			continue
+		}
 		if r.Privacy == "public" && r.State == "published" && !f.mutedFromFeed(a.ViewerID, r.ChannelID) {
 			ch, cn := f.channelInfo(r.ChannelID)
 			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{

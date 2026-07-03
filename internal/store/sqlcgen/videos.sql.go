@@ -331,18 +331,26 @@ WHERE v.privacy = 'public' AND v.state = 'published'
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
   )
+  AND ($2::text IS NULL OR EXISTS (
+      SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $2
+  ))
+  AND ($3::text IS NULL OR v.category = $3)
+  AND ($4::text IS NULL OR v.language = $4)
 ORDER BY
-    CASE WHEN $2::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
-    CASE WHEN $2::text = 'trending'
+    CASE WHEN $5::text = 'popular' THEN COALESCE(vc.views, 0) END DESC,
+    CASE WHEN $5::text = 'trending'
          THEN COALESCE(vc.views, 0)::float8
               / power(EXTRACT(EPOCH FROM (now() - v.created_at)) / 3600.0 + 2.0, 1.5)
     END DESC,
     v.created_at DESC, v.id DESC
-LIMIT $4 OFFSET $3
+LIMIT $7 OFFSET $6
 `
 
 type ListPublicVideosSortedParams struct {
 	ViewerID     pgtype.UUID `json:"viewer_id"`
+	Tag          *string     `json:"tag"`
+	Category     *string     `json:"category"`
+	Language     *string     `json:"language"`
 	Sort         string      `json:"sort"`
 	ResultOffset int32       `json:"result_offset"`
 	ResultLimit  int32       `json:"result_limit"`
@@ -370,9 +378,15 @@ type ListPublicVideosSortedRow struct {
 //	recent   -> newest first (the NULL CASE terms fall through to created_at)
 //	popular  -> most all-time views first
 //	trending -> views decayed by age (Hacker-News-style gravity)
+//
+// Optional filters (NULL = off): tag (exact, tags are stored lowercased),
+// category, and language (taxonomy ids; validated by the HTTP layer).
 func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVideosSortedParams) ([]ListPublicVideosSortedRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosSorted,
 		arg.ViewerID,
+		arg.Tag,
+		arg.Category,
+		arg.Language,
 		arg.Sort,
 		arg.ResultOffset,
 		arg.ResultLimit,
@@ -583,7 +597,11 @@ WHERE v.privacy = 'public' AND v.state = 'published'
       SELECT 1 FROM muted_accounts m
       WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
   )
-  AND v.title ILIKE '%' || $2 || '%'
+  AND (v.title ILIKE '%' || $2 || '%'
+       OR EXISTS (
+           SELECT 1 FROM video_tags t
+           WHERE t.video_id = v.id AND t.tag ILIKE '%' || $2 || '%'
+       ))
 ORDER BY similarity(v.title, $2) DESC, v.created_at DESC, v.id DESC
 LIMIT $4 OFFSET $3
 `
@@ -611,7 +629,9 @@ type SearchPublicVideosRow struct {
 	DurationSeconds    *int32    `json:"duration_seconds"`
 }
 
-// Public, published title search with discovery-card data.
+// Public, published title search with discovery-card data. A video also
+// matches when one of its (lowercased) tags contains the query substring;
+// ranking stays title-similarity first, so tag-only matches sort later.
 func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideosParams) ([]SearchPublicVideosRow, error) {
 	rows, err := q.db.Query(ctx, searchPublicVideos,
 		arg.ViewerID,
