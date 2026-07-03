@@ -73,81 +73,81 @@
 
 ## P1.1 Go Project Scaffold
 
-- [ ] Initialize or verify Go module.
-- [ ] Choose stable package layout: `cmd/`, `internal/`, `pkg/` only where justified.
-- [ ] Add `cmd/api` entrypoint.
-- [ ] Add `cmd/worker` entrypoint.
-- [ ] Add `cmd/migrate` or document migration command.
-- [ ] Add `internal/config`.
-- [ ] Add `internal/http`.
-- [ ] Add `internal/db`.
-- [ ] Add `internal/cache`.
-- [ ] Add `internal/auth`.
-- [ ] Add `internal/media`.
-- [ ] Add `internal/storage`.
-- [ ] Add `internal/federation`.
+- [x] Initialize or verify Go module. (`go.mod` at the repo root — reconciled with shipped code, audit 2026-07-02)
+- [x] Choose stable package layout: `cmd/`, `internal/`, `pkg/` only where justified. (`cmd/api` + 30+ `internal/` packages; no `pkg/` — nothing has justified it)
+- [x] Add `cmd/api` entrypoint. (full production wiring + graceful shutdown; boot-proved by `TestAPIStartupSmoke` — P16)
+- [ ] Add `cmd/worker` entrypoint. (NOTE: background workers currently run in-process in `cmd/api` — the transcode + federation-delivery goroutines; a separate binary is still TODO if/when scale demands it)
+- [x] Add `cmd/migrate` or document migration command. (documented-command path: golang-migrate CLI via `make migrate-up`/`migrate-down`, in README + `.ralph/AGENT.md`; CI installs the pinned CLI and applies all migrations to a fresh DB every run)
+- [x] Add `internal/config`.
+- [x] Add `internal/http`. (as `internal/httpapi`)
+- [x] Add `internal/db`. (as `internal/store` — pgxpool + sqlc-generated queries)
+- [x] Add `internal/cache`.
+- [x] Add `internal/auth`.
+- [x] Add `internal/media`.
+- [x] Add `internal/storage`.
+- [x] Add `internal/federation`.
 - [x] Add `internal/messaging`. (normal 1:1 DM service; E2EE is P11.2)
-- [ ] Add `internal/moderation`.
-- [ ] Add `internal/observability`.
-- [ ] Add `internal/testutil`.
-- [ ] Ensure `go test ./...` runs, even if most packages are empty foundations.
+- [x] Add `internal/moderation`.
+- [x] Add `internal/observability`.
+- [ ] Add `internal/testutil`. (still absent — shared test helpers live per-package today)
+- [x] Ensure `go test ./...` runs. (95 `*_test.go` files across the module; `make ci` (`test-race`) green locally and in CI)
 
 ## P1.2 Configuration
 
-- [ ] Add typed configuration struct.
-- [ ] Support `.env`, environment variables, and Docker Compose defaults.
-- [ ] Add `.env.example`.
-- [ ] Validate required config on startup.
-- [ ] Add safe defaults for local development.
-- [ ] Add config for HTTP server address/port.
-- [ ] Add config for PostgreSQL DSN/pool.
-- [ ] Add config for Redis URL/pool.
+- [x] Add typed configuration struct. (`internal/config.Config`)
+- [x] Support `.env`, environment variables, and Docker Compose defaults. (env-var loaders + compose passthrough defaults; `.env.example` documents them)
+- [x] Add `.env.example`.
+- [x] Validate required config on startup. (`config.Load` → `validate()`; boot fails fast with a typed error)
+- [x] Add safe defaults for local development. (dev defaults throughout; production rejects the dev JWT secret / short secrets and enforces https + `FEDERATION_KEY_KEK`)
+- [x] Add config for HTTP server address/port. (`HTTP_PORT`, default 8080, range-validated)
+- [x] Add config for PostgreSQL DSN/pool. (`DATABASE_URL` → `internal/store` pgxpool)
+- [x] Add config for Redis URL/pool. (`REDIS_URL`)
 - [x] Add config for JWT keys/issuer/audience/expiry. (`JWT_SECRET`/`JWT_ISSUER`/`JWT_AUDIENCE`/`JWT_ACCESS_TTL`; prod rejects the dev default and short secrets)
 - [ ] Add config for OAuth2 providers, disabled by default.
 - [ ] Add config for TOTP issuer.
-- [ ] Add config for CORS allowlist.
+- [x] Add config for CORS allowlist. (`CORS_ALLOWED_ORIGINS`, default localhost:3000; credentials never granted with a `*` wildcard)
 - [x] Add config for rate limiting. (`RATE_LIMIT_ENABLED`/`RATE_LIMIT_REQUESTS`/`RATE_LIMIT_WINDOW`, validated when enabled)
-- [ ] Add config for SSRF allow/deny behavior.
+- [x] Add config for SSRF allow/deny behavior. (the `urlsafety.Guard` is fail-closed by default; `HTTP_IMPORT_ALLOW_PRIVATE_URLS` is the explicit dev/test allow knob — see P15)
 - [x] Add config for storage backend: local, S3-compatible, IPFS. (`STORAGE_BACKEND` (local; s3/ipfs rejected until implemented) + `STORAGE_LOCAL_ROOT`, validated)
 - [~] Add config for FFmpeg paths and transcoding options. (`TRANSCODING_ENABLED` (default false) gates the HLS pipeline; ffmpeg/ffprobe are found on PATH (detected at boot, warn-and-disable when absent). Explicit binary-path overrides + codec/ladder tuning knobs still TODO if ever needed.)
-- [ ] Add config for ClamAV and fallback mode.
-- [ ] Add config for RTMP/HLS.
+- [~] Add config for ClamAV and fallback mode. (`MALWARE_SCAN_ENABLED` + `CLAMAV_ADDR`, validated when enabled — see P6.1; behaviour is fixed fail-closed, a fallback-mode knob is still TODO)
+- [x] Add config for RTMP/HLS. (RTMP ingest: `LIVE_INGEST_SECRET` + `LIVE_RTMP_URL` — P12; HLS: `TRANSCODING_ENABLED` — P6.3)
 - [ ] Add config for Whisper captions, disabled by default.
-- [ ] Add config for ActivityPub, disabled/enabled per instance.
+- [x] Add config for ActivityPub, disabled/enabled per instance. (`FEDERATION_ENABLED` default false + `PUBLIC_BASE_URL` + `FEDERATION_KEY_KEK`, validated — P10 Slices 1/2a)
 - [ ] Add config for ATProto/Bluesky, disabled by default.
-- [ ] Add config tests for defaults, env override, validation failure, and secret redaction.
+- [x] Add config tests for defaults, env override, validation failure, and secret redaction. (39 tests in `config_test.go` cover defaults/override/validation-failure; secret redaction is enforced module-wide by the `TestNoSensitiveLogKeys` guard — P17.2)
 
 ## P1.3 Docker-First Development
 
-- [ ] Add `Dockerfile` for API.
-- [ ] Add `Dockerfile.worker` or multi-target Dockerfile.
-- [ ] Add `docker-compose.yml` for API, worker, PostgreSQL, Redis.
-- [ ] Add optional Compose profile for ClamAV.
-- [ ] Add optional Compose profile for MinIO/S3-compatible storage.
+- [x] Add `Dockerfile` for API. (multi-stage; alpine runtime with ffmpeg, non-root user)
+- [ ] Add `Dockerfile.worker` or multi-target Dockerfile. (not needed yet — workers run in-process in the api container)
+- [~] Add `docker-compose.yml` for API, worker, PostgreSQL, Redis. (api/postgres/redis/migrate services DONE; the worker runs in-process in the api container, no separate service)
+- [ ] Add optional Compose profile for ClamAV. (only the `CLAMAV_ADDR` passthrough exists — the operator provides clamd; no compose clamd service yet)
+- [x] Add optional Compose profile for MinIO/S3-compatible storage. (`storage` profile: pinned minio image, `mc ready` healthcheck, named volume — see P6.2)
 - [ ] Add optional Compose profile for IPFS/Kubo.
 - [ ] Add optional Compose profile for RTMP/HLS.
 - [ ] Add optional Compose profile for Whisper.
-- [ ] Add named volumes for PostgreSQL, Redis, media, and object-storage emulator.
-- [ ] Add health checks for all first-party containers.
-- [ ] Add Makefile or task runner commands: `dev`, `up`, `down`, `logs`, `test`, `lint`, `migrate`, `seed`.
+- [~] Add named volumes for PostgreSQL, Redis, media, and object-storage emulator. (`postgres_data` + `minio_data` exist; redis and local-media volumes still TODO)
+- [~] Add health checks for all first-party containers. (postgres/redis/minio have compose healthchecks; the api container has none yet)
+- [~] Add Makefile or task runner commands: `dev`, `up`, `down`, `logs`, `test`, `lint`, `migrate`, `seed`. (`up`/`down`/`run`(≈dev)/`test`/`test-race`/`test-integration`/`fmt`/`vet`/`migrate-up`/`migrate-down`/`sqlc`/`openapi-*`/`ci` exist; `logs`/`lint`/`seed` still absent)
 - [ ] Document how to run only API, only worker, only dependencies, and all services.
 
 ## P1.4 CI Skeleton
 
-> NOTE (monorepo): GitHub Actions workflows live at the repository root in
-> `../.github/workflows/` (GitHub does not read workflows from subdirectories).
-> Backend workflows must use `vidra-core/**` path filters and a `vidra-core`
-> working directory. This is the one allowed cross-boundary edit from this repo.
+> NOTE (post-split, 2026-07-01): vidra-core is a standalone repo — its workflows
+> live in THIS repo at `.github/workflows/` (backend-ci.yml, backend-integration.yml,
+> openapi.yml, ci-guard.yml). The old monorepo arrangement (root `../.github/workflows/`
+> with `vidra-core/**` path filters and a `vidra-core` working directory) no longer applies.
 
-- [ ] Add GitHub Actions workflow for Go tests.
-- [ ] Add GitHub Actions workflow for lint/static analysis.
+- [x] Add GitHub Actions workflow for Go tests. (`backend-ci.yml`: fresh-DB migrate, then the canonical `make ci` with PG/Redis service containers; `backend-integration.yml` runs the `-tags=integration` suite)
+- [x] Add GitHub Actions workflow for lint/static analysis. (static analysis rides `make ci` (gofmt check + `go vet`) in backend-ci.yml; `openapi.yml` lints the API contract (Redocly); `ci-guard.yml` guards workflow integrity. A richer linter (golangci-lint) remains optional)
 - [ ] Add GitHub Actions workflow for Docker build.
 - [ ] Add shared/reusable workflow or composite action for dependency setup.
-- [ ] Add Go module cache.
-- [ ] Add Docker layer cache.
-- [ ] Add PostgreSQL and Redis service containers for integration tests.
+- [x] Add Go module cache. (`actions/setup-go@v5` with `cache: true` + `cache-dependency-path: go.sum` in both backend workflows)
+- [ ] Add Docker layer cache. (no Docker build in CI yet)
+- [x] Add PostgreSQL and Redis service containers for integration tests. (postgres:16-alpine + redis:7-alpine, healthchecked, in both backend-ci.yml and backend-integration.yml)
 - [ ] Add artifact upload for test reports/logs.
-- [ ] Keep CI under reasonable runtime by splitting smoke, unit, integration, fuzz, and benchmark jobs.
+- [~] Keep CI under reasonable runtime by splitting smoke, unit, integration, fuzz, and benchmark jobs. (unit (`make ci`, ~2min) and integration (~2min) are split into separate workflows and the startup smoke rides integration; scheduled fuzz/benchmark jobs still TODO — see P16)
 
 ---
 
@@ -155,19 +155,19 @@
 
 ## P2.1 Database Foundation
 
-- [ ] Choose migration tool and document why.
-- [ ] Add initial migration for required PostgreSQL extensions: `pg_trgm`, `uuid-ossp`.
-- [ ] Add migration for schema version tracking if not provided by tool.
-- [ ] Add connection pooling with sane limits and timeouts.
-- [ ] Add database readiness check.
+- [x] Choose migration tool and document why. (golang-migrate — plain numbered up/down SQL pairs, no ORM; documented in `.ralph/specs/architecture.md`, README, the Makefile targets, and both CI workflows)
+- [x] Add initial migration for required PostgreSQL extensions: `pg_trgm`, `uuid-ossp`. (migration 0001; asserted by `store.TestRequiredExtensionsInstalled` against real PG)
+- [x] Add migration for schema version tracking if not provided by tool. (provided by golang-migrate — `schema_migrations`)
+- [x] Add connection pooling with sane limits and timeouts. (`internal/store` pgxpool, MaxConns=10, ping-verified at boot under a timeout)
+- [x] Add database readiness check. (`GET /readyz` pings postgres + redis, 503 when degraded — P3.2)
 - [ ] Add transactional test helper.
-- [ ] Add migration up/down smoke test against live PostgreSQL.
+- [~] Add migration up/down smoke test against live PostgreSQL. (UP enforced: both backend CI workflows apply ALL migrations to a fresh postgres:16 before tests on every push/PR; a systematic DOWN smoke is still TODO — individual downs only spot-verified, e.g. 0041)
 - [ ] Add rollback test for initial migrations where feasible.
 
 ## P2.2 Core Tables
 
-- [ ] Add accounts/users table.
-- [ ] Add roles/permissions table or enum strategy.
+- [x] Add accounts/users table. (migration 0002 `users`: case-insensitive unique username/email, trigram search index, role/is_active/email_verified; profile fields in 0004, quota in 0041)
+- [x] Add roles/permissions table or enum strategy. (enum strategy: `users.role` TEXT CHECK user/moderator/admin (0002), carried in the JWT, enforced by `requireRole` — see P9)
 - [x] Add sessions/refresh tokens table if not Redis-only. (`sessions` table in 0002; sqlc queries in `internal/store/queries/sessions.sql` — Create/Get-by-hash/Revoke/RevokeAll/DeleteExpired)
 - [ ] Add OAuth identities table.
 - [ ] Add TOTP/MFA settings table.
@@ -175,25 +175,25 @@
 - [x] Add videos table. (migration `0006_videos`: channel FK, title/description, privacy + state CHECK enums, channel + partial public-published indexes; integration test asserts table)
 - [x] Add video files/renditions table. (`video_files` = migration 0008 (originals/thumbnails). **HLS renditions**: migration 0039 `video_renditions` (video FK `ON DELETE CASCADE`, height/width CHECK > 0, `key_prefix` = `streaming-playlists/<id>/<height>p`, `UNIQUE(video_id, height)`, video index); replaced wholesale on re-transcode. sqlc `CreateVideoRendition`/`DeleteVideoRenditions`/`ListVideoRenditions` (tallest first). Real-PG integration `TestStreamingPlaylistAndRenditionsPersist`.)
 - [x] Add streaming playlists/HLS assets table. (migration 0039 `streaming_playlists`: `video_id` PK/FK `ON DELETE CASCADE`, `master_key`, `state` CHECK pending/ready/failed, timestamps — one row per video, upserted by the transcode worker; `hls_url` surfaces on the detail only when `ready`. sqlc `UpsertStreamingPlaylist`/`GetStreamingPlaylist`. See P6.3 HLS pipeline.)
-- [ ] Add thumbnails/previews/storyboards table.
+- [~] Add thumbnails/previews/storyboards table. (thumbnails DONE via `video_files` `kind='thumbnail'` (migration 0010) — no separate table needed; previews/storyboards still planned)
 - [x] Add captions/subtitles table. (migration 0024 `captions` (id, `video_id` FK `ON DELETE CASCADE`, `language`, `label`, `storage_key`, timestamps, `UNIQUE(video_id, language)`); one WebVTT track per language per video, the .vtt bytes in the storage backend at `captions/<video_id>/<language>.vtt`.)
 - [ ] Add video imports table.
-- [ ] Add live streams table.
+- [x] Add live streams table. (migration 0034 `live_streams`: channel FK, unique `stream_key_hash` (raw key never stored), state CHECK offline/live/ended, `permanent` flag — see P12)
 - [x] Add playlists table. (migration 0019 `playlists` (id, owner FK `ON DELETE CASCADE`, title, description, `visibility` CHECK public/unlisted/private default private, created/updated; `(owner_id, created_at DESC)` index).)
 - [x] Add playlist items table. (migration 0019 `playlist_items` (id, playlist FK, video FK both `ON DELETE CASCADE`, `position`, `added_at`, `UNIQUE(playlist_id, video_id)`; `(playlist_id, position)` index).)
-- [ ] Add comments table.
+- [x] Add comments table. (migration 0014 `comments` — video+user FKs `ON DELETE CASCADE`; 0026 adds the `parent_id` self-FK for threading — see P8)
 - [x] Add likes/dislikes or reactions table according to spec. (migration 0015 `video_ratings` (PK `(user_id, video_id)`, `rating` CHECK like/dislike, `ON DELETE CASCADE` from videos+users, `video_id` index). A user has at most one rating per video, settable/changeable/clearable. Endpoints (on **public, published** videos via the shared `publicVideoID` guard, else 404): `GET /api/v1/videos/:id/rating` (optionalAuth → `{like_count, dislike_count, my_rating}`; `my_rating` null for anon/unrated), `PUT /api/v1/videos/:id/rating` (auth, body `{rating: like|dislike}`, upsert, 422 on bad value), `DELETE /api/v1/videos/:id/rating` (auth, idempotent clear). `internal/rating` service (Set/Clear/Get + Summary) + `internal/httpapi/ratings.go`; openapi documents all three + `VideoRating` schema (drift guard extended). sqlc `UpsertVideoRating`/`DeleteVideoRating`/`GetVideoRating`/`CountVideoRatings` (FILTER counts). Tested: 3 service + 3 handler (set→change→clear, anon hides my_rating, invalid 422, auth 401, non-public 404).)
 - [x] Add watch history table. (migration 0017 `watch_history` (PK `(user_id, video_id)`, `position_seconds INTEGER NOT NULL DEFAULT 0 CHECK (>= 0)`, `created_at`, `updated_at`, `ON DELETE CASCADE` from users+videos, `(user_id, updated_at DESC)` index). One row per (user, video): the viewer's last watch + resume position; `updated_at` bumped on every progress report so history lists most-recently-watched first.)
 - [x] Add watch later/private library tables. (migration 0016 `saved_videos` (PK `(user_id, video_id)`, `created_at`, `ON DELETE CASCADE` from users+videos, `(user_id, created_at DESC)` index). A "watch later"/library: save a video once, list newest-saved first. Endpoints (all requireAuth): `POST /api/v1/videos/:id/save` (idempotent; only **public, published** videos via `publicVideoID`, else 404), `DELETE /api/v1/videos/:id/save` (idempotent; no public check so a user can always clean up), `GET /api/v1/me/saved` (paginated discovery cards, reuses `videoFeedResponse`, filters to public+published). Mirrors the subscriptions feed: `Save`/`Unsave`/`ListSaved` on the **video** service (sqlc `SaveVideo`/`UnsaveVideo`/`ListSavedVideos`) reusing `newFeedItem`/`feedItemView`. openapi documents all three (list → `VideoFeedResponse`); drift guard covers them (routes are under the existing video block). Tested: video-service round-trip + 3 handler (save→list newest-first→idempotent→unsave, non-public 404, auth 401). DEFERRED: named playlists + ordering (separate `playlists`/`playlist_items` slice).)
 - [x] Add follows/subscriptions table. (migration `0005_channel_follows`: `channel_follows` (follower_id, channel_id) composite PK + channel_id index; sqlc Follow/Unfollow/CountFollowers/IsFollowing)
-- [ ] Add notifications table.
+- [x] Add notifications table. (migration 0018 `notifications` (+0032 `conversation_id`, +0042 `report_id`); unread partial index — see P8)
 - [x] Add abuse reports table. (migration 0020 `reports` (video/comment targets); migration 0027 widens `target_type` to add `account` + adds nullable `reported_user_id` FK → users `ON DELETE CASCADE` + partial unique `(reporter_id, reported_user_id)`. See P9 abuse-reports.)
 - [x] Add video blocks/quarantine table. (migration 0021 `video_blocks` (PK `video_id` → videos `ON DELETE CASCADE`, `reason TEXT NOT NULL DEFAULT ''`, `blocked_by` → users `ON DELETE SET NULL`, `created_at`). One row per blocked video; see the P9 block/unblock flow. Auto-quarantine (block-on-upload + approve/reject) is a later slice.)
 - [x] Add watched words lists and matches tables. (Words list: migration 0023 `watched_words` (id, `word`, `created_by` FK → users `ON DELETE SET NULL`, `created_at`; unique index on `lower(word)`). Matches: migration 0030 `watched_word_matches` (`watched_word_id`+`comment_id` FKs `ON DELETE CASCADE`, `UNIQUE(watched_word_id, comment_id)`, `created_at` index) — records which comment matched which term when posted. See the watched-words tagging item in P9.)
 - [~] Add muted accounts/instances table. (Accounts done: migration 0022 `muted_accounts` (PK `(muter_id, muted_id)`, both FK → users `ON DELETE CASCADE`, `created_at`, CHECK `muter_id <> muted_id`; `(muter_id, created_at DESC)` index). Muted **instances** (federation) is a later slice.)
-- [ ] Add admin audit log table.
-- [ ] Add federation actors table.
-- [ ] Add federation activities/inbox/outbox table.
+- [x] Add admin audit log table. (migration 0029 `audit_log` — append-only, actor stored without an FK so the trail survives account deletion — see P9)
+- [x] Add federation actors table. (migrations 0035 `account_actor_keys`/`channel_actor_keys` (local actor keypairs, sealed at rest) + 0036 `remote_actors` cache — see P10)
+- [x] Add federation activities/inbox/outbox table. (migration 0037 `federation_inbox_activities` dedup log + `remote_follows`; 0038 `federation_deliveries` outbound queue; the outbox collection is intentionally derived from `videos` rather than stored — P10 Slice 5f)
 - [ ] Add ATProto identities/events tables.
 - [x] Add direct messages conversations table. (migration 0031: `conversations` + `conversation_participants`)
 - [x] Add direct messages table. (migration 0031: `messages`, index on `(conversation_id, created_at DESC)`)
@@ -224,11 +224,11 @@
 
 ## P3.1 API Foundation
 
-- [ ] Add Echo server setup.
-- [ ] Add request ID middleware.
+- [x] Add Echo server setup. (`internal/httpapi/server.go`; graceful shutdown in `cmd/api`; startup proved end-to-end by `TestAPIStartupSmoke`)
+- [x] Add request ID middleware. (`middleware.RequestID` + the correlation-ID middleware — P17.1; `request_id` on every request log and error envelope)
 - [x] Add structured logging middleware. (slog request logger, `server.go requestLogger`; level escalates by status class)
-- [ ] Add panic recovery middleware.
-- [ ] Add CORS middleware with config allowlist.
+- [x] Add panic recovery middleware. (`middleware.Recover`, mounted first so recovered 5xx still carry secure headers + the JSON envelope)
+- [x] Add CORS middleware with config allowlist. (`middleware.CORSWithConfig` from `CORS_ALLOWED_ORIGINS`; credentials only for the explicit allow-list, never with `*`; locked by `cors_test.go` — P15)
 - [x] Add body size limits. (`middleware.BodyLimit(cfg.HTTPBodyLimit)`, default 8M, configurable via `HTTP_BODY_LIMIT`; oversized → 413 `request_entity_too_large` envelope; tested)
 - [x] Add timeout middleware. (`requestDeadline` propagates a per-request context deadline, `HTTP_REQUEST_TIMEOUT` default 30s; ctx-deadline → 503 `request_timeout` envelope; server WriteTimeout is the hard backstop; tested)
 - [x] Add rate limit middleware using Redis. (`internal/ratelimit` fixed-window via Redis INCR+ExpireNX+PTTL behind a `Counter` interface; `httpapi` middleware on `/api` per client IP, `X-RateLimit-*` headers, `429 rate_limited` envelope + `Retry-After`, fails open if Redis down, system probes exempt; unit-tested with a fake counter + Redis-gated integration test)
@@ -242,17 +242,16 @@
 - [ ] Extend `api/openapi.yaml` (and its schemas) as each new endpoint family lands, keeping the drift guard green every slice.
 - [ ] Generate or validate TypeScript client/types for `vidra-user` from `api/openapi.yaml`.
 - [ ] Add Postman collection scaffold.
-- [ ] Add API smoke tests against live Docker database.
+- [x] Add API smoke tests against live Docker database. (`cmd/api/smoke_integration_test.go` `TestAPIStartupSmoke` boots the real binary against live PG/Redis and probes `/healthz`/`/readyz`/`/version` — see P16; runs in backend-integration)
 
 ## P3.2 System Endpoints
 
 - [x] `GET /healthz`. (`internal/httpapi/health.go`, tested)
 - [x] `GET /readyz`. (postgres + redis readiness, 503 when degraded, tested)
 - [x] `GET /version`. (`version.go` + `internal/version` package, ldflags-injected via `make build`; documented + tested)
-- [ ] `GET /nodeinfo/2.0.json` or documented intentional difference. (minimal
-      `GET /api/v1/nodeinfo` exists; canonical NodeInfo path still TODO)
-- [ ] `GET /.well-known/nodeinfo` or documented intentional difference.
-- [ ] `GET /.well-known/webfinger` for federation identity lookup when ActivityPub is enabled.
+- [x] `GET /nodeinfo/2.0.json` or documented intentional difference. (INTENTIONAL_DIFFERENCE: Vidra serves NodeInfo **2.1** at `/nodeinfo/2.1` per `.ralph/specs/federation.md`, mounted only when `FEDERATION_ENABLED` (NodeInfo advertises federation — gated on purpose); the minimal `GET /api/v1/nodeinfo` also remains. Tested incl. absent-when-disabled — P10 Slice 1.)
+- [x] `GET /.well-known/nodeinfo` or documented intentional difference. (discovery document linking `/nodeinfo/2.1`; mounted when `FEDERATION_ENABLED` — `internal/httpapi/federation.go`, tested)
+- [x] `GET /.well-known/webfinger` for federation identity lookup when ActivityPub is enabled. (own-domain `acct:` resolution to account/channel actor URLs; 400 bad resource, 404 foreign domain; gated on `FEDERATION_ENABLED` — P10 Slice 2b, tested)
 - [x] Add tests for currently-registered system endpoints. (`internal/httpapi/health_test.go`)
 
 ---
@@ -280,7 +279,7 @@
 - [~] Implement account deletion/deactivation. (Deactivation done: `POST /api/v1/auth/me/deactivate` (behind `requireAuth`, body `{password}`) re-confirms the current password, sets `users.is_active=FALSE` (sqlc `DeactivateUser`), and revokes all sessions — the account can no longer log in (→403) and its tokens stop resolving (→401). Reversible by an admin. `internal/auth/account.go` `Service.DeactivateAccount` + `ErrInvalidPassword`; handler + openapi + `auth.account.deactivate` audit event (success/failure). Tested: 3 service (disable+revoke, wrong-password leaves active, unknown user) + 3 handler (403/204/login-403/me-401 flow, requires-auth 401, validation 422). DEFERRED: hard deletion (removing/anonymising the account and its videos/channels/comments) needs a data-retention/anonymisation policy decision — see safety rails.)
 - [x] Add auth rate limits. (A stricter, dedicated fixed-window limiter (`AUTH_RATE_LIMIT_REQUESTS`, default 10/`RATE_LIMIT_WINDOW`, per client IP, keyed `auth:<ip>`) layered over the general 120/min API limiter on the credential-stuffing / token-guessing endpoints: login, register, password-reset, password-reset/confirm, verify-email/confirm. `httpapi.authRateLimit` middleware + `WithAuthRateLimiter`; wired in `cmd/api` sharing the Redis counter; gated by `RATE_LIMIT_ENABLED`. Fails open if Redis is down (degrade protection, not availability) and emits an `auth.rate_limited` audit event on denial (never the credentials). Tested: throttle-after-N + audit + password-not-logged, fail-open on store error, and not-applied-to-non-sensitive-routes (logout), plus the config default. `.env.example` updated.)
 - [x] Add auth audit logs. (New `internal/observability` package: typed `AuditEvent` (action/result/actor_id/request_id/reason + slog timestamp as occurred_at), `Audit()` emitter, and the canonical `IsSensitiveKey` denylist from the observability spec. Wired into the auth handlers via `Server.audit` (`internal/httpapi/auth.go`): register, login success/failure (failure carries no actor_id/email — enumeration-safe), logout, logout-all, password-reset request + complete (success/failure), email-verify request + confirm (success/failure). Events are marked `audit=true`, distinct from request logs; never carry secrets/PII. `WithLogger` server option added as a capture seam. Tested: 4 observability unit (required fields, omit-empty, no-denylisted-key, IsSensitiveKey) + 2 httpapi handler (login emits success+failure with correct actor_id presence and reason; logout/reset events; asserts no denylisted key and the password never appears in logs). Partially advances P17.1/P17.2 observability.)
-- [ ] Add unit/integration tests for signup/login/session/MFA.
+- [~] Add unit/integration tests for signup/login/session/MFA. (signup/login/session DONE: `internal/auth/{registration,service,reset,verification,account,jwt,password}_test.go` + `internal/httpapi/auth_test.go` (register/login/refresh rotation + reuse-revocation/logout/logout-all/reset/verify/me) + the cookie-mode suite incl. a real-PG integration test. MFA tests await the P4 TOTP implementation above — nothing to test yet.)
 - [ ] Add Postman tests for auth happy/error paths.
 
 ---
@@ -298,7 +297,7 @@
 - [ ] Implement channel sync placeholder/foundation for remote channels.
 - [x] Implement instance about/config endpoint for frontend. (`GET /api/v1/instance` (public) → name, software{name,version}, registration_enabled; `internal/httpapi/instance.go`; documented + tested)
 - [x] Implement terms/privacy/about/contact instance metadata. (`GET /api/v1/instance` now returns description, terms_url, privacy_url, contact_email from `INSTANCE_DESCRIPTION`/`INSTANCE_TERMS_URL`/`INSTANCE_PRIVACY_URL`/`INSTANCE_CONTACT_EMAIL`; documented + tested)
-- [~] Add tests for channel/profile permissions. (channel: create-requires-auth, validation, duplicate-409, create→list→public-get, get-404, owner/non-owner update-403, delete-403/204, plus service unit tests; profile tests pending the profile slice)
+- [x] Add tests for channel/profile permissions. (channel: create-requires-auth, validation, duplicate-409, create→list→public-get, get-404, owner/non-owner update-403, delete-403/204, plus service unit tests. profile tests landed with the profile slice: `TestMeRequiresAuth`/`TestMeRejectsBadToken`/`TestUpdateMeProfile`/`TestUpdateMeValidationAndAuth` in `internal/httpapi/auth_test.go` + `TestUpdateProfilePartial` in `internal/auth/service_test.go`.)
 
 ---
 
@@ -313,9 +312,9 @@
 - [~] Implement video metadata validation: title, description, tags, category, language, license, privacy, channel. (title/description/privacy/channel long done. **category/language/license DONE**: migration 0025 adds three nullable TEXT columns to `videos`; `POST /channels/:handle/videos` + `PATCH /videos/:id` accept optional `category`/`language`/`license`, validated against the canonical `video.IsCategory`/`IsLanguage`/`IsLicense` maps (unknown/empty → 422 field error); stored on create (empty → NULL) and COALESCE-partial on update; exposed on the `Video` detail/create/update views (omitted when unset). sqlc CreateVideo/GetVideoByID/UpdateVideo/SetVideoState carry the columns; openapi `Video`/`CreateVideoRequest`/`UpdateVideoRequest` document them (drift guard green). Tested: handler `TestVideoTaxonomyMetadata` (store+round-trip on detail, unset→omitted, unknown-on-create 422, partial update preserves siblings, unknown/empty-on-update 422) + `config_test` validators. **VERIFIED** end-to-end against real PG (migration applies; create/detail/update/422 flow + psql-confirmed row). Clearing a set value back to unset is not yet supported (COALESCE can't distinguish keep from clear). Remaining: free-form **tags** (a separate many-to-many/array feature, not a config map).)
 - [~] Implement privacy levels. (videos: public/unlisted/private enforced on read — private hidden as 404 to non-owners; account/channel-level privacy still TODO)
 - [ ] Implement publish date/scheduled publish.
-- [~] Implement file validation. (upload enforces a size cap — `UPLOAD_MAX_SIZE`, default 2G, via a per-route body limit so the upload route is exempt from the small JSON `HTTP_BODY_LIMIT`; oversize → 413 — and an extension allowlist of video containers; unaccepted → 415, checked after ownership so non-owners still see 404. Authoritative content/codec validation is FFprobe's job in the transcode slice; magic-byte sniffing is unreliable for video containers in Go's detector.)
-- [ ] Implement ClamAV scan integration.
-- [ ] Implement ClamAV fallback modes: fail-closed, fail-open, quarantine.
+- [x] Implement file validation. (upload enforces a size cap — `UPLOAD_MAX_SIZE`, default 2G, via a per-route body limit so the upload route is exempt from the small JSON `HTTP_BODY_LIMIT`; oversize → 413 — and an extension allowlist of video containers; unaccepted → 415, checked after ownership so non-owners still see 404. The once-remaining piece, authoritative FFprobe content validation, landed with the probe slice: `cmd/api` wires `video.WithProber(media.DetectFFProbe(blobs))`, a probe failure → `state=failed`, and ffmpeg ships in the runtime image — see P6.3.)
+- [x] Implement ClamAV scan integration. (`internal/media/clamav.go` — clamd INSTREAM client satisfying `video.Scanner`; `Process` scans BEFORE probe/publish; wired in `cmd/api` when `MALWARE_SCAN_ENABLED` (+`CLAMAV_ADDR` validated; compose passthrough — the operator provides clamd). Tested: video service (clean→published, infected→failed, scan-error→failed) + media against a fake clamd (OK/FOUND/garbage/dial-failure). See also the P15 malware-scan-hooks item.)
+- [~] Implement ClamAV fallback modes: fail-closed, fail-open, quarantine. (fail-closed DONE — an infected or unscannable original is never published (`state=failed`). fail-open + quarantine still TODO: need a config knob and the P9 quarantine flow.)
 - [x] Implement URL import with SSRF protection. (`POST /api/v1/videos/:id/import` (requireAuth, owner-only), body `{url}` — the URL-import counterpart of `POST /videos/:id/file`. Flow: `urlsafety.ValidateURL` (http/https + non-public literal-IP reject → 422); **ownership checked BEFORE any fetch** so a non-owner (or unknown video) is 404 and the server never fetches on their behalf; fetch via `urlsafety.NewClient` (SSRF-guarded at dial time — loopback/private/link-local/CGNAT/DNS-rebinding/internal-redirects refused → 422); non-200 → 422; `Content-Length > UPLOAD_MAX_SIZE` → 413 and a streaming `maxBytesReader` hard-caps a lying/absent length; then reuse `video.AttachOriginal` (container type from the URL path extension, or — when the path has none, e.g. `/download?id=…` or the backend's own `/original` — from the response **Content-Type** via `extForContentType`; unknown → 415) + `Process` (publish/fail) → 201 `UploadVideoFileResponse`, identical to upload. The fetch client is injectable in tests (`Server.importClient`) so the happy path is exercised against a loopback httptest origin while production always uses the guard. The guard is config-driven — `urlsafety.Guard{AllowPrivate: cfg.ImportAllowPrivateURLs}` — so the dev/test `HTTP_IMPORT_ALLOW_PRIVATE_URLS` knob (P15, compose default off) lets a real backend import from a loopback/compose-network origin, which is what makes the **frontend URL-import backed e2e provable in CI**. openapi documents the route + `ImportVideoRequest` (drift guard green). Tested: `videos_import_test.go` — happy path (import→published→publicly served), 415 non-video ext, **SSRF guard blocks loopback via the default client (422)**, **allow-private config imports a literal-127.0.0.1 origin (201)**, **Content-Type fallback imports an extension-less URL (201)**, missing/ftp url 422, anon 401, non-owner 404. **Backed-import now fully enabled**: with `HTTP_IMPORT_ALLOW_PRIVATE_URLS=true` a real backend can import its OWN extension-less `/original` via the compose service name (`http://api:8080/api/v1/videos/:src/original`) — verified live (201), so a `vidra-user` backed e2e can prove the studio "Import from URL" flow without any external origin (compose also adds `extra_hosts host.docker.internal:host-gateway` as an alternative host origin). Torrent/magnet import is separate below.)
 - [ ] Implement torrent/magnet import placeholder or adapter boundary.
 - [ ] Implement upload cancellation.
@@ -331,8 +330,8 @@
 - [x] Implement DigitalOcean Spaces-compatible configuration. (Documentation, not code — endpoint `<region>.digitaloceanspaces.com` (bucket NOT in the endpoint) + `STORAGE_S3_REGION=<region>`. Documented in `.env.example`, `S3Config` godoc, and README.)
 - [ ] Implement IPFS backend adapter or deferred spec.
 - [x] Implement object key naming strategy. (PeerTube-aligned, one top-level dir per asset kind — `.ralph/specs/storage-layout.md`: originals `web-videos/<id><ext>`, thumbnails `thumbnails/<id>.jpg`, captions `captions/<id>/<lang>.vtt`, HLS `streaming-playlists/<id>/master.m3u8` + `<id>/<height>p/{playlist.m3u8,seg_NNNNN.ts}`.)
-- [ ] Implement private/public object handling.
-- [ ] Implement signed URL or proxy strategy.
+- [x] Implement private/public object handling. (all stored objects are private by default — nothing is served from a public bucket or static path; every read goes through the authenticated API with per-request visibility checks (`video.FileForView`: private → owner-only 404, blocked → mods-only) — see the storage-layout.md notes on id-based keys being safe for exactly this reason.)
+- [x] Implement signed URL or proxy strategy. (proxy strategy implemented: `/original`, `/thumbnail`, `/hls/*`, captions, and avatars/banners are all proxied through the API via `serveStoredObject` with Range/206 support (`http.ServeContent` over `storage.PathProvider` or a seekable backend reader — works on local AND S3/MinIO). Signed URLs deferred until a CDN/offload need exists.)
 - [ ] Implement media deletion/garbage collection.
 - [x] Add integration tests using local filesystem and MinIO. (Local: the full `local_test.go` suite (round trip, idempotent delete, ErrNotFound, traversal-cannot-escape-root) runs in `make ci`. MinIO: `internal/storage/s3_integration_test.go` under `-tags=integration`, gated on `S3_TEST_ENDPOINT` (self-skips when unset, repo style): Put/Open round trip, overwrite, Exists/Delete + idempotent re-delete, Open-missing → ErrNotFound, `TestS3ServeContentRange` (real `*minio.Object` is an `io.ReadSeeker`; `http.ServeContent` serves `bytes=2-5` as a true 206 + Content-Range — the exact `serveStoredObject` path), and `TestS3TempDownloadFallbackContract` (stream-to-temp-file byte fidelity, the ffprobe/transcode path). Run: `docker compose --profile storage up -d minio && S3_TEST_ENDPOINT=localhost:9000 go test -tags=integration ./internal/storage/...` — documented in testing.md + AGENT.md. VERIFIED locally against the compose minio.)
 
@@ -368,9 +367,9 @@
 - [x] Implement public video list endpoint. (`GET /api/v1/videos` (public, paginated limit≤100/offset) → cross-channel public videos newest-first; sqlc `ListPublicVideos`; `internal/video.ListPublic`; tested. Now filters `state='published'` — the publish pipeline landed, so feed/search/channel-public surfaces exclude draft/processing/failed.)
 - [ ] Implement local videos endpoint.
 - [x] Implement trending/recent/popular sort modes or documented staged rollout. (`GET /api/v1/videos?sort=recent|popular|trending` (unknown → recent, echoed back in the response). `ListPublicVideosSorted` LEFT JOINs `video_view_counts` and orders by a CASE on the sort param: popular = all-time views, trending = views decayed by age (HN-style `views / (age_hours+2)^1.5`). Feed items now also carry `views` + `has_thumbnail` for cards. `internal/video.FeedItem`; tested incl. popular ordering + sort fallback.)
-- [ ] Implement video detail endpoint.
+- [x] Implement video detail endpoint. (`GET /api/v1/videos/:id` (optionalAuth): public/unlisted to anyone, private owner-only → 404, blocked → mods-only; the detail view carries views, `has_thumbnail`, probed duration/dimensions, taxonomy metadata, and `hls_url`/`renditions` when ready. Tested: `TestGetPublicVideoIsAnonymous` + `TestGetPrivateVideoOwnerOnly` (videos_test.go) plus the taxonomy/HLS detail assertions.)
 - [x] Implement video playback manifest endpoint. (Progressive: `GET /api/v1/videos/:id/original` streams the stored original with HTTP Range/206 support via `http.ServeContent` + the `storage.PathProvider` capability; visibility mirrors detail (private→owner-only/404, no-original→404). **HLS now DONE** (P6.3 pipeline): `GET /api/v1/videos/:id/hls/master.m3u8` (`application/vnd.apple.mpegurl`) + `GET /api/v1/videos/:id/hls/:rendition/:file` (variant playlists `application/vnd.apple.mpegurl`, segments `video/mp2t`) served from storage via the shared `serveStoredObject`, with the SAME visibility as `/original` (`hlsPlaylistForView`: private→owner-only 404, blocked→mods-only, playlist-not-ready→404, non-canonical rendition/file names→404 — no traversal). Video detail gains `hls_url` (present ONLY when the playlist is `ready`) + `renditions [{height,width}]`. openapi documents both routes + fields (drift guard green). Handler tests (`hls_test.go`): master/variant/segment round-trip with content types, not-ready/no-playlist 404 + detail gating, private owner-only across all three routes (anon + non-owner 404, owner 200), non-canonical names + traversal attempt 404.)
-- [ ] Implement captions endpoint.
+- [x] Implement captions endpoint. (full caption surface in `internal/httpapi/captions.go`: `GET /videos/:id/captions` + `GET .../captions/:lang` (public, `text/vtt`) and `POST`/`DELETE` (owner-only); tested by `TestCaptionsFlow` + `TestCaptionsValidationAndAuth`. Service details in P13.)
 - [x] Implement download metadata endpoint. (`GET /api/v1/videos/:id/download` (optionalAuth) lists a video's downloadable files — what a watch-page "Download" menu consumes. Entries `{kind, url, content_type, size_bytes?, original_name?, height?, width?}`: the stored **original** (progressive `/original` URL, stored size + content type + upload filename + probed dimensions when known) plus one **hls** entry per ready rendition (variant-playlist URL `/hls/<height>p/playlist.m3u8`, `application/vnd.apple.mpegurl`, rung dimensions; no size — segmented). Visibility mirrors the detail endpoint exactly (public/unlisted → anyone, private → owner-only 404, blocked → hidden from non-mods via `videoHiddenByBlock`, unknown/malformed → 404); a visible video with no stored files (draft) returns an empty list. HLS gating mirrors `hlsDetail` (only a `ready` playlist). `internal/httpapi/downloads.go`; openapi documents the path + `VideoDownloadFile`/`VideoDownloadResponse` (drift guard green). Tested: 2 handler (`TestVideoDownloadsShape`: original-only → +HLS rendition entry with correct URL/content-type/dimensions and no size, draft → empty; `TestVideoDownloadsVisibility`: private anon/non-owner 404 + owner 200, blocked regular-user 404 + admin 200, unknown/malformed 404).)
 - [ ] Implement share/embed metadata endpoint.
 - [ ] Implement oEmbed or documented difference.
@@ -393,13 +392,13 @@
 - [x] Implement playlist visibility rules. (public/unlisted/private CHECK on the table; `GET /playlists/:id` gates private → owner-only (else 404); list/detail `video_count` + item list only count/return public+published videos so a leaked private video never surfaces in a public playlist. Tested: anon-sees-public, anon-404-on-private, owner-sees-own-private.)
 - [x] Implement playlist item add/remove/reorder. (All three DONE. Add + remove: `POST /api/v1/playlists/:id/videos` (owner-only, body `{video_id}`; appends at `MAX(position)+1`, idempotent `ON CONFLICT DO NOTHING`; only **public, published** videos addable else 404), `DELETE /api/v1/playlists/:id/videos/:videoId` (owner-only, idempotent). **Reorder DONE**: `PUT /api/v1/playlists/:id/videos` (owner-only, body `{video_ids: [uuid…]}`) rewrites item positions to the given order in ONE atomic statement (`ReorderPlaylistItems` = `UPDATE … FROM unnest($video_ids::uuid[]) WITH ORDINALITY` → each video's position becomes its 1-based index; no `UNIQUE(position)` to collide with). The body must be exactly the playlist's current items — every item once, none missing/extra/duplicated (validated via the new unfiltered `ListPlaylistItemVideoIDs`) — else 422 (`playlist.ErrInvalidOrder`); a non-owner/unknown playlist is 404 (existence hidden). `playlist.Service.ReorderItems`; `handleReorderPlaylistItems`; openapi documents the op + `ReorderPlaylistItemsRequest` (drift guard green). Tested: service unit (reverse applies; non-owner→ErrForbidden, unknown→ErrNotFound, missing/extra/dup→ErrInvalidOrder, empty no-op) + handler (`TestPlaylistReorder`: reverse→204 + GET reflects order, missing-id 422, bad-uuid 422, non-owner 404, anon 401) + **real-PG integration** (`store.TestReorderPlaylistItemsPersists`: seeds the FK chain, reverses via the query, reads back the new order — proves the `WITH ORDINALITY` UPDATE against PostgreSQL). Now unblocks the frontend playlist drag-reorder.)
 - [x] Implement quick-add to playlist API. (The `POST /api/v1/playlists/:id/videos` add-item endpoint is the quick-add API: a single authed call appends a video to a playlist, idempotent. A convenience "create playlist + add in one call" is DEFERRED.)
-- [~] Implement comments create/read/update/delete. (Flat comments (no threading yet): `POST /api/v1/videos/:id/comments` (auth) posts a comment on a **public, published** video; `GET /api/v1/videos/:id/comments` (public, paginated `limit`≤100/`offset`) lists them newest-first with the author's username + display name (sqlc `ListCommentsByVideo` JOINs users); `DELETE /api/v1/comments/:id` (auth) removes the caller's OWN comment (403 for another's, 404 unknown). Non-public/unpublished/unknown video → 404 (`commentableVideoID` guard). migration 0014 (`comments` table, `ON DELETE CASCADE` from videos+users); `internal/comment` service + `internal/httpapi/comments.go`; openapi documents all three + `Comment`/`CommentListResponse` schemas (drift guard extended via `fullRouteOptions`). Tested: 2 service + 3 handler (create→list→delete-by-author, non-author 403, non-public 404, blank-body 422). **Edit (PATCH) now DONE**: `PATCH /api/v1/comments/:id` (auth) lets the **author** edit their own comment body (moderators delete, not edit) — another user's → 403, unknown → 404, blank/too-long → 422; it bumps `updated_at` so the `Comment` view now carries an `edited` boolean (`updated_at > created_at`) for an "(edited)" marker, and re-flags the edited body against the watched-words list. sqlc `UpdateComment`; `comment.Service.Edit`; `handleUpdateComment`; openapi documents the op + `UpdateCommentRequest` + the `Comment.edited` field (drift guard green). Tested: 1 service unit (`TestEditComment`) + 1 handler (`TestCommentEdit`: author 200+edited, blank 422, non-author 403, unknown 404, anon 401) + **real-PG integration** (`store.TestUpdateCommentPersists`: body updated + `updated_at` advances past `created_at`). Threading (parent_id) landed — see the next item; moderation hooks are P9. All four CRUD verbs are now implemented.)
+- [x] Implement comments create/read/update/delete. (All four verbs DONE; flat-list model (threading via `parent_id` — next item): `POST /api/v1/videos/:id/comments` (auth) posts a comment on a **public, published** video; `GET /api/v1/videos/:id/comments` (public, paginated `limit`≤100/`offset`) lists them newest-first with the author's username + display name (sqlc `ListCommentsByVideo` JOINs users); `DELETE /api/v1/comments/:id` (auth) removes the caller's OWN comment (403 for another's, 404 unknown). Non-public/unpublished/unknown video → 404 (`commentableVideoID` guard). migration 0014 (`comments` table, `ON DELETE CASCADE` from videos+users); `internal/comment` service + `internal/httpapi/comments.go`; openapi documents all three + `Comment`/`CommentListResponse` schemas (drift guard extended via `fullRouteOptions`). Tested: 2 service + 3 handler (create→list→delete-by-author, non-author 403, non-public 404, blank-body 422). **Edit (PATCH) now DONE**: `PATCH /api/v1/comments/:id` (auth) lets the **author** edit their own comment body (moderators delete, not edit) — another user's → 403, unknown → 404, blank/too-long → 422; it bumps `updated_at` so the `Comment` view now carries an `edited` boolean (`updated_at > created_at`) for an "(edited)" marker, and re-flags the edited body against the watched-words list. sqlc `UpdateComment`; `comment.Service.Edit`; `handleUpdateComment`; openapi documents the op + `UpdateCommentRequest` + the `Comment.edited` field (drift guard green). Tested: 1 service unit (`TestEditComment`) + 1 handler (`TestCommentEdit`: author 200+edited, blank 422, non-author 403, unknown 404, anon 401) + **real-PG integration** (`store.TestUpdateCommentPersists`: body updated + `updated_at` advances past `created_at`). Threading (parent_id) landed — see the next item; moderation hooks are P9. All four CRUD verbs are now implemented.)
 - [x] Implement comment threading if in-scope. (Replies via a nullable `comments.parent_id` self-FK (migration 0026, reserved by 0014; `ON DELETE CASCADE` so a thread is removed with its root — soft-delete-that-keeps-the-thread is a later refinement). `POST /api/v1/videos/:id/comments` accepts an optional `parent_id`: the service (`comment.Create` now takes `parentID *uuid.UUID`) validates it references an existing comment on the **same** video, else `ErrParentNotFound` → 422 field error (a reply can't be smuggled onto another video's thread, and arbitrary comment-id existence isn't leaked); a malformed `parent_id` is a 422 too. Every comment view now carries `parent_id` (null for top-level), and `GET /videos/:id/comments` returns replies inline with the link so the client builds the tree. sqlc `CreateComment`/`GetComment`/`ListCommentsByVideo` carry `parent_id`; openapi documents the request field + `Comment.parent_id` (drift guard green). Tested: 1 service unit (`TestCreateReply`: reply ok records parent_id; unknown parent → ErrParentNotFound; cross-video parent → ErrParentNotFound) + 1 handler (`TestCommentReplyThreading`: top-level null parent, reply carries parent_id, both listed, malformed 422, cross-video 422). INTENTIONAL_DIFFERENCE from PeerTube: a flat list + `parent_id` (client builds the tree) rather than dedicated `comment-threads` / thread-detail endpoints — those can be a later refinement.)
-- [~] Implement comment moderation hooks. (Moderator delete DONE: `DELETE /api/v1/comments/:id` lets a moderator/admin delete any comment (not just the author's) — see the admin comments overview in P9. Watched-words auto-flagging of comments is a later slice.)
+- [x] Implement comment moderation hooks. (Moderator delete: `DELETE /api/v1/comments/:id` lets a moderator/admin delete any comment (not just the author's) — see the admin comments overview in P9; tested by `TestModeratorDeletesAnyComment`. Watched-words auto-flagging landed too: `handleCreateComment` flags on post and `handleUpdateComment` re-flags on edit via `watchword.FlagComment`, feeding the `GET /admin/watched-word-matches` review queue — see the P9 watched-words items.)
 - [x] Implement video like/dislike or reaction behavior according to spec. (Already implemented — reconciling a stale checkbox. `internal/rating` (`Like`/`Dislike`) backs `PUT /api/v1/videos/:id/rating` (requireAuth, body `{rating:"like"|"dislike"}`, upsert that replaces the caller's prior rating), `DELETE /api/v1/videos/:id/rating` (clears it), and `GET /api/v1/videos/:id/rating` (public: `{like_count, dislike_count, my_rating}` where `my_rating` is null for an anonymous/unrated viewer) — all guarded to public+published videos. `internal/httpapi/ratings.go` + `ratings_test.go`; openapi documents both ops + `VideoRating` (drift guard green). Verified present + passing under `make ci` (internal/rating + httpapi tests green).)
 - [x] Implement subscriptions/follows. (The follow model landed in P5 (`POST`/`DELETE /api/v1/channels/:handle/follow`). This adds the **subscriptions feed**: `GET /api/v1/me/subscriptions/videos` (behind `requireAuth`, paginated `limit`≤100/`offset`) returns public, published videos from the channels the user follows, newest first, with the same discovery-card data (`views`, `has_thumbnail`) as the main feed. sqlc `ListSubscriptionVideos` (filters `channel_id IN (SELECT … FROM channel_follows WHERE follower_id = $1)`); `internal/video.ListSubscriptions`; openapi documented; tested — service-level (only-followed-channels) + handler-level using the real follow flow (anon→401, empty-before-follow, video-appears-after-follow).)
 - [x] Implement notification creation/read/mark-read. (migration 0018 `notifications` (PK id, recipient `user_id`, `type`, nullable `actor_id`/`channel_id`/`video_id`/`comment_id` all `ON DELETE CASCADE`, `read_at` (NULL=unread), `created_at`; `(user_id, created_at DESC)` index + partial `(user_id) WHERE read_at IS NULL` for cheap unread). `internal/notification` service: `NotifyFollow`/`NotifyComment` (best-effort side effects, skip self-notify), `List` (unread-filterable, joins actor/channel/video for display), `UnreadCount`, `MarkRead` (idempotent, ErrNotFound on unknown/not-yours), `MarkAllRead`. Endpoints (all requireAuth): `GET /api/v1/me/notifications?unread=&limit=&offset=` → `{notifications, unread_count, limit, offset}`, `GET /api/v1/me/notifications/unread-count`, `POST /api/v1/me/notifications/read-all`, `POST /api/v1/me/notifications/:id/read`. Creation hooks: `handleFollowChannel` notifies the channel owner only on a **genuinely new** follow (`FollowChannel` changed to `:execrows` so `channel.Service.Follow` returns `(channel, created, err)`); `handleCreateComment` notifies the video owner. `internal/httpapi/notifications.go`; openapi documents all 4 + `Notification`/`NotificationActor`/`NotificationListResponse`/`UnreadCountResponse` (drift guard extended via `fullRouteOptions`). Tested: 2 service unit (notify+list ordering+self-skip; mark-read idempotent/404/mark-all) + 5 handler (follow→owner notified+mark-read clears unread, self-follow none, comment→owner notified+self-comment none+read-all, auth 401 on all 4, unknown 404). **Message notifications now added** (migration 0032 adds a nullable `notifications.conversation_id` FK → conversations `ON DELETE CASCADE`): sending a direct message best-effort notifies the recipient — `notification.NotifyMessage(recipient, sender, conversationID)` (type `message`, actor = sender, links the conversation; NO message body stored → no plaintext leak), emitted from `handleSendMessage` via `messaging.OtherParticipant` (new sqlc `GetOtherParticipant`). `Notification.type` enum + `conversation_id` field documented in openapi. Tested: 1 notification unit (`TestNotifyMessage`: message notif carries conversation id, self-message skipped) + messaging `OtherParticipant` unit + handler assertion in `TestMessagingFlow` (recipient sees a `message` notification linking the conversation from the sender; sender is NOT self-notified). DEFERRED: new-video-from-subscription fan-out, notification preferences, email/push delivery.)
-- [~] Add tests for playlist permissions, history privacy, and comment moderation. (Playlist permissions + visibility DONE: 2 service unit (create/get/items ordering+idempotent; owner-only update/add/remove/delete → ErrForbidden/ErrNotFound) + 5 handler (CRUD+items round trip with card + count, private 404 to anon / 200 to owner / public 200, non-owner mutate 404, add-non-public 404, blank-title 422, auth 401 on all 7). History privacy: watch-history is already per-user (requireAuth). Comment moderation: pending P9.)
+- [x] Add tests for playlist permissions, history privacy, and comment moderation. (Playlist permissions + visibility: 2 service unit (create/get/items ordering+idempotent; owner-only update/add/remove/delete → ErrForbidden/ErrNotFound) + 5 handler (CRUD+items round trip with card + count, private 404 to anon / 200 to owner / public 200, non-owner mutate 404, add-non-public 404, blank-title 422, auth 401 on all 7). History privacy: watch-history is per-user by construction (requireAuth) + `history_test.go` auth coverage. Comment moderation landed with P9: `TestModeratorDeletesAnyComment` + `TestAdminCommentsOverview` (admin_comments_test.go) + `TestWatchedWordMatchesFlow` (admin_watched_word_matches_test.go).)
 
 ---
 
@@ -674,7 +673,7 @@
 - [x] Implement VTT validation. (`video.isWebVTT` requires the `WEBVTT` signature (optionally after a UTF-8 BOM) followed by EOF/newline/space/tab, per the WebVTT spec; upload is bounded to 4 MiB; the language tag must match a BCP-47-ish pattern (`^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$`). Bad input → `ErrInvalidCaption` → 422.)
 - [ ] Implement optional Whisper job adapter.
 - [ ] Implement auto-caption request/status.
-- [~] Implement language metadata. (Each caption carries its own `language` tag (validated) + `label`. The global taxonomy config endpoint now exists — `GET /api/v1/videos/config` (categories/licenses/languages/privacies; see P7) — so the frontend can offer a curated language dropdown. Per-video category/language/license STORAGE + validation against these maps is the remaining piece, P6.312.)
+- [x] Implement language metadata. (Each caption carries its own `language` tag (validated) + `label`. The global taxonomy config endpoint exists — `GET /api/v1/videos/config` (categories/licenses/languages/privacies; see P7) — and the once-remaining piece, per-video category/language/license STORAGE + validation, landed too: migration 0025 + `validateTaxonomy` against the `video.IsCategory`/`IsLanguage`/`IsLicense` maps, exposed on the video views — see the P6.1 metadata-validation item, VERIFIED against real PG.)
 - [x] Add tests for manual captions. (`internal/video` unit: `TestIsWebVTT` (signature/BOM/glued-suffix/lowercase edge cases) + `TestLangPattern` (valid/invalid tags). `internal/httpapi` handler: `TestCaptionsFlow` (upload→list→download-with-`text/vtt`→re-upload-replaces→second-language→delete→gone→download-404) + `TestCaptionsValidationAndAuth` (non-WebVTT 422, bad-lang 422, missing-file 400, non-owner 404, anon upload/delete 401, list on a private draft 404). Real storage exercised via the handler test's `storage.Local`.)
 - [ ] Add Whisper mocked integration tests.
 
@@ -713,17 +712,17 @@
 
 # P16 — Testing Strategy
 
-- [ ] Add unit test pattern and examples.
-- [ ] Add integration test pattern with PostgreSQL and Redis.
+- [x] Add unit test pattern and examples. (pattern documented in `.ralph/specs/testing.md` §Layers — fakes/httptest, no external deps; 95 `*_test.go` files across `internal/` follow it)
+- [x] Add integration test pattern with PostgreSQL and Redis. (`-tags=integration`, self-skipping when a dependency is absent; 12+ files across store/cache/ratelimit/storage/media/federation/httpapi/transcode/profileimage/cmd/api; `make test-integration`; documented in testing.md + AGENT.md)
 - [x] Add smoke test for API startup. (`cmd/api/smoke_integration_test.go` `TestAPIStartupSmoke` (`-tags=integration`; self-skips without `DATABASE_URL`/`REDIS_URL`): `go build`s the REAL api binary and exec's it against the live PostgreSQL + Redis on a reserved loopback port (tempdir `STORAGE_LOCAL_ROOT`), proving the full production wiring end to end — config load, store/cache connections, service construction, route registration — not the fakes unit tests use. Polls `/readyz` until 200 (asserting `postgres`+`redis` components both `ok`; a boot crash surfaces immediately with captured logs instead of a poll timeout), asserts `/healthz` → `{status:ok}` and `/version` → `{name:vidra, version, go}`, then SIGTERMs and requires a clean exit 0 with "shutdown complete" in the logs. Race-safe (mutex'd log sink; exit result consumed exactly once; killed on test failure so nothing leaks). Runs in `make test-integration` / the backend-integration workflow (`./...` includes `cmd/api`); passed locally in ~4.5s under `-race` against the compose PG/Redis.)
 - [ ] Add Postman collection and environment for live DB tests.
-- [ ] Add fuzz test target list.
+- [x] Add fuzz test target list. (targets listed in testing.md §Layers and implemented — `FuzzValidateURL` (urlsafety), `FuzzParseFFProbe` (media), `FuzzParseSignatureHeader`/`FuzzVerify` (httpsig); seed corpora run under `make ci` — see P15)
 - [ ] Add benchmark target list.
-- [ ] Add tiny media fixtures.
-- [ ] Add testcontainers or Compose-based test runner.
-- [ ] Add CI jobs for unit tests.
-- [ ] Add CI jobs for integration tests.
-- [ ] Add CI jobs for smoke tests.
+- [x] Add tiny media fixtures. (generated, not committed: a 2s 320x240 ffmpeg testsrc fixture built at test time powers `TestHLSTranscoderRealVideo`, `TestHLSPipelineEndToEnd`, and the ffprobe/thumbnail integration tests)
+- [x] Add testcontainers or Compose-based test runner. (Compose-based: `docker compose up` postgres/redis(/minio) + `make test-integration`; CI mirrors it with service containers in backend-integration.yml)
+- [x] Add CI jobs for unit tests. (`.github/workflows/backend-ci.yml` — the canonical `make ci` gate (fmt-check+vet+openapi-verify+sqlc-verify+test-race) with PG/Redis service containers)
+- [x] Add CI jobs for integration tests. (`.github/workflows/backend-integration.yml` — `make test-integration` against real postgres:16 + redis:7 + ffmpeg, fresh-DB migrations applied first)
+- [x] Add CI jobs for smoke tests. (the API startup smoke `TestAPIStartupSmoke` rides backend-integration.yml — its `./...` includes `cmd/api`; no separate workflow needed)
 - [ ] Add scheduled or manual fuzz/benchmark workflows.
 - [ ] Document when Ralph should run focused vs full test suites.
 
@@ -818,17 +817,17 @@
 - [ ] Vidra extensions ledger has no unclassified in-scope backend items.
 - [x] OpenAPI contract (`api/openapi.yaml`) is current: lints clean (`make openapi-lint` — Redocly @1, 0 errors) and the route↔spec drift guard passes (`make openapi-verify` / `TestOpenAPIContract`). Fixed two 3.1 contract bugs that had reddened the `openapi` workflow for several commits: `nullable: true` (a 3.0-ism 3.1 removed) → JSON-Schema type-arrays on `Video.{duration_seconds,width,height}`, and undeclared per-op auth → a document-level `security: []` (public by default; protected ops override with `bearerAuth`). Remaining 8 advisory warnings (info-license [repo license TBD], no-server-example.com [localhost dev URL], operation-4xx-response ×6) are non-blocking; documenting 4xx bodies is a later completeness pass.
 - [ ] `README.md`, `.env.example`, and `.ralph/AGENT.md` reflect the current endpoints, env vars, and commands (no documentation drift).
-- [ ] Logging is structured and configurable (`LOG_LEVEL`/`LOG_FORMAT`); the banned-logging and secrets-in-logs guard tests pass; no denylisted data in logs/spans/metric labels.
-- [ ] Audit events exist and are tested for in-scope sensitive actions.
-- [ ] OpenTelemetry traces/metrics follow `.ralph/specs/observability.md` (behind config flags; logs carry `trace_id` when enabled).
-- [ ] Migrations apply cleanly to empty database.
+- [x] Logging is structured and configurable (`LOG_LEVEL`/`LOG_FORMAT`); the banned-logging and secrets-in-logs guard tests pass; no denylisted data in logs/spans/metric labels. (slog json/text via `observability.NewLogger`; `TestNoForbiddenLogging` + `TestNoSensitiveLogKeys` run under `make ci` — P17.1/P17.2. Reconciled 2026-07-02 audit.)
+- [x] Audit events exist and are tested for in-scope sensitive actions. (typed events at the `s.audit` choke point, persisted to `audit_log` (0029), per-action tests — see P15/P17.2/P9)
+- [~] OpenTelemetry traces/metrics follow `.ralph/specs/observability.md` (behind config flags; logs carry `trace_id` when enabled). (traces DONE behind the `OTEL_*` flags with `trace_id`/`span_id` log stamping; RED **metrics** (`METRICS_ENABLED`) still TODO — see P17.3)
+- [x] Migrations apply cleanly to empty database. (both backend workflows apply ALL migrations to a fresh postgres:16 before tests on every push/PR — green on main 2026-07-03)
 - [ ] Migrations apply cleanly to existing database fixture.
-- [ ] Docker Compose can start required local services.
-- [ ] Unit tests pass.
-- [ ] Integration tests pass or documented external dependency is unavailable.
-- [ ] Smoke tests pass.
-- [ ] Lint/static analysis passes.
-- [ ] `make ci` passes locally and CI is green running the same `make ci` gate (local↔CI parity); `ci-guard.yml` passes (no hidden failures, workflows invoke the canonical gate).
+- [x] Docker Compose can start required local services. (postgres/redis/migrate/api + optional minio `storage` profile, healthchecked; multiple slices VERIFIED against the live compose stack — e.g. P12 ingest, P4 dev-mail flows)
+- [x] Unit tests pass. (`make ci` (`test-race`) green in CI — backend-ci on main, 2026-07-03)
+- [x] Integration tests pass or documented external dependency is unavailable. (backend-integration green on main, 2026-07-03)
+- [x] Smoke tests pass. (`TestAPIStartupSmoke` runs in backend-integration — green on main, 2026-07-03)
+- [x] Lint/static analysis passes. (gofmt check + `go vet` via `make ci`; Redocly OpenAPI lint in openapi.yml — all green on main, 2026-07-03)
+- [x] `make ci` passes locally and CI is green running the same `make ci` gate (local↔CI parity); `ci-guard.yml` passes (no hidden failures, workflows invoke the canonical gate). (backend-ci runs `make ci` verbatim; backend-ci/backend-integration/openapi/ci-guard all green on main, 2026-07-03)
 - [ ] `.ralph/AGENT.md` is accurate.
 - [ ] No secrets are committed.
 
