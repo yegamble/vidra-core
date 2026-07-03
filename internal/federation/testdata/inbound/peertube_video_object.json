@@ -1,0 +1,53 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    {
+      "pt": "https://joinpeertube.org/ns#",
+      "views": "pt:views",
+      "sensitive": "as:sensitive"
+    }
+  ],
+  "type": "Video",
+  "id": "https://peertube.example/videos/watch/e2b7c9d4-1f3a-4a6b-8c5d-0e9f8a7b6c5d",
+  "name": "Dawn crossing at Whitegull Sound",
+  "duration": "PT212S",
+  "uuid": "e2b7c9d4-1f3a-4a6b-8c5d-0e9f8a7b6c5d",
+  "views": 52,
+  "sensitive": false,
+  "published": "2026-05-12T08:30:00.000Z",
+  "updated": "2026-05-12T09:00:00.000Z",
+  "mediaType": "text/markdown",
+  "content": "Calm water, 4kt tail current. Route notes in the pinned comment.",
+  "icon": {
+    "type": "Image",
+    "url": "https://peertube.example/lazy-static/thumbnails/e2b7c9d4.jpg",
+    "mediaType": "image/jpeg",
+    "width": 280,
+    "height": 157
+  },
+  "url": [
+    {
+      "type": "Link",
+      "mediaType": "text/html",
+      "href": "https://peertube.example/videos/watch/e2b7c9d4-1f3a-4a6b-8c5d-0e9f8a7b6c5d"
+    },
+    {
+      "type": "Link",
+      "mediaType": "application/x-mpegURL",
+      "href": "https://peertube.example/static/streaming-playlists/hls/e2b7c9d4/master.m3u8"
+    }
+  ],
+  "attributedTo": [
+    {
+      "type": "Person",
+      "id": "https://peertube.example/accounts/marta"
+    },
+    {
+      "type": "Group",
+      "id": "https://peertube.example/video-channels/kayak_diaries"
+    }
+  ],
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ]
+}

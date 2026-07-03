@@ -1,0 +1,7 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "actor": "https://videos.example/accounts/ada",
+  "id": "https://videos.example/accounts/ada/activities/follow/00000000-0000-0000-0000-000000000000",
+  "object": "https://peertube.example/video-channels/kayak_diaries",
+  "type": "Follow"
+}

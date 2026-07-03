@@ -1,0 +1,19 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "actor": "https://videos.example/accounts/ada",
+  "id": "https://videos.example/accounts/ada/activities/update/00000000-0000-0000-0000-000000000000",
+  "object": {
+    "attributedTo": "https://videos.example/accounts/ada",
+    "content": "Beautiful grade — what camera?",
+    "id": "https://videos.example/comments/c4d5e6f7-a8b9-4c0d-8e1f-2a3b4c5d6e7f",
+    "inReplyTo": "https://videos.example/videos/watch/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
+    "to": [
+      "https://www.w3.org/ns/activitystreams#Public"
+    ],
+    "type": "Note"
+  },
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ],
+  "type": "Update"
+}

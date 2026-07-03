@@ -1,0 +1,7 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://mastodon.example/2f6c1a9e-90b1-47a4-b2c8-3d5e7f9a1b2c",
+  "type": "Follow",
+  "actor": "https://mastodon.example/users/kaisa",
+  "object": "https://videos.example/video-channels/films"
+}

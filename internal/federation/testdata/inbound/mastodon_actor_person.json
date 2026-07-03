@@ -1,0 +1,39 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    "https://w3id.org/security/v1",
+    {
+      "manuallyApprovesFollowers": "as:manuallyApprovesFollowers",
+      "toot": "http://joinmastodon.org/ns#",
+      "featured": {
+        "@id": "toot:featured",
+        "@type": "@id"
+      },
+      "discoverable": "toot:discoverable"
+    }
+  ],
+  "id": "https://mastodon.example/users/kaisa",
+  "type": "Person",
+  "following": "https://mastodon.example/users/kaisa/following",
+  "followers": "https://mastodon.example/users/kaisa/followers",
+  "inbox": "https://mastodon.example/users/kaisa/inbox",
+  "outbox": "https://mastodon.example/users/kaisa/outbox",
+  "featured": "https://mastodon.example/users/kaisa/collections/featured",
+  "preferredUsername": "kaisa",
+  "name": "Kaisa",
+  "summary": "<p>Boosts are not endorsements.</p>",
+  "url": "https://mastodon.example/@kaisa",
+  "manuallyApprovesFollowers": false,
+  "discoverable": true,
+  "published": "2024-03-18T00:00:00Z",
+  "publicKey": {
+    "id": "https://mastodon.example/users/kaisa#main-key",
+    "owner": "https://mastodon.example/users/kaisa",
+    "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nTk9UIEEgUkVBTCBLRVk6IHNhbml0aXplZCBjb250cmFjdC1maXh0dXJlIHBsYWNlaG9sZGVy\n-----END PUBLIC KEY-----\n"
+  },
+  "tag": [],
+  "attachment": [],
+  "endpoints": {
+    "sharedInbox": "https://mastodon.example/inbox"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "subject": "acct:kayak_diaries@peertube.example",
+  "aliases": [
+    "https://peertube.example/video-channels/kayak_diaries"
+  ],
+  "links": [
+    {
+      "rel": "self",
+      "type": "application/activity+json",
+      "href": "https://peertube.example/video-channels/kayak_diaries"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://videos.example/video-channels/films/followers",
+  "totalItems": 5,
+  "type": "OrderedCollection"
+}

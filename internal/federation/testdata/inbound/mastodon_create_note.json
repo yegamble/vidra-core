@@ -1,0 +1,62 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    {
+      "ostatus": "http://ostatus.org#",
+      "sensitive": "as:sensitive",
+      "toot": "http://joinmastodon.org/ns#",
+      "votersCount": "toot:votersCount",
+      "conversation": "ostatus:conversation"
+    }
+  ],
+  "id": "https://mastodon.example/users/kaisa/statuses/114522110099887766/activity",
+  "type": "Create",
+  "actor": "https://mastodon.example/users/kaisa",
+  "published": "2026-06-20T17:41:09Z",
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ],
+  "cc": [
+    "https://mastodon.example/users/kaisa/followers"
+  ],
+  "object": {
+    "id": "https://mastodon.example/users/kaisa/statuses/114522110099887766",
+    "type": "Note",
+    "summary": null,
+    "inReplyTo": "https://videos.example/videos/watch/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
+    "published": "2026-06-20T17:41:09Z",
+    "url": "https://mastodon.example/@kaisa/114522110099887766",
+    "attributedTo": "https://mastodon.example/users/kaisa",
+    "to": [
+      "https://www.w3.org/ns/activitystreams#Public"
+    ],
+    "cc": [
+      "https://mastodon.example/users/kaisa/followers"
+    ],
+    "sensitive": false,
+    "atomUri": "https://mastodon.example/users/kaisa/statuses/114522110099887766",
+    "inReplyToAtomUri": "https://videos.example/videos/watch/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
+    "conversation": "tag:mastodon.example,2026-06-20:objectId=9912734:objectType=Conversation",
+    "content": "<p>The drone shots at <a href=\"https://mastodon.example/tags/whitegull\" class=\"mention hashtag\" rel=\"tag\">#<span>whitegull</span></a> are stunning &amp; the route notes helped a lot!</p>",
+    "contentMap": {
+      "en": "<p>The drone shots at <a href=\"https://mastodon.example/tags/whitegull\" class=\"mention hashtag\" rel=\"tag\">#<span>whitegull</span></a> are stunning &amp; the route notes helped a lot!</p>"
+    },
+    "tag": [
+      {
+        "type": "Hashtag",
+        "href": "https://mastodon.example/tags/whitegull",
+        "name": "#whitegull"
+      }
+    ],
+    "replies": {
+      "id": "https://mastodon.example/users/kaisa/statuses/114522110099887766/replies",
+      "type": "Collection",
+      "first": {
+        "type": "CollectionPage",
+        "next": "https://mastodon.example/users/kaisa/statuses/114522110099887766/replies?only_other_accounts=true&page=true",
+        "partOf": "https://mastodon.example/users/kaisa/statuses/114522110099887766/replies",
+        "items": []
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    {
+      "sensitive": "as:sensitive",
+      "toot": "http://joinmastodon.org/ns#"
+    }
+  ],
+  "id": "https://mastodon.example/users/kaisa/statuses/114522110099887766#updates/1",
+  "type": "Update",
+  "actor": "https://mastodon.example/users/kaisa",
+  "published": "2026-06-20T18:02:33Z",
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ],
+  "cc": [
+    "https://mastodon.example/users/kaisa/followers"
+  ],
+  "object": {
+    "id": "https://mastodon.example/users/kaisa/statuses/114522110099887766",
+    "type": "Note",
+    "summary": null,
+    "inReplyTo": "https://videos.example/videos/watch/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
+    "published": "2026-06-20T17:41:09Z",
+    "updated": "2026-06-20T18:02:33Z",
+    "url": "https://mastodon.example/@kaisa/114522110099887766",
+    "attributedTo": "https://mastodon.example/users/kaisa",
+    "to": [
+      "https://www.w3.org/ns/activitystreams#Public"
+    ],
+    "sensitive": false,
+    "content": "<p>Edit: the drone shots are stunning &amp; the route notes helped a lot. Camera was a knock-off action cam!</p>"
+  }
+}

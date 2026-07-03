@@ -1,0 +1,10 @@
+{
+  "links": [
+    {
+      "href": "https://videos.example/accounts/ada",
+      "rel": "self",
+      "type": "application/activity+json"
+    }
+  ],
+  "subject": "acct:ada@videos.example"
+}

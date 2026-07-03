@@ -1,0 +1,12 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://mastodon.example/users/kaisa#rejects/follows/58",
+  "type": "Reject",
+  "actor": "https://mastodon.example/users/kaisa",
+  "object": {
+    "id": "https://videos.example/accounts/ada/activities/follow/1e2d3c4b-5a69-4788-9b0a-6f5e4d3c2b1a",
+    "type": "Follow",
+    "actor": "https://videos.example/accounts/ada",
+    "object": "https://mastodon.example/users/kaisa"
+  }
+}

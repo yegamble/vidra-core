@@ -1,0 +1,45 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    {
+      "sensitive": "as:sensitive",
+      "toot": "http://joinmastodon.org/ns#"
+    }
+  ],
+  "id": "https://mastodon.example/users/pekka/statuses/114522110099887799/activity",
+  "type": "Create",
+  "actor": "https://mastodon.example/users/pekka",
+  "published": "2026-06-20T18:12:44Z",
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ],
+  "cc": [
+    "https://mastodon.example/users/pekka/followers",
+    "https://mastodon.example/users/kaisa"
+  ],
+  "object": {
+    "id": "https://mastodon.example/users/pekka/statuses/114522110099887799",
+    "type": "Note",
+    "summary": null,
+    "inReplyTo": "https://mastodon.example/users/kaisa/statuses/114522110099887766",
+    "published": "2026-06-20T18:12:44Z",
+    "url": "https://mastodon.example/@pekka/114522110099887799",
+    "attributedTo": "https://mastodon.example/users/pekka",
+    "to": [
+      "https://www.w3.org/ns/activitystreams#Public"
+    ],
+    "cc": [
+      "https://mastodon.example/users/pekka/followers",
+      "https://mastodon.example/users/kaisa"
+    ],
+    "sensitive": false,
+    "content": "<p><span class=\"h-card\"><a href=\"https://mastodon.example/@kaisa\" class=\"u-url mention\">@<span>kaisa</span></a></span> agreed — the tide window chart alone is worth a follow.</p>",
+    "tag": [
+      {
+        "type": "Mention",
+        "href": "https://mastodon.example/users/kaisa",
+        "name": "@kaisa"
+      }
+    ]
+  }
+}

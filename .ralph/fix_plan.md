@@ -698,6 +698,49 @@
 > `DATABASE_URL=… -tags=integration -race ./internal/...` green 2026-07-03. Remaining in
 > remote-content: none design-gated — v1 excludes local comments on REMOTE videos
 > (INTENTIONAL_DIFFERENCE per §6; interactions live at the origin).
+>
+> **Slice core-fed-contract SHIPPED** (fix_plan P10 "federation contract tests using fixtures" +
+> remote-content §9 golden-fixture bar): test-only slice — no routes/migrations/sqlc changes; the
+> suite is ordinary `go test` in `internal/federation`, so it runs inside `make ci` (test-race)
+> automatically. **Corpus** (`internal/federation/testdata/inbound/`, 19 hand-built SANITIZED
+> real-shaped files — never copied verbatim; domains peertube.example / mastodon.example /
+> videos.example; public-key PEMs are base64 "NOT A REAL KEY" placeholders — no private keys
+> anywhere): PeerTube- and Mastodon-shaped WebFinger JRDs (incl. Mastodon's extra profile-page +
+> subscribe-template links), Person/Group actor docs (@context extension objects, endpoints.
+> sharedInbox, playlists/featured extras), Follow (both flavors), Undo{Follow}, Accept/Reject
+> {Follow} (fragment ids like `#rejects/follows/58`), full PeerTube Create{Video} (attributedTo
+> ARRAY of Person+Group objects, url array with html watch link + HLS m3u8 + mp4 + magnet, icon
+> array, PT212S duration, category object, views/sensitive extras), URL-only Announce + the
+> standalone Video object doc (Person-first attribution), Update{Video}, Delete (video string
+> object / Note Tombstone / actor self-delete with an LD-signature blob to ignore), Mastodon
+> Create{Note} threaded to a local video (HTML content + entities + hashtag anchors, contentMap,
+> replies collection), a cross-user reply Note, Update{Note}, and Like/View (accepted-and-ignored).
+> **(a) Inbound** (`contract_fixture_test.go`): 19-case table drives every fixture through
+> `HandleInbox` with a seeded edge-checker asserting dispatch outcome — follows recorded + Accept
+> queued, Accept flips ONLY when the followed actor signs, Reject deletes, Create{Video} ingests
+> the full shape (HLS preferred over mp4/magnet, html link = watch_url, PT212S→212s, RFC3339
+> published) and is ignored without an edge / rejected on signer mismatch, Update upserts in
+> place, Deletes remove video/comment and cascade an actor, Note stores stripped+unescaped body
+> with author snapshot and remote-sibling threading, foreign Update{Note} can't edit, Like/View
+> no-op but mark processed. `TestContractWebFingerResolution` follows `handle@domain` end-to-end
+> through the JRD+actor fixtures via a fixtureTransport (no network); `TestContractAnnounce
+> FetchesFixtureObject` exercises the object-fetch + owner-actor-resolution path from fixtures.
+> **(b) Outbound goldens** (`contract_golden_test.go` + `testdata/golden/`, 16 files): every
+> document we mint — Person/Group actor docs, WebFinger JRD, Accept{Follow} (captured off the
+> queue in reply to the real-shaped Mastodon Follow), Follow + Undo{Follow}, Create/Update/
+> Delete{Video}, Create{Note} + remote-parent reply + Update/Delete{Note}, outbox OrderedCollection
+> + page + followers collection — canonicalized (volatile `/activities/<verb>/<uuid>` ids and
+> minted key PEMs scrubbed, keys sorted, stable indent) and BYTE-compared against the golden; any
+> shape regression flips the test (verified by mutating a golden → FAIL → restore). Regenerate
+> intentionally with `UPDATE_GOLDEN=1 go test ./internal/federation -run ContractGolden`.
+> **(c) Digest/Signature interop** (`contract_httpsig_test.go`): the PT Create{Video} fixture is
+> signed with `httpsig.Signer` exactly like outbound delivery and verified through the service's
+> own `ResolveKey` (remote-actor cache) like the inbox — asserting the fediverse-standard
+> `SHA-256=<b64>` Digest, returned keyId, end-to-end dispatch of the verified body, and rejection
+> of a tampered body + wrong-key signature. **No parsing gaps surfaced**: the existing parsers
+> handled every real-shaped variant (attributedTo object arrays, Tombstones, id fragments, magnet
+> mediaTypes, null/extra fields) — no parser fix needed this slice. Gate: `make ci` +
+> `DATABASE_URL=… -tags=integration -race ./internal/...` green 2026-07-03.
 
 ## P10.1 ActivityPub
 
@@ -716,7 +759,7 @@
 - [x] Implement federated deletes/updates. (Inbound `Undo{Follow}` DONE (5d). **Outbound `Update`/`Delete` of a channel's own videos DONE (5e)**: editing a public+published video fans an `Update{Video}` to remote followers; editing it out of public (e.g. → private) or deleting it fans a `Delete` (unfederate) — via `video.WithUpdateHook`/`WithDeleteHook` → `federation.UpdateVideo`/`DeleteVideo` → the delivery queue. **Inbound `Update`/`Delete` of REMOTE objects DONE (core-fed-comments slice, §7)**: `Update{Video}` upserts through the same authority+edge-gate path as Create; `Update{Note}` applies only for the original attributed actor; `Delete` handles remote videos, federated comments, and remote actors (authority: attributed actor OR same-origin signer; an actor Delete cascades its videos+comments+follow edges via FKs). Outbound comment deletes/updates fan out too (§6). Unit + integration evidence in the core-fed-comments slice log.)
 - [x] Implement federation queue/retry/dead-letter. (`federation_deliveries` table + `DrainDeliveries` worker — Slice 5a. Claims due pending rows, signs each as its channel and POSTs via the SSRF-guarded client; success → delivered, failure → reschedule with exponential backoff (30s×2ⁿ, cap 6h) or dead-letter (state 'failed') after 6 attempts. A single background worker (cmd/api, 10s ticker) drains it. First producer wired: an inbound Follow enqueues a signed Accept. More producers (Create/Announce) land with the outbox slice.)
 - [x] Implement remote media cache strategy. (Decided in federation-remote-content.md §5 and implemented in the core-fed-inbound slice: cache **thumbnails only** — video bytes are NEVER mirrored (bandwidth + licensing). On ingestion, `cacheRemoteThumbnail` best-effort fetches the object's `icon` URL through the SSRF guard (2 MiB cap read-one-past to detect oversize; content-type must be image/*), stores it at `remote-thumbnails/<id>.jpg` via the shared `storage.Backend` (`federation.WithMediaStorage(blobs)` in cmd/api), and records `thumbnail_key`; ANY failure is non-fatal (video ingests without a poster; an existing cached key is never re-fetched on upsert). Served at `GET /api/v1/remote-videos/:id/thumbnail` (image/jpeg; 404 when uncached). Tested: unit (cache round-trip against an httptest image origin — key + bytes land in a local backend; oversized poster skipped while ingestion succeeds) + handler (thumbnail 200/content-type/bytes + 404) + integration (thumbnail_key persists).)
-- [ ] Add federation contract tests using fixtures.
+- [x] Add federation contract tests using fixtures. (core-fed-contract slice — 19-file sanitized real-shaped PeerTube/Mastodon corpus in `internal/federation/testdata/inbound/` driven through `HandleInbox`/WebFinger/actor/object-fetch paths (19-case dispatch table + resolution tests, seeded edge-checker, fixtureTransport — no network), 16 golden files in `testdata/golden/` byte-guarding every outbound document we mint (actor docs, WebFinger, Accept, Follow/Undo, Create/Update/Delete{Video}, Create/Update/Delete{Note} incl. remote-parent reply threading, outbox collection/page/followers; canonicalized — volatile activity-id UUIDs + minted PEMs scrubbed; regenerate via `UPDATE_GOLDEN=1`), plus an httpsig sign→verify round-trip of a fixture through the service's real `ResolveKey` (Digest `SHA-256=<b64>`, tamper + wrong-key rejection, verified-body dispatch). Ordinary go tests → run in `make ci`. No parser gaps found (attributedTo object arrays, Tombstones, fragment ids, magnet links, extra/null fields all already handled). See the core-fed-contract slice log above.)
 
 ## P10.2 ATProto / Bluesky Extension
 

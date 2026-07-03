@@ -1,0 +1,42 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    "https://w3id.org/security/v1",
+    {
+      "pt": "https://joinpeertube.org/ns#",
+      "playlists": {
+        "@id": "pt:playlists",
+        "@type": "@id"
+      },
+      "support": "pt:support",
+      "icons": "pt:icons"
+    }
+  ],
+  "type": "Group",
+  "id": "https://peertube.example/video-channels/kayak_diaries",
+  "following": "https://peertube.example/video-channels/kayak_diaries/following",
+  "followers": "https://peertube.example/video-channels/kayak_diaries/followers",
+  "playlists": "https://peertube.example/video-channels/kayak_diaries/playlists",
+  "inbox": "https://peertube.example/video-channels/kayak_diaries/inbox",
+  "outbox": "https://peertube.example/video-channels/kayak_diaries/outbox",
+  "preferredUsername": "kayak_diaries",
+  "url": "https://peertube.example/video-channels/kayak_diaries",
+  "name": "Kayak Diaries",
+  "endpoints": {
+    "sharedInbox": "https://peertube.example/inbox"
+  },
+  "publicKey": {
+    "id": "https://peertube.example/video-channels/kayak_diaries#main-key",
+    "owner": "https://peertube.example/video-channels/kayak_diaries",
+    "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nTk9UIEEgUkVBTCBLRVk6IHNhbml0aXplZCBjb250cmFjdC1maXh0dXJlIHBsYWNlaG9sZGVy\n-----END PUBLIC KEY-----\n"
+  },
+  "published": "2025-11-02T09:15:00.000Z",
+  "summary": "Sea kayaking trip logs and gear checks.",
+  "support": "Filmed on volunteer weekends.",
+  "attributedTo": [
+    {
+      "type": "Person",
+      "id": "https://peertube.example/accounts/marta"
+    }
+  ]
+}

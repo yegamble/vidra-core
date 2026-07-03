@@ -1,0 +1,14 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    {
+      "pt": "https://joinpeertube.org/ns#",
+      "expires": "pt:expires"
+    }
+  ],
+  "id": "https://peertube.example/views/videos/e2b7c9d4/9a01f3",
+  "type": "View",
+  "actor": "https://peertube.example/accounts/peertube",
+  "object": "https://videos.example/videos/watch/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
+  "expires": "2026-06-21T00:00:00.000Z"
+}

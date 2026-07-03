@@ -1,0 +1,50 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    {
+      "pt": "https://joinpeertube.org/ns#",
+      "views": "pt:views"
+    }
+  ],
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ],
+  "cc": [
+    "https://peertube.example/video-channels/kayak_diaries/followers"
+  ],
+  "type": "Update",
+  "id": "https://peertube.example/videos/watch/e2b7c9d4-1f3a-4a6b-8c5d-0e9f8a7b6c5d/updates/2",
+  "actor": "https://peertube.example/video-channels/kayak_diaries",
+  "object": {
+    "type": "Video",
+    "id": "https://peertube.example/videos/watch/e2b7c9d4-1f3a-4a6b-8c5d-0e9f8a7b6c5d",
+    "name": "Dawn crossing at Whitegull Sound (remastered)",
+    "duration": "PT212S",
+    "views": 61,
+    "published": "2026-05-12T08:30:00.000Z",
+    "updated": "2026-05-14T11:45:00.000Z",
+    "content": "Calm water, 4kt tail current. Now with color-graded footage.",
+    "url": [
+      {
+        "type": "Link",
+        "mediaType": "text/html",
+        "href": "https://peertube.example/videos/watch/e2b7c9d4-1f3a-4a6b-8c5d-0e9f8a7b6c5d"
+      },
+      {
+        "type": "Link",
+        "mediaType": "application/x-mpegURL",
+        "href": "https://peertube.example/static/streaming-playlists/hls/e2b7c9d4/master.m3u8"
+      }
+    ],
+    "attributedTo": [
+      {
+        "type": "Person",
+        "id": "https://peertube.example/accounts/marta"
+      },
+      {
+        "type": "Group",
+        "id": "https://peertube.example/video-channels/kayak_diaries"
+      }
+    ]
+  }
+}

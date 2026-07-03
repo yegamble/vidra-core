@@ -1,0 +1,12 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://peertube.example/accepts/follows/57",
+  "type": "Accept",
+  "actor": "https://peertube.example/video-channels/kayak_diaries",
+  "object": {
+    "id": "https://videos.example/accounts/ada/activities/follow/1e2d3c4b-5a69-4788-9b0a-6f5e4d3c2b1a",
+    "type": "Follow",
+    "actor": "https://videos.example/accounts/ada",
+    "object": "https://peertube.example/video-channels/kayak_diaries"
+  }
+}

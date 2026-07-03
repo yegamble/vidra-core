@@ -1,0 +1,20 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    "https://w3id.org/security/v1"
+  ],
+  "followers": "https://videos.example/video-channels/films/followers",
+  "following": "https://videos.example/video-channels/films/following",
+  "id": "https://videos.example/video-channels/films",
+  "inbox": "https://videos.example/video-channels/films/inbox",
+  "name": "Films",
+  "outbox": "https://videos.example/video-channels/films/outbox",
+  "preferredUsername": "films",
+  "publicKey": {
+    "id": "https://videos.example/video-channels/films#main-key",
+    "owner": "https://videos.example/video-channels/films",
+    "publicKeyPem": "\u003cpublic-key-pem\u003e"
+  },
+  "summary": "Hand-picked documentaries.",
+  "type": "Group"
+}

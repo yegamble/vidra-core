@@ -1,0 +1,20 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    "https://w3id.org/security/v1"
+  ],
+  "followers": "https://videos.example/accounts/ada/followers",
+  "following": "https://videos.example/accounts/ada/following",
+  "id": "https://videos.example/accounts/ada",
+  "inbox": "https://videos.example/accounts/ada/inbox",
+  "name": "Ada",
+  "outbox": "https://videos.example/accounts/ada/outbox",
+  "preferredUsername": "ada",
+  "publicKey": {
+    "id": "https://videos.example/accounts/ada#main-key",
+    "owner": "https://videos.example/accounts/ada",
+    "publicKeyPem": "\u003cpublic-key-pem\u003e"
+  },
+  "summary": "Field recordings.",
+  "type": "Person"
+}

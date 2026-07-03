@@ -1,0 +1,12 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "actor": "https://videos.example/video-channels/films",
+  "id": "https://videos.example/video-channels/films/activities/accept/00000000-0000-0000-0000-000000000000",
+  "object": {
+    "actor": "https://mastodon.example/users/kaisa",
+    "id": "https://mastodon.example/2f6c1a9e-90b1-47a4-b2c8-3d5e7f9a1b2c",
+    "object": "https://videos.example/video-channels/films",
+    "type": "Follow"
+  },
+  "type": "Accept"
+}

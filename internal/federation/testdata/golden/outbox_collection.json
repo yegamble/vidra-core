@@ -1,0 +1,7 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "first": "https://videos.example/video-channels/films/outbox?page=1",
+  "id": "https://videos.example/video-channels/films/outbox",
+  "totalItems": 2,
+  "type": "OrderedCollection"
+}

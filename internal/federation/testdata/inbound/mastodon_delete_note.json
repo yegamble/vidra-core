@@ -1,0 +1,14 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://mastodon.example/users/kaisa/statuses/114522110099887766#delete",
+  "type": "Delete",
+  "actor": "https://mastodon.example/users/kaisa",
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ],
+  "object": {
+    "id": "https://mastodon.example/users/kaisa/statuses/114522110099887766",
+    "type": "Tombstone",
+    "atomUri": "https://mastodon.example/users/kaisa/statuses/114522110099887766"
+  }
+}

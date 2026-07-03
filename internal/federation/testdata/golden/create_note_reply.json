@@ -1,0 +1,19 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "actor": "https://videos.example/accounts/ada",
+  "id": "https://videos.example/accounts/ada/activities/create/00000000-0000-0000-0000-000000000000",
+  "object": {
+    "attributedTo": "https://videos.example/accounts/ada",
+    "content": "Thanks — the route map is in the description.",
+    "id": "https://videos.example/comments/d5e6f7a8-b9c0-4d1e-9f2a-3b4c5d6e7f80",
+    "inReplyTo": "https://mastodon.example/users/kaisa/statuses/114522110099887766",
+    "to": [
+      "https://www.w3.org/ns/activitystreams#Public"
+    ],
+    "type": "Note"
+  },
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ],
+  "type": "Create"
+}

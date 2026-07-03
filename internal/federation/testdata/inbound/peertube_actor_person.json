@@ -1,0 +1,33 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    "https://w3id.org/security/v1",
+    {
+      "pt": "https://joinpeertube.org/ns#",
+      "playlists": {
+        "@id": "pt:playlists",
+        "@type": "@id"
+      }
+    }
+  ],
+  "type": "Person",
+  "id": "https://peertube.example/accounts/marta",
+  "following": "https://peertube.example/accounts/marta/following",
+  "followers": "https://peertube.example/accounts/marta/followers",
+  "playlists": "https://peertube.example/accounts/marta/playlists",
+  "inbox": "https://peertube.example/accounts/marta/inbox",
+  "outbox": "https://peertube.example/accounts/marta/outbox",
+  "preferredUsername": "marta",
+  "url": "https://peertube.example/accounts/marta",
+  "name": "Marta",
+  "endpoints": {
+    "sharedInbox": "https://peertube.example/inbox"
+  },
+  "publicKey": {
+    "id": "https://peertube.example/accounts/marta#main-key",
+    "owner": "https://peertube.example/accounts/marta",
+    "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nTk9UIEEgUkVBTCBLRVk6IHNhbml0aXplZCBjb250cmFjdC1maXh0dXJlIHBsYWNlaG9sZGVy\n-----END PUBLIC KEY-----\n"
+  },
+  "published": "2025-10-30T18:20:00.000Z",
+  "summary": null
+}

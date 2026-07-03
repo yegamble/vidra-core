@@ -1,0 +1,10 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://peertube.example/videos/watch/e2b7c9d4-1f3a-4a6b-8c5d-0e9f8a7b6c5d/delete",
+  "type": "Delete",
+  "actor": "https://peertube.example/video-channels/kayak_diaries",
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ],
+  "object": "https://peertube.example/videos/watch/e2b7c9d4-1f3a-4a6b-8c5d-0e9f8a7b6c5d"
+}

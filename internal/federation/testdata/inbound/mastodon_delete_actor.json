@@ -1,0 +1,16 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://mastodon.example/users/kaisa#delete",
+  "type": "Delete",
+  "actor": "https://mastodon.example/users/kaisa",
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ],
+  "object": "https://mastodon.example/users/kaisa",
+  "signature": {
+    "type": "RsaSignature2017",
+    "creator": "https://mastodon.example/users/kaisa#main-key",
+    "created": "2026-06-25T02:11:07Z",
+    "signatureValue": "c2FuaXRpemVkLWZpeHR1cmUtbm90LWEtcmVhbC1zaWduYXR1cmU="
+  }
+}
