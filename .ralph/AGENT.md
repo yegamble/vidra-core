@@ -308,6 +308,15 @@ go test ./internal/config/...   # focused package run
 Integration tests expect a live PostgreSQL + Redis (use `make up` or the `core`
 Compose profile). Migration tests must apply cleanly against a fresh database.
 
+S3 storage backend integration tests (MinIO; self-skip when the env is unset):
+```bash
+docker compose --profile storage up -d minio
+S3_TEST_ENDPOINT=localhost:9000 go test -tags=integration ./internal/storage/...
+```
+To run the whole api against MinIO instead of local disk, see the env block at
+the top of `docker-compose.yml` (`STORAGE_BACKEND=s3` + `STORAGE_S3_*`; the
+bucket is auto-created at boot).
+
 Password hashing: production uses bcrypt cost 12, but test binaries call
 `auth.UseFastPasswordHashingForTests()` (from an `init()` in `internal/auth` and
 `internal/httpapi` `*_test.go` files) to drop to bcrypt's min cost — keeping

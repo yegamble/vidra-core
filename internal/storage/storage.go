@@ -1,7 +1,8 @@
 // Package storage abstracts blob storage for media (originals, renditions,
 // thumbnails, captions) behind a small Backend interface. The local-filesystem
-// backend is the development default; S3-compatible and IPFS backends land
-// later behind the same interface. Keys are forward-slash object paths laid out
+// backend is the development default; the S3 backend covers S3-compatible
+// object stores (MinIO, AWS S3, Backblaze B2, DigitalOcean Spaces); an IPFS
+// backend lands later. Keys are forward-slash object paths laid out
 // PeerTube-style — one top-level dir per asset kind, e.g. "web-videos/<id>.mp4"
 // or "thumbnails/<id>.jpg" (see vidra-core/.ralph/specs/storage-layout.md) —
 // never OS paths.

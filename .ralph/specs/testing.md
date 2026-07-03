@@ -54,6 +54,28 @@ unit-tested in `internal/media/hls_test.go`, and the worker state machine
   enqueue → `DrainJobs` with the real transcoder → the `/hls/*` endpoints serve
   master/variant/segments with correct content types (needs ffmpeg on PATH).
 
+## S3 storage integration tests (MinIO-gated)
+
+The S3-compatible storage backend (`internal/storage.S3`) keeps the network out
+of the unit gate: config validation, the invalid-key contract
+(`ErrInvalidKey` before any request), and the not-a-PathProvider design pin are
+unit-tested in `internal/storage/s3_test.go`, and `internal/httpapi`
+`TestStreamOriginalRangeViaSeekableBackend` proves Range/206 serving through a
+seekable path-less backend with a fake. The real-store round trip runs under
+`-tags=integration`, gated on `S3_TEST_ENDPOINT` (self-skips when unset):
+
+```bash
+docker compose --profile storage up -d minio
+S3_TEST_ENDPOINT=localhost:9000 go test -tags=integration ./internal/storage/...
+```
+
+Covers Put/Open/Exists/Delete round trip, overwrite, idempotent delete,
+`ErrNotFound`, `http.ServeContent` Range/206 through the real seekable object
+reader (`TestS3ServeContentRange`), and the probe/transcode temp-download
+fallback contract. Optional env overrides: `S3_TEST_ACCESS_KEY` /
+`S3_TEST_SECRET_KEY` / `S3_TEST_BUCKET` / `S3_TEST_USE_SSL` (defaults match the
+compose minio service: vidra / vidra-dev-secret / vidra-test / false).
+
 ## Dev-only mail capture (email-token test seam)
 
 The account-security token flows (password reset, email verification) deliver a

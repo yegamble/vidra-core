@@ -52,6 +52,8 @@ var sensitiveKeys = map[string]bool{
 	"authorization":      true,
 	"cookie":             true,
 	"secret":             true,
+	"secret_key":         true,
+	"access_key":         true,
 	"private_key":        true,
 	"private_key_pem":    true,
 	"kek":                true,

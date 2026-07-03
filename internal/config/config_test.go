@@ -168,9 +168,80 @@ func TestStorageDefaults(t *testing.T) {
 }
 
 func TestStorageRejectsUnsupportedBackend(t *testing.T) {
-	t.Setenv("STORAGE_BACKEND", "s3")
+	t.Setenv("STORAGE_BACKEND", "ipfs")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() expected error for unsupported STORAGE_BACKEND, got nil")
+	}
+}
+
+// setS3Env sets a complete, valid s3 storage environment; individual tests
+// blank out pieces to probe validation.
+func setS3Env(t *testing.T) {
+	t.Helper()
+	t.Setenv("STORAGE_BACKEND", "s3")
+	t.Setenv("STORAGE_S3_ENDPOINT", "minio:9000")
+	t.Setenv("STORAGE_S3_BUCKET", "vidra-media")
+	t.Setenv("STORAGE_S3_ACCESS_KEY", "test-access")
+	t.Setenv("STORAGE_S3_SECRET_KEY", "test-secret")
+}
+
+func TestStorageS3ValidConfig(t *testing.T) {
+	setS3Env(t)
+	t.Setenv("STORAGE_S3_USE_SSL", "false")
+	t.Setenv("STORAGE_S3_FORCE_PATH_STYLE", "true")
+	t.Setenv("STORAGE_S3_REGION", "us-east-1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.StorageBackend != "s3" {
+		t.Errorf("StorageBackend = %q, want s3", cfg.StorageBackend)
+	}
+	if cfg.StorageS3Endpoint != "minio:9000" || cfg.StorageS3Bucket != "vidra-media" {
+		t.Errorf("endpoint/bucket = %q/%q, want minio:9000/vidra-media", cfg.StorageS3Endpoint, cfg.StorageS3Bucket)
+	}
+	if cfg.StorageS3UseSSL {
+		t.Error("StorageS3UseSSL = true, want false (overridden)")
+	}
+	if !cfg.StorageS3ForcePathStyle {
+		t.Error("StorageS3ForcePathStyle = false, want true (overridden)")
+	}
+	if cfg.StorageS3Region != "us-east-1" {
+		t.Errorf("StorageS3Region = %q, want us-east-1", cfg.StorageS3Region)
+	}
+}
+
+func TestStorageS3SecureDefaults(t *testing.T) {
+	setS3Env(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.StorageS3UseSSL {
+		t.Error("StorageS3UseSSL default = false, want true (secure default)")
+	}
+	if cfg.StorageS3ForcePathStyle {
+		t.Error("StorageS3ForcePathStyle default = true, want false")
+	}
+}
+
+func TestStorageS3RequiresSettings(t *testing.T) {
+	for _, missing := range []string{"STORAGE_S3_ENDPOINT", "STORAGE_S3_BUCKET", "STORAGE_S3_ACCESS_KEY", "STORAGE_S3_SECRET_KEY"} {
+		t.Run(missing, func(t *testing.T) {
+			setS3Env(t)
+			t.Setenv(missing, "")
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() with %s unset expected error, got nil", missing)
+			}
+		})
+	}
+}
+
+func TestStorageS3RejectsSchemeInEndpoint(t *testing.T) {
+	setS3Env(t)
+	t.Setenv("STORAGE_S3_ENDPOINT", "https://minio:9000")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for scheme-bearing STORAGE_S3_ENDPOINT, got nil")
 	}
 }
 

@@ -60,7 +60,9 @@ Never log, never put in a span attribute, never use as a metric label, and never
 return to a client:
 - Secrets/credentials: passwords, password hashes, JWTs/refresh tokens, session
   cookies, `Authorization` / `Cookie` / `Set-Cookie` headers, API keys, OAuth
-  client secrets, TOTP seeds, signing keys, wallet private keys, stream keys.
+  client secrets, TOTP seeds, signing keys, wallet private keys, stream keys,
+  object-storage credentials (S3 access/secret keys — `STORAGE_S3_ACCESS_KEY` /
+  `STORAGE_S3_SECRET_KEY`; endpoint/bucket/region are safe).
 - Full request or response bodies, and full header dumps.
 - PII beyond what an event needs: do not log raw email addresses, full IPs, or
   message contents. Prefer IDs (`actor_id`) over identifying values; when an

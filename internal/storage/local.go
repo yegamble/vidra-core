@@ -28,17 +28,13 @@ func NewLocal(dir string) (*Local, error) {
 
 // resolve maps an object key to a filesystem path guaranteed to stay within the
 // root. Keys are relative, forward-slash paths: empty, absolute, NUL-bearing, or
-// any-".."-segment keys are rejected outright (rather than silently cleaned) so
-// the contract is predictable. The final Rel check is the hard belt-and-braces
-// guarantee that nothing escapes the root.
+// any-".."-segment keys are rejected outright by validateKey (rather than
+// silently cleaned) so the contract is predictable and backend-independent. The
+// final Rel check is the hard belt-and-braces guarantee that nothing escapes
+// the root.
 func (l *Local) resolve(key string) (string, error) {
-	if key == "" || strings.ContainsRune(key, 0) || strings.HasPrefix(key, "/") {
-		return "", ErrInvalidKey
-	}
-	for _, seg := range strings.Split(key, "/") {
-		if seg == ".." {
-			return "", ErrInvalidKey
-		}
+	if err := validateKey(key); err != nil {
+		return "", err
 	}
 	full := filepath.Join(l.root, filepath.FromSlash(key))
 	rel, err := filepath.Rel(l.root, full)

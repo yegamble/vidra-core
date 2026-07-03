@@ -196,8 +196,18 @@ Redis blip degrades protection, not availability.
 Media storage goes through a small `internal/storage.Backend` interface
 (Put/Open/Delete/Exists over forward-slash object keys). The default `local` backend
 (`STORAGE_BACKEND=local`, `STORAGE_LOCAL_ROOT`) writes under a root directory with
-path-traversal-safe key resolution; S3-compatible and IPFS backends land later behind
-the same interface. The video original-file upload endpoint writes through it.
+path-traversal-safe key resolution. `STORAGE_BACKEND=s3` stores objects in any
+S3-compatible store (MinIO, AWS S3, Backblaze B2, DigitalOcean Spaces) via the MinIO
+Go SDK: set `STORAGE_S3_ENDPOINT` (host[:port], no scheme), `STORAGE_S3_BUCKET`,
+`STORAGE_S3_ACCESS_KEY`/`STORAGE_S3_SECRET_KEY` (credentials — never logged), and
+optionally `STORAGE_S3_REGION`, `STORAGE_S3_USE_SSL` (default true), and
+`STORAGE_S3_FORCE_PATH_STYLE` (required by MinIO). The bucket is created at boot when
+missing. Provider endpoint examples live in `.env.example`; for local dev the compose
+`storage` profile runs MinIO (`docker compose --profile storage up -d minio`; the
+api-against-minio env is documented at the top of `docker-compose.yml`). The S3
+backend exposes no filesystem paths — ffprobe/ffmpeg/clamav read via the temp-file
+download fallback, and HTTP Range/206 serving works through its seekable object
+reader. IPFS lands later behind the same interface.
 
 ## Local development (without Docker for the app)
 

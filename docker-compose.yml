@@ -1,14 +1,30 @@
 # Vidra core local development stack.
 #
 # Profiles let you run subsets of the stack:
-#   core  -> postgres, redis, migrate, api  (default for `docker compose up`)
+#   core    -> postgres, redis, migrate, api  (default for `docker compose up`)
+#   storage -> minio (S3-compatible object storage for STORAGE_BACKEND=s3)
 #
 # Usage:
 #   cp .env.example .env
 #   docker compose --profile core up --build
 #
-# Additional profiles (media, storage, federation) will be added as those
-# subsystems land.
+# To run the api against MinIO instead of the local-disk backend, start the
+# storage profile too and point the api at the compose-network endpoint:
+#
+#   STORAGE_BACKEND=s3 \
+#   STORAGE_S3_ENDPOINT=minio:9000 \
+#   STORAGE_S3_BUCKET=vidra-media \
+#   STORAGE_S3_ACCESS_KEY=vidra \
+#   STORAGE_S3_SECRET_KEY=vidra-dev-secret \
+#   STORAGE_S3_USE_SSL=false \
+#   STORAGE_S3_FORCE_PATH_STYLE=true \
+#   docker compose --profile core --profile storage up --build
+#
+# (The api creates the bucket at boot if it is missing.) From the HOST (e.g.
+# `make run` or the -tags=integration storage tests) use
+# STORAGE_S3_ENDPOINT=localhost:9000 / S3_TEST_ENDPOINT=localhost:9000 instead.
+#
+# Additional profiles (media, federation) will be added as those subsystems land.
 
 services:
   postgres:
@@ -40,6 +56,26 @@ services:
       timeout: 3s
       retries: 10
 
+  # S3-compatible object storage for local dev/tests (STORAGE_BACKEND=s3).
+  # S3 API on :9000. The dev credentials below are compose-local ONLY — real
+  # deployments set strong values and never commit them.
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    profiles: ["storage"]
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-vidra}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-vidra-dev-secret}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   migrate:
     image: migrate/migrate:v4.17.1
     profiles: ["core"]
@@ -65,6 +101,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      # Waits for minio only when the storage profile is active (required: false
+      # skips the dependency when the service is not enabled).
+      minio:
+        condition: service_healthy
+        required: false
     environment:
       VIDRA_ENV: ${VIDRA_ENV:-development}
       HTTP_PORT: "8080"
@@ -112,6 +153,17 @@ services:
       # Base64 32-byte KEK for actor private-key envelope encryption (required in
       # production when federation is on). NEVER commit a real value.
       FEDERATION_KEY_KEK: ${FEDERATION_KEY_KEK:-}
+      # Media storage backend: local (default) or s3. For s3 against the compose
+      # minio service (`--profile storage`), see the header of this file. The S3
+      # credentials are secrets — never log or commit real values.
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-}
+      STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:-}
+      STORAGE_S3_ACCESS_KEY: ${STORAGE_S3_ACCESS_KEY:-}
+      STORAGE_S3_SECRET_KEY: ${STORAGE_S3_SECRET_KEY:-}
+      STORAGE_S3_REGION: ${STORAGE_S3_REGION:-}
+      STORAGE_S3_USE_SSL: ${STORAGE_S3_USE_SSL:-true}
+      STORAGE_S3_FORCE_PATH_STYLE: ${STORAGE_S3_FORCE_PATH_STYLE:-false}
     # Make the host reachable as host.docker.internal on Linux too (Docker Desktop
     # provides it already). Lets a backed e2e point URL import at a media origin
     # served on the host (paired with HTTP_IMPORT_ALLOW_PRIVATE_URLS=true). No
@@ -123,3 +175,4 @@ services:
 
 volumes:
   postgres_data:
+  minio_data:

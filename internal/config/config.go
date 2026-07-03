@@ -152,10 +152,25 @@ type Config struct {
 	// JWTRefreshTTL is the lifetime of an opaque refresh-token session.
 	JWTRefreshTTL time.Duration
 
-	// Media storage. StorageBackend selects the blob backend ("local" today;
-	// "s3"/"ipfs" later). StorageLocalRoot is the directory for the local backend.
+	// Media storage. StorageBackend selects the blob backend: "local" (default)
+	// or "s3" ("ipfs" later). StorageLocalRoot is the directory for the local
+	// backend.
 	StorageBackend   string
 	StorageLocalRoot string
+
+	// S3-compatible object storage (STORAGE_BACKEND=s3): MinIO (dev, compose
+	// "storage" profile), AWS S3, Backblaze B2, DigitalOcean Spaces. Endpoint is
+	// host[:port] WITHOUT a scheme — StorageS3UseSSL selects http/https;
+	// StorageS3ForcePathStyle addresses the bucket as /<bucket>/<key> (required
+	// by MinIO). StorageS3AccessKey/StorageS3SecretKey are credentials and must
+	// NEVER be logged (see internal/observability.IsSensitiveKey).
+	StorageS3Endpoint       string
+	StorageS3Bucket         string
+	StorageS3AccessKey      string
+	StorageS3SecretKey      string
+	StorageS3Region         string
+	StorageS3UseSSL         bool
+	StorageS3ForcePathStyle bool
 
 	// UploadMaxSize caps a single original-file upload, as an Echo size string
 	// (e.g. "2G", "512M"). It overrides HTTPBodyLimit for the upload route only,
@@ -228,6 +243,13 @@ func Load() (*Config, error) {
 		JWTRefreshTTL:               getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
 		StorageBackend:              getEnv("STORAGE_BACKEND", "local"),
 		StorageLocalRoot:            getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
+		StorageS3Endpoint:           getEnv("STORAGE_S3_ENDPOINT", ""),
+		StorageS3Bucket:             getEnv("STORAGE_S3_BUCKET", ""),
+		StorageS3AccessKey:          getEnv("STORAGE_S3_ACCESS_KEY", ""),
+		StorageS3SecretKey:          getEnv("STORAGE_S3_SECRET_KEY", ""),
+		StorageS3Region:             getEnv("STORAGE_S3_REGION", ""),
+		StorageS3UseSSL:             getEnvBool("STORAGE_S3_USE_SSL", true),
+		StorageS3ForcePathStyle:     getEnvBool("STORAGE_S3_FORCE_PATH_STYLE", false),
 		UploadMaxSize:               getEnv("UPLOAD_MAX_SIZE", "2G"),
 	}
 
@@ -324,8 +346,24 @@ func (c *Config) validate() error {
 		if strings.TrimSpace(c.StorageLocalRoot) == "" {
 			return fmt.Errorf("config: STORAGE_LOCAL_ROOT is required for the local storage backend")
 		}
+	case "s3":
+		if strings.TrimSpace(c.StorageS3Endpoint) == "" {
+			return fmt.Errorf("config: STORAGE_S3_ENDPOINT is required for the s3 storage backend")
+		}
+		if strings.Contains(c.StorageS3Endpoint, "://") {
+			return fmt.Errorf("config: STORAGE_S3_ENDPOINT must be host[:port] without a scheme (got %q); use STORAGE_S3_USE_SSL to pick http/https", c.StorageS3Endpoint)
+		}
+		if strings.TrimSpace(c.StorageS3Bucket) == "" {
+			return fmt.Errorf("config: STORAGE_S3_BUCKET is required for the s3 storage backend")
+		}
+		if strings.TrimSpace(c.StorageS3AccessKey) == "" {
+			return fmt.Errorf("config: STORAGE_S3_ACCESS_KEY is required for the s3 storage backend")
+		}
+		if strings.TrimSpace(c.StorageS3SecretKey) == "" {
+			return fmt.Errorf("config: STORAGE_S3_SECRET_KEY is required for the s3 storage backend")
+		}
 	default:
-		return fmt.Errorf("config: unsupported STORAGE_BACKEND %q (want local)", c.StorageBackend)
+		return fmt.Errorf("config: unsupported STORAGE_BACKEND %q (want local|s3)", c.StorageBackend)
 	}
 	if _, err := bytes.Parse(c.UploadMaxSize); err != nil {
 		return fmt.Errorf("config: invalid UPLOAD_MAX_SIZE %q: %w", c.UploadMaxSize, err)

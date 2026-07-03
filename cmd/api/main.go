@@ -152,11 +152,22 @@ func run() error {
 	channelsvc := channel.NewService(db.Queries())
 	opts = append(opts, httpapi.WithChannelService(channelsvc))
 
-	blobs, err := newStorageBackend(cfg)
+	blobs, err := newStorageBackend(startCtx, cfg)
 	if err != nil {
 		return err
 	}
-	logger.Info("media storage configured", "backend", cfg.StorageBackend)
+	// NB: endpoint/bucket/region are safe to log; the S3 credentials are NOT
+	// and must never appear here (observability spec sensitive-key rules).
+	if cfg.StorageBackend == "s3" {
+		logger.Info("media storage configured",
+			"backend", cfg.StorageBackend,
+			"endpoint", cfg.StorageS3Endpoint,
+			"bucket", cfg.StorageS3Bucket,
+			"region", cfg.StorageS3Region,
+		)
+	} else {
+		logger.Info("media storage configured", "backend", cfg.StorageBackend)
+	}
 
 	// Wire the FFprobe media prober when ffprobe is on PATH; otherwise uploads
 	// finalise by publishing the original unprobed (no metadata) so a host
@@ -400,11 +411,29 @@ func runTranscodeWorker(ctx context.Context, logger *slog.Logger, svc *transcode
 
 // newStorageBackend builds the media blob backend selected by config. Config
 // validation already restricts StorageBackend to the supported set, so the
-// default branch is a defensive guard.
-func newStorageBackend(cfg *config.Config) (storage.Backend, error) {
+// default branch is a defensive guard. ctx bounds the s3 startup probe
+// (EnsureBucket) so an unreachable store fails fast like a missing DB.
+func newStorageBackend(ctx context.Context, cfg *config.Config) (storage.Backend, error) {
 	switch cfg.StorageBackend {
 	case "local":
 		return storage.NewLocal(cfg.StorageLocalRoot)
+	case "s3":
+		s3b, err := storage.NewS3(storage.S3Config{
+			Endpoint:       cfg.StorageS3Endpoint,
+			Bucket:         cfg.StorageS3Bucket,
+			AccessKey:      cfg.StorageS3AccessKey,
+			SecretKey:      cfg.StorageS3SecretKey,
+			Region:         cfg.StorageS3Region,
+			UseSSL:         cfg.StorageS3UseSSL,
+			ForcePathStyle: cfg.StorageS3ForcePathStyle,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := s3b.EnsureBucket(ctx); err != nil {
+			return nil, err
+		}
+		return s3b, nil
 	default:
 		return nil, fmt.Errorf("unsupported storage backend %q", cfg.StorageBackend)
 	}

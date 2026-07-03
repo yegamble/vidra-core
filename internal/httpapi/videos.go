@@ -828,8 +828,10 @@ func (s *Server) serveStoredObject(c echo.Context, key, contentType string) erro
 // serveStoredObjectNamed streams the object at key, reporting a missing object
 // as a 404 with notFoundMsg (so avatar routes don't say "video not found").
 // When the backend exposes a local path (storage.PathProvider) it uses
-// http.ServeContent so Range, conditional, and 206 handling come for free;
-// otherwise it streams the whole object as 200.
+// http.ServeContent so Range, conditional, and 206 handling come for free.
+// A backend without a path can still return a seekable reader from Open (the
+// S3 backend does — seeks become ranged GETs), which gets the same
+// http.ServeContent treatment; only a plain reader degrades to a full-body 200.
 func (s *Server) serveStoredObjectNamed(c echo.Context, key, contentType, notFoundMsg string) error {
 	if s.media == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
@@ -865,6 +867,12 @@ func (s *Server) serveStoredObjectNamed(c echo.Context, key, contentType, notFou
 		return err
 	}
 	defer func() { _ = rc.Close() }()
+	if rs, ok := rc.(io.ReadSeeker); ok {
+		// Zero modtime suppresses Last-Modified/conditional handling; the name
+		// is unused because Content-Type is already set above.
+		http.ServeContent(c.Response(), c.Request(), "", time.Time{}, rs)
+		return nil
+	}
 	c.Response().WriteHeader(http.StatusOK)
 	_, err = io.Copy(c.Response(), rc)
 	return err
