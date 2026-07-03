@@ -71,6 +71,37 @@ availability concern, or a compliance requirement mandating scheduled key rollov
 without any client-visible error. When implemented it ships with issuer keyring
 tests (old-key token still verifies within grace; dropped after).
 
+## Cookie-mode refresh sessions (browser clients)
+
+By default the refresh token travels only in the JSON body and the SPA keeps it
+in memory — a hard reload signs the user out. Cookie mode is the **opt-in**
+browser alternative: register/login/refresh accept `{"cookie_mode": true}` (or
+detect an existing `vidra_refresh` cookie) and then carry the rotating refresh
+token in an httpOnly cookie instead (`internal/httpapi/auth_cookie.go`).
+
+Design (defense-in-depth):
+
+- **httpOnly** — the raw refresh token is never readable by JavaScript; in
+  cookie mode the response body OMITS `refresh_token` so the token never has to
+  touch JS-accessible storage at all.
+- **Path=/api/v1/auth** — the browser only attaches the cookie to the auth
+  endpoints (refresh/logout/…), never the wider API surface.
+- **SameSite=Lax** — not attached to cross-site POSTs, blunting CSRF against
+  refresh/logout. Rotation semantics are unchanged: reuse of a rotated token
+  still revokes all of the user's sessions.
+- **Secure** — derived from config (`config.CookieSecure`): on when
+  `PUBLIC_BASE_URL` is https, and always in production (fail-secure even when
+  `PUBLIC_BASE_URL` is unset). Plain-http local dev keeps it off so
+  `http://localhost` works.
+- **Max-Age = `JWT_REFRESH_TTL`** — cookie lifetime matches the session row.
+- `POST /auth/refresh` falls back to the cookie when the body omits the token
+  (explicit body token wins); rotation re-sets the cookie; an invalid
+  cookie-presented token is cleared alongside the 401 so a dead cookie is not
+  re-presented forever. `logout`/`logout-all` clear the cookie (Max-Age=0).
+- **Credentialed CORS** — `Access-Control-Allow-Credentials: true` is sent only
+  for the explicit `CORS_ALLOWED_ORIGINS` allow-list and is disabled entirely
+  if the list contains `*` (credentials + wildcard is never granted).
+
 ## Rules
 
 - Never commit real secrets, tokens, keys, or personal data anywhere

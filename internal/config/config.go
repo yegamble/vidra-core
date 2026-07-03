@@ -352,6 +352,19 @@ func (c *Config) HTTPAddr() string {
 	return fmt.Sprintf("%s:%d", c.HTTPHost, c.HTTPPort)
 }
 
+// CookieSecure reports whether auth cookies (the vidra_refresh cookie set by
+// cookie-mode sessions) must carry the Secure attribute. True when the
+// instance's canonical public origin is https (PUBLIC_BASE_URL), and always in
+// production — fail-secure even when PUBLIC_BASE_URL is unset, since production
+// deployments are expected to terminate TLS. Plain-http local development keeps
+// Secure off so the cookie still works on http://localhost.
+func (c *Config) CookieSecure() bool {
+	if strings.HasPrefix(strings.ToLower(c.PublicBaseURL), "https://") {
+		return true
+	}
+	return c.Environment == "production"
+}
+
 func getEnv(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v

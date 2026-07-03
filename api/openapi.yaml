@@ -115,6 +115,10 @@ paths:
         limited; subject to the standard request guards. When the instance
         requires registration approval, no account is created: a pending
         registration request is filed and 202 is returned with no token.
+        With `cookie_mode: true` (or an existing `vidra_refresh` cookie) the
+        refresh token is delivered as an httpOnly `vidra_refresh` cookie
+        (Path=/api/v1/auth, SameSite=Lax, Secure on https instances) instead of
+        in the response body.
       tags: [auth]
       requestBody:
         required: true
@@ -168,7 +172,10 @@ paths:
       description: >-
         Verifies credentials and returns an access token. Unknown account and
         wrong password are reported identically (401) to prevent account
-        enumeration.
+        enumeration. With `cookie_mode: true` (or an existing `vidra_refresh`
+        cookie) the refresh token is delivered as an httpOnly `vidra_refresh`
+        cookie (Path=/api/v1/auth, SameSite=Lax, Secure on https instances)
+        instead of in the response body.
       tags: [auth]
       requestBody:
         required: true
@@ -261,6 +268,11 @@ paths:
         Exchanges a valid refresh token for a new access + refresh token pair and
         revokes the presented token (rotation). Reusing an already-rotated token
         is treated as compromise: all of the user's sessions are revoked.
+        When the body omits `refresh_token`, the token is read from the
+        `vidra_refresh` cookie (cookie mode); rotation then re-sets the cookie
+        with the new token and the body omits the raw token. A cookie-presented
+        token that is invalid is cleared alongside the 401 so the browser stops
+        re-presenting a dead cookie.
       tags: [auth]
       requestBody:
         required: true
@@ -294,7 +306,10 @@ paths:
       description: >-
         Revokes the session for the presented refresh token. Idempotent — an
         unknown or already-revoked token still returns 204 and never reveals
-        whether the token existed.
+        whether the token existed. When the body omits `refresh_token`, the
+        token is read from the `vidra_refresh` cookie (cookie mode). The
+        response always clears the `vidra_refresh` cookie (Max-Age=0) so a
+        browser is left signed out.
       tags: [auth]
       requestBody:
         required: true
@@ -317,7 +332,8 @@ paths:
       summary: Revoke all of the current user's sessions
       description: >-
         "Sign out everywhere" — revokes every active refresh-token session for
-        the authenticated account. Requires a bearer access token.
+        the authenticated account. Requires a bearer access token. The response
+        also clears the `vidra_refresh` cookie (Max-Age=0).
       tags: [auth]
       security:
         - bearerAuth: []
@@ -5710,6 +5726,14 @@ components:
           description: >-
             Optional message to moderators, used only when the instance requires
             registration approval; ignored otherwise.
+        cookie_mode:
+          type: boolean
+          default: false
+          description: >-
+            Opt the new session into cookie mode (browser clients): the rotating
+            refresh token is set as an httpOnly `vidra_refresh` cookie
+            (Path=/api/v1/auth, SameSite=Lax, Secure on https instances,
+            Max-Age = the refresh TTL) and omitted from the response body.
     RegistrationPending:
       type: object
       required: [status]
@@ -5778,23 +5802,43 @@ components:
         password:
           type: string
           format: password
+        cookie_mode:
+          type: boolean
+          default: false
+          description: >-
+            Opt the new session into cookie mode (browser clients): the rotating
+            refresh token is set as an httpOnly `vidra_refresh` cookie
+            (Path=/api/v1/auth, SameSite=Lax, Secure on https instances,
+            Max-Age = the refresh TTL) and omitted from the response body.
     RefreshRequest:
       type: object
-      required: [refresh_token]
       properties:
         refresh_token:
           type: string
-          description: The opaque refresh token returned by register/login/refresh.
+          description: >-
+            The opaque refresh token returned by register/login/refresh. May be
+            omitted when the request carries the `vidra_refresh` cookie (cookie
+            mode) — the cookie value is used instead. An explicit body token
+            takes precedence over the cookie. 422 when neither is present.
+        cookie_mode:
+          type: boolean
+          default: false
+          description: >-
+            Opt the rotated session into cookie mode even when the token was
+            sent in the body. A cookie-supplied token implies cookie mode.
     AuthResponse:
       type: object
-      required: [token, refresh_token, token_type, expires_in, user]
+      required: [token, token_type, expires_in, user]
       properties:
         token:
           type: string
           description: Signed HS256 JWT access token.
         refresh_token:
           type: string
-          description: Opaque rotating refresh token; store securely, send to /auth/refresh.
+          description: >-
+            Opaque rotating refresh token; store securely, send to /auth/refresh.
+            Omitted in cookie mode, where the httpOnly `vidra_refresh` cookie is
+            the sole carrier of the refresh token.
         token_type:
           type: string
           example: Bearer

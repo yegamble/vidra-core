@@ -28,6 +28,7 @@ func testConfig() *config.Config {
 		HTTPRequestTimeout:  30 * time.Second,
 		HTTPBodyLimit:       "8M",
 		UploadMaxSize:       "64K",
+		JWTRefreshTTL:       720 * time.Hour,
 	}
 }
 

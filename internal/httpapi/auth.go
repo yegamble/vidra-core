@@ -50,6 +50,9 @@ type registerRequest struct {
 	// Note is an optional message to moderators, used only when the instance
 	// requires registration approval; ignored otherwise.
 	Note string `json:"note,omitempty"`
+	// CookieMode opts the new session into cookie mode: the refresh token is
+	// set as an httpOnly vidra_refresh cookie and omitted from the body.
+	CookieMode bool `json:"cookie_mode,omitempty"`
 }
 
 // maxRegistrationNoteLen bounds the optional applicant note.
@@ -87,6 +90,9 @@ func (r registerRequest) Validate() []FieldError {
 type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	// CookieMode opts the new session into cookie mode: the refresh token is
+	// set as an httpOnly vidra_refresh cookie and omitted from the body.
+	CookieMode bool `json:"cookie_mode,omitempty"`
 }
 
 func (r loginRequest) Validate() []FieldError {
@@ -137,23 +143,32 @@ func newUserView(u sqlcgen.User) userView {
 	}
 }
 
-// authResponse is returned by register and login.
+// authResponse is returned by register and login. RefreshToken is omitted in
+// cookie mode, where the httpOnly vidra_refresh cookie is the sole carrier.
 type authResponse struct {
 	Token        string   `json:"token"`
-	RefreshToken string   `json:"refresh_token"`
+	RefreshToken string   `json:"refresh_token,omitempty"`
 	TokenType    string   `json:"token_type"`
 	ExpiresIn    int      `json:"expires_in"`
 	User         userView `json:"user"`
 }
 
-func (s *Server) authResponse(status int, c echo.Context, user sqlcgen.User, tokens auth.Tokens) error {
-	return c.JSON(status, authResponse{
+func (s *Server) authResponse(status int, c echo.Context, user sqlcgen.User, tokens auth.Tokens, cookieMode bool) error {
+	resp := authResponse{
 		Token:        tokens.AccessToken,
 		RefreshToken: tokens.RefreshToken,
 		TokenType:    "Bearer",
 		ExpiresIn:    int(s.authTTL.Seconds()),
 		User:         newUserView(user),
-	})
+	}
+	if cookieMode {
+		// The cookie is the sole refresh-token carrier in cookie mode: set the
+		// rotated token httpOnly and keep the raw value out of the JSON body so
+		// it never has to touch JavaScript-accessible storage.
+		s.setRefreshCookie(c, tokens.RefreshToken)
+		resp.RefreshToken = ""
+	}
+	return c.JSON(status, resp)
 }
 
 // handleRegister creates an account and returns it with an access + refresh token.
@@ -188,7 +203,8 @@ func (s *Server) handleRegister(c echo.Context) error {
 		return err
 	}
 	s.audit(c, observability.ActionRegister, observability.ResultSuccess, user.ID.String(), "")
-	return s.authResponse(http.StatusCreated, c, user, tokens)
+	cookieMode := in.CookieMode || refreshCookieToken(c) != ""
+	return s.authResponse(http.StatusCreated, c, user, tokens, cookieMode)
 }
 
 // handleMe returns the authenticated account. It runs behind requireAuth, so the
@@ -279,35 +295,55 @@ func (s *Server) handleLogin(c echo.Context) error {
 		return err
 	}
 	s.audit(c, observability.ActionLogin, observability.ResultSuccess, user.ID.String(), "")
-	return s.authResponse(http.StatusOK, c, user, tokens)
+	cookieMode := in.CookieMode || refreshCookieToken(c) != ""
+	return s.authResponse(http.StatusOK, c, user, tokens, cookieMode)
 }
 
-// refreshRequest is the POST /api/v1/auth/refresh and /logout body.
+// refreshRequest is the POST /api/v1/auth/refresh and /logout body. The token
+// may be omitted when the request carries the vidra_refresh cookie (cookie
+// mode); presence of one or the other is enforced in the handler after cookie
+// resolution.
 type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
+	// CookieMode opts the rotated session into cookie mode even when the token
+	// arrived in the body. A cookie-supplied token implies cookie mode.
+	CookieMode bool `json:"cookie_mode,omitempty"`
 }
 
-func (r refreshRequest) Validate() []FieldError {
-	if strings.TrimSpace(r.RefreshToken) == "" {
-		return []FieldError{{Field: "refresh_token", Message: "is required"}}
-	}
-	return nil
+// errRefreshTokenRequired is the 422 returned when neither the body nor the
+// vidra_refresh cookie supplies a refresh token.
+func errRefreshTokenRequired() error {
+	return &ValidationError{Fields: []FieldError{
+		{Field: "refresh_token", Message: "is required (in the body or the vidra_refresh cookie)"},
+	}}
 }
 
 // handleRefresh rotates a refresh token, returning a new access + refresh pair.
+// The token comes from the body or, when absent, from the vidra_refresh cookie;
+// in cookie mode rotation re-sets the cookie and the body omits the raw token.
 func (s *Server) handleRefresh(c echo.Context) error {
 	var in refreshRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	user, tokens, err := s.authsvc.Refresh(c.Request().Context(), in.RefreshToken, c.Request().UserAgent())
+	raw, fromCookie := resolveRefreshToken(c, in.RefreshToken)
+	if raw == "" {
+		return errRefreshTokenRequired()
+	}
+	cookieMode := in.CookieMode || fromCookie
+	user, tokens, err := s.authsvc.Refresh(c.Request().Context(), raw, c.Request().UserAgent())
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidRefresh) {
+			// A dead cookie would be re-presented on every future attempt (each
+			// one tripping reuse detection), so clear it alongside the 401.
+			if fromCookie {
+				s.clearRefreshCookie(c)
+			}
 			return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired refresh token")
 		}
 		return err
 	}
-	return s.authResponse(http.StatusOK, c, user, tokens)
+	return s.authResponse(http.StatusOK, c, user, tokens, cookieMode)
 }
 
 // handleLogoutAll revokes every active session for the authenticated user
@@ -321,20 +357,30 @@ func (s *Server) handleLogoutAll(c echo.Context) error {
 	if err := s.authsvc.LogoutAll(c.Request().Context(), userID); err != nil {
 		return err
 	}
+	// Clear the cookie-mode session cookie too (harmless when none was set).
+	s.clearRefreshCookie(c)
 	s.audit(c, observability.ActionLogoutAll, observability.ResultSuccess, userID.String(), "")
 	return c.NoContent(http.StatusNoContent)
 }
 
-// handleLogout revokes the session for the presented refresh token. It is
-// idempotent and always returns 204, never revealing whether the token existed.
+// handleLogout revokes the session for the presented refresh token — from the
+// body or, when absent, from the vidra_refresh cookie. It is idempotent and
+// always returns 204, never revealing whether the token existed. The response
+// clears the cookie so a browser is always left signed out.
 func (s *Server) handleLogout(c echo.Context) error {
 	var in refreshRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	if err := s.authsvc.Logout(c.Request().Context(), in.RefreshToken); err != nil {
+	raw, _ := resolveRefreshToken(c, in.RefreshToken)
+	if raw == "" {
+		return errRefreshTokenRequired()
+	}
+	if err := s.authsvc.Logout(c.Request().Context(), raw); err != nil {
 		return err
 	}
+	// Clear the cookie-mode session cookie too (harmless when none was set).
+	s.clearRefreshCookie(c)
 	// Idempotent: no actor_id, since the token may be unknown/already-revoked.
 	s.audit(c, observability.ActionLogout, observability.ResultSuccess, "", "")
 	return c.NoContent(http.StatusNoContent)

@@ -56,6 +56,16 @@ the presented refresh token (idempotent `204`); `POST /api/v1/auth/logout-all`
 (bearer-authenticated) signs the account out everywhere. Refresh tokens are opaque
 256-bit values; only their SHA-256 hash is stored in the `sessions` table.
 
+Cookie-mode sessions (browser clients): register/login/refresh accept
+`{"cookie_mode": true}` — or detect an existing `vidra_refresh` cookie — and then carry
+the rotating refresh token in an httpOnly `vidra_refresh` cookie instead of the JSON
+body (which omits `refresh_token`). The cookie is scoped to `Path=/api/v1/auth`,
+`SameSite=Lax`, `Max-Age` = the refresh TTL, and `Secure` when the instance is https
+(derived from `PUBLIC_BASE_URL`; always on in production). `refresh`/`logout` fall back
+to the cookie when the body omits the token; logout/logout-all clear it. CORS sends
+`Access-Control-Allow-Credentials: true` for the explicit `CORS_ALLOWED_ORIGINS`
+allow-list (never combined with a wildcard origin).
+
 Authorization: routes are gated by `requireAuth` (valid bearer token) and, where
 role-restricted, `requireRole(...)` off the JWT's `role` claim — an authenticated
 principal lacking an allowed role gets `403`.

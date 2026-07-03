@@ -337,6 +337,29 @@ func TestCORSOriginsParsing(t *testing.T) {
 	}
 }
 
+func TestCookieSecureDerivation(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"dev without public base url", Config{Environment: "development"}, false},
+		{"dev with http public base url", Config{Environment: "development", PublicBaseURL: "http://localhost:8080"}, false},
+		{"dev with https public base url", Config{Environment: "development", PublicBaseURL: "https://videos.example"}, true},
+		{"https scheme is case-insensitive", Config{Environment: "development", PublicBaseURL: "HTTPS://videos.example"}, true},
+		{"test env plain", Config{Environment: "test"}, false},
+		{"production fail-secure without base url", Config{Environment: "production"}, true},
+		{"production with https base url", Config{Environment: "production", PublicBaseURL: "https://videos.example"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.CookieSecure(); got != tc.want {
+				t.Errorf("CookieSecure() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFederationDisabledByDefault(t *testing.T) {
 	t.Setenv("FEDERATION_ENABLED", "")
 	cfg, err := Load()

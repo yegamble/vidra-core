@@ -268,9 +268,20 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 		e.Use(otelecho.Middleware(cfg.OTelServiceName))
 	}
 	e.Use(s.requestLogger())
+	// Cookie-mode auth sessions need credentialed CORS so the browser attaches
+	// the vidra_refresh cookie cross-origin. Allow-Credentials is only ever
+	// granted to the explicit allow-list — never combined with a wildcard
+	// origin (echoing "*" with credentials is unsafe; the browser rejects it).
+	corsAllowCredentials := true
+	for _, o := range cfg.CORSAllowedOrigins {
+		if o == "*" {
+			corsAllowCredentials = false
+		}
+	}
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: cfg.CORSAllowedOrigins,
-		AllowMethods: []string{echo.GET, echo.POST, echo.PUT, echo.PATCH, echo.DELETE, echo.OPTIONS},
+		AllowOrigins:     cfg.CORSAllowedOrigins,
+		AllowMethods:     []string{echo.GET, echo.POST, echo.PUT, echo.PATCH, echo.DELETE, echo.OPTIONS},
+		AllowCredentials: corsAllowCredentials,
 	}))
 	e.Use(requestDeadline(cfg.HTTPRequestTimeout))
 	// The default body limit keeps the JSON API small. The original-file upload
