@@ -402,8 +402,24 @@ func runTranscodeWorker(ctx context.Context, logger *slog.Logger, svc *transcode
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := svc.DrainJobs(ctx, batch); err != nil {
-				logger.Warn("transcode drain failed", "error", err)
+			// Drain the whole due backlog, batch by batch, so a burst of
+			// uploads doesn't wait a tick per pair of jobs. DrainJobs only
+			// counts completions, so a persistently failing job ends the
+			// inner loop and backoff retries it on a later tick.
+			total := 0
+			for {
+				n, err := svc.DrainJobs(ctx, batch)
+				if err != nil {
+					logger.Warn("transcode drain failed", "error", err)
+					break
+				}
+				total += n
+				if n == 0 {
+					break
+				}
+			}
+			if total > 0 {
+				logger.Info("transcode drain completed jobs", "count", total)
 			}
 		}
 	}

@@ -121,6 +121,10 @@ services:
       # a suite that makes many register/login calls from one host. Rate limiting
       # has dedicated unit tests, so the e2e suite need not exercise it.
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      # When true, signups file a pending registration request an admin must
+      # approve (the registration approval queue). Overridable so approval-mode
+      # backed e2e runs can flip it without editing the file. Default off.
+      REGISTRATION_REQUIRE_APPROVAL: ${REGISTRATION_REQUIRE_APPROVAL:-false}
       # DEV-ONLY: when true, account-security tokens (reset / verify) are captured
       # in memory and retrievable via GET /api/v1/dev/email-token so end-to-end
       # tests can complete the token flows. NEVER enable in production. Default off.
