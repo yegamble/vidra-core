@@ -51,6 +51,11 @@ type channelView struct {
 	Description   string    `json:"description"`
 	FollowerCount int64     `json:"follower_count"`
 	CreatedAt     time.Time `json:"created_at"`
+	// HasAvatar/HasBanner are set when the profile-image service is wired
+	// (omitted otherwise); when true the image is served at
+	// GET /channels/{handle}/avatar | /banner.
+	HasAvatar *bool `json:"has_avatar,omitempty"`
+	HasBanner *bool `json:"has_banner,omitempty"`
 }
 
 func newChannelView(c sqlcgen.Channel, followerCount int64) channelView {
@@ -92,7 +97,7 @@ func (s *Server) handleCreateChannel(c echo.Context) error {
 		return err
 	}
 	// A just-created channel has no followers yet.
-	return c.JSON(http.StatusCreated, newChannelView(ch, 0))
+	return c.JSON(http.StatusCreated, s.channelViewFor(c.Request().Context(), ch, 0))
 }
 
 // handleListMyChannels lists the authenticated user's channels.
@@ -112,7 +117,7 @@ func (s *Server) handleListMyChannels(c echo.Context) error {
 		if err != nil {
 			return err
 		}
-		views = append(views, newChannelView(ch, count))
+		views = append(views, s.channelViewFor(ctx, ch, count))
 	}
 	return c.JSON(http.StatusOK, channelListResponse{Channels: views})
 }
@@ -166,7 +171,7 @@ func (s *Server) handleUpdateChannel(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, newChannelView(ch, count))
+	return c.JSON(http.StatusOK, s.channelViewFor(ctx, ch, count))
 }
 
 // handleDeleteChannel deletes a channel owned by the authenticated user.
@@ -210,7 +215,7 @@ func (s *Server) handleGetChannel(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, newChannelView(ch, count))
+	return c.JSON(http.StatusOK, s.channelViewFor(ctx, ch, count))
 }
 
 // handleFollowChannel makes the authenticated user follow a channel. Idempotent.

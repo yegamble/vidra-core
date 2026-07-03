@@ -747,6 +747,459 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/avatar:
+    get:
+      operationId: getChannelAvatar
+      summary: Get a channel's avatar image
+      description: >-
+        Serves the channel's avatar with the Content-Type derived at upload
+        time. Public. 404 when the channel is unknown or has no avatar set —
+        the channel view's has_avatar flag tells clients whether one exists.
+      tags: [channels]
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The avatar image.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No channel with that handle, or no avatar set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: setChannelAvatar
+      summary: Set a channel's avatar image
+      description: >-
+        Uploads the channel's avatar (owner only) as a multipart form with a
+        single "file" part, replacing any previous one. Accepted types are
+        JPEG/PNG/WebP (by extension; otherwise 415); the served Content-Type is
+        derived from the extension. A non-owner or unknown handle is 404 (the
+        route does not reveal whether the caller could act on it). The upload
+        is bounded by the global HTTP body limit.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The avatar image (JPEG/PNG/WebP).
+      responses:
+        "201":
+          description: The avatar was stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileImage"
+        "400":
+          description: The multipart "file" field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: The file extension is not an accepted image type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteChannelAvatar
+      summary: Remove a channel's avatar image
+      description: >-
+        Deletes the channel's avatar (owner only): the record and the stored
+        object. A non-owner or unknown handle is 404; so is a channel with no
+        avatar set.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The avatar was removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: >-
+            No channel with that handle, not owned by the caller, or no avatar
+            set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/banner:
+    get:
+      operationId: getChannelBanner
+      summary: Get a channel's banner image
+      description: >-
+        Serves the channel's banner with the Content-Type derived at upload
+        time. Public. 404 when the channel is unknown or has no banner set —
+        the channel view's has_banner flag tells clients whether one exists.
+      tags: [channels]
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The banner image.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No channel with that handle, or no banner set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: setChannelBanner
+      summary: Set a channel's banner image
+      description: >-
+        Uploads the channel's banner (owner only) as a multipart form with a
+        single "file" part, replacing any previous one. Same type gate, size
+        bound, and 404-for-non-owner semantics as the avatar route.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The banner image (JPEG/PNG/WebP).
+      responses:
+        "201":
+          description: The banner was stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileImage"
+        "400":
+          description: The multipart "file" field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: The file extension is not an accepted image type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteChannelBanner
+      summary: Remove a channel's banner image
+      description: >-
+        Deletes the channel's banner (owner only): the record and the stored
+        object. A non-owner or unknown handle is 404; so is a channel with no
+        banner set.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The banner was removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: >-
+            No channel with that handle, not owned by the caller, or no banner
+            set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/avatar:
+    post:
+      operationId: setMyAvatar
+      summary: Set the authenticated user's avatar image
+      description: >-
+        Uploads the caller's account avatar as a multipart form with a single
+        "file" part, replacing any previous one. Accepted types are
+        JPEG/PNG/WebP (by extension; otherwise 415); the served Content-Type is
+        derived from the extension. The upload is bounded by the global HTTP
+        body limit. Served publicly at GET /users/{id}/avatar.
+      tags: [account]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The avatar image (JPEG/PNG/WebP).
+      responses:
+        "201":
+          description: The avatar was stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileImage"
+        "400":
+          description: The multipart "file" field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: The file extension is not an accepted image type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteMyAvatar
+      summary: Remove the authenticated user's avatar image
+      description: >-
+        Deletes the caller's account avatar: the record and the stored object.
+        404 when no avatar is set.
+      tags: [account]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: The avatar was removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No avatar set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/banner:
+    post:
+      operationId: setMyBanner
+      summary: Set the authenticated user's banner image
+      description: >-
+        Uploads the caller's account (profile) banner as a multipart form with
+        a single "file" part, replacing any previous one. Same type gate and
+        size bound as the avatar route. Served publicly at
+        GET /users/{id}/banner.
+      tags: [account]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The banner image (JPEG/PNG/WebP).
+      responses:
+        "201":
+          description: The banner was stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileImage"
+        "400":
+          description: The multipart "file" field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: The file extension is not an accepted image type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteMyBanner
+      summary: Remove the authenticated user's banner image
+      description: >-
+        Deletes the caller's account banner: the record and the stored object.
+        404 when no banner is set.
+      tags: [account]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: The banner was removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No banner set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/users/{id}/avatar:
+    get:
+      operationId: getUserAvatar
+      summary: Get a user's avatar image
+      description: >-
+        Serves the user's account avatar with the Content-Type derived at
+        upload time. Public. 404 when the user is unknown or has no avatar set
+        — the /auth/me view's has_avatar flag tells the owner whether one
+        exists.
+      tags: [account]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The avatar image.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No such user, or no avatar set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/users/{id}/banner:
+    get:
+      operationId: getUserBanner
+      summary: Get a user's banner image
+      description: >-
+        Serves the user's account (profile) banner with the Content-Type
+        derived at upload time. Public. 404 when the user is unknown or has no
+        banner set.
+      tags: [account]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The banner image.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No such user, or no banner set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/subscriptions/videos:
     get:
       operationId: listSubscriptionVideos
@@ -4502,6 +4955,40 @@ components:
         created_at:
           type: string
           format: date-time
+        has_avatar:
+          type: boolean
+          description: >-
+            Whether an avatar is set (served at GET /users/{id}/avatar).
+            Present on GET/PATCH /auth/me; omitted elsewhere.
+        has_banner:
+          type: boolean
+          description: >-
+            Whether a profile banner is set (served at GET /users/{id}/banner).
+            Present on GET/PATCH /auth/me; omitted elsewhere.
+    ProfileImage:
+      type: object
+      description: >-
+        A stored avatar/banner's metadata, returned by the upload endpoints.
+        The image itself is served by the corresponding public GET route with
+        the Content-Type recorded here.
+      required: [kind, content_type, size_bytes, created_at, updated_at]
+      properties:
+        kind:
+          type: string
+          enum: [avatar, banner]
+        content_type:
+          type: string
+          description: Derived from the upload's file extension.
+          example: image/png
+        size_bytes:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     UpdateProfileRequest:
       type: object
       description: Partial profile update; provide at least one field.
@@ -4538,6 +5025,14 @@ components:
         created_at:
           type: string
           format: date-time
+        has_avatar:
+          type: boolean
+          description: >-
+            Whether an avatar is set (served at GET /channels/{handle}/avatar).
+        has_banner:
+          type: boolean
+          description: >-
+            Whether a banner is set (served at GET /channels/{handle}/banner).
     CreateChannelRequest:
       type: object
       required: [handle, display_name]

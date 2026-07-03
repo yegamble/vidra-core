@@ -28,6 +28,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
+	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -67,6 +68,7 @@ type Server struct {
 	auditLog      *audit.Service
 	messagingsvc  *messaging.Service
 	livesvc       *live.Service
+	imagesvc      *profileimage.Service
 	transcodesvc  *transcode.Service
 	fedsvc        *federation.Service
 	media         storage.Backend
@@ -194,6 +196,14 @@ func WithMessagingService(svc *messaging.Service) Option {
 // stream-key regeneration). When unset, the routes are not registered.
 func WithLiveService(svc *live.Service) Option {
 	return func(s *Server) { s.livesvc = svc }
+}
+
+// WithProfileImageService mounts the avatar/banner endpoints: upload/delete for
+// the caller's own account, owner-only upload/delete per channel, and the
+// public serving routes. The channel routes additionally need the channel
+// service (for handle resolution + ownership); when unset, none are registered.
+func WithProfileImageService(svc *profileimage.Service) Option {
+	return func(s *Server) { s.imagesvc = svc }
 }
 
 // WithTranscodeService wires the HLS transcoding read side: the video detail's
@@ -451,6 +461,23 @@ func (s *Server) routes() {
 		api.POST("/channels/:handle/follow", s.handleFollowChannel, s.requireAuth)
 		api.DELETE("/channels/:handle/follow", s.handleUnfollowChannel, s.requireAuth)
 		api.GET("/me/channels", s.handleListMyChannels, s.requireAuth)
+	}
+
+	// Avatars/banners: the caller manages their own account images; a channel
+	// owner manages the channel's (non-owner → 404); serving is public with the
+	// content type derived at upload time. Uploads are bounded by the global
+	// HTTP body limit (same cap as the custom video thumbnail).
+	if s.imagesvc != nil {
+		for _, kind := range []string{profileimage.KindAvatar, profileimage.KindBanner} {
+			api.POST("/me/"+kind, s.handleSetMyImage(kind), s.requireAuth)
+			api.DELETE("/me/"+kind, s.handleDeleteMyImage(kind), s.requireAuth)
+			api.GET("/users/:id/"+kind, s.handleGetUserImage(kind))
+			if s.channelsvc != nil {
+				api.POST("/channels/:handle/"+kind, s.handleSetChannelImage(kind), s.requireAuth)
+				api.DELETE("/channels/:handle/"+kind, s.handleDeleteChannelImage(kind), s.requireAuth)
+				api.GET("/channels/:handle/"+kind, s.handleGetChannelImage(kind))
+			}
+		}
 	}
 
 	// Video creation needs both the video and channel services (channel for

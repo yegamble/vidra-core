@@ -62,6 +62,16 @@ type ChannelFollow struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+type ChannelImage struct {
+	ChannelID   uuid.UUID `json:"channel_id"`
+	Kind        string    `json:"kind"`
+	StorageKey  string    `json:"storage_key"`
+	ContentType string    `json:"content_type"`
+	SizeBytes   int64     `json:"size_bytes"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type Comment struct {
 	ID        uuid.UUID   `json:"id"`
 	VideoID   uuid.UUID   `json:"video_id"`
@@ -285,6 +295,16 @@ type UserBlock struct {
 	BlockerID uuid.UUID `json:"blocker_id"`
 	BlockedID uuid.UUID `json:"blocked_id"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type UserImage struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Kind        string    `json:"kind"`
+	StorageKey  string    `json:"storage_key"`
+	ContentType string    `json:"content_type"`
+	SizeBytes   int64     `json:"size_bytes"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type Video struct {

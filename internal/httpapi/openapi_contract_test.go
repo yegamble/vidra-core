@@ -21,6 +21,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/playlist"
+	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/video"
@@ -48,6 +49,7 @@ func fullRouteOptions() []Option {
 		WithAuditLog(audit.NewService(nil)),
 		WithMessagingService(messaging.NewService(nil)),
 		WithLiveService(live.NewService(nil)),
+		WithProfileImageService(profileimage.NewService(nil, nil)),
 		WithTranscodeService(transcode.NewService(nil, nil)),
 	}
 }

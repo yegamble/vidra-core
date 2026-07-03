@@ -766,10 +766,18 @@ func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
 	return s.serveStoredObject(c, f.StorageKey, f.ContentType)
 }
 
-// serveStoredObject streams the object at key. When the backend exposes a local
-// path (storage.PathProvider) it uses http.ServeContent so Range, conditional,
-// and 206 handling come for free; otherwise it streams the whole object as 200.
+// serveStoredObject streams the object at key with the video routes' 404
+// message. See serveStoredObjectNamed.
 func (s *Server) serveStoredObject(c echo.Context, key, contentType string) error {
+	return s.serveStoredObjectNamed(c, key, contentType, "video not found")
+}
+
+// serveStoredObjectNamed streams the object at key, reporting a missing object
+// as a 404 with notFoundMsg (so avatar routes don't say "video not found").
+// When the backend exposes a local path (storage.PathProvider) it uses
+// http.ServeContent so Range, conditional, and 206 handling come for free;
+// otherwise it streams the whole object as 200.
+func (s *Server) serveStoredObjectNamed(c echo.Context, key, contentType, notFoundMsg string) error {
 	if s.media == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
 	}
@@ -779,12 +787,12 @@ func (s *Server) serveStoredObject(c echo.Context, key, contentType string) erro
 	if pp, ok := s.media.(storage.PathProvider); ok {
 		path, err := pp.Path(key)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+			return echo.NewHTTPError(http.StatusNotFound, notFoundMsg)
 		}
 		file, err := os.Open(path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return echo.NewHTTPError(http.StatusNotFound, "video not found")
+				return echo.NewHTTPError(http.StatusNotFound, notFoundMsg)
 			}
 			return err
 		}
@@ -799,7 +807,7 @@ func (s *Server) serveStoredObject(c echo.Context, key, contentType string) erro
 	rc, err := s.media.Open(c.Request().Context(), key)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+			return echo.NewHTTPError(http.StatusNotFound, notFoundMsg)
 		}
 		return err
 	}

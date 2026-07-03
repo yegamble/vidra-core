@@ -80,6 +80,21 @@ The handle is immutable after creation. `POST`/`DELETE /api/v1/channels/{handle}
 (auth, idempotent `204`) follow/unfollow a channel; every channel view carries a
 `follower_count`.
 
+Avatars and banners: accounts and channels each take an avatar and a banner image.
+`POST`/`DELETE /api/v1/me/avatar` and `/api/v1/me/banner` (auth) manage the caller's
+own; `POST`/`DELETE /api/v1/channels/{handle}/avatar` and `/banner` are owner-only
+(non-owner/unknown handle → `404`). Uploads are a `multipart/form-data` `file` part,
+JPEG/PNG/WebP by extension (else `415`), bounded by the global `HTTP_BODY_LIMIT`
+(same cap as the custom video thumbnail); re-upload replaces the image and delete
+removes both the record and the stored object (`404` when none is set). Serving is
+public: `GET /api/v1/users/{id}/avatar` | `/banner` and
+`GET /api/v1/channels/{handle}/avatar` | `/banner` return the image with the
+Content-Type derived from the upload's extension, `404` when unset. The `/auth/me`
+view and every channel view carry `has_avatar`/`has_banner` flags. Blobs live at
+deterministic PeerTube-style keys (`avatars/users/<id><ext>`,
+`banners/channels/<id><ext>`, …) recorded in the `user_images`/`channel_images`
+tables.
+
 Videos: `POST /api/v1/channels/{handle}/videos` (owner-only) creates a draft video
 (`title`, optional `description`/`privacy`; starts `state: draft`, `privacy` defaults
 `private`). `GET /api/v1/videos/{id}` returns public/unlisted videos to anyone with the

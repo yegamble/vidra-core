@@ -24,7 +24,8 @@ PeerTube buckets (from its `storage:` config) and the vidra mapping:
 | `previews/`              | large preview images                    | `previews/<id>.jpg`             | planned |
 | `storyboards/`           | scrubbing storyboards                   | `storyboards/<id>.jpg`          | planned |
 | `captions/`              | subtitle/caption files                  | `captions/<id>-<lang>.vtt`      | planned (P13 captions) |
-| `avatars/`               | account/channel avatars                 | `avatars/<id><ext>`             | planned (P5 avatar upload) |
+| `avatars/`               | account/channel avatars                 | `avatars/users/<id><ext>`, `avatars/channels/<id><ext>` | **in use** (P5; `user_images`/`channel_images` tables) |
+| `banners/`               | account/channel banners (vidra addition — PeerTube keeps banners inside `avatars/`; a separate kind dir follows the one-dir-per-kind rule) | `banners/users/<id><ext>`, `banners/channels/<id><ext>` | **in use** (P5) |
 | `torrents/`              | .torrent files                          | `torrents/<id>.torrent`         | planned (if/when WebTorrent) |
 | `tmp/`                   | scratch during upload/processing        | `tmp/...`                        | planned |
 
@@ -48,3 +49,8 @@ new top-level directory or revert to per-video directories
 - `storage_key` stays **opaque to the database** (migration 0008); serving reads the
   stored key, so the scheme can evolve without a schema change. Existing rows keep
   their recorded keys.
+- **Avatars/banners keep the upload's extension in the key** (`avatars/users/<id>.png`),
+  with the owner type as a subdirectory so user and channel assets of the same kind
+  share one top-level dir. Because the key varies with the extension, a re-upload that
+  changes type deletes the previously recorded object before storing the new one
+  (`internal/profileimage`), so no orphan blob is left behind.

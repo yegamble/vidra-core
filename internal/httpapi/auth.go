@@ -128,6 +128,10 @@ type userView struct {
 	DisplayName   string    `json:"display_name"`
 	Bio           string    `json:"bio"`
 	CreatedAt     time.Time `json:"created_at"`
+	// HasAvatar/HasBanner are set on GET/PATCH /auth/me (omitted elsewhere);
+	// when true the image is served at GET /users/{id}/avatar | /banner.
+	HasAvatar *bool `json:"has_avatar,omitempty"`
+	HasBanner *bool `json:"has_banner,omitempty"`
 }
 
 func newUserView(u sqlcgen.User) userView {
@@ -222,7 +226,9 @@ func (s *Server) handleMe(c echo.Context) error {
 		}
 		return err
 	}
-	return c.JSON(http.StatusOK, newUserView(user))
+	view := newUserView(user)
+	s.attachUserImageFlags(c.Request().Context(), &view, userID)
+	return c.JSON(http.StatusOK, view)
 }
 
 // updateProfileRequest is the PATCH /api/v1/auth/me body. Fields are optional;
@@ -267,7 +273,9 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 		}
 		return err
 	}
-	return c.JSON(http.StatusOK, newUserView(user))
+	view := newUserView(user)
+	s.attachUserImageFlags(c.Request().Context(), &view, userID)
+	return c.JSON(http.StatusOK, view)
 }
 
 // handleLogin verifies credentials and returns an access + refresh token.

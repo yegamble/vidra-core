@@ -34,6 +34,7 @@ import (
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/playlist"
+	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/secretbox"
@@ -267,6 +268,9 @@ func run() error {
 
 	livesvc := live.NewService(db.Queries())
 	opts = append(opts, httpapi.WithLiveService(livesvc))
+
+	imagesvc := profileimage.NewService(db.Queries(), blobs)
+	opts = append(opts, httpapi.WithProfileImageService(imagesvc))
 
 	// Federation (ActivityPub) — the service is always constructed, but its routes
 	// mount only when FEDERATION_ENABLED (gated in httpapi.routes). Actor private
