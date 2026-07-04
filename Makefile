@@ -51,6 +51,10 @@ cover: ## Run tests with coverage summary
 test-integration: ## Run integration tests (-tags=integration); needs DATABASE_URL, REDIS_URL, ffmpeg — each test self-skips if its dependency is absent
 	go test -tags=integration -race ./...
 
+.PHONY: bench
+bench: ## Run the hot-path benchmarks (NOT in the gate); set DATABASE_URL for the store feed/search benches
+	go test -tags=integration -run='^$$' -bench=. -benchmem ./...
+
 .PHONY: build
 build: ## Build the api binary into ./bin (injects version metadata)
 	go build -ldflags "$(LDFLAGS)" -o bin/api ./cmd/api

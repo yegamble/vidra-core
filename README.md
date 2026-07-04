@@ -537,7 +537,13 @@ make run          # runs the API against local Postgres/Redis
 ## Developer commands
 
 Run `make help` for the full list (fmt, vet, test, test-race, cover, build,
-run, sqlc, sqlc-verify, migrate-up, up/down).
+run, sqlc, sqlc-verify, migrate-up, up/down, bench).
+
+Benchmarks + fuzzing are exploratory signal, NOT part of the required `make ci`
+gate (which stays fast). Run the hot-path benchmarks with `make bench` (set
+`DATABASE_URL` for the feed/search benches); the scheduled/manual
+`bench-fuzz.yml` workflow runs them plus a short `go test -fuzz` pass over the
+fuzz targets and uploads the reports.
 
 ## Tech stack
 

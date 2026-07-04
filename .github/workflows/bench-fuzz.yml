@@ -1,0 +1,131 @@
+name: bench-fuzz
+
+# Scheduled + manual performance & robustness sweep. Runs the Go benchmarks on
+# the read-hot paths and a SHORT fuzz pass over the existing fuzz targets, then
+# uploads the results as artifacts.
+#
+# DELIBERATELY NOT a required gate: it is triggered only by `schedule` and manual
+# `workflow_dispatch`, never on push/PR, so `make ci` (backend-ci.yml) stays fast.
+# Benchmarks/fuzzing are exploratory signal, not a merge blocker — a regression
+# shows up in the uploaded reports and a fuzz crash fails THIS job (with the
+# crasher uploaded) without reddening the normal PR pipeline.
+on:
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Per-target fuzz duration (Go duration, e.g. 60s, 5m)"
+        required: false
+        default: "60s"
+  schedule:
+    # Mondays 06:00 UTC.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: benchmarks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vidra
+          POSTGRES_PASSWORD: vidra
+          POSTGRES_DB: vidra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vidra"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install migrate CLI
+        run: |
+          curl -fsSL https://github.com/golang-migrate/migrate/releases/download/v4.17.1/migrate.linux-amd64.tar.gz \
+            | tar xz -C /usr/local/bin migrate
+
+      - name: Run migrations against a fresh database
+        env:
+          DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
+        run: migrate -path migrations -database "$DATABASE_URL" up
+
+      - name: Run benchmarks (pure + integration hot paths)
+        env:
+          DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+        # -run=^$ runs benchmarks only; -tags=integration also compiles+runs the
+        # store feed/search benchmarks against the live DB.
+        run: |
+          go test -tags=integration -run='^$' -bench=. -benchmem -benchtime=200x ./... \
+            | tee bench-results.txt
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: bench-results.txt
+          if-no-files-found: warn
+
+  fuzz:
+    name: fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Short fuzz pass over every target
+        env:
+          FUZZTIME: ${{ github.event.inputs.fuzztime || '60s' }}
+        # One target per `go test -fuzz` invocation (the flag matches exactly one
+        # function). A crash exits non-zero and writes the reproducer under
+        # testdata/fuzz/, which the next step uploads. `set +e` collects all
+        # targets before failing so one crash doesn't mask the others.
+        run: |
+          set +e
+          status=0
+          run_fuzz() { # pkg  target
+            echo "::group::fuzz $2 ($1)"
+            go test -run='^$' -fuzz="^$2$" -fuzztime="$FUZZTIME" "$1"
+            rc=$?
+            [ $rc -ne 0 ] && status=$rc
+            echo "::endgroup::"
+          }
+          run_fuzz ./internal/urlsafety FuzzValidateURL
+          run_fuzz ./internal/httpsig   FuzzParseSignatureHeader
+          run_fuzz ./internal/httpsig   FuzzVerify
+          run_fuzz ./internal/media     FuzzParseFFProbe
+          exit $status
+
+      - name: Upload fuzz reproducers (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-reproducers
+          path: internal/**/testdata/fuzz/**
+          if-no-files-found: warn

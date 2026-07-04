@@ -13,9 +13,16 @@ Status: living document. Tests serve implementation; they are not busywork.
   CI (`backend-ci.yml`) before tests run.
 - **API smoke / Newman** — Postman collection in `api/` once endpoints exist.
 - **Fuzz** — URL normalization, SSRF filters, AP/ATProto payloads, media paths,
-  import/link-preview inputs (added with those subsystems).
-- **Benchmarks** — auth checks, feed queries, search, permission checks, status
-  lookups (added with those hot paths).
+  import/link-preview inputs (added with those subsystems). Targets:
+  `FuzzValidateURL` (urlsafety), `FuzzParseSignatureHeader`/`FuzzVerify`
+  (httpsig), `FuzzParseFFProbe` (media). Seed corpora run under `make ci`; a
+  longer `go test -fuzz` pass runs in the scheduled `bench-fuzz.yml` workflow.
+- **Benchmarks** — the read-hot paths: `BenchmarkTokenParse`/`BenchmarkTokenIssue`
+  (auth, JWT verify/mint), `BenchmarkRenderMasterPlaylist`/`BenchmarkPlanHLSLadder`
+  (media, HLS master render), and integration `BenchmarkListPublicVideosSorted`
+  (public feed) + `BenchmarkSearchPublicVideos` (pg_trgm search) against live PG.
+  NOT in `make ci` (keeps the gate fast); run via `make bench` locally or the
+  scheduled/manual `bench-fuzz.yml` workflow (uploads a benchmark report).
 
 ## How to run
 
