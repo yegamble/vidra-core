@@ -9310,7 +9310,7 @@ components:
           enum: [original, webm, hls]
         url:
           type: string
-          description: API path serving this file, e.g. "/api/v1/videos/{id}/original", "/api/v1/videos/{id}/webm", or "/api/v1/videos/{id}/hls/720p/playlist.m3u8".
+          description: API path serving this file, e.g. the video original, its webm alternate, or an HLS rendition variant playlist.
         content_type:
           type: string
           example: video/mp4
@@ -11338,8 +11338,9 @@ components:
         signing_key:
           type: string
         one_time_key:
-          nullable: true
-          allOf:
+          description: A claimed one-time prekey, or null when the device has none left.
+          oneOf:
+            - type: "null"
             - $ref: "#/components/schemas/E2EEOneTimeKey"
     E2EEClaimResponse:
       type: object
@@ -11384,8 +11385,7 @@ components:
           items:
             $ref: "#/components/schemas/DMAttachment"
         preview:
-          nullable: true
-          description: OpenGraph link preview of the first URL in the body, present only once the async fetch has resolved.
+          description: OpenGraph link preview of the first URL in the body; omitted until the async fetch has resolved (optional).
           allOf:
             - $ref: "#/components/schemas/LinkPreview"
     DMAttachment:
