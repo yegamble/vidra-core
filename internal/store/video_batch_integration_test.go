@@ -162,7 +162,9 @@ func TestScheduledPublishPersists(t *testing.T) {
 	_, channelID := seedOwnerChannel(ctx, t, st, "sched")
 
 	// CreateVideo persists publish_at.
-	future := time.Now().Add(1 * time.Hour).UTC()
+	// Truncate to microseconds: PostgreSQL timestamptz has microsecond
+	// precision, so a nanosecond-precision Go time would not round-trip exactly.
+	future := time.Now().Add(1 * time.Hour).UTC().Truncate(time.Microsecond)
 	created, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{
 		ChannelID: channelID, Title: "premiere", Privacy: "public",
 		PublishAt: pgtype.Timestamptz{Time: future, Valid: true},
