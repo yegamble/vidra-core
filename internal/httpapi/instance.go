@@ -15,6 +15,16 @@ type instanceSoftware struct {
 	Version string `json:"version"`
 }
 
+// instanceFeatures reports the EFFECTIVE feature toggles (the DB-backed
+// instance-settings overlay over static config) so the frontend can disable the
+// matching affordances — e.g. hide the studio upload form when uploads are off.
+type instanceFeatures struct {
+	Uploads  bool `json:"uploads"`
+	Imports  bool `json:"imports"`
+	Live     bool `json:"live"`
+	Comments bool `json:"comments"`
+}
+
 // instanceResponse is the public "about this instance" document the frontend
 // app shell reads on load: instance name/description, software, whether signup
 // is open, and operator-provided legal/contact links (empty when unset).
@@ -35,6 +45,9 @@ type instanceResponse struct {
 	TermsURL          string `json:"terms_url"`
 	PrivacyURL        string `json:"privacy_url"`
 	ContactEmail      string `json:"contact_email"`
+	// Features carries the effective feature toggles so the frontend can gate
+	// its affordances in lock-step with the backend's enforcement.
+	Features instanceFeatures `json:"features"`
 }
 
 // handleInstance returns public instance metadata. No auth required; it exposes
@@ -54,5 +67,11 @@ func (s *Server) handleInstance(c echo.Context) error {
 		TermsURL:                     s.settingString(instancesettings.KeyTermsURL, s.cfg.InstanceTermsURL),
 		PrivacyURL:                   s.settingString(instancesettings.KeyPrivacyURL, s.cfg.InstancePrivacyURL),
 		ContactEmail:                 s.settingString(instancesettings.KeyContactEmail, s.cfg.InstanceContactEmail),
+		Features: instanceFeatures{
+			Uploads:  s.uploadsEnabled(),
+			Imports:  s.importsEnabled(),
+			Live:     s.liveEnabled(),
+			Comments: s.commentsEnabled(),
+		},
 	})
 }

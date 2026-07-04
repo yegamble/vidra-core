@@ -8708,7 +8708,7 @@ components:
                     example: must be a valid email
     InstanceResponse:
       type: object
-      required: [name, description, software, registration_enabled, registration_requires_approval, oauth_providers, federation_enabled, terms_url, privacy_url, contact_email]
+      required: [name, description, software, registration_enabled, registration_requires_approval, oauth_providers, federation_enabled, terms_url, privacy_url, contact_email, features]
       properties:
         name:
           type: string
@@ -8758,6 +8758,26 @@ components:
         contact_email:
           type: string
           description: Operator contact email; may be empty.
+        features:
+          type: object
+          required: [uploads, imports, live, comments]
+          description: >-
+            Effective feature toggles (the DB-backed instance-settings overlay
+            over static config). The frontend disables the matching affordances
+            in lock-step with the backend's enforcement.
+          properties:
+            uploads:
+              type: boolean
+              description: Whether new video uploads are accepted.
+            imports:
+              type: boolean
+              description: Whether URL video import is accepted.
+            live:
+              type: boolean
+              description: Whether creating live streams is allowed.
+            comments:
+              type: boolean
+              description: Whether posting comments is allowed.
     OAuthIdentity:
       type: object
       required: [provider, email, created_at]

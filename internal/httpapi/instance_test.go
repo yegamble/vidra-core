@@ -30,6 +30,11 @@ func TestInstanceEndpoint(t *testing.T) {
 	if !body.RegistrationEnabled {
 		t.Error("registration_enabled = false, want true (testConfig default)")
 	}
+	// Feature toggles default on, so the frontend can gate affordances in
+	// lock-step with backend enforcement (fix_plan P10 instance features).
+	if !body.Features.Uploads || !body.Features.Imports || !body.Features.Live || !body.Features.Comments {
+		t.Errorf("features = %+v, want all enabled by default", body.Features)
+	}
 }
 
 func TestInstanceAboutMetadata(t *testing.T) {
