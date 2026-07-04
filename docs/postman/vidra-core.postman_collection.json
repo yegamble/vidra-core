@@ -1,0 +1,488 @@
+{
+  "info": {
+    "name": "Vidra Core API — smoke",
+    "_postman_id": "vidra-core-smoke",
+    "description": "Curated system + auth happy/error smoke collection for vidra-core, generated from api/openapi.yaml by docs/postman/generate.mjs. Contract version 0.1.0. Run against a live backend with newman (see docs/postman/README.md).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Liveness (healthz)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status ok\", () => pm.expect(pm.response.json().status).to.eql(\"ok\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Readiness (readyz)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 or 503\", () => pm.expect([200, 503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/readyz",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "readyz"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Build version",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"names vidra\", () => pm.expect(pm.response.json().name).to.eql(\"vidra\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/version",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "version"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "NodeInfo discovery",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/nodeinfo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "nodeinfo"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Public instance config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"has registration flag\", () => pm.expect(pm.response.json()).to.have.property(\"registration_enabled\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/instance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "instance"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register (happy) → captures token",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const n = Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36);",
+                  "pm.collectionVariables.set(\"authUsername\", \"postman_\" + n);",
+                  "pm.collectionVariables.set(\"authEmail\", \"postman_\" + n + \"@vidra.test\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test(\"returns a bearer token\", () => pm.expect(j.token).to.be.a(\"string\").and.not.empty);",
+                  "pm.collectionVariables.set(\"token\", j.token);",
+                  "if (j.refresh_token) pm.collectionVariables.set(\"refreshToken\", j.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{authUsername}}\",\n  \"email\": \"{{authEmail}}\",\n  \"password\": \"{{authPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register (validation error)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"422 Unprocessable Entity\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"carries an error\", () => pm.expect(pm.response.json()).to.have.property(\"error\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"a\",\n  \"email\": \"not-an-email\",\n  \"password\": \"short\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login (happy)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "if (j.token) pm.collectionVariables.set(\"token\", j.token);",
+                  "pm.test(\"issued a session (token or mfa challenge)\", () => pm.expect(j.token || j.mfa_required).to.be.ok);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{authEmail}}\",\n  \"password\": \"{{authPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login (wrong password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"401 Unauthorized\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{authEmail}}\",\n  \"password\": \"wrong-password-xxxxx\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Current account (me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is the registered user\", () => pm.expect(pm.response.json().username).to.eql(pm.collectionVariables.get(\"authUsername\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "System status (build + rate_limits)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 (admin) or 403 (non-admin)\", () => pm.expect([200, 403]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  pm.test(\"reports software + effective rate_limits\", () => {",
+                  "    pm.expect(j.software.name).to.eql(\"vidra\");",
+                  "    pm.expect(j.rate_limits).to.have.property(\"window_seconds\");",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/system",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "system"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "authUsername",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "authEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "authPassword",
+      "value": "postman-Sup3rSecret",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

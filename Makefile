@@ -89,6 +89,10 @@ openapi-lint: ## Lint the OpenAPI contract (requires npx; uses Redocly CLI)
 openapi-verify: ## Verify routes match api/openapi.yaml (documentation drift guard)
 	go test ./internal/httpapi/ -run TestOpenAPIContract
 
+.PHONY: postman
+postman: ## Regenerate the curated Postman collection + environment from api/openapi.yaml (docs/postman/; requires node)
+	node docs/postman/generate.mjs
+
 .PHONY: docs-check
 docs-check: openapi-verify ## Run the documentation stop guard (route<->spec drift)
 	@echo "docs-check: OpenAPI contract is in sync with the router."

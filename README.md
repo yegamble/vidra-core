@@ -537,7 +537,11 @@ make run          # runs the API against local Postgres/Redis
 ## Developer commands
 
 Run `make help` for the full list (fmt, vet, test, test-race, cover, build,
-run, sqlc, sqlc-verify, migrate-up, up/down, bench).
+run, sqlc, sqlc-verify, migrate-up, up/down, bench, postman).
+
+A curated Postman/Newman collection for smoke-testing a live backend lives in
+`docs/postman/` (generated from `api/openapi.yaml` via `make postman`; run with
+`newman` — see `docs/postman/README.md`). Documentation/QA tooling, not a gate.
 
 Benchmarks + fuzzing are exploratory signal, NOT part of the required `make ci`
 gate (which stays fast). Run the hot-path benchmarks with `make bench` (set
