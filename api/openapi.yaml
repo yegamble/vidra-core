@@ -11525,7 +11525,7 @@ components:
     SystemStatus:
       type: object
       description: Operational snapshot for the admin dashboard. No secrets/PII.
-      required: [status, software, environment, uptime_seconds, components]
+      required: [status, software, environment, uptime_seconds, components, rate_limits]
       properties:
         status:
           type: string
@@ -11563,6 +11563,28 @@ components:
                 description: ok | down | not_configured
               error:
                 type: string
+        rate_limits:
+          type: object
+          description: >-
+            The effective, non-secret rate-limit configuration in force. Rate
+            limits are a deploy-time capacity decision (RATE_LIMIT_* /
+            AUTH_RATE_LIMIT_* env), surfaced here read-only so an operator can
+            confirm what is applied — there is no runtime mutation endpoint (see
+            product-decisions §3).
+          required: [enabled, requests, auth_requests, window_seconds]
+          properties:
+            enabled:
+              type: boolean
+            requests:
+              type: integer
+              description: General per-IP request budget over the window.
+            auth_requests:
+              type: integer
+              description: Stricter per-IP budget for sensitive auth endpoints.
+            window_seconds:
+              type: integer
+              format: int64
+              description: The shared fixed-window length in seconds.
     JobsOverview:
       type: object
       description: >-

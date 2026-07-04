@@ -29,6 +29,14 @@ func testConfig() *config.Config {
 		HTTPBodyLimit:       "8M",
 		UploadMaxSize:       "64K",
 		JWTRefreshTTL:       720 * time.Hour,
+		// Effective rate-limit config mirrors the production defaults so the admin
+		// system-status page (which surfaces these read-only) has real values to
+		// report. The httpapi layer only enforces limits when a limiter is
+		// injected (WithRateLimiter), so these are inert unless a test wires one.
+		RateLimitEnabled:      true,
+		RateLimitRequests:     120,
+		AuthRateLimitRequests: 10,
+		RateLimitWindow:       time.Minute,
 		// Feature toggles default true (production config default), so the
 		// upload/import/live/comment gates are open unless a test flips them.
 		UploadsEnabled:  true,

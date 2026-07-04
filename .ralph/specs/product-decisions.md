@@ -39,6 +39,12 @@ adds an attack surface (an admin-compromise can disable protection silently). Th
 admin system-status page shows the effective config (read-only) instead — expose
 them in `GET /api/v1/admin/system` (non-secret values only).
 
+**Status: IMPLEMENTED** (core-sweep, 2026-07-03). `GET /api/v1/admin/system`
+carries a `rate_limits` object `{enabled, requests, auth_requests,
+window_seconds}` populated from the effective config; there is no runtime
+mutation endpoint. See fix_plan P9 (INTENTIONAL_DIFFERENCE) + `SystemStatus` in
+`api/openapi.yaml`.
+
 ## 4. Torrent/magnet import (P6.1 / user P6.4) — DECISION (INTENTIONAL_DIFFERENCE)
 
 Not implemented: WebTorrent-based import/playback is legacy-PeerTube architecture the

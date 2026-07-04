@@ -463,7 +463,9 @@ disable with `RATE_LIMIT_ENABLED=false`). Responses carry `X-RateLimit-Limit`,
 `X-RateLimit-Remaining`, and `X-RateLimit-Reset`; over-budget requests get `429`
 `rate_limited` with `Retry-After`. System probes (`/healthz`, `/readyz`, `/version`)
 are exempt. If Redis is unreachable the limiter fails open (logs a warning) so a
-Redis blip degrades protection, not availability.
+Redis blip degrades protection, not availability. Rate limits are deploy-time
+config only — there is no runtime mutation endpoint; the effective non-secret
+values are surfaced read-only on `GET /api/v1/admin/system` (`rate_limits`).
 
 Media storage goes through a small `internal/storage.Backend` interface
 (Put/Open/Delete/Exists over forward-slash object keys). The default `local` backend
@@ -498,8 +500,9 @@ metrics and tracing at zero cost when off:
   `docker compose --profile core --profile otel up` (collector at
   `otel-collector:4317`, UI at http://localhost:16686).
 - **Admin ops endpoints**: `GET /api/v1/admin/system` (build/uptime/dependency
-  health) and `GET /api/v1/admin/jobs` (per-queue depth + oldest-pending age +
-  recent failures) back the admin dashboards.
+  health + effective non-secret `rate_limits`) and `GET /api/v1/admin/jobs`
+  (per-queue depth + oldest-pending age + recent failures) back the admin
+  dashboards.
 
 Backups, restore, and production deploy notes: `docs/operations.md`.
 
