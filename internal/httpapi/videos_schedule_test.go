@@ -71,6 +71,13 @@ func TestScheduledPublishFlow(t *testing.T) {
 		t.Fatalf("studio list = %+v, want one scheduled video with publish_at", list.Videos)
 	}
 
+	// The public (non-owner) by-id detail read must NOT serve a scheduled video
+	// before its publish time — it 404s just like the feed hides it. (The owner
+	// read above still returns 200.)
+	if rec := getVideo(srv, created.ID, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("public detail of scheduled video = %d, want 404 (not yet published)", rec.Code)
+	}
+
 	// Not due yet: the sweeper is a no-op.
 	if n, err := srv.videosvc.PublishDue(context.Background(), 10); err != nil || n != 0 {
 		t.Fatalf("PublishDue before due = (%d, %v), want (0, nil)", n, err)

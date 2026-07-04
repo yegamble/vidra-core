@@ -298,6 +298,9 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	if quarantineHidesVideo(c, v.State, v.OwnerID) {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	if scheduledHidesVideo(c, v.State, v.OwnerID) {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
 	view := videoViewFromRow(v)
 	if md, ok, err := s.videosvc.GetMetadata(c.Request().Context(), id); err == nil && ok {
 		view.DurationSeconds = md.DurationSeconds
@@ -952,6 +955,23 @@ func quarantineHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool 
 	}
 	userID, role, ok := principalFromContext(c)
 	if ok && (userID == ownerID || role == "admin" || role == "moderator") {
+		return false
+	}
+	return true
+}
+
+// scheduledHidesVideo reports whether a scheduled video must be hidden as a 404.
+// A scheduled video is not yet public — it is visible only to its owner until the
+// publish sweeper (PublishDue) flips it to "published" at its publish_at. The
+// public discovery surfaces already filter on state=published, but the by-id
+// detail read fetches without a state filter, so it must gate here too (else a
+// scheduled video leaks to anyone with its id before its publish time).
+func scheduledHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
+	if state != "scheduled" {
+		return false
+	}
+	userID, _, ok := principalFromContext(c)
+	if ok && userID == ownerID {
 		return false
 	}
 	return true
