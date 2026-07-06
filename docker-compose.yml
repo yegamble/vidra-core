@@ -232,8 +232,10 @@ services:
       MALWARE_SCAN_MODE: ${MALWARE_SCAN_MODE:-fail-closed}
       # HLS transcoding: when TRANSCODING_ENABLED=true, published videos are
       # transcoded to an H.264/AAC HLS ladder by an in-process worker (ffmpeg is
-      # in the image) and served at /api/v1/videos/{id}/hls/*. Off by default.
-      TRANSCODING_ENABLED: ${TRANSCODING_ENABLED:-false}
+      # in the image) and served at /api/v1/videos/{id}/hls/*, which powers the
+      # player's quality selector. On by default so `make dev` uploads produce
+      # the full ladder; set TRANSCODING_ENABLED=false to serve originals only.
+      TRANSCODING_ENABLED: ${TRANSCODING_ENABLED:-true}
       # TRANSCODING_VP9_ENABLED additionally emits a progressive VP9/WebM alternate
       # per video (surfaced via /download). AV1 is deferred and rejected if enabled.
       TRANSCODING_VP9_ENABLED: ${TRANSCODING_VP9_ENABLED:-false}
