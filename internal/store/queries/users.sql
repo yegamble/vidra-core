@@ -22,6 +22,15 @@ SELECT id, username, email, password_hash, role, email_verified, is_active, crea
 FROM users
 WHERE lower(email) = lower($1);
 
+-- name: GetUserByUsername :one
+-- Resolve a username to a full user row, case-insensitive and active-only
+-- (deactivated accounts are treated as not found → the caller 404s, so an
+-- inactive account's existence is not leaked differently from an unknown one).
+-- Used to start a DM by username instead of by id.
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at
+FROM users
+WHERE lower(username) = lower($1) AND is_active = true;
+
 -- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role)
 VALUES ($1, $2, $3, $4)

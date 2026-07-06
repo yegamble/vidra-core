@@ -14,19 +14,27 @@ import (
 
 const maxMessageLen = 5000
 
-// startConversationRequest is the POST /conversations body. encrypted chooses
-// the conversation type AT CREATION, immutably: an encrypted conversation
-// stores only opaque ciphertext envelopes (see internal/e2ee), a plaintext one
-// only {body} messages. The two live in distinct dm_key namespaces, so a pair
-// of users can have one of each.
+// startConversationRequest is the POST /conversations body. The recipient is
+// named by EXACTLY ONE of recipient_id (a UUID) or recipient_username (resolved
+// server-side, case-insensitive, active accounts only) — both or neither is a
+// 422. encrypted chooses the conversation type AT CREATION, immutably: an
+// encrypted conversation stores only opaque ciphertext envelopes (see
+// internal/e2ee), a plaintext one only {body} messages. The two live in
+// distinct dm_key namespaces, so a pair of users can have one of each.
 type startConversationRequest struct {
-	RecipientID string `json:"recipient_id"`
-	Encrypted   bool   `json:"encrypted"`
+	RecipientID       string `json:"recipient_id"`
+	RecipientUsername string `json:"recipient_username"`
+	Encrypted         bool   `json:"encrypted"`
 }
 
 func (r startConversationRequest) Validate() []FieldError {
-	if strings.TrimSpace(r.RecipientID) == "" {
-		return []FieldError{{Field: "recipient_id", Message: "is required"}}
+	id := strings.TrimSpace(r.RecipientID)
+	username := strings.TrimSpace(r.RecipientUsername)
+	switch {
+	case id == "" && username == "":
+		return []FieldError{{Field: "recipient_id", Message: "provide recipient_id or recipient_username"}}
+	case id != "" && username != "":
+		return []FieldError{{Field: "recipient_username", Message: "provide only one of recipient_id or recipient_username"}}
 	}
 	return nil
 }
@@ -204,9 +212,28 @@ func (s *Server) handleStartConversation(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	recipientID, err := uuid.Parse(strings.TrimSpace(in.RecipientID))
-	if err != nil {
-		return &ValidationError{Fields: []FieldError{{Field: "recipient_id", Message: "must be a valid id"}}}
+	// Resolve the recipient to a user id. Validate() guarantees exactly one of
+	// recipient_id / recipient_username is set. A username is resolved
+	// server-side (case-insensitive, active-only); an unknown/inactive username
+	// 404s exactly like an unknown recipient_id, so existence is not leaked
+	// differently. Self, block, and encrypted-type handling below are unchanged
+	// and operate on the resolved id (self → 422, block → 403).
+	var recipientID uuid.UUID
+	if uname := strings.TrimSpace(in.RecipientUsername); uname != "" {
+		resolved, rerr := s.messagingsvc.ResolveRecipientUsername(c.Request().Context(), uname)
+		if rerr != nil {
+			if errors.Is(rerr, messaging.ErrRecipientNotFound) {
+				return echo.NewHTTPError(http.StatusNotFound, "recipient not found")
+			}
+			return rerr
+		}
+		recipientID = resolved
+	} else {
+		parsed, perr := uuid.Parse(strings.TrimSpace(in.RecipientID))
+		if perr != nil {
+			return &ValidationError{Fields: []FieldError{{Field: "recipient_id", Message: "must be a valid id"}}}
+		}
+		recipientID = parsed
 	}
 	// Encrypted conversations live in the e2ee service (distinct dm_key
 	// namespace, ciphertext-only storage); everything else is unchanged.

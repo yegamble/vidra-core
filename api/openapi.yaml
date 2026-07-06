@@ -11034,11 +11034,24 @@ components:
           description: The publisher's raw stream key, as presented to the RTMP ingest.
     StartConversationRequest:
       type: object
-      required: [recipient_id]
+      description: >-
+        Names the other participant by EXACTLY ONE of recipient_id or
+        recipient_username — providing both, or neither, is a 422 field error.
+        recipient_username is resolved server-side (case-insensitive, active
+        accounts only); an unknown or deactivated username is a 404, exactly
+        like an unknown recipient_id, so existence is not leaked differently.
+        Resolving to yourself is a 422 (cannot message yourself).
       properties:
         recipient_id:
           type: string
           format: uuid
+          description: The recipient's user id. Provide this OR recipient_username, not both.
+        recipient_username:
+          type: string
+          description: >-
+            The recipient's username, resolved server-side (case-insensitive,
+            active accounts only). An alternative to recipient_id — provide
+            exactly one.
         encrypted:
           type: boolean
           default: false

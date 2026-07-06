@@ -144,6 +144,7 @@ type Repository interface {
 	ListMessages(ctx context.Context, arg sqlcgen.ListMessagesParams) ([]sqlcgen.ListMessagesRow, error)
 	ListConversations(ctx context.Context, arg sqlcgen.ListConversationsParams) ([]sqlcgen.ListConversationsRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
+	GetUserByUsername(ctx context.Context, lower string) (sqlcgen.User, error)
 	// DM completeness (§14).
 	GetMessage(ctx context.Context, id uuid.UUID) (sqlcgen.GetMessageRow, error)
 	GetLatestMessageID(ctx context.Context, conversationID uuid.UUID) (uuid.UUID, error)
@@ -371,6 +372,23 @@ func (s *Service) StartConversation(ctx context.Context, meID, recipientID uuid.
 		}
 	}
 	return conv, nil
+}
+
+// ResolveRecipientUsername resolves a username to an active user's id
+// (case-insensitive). An unknown OR deactivated username → ErrRecipientNotFound
+// so the HTTP layer 404s exactly as it does for an unknown recipient id (an
+// inactive account's existence is not leaked differently). It performs no self
+// or block check — the caller feeds the resolved id to StartConversation, which
+// applies those (self → ErrCannotMessageSelf, block → ErrBlocked).
+func (s *Service) ResolveRecipientUsername(ctx context.Context, username string) (uuid.UUID, error) {
+	u, err := s.repo.GetUserByUsername(ctx, strings.TrimSpace(username))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrRecipientNotFound
+		}
+		return uuid.Nil, err
+	}
+	return u.ID, nil
 }
 
 // ListConversations returns the caller's conversations, most-recently-active

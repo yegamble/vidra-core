@@ -288,6 +288,39 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 	return i, err
 }
 
+const getUserByUsername = `-- name: GetUserByUsername :one
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at
+FROM users
+WHERE lower(username) = lower($1) AND is_active = true
+`
+
+// Resolve a username to a full user row, case-insensitive and active-only
+// (deactivated accounts are treated as not found → the caller 404s, so an
+// inactive account's existence is not leaked differently from an unknown one).
+// Used to start a DM by username instead of by id.
+func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByUsername, lower)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Role,
+		&i.EmailVerified,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisplayName,
+		&i.Bio,
+		&i.StorageQuotaBytes,
+		&i.Unlisted,
+		&i.BypassQuarantine,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const listUsers = `-- name: ListUsers :many
 SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.is_active,
        u.created_at, u.updated_at, u.display_name, u.bio, u.storage_quota_bytes, u.unlisted,

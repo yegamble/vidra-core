@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +51,18 @@ func (f *messagingFakeRepo) GetUserByID(ctx context.Context, id uuid.UUID) (sqlc
 		return sqlcgen.User{}, pgx.ErrNoRows
 	}
 	return u, nil
+}
+
+// GetUserByUsername mirrors the real query: case-insensitive, active accounts
+// only. A miss (unknown OR inactive) is pgx.ErrNoRows so the service maps it to
+// ErrRecipientNotFound (→ 404).
+func (f *messagingFakeRepo) GetUserByUsername(_ context.Context, lower string) (sqlcgen.User, error) {
+	for _, u := range f.auth.users {
+		if u.IsActive && strings.EqualFold(u.Username, strings.TrimSpace(lower)) {
+			return u, nil
+		}
+	}
+	return sqlcgen.User{}, pgx.ErrNoRows
 }
 
 func (f *messagingFakeRepo) CreateConversation(_ context.Context, dmKey *string) (sqlcgen.CreateConversationRow, error) {
@@ -365,6 +378,63 @@ func (f *messagingFakeRepo) ListConversations(ctx context.Context, a sqlcgen.Lis
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+// TestStartConversationByUsername covers naming the recipient by username as an
+// alternative to recipient_id: the same conversation is created/returned as by
+// id (idempotent, case-insensitive), and the exactly-one-of rule plus the same
+// self/unknown/blocked outcomes as the id path hold.
+func TestStartConversationByUsername(t *testing.T) {
+	srv := videoServer(t)
+	adaTok, _ := registerAndUser(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	_, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	// Both recipient_id AND recipient_username → 422 (exactly one required).
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{"recipient_id":"`+bobID+`","recipient_username":"bob"}`, adaTok); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("both fields = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	// Neither field → 422.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{}`, adaTok); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("neither field = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	// Unknown username → 404 (same as an unknown recipient_id; existence not leaked).
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{"recipient_username":"nobody"}`, adaTok); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown username = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	// Username resolving to the caller → 422 (cannot message yourself).
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{"recipient_username":"ada"}`, adaTok); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("self by username = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Ada starts with Bob by id.
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{"recipient_id":"`+bobID+`"}`, adaTok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("start by id = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var byID conversationView
+	_ = json.Unmarshal(rec.Body.Bytes(), &byID)
+
+	// Ada starts with Bob by username (case-insensitive) → the SAME conversation.
+	rec2 := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{"recipient_username":"BOB"}`, adaTok)
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("start by username = %d, want 201; body=%s", rec2.Code, rec2.Body.String())
+	}
+	var byName conversationView
+	_ = json.Unmarshal(rec2.Body.Bytes(), &byName)
+	if byName.ID != byID.ID {
+		t.Fatalf("start-by-username mismatch: %s (id) vs %s (username)", byID.ID, byName.ID)
+	}
+
+	// Blocked-by-username → 403: a block between the two users applies after
+	// resolution, exactly as it does for recipient_id.
+	carolTok, _ := registerAndUser(t, srv, `{"username":"carol","email":"carol@example.test","password":"supersecret"}`)
+	_, daveID := registerAndUser(t, srv, `{"username":"dave","email":"dave@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/blocks/"+daveID, ``, carolTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("block dave = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{"recipient_username":"dave"}`, carolTok); rec.Code != http.StatusForbidden {
+		t.Fatalf("blocked by username = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 // TestMessagingFlow drives the full 1:1 DM lifecycle over HTTP: start (idempotent),

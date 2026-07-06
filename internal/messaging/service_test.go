@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +72,18 @@ func (f *fakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.User, e
 		return sqlcgen.User{}, pgx.ErrNoRows
 	}
 	return sqlcgen.User{ID: id, Username: "u-" + id.String()[:8]}, nil
+}
+
+// GetUserByUsername mirrors the real query (case-insensitive, active-only)
+// against the fake's synthetic "u-<id[:8]>" usernames. A miss is pgx.ErrNoRows.
+func (f *fakeRepo) GetUserByUsername(_ context.Context, lower string) (sqlcgen.User, error) {
+	name := strings.TrimSpace(lower)
+	for id, active := range f.users {
+		if active && strings.EqualFold("u-"+id.String()[:8], name) {
+			return sqlcgen.User{ID: id, Username: "u-" + id.String()[:8]}, nil
+		}
+	}
+	return sqlcgen.User{}, pgx.ErrNoRows
 }
 
 func (f *fakeRepo) CreateConversation(_ context.Context, dmKey *string) (sqlcgen.CreateConversationRow, error) {
@@ -467,6 +480,23 @@ func TestStartConversationErrors(t *testing.T) {
 	}
 	if _, err := svc.StartConversation(ctx, ada, uuid.New()); err != ErrRecipientNotFound {
 		t.Errorf("unknown recipient err = %v, want ErrRecipientNotFound", err)
+	}
+}
+
+func TestResolveRecipientUsername(t *testing.T) {
+	ctx := context.Background()
+	ada := uuid.New()
+	svc := NewService(newFakeRepo(ada))
+
+	// Resolves case-insensitively to the user's id.
+	name := "u-" + ada.String()[:8]
+	got, err := svc.ResolveRecipientUsername(ctx, strings.ToUpper(name))
+	if err != nil || got != ada {
+		t.Fatalf("resolve = (%s, %v), want (%s, nil)", got, err, ada)
+	}
+	// Unknown username → ErrRecipientNotFound (same as an unknown id).
+	if _, err := svc.ResolveRecipientUsername(ctx, "nobody"); err != ErrRecipientNotFound {
+		t.Errorf("unknown username err = %v, want ErrRecipientNotFound", err)
 	}
 }
 
