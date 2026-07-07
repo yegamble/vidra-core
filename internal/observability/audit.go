@@ -63,6 +63,12 @@ const (
 	// session as a VOD on ingest-stop (P12). Reason carries safe ids/outcome
 	// only — never the stream key.
 	ActionLiveReplay = "content.live.replay"
+	// ActionUploadMalwareRejected records that the malware scanner (ClamAV,
+	// UPLOAD-13) kept an uploaded original out of the published state — an
+	// infection, or an unscannable file under a non-publishing policy. Reason
+	// carries only the safe video id, the outcome (infected|scan_error), and the
+	// applied policy — never the scanned bytes or any file content.
+	ActionUploadMalwareRejected = "content.upload.malware_rejected"
 	// E2EE one-time-key claims are audited with COUNTS ONLY (never key
 	// material): key exhaustion/abuse is a security-relevant signal.
 	ActionE2EEClaim = "e2ee.otk.claim"

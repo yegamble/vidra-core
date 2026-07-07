@@ -465,6 +465,33 @@ func TestLoadRejectsInvalidMalwareScanMode(t *testing.T) {
 	}
 }
 
+func TestClamAVTimeoutDefaultAndOverride(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.ClamAVTimeout != 60*time.Second {
+		t.Errorf("default ClamAVTimeout = %s, want 60s", cfg.ClamAVTimeout)
+	}
+	t.Setenv("CLAMAV_TIMEOUT", "90s")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load override: %v", err)
+	}
+	if cfg.ClamAVTimeout != 90*time.Second {
+		t.Errorf("ClamAVTimeout = %s, want 90s", cfg.ClamAVTimeout)
+	}
+}
+
+func TestLoadRejectsNonPositiveClamAVTimeoutWhenScanEnabled(t *testing.T) {
+	t.Setenv("MALWARE_SCAN_ENABLED", "true")
+	t.Setenv("CLAMAV_ADDR", "clamav:3310")
+	t.Setenv("CLAMAV_TIMEOUT", "0s")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for non-positive CLAMAV_TIMEOUT with scanning enabled, got nil")
+	}
+}
+
 func TestLoadRejectsAV1(t *testing.T) {
 	t.Setenv("TRANSCODING_AV1_ENABLED", "true")
 	if _, err := Load(); err == nil {

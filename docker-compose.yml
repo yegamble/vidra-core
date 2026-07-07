@@ -92,6 +92,11 @@ services:
   # The clamav/clamav image bundles clamd; the first boot downloads signature
   # databases (freshclam) which can take a minute — the healthcheck waits for the
   # daemon to accept connections.
+  # MEMORY FOOTPRINT CAVEAT: clamd loads the full signature database into RAM and
+  # holds it resident — budget ~1.5-2 GiB for this one container (it will OOM-kill
+  # on a 512 MiB host). This is why scanning is opt-in (the "scan" profile) rather
+  # than part of the default core stack; a small dev machine can run everything
+  # else without paying clamd's memory cost.
   clamav:
     image: clamav/clamav:1.4
     profiles: ["scan"]
@@ -225,6 +230,9 @@ services:
       # with the "scan" profile (CLAMAV_ADDR=clamav:3310) or point at your own.
       MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-false}
       CLAMAV_ADDR: ${CLAMAV_ADDR:-}
+      # CLAMAV_TIMEOUT bounds a single scan (dial + stream + verdict); a slow/wedged
+      # clamd surfaces as a scan error (resolved by MALWARE_SCAN_MODE) not a hang.
+      CLAMAV_TIMEOUT: ${CLAMAV_TIMEOUT:-60s}
       # MALWARE_SCAN_MODE: fallback policy on a scan ERROR — fail-closed (default;
       # unscannable media is not published), fail-open (publish anyway, logged
       # loudly), or quarantine (park for moderator review). Infected media always

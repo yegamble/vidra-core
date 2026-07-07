@@ -8,9 +8,14 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vidra/vidra-core/internal/storage"
 )
+
+// testScanTimeout bounds the fake-clamd scans; small but ample for a loopback
+// exchange.
+const testScanTimeout = 5 * time.Second
 
 // fakeClamd is a minimal clamd: it reads a full INSTREAM upload (command, then
 // size-prefixed chunks until the zero-length terminator) and only then replies
@@ -65,7 +70,7 @@ func localWithFile(t *testing.T, key, content string) storage.Backend {
 
 func TestClamAVClean(t *testing.T) {
 	blobs := localWithFile(t, "originals/x.mp4", "harmless bytes")
-	sc := NewClamAV(fakeClamd(t, "stream: OK"), blobs)
+	sc := NewClamAV(fakeClamd(t, "stream: OK"), blobs, testScanTimeout)
 	clean, err := sc.Scan(context.Background(), "originals/x.mp4")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -77,7 +82,7 @@ func TestClamAVClean(t *testing.T) {
 
 func TestClamAVInfected(t *testing.T) {
 	blobs := localWithFile(t, "originals/x.mp4", "EICAR-ish")
-	sc := NewClamAV(fakeClamd(t, "stream: Eicar-Test-Signature FOUND"), blobs)
+	sc := NewClamAV(fakeClamd(t, "stream: Eicar-Test-Signature FOUND"), blobs, testScanTimeout)
 	clean, err := sc.Scan(context.Background(), "originals/x.mp4")
 	if err != nil {
 		t.Fatalf("Scan returned err: %v", err)
@@ -89,7 +94,7 @@ func TestClamAVInfected(t *testing.T) {
 
 func TestClamAVUnexpectedResponseIsError(t *testing.T) {
 	blobs := localWithFile(t, "originals/x.mp4", "bytes")
-	sc := NewClamAV(fakeClamd(t, "gibberish"), blobs)
+	sc := NewClamAV(fakeClamd(t, "gibberish"), blobs, testScanTimeout)
 	if _, err := sc.Scan(context.Background(), "originals/x.mp4"); err == nil {
 		t.Error("unexpected clamd response should be an error (fail closed)")
 	}
@@ -98,8 +103,51 @@ func TestClamAVUnexpectedResponseIsError(t *testing.T) {
 func TestClamAVDialFailureIsError(t *testing.T) {
 	blobs := localWithFile(t, "originals/x.mp4", "bytes")
 	// Nothing is listening here.
-	sc := NewClamAV("127.0.0.1:1", blobs)
+	sc := NewClamAV("127.0.0.1:1", blobs, testScanTimeout)
 	if _, err := sc.Scan(context.Background(), "originals/x.mp4"); err == nil {
 		t.Error("dial failure should be an error")
+	}
+}
+
+// silentClamd accepts the connection and drains the upload but never sends a
+// verdict, so the client blocks on the response read until its deadline. Returns
+// the listener address.
+func silentClamd(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		// Hold the connection open (no reply) until the test finishes; the client
+		// should give up on its own deadline first.
+		<-t.Context().Done()
+		_ = conn.Close()
+	}()
+	return ln.Addr().String()
+}
+
+func TestClamAVScanTimeoutIsError(t *testing.T) {
+	blobs := localWithFile(t, "originals/x.mp4", "bytes")
+	// A clamd that never answers must surface as a scan error within the
+	// configured timeout (fail-closed is the caller's job), not hang the upload.
+	sc := NewClamAV(silentClamd(t), blobs, 200*time.Millisecond)
+	done := make(chan error, 1)
+	go func() {
+		_, err := sc.Scan(context.Background(), "originals/x.mp4")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a non-responding clamd should be a scan error (fail closed)")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Scan did not honour the configured timeout")
 	}
 }

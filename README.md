@@ -197,7 +197,12 @@ rejects it). Re-uploading replaces the prior original, and non-owner/unknown →
 clamd at `CLAMAV_ADDR` — the compose `scan` profile ships one): an INFECTED file
 always fails. `MALWARE_SCAN_MODE` decides the fallback on a scan *error*:
 `fail-closed` (default — not published), `fail-open` (published anyway, logged
-loudly), or `quarantine` (parked in the moderator review queue).
+loudly), or `quarantine` (parked in the moderator review queue). A single scan is
+bounded by `CLAMAV_TIMEOUT` (default `60s`), so a slow/unreachable clamd surfaces
+as a scan error (resolved by the mode above) rather than hanging the upload. Any
+outcome that keeps an upload out of `published` (infection, or unscannable under a
+non-publishing mode) writes a `content.upload.malware_rejected` audit event —
+safe ids/outcome/policy only, never file content.
 The file extension must be an accepted video container (else `415`) and the body must
 be within `UPLOAD_MAX_SIZE` (else `413`; this route is exempt from the small
 `HTTP_BODY_LIMIT` that guards the JSON API). The stored file is tracked in

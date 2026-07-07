@@ -355,12 +355,23 @@ the top of `docker-compose.yml` (`STORAGE_BACKEND=s3` + `STORAGE_S3_*`; the
 bucket is auto-created at boot).
 
 Virus scanning (compose `scan` profile ships a clamd; first boot downloads
-signature DBs — the healthcheck has a 120s start_period):
+signature DBs — the healthcheck has a 120s start_period; clamd holds the whole
+signature DB resident, ~1.5-2 GiB RAM, which is why it's an opt-in profile):
 ```bash
 docker compose --profile scan up -d clamav
 # then run the api with: MALWARE_SCAN_ENABLED=true CLAMAV_ADDR=clamav:3310
 # MALWARE_SCAN_MODE = fail-closed (default) | fail-open | quarantine
+# CLAMAV_TIMEOUT   = per-scan bound (default 60s); slow clamd => scan error, not a hang
 ```
+The `internal/media.ClamAV` INSTREAM client's pure logic is unit-tested against a
+fake clamd in `make ci`; a real-clamd EICAR check is gated behind
+`-tags=integration` and self-skips unless `CLAMAV_TEST_ADDR` is set:
+```bash
+docker compose --profile scan up -d clamav
+CLAMAV_TEST_ADDR=localhost:3310 go test -tags integration ./internal/media/
+```
+Any scan outcome that keeps an upload out of `published` writes a
+`content.upload.malware_rejected` audit event (safe ids/outcome/policy only).
 
 Password hashing: production uses bcrypt cost 12, but test binaries call
 `auth.UseFastPasswordHashingForTests()` (from an `init()` in `internal/auth` and

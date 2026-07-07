@@ -100,6 +100,14 @@ type Config struct {
 	// ClamAVAddr is the clamd TCP address (host:port) used when MalwareScanEnabled.
 	ClamAVAddr string
 
+	// ClamAVTimeout bounds a single INSTREAM scan: the connection deadline the
+	// scanner sets before streaming the object to clamd. A slow or wedged clamd
+	// therefore surfaces as a scan error within this window (which MalwareScanMode
+	// then resolves) rather than hanging the upload finalisation. Parsed with
+	// time.ParseDuration (e.g. "60s", "2m"); default 60s; must be > 0 when
+	// MalwareScanEnabled.
+	ClamAVTimeout time.Duration
+
 	// MalwareScanMode is the ClamAV fallback policy applied when a scan cannot
 	// complete (a dial/protocol/IO error): "fail-closed" (default — unscannable
 	// media is not published), "fail-open" (publish anyway, logged loudly), or
@@ -414,6 +422,7 @@ func Load() (*Config, error) {
 		TOTPIssuer:                     getEnv("TOTP_ISSUER", ""),
 		MalwareScanEnabled:             getEnvBool("MALWARE_SCAN_ENABLED", false),
 		ClamAVAddr:                     getEnv("CLAMAV_ADDR", ""),
+		ClamAVTimeout:                  getEnvDuration("CLAMAV_TIMEOUT", 60*time.Second),
 		MalwareScanMode:                getEnv("MALWARE_SCAN_MODE", "fail-closed"),
 		TranscodingEnabled:             getEnvBool("TRANSCODING_ENABLED", true),
 		TranscodingVP9Enabled:          getEnvBool("TRANSCODING_VP9_ENABLED", false),
@@ -654,6 +663,9 @@ func (c *Config) validate() error {
 	}
 	if c.MalwareScanEnabled && strings.TrimSpace(c.ClamAVAddr) == "" {
 		return fmt.Errorf("config: CLAMAV_ADDR is required when MALWARE_SCAN_ENABLED=true")
+	}
+	if c.MalwareScanEnabled && c.ClamAVTimeout <= 0 {
+		return fmt.Errorf("config: CLAMAV_TIMEOUT must be a positive duration when MALWARE_SCAN_ENABLED=true")
 	}
 	switch c.MalwareScanMode {
 	case "", "fail-closed", "fail-open", "quarantine": // "" = default fail-closed

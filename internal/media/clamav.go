@@ -16,20 +16,30 @@ import (
 // ClamAV scans stored objects for malware by streaming them to a clamd daemon
 // over its INSTREAM command. It satisfies video.Scanner.
 type ClamAV struct {
-	blobs storage.Backend
-	addr  string
+	blobs   storage.Backend
+	addr    string
+	timeout time.Duration
 }
 
 // NewClamAV builds a scanner that streams objects from blobs to the clamd at addr
-// (host:port).
-func NewClamAV(addr string, blobs storage.Backend) *ClamAV {
-	return &ClamAV{blobs: blobs, addr: addr}
+// (host:port). timeout bounds a single scan (dial + stream + verdict); a
+// non-positive value falls back to the built-in default so callers that don't
+// configure one still behave sanely.
+func NewClamAV(addr string, blobs storage.Backend, timeout time.Duration) *ClamAV {
+	if timeout <= 0 {
+		timeout = clamDefaultScanDeadline
+	}
+	return &ClamAV{blobs: blobs, addr: addr, timeout: timeout}
 }
 
 const (
-	clamChunkSize    = 64 * 1024
-	clamDialTimeout  = 5 * time.Second
-	clamScanDeadline = 60 * time.Second
+	clamChunkSize = 64 * 1024
+	// clamDialTimeout caps the TCP dial; the overall scan is additionally bounded
+	// by the configured timeout (it never exceeds it).
+	clamDialTimeout = 5 * time.Second
+	// clamDefaultScanDeadline is the fallback overall scan bound when no timeout
+	// is configured (CLAMAV_TIMEOUT default mirrors this).
+	clamDefaultScanDeadline = 60 * time.Second
 )
 
 // Scan streams the object at key to clamd and reports whether it is clean. An
@@ -42,13 +52,18 @@ func (c *ClamAV) Scan(ctx context.Context, key string) (bool, error) {
 	}
 	defer func() { _ = rc.Close() }()
 
-	dialer := net.Dialer{Timeout: clamDialTimeout}
+	// The dial never waits longer than the whole scan budget.
+	dialTimeout := clamDialTimeout
+	if c.timeout < dialTimeout {
+		dialTimeout = c.timeout
+	}
+	dialer := net.Dialer{Timeout: dialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", c.addr)
 	if err != nil {
 		return false, fmt.Errorf("clamav: dial: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	deadline := time.Now().Add(clamScanDeadline)
+	deadline := time.Now().Add(c.timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}

@@ -17,7 +17,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -131,6 +133,13 @@ type Scanner interface {
 	Scan(ctx context.Context, storageKey string) (clean bool, err error)
 }
 
+// Auditor records security-relevant scan outcomes to the durable audit trail
+// (safe ids/outcome only — never file content). *audit.Service satisfies it;
+// when none is wired the malware-rejection audit event is simply skipped.
+type Auditor interface {
+	Record(ctx context.Context, ev audit.Event) error
+}
+
 // Thumbnailer produces a poster image (JPEG bytes) for the media at storageKey.
 // durationSeconds (0 if unknown) hints which frame to grab. It is the seam for
 // FFmpeg thumbnail extraction; when none is configured videos publish without a
@@ -195,6 +204,7 @@ type Service struct {
 	storyboarder         Storyboarder
 	scanner              Scanner
 	scanMode             ScanMode
+	auditor              Auditor
 	viewDeduper          ViewDeduper
 	quarantineNewUploads func() bool
 	onPublish            []func(context.Context, uuid.UUID)
@@ -222,6 +232,14 @@ func WithThumbnailer(t Thumbnailer) Option {
 // it, uploads are not scanned.
 func WithScanner(sc Scanner) Option {
 	return func(s *Service) { s.scanner = sc }
+}
+
+// WithAuditor wires the durable audit trail so Process can record a
+// content.upload.malware_rejected event whenever the scanner keeps an upload out
+// of the published state (infection, or unscannable under a non-publishing
+// policy). Without it, that event is skipped (the state transition still holds).
+func WithAuditor(a Auditor) Option {
+	return func(s *Service) { s.auditor = a }
 }
 
 // WithScanMode sets the malware-scan fallback policy honored by Process on a
@@ -450,6 +468,25 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	return updated, file, nil
 }
 
+// auditMalwareRejected records (best-effort) that the malware scanner kept an
+// upload out of the published state. outcome is "infected" or "scan_error"; the
+// reason carries only the safe video id, the outcome, and the applied policy —
+// never the scanned bytes or any file content. A no-op when no auditor is wired.
+func (s *Service) auditMalwareRejected(ctx context.Context, videoID uuid.UUID, outcome string) {
+	if s.auditor == nil {
+		return
+	}
+	policy := string(s.scanMode)
+	if policy == "" {
+		policy = string(ScanModeFailClosed)
+	}
+	_ = s.auditor.Record(ctx, audit.Event{
+		Action: observability.ActionUploadMalwareRejected,
+		Result: observability.ResultFailure,
+		Reason: "video=" + videoID.String() + " outcome=" + outcome + " policy=" + policy,
+	})
+}
+
 // Process finalises a processing video: it probes the stored original and moves
 // the video to published on success or failed on a probe error. When no prober
 // is configured the original is trusted (the extension allow-list already
@@ -473,17 +510,21 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 			// The scan could not complete — MALWARE_SCAN_MODE decides.
 			switch s.scanMode {
 			case ScanModeFailOpen:
-				// Publish anyway, but log loudly: the upload is unscanned.
+				// Publish anyway, but log loudly: the upload is unscanned. Not a
+				// rejection (the video publishes), so no rejection audit event.
 				slog.WarnContext(ctx, "malware scan failed; publishing anyway (MALWARE_SCAN_MODE=fail-open)",
 					"video_id", videoID.String(), "error", err.Error())
 			case ScanModeQuarantine:
 				scanQuarantine = true
+				s.auditMalwareRejected(ctx, videoID, "scan_error")
 			default: // fail-closed
 				state = "failed"
+				s.auditMalwareRejected(ctx, videoID, "scan_error")
 			}
 		case !clean:
 			// Infected media ALWAYS fails, regardless of mode.
 			state = "failed"
+			s.auditMalwareRejected(ctx, videoID, "infected")
 		}
 	}
 	if state == "published" && s.prober != nil {

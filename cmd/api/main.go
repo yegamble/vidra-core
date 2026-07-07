@@ -304,9 +304,14 @@ func run() error {
 		logger.Warn("storyboard generation disabled (ffmpeg/ffprobe not on PATH); videos publish without a storyboard")
 	}
 	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
+	// The durable audit trail (also mounted on the admin API below) lets the video
+	// service record a content.upload.malware_rejected event when a scan keeps an
+	// upload out of published (infection / unscannable under a non-publishing mode).
+	auditsvc := audit.NewService(db.Queries())
+	vopts = append(vopts, video.WithAuditor(auditsvc))
 	if cfg.MalwareScanEnabled {
-		vopts = append(vopts, video.WithScanner(media.NewClamAV(cfg.ClamAVAddr, blobs)))
-		logger.Info("malware scanning enabled (clamd)", "addr", cfg.ClamAVAddr, "mode", cfg.MalwareScanMode)
+		vopts = append(vopts, video.WithScanner(media.NewClamAV(cfg.ClamAVAddr, blobs, cfg.ClamAVTimeout)))
+		logger.Info("malware scanning enabled (clamd)", "addr", cfg.ClamAVAddr, "mode", cfg.MalwareScanMode, "timeout", cfg.ClamAVTimeout.String())
 	}
 	// The scan fallback policy applies whenever a scanner is wired (default
 	// fail-closed); harmless to set when scanning is off.
@@ -452,7 +457,6 @@ func run() error {
 	adminsvc := admin.NewService(db.Queries())
 	opts = append(opts, httpapi.WithAdminService(adminsvc))
 
-	auditsvc := audit.NewService(db.Queries())
 	opts = append(opts, httpapi.WithAuditLog(auditsvc))
 
 	// DM completeness (product-decisions.md §14): attachments (scanned fail-closed
@@ -460,7 +464,7 @@ func run() error {
 	msgOpts := []messaging.Option{messaging.WithBlocker(blocksvc), messaging.WithLogger(logger)}
 	var attachScanner messaging.Scanner
 	if cfg.MalwareScanEnabled {
-		attachScanner = media.NewClamAV(cfg.ClamAVAddr, blobs)
+		attachScanner = media.NewClamAV(cfg.ClamAVAddr, blobs, cfg.ClamAVTimeout)
 	}
 	msgOpts = append(msgOpts, messaging.WithAttachments(blobs, attachScanner, messaging.MaxAttachmentBytes))
 	previewGuard := urlsafety.Guard{AllowPrivate: cfg.ImportAllowPrivateURLs}
