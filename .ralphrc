@@ -27,7 +27,7 @@ CLAUDE_OUTPUT_FORMAT="json"
 
 # Tool permissions
 # Safe git subcommands only + Go/Docker/make tooling needed for backend work.
-ALLOWED_TOOLS="Write,Read,Edit,Bash(git add *),Bash(git commit *),Bash(git diff *),Bash(git log *),Bash(git status),Bash(git status *),Bash(git push *),Bash(git pull *),Bash(git fetch *),Bash(git checkout *),Bash(git branch *),Bash(git stash *),Bash(git merge *),Bash(git tag *),Bash(go *),Bash(gofmt *),Bash(golangci-lint *),Bash(staticcheck *),Bash(sqlc *),Bash(make *),Bash(docker *),Bash(docker-compose *),Bash(migrate *),Bash(newman *),Bash(curl *)"
+ALLOWED_TOOLS="Write,Read,Edit,Monitor,TaskOutput,TaskStop,Bash(git add *),Bash(git commit *),Bash(git diff *),Bash(git log *),Bash(git status),Bash(git status *),Bash(git push *),Bash(git pull *),Bash(git fetch *),Bash(git checkout *),Bash(git branch *),Bash(git stash *),Bash(git merge *),Bash(git tag *),Bash(go *),Bash(gofmt *),Bash(golangci-lint *),Bash(staticcheck *),Bash(sqlc *),Bash(make *),Bash(docker *),Bash(docker-compose *),Bash(migrate *),Bash(newman *),Bash(curl *)"
 
 # Sections in fix_plan.md whose unchecked items do NOT block Ralph exit.
 OPTIONAL_SECTIONS="Optional / Deferred / Non-Blocking,Optional,Future,Future Enhancements,Nice to Have"
