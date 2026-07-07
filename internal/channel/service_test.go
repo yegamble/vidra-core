@@ -15,12 +15,18 @@ import (
 
 // fakeRepo is an in-memory channel.Repository keyed by lowercased handle.
 type fakeRepo struct {
-	byHandle map[string]sqlcgen.Channel
-	follows  map[string]bool // "followerID|channelID"
+	byHandle   map[string]sqlcgen.Channel
+	follows    map[string]bool      // "followerID|channelID"
+	followedAt map[string]time.Time // when each follow was created
+	followSeq  []string             // follow keys in follow order
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{byHandle: map[string]sqlcgen.Channel{}, follows: map[string]bool{}}
+	return &fakeRepo{
+		byHandle:   map[string]sqlcgen.Channel{},
+		follows:    map[string]bool{},
+		followedAt: map[string]time.Time{},
+	}
 }
 
 func followKey(follower, channel uuid.UUID) string { return follower.String() + "|" + channel.String() }
@@ -31,12 +37,62 @@ func (f *fakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChannelParam
 		return 0, nil // already following
 	}
 	f.follows[key] = true
+	f.followedAt[key] = time.Now()
+	f.followSeq = append(f.followSeq, key)
 	return 1, nil
 }
 
 func (f *fakeRepo) UnfollowChannel(_ context.Context, a sqlcgen.UnfollowChannelParams) error {
-	delete(f.follows, followKey(a.FollowerID, a.ChannelID))
+	key := followKey(a.FollowerID, a.ChannelID)
+	delete(f.follows, key)
+	delete(f.followedAt, key)
+	for i, k := range f.followSeq {
+		if k == key {
+			f.followSeq = append(f.followSeq[:i], f.followSeq[i+1:]...)
+			break
+		}
+	}
 	return nil
+}
+
+func (f *fakeRepo) ListFollowedChannels(ctx context.Context, a sqlcgen.ListFollowedChannelsParams) ([]sqlcgen.ListFollowedChannelsRow, error) {
+	prefix := a.FollowerID.String() + "|"
+	var out []sqlcgen.ListFollowedChannelsRow
+	skipped, taken := int32(0), int32(0)
+	for i := len(f.followSeq) - 1; i >= 0; i-- { // reverse = most recently followed first
+		key := f.followSeq[i]
+		if !f.follows[key] || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		chID := strings.TrimPrefix(key, prefix)
+		var ch sqlcgen.Channel
+		found := false
+		for _, c := range f.byHandle {
+			if c.ID.String() == chID {
+				ch, found = c, true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		if skipped < a.Offset {
+			skipped++
+			continue
+		}
+		if a.Limit > 0 && taken >= a.Limit {
+			break
+		}
+		count, _ := f.CountChannelFollowers(ctx, ch.ID)
+		out = append(out, sqlcgen.ListFollowedChannelsRow{
+			ID: ch.ID, OwnerID: ch.OwnerID, Handle: ch.Handle,
+			DisplayName: ch.DisplayName, Description: ch.Description,
+			CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt,
+			FollowerCount: count, FollowedAt: f.followedAt[key],
+		})
+		taken++
+	}
+	return out, nil
 }
 
 func (f *fakeRepo) CountChannelFollowers(_ context.Context, channelID uuid.UUID) (int64, error) {
@@ -246,6 +302,61 @@ func TestFollowUnknownChannelNotFound(t *testing.T) {
 	svc := NewService(newFakeRepo())
 	if _, _, err := svc.Follow(context.Background(), uuid.New(), "ghost"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListFollowed(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	ctx := context.Background()
+	owner := uuid.New()
+	_, _ = svc.Create(ctx, owner, CreateInput{Handle: "ada", DisplayName: "Ada"})
+	_, _ = svc.Create(ctx, owner, CreateInput{Handle: "north", DisplayName: "North"})
+	_, _ = svc.Create(ctx, owner, CreateInput{Handle: "field", DisplayName: "Field"})
+
+	follower := uuid.New()
+	// A follower with no follows gets an empty (non-nil) slice.
+	if got, err := svc.ListFollowed(ctx, follower, 20, 0); err != nil || len(got) != 0 {
+		t.Fatalf("ListFollowed empty = (%v, %v), want ([], nil)", got, err)
+	}
+
+	// Follow in order: ada, north, field. Newest-first → field, north, ada.
+	for _, h := range []string{"ada", "north", "field"} {
+		if _, _, err := svc.Follow(ctx, follower, h); err != nil {
+			t.Fatalf("follow %s: %v", h, err)
+		}
+	}
+	// A second follower on "ada" bumps its follower_count to 2.
+	if _, _, err := svc.Follow(ctx, uuid.New(), "ada"); err != nil {
+		t.Fatalf("second follow ada: %v", err)
+	}
+
+	got, err := svc.ListFollowed(ctx, follower, 20, 0)
+	if err != nil {
+		t.Fatalf("ListFollowed: %v", err)
+	}
+	wantOrder := []string{"field", "north", "ada"}
+	if len(got) != len(wantOrder) {
+		t.Fatalf("got %d followed, want %d", len(got), len(wantOrder))
+	}
+	for i, w := range wantOrder {
+		if got[i].Channel.Handle != w {
+			t.Errorf("position %d = %q, want %q", i, got[i].Channel.Handle, w)
+		}
+		if got[i].FollowedAt.IsZero() {
+			t.Errorf("%s FollowedAt is zero", w)
+		}
+	}
+	if got[2].FollowerCount != 2 { // ada
+		t.Errorf("ada follower_count = %d, want 2", got[2].FollowerCount)
+	}
+
+	// Pagination: limit 1 offset 1 → the second newest ("north").
+	page, err := svc.ListFollowed(ctx, follower, 1, 1)
+	if err != nil {
+		t.Fatalf("ListFollowed page: %v", err)
+	}
+	if len(page) != 1 || page[0].Channel.Handle != "north" {
+		t.Fatalf("limit=1 offset=1 = %+v, want [north]", page)
 	}
 }
 

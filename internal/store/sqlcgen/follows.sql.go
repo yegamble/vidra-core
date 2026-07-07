@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -60,6 +61,70 @@ func (q *Queries) IsFollowingChannel(ctx context.Context, arg IsFollowingChannel
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const listFollowedChannels = `-- name: ListFollowedChannels :many
+SELECT
+    c.id, c.owner_id, c.handle, c.display_name, c.description,
+    c.created_at, c.updated_at,
+    (SELECT count(*) FROM channel_follows cf2 WHERE cf2.channel_id = c.id) AS follower_count,
+    cf.created_at AS followed_at
+FROM channel_follows cf
+JOIN channels c ON c.id = cf.channel_id
+WHERE cf.follower_id = $1
+ORDER BY cf.created_at DESC, c.id
+LIMIT $2 OFFSET $3
+`
+
+type ListFollowedChannelsParams struct {
+	FollowerID uuid.UUID `json:"follower_id"`
+	Limit      int32     `json:"limit"`
+	Offset     int32     `json:"offset"`
+}
+
+type ListFollowedChannelsRow struct {
+	ID            uuid.UUID `json:"id"`
+	OwnerID       uuid.UUID `json:"owner_id"`
+	Handle        string    `json:"handle"`
+	DisplayName   string    `json:"display_name"`
+	Description   string    `json:"description"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	FollowerCount int64     `json:"follower_count"`
+	FollowedAt    time.Time `json:"followed_at"`
+}
+
+// The LOCAL channels the caller follows (the "FOLLOWING" list), most recently
+// followed first. follower_count is each channel's total follower count and
+// followed_at is when the caller followed it. Paginated via limit/offset.
+func (q *Queries) ListFollowedChannels(ctx context.Context, arg ListFollowedChannelsParams) ([]ListFollowedChannelsRow, error) {
+	rows, err := q.db.Query(ctx, listFollowedChannels, arg.FollowerID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFollowedChannelsRow
+	for rows.Next() {
+		var i ListFollowedChannelsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Handle,
+			&i.DisplayName,
+			&i.Description,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FollowerCount,
+			&i.FollowedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const unfollowChannel = `-- name: UnfollowChannel :exec

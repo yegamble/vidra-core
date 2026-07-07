@@ -696,6 +696,7 @@ func (s *Server) routes() {
 		api.POST("/channels/:handle/follow", s.handleFollowChannel, s.requireAuth)
 		api.DELETE("/channels/:handle/follow", s.handleUnfollowChannel, s.requireAuth)
 		api.GET("/me/channels", s.handleListMyChannels, s.requireAuth)
+		api.GET("/me/subscriptions", s.handleListFollowedChannels, s.requireAuth)
 	}
 
 	// Simple crypto donation addresses (P14): the owner manages their own

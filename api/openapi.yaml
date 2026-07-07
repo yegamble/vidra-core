@@ -2120,6 +2120,48 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/subscriptions:
+    get:
+      operationId: listFollowedChannels
+      summary: List the local channels the caller follows
+      description: >-
+        The authenticated user's "FOLLOWING" list: the LOCAL channels they
+        follow, most recently followed first, each with the channel's total
+        follower_count and the followed_at timestamp. Remote-channel follows are
+        listed separately at GET /me/remote-follows. Paginated via limit (1–100,
+        default 20) and offset.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of followed channels (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FollowedChannelsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/subscriptions/videos:
     get:
       operationId: listSubscriptionVideos
@@ -8980,6 +9022,29 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Channel"
+    FollowedChannel:
+      description: A channel the caller follows, with the follow timestamp.
+      allOf:
+        - $ref: "#/components/schemas/Channel"
+        - type: object
+          required: [followed_at]
+          properties:
+            followed_at:
+              type: string
+              format: date-time
+              description: When the caller followed this channel.
+    FollowedChannelsResponse:
+      type: object
+      required: [channels, limit, offset]
+      properties:
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/FollowedChannel"
+        limit:
+          type: integer
+        offset:
+          type: integer
     DonationAddress:
       type: object
       description: >-

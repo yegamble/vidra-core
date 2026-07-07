@@ -21,12 +21,18 @@ import (
 
 // channelFakeRepo is an in-memory channel.Repository for handler tests.
 type channelFakeRepo struct {
-	byHandle map[string]sqlcgen.Channel
-	follows  map[string]bool // "followerID|channelID"
+	byHandle   map[string]sqlcgen.Channel
+	follows    map[string]bool      // "followerID|channelID"
+	followedAt map[string]time.Time // when each follow was created
+	followSeq  []string             // follow keys in follow order (for stable "newest first")
 }
 
 func newChannelFakeRepo() *channelFakeRepo {
-	return &channelFakeRepo{byHandle: map[string]sqlcgen.Channel{}, follows: map[string]bool{}}
+	return &channelFakeRepo{
+		byHandle:   map[string]sqlcgen.Channel{},
+		follows:    map[string]bool{},
+		followedAt: map[string]time.Time{},
+	}
 }
 
 func (f *channelFakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChannelParams) (int64, error) {
@@ -35,12 +41,64 @@ func (f *channelFakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChann
 		return 0, nil // already following
 	}
 	f.follows[key] = true
+	f.followedAt[key] = time.Now()
+	f.followSeq = append(f.followSeq, key)
 	return 1, nil
 }
 
 func (f *channelFakeRepo) UnfollowChannel(_ context.Context, a sqlcgen.UnfollowChannelParams) error {
-	delete(f.follows, a.FollowerID.String()+"|"+a.ChannelID.String())
+	key := a.FollowerID.String() + "|" + a.ChannelID.String()
+	delete(f.follows, key)
+	delete(f.followedAt, key)
+	for i, k := range f.followSeq {
+		if k == key {
+			f.followSeq = append(f.followSeq[:i], f.followSeq[i+1:]...)
+			break
+		}
+	}
 	return nil
+}
+
+func (f *channelFakeRepo) ListFollowedChannels(ctx context.Context, a sqlcgen.ListFollowedChannelsParams) ([]sqlcgen.ListFollowedChannelsRow, error) {
+	prefix := a.FollowerID.String() + "|"
+	// Walk followSeq in reverse so the most recently followed channel is first
+	// (mirrors the SQL ORDER BY cf.created_at DESC).
+	var out []sqlcgen.ListFollowedChannelsRow
+	skipped, taken := int32(0), int32(0)
+	for i := len(f.followSeq) - 1; i >= 0; i-- {
+		key := f.followSeq[i]
+		if !f.follows[key] || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		chID := strings.TrimPrefix(key, prefix)
+		var ch sqlcgen.Channel
+		found := false
+		for _, c := range f.byHandle {
+			if c.ID.String() == chID {
+				ch, found = c, true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		if skipped < a.Offset {
+			skipped++
+			continue
+		}
+		if a.Limit > 0 && taken >= a.Limit {
+			break
+		}
+		count, _ := f.CountChannelFollowers(ctx, ch.ID)
+		out = append(out, sqlcgen.ListFollowedChannelsRow{
+			ID: ch.ID, OwnerID: ch.OwnerID, Handle: ch.Handle,
+			DisplayName: ch.DisplayName, Description: ch.Description,
+			CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt,
+			FollowerCount: count, FollowedAt: f.followedAt[key],
+		})
+		taken++
+	}
+	return out, nil
 }
 
 func (f *channelFakeRepo) CountChannelFollowers(_ context.Context, channelID uuid.UUID) (int64, error) {
@@ -343,6 +401,82 @@ func TestFollowUnknownChannel404(t *testing.T) {
 	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/ghost/follow", "", tok)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestListFollowedChannels exercises GET /api/v1/me/subscriptions: the caller's
+// "FOLLOWING" list — most recently followed first, follower_count + followed_at
+// populated, paginated, and reflecting unfollows.
+func TestListFollowedChannels(t *testing.T) {
+	srv := channelServer(t)
+	adaTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	northTok := registerAndToken(t, srv, `{"username":"north","email":"north@example.test","password":"supersecret"}`)
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	_ = postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada_makes","display_name":"Ada Makes"}`, adaTok)
+	_ = postJSONAuth(srv, "/api/v1/channels", `{"handle":"north_loop","display_name":"North Loop"}`, northTok)
+
+	list := func(query, token string) followedChannelsResponse {
+		t.Helper()
+		rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/me/subscriptions"+query, "", token)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /me/subscriptions%s = %d, want 200; body=%s", query, rec.Code, rec.Body.String())
+		}
+		var out followedChannelsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+		}
+		return out
+	}
+
+	// Auth required.
+	if anon := sendJSONAuth(srv, http.MethodGet, "/api/v1/me/subscriptions", "", ""); anon.Code != http.StatusUnauthorized {
+		t.Fatalf("anon = %d, want 401", anon.Code)
+	}
+
+	// No follows yet → empty (never null).
+	if got := list("", bobTok); got.Channels == nil || len(got.Channels) != 0 {
+		t.Fatalf("empty follow list = %+v, want zero-length non-nil", got.Channels)
+	}
+
+	// Follow ada_makes, then north_loop.
+	for _, h := range []string{"ada_makes", "north_loop"} {
+		if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/"+h+"/follow", "", bobTok); rec.Code != http.StatusNoContent {
+			t.Fatalf("follow %s = %d, want 204", h, rec.Code)
+		}
+	}
+
+	// Most recently followed first: north_loop before ada_makes.
+	got := list("", bobTok)
+	if len(got.Channels) != 2 {
+		t.Fatalf("got %d channels, want 2: %+v", len(got.Channels), got.Channels)
+	}
+	if got.Channels[0].Handle != "north_loop" || got.Channels[1].Handle != "ada_makes" {
+		t.Fatalf("order = [%s, %s], want [north_loop, ada_makes]", got.Channels[0].Handle, got.Channels[1].Handle)
+	}
+	for _, ch := range got.Channels {
+		if ch.FollowerCount != 1 {
+			t.Errorf("%s follower_count = %d, want 1", ch.Handle, ch.FollowerCount)
+		}
+		if ch.DisplayName == "" || ch.FollowedAt.IsZero() {
+			t.Errorf("%s missing display_name/followed_at: %+v", ch.Handle, ch)
+		}
+	}
+
+	// Pagination.
+	if p := list("?limit=1", bobTok); len(p.Channels) != 1 || p.Channels[0].Handle != "north_loop" || p.Limit != 1 {
+		t.Fatalf("limit=1 = %+v, want [north_loop]", p.Channels)
+	}
+	if p := list("?limit=1&offset=1", bobTok); len(p.Channels) != 1 || p.Channels[0].Handle != "ada_makes" || p.Offset != 1 {
+		t.Fatalf("limit=1&offset=1 = %+v, want [ada_makes]", p.Channels)
+	}
+
+	// Unfollow drops it from the list.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/channels/north_loop/follow", "", bobTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("unfollow = %d, want 204", rec.Code)
+	}
+	after := list("", bobTok)
+	if len(after.Channels) != 1 || after.Channels[0].Handle != "ada_makes" {
+		t.Fatalf("after unfollow = %+v, want [ada_makes]", after.Channels)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -36,6 +37,7 @@ type Repository interface {
 	FollowChannel(ctx context.Context, arg sqlcgen.FollowChannelParams) (int64, error)
 	UnfollowChannel(ctx context.Context, arg sqlcgen.UnfollowChannelParams) error
 	CountChannelFollowers(ctx context.Context, channelID uuid.UUID) (int64, error)
+	ListFollowedChannels(ctx context.Context, arg sqlcgen.ListFollowedChannelsParams) ([]sqlcgen.ListFollowedChannelsRow, error)
 }
 
 // Service holds the channel application logic.
@@ -160,6 +162,45 @@ func (s *Service) Unfollow(ctx context.Context, followerID uuid.UUID, handle str
 // FollowerCount returns how many followers a channel has.
 func (s *Service) FollowerCount(ctx context.Context, channelID uuid.UUID) (int64, error) {
 	return s.repo.CountChannelFollowers(ctx, channelID)
+}
+
+// Followed is a channel the caller follows, paired with the channel's total
+// follower count and when the caller followed it.
+type Followed struct {
+	Channel       sqlcgen.Channel
+	FollowerCount int64
+	FollowedAt    time.Time
+}
+
+// ListFollowed returns the local channels followerID follows (the "FOLLOWING"
+// list), most recently followed first, paginated. limit is clamped to [1,100]
+// and offset to >= 0 by the caller.
+func (s *Service) ListFollowed(ctx context.Context, followerID uuid.UUID, limit, offset int32) ([]Followed, error) {
+	rows, err := s.repo.ListFollowedChannels(ctx, sqlcgen.ListFollowedChannelsParams{
+		FollowerID: followerID,
+		Limit:      limit,
+		Offset:     offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Followed, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Followed{
+			Channel: sqlcgen.Channel{
+				ID:          r.ID,
+				OwnerID:     r.OwnerID,
+				Handle:      r.Handle,
+				DisplayName: r.DisplayName,
+				Description: r.Description,
+				CreatedAt:   r.CreatedAt,
+				UpdatedAt:   r.UpdatedAt,
+			},
+			FollowerCount: r.FollowerCount,
+			FollowedAt:    r.FollowedAt,
+		})
+	}
+	return out, nil
 }
 
 // trimPtr trims a non-nil string pointer's value, leaving nil untouched so a

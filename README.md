@@ -128,7 +128,11 @@ Channels: a channel is a publishing identity owned by a user. `POST /api/v1/chan
 and `DELETE /api/v1/channels/{handle}` (owner-only) manage it — a non-owner gets `403`.
 The handle is immutable after creation. `POST`/`DELETE /api/v1/channels/{handle}/follow`
 (auth, idempotent `204`) follow/unfollow a channel; every channel view carries a
-`follower_count`.
+`follower_count`. `GET /api/v1/me/subscriptions` (auth, paginated) lists the local
+channels the caller follows — the "FOLLOWING" list — most recently followed first,
+each channel view plus a `followed_at` timestamp; the videos from those channels are a
+separate feed at `GET /api/v1/me/subscriptions/videos`, and remote-channel follows live
+at `GET /api/v1/me/remote-follows`.
 
 Avatars and banners: accounts and channels each take an avatar and a banner image.
 `POST`/`DELETE /api/v1/me/avatar` and `/api/v1/me/banner` (auth) manage the caller's

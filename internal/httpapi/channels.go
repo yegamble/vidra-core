@@ -75,6 +75,20 @@ type channelListResponse struct {
 	Channels []channelView `json:"channels"`
 }
 
+// followedChannelView is a channel the caller follows, with the follow time
+// added to the standard channel projection.
+type followedChannelView struct {
+	channelView
+	FollowedAt time.Time `json:"followed_at"`
+}
+
+// followedChannelsResponse is a page of the caller's followed channels.
+type followedChannelsResponse struct {
+	Channels []followedChannelView `json:"channels"`
+	Limit    int                   `json:"limit"`
+	Offset   int                   `json:"offset"`
+}
+
 // handleCreateChannel creates a channel owned by the authenticated user.
 func (s *Server) handleCreateChannel(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
@@ -120,6 +134,34 @@ func (s *Server) handleListMyChannels(c echo.Context) error {
 		views = append(views, s.channelViewFor(ctx, ch, count))
 	}
 	return c.JSON(http.StatusOK, channelListResponse{Channels: views})
+}
+
+// handleListFollowedChannels lists the LOCAL channels the authenticated user
+// follows (the "FOLLOWING" list), most recently followed first. Paginated via
+// ?limit (1–100, default 20) and ?offset.
+func (s *Server) handleListFollowedChannels(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
+	offset := queryInt(c, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+	ctx := c.Request().Context()
+	followed, err := s.channelsvc.ListFollowed(ctx, userID, int32(limit), int32(offset))
+	if err != nil {
+		return err
+	}
+	views := make([]followedChannelView, 0, len(followed))
+	for _, f := range followed {
+		views = append(views, followedChannelView{
+			channelView: s.channelViewFor(ctx, f.Channel, f.FollowerCount),
+			FollowedAt:  f.FollowedAt,
+		})
+	}
+	return c.JSON(http.StatusOK, followedChannelsResponse{Channels: views, Limit: limit, Offset: offset})
 }
 
 // updateChannelRequest is the PATCH /api/v1/channels/{handle} body. Fields are
