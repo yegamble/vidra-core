@@ -37,6 +37,7 @@ import (
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/playback"
+	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/quota"
@@ -77,6 +78,7 @@ type Server struct {
 	commentsvc        *comment.Service
 	ratingsvc         *rating.Service
 	notifsvc          *notification.Service
+	playersettingssvc *playersettings.Service
 	playlistsvc       *playlist.Service
 	moderationsvc     *moderation.Service
 	mutesvc           *mute.Service
@@ -220,6 +222,13 @@ func WithRatingService(svc *rating.Service) Option {
 // registered and no notifications are created.
 func WithNotificationService(svc *notification.Service) Option {
 	return func(s *Server) { s.notifsvc = svc }
+}
+
+// WithPlayerSettingsService mounts the per-user player-settings endpoints
+// (GET/PUT /me/player-settings, PLAY-07). When unset, the routes are not
+// registered.
+func WithPlayerSettingsService(svc *playersettings.Service) Option {
+	return func(s *Server) { s.playersettingssvc = svc }
 }
 
 // WithPlaylistService mounts the playlist endpoints (create/list/get/update/
@@ -899,6 +908,14 @@ func (s *Server) routes() {
 		// side effects consult them at create time).
 		api.GET("/me/notification-prefs", s.handleGetNotificationPrefs, s.requireAuth)
 		api.PATCH("/me/notification-prefs", s.handleUpdateNotificationPrefs, s.requireAuth)
+	}
+
+	// Per-user player settings (PLAY-07): the signed-in user's playback defaults
+	// (speed, autoplay-next, quality, captions/theater). GET always returns the
+	// full effective object (defaults for a fresh user); PUT is a merge.
+	if s.playersettingssvc != nil {
+		api.GET("/me/player-settings", s.handleGetPlayerSettings, s.requireAuth)
+		api.PUT("/me/player-settings", s.handleUpdatePlayerSettings, s.requireAuth)
 	}
 
 	// Named playlists. The public get applies optional auth so owners can see

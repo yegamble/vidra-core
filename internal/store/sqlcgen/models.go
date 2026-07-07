@@ -612,6 +612,16 @@ type UserMfa struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
+type UserPlayerSetting struct {
+	UserID          uuid.UUID      `json:"user_id"`
+	AutoplayNext    bool           `json:"autoplay_next"`
+	DefaultSpeed    pgtype.Numeric `json:"default_speed"`
+	DefaultQuality  string         `json:"default_quality"`
+	CaptionsDefault bool           `json:"captions_default"`
+	TheaterDefault  bool           `json:"theater_default"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+}
+
 type Video struct {
 	ID                  uuid.UUID          `json:"id"`
 	ChannelID           uuid.UUID          `json:"channel_id"`

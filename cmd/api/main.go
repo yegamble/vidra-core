@@ -49,6 +49,7 @@ import (
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
+	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/quota"
@@ -521,6 +522,9 @@ func run() error {
 
 	notifsvc := notification.NewService(db.Queries())
 	opts = append(opts, httpapi.WithNotificationService(notifsvc))
+
+	playersettingssvc := playersettings.NewService(db.Queries())
+	opts = append(opts, httpapi.WithPlayerSettingsService(playersettingssvc))
 
 	playlistsvc := playlist.NewService(db.Queries(), playlist.WithStorage(blobs), playlist.WithMirror(ipfsMirror))
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))

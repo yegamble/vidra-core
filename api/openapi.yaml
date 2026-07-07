@@ -4991,6 +4991,73 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/player-settings:
+    get:
+      operationId: getPlayerSettings
+      summary: Get the caller's player settings
+      description: >-
+        Returns the signed-in user's effective player defaults (PLAY-07): whether
+        the next video autoplays, the default playback speed, the default quality,
+        and whether captions / theater mode start on. Always 200 with the full
+        object — a user who never saved gets the built-in defaults (no 404). The
+        custom player hydrates from this on load, replacing its interim local
+        storage.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's effective player settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerSettings"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updatePlayerSettings
+      summary: Update the caller's player settings
+      description: >-
+        Merge-update the signed-in user's player defaults. Every field is
+        optional; an omitted field keeps its stored value (or the default, for a
+        user who never saved), and a supplied field replaces it. The first update
+        creates the row. Returns the full effective object. Validation is 400:
+        default_speed must be one of the shared playback rates
+        (0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4) and
+        default_quality must be "auto" or a rendition height like "720p".
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlayerSettingsRequest"
+      responses:
+        "200":
+          description: The full effective player settings after the merge.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerSettings"
+        "400":
+          description: >-
+            Malformed body, or an invalid default_speed / default_quality.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/playlists:
     post:
       operationId: createPlaylist
@@ -10825,6 +10892,64 @@ components:
             type: boolean
           minProperties: 1
           example: { follow: false }
+    PlayerSettings:
+      type: object
+      description: >-
+        A signed-in user's effective player defaults (PLAY-07). Every field is
+        always present; a user who never saved gets these built-in defaults.
+      required: [autoplay_next, default_speed, default_quality, captions_default, theater_default]
+      properties:
+        autoplay_next:
+          type: boolean
+          description: Whether the next video autoplays when the current one ends.
+          example: true
+        default_speed:
+          type: number
+          description: >-
+            Default playback speed. One of the shared playback rates: 0.25, 0.5,
+            0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4.
+          example: 1
+        default_quality:
+          type: string
+          description: >-
+            Default quality: "auto" (adaptive) or a rendition height like "720p"
+            (^[0-9]{2,4}p$, same shape as the HLS rendition path segment).
+          example: auto
+        captions_default:
+          type: boolean
+          description: Whether captions are on by default when a track exists.
+          example: false
+        theater_default:
+          type: boolean
+          description: Whether the player opens in theater mode by default.
+          example: false
+    UpdatePlayerSettingsRequest:
+      type: object
+      description: >-
+        Merge-update body: every field is optional. An omitted field keeps its
+        stored value (or the default, for a user who never saved); a supplied
+        field replaces it. At least one field is normally sent, but an empty body
+        is accepted as a no-op that returns the current effective settings.
+      properties:
+        autoplay_next:
+          type: boolean
+          example: false
+        default_speed:
+          type: number
+          description: >-
+            One of the shared playback rates (0.25, 0.5, 0.75, 1, 1.25, 1.5,
+            1.75, 2, 2.5, 3, 3.5, 4); any other value is 400.
+          example: 1.5
+        default_quality:
+          type: string
+          description: '"auto" or a rendition height like "720p"; any other value is 400.'
+          example: 1080p
+        captions_default:
+          type: boolean
+          example: true
+        theater_default:
+          type: boolean
+          example: true
     Playlist:
       type: object
       required: [id, title, description, visibility, video_count, has_thumbnail, created_at, updated_at]

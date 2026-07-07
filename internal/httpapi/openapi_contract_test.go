@@ -31,6 +31,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
+	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/quota"
@@ -58,6 +59,7 @@ func fullRouteOptions() []Option {
 		WithCommentService(comment.NewService(nil)),
 		WithRatingService(rating.NewService(nil)),
 		WithNotificationService(notification.NewService(nil)),
+		WithPlayerSettingsService(playersettings.NewService(nil)),
 		WithPlaylistService(playlist.NewService(nil)),
 		WithModerationService(moderation.NewService(nil)),
 		WithMuteService(mute.NewService(nil)),

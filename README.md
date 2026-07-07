@@ -329,6 +329,18 @@ bare hostnames for `whitelist`). Enforcement is at the embed page in
 `vidra-user` (referrer / ancestor-origin check); server-side Referer enforcement
 is a non-goal.
 
+**Per-user player settings** (PLAY-07): the signed-in user's playback defaults —
+`GET /api/v1/me/player-settings` always returns the full effective object
+(`{autoplay_next, default_speed, default_quality, captions_default,
+theater_default}`; a user who never saved gets the built-in defaults, no 404).
+`PUT /api/v1/me/player-settings` is a **merge**: any subset of the five fields is
+accepted and omitted fields keep their stored value (the first PUT creates the
+row). Validation is 400 — `default_speed` must be one of the shared playback
+rates `0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4` (kept in lockstep
+with the frontend `PLAYBACK_RATES`) and `default_quality` must be `auto` or a
+rendition height like `720p` (`^[0-9]{2,4}p$`). Scope is per-user only —
+per-video/per-channel overrides are deliberately not ported.
+
 **Media garbage collection**: `POST /api/v1/admin/media/gc` (admin) lists stored
 objects under the known media prefixes and deletes those with no database
 reference. It defaults to a dry run (`{"dry_run":false}` deletes); it never

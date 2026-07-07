@@ -179,6 +179,13 @@ curl -s localhost:8080/api/v1/videos/<id>/embed-privacy                         
 curl -sX PUT localhost:8080/api/v1/videos/<id>/embed-privacy -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"status":"whitelist","allowed_domains":["example.com"]}'  # 400 on unknown status, empty/invalid whitelist (hostnames only, <=50), or domains with a non-whitelist status
 
+# Per-user player settings (PLAY-07; the signed-in user's playback defaults. GET
+# ALWAYS 200 with the full effective object — defaults for a fresh user, no 404.
+# PUT is a merge: any subset of the five fields, omitted fields keep stored values):
+curl -s localhost:8080/api/v1/me/player-settings -H 'authorization: Bearer <token>'  # {autoplay_next,default_speed,default_quality,captions_default,theater_default}
+curl -sX PUT localhost:8080/api/v1/me/player-settings -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"default_speed":1.5,"captions_default":true}'  # merge-PUT -> full object; 400 unless default_speed in {0.25,0.5,0.75,1,1.25,1.5,1.75,2,2.5,3,3.5,4} and default_quality = auto|^[0-9]{2,4}p$
+
 # Captions (WebVTT; owner uploads/removes, anyone lists/downloads on a public video):
 curl -sX POST localhost:8080/api/v1/videos/<id>/captions -H 'authorization: Bearer <token>' \
   -F 'language=en' -F 'label=English' -F 'file=@subs.vtt'                             # upload a caption (owner-only; bad vtt/lang -> 422)
