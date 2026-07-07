@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -277,7 +278,10 @@ func TestHLSMultiRenditionLadderExposed(t *testing.T) {
 	}
 
 	// The served master playlist is genuinely multivariant — the player parses
-	// these #EXT-X-STREAM-INF entries into its selectable quality levels.
+	// these #EXT-X-STREAM-INF entries into its selectable quality levels. Assert
+	// the full contract the quality selector consumes (W1.C0 checklist item 1a):
+	// one STREAM-INF per rung, each with a DISTINCT RESOLUTION and BANDWIDTH, and
+	// a RELATIVE variant URI whose set equals the detail's tallest-first rungs.
 	master := getHLS(srv, wantURL, "").Body.String()
 	if n := strings.Count(master, "#EXT-X-STREAM-INF"); n != 3 {
 		t.Fatalf("master has %d variant streams, want 3:\n%s", n, master)
@@ -287,11 +291,39 @@ func TestHLSMultiRenditionLadderExposed(t *testing.T) {
 			t.Errorf("master missing %q:\n%s", want, master)
 		}
 	}
-	// Each variant playlist actually serves (players resolve these relatively).
+	// Distinct BANDWIDTH per rung — an ABR client collapses two rungs advertised
+	// at the same bitrate, so the ladder must carry three distinct values.
+	bwMatches := regexp.MustCompile(`BANDWIDTH=(\d+)`).FindAllStringSubmatch(master, -1)
+	if len(bwMatches) != 3 {
+		t.Fatalf("master has %d BANDWIDTH attrs, want 3:\n%s", len(bwMatches), master)
+	}
+	seenBW := map[string]bool{}
+	for _, m := range bwMatches {
+		if seenBW[m[1]] {
+			t.Errorf("duplicate BANDWIDTH=%s in master (rungs must be distinct):\n%s", m[1], master)
+		}
+		seenBW[m[1]] = true
+	}
+	// Variant URIs are RELATIVE ("720p/playlist.m3u8"), match the detail's rungs
+	// exactly, and carry no absolute/api-prefixed path — native HLS resolves them
+	// against the master's own URL.
 	for _, h := range wantHeights {
-		p := "/api/v1/videos/" + id + "/hls/" + strconv.Itoa(int(h)) + "p/playlist.m3u8"
-		if rec := getHLS(srv, p, ""); rec.Code != http.StatusOK {
-			t.Errorf("variant GET %s = %d, want 200", p, rec.Code)
+		if uri := strconv.Itoa(int(h)) + "p/playlist.m3u8"; !strings.Contains(master, "\n"+uri) {
+			t.Errorf("master missing relative variant URI %q:\n%s", uri, master)
+		}
+	}
+	if strings.Contains(master, "/api/v1/") || strings.Contains(master, "http://") || strings.Contains(master, "https://") {
+		t.Errorf("master variant URIs must be relative, found an absolute reference:\n%s", master)
+	}
+	// Every advertised rendition's variant playlist AND its first segment serve
+	// 200 (W1.C0 checklist item 1c — players resolve both relatively).
+	for _, h := range wantHeights {
+		base := "/api/v1/videos/" + id + "/hls/" + strconv.Itoa(int(h)) + "p/"
+		if rec := getHLS(srv, base+"playlist.m3u8", ""); rec.Code != http.StatusOK {
+			t.Errorf("variant GET %splaylist.m3u8 = %d, want 200", base, rec.Code)
+		}
+		if rec := getHLS(srv, base+"seg_00000.ts", ""); rec.Code != http.StatusOK {
+			t.Errorf("first segment GET %sseg_00000.ts = %d, want 200", base, rec.Code)
 		}
 	}
 }
