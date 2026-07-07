@@ -146,6 +146,39 @@ blocker = viewer). Symmetric DM refusal unchanged.
   stores the message id + body snapshot into the report for moderator context).
 - Typing presence stays OUT (polling model; documented INTENTIONAL_DIFFERENCE).
 
+### 14a. DM attachment limits — Facebook-Messenger parity (AMENDMENT, DECIDED 2026-07-07)
+
+User decision (messaging-v2.md D6; sources cited in messaging-v2 RESEARCH §10):
+**DM attachments do NOT count against the user's storage quota.** Instead Vidra
+enforces per-file / per-message platform limits "same as Facebook Messenger". The
+`quota` package (used for video uploads) is intentionally NOT wired into the
+messaging attachment path.
+
+- **Per-file cap: 100 MiB (104,857,600 bytes)** — raised from the original 25 MiB
+  (`messaging.MaxAttachmentBytes`); over-limit stays **413**.
+- **Per-message count: 30** (`messaging.MaxAttachmentsPerMessage`, raised from 4);
+  `SendMessageRequest.attachment_ids.maxItems: 30`; the 31st+ is a **422** field
+  error.
+- **Allowlist gains office documents** as a new coarse kind **`doc`**
+  (migration 0070 widens the `message_attachments.kind` CHECK): `application/msword`,
+  `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
+  `application/vnd.ms-powerpoint`,
+  `application/vnd.openxmlformats-officedocument.presentationml.presentation`,
+  `application/vnd.ms-excel`, and
+  `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`. Images
+  (JPEG/PNG/GIF/WEBP), video (incl. MP4/MOV), audio, and PDF remain; anything else
+  is **415**.
+- **Malware scanning stays load-bearing.** Every upload still routes through the
+  ClamAV hook fail-closed (when `MALWARE_SCAN_ENABLED`), ordered BEFORE the row
+  becomes linkable — now that macro-carrying office formats are accepted this is a
+  hard requirement, not a nicety (an EICAR-in-docx upload is rejected 422).
+- **Compensating anti-abuse control (no quota counting):** a per-USER rate limit on
+  `POST /conversations/{id}/attachments` via the `ratelimit` package — default
+  **60 uploads / 10 minutes → 429** (`ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS` /
+  `ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW`, gated by `RATE_LIMIT_ENABLED`). Existing
+  lifecycle cleanup is unchanged (attachments removed on tombstone; unlinked
+  uploads are GC-eligible).
+
 ## 15. Local videos endpoint (P7) — CODE (trivial with §federation scope param)
 
 `GET /api/v1/videos?scope=local|all` (default local) replaces the dedicated

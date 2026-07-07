@@ -47,6 +47,51 @@ func (s *Server) rateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 	}
 }
 
+// attachmentUploadRateLimit throttles DM attachment uploads PER USER (not per
+// IP). DM attachments do not count against the storage quota (messaging-v2.md
+// D6), so this is the compensating anti-abuse control. It is a no-op passthrough
+// when no attachment limiter is configured (e.g. unit tests) or the request did
+// not carry an authenticated principal (requireAuth runs first, so that is only a
+// defensive fallback). Like the other limiters it FAILS OPEN if the store is down
+// and denies with a 429 rate_limited envelope plus Retry-After.
+func (s *Server) attachmentUploadRateLimit() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if s.attachmentLimit == nil {
+				return next(c)
+			}
+			userID, _, ok := principalFromContext(c)
+			if !ok {
+				return next(c)
+			}
+			res, err := s.attachmentLimit.Allow(c.Request().Context(), "dm-attach:"+userID.String())
+			if err != nil {
+				s.logger.Warn("attachment rate limiter unavailable, failing open",
+					"error", err,
+					"path", c.Path(),
+					"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
+				)
+				return next(c)
+			}
+
+			h := c.Response().Header()
+			h.Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
+			h.Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
+			h.Set("X-RateLimit-Reset", strconv.Itoa(int(res.Reset.Seconds())))
+
+			if !res.Allowed {
+				retry := int(res.RetryAfter.Seconds())
+				if retry < 1 {
+					retry = 1
+				}
+				h.Set("Retry-After", strconv.Itoa(retry))
+				return echo.NewHTTPError(http.StatusTooManyRequests, "attachment upload rate limit exceeded")
+			}
+			return next(c)
+		}
+	}
+}
+
 // authRateLimit is a stricter limiter for the sensitive auth endpoints. It keys
 // independently of the general limiter ("auth:" + client IP) so credential
 // stuffing on login/register/confirm endpoints is throttled without touching the

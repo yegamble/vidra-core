@@ -65,6 +65,7 @@ type Server struct {
 	logger            *slog.Logger
 	limiter           *ratelimit.Limiter
 	authLimit         *ratelimit.Limiter
+	attachmentLimit   *ratelimit.Limiter
 	authsvc           *auth.Service
 	authTTL           time.Duration
 	accountsvc        *account.Service
@@ -117,7 +118,7 @@ const uploadChunkRoutePath = "/api/v1/uploads/:upload_id/chunks/:n"
 
 // attachmentUploadRoutePath is the Echo route template for a DM attachment
 // upload. Exempted from the default JSON body limit; the messaging service caps
-// each attachment at 25 MiB itself.
+// each attachment at 100 MiB itself (messaging-v2.md D6).
 const attachmentUploadRoutePath = "/api/v1/conversations/:id/attachments"
 
 // Option customises the Server during construction.
@@ -163,6 +164,15 @@ func WithOAuthService(svc *auth.OAuthService) Option {
 // When nil/unset, those routes fall back to the general limiter only.
 func WithAuthRateLimiter(l *ratelimit.Limiter) Option {
 	return func(s *Server) { s.authLimit = l }
+}
+
+// WithAttachmentRateLimiter mounts a per-USER limiter on the DM attachment upload
+// route (messaging-v2.md D6). DM attachments do not count against the storage
+// quota, so this per-user upload budget is the compensating anti-abuse control.
+// It is keyed by authenticated user id (not IP) and layered over the general
+// per-IP limiter. When nil/unset, the upload route is not extra-throttled.
+func WithAttachmentRateLimiter(l *ratelimit.Limiter) Option {
+	return func(s *Server) { s.attachmentLimit = l }
 }
 
 // WithChannelService mounts the channel endpoints (create/list-own/get-by-handle).
@@ -486,7 +496,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 			if r.Method == http.MethodPost && c.Path() == uploadRoutePath {
 				return true
 			}
-			// DM attachment uploads carry a bounded (25 MiB) media body.
+			// DM attachment uploads carry a bounded (100 MiB) media body.
 			if r.Method == http.MethodPost && c.Path() == attachmentUploadRoutePath {
 				return true
 			}
@@ -1017,10 +1027,12 @@ func (s *Server) routes() {
 		api.POST("/messages/:id/report", s.handleReportMessage, s.requireAuth)
 		api.GET("/me/messaging-prefs", s.handleGetMessagingPrefs, s.requireAuth)
 		api.PATCH("/me/messaging-prefs", s.handleUpdateMessagingPrefs, s.requireAuth)
-		// Attachments: the upload route carries a bounded (25 MiB) media body
-		// (exempted from the JSON body limit above). Both endpoints return 503
-		// when blob storage is not configured.
-		api.POST("/conversations/:id/attachments", s.handleUploadAttachment, s.requireAuth)
+		// Attachments: the upload route carries a bounded (100 MiB) media body
+		// (exempted from the JSON body limit above) and is per-user rate limited
+		// (the no-quota compensating control, messaging-v2.md D6; a no-op when the
+		// attachment limiter is unset). Both endpoints return 503 when blob
+		// storage is not configured.
+		api.POST("/conversations/:id/attachments", s.handleUploadAttachment, s.requireAuth, s.attachmentUploadRateLimit())
 		api.GET("/attachments/:id", s.handleDownloadAttachment, s.requireAuth)
 	}
 

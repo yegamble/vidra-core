@@ -7421,13 +7421,19 @@ paths:
       description: >-
         Stores an attachment (multipart field "file") for a plaintext
         conversation the caller participates in and returns an id to reference in
-        a subsequent send (send accepts up to 4 own-uploaded attachment_ids).
-        Behind auth. Allowed kinds: image, video, audio, pdf; capped at 25 MiB;
-        malware-scanned fail-closed when scanning is enabled. Non-participant/
-        unknown conversation → 404; an ENCRYPTED conversation → 422 (attachment
-        ciphertext is exchanged out of band); unsupported type → 415; oversize
-        → 413; failed scan → 422. Returns 503 when blob storage is not
-        configured.
+        a subsequent send (send accepts up to 30 own-uploaded attachment_ids).
+        Behind auth. Facebook-Messenger-parity platform limits (DM attachments do
+        NOT count against the storage quota): allowed kinds image, video, audio,
+        pdf, and doc (office documents — application/msword, the OOXML Word/
+        PowerPoint/Excel types, application/vnd.ms-powerpoint, and
+        application/vnd.ms-excel); capped at 100 MiB (104,857,600 bytes);
+        malware-scanned fail-closed when scanning is enabled (load-bearing for the
+        macro-carrying office formats — the scan runs before the attachment
+        becomes linkable). This route is additionally rate limited per user (the
+        no-quota compensating control). Non-participant/unknown conversation →
+        404; an ENCRYPTED conversation → 422 (attachment ciphertext is exchanged
+        out of band); unsupported type → 415; oversize → 413; failed scan → 422;
+        too many uploads → 429. Returns 503 when blob storage is not configured.
       tags: [messaging]
       security:
         - bearerAuth: []
@@ -7469,19 +7475,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "413":
-          description: The attachment exceeds the 25 MiB limit.
+          description: The attachment exceeds the 100 MiB limit.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "415":
-          description: Unsupported attachment type.
+          description: "Unsupported attachment type (allowed: image, video, audio, pdf, doc)."
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: The conversation is encrypted, the attachment failed the malware scan, or a probed image reported dimensions over 20000px on either side.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Per-user attachment upload rate limit exceeded (the no-quota compensating control). Carries Retry-After and X-RateLimit-* headers.
           content:
             application/json:
               schema:
@@ -11218,8 +11230,11 @@ components:
           maxLength: 5000
         attachment_ids:
           type: array
-          maxItems: 4
-          description: Ids from POST /conversations/{id}/attachments — own-uploaded, in this conversation, not yet sent.
+          maxItems: 30
+          description: >-
+            Ids from POST /conversations/{id}/attachments — own-uploaded, in this
+            conversation, not yet sent. Up to 30 per message (Facebook-Messenger
+            parity); the 31st and beyond are a 422 field error.
           items:
             type: string
             format: uuid
@@ -11498,7 +11513,10 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [image, video, audio, pdf]
+          enum: [image, video, audio, pdf, doc]
+          description: >-
+            Coarse attachment kind. "doc" covers office documents
+            (DOC/DOCX/PPT/PPTX/XLS/XLSX); PDFs keep their own "pdf" kind.
         content_type:
           type: string
         filename:
@@ -11533,7 +11551,10 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [image, video, audio, pdf]
+          enum: [image, video, audio, pdf, doc]
+          description: >-
+            Coarse attachment kind. "doc" covers office documents
+            (DOC/DOCX/PPT/PPTX/XLS/XLSX); PDFs keep their own "pdf" kind.
         content_type:
           type: string
         filename:

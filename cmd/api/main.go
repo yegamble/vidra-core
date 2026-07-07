@@ -171,14 +171,21 @@ func run() error {
 		counter := ratelimit.NewRedisCounter(rdb.Client)
 		limiter := ratelimit.NewLimiter(counter, cfg.RateLimitRequests, cfg.RateLimitWindow)
 		authLimiter := ratelimit.NewLimiter(counter, cfg.AuthRateLimitRequests, cfg.RateLimitWindow)
+		// Per-user DM attachment upload limiter (messaging-v2.md D6): the
+		// compensating anti-abuse control now that DM attachments do not count
+		// against the storage quota. Keyed by user id, its own (longer) window.
+		attachLimiter := ratelimit.NewLimiter(counter, cfg.AttachmentUploadRateLimitRequests, cfg.AttachmentUploadRateLimitWindow)
 		opts = append(opts,
 			httpapi.WithRateLimiter(limiter),
 			httpapi.WithAuthRateLimiter(authLimiter),
+			httpapi.WithAttachmentRateLimiter(attachLimiter),
 		)
 		logger.Info("rate limiting enabled",
 			"requests", cfg.RateLimitRequests,
 			"auth_requests", cfg.AuthRateLimitRequests,
 			"window", cfg.RateLimitWindow,
+			"attachment_upload_requests", cfg.AttachmentUploadRateLimitRequests,
+			"attachment_upload_window", cfg.AttachmentUploadRateLimitWindow,
 		)
 	}
 

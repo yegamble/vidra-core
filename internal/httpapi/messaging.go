@@ -102,8 +102,8 @@ func (r sendMessageRequest) Validate() []FieldError {
 			return []FieldError{{Field: "body", Message: "is required"}}
 		case len(body) > maxMessageLen:
 			return []FieldError{{Field: "body", Message: "must be at most 5000 characters"}}
-		case len(r.AttachmentIDs) > 4:
-			return []FieldError{{Field: "attachment_ids", Message: "at most 4 attachments"}}
+		case len(r.AttachmentIDs) > messaging.MaxAttachmentsPerMessage:
+			return []FieldError{{Field: "attachment_ids", Message: "at most 30 attachments"}}
 		case r.SenderDeviceID != "" || r.ExpiresInSeconds != nil:
 			return []FieldError{{Field: "body", Message: "cannot be combined with encrypted-send fields"}}
 		}

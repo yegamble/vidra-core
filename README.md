@@ -423,11 +423,15 @@ inbox (with per-conversation `unread_count`); `POST`/`GET /api/v1/conversations/
 send/list. A user block in either direction refuses messaging with `403`.
 
 DM completeness (product-decisions.md §14): **attachments** — `POST /api/v1/conversations/{id}/attachments`
-(multipart `file`, ≤25 MiB, image/video/audio/pdf, ClamAV fail-closed when
+(multipart `file`, ≤100 MiB, image/video/audio/pdf/doc, ClamAV fail-closed when
 `MALWARE_SCAN_ENABLED`) returns an `attachment_id` to reference in a send
-(`attachment_ids: []`, ≤4, own-uploaded); `GET /api/v1/attachments/{id}` serves
+(`attachment_ids: []`, ≤30, own-uploaded); `GET /api/v1/attachments/{id}` serves
 the bytes participant-gated; attachments are plaintext-only (encrypted
-conversations `422`). **Link previews** — the first URL in a plaintext body is
+conversations `422`). Facebook-Messenger-parity limits apply instead of storage-quota
+counting (messaging-v2.md D6): per-file 100 MiB (`413`), 30 per message (`422`),
+allowlist adds office documents as kind `doc` (DOC/DOCX/PPT/PPTX/XLS/XLSX; anything
+else `415`), and the upload route is per-user rate limited (`429`,
+`ATTACHMENT_UPLOAD_RATE_LIMIT_*`) as the no-quota compensating control. **Link previews** — the first URL in a plaintext body is
 fetched asynchronously through the SSRF guard (1 MiB, HTML-only OpenGraph;
 `HTTP_IMPORT_ALLOW_PRIVATE_URLS` also relaxes this guard in dev) and joined onto
 the message when ready; the fetch never blocks or fails the send. **Read
@@ -474,11 +478,16 @@ Rate limiting: the `/api` surface is rate limited per client IP with a Redis
 fixed-window limiter (`RATE_LIMIT_REQUESTS` per `RATE_LIMIT_WINDOW`, default 120/min;
 disable with `RATE_LIMIT_ENABLED=false`). Responses carry `X-RateLimit-Limit`,
 `X-RateLimit-Remaining`, and `X-RateLimit-Reset`; over-budget requests get `429`
-`rate_limited` with `Retry-After`. System probes (`/healthz`, `/readyz`, `/version`)
-are exempt. If Redis is unreachable the limiter fails open (logs a warning) so a
-Redis blip degrades protection, not availability. Rate limits are deploy-time
-config only — there is no runtime mutation endpoint; the effective non-secret
-values are surfaced read-only on `GET /api/v1/admin/system` (`rate_limits`).
+`rate_limited` with `Retry-After`. A stricter per-IP budget
+(`AUTH_RATE_LIMIT_REQUESTS`) layers over the sensitive auth endpoints, and the DM
+attachment upload route carries a separate **per-user** budget
+(`ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS` per `ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW`,
+default 60/10m) as the no-quota anti-abuse control. System probes (`/healthz`,
+`/readyz`, `/version`) are exempt. If Redis is unreachable the limiter fails open
+(logs a warning) so a Redis blip degrades protection, not availability. Rate limits
+are deploy-time config only — there is no runtime mutation endpoint; the effective
+non-secret values are surfaced read-only on `GET /api/v1/admin/system`
+(`rate_limits`).
 
 Media storage goes through a small `internal/storage.Backend` interface
 (Put/Open/Delete/Exists over forward-slash object keys). The default `local` backend

@@ -130,6 +130,74 @@ func TestMessagingV2AttachmentDimensionsPersist(t *testing.T) {
 	}
 }
 
+// TestMessagingV2DocKindPersists proves D6: kind='doc' passes the widened CHECK
+// constraint (migration 0070), round-trips through Create/Get/List against real
+// PostgreSQL, and a linked attachment is removed by the tombstone-cleanup query —
+// while a bogus kind is still rejected by the constraint.
+func TestMessagingV2DocKindPersists(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	convID, ada, _, cleanup := seedConversation(t, st)
+	defer cleanup()
+
+	// A doc-kind attachment persists (the CHECK now accepts 'doc').
+	attID := uuid.New()
+	att, err := q.CreateMessageAttachment(ctx, sqlcgen.CreateMessageAttachmentParams{
+		ID: attID, ConversationID: convID, UploaderID: ada, Kind: "doc",
+		ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		Filename:    "report.docx", SizeBytes: 2048, StorageKey: "dm-attachments/x/report.docx",
+	})
+	if err != nil {
+		t.Fatalf("create doc attachment: %v", err)
+	}
+	if att.Kind != "doc" {
+		t.Fatalf("create kind = %q, want doc", att.Kind)
+	}
+	got, err := q.GetMessageAttachment(ctx, attID)
+	if err != nil || got.Kind != "doc" {
+		t.Fatalf("get kind = %q (err %v), want doc", got.Kind, err)
+	}
+
+	// Link to a message; the list projection carries kind=doc.
+	msgID := insertMessage(t, st, convID, ada, "here is the doc", time.Now())
+	if err := q.LinkAttachmentsToMessage(ctx, sqlcgen.LinkAttachmentsToMessageParams{
+		MessageID: pgtype.UUID{Bytes: msgID, Valid: true}, Ids: []uuid.UUID{attID}, UploaderID: ada, ConversationID: convID,
+	}); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	rows, err := q.ListAttachmentsForMessages(ctx, []uuid.UUID{msgID})
+	if err != nil || len(rows) != 1 || rows[0].Kind != "doc" {
+		t.Fatalf("list = %+v (err %v), want one doc row", rows, err)
+	}
+
+	// Tombstone cleanup: keys are enumerated then the rows deleted (DB-proof that a
+	// tombstone removes a doc attachment).
+	keys, err := q.ListAttachmentKeysByMessage(ctx, pgtype.UUID{Bytes: msgID, Valid: true})
+	if err != nil || len(keys) != 1 || keys[0].StorageKey != "dm-attachments/x/report.docx" {
+		t.Fatalf("keys = %+v (err %v), want the one doc key", keys, err)
+	}
+	if err := q.DeleteAttachmentsByMessage(ctx, pgtype.UUID{Bytes: msgID, Valid: true}); err != nil {
+		t.Fatalf("delete by message: %v", err)
+	}
+	if after, err := q.ListAttachmentsForMessages(ctx, []uuid.UUID{msgID}); err != nil || len(after) != 0 {
+		t.Fatalf("after tombstone delete = %+v (err %v), want none", after, err)
+	}
+
+	// The widened CHECK still rejects an unknown kind.
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO message_attachments (conversation_id, uploader_id, kind, content_type, filename, size_bytes, storage_key)
+		 VALUES ($1,$2,'exe','application/octet-stream','x',1,'k')`, convID, ada); err == nil {
+		t.Fatal("expected CHECK violation for kind='exe', got nil")
+	}
+}
+
 // TestMessagingV2KeysetStablePaging proves D2: the real row-value keyset query
 // pages stably even when a new message arrives between pages (no duplicate/skip),
 // where an offset page would have shifted.

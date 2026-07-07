@@ -95,9 +95,9 @@ func (s *Server) handleUploadAttachment(c echo.Context) error {
 		case errors.Is(err, messaging.ErrNotParticipant):
 			return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
 		case errors.Is(err, messaging.ErrUnsupportedAttachment):
-			return echo.NewHTTPError(http.StatusUnsupportedMediaType, "unsupported attachment type (allowed: image, video, audio, pdf)")
+			return echo.NewHTTPError(http.StatusUnsupportedMediaType, "unsupported attachment type (allowed: image, video, audio, pdf, doc)")
 		case errors.Is(err, messaging.ErrAttachmentTooLarge):
-			return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "attachment exceeds the 25 MiB limit")
+			return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "attachment exceeds the 100 MiB limit")
 		case errors.Is(err, messaging.ErrAttachmentDimensions):
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "image dimensions exceed the 20000px limit")
 		case errors.Is(err, messaging.ErrAttachmentRejected):

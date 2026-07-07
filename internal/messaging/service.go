@@ -72,12 +72,16 @@ var (
 	ErrInvalidCursor = errors.New("messaging: invalid pagination cursor")
 )
 
-// MaxAttachmentBytes is the default per-attachment size cap (25 MiB, per
-// product-decisions.md §14).
-const MaxAttachmentBytes int64 = 25 << 20
+// MaxAttachmentBytes is the default per-attachment size cap: 100 MiB
+// (104,857,600 bytes), Facebook-Messenger parity (messaging-v2.md D6,
+// product-decisions.md §14 amendment, DECIDED 2026-07-07). DM attachments do NOT
+// count against the user's storage quota; per-file / per-message platform limits
+// apply instead. Over-limit uploads are ErrAttachmentTooLarge (→ 413).
+const MaxAttachmentBytes int64 = 100 << 20
 
-// MaxAttachmentsPerMessage bounds how many attachments one send may reference.
-const MaxAttachmentsPerMessage = 4
+// MaxAttachmentsPerMessage bounds how many attachments one send may reference
+// (Facebook-Messenger parity: up to 30 per message, messaging-v2.md D6).
+const MaxAttachmentsPerMessage = 30
 
 // maxImageDimension caps the intrinsic width/height (pixels) a probed image may
 // report before the upload is rejected (messaging-v2.md D1). Bytes are already
@@ -96,8 +100,23 @@ const dimensionProbeMaxBytes = 512 << 10 // 512 KiB
 // dedicated column). Absence of a row means the default: enabled.
 const readReceiptsPrefType = "read_receipts"
 
-// attachmentKinds maps allowed MIME type prefixes/values to a coarse kind. Only
-// images, video, audio, and PDF are accepted.
+// officeDocContentTypes is the exact MIME allowlist for the "doc" kind
+// (Facebook-Messenger parity, messaging-v2.md D6): the legacy binary Office
+// formats plus their OOXML successors. PDF has its own coarse kind ("pdf") and is
+// not listed here. Macro-carrying formats are why every upload stays malware
+// scanned fail-closed (the scan runs before the attachment becomes linkable).
+var officeDocContentTypes = map[string]bool{
+	"application/msword": true, // .doc
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   true, // .docx
+	"application/vnd.ms-powerpoint":                                             true, // .ppt
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": true, // .pptx
+	"application/vnd.ms-excel":                                                  true, // .xls
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         true, // .xlsx
+}
+
+// attachmentKind maps an allowed MIME type (or, as a fallback, filename
+// extension) to a coarse kind. Accepted kinds: image, video, audio, pdf, and doc
+// (office documents). Anything else is rejected (→ 415).
 func attachmentKind(contentType, filename string) (string, bool) {
 	ct := strings.ToLower(strings.TrimSpace(contentType))
 	if i := strings.IndexByte(ct, ';'); i >= 0 {
@@ -106,6 +125,8 @@ func attachmentKind(contentType, filename string) (string, bool) {
 	switch {
 	case ct == "application/pdf":
 		return "pdf", true
+	case officeDocContentTypes[ct]:
+		return "doc", true
 	case strings.HasPrefix(ct, "image/"):
 		return "image", true
 	case strings.HasPrefix(ct, "video/"):
@@ -117,6 +138,8 @@ func attachmentKind(contentType, filename string) (string, bool) {
 	switch strings.ToLower(strings.TrimPrefix(path.Ext(filename), ".")) {
 	case "pdf":
 		return "pdf", true
+	case "doc", "docx", "ppt", "pptx", "xls", "xlsx":
+		return "doc", true
 	case "jpg", "jpeg", "png", "gif", "webp", "avif":
 		return "image", true
 	case "mp4", "webm", "mov", "m4v":
@@ -448,7 +471,7 @@ func (s *Service) ListConversations(ctx context.Context, meID uuid.UUID, limit, 
 }
 
 // SendMessage posts a message to a conversation. The caller must be a
-// participant, else ErrNotParticipant. attachmentIDs (<=4) must be the caller's
+// participant, else ErrNotParticipant. attachmentIDs (<=30) must be the caller's
 // own still-unlinked uploads in this conversation, else ErrInvalidAttachments —
 // validated BEFORE the message is created so a bad reference never leaves a
 // half-sent message. On success the first URL in the body kicks off a
@@ -479,7 +502,7 @@ func (s *Service) SendMessage(ctx context.Context, meID, conversationID uuid.UUI
 		}
 	}
 	// Validate attachment references up front (own-uploaded, same conversation,
-	// unlinked, <=4). A mismatch means at least one id was invalid.
+	// unlinked, <=30). A mismatch means at least one id was invalid.
 	if len(attachmentIDs) > MaxAttachmentsPerMessage {
 		return Message{}, ErrInvalidAttachments
 	}
