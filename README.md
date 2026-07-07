@@ -298,6 +298,15 @@ best-effort during finalisation and stored at `storyboards/<id>.{jpg,vtt}`.
 (same visibility as the detail endpoint), and the detail carries a
 `has_storyboard` flag.
 
+**Chapters** (CORE-15; seek-bar marks): `GET /api/v1/videos/{id}/chapters`
+returns `{chapters:[{start_seconds,title}]}` in ascending order (same visibility
+as the detail endpoint; `[]` when none), and the detail carries a `has_chapters`
+flag. `PUT /api/v1/videos/{id}/chapters` (owner only; non-owner/unknown → 404)
+replaces the whole set atomically — an empty array clears it. The set is
+validated in full before any write (400 on: non-ascending/duplicate starts, a
+start `>=` the probed duration, a title not 1–120 chars after trim, or more than
+100 chapters).
+
 **Media garbage collection**: `POST /api/v1/admin/media/gc` (admin) lists stored
 objects under the known media prefixes and deletes those with no database
 reference. It defaults to a dry run (`{"dry_run":false}` deletes); it never

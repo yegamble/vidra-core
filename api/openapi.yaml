@@ -3018,6 +3018,95 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/chapters:
+    get:
+      operationId: getVideoChapters
+      summary: Get a video's chapters
+      description: >-
+        Returns the video's seek-bar chapters in playback order (ascending
+        start_seconds), or an empty array when there are none. Same visibility as
+        the detail endpoint (private → owner only, blocked → moderators only,
+        else 404). The detail response's has_chapters flag tells clients whether
+        any exist before fetching.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video's chapters (ascending; empty when none).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoChapters"
+        "404":
+          description: No such video, or it is not visible to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: setVideoChapters
+      summary: Replace a video's chapters
+      description: >-
+        Replaces the video's whole chapter set atomically (owner only); an empty
+        array clears all chapters. There is no per-row endpoint. A non-owner or
+        unknown id is 404 so a private video's existence is not leaked. The set is
+        validated in full before any write, so a rejected request leaves the
+        stored chapters untouched. Validation (400): start_seconds must be >= 0
+        and strictly increasing (so unique); each start_seconds must be less than
+        the probed duration when one was recorded; each title is 1–120 characters
+        after trimming; at most 100 chapters.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetVideoChaptersRequest"
+      responses:
+        "200":
+          description: The stored chapters (ascending).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoChapters"
+        "400":
+          description: >-
+            A malformed body, or a chapters-validation violation (bad ordering,
+            an out-of-bounds start, a bad title length, or more than 100 chapters).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/webm:
     get:
       operationId: getVideoWebM
@@ -9367,6 +9456,12 @@ components:
             Whether a seek-preview storyboard is available at GET
             /videos/{id}/storyboard.jpg (+ the .vtt map). Present on the detail
             endpoint; omitted on list/feed views.
+        has_chapters:
+          type: boolean
+          description: >-
+            Whether the video has seek-bar chapters at GET
+            /videos/{id}/chapters. Present on the detail endpoint; omitted on
+            list/feed views. Lets the player fetch chapters only when they exist.
         views:
           type: integer
           format: int64
@@ -9471,6 +9566,47 @@ components:
         width:
           type: integer
           example: 1280
+    VideoChapter:
+      type: object
+      description: One seek-bar chapter of a video (CORE-15).
+      required: [start_seconds, title]
+      properties:
+        start_seconds:
+          type: integer
+          minimum: 0
+          description: Whole-second offset from the video start where the chapter begins.
+          example: 90
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Short chapter title (1–120 characters after trimming).
+          example: Introduction
+    VideoChapters:
+      type: object
+      description: >-
+        A video's chapters in playback order (ascending start_seconds); the
+        array is empty when the video has none.
+      required: [chapters]
+      properties:
+        chapters:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoChapter"
+    SetVideoChaptersRequest:
+      type: object
+      description: >-
+        The whole chapter set to store (replaces any existing set). An empty
+        array clears all chapters. start_seconds must be >= 0 and strictly
+        increasing; titles are 1–120 characters after trimming; at most 100
+        chapters; each start must be less than the probed duration when known.
+      required: [chapters]
+      properties:
+        chapters:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/VideoChapter"
     DailyViews:
       type: object
       description: One day of a stats series (UTC calendar day).

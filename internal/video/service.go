@@ -95,6 +95,10 @@ type Repository interface {
 	DeleteVideoTags(ctx context.Context, videoID uuid.UUID) error
 	InsertVideoTags(ctx context.Context, arg sqlcgen.InsertVideoTagsParams) error
 	ListVideoTags(ctx context.Context, videoID uuid.UUID) ([]string, error)
+	ListVideoChapters(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.ListVideoChaptersRow, error)
+	VideoHasChapters(ctx context.Context, videoID uuid.UUID) (bool, error)
+	DeleteVideoChapters(ctx context.Context, videoID uuid.UUID) error
+	InsertVideoChapters(ctx context.Context, arg sqlcgen.InsertVideoChaptersParams) error
 	ListDueScheduledVideos(ctx context.Context, limit int32) ([]sqlcgen.ListDueScheduledVideosRow, error)
 	UpsertVideoMetadata(ctx context.Context, arg sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error)
 	GetVideoMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error)

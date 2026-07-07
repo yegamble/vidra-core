@@ -788,6 +788,10 @@ func (s *Server) routes() {
 		// the detail endpoint. detail exposes has_storyboard.
 		api.GET("/videos/:id/storyboard.jpg", s.handleGetVideoStoryboardImage, s.optionalAuth)
 		api.GET("/videos/:id/storyboard.vtt", s.handleGetVideoStoryboardVTT, s.optionalAuth)
+		// Seek-bar chapters (CORE-15): public read with the detail's visibility;
+		// owner-only whole-set replace. detail exposes has_chapters.
+		api.GET("/videos/:id/chapters", s.handleGetVideoChapters, s.optionalAuth)
+		api.PUT("/videos/:id/chapters", s.handleSetVideoChapters, s.requireAuth)
 		// Progressive VP9/WebM alternate (TRANSCODING_VP9_ENABLED); 404 when absent.
 		api.GET("/videos/:id/webm", s.handleStreamVideoWebM, s.optionalAuth)
 		api.POST("/videos/:id/view", s.handleRecordVideoView, s.optionalAuth)

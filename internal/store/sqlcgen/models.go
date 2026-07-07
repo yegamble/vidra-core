@@ -634,6 +634,12 @@ type VideoBlock struct {
 	CreatedAt time.Time   `json:"created_at"`
 }
 
+type VideoChapter struct {
+	VideoID      uuid.UUID `json:"video_id"`
+	StartSeconds int32     `json:"start_seconds"`
+	Title        string    `json:"title"`
+}
+
 type VideoFile struct {
 	ID           uuid.UUID `json:"id"`
 	VideoID      uuid.UUID `json:"video_id"`

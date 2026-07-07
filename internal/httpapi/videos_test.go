@@ -59,11 +59,12 @@ type videoFakeRepo struct {
 	files      map[uuid.UUID][]sqlcgen.VideoFile
 	metadata   map[uuid.UUID]sqlcgen.VideoMetadatum
 	views      map[uuid.UUID]int64
-	saved      map[string]time.Time       // "userID|videoID" -> saved-at
-	history    map[string]historyMark     // "userID|videoID" -> resume position + last-watched
-	captions   map[string]sqlcgen.Caption // "videoID|lang" -> caption
-	tags       map[uuid.UUID][]string     // video ID -> normalized tag set
-	viewDays   map[string]int64           // "videoID|YYYY-MM-DD" -> rolled-up views
+	saved      map[string]time.Time                         // "userID|videoID" -> saved-at
+	history    map[string]historyMark                       // "userID|videoID" -> resume position + last-watched
+	captions   map[string]sqlcgen.Caption                   // "videoID|lang" -> caption
+	tags       map[uuid.UUID][]string                       // video ID -> normalized tag set
+	chapters   map[uuid.UUID][]sqlcgen.ListVideoChaptersRow // video ID -> ordered chapters
+	viewDays   map[string]int64                             // "videoID|YYYY-MM-DD" -> rolled-up views
 	// ratings/commentsRepo mirror the cross-table joins the stats queries do.
 	ratings      *ratingFakeRepo
 	commentsRepo *commentFakeRepo

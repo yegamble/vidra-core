@@ -145,6 +145,13 @@ curl -sX POST localhost:8080/api/v1/live/ingest/start -H 'X-Ingest-Secret: <secr
 curl -sX POST localhost:8080/api/v1/live/ingest/stop  -H 'X-Ingest-Secret: <secret>' \
   -H 'content-type: application/json' -d '{"stream_key":"<key>"}'                       # publisher disconnected -> ended (one-shot) / offline (permanent)
 
+# Chapters (CORE-15; seek-bar marks. Public read with the detail's visibility;
+# owner-only whole-set atomic replace. detail exposes has_chapters):
+curl -s localhost:8080/api/v1/videos/<id>/chapters                                    # {chapters:[{start_seconds,title}]} ascending ([] when none); 404 if not visible
+curl -sX PUT localhost:8080/api/v1/videos/<id>/chapters -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' \
+  -d '{"chapters":[{"start_seconds":0,"title":"Intro"},{"start_seconds":90,"title":"Main"}]}'  # replace-all (owner-only; empty array clears; 400 on non-ascending/dup, start>=duration, title !1..120, >100 rows)
+
 # Captions (WebVTT; owner uploads/removes, anyone lists/downloads on a public video):
 curl -sX POST localhost:8080/api/v1/videos/<id>/captions -H 'authorization: Bearer <token>' \
   -F 'language=en' -F 'label=English' -F 'file=@subs.vtt'                             # upload a caption (owner-only; bad vtt/lang -> 422)

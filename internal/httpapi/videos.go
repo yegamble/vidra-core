@@ -139,6 +139,10 @@ type videoView struct {
 	// HasStoryboard is set on the detail endpoint; when true a seek-preview
 	// storyboard is available at GET /videos/{id}/storyboard.jpg (+ .vtt map).
 	HasStoryboard *bool `json:"has_storyboard,omitempty"`
+	// HasChapters is set on the detail endpoint; when true a chapter list is
+	// available at GET /videos/{id}/chapters (so the player fetches it only when
+	// chapters exist). Same presence rule as has_thumbnail/has_storyboard.
+	HasChapters *bool `json:"has_chapters,omitempty"`
 	// Views is the recorded view count, set on the detail endpoint (omitted on
 	// list/feed views, which do not look it up).
 	Views *int64 `json:"views,omitempty"`
@@ -361,29 +365,9 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	v, err := s.videosvc.GetByID(c.Request().Context(), id)
+	v, err := s.videoVisibleForRead(c, id)
 	if err != nil {
-		if errors.Is(err, video.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "video not found")
-		}
 		return err
-	}
-	if v.Privacy == "private" {
-		userID, _, ok := principalFromContext(c)
-		if !ok || userID != v.OwnerID {
-			return echo.NewHTTPError(http.StatusNotFound, "video not found")
-		}
-	}
-	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
-		return err
-	} else if hidden {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
-	}
-	if quarantineHidesVideo(c, v.State, v.OwnerID) {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
-	}
-	if scheduledHidesVideo(c, v.State, v.OwnerID) {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	view := videoViewFromRow(v)
 	if md, ok, err := s.videosvc.GetMetadata(c.Request().Context(), id); err == nil && ok {
@@ -395,6 +379,8 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	view.HasThumbnail = &has
 	hasSB := s.videosvc.HasStoryboard(c.Request().Context(), id)
 	view.HasStoryboard = &hasSB
+	hasCh := s.videosvc.HasChapters(c.Request().Context(), id)
+	view.HasChapters = &hasCh
 	views := s.videosvc.Views(c.Request().Context(), id)
 	view.Views = &views
 	s.attachVideoTags(c.Request().Context(), &view, id)
@@ -1079,6 +1065,40 @@ func (s *Server) videoHiddenFromViewer(c echo.Context, videoID uuid.UUID) (bool,
 		return false, nil
 	}
 	return quarantineHidesVideo(c, v.State, v.OwnerID), nil
+}
+
+// videoVisibleForRead resolves a video for a read endpoint applying the SAME
+// visibility as GET /videos/{id}: an unknown id → 404; a private video → owner
+// only (else 404 so existence is not leaked); a blocked video → moderators only;
+// a quarantined video → owner + moderators; a scheduled video → owner. On any
+// failure it returns an *echo.HTTPError the caller returns as-is; otherwise it
+// returns the joined video row. Callers must already have parsed the id.
+func (s *Server) videoVisibleForRead(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
+	if err != nil {
+		if errors.Is(err, video.ErrNotFound) {
+			return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return sqlcgen.GetVideoByIDRow{}, err
+	}
+	if v.Privacy == "private" {
+		userID, _, ok := principalFromContext(c)
+		if !ok || userID != v.OwnerID {
+			return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+	}
+	if hidden, err := s.videoHiddenByBlock(c, videoID); err != nil {
+		return sqlcgen.GetVideoByIDRow{}, err
+	} else if hidden {
+		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if quarantineHidesVideo(c, v.State, v.OwnerID) {
+		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if scheduledHidesVideo(c, v.State, v.OwnerID) {
+		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	return v, nil
 }
 
 // blockVideoRequest is the optional POST /admin/videos/{id}/block body; the reason
