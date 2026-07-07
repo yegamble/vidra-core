@@ -44,6 +44,36 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # Real clamd for the EICAR virus-scan integration tests
+      # (internal/media/clamav_integration_test.go +
+      # internal/messaging/eicar_integration_test.go). Without this service they
+      # self-skip because CLAMAV_TEST_ADDR is unset; with it they scan the real
+      # daemon and fail loudly on a regression.
+      clamav:
+        # Non-"_base" tag: the signature databases are baked into the image, so
+        # clamd loads them from disk and needs NO network download to become
+        # ready. Combined with CLAMAV_NO_FRESHCLAM below this makes startup fast
+        # and reliable in CI (no dependency on the freshclam mirror). clamd holds
+        # the whole DB resident (~1.5-2 GiB RAM), which the runner has.
+        image: clamav/clamav:1.4
+        env:
+          # Skip the freshclam signature-DB update on boot. The bundled DB is
+          # enough to detect EICAR, and a live download would add a slow, flaky
+          # network dependency to every CI run. clamd starts on the baked-in DB.
+          CLAMAV_NO_FRESHCLAM: "true"
+        ports:
+          - 3310:3310
+        # clamdcheck.sh (shipped in the image) pings clamd and only succeeds once
+        # the daemon has loaded its databases and accepts connections. Generous
+        # budget: clamd is typically ready in well under a minute on an amd64
+        # runner, but loading the full signature DB into RAM is allowed up to
+        # ~5 min of retries after a 60s grace period before the job fails.
+        options: >-
+          --health-cmd "clamdcheck.sh"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 30
+          --health-start-period 60s
 
     steps:
       - uses: actions/checkout@v4
@@ -71,4 +101,7 @@ jobs:
         env:
           DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
+          # Points the EICAR real-clamd tests at the clamav service above so they
+          # execute (and can fail the job) instead of self-skipping.
+          CLAMAV_TEST_ADDR: localhost:3310
         run: make test-integration
