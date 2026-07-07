@@ -2,6 +2,7 @@ package ipfsmirror
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"path"
@@ -41,6 +42,13 @@ const (
 	leaseSeconds = 120
 	// defaultReconcileBatch bounds how many failed rows one reconcile scan re-arms.
 	defaultReconcileBatch = 200
+	// reevalLeaseSeconds is the per-user re-eval job claim visibility timeout — the
+	// fan-out is longer than a single pin, so it is generous. Re-evaluation is
+	// idempotent, so an over-long lease is safe.
+	reevalLeaseSeconds = 300
+	// eligibilitySweepBatch bounds how many ineligible live rows one backstop sweep
+	// re-arms toward removal.
+	eligibilitySweepBatch = 500
 )
 
 // Repository is the ledger/queue data access the mirror needs. *sqlcgen.Queries
@@ -59,10 +67,24 @@ type Repository interface {
 	MarkIPFSPinUnpinned(ctx context.Context, objectKey string) error
 	RescheduleIPFSPin(ctx context.Context, arg sqlcgen.RescheduleIPFSPinParams) error
 	RearmFailedIPFSPins(ctx context.Context, batchSize int32) (int64, error)
+	// SweepIneligibleIPFSPins is the periodic eligibility BACKSTOP: it flips every
+	// live (pinned/pending) row whose current committed visibility facts make it
+	// ineligible to 'unpinning', in one set-based join, so any missed unlisted/privacy
+	// toggle (a crashed re-eval, a raced worker, a future rule change) converges on
+	// the next reconcile tick. Returns how many rows it re-armed.
+	SweepIneligibleIPFSPins(ctx context.Context, batchSize int32) (int64, error)
 	CountIPFSPinsByStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByStateClassRow, error)
 	CountIPFSPinsSharingCID(ctx context.Context, arg sqlcgen.CountIPFSPinsSharingCIDParams) (int64, error)
 	ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) ([]sqlcgen.MediaIpfsPin, error)
 	ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID) ([]pgtype.UUID, error)
+	// ---- durable per-user re-evaluation queue (P19 round-2 audit) --------------
+	// EnqueueIPFSUserReeval records ONE compact per-user re-eval job (idempotent
+	// upsert); ClaimDue leases due jobs; Delete completes one; Reschedule retries a
+	// partial failure with backoff. The worker EXPANDS each job off the request path.
+	EnqueueIPFSUserReeval(ctx context.Context, userID uuid.UUID) error
+	ClaimDueIPFSUserReevals(ctx context.Context, arg sqlcgen.ClaimDueIPFSUserReevalsParams) ([]sqlcgen.ClaimDueIPFSUserReevalsRow, error)
+	DeleteIPFSUserReeval(ctx context.Context, userID uuid.UUID) error
+	RescheduleIPFSUserReeval(ctx context.Context, arg sqlcgen.RescheduleIPFSUserReevalParams) error
 }
 
 // VideoFileRef is one stored video-file object (video_files row) the mirror may
@@ -399,39 +421,143 @@ func (s *Service) OnTranscodeComplete(ctx context.Context, videoID uuid.UUID) er
 // This is the privacy re-evaluation trigger. Everything here is a durable QUEUE
 // operation (upsert/unpin ledger writes) — no synchronous node calls — so the
 // worker performs the actual pin/unpin off the request path. No-op when disabled.
+//
+// It runs OFF the request path (the HTTP handler only enqueues a compact job via
+// EnqueueUserReeval; the worker calls this while draining the queue), and it is
+// PER-ITEM ERROR-ISOLATED (P19 round-2 audit MAJOR): a transient failure on one
+// image or video is logged and counted but NEVER aborts the batch, so it can never
+// strand the owner's other now-ineligible objects still pinned. When any item failed
+// it returns a non-nil error so the worker reschedules the WHOLE job — the items that
+// already succeeded are idempotent no-ops on the retry, only the stragglers re-run.
 func (s *Service) ReevaluateUser(ctx context.Context, userID uuid.UUID) error {
 	if !s.enabled {
 		return nil
 	}
 	active, unlisted, ok, err := s.lookups.UserFlags(ctx, userID)
-	if err != nil || !ok {
-		return err
-	}
-	refs, err := s.lookups.OwnerImageRefs(ctx, userID)
 	if err != nil {
 		return err
+	}
+	if !ok {
+		// Owner row gone (deleted): nothing to re-evaluate here — the account
+		// delete/unpin path (§3) owns cleanup, and the eligibility sweep is the backstop.
+		return nil
+	}
+	var failures int
+	refs, err := s.lookups.OwnerImageRefs(ctx, userID)
+	if err != nil {
+		// Can't enumerate identity images — count it and still process the videos
+		// (they enumerate independently), so an image-lookup hiccup never strands the
+		// owner's now-ineligible videos.
+		s.logger.Warn("ipfs_reeval_images_list_failed", "user_id", userID, "error", err)
+		failures++
 	}
 	for _, ref := range refs {
 		if Eligible(Subject{Class: ref.Class, OwnerActive: active, OwnerUnlisted: unlisted}) {
 			if perr := s.upsertPin(ctx, ref.ObjectKey, ref.Class, uuid.Nil, userID); perr != nil {
-				return perr
+				s.logger.Warn("ipfs_reeval_image_repin_failed", "object_key", ref.ObjectKey, "error", perr)
+				failures++
 			}
 		} else if uerr := s.repo.EnqueueIPFSUnpin(ctx, ref.ObjectKey); uerr != nil {
-			return uerr
+			s.logger.Warn("ipfs_reeval_image_unpin_failed", "object_key", ref.ObjectKey, "error", uerr)
+			failures++
 		}
 	}
 	// Re-evaluate the owner's videos: SyncVideo re-checks each against the updated
 	// owner-unlisted fact (unpin-all when now ineligible, re-pin refs when eligible).
 	videoIDs, err := s.lookups.OwnerVideoIDs(ctx, userID)
 	if err != nil {
-		return err
+		s.logger.Warn("ipfs_reeval_videos_list_failed", "user_id", userID, "error", err)
+		failures++
+		videoIDs = nil
 	}
 	for _, videoID := range videoIDs {
-		if err := s.SyncVideo(ctx, videoID); err != nil {
-			return err
+		if serr := s.SyncVideo(ctx, videoID); serr != nil {
+			// Per-video isolation: log-and-continue with a counter so one video's
+			// transient error reschedules the job (below) without aborting the batch.
+			s.logger.Warn("ipfs_reeval_sync_video_failed", "video_id", videoID, "error", serr)
+			failures++
 		}
 	}
+	if failures > 0 {
+		return fmt.Errorf("ipfsmirror: reevaluate user %s: %d item(s) failed", userID, failures)
+	}
 	return nil
+}
+
+// EnqueueUserReeval records a durable per-user re-evaluation job (P19 round-2 audit
+// MAJOR). The HTTP unlisted-toggle / activation-change handler calls THIS — a single
+// cheap idempotent upsert — instead of running the SyncVideo fan-out inline on the
+// request goroutine; the mirror worker later expands the job via ReevaluateUser with
+// per-video error isolation. Committed durably, so a crash right after the toggle
+// still converges once the worker resumes. No-op when disabled.
+func (s *Service) EnqueueUserReeval(ctx context.Context, userID uuid.UUID) error {
+	if !s.enabled {
+		return nil
+	}
+	return s.repo.EnqueueIPFSUserReeval(ctx, userID)
+}
+
+// DrainDueUserReevals claims up to batch due per-user re-eval jobs and expands each
+// via ReevaluateUser (per-item error-isolated). A fully-successful expansion deletes
+// the job; a partial failure reschedules it with backoff so the stragglers retry —
+// never dead-lettered (a stranded re-eval is a privacy concern). Returns how many
+// jobs reached terminal success. Only the claim-query error is surfaced; per-job
+// failures are persisted in the queue, never blocking. No-op when disabled.
+func (s *Service) DrainDueUserReevals(ctx context.Context, batch int) (int, error) {
+	if !s.enabled {
+		return 0, nil
+	}
+	if batch < 1 {
+		batch = 1
+	}
+	jobs, err := s.repo.ClaimDueIPFSUserReevals(ctx, sqlcgen.ClaimDueIPFSUserReevalsParams{
+		LeaseSeconds: reevalLeaseSeconds,
+		BatchSize:    int32(batch),
+	})
+	if err != nil {
+		return 0, err
+	}
+	done := 0
+	for _, job := range jobs {
+		if rerr := s.ReevaluateUser(ctx, job.UserID); rerr != nil {
+			attempts := int(job.Attempts) + 1
+			_ = s.repo.RescheduleIPFSUserReeval(ctx, sqlcgen.RescheduleIPFSUserReevalParams{
+				UserID:        job.UserID,
+				NextAttemptAt: time.Now().UTC().Add(s.backoff(attempts)),
+				LastError:     "reevaluation partially failed",
+			})
+			s.logger.Warn("ipfs_user_reeval_rescheduled", "user_id", job.UserID, "attempts", attempts, "error", rerr)
+			continue
+		}
+		if derr := s.repo.DeleteIPFSUserReeval(ctx, job.UserID); derr != nil {
+			s.logger.Warn("ipfs_user_reeval_delete_failed", "user_id", job.UserID, "error", derr)
+			continue
+		}
+		done++
+	}
+	return done, nil
+}
+
+// SweepIneligible is the periodic eligibility BACKSTOP (P19 round-2 audit MAJOR): it
+// flips every live (pinned/pending) ledger row whose current committed visibility
+// facts make it ineligible to 'unpinning' in ONE set-based query, so any missed
+// enqueue — a crashed re-eval job, an unlisted/privacy toggle that raced a worker, or
+// a future eligibility-rule change — converges toward removal on the next reconcile
+// tick without a per-row Go loop. The worker's reference-checked node removal runs
+// when it later drains the flipped rows. Returns how many rows it re-armed. No-op
+// when disabled.
+func (s *Service) SweepIneligible(ctx context.Context) (int64, error) {
+	if !s.enabled {
+		return 0, nil
+	}
+	n, err := s.repo.SweepIneligibleIPFSPins(ctx, int32(eligibilitySweepBatch))
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		s.logger.Info("ipfs eligibility sweep re-armed ineligible pins", "count", n)
+	}
+	return n, nil
 }
 
 // EnqueuePlaylistCover records a pin intent for a public playlist's cover, or an

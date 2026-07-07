@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ func ipfsServer(t *testing.T, cfg *config.Config, extra ...Option) *Server {
 type fakeIPFSMirror struct {
 	status     ipfsmirror.Status
 	reevalHits int
+	reevalErr  error
 	// videoPins is returned (with ok=true) by VideoPins; pinnedIDs is the set
 	// PinnedVideoIDs reports true for. Both default to empty/nothing pinned.
 	videoPins map[uuid.UUID]ipfsmirror.VideoIPFS
@@ -46,9 +48,9 @@ type fakeIPFSMirror struct {
 func (f *fakeIPFSMirror) Status(ctx context.Context) (ipfsmirror.Status, error) {
 	return f.status, nil
 }
-func (f *fakeIPFSMirror) ReevaluateUser(ctx context.Context, userID uuid.UUID) error {
+func (f *fakeIPFSMirror) EnqueueUserReeval(ctx context.Context, userID uuid.UUID) error {
 	f.reevalHits++
-	return nil
+	return f.reevalErr
 }
 func (f *fakeIPFSMirror) Reconcile(ctx context.Context) (int64, error) {
 	f.reconcileHits++
@@ -202,6 +204,47 @@ func TestIPFSReconcileEnabled(t *testing.T) {
 	}
 	if rec := postJSONWithAuth(srv, "/api/v1/admin/ipfs/reconcile", "", `{}`); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anon reconcile = %d, want 401", rec.Code)
+	}
+}
+
+// TestUpdateMeUnlistedEnqueuesReevalNotInline: toggling unlisted via PATCH /auth/me
+// enqueues a durable per-user mirror re-evaluation (a cheap off-request-path write)
+// exactly once; a non-unlisted profile edit does not; and a mirror enqueue error is
+// swallowed (best-effort — the profile update still 200s). The provider interface
+// exposes ONLY EnqueueUserReeval, so the handler structurally cannot run the SyncVideo
+// fan-out inline (round-2 audit MAJOR).
+func TestUpdateMeUnlistedEnqueuesReevalNotInline(t *testing.T) {
+	cfg := testConfig()
+	cfg.IPFSEnabled = true
+	cfg.IPFSAPIURL = "http://ipfs:5001"
+	cfg.IPFSGatewayURL = "https://gw.example.org"
+	mirror := &fakeIPFSMirror{}
+	srv := ipfsServer(t, cfg, WithIPFSMirrorService(mirror))
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	// A plain profile edit (no unlisted) must NOT enqueue a re-eval.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"display_name":"Ada L"}`, tok); rec.Code != http.StatusOK {
+		t.Fatalf("patch display_name = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if mirror.reevalHits != 0 {
+		t.Fatalf("reeval enqueued %d times on a non-unlisted edit, want 0", mirror.reevalHits)
+	}
+
+	// Toggling unlisted enqueues exactly one durable re-eval job and returns 200 fast.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"unlisted":true}`, tok); rec.Code != http.StatusOK {
+		t.Fatalf("patch unlisted = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if mirror.reevalHits != 1 {
+		t.Fatalf("reeval enqueued %d times on unlisted toggle, want 1", mirror.reevalHits)
+	}
+
+	// A mirror enqueue error is best-effort: the profile update still succeeds.
+	mirror.reevalErr = errors.New("queue write failed")
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"unlisted":false}`, tok); rec.Code != http.StatusOK {
+		t.Fatalf("patch unlisted=false with mirror error = %d, want 200 (best-effort); body=%s", rec.Code, rec.Body.String())
+	}
+	if mirror.reevalHits != 2 {
+		t.Errorf("reeval enqueued %d times total, want 2", mirror.reevalHits)
 	}
 }
 

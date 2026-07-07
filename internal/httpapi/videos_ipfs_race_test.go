@@ -84,6 +84,21 @@ func (r *stubLedgerRepo) RescheduleIPFSPin(ctx context.Context, arg sqlcgen.Resc
 func (r *stubLedgerRepo) RearmFailedIPFSPins(ctx context.Context, batchSize int32) (int64, error) {
 	return 0, nil
 }
+func (r *stubLedgerRepo) SweepIneligibleIPFSPins(ctx context.Context, batchSize int32) (int64, error) {
+	return 0, nil
+}
+func (r *stubLedgerRepo) EnqueueIPFSUserReeval(ctx context.Context, userID uuid.UUID) error {
+	return nil
+}
+func (r *stubLedgerRepo) ClaimDueIPFSUserReevals(ctx context.Context, arg sqlcgen.ClaimDueIPFSUserReevalsParams) ([]sqlcgen.ClaimDueIPFSUserReevalsRow, error) {
+	return nil, nil
+}
+func (r *stubLedgerRepo) DeleteIPFSUserReeval(ctx context.Context, userID uuid.UUID) error {
+	return nil
+}
+func (r *stubLedgerRepo) RescheduleIPFSUserReeval(ctx context.Context, arg sqlcgen.RescheduleIPFSUserReevalParams) error {
+	return nil
+}
 func (r *stubLedgerRepo) CountIPFSPinsByStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByStateClassRow, error) {
 	return nil, nil
 }

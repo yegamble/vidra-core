@@ -1234,9 +1234,26 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 			if total > 0 {
 				logger.Info("ipfs mirror drained pins", "count", total)
 			}
+			// Expand any durable per-user re-eval jobs (unlisted-toggle fan-out moved
+			// off the request path, P19 round-2 audit) with per-video error isolation.
+			for {
+				n, err := svc.DrainDueUserReevals(ctx, batch)
+				if err != nil {
+					logger.Warn("ipfs mirror user-reeval drain failed", "error", err)
+					break
+				}
+				if n == 0 {
+					break
+				}
+			}
 		case <-reconcile.C:
 			if _, err := svc.Reconcile(ctx); err != nil {
 				logger.Warn("ipfs mirror reconcile failed", "error", err)
+			}
+			// Eligibility backstop: re-arm any pinned-but-now-ineligible row (missed
+			// toggle, crashed re-eval, or a future rule change) toward removal.
+			if _, err := svc.SweepIneligible(ctx); err != nil {
+				logger.Warn("ipfs mirror eligibility sweep failed", "error", err)
 			}
 		}
 	}

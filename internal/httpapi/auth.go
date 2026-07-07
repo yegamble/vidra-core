@@ -282,11 +282,18 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 		return err
 	}
 	// IPFS mirror re-evaluation (fix_plan P19): toggling the discovery opt-out
-	// changes identity-image eligibility, so flipping to unlisted pulls the user's
-	// avatar/banner off the public mirror (and re-listing re-pins them). Best-effort
-	// — a mirror hiccup never fails the profile update.
+	// changes the eligibility of the owner's avatar/banner AND every one of their
+	// videos' derivatives (unlisted is private for mirroring, spec §7). Round-2 audit
+	// (MAJOR): this ENQUEUES a durable per-user re-eval job — a single cheap DB write —
+	// instead of running the SyncVideo fan-out inline on the request goroutine, which
+	// could strand a now-unlisted owner's videos pinned if the loop was slow or the
+	// client disconnected mid-loop. The mirror worker expands the job off the request
+	// path with per-video error isolation; the periodic eligibility sweep is the
+	// backstop. Best-effort — a mirror hiccup never fails the profile update.
 	if in.Unlisted != nil && s.ipfsmirrorsvc != nil {
-		_ = s.ipfsmirrorsvc.ReevaluateUser(c.Request().Context(), userID)
+		if err := s.ipfsmirrorsvc.EnqueueUserReeval(c.Request().Context(), userID); err != nil {
+			s.logger.Warn("ipfs mirror reeval enqueue failed", "user_id", userID, "error", err)
+		}
 	}
 	view := newUserView(user)
 	s.attachUserImageFlags(c.Request().Context(), &view, userID)

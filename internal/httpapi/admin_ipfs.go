@@ -29,7 +29,11 @@ import (
 // *ipfsmirror.Service satisfies it; handler tests fake it.
 type ipfsMirrorProvider interface {
 	Status(ctx context.Context) (ipfsmirror.Status, error)
-	ReevaluateUser(ctx context.Context, userID uuid.UUID) error
+	// EnqueueUserReeval records a durable, off-request-path per-user mirror
+	// re-evaluation after an unlisted toggle / activation change. The handler does
+	// this cheap queue write ONLY — the SyncVideo fan-out runs in the mirror worker,
+	// never inline on the request goroutine (P19 round-2 audit MAJOR).
+	EnqueueUserReeval(ctx context.Context, userID uuid.UUID) error
 	// Reconcile re-arms dead-lettered ('failed') ledger rows so the worker retries
 	// them; returns how many were re-armed. Backs the failed-pin retry half of the
 	// admin reconcile.

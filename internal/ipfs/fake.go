@@ -35,6 +35,14 @@ type FakeIPFSClient struct {
 	// touch other fakes (e.g. the ledger) freely. Nil in production/normal tests.
 	AddHook func()
 
+	// UnpinHook, when set, is consulted at the START of Unpin BEFORE the pin is
+	// removed. A non-nil return makes that Unpin call fail (the pin is LEFT in place,
+	// as a transient node error would), letting a test drive a failing-then-succeeding
+	// removal — e.g. the raced-unpin durability retry (P19 round-2 audit): the ledger
+	// row must re-arm 'unpinning' so the NEXT drain retries the removal rather than
+	// leaking the pin. Nil in production/normal tests.
+	UnpinHook func(cid string) error
+
 	// content maps CID → stored bytes; pins is the set of currently-pinned CIDs.
 	content map[string][]byte
 	pins    map[string]bool
@@ -164,6 +172,16 @@ func (f *FakeIPFSClient) Pin(ctx context.Context, cid string) error {
 func (f *FakeIPFSClient) Unpin(ctx context.Context, cid string) error {
 	if err := ValidateCID(cid); err != nil {
 		return err
+	}
+	f.mu.Lock()
+	hook := f.UnpinHook
+	f.mu.Unlock()
+	// Consult the transient-failure hook OUTSIDE the lock (mirrors AddHook): a non-nil
+	// return leaves the pin in place, simulating a node unpin that failed.
+	if hook != nil {
+		if err := hook(cid); err != nil {
+			return err
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

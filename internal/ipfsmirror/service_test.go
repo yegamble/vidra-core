@@ -2,6 +2,7 @@ package ipfsmirror
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -15,13 +16,35 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
+// errFakeUnpinEnqueue is returned by the fake repo's EnqueueIPFSUnpin for keys in
+// failUnpinKeys (per-video-isolation tests).
+var errFakeUnpinEnqueue = errors.New("fake: enqueue unpin failed")
+
 // ---- in-memory fake Repository -------------------------------------------
 
 type fakeRepo struct {
 	rows map[string]*sqlcgen.MediaIpfsPin
+	// reevals is the durable per-user re-eval queue (media_ipfs_user_reevals).
+	reevals map[uuid.UUID]*sqlcgen.MediaIpfsUserReeval
+	// failUnpinKeys makes EnqueueIPFSUnpin return an error for the listed object keys
+	// (per-video-isolation tests: one video's unpin fails transiently, the rest must
+	// still converge and the job reschedule/retry).
+	failUnpinKeys map[string]bool
+	// ineligibleKeys is the set the eligibility sweep treats as ineligible — the fake
+	// stand-in for the SQL join against videos/users (the real join is exercised by
+	// the integration test). SweepIneligibleIPFSPins flips these pinned/pending rows
+	// to 'unpinning'.
+	ineligibleKeys map[string]bool
 }
 
-func newFakeRepo() *fakeRepo { return &fakeRepo{rows: map[string]*sqlcgen.MediaIpfsPin{}} }
+func newFakeRepo() *fakeRepo {
+	return &fakeRepo{
+		rows:           map[string]*sqlcgen.MediaIpfsPin{},
+		reevals:        map[uuid.UUID]*sqlcgen.MediaIpfsUserReeval{},
+		failUnpinKeys:  map[string]bool{},
+		ineligibleKeys: map[string]bool{},
+	}
+}
 
 func (r *fakeRepo) UpsertIPFSPinIntent(ctx context.Context, arg sqlcgen.UpsertIPFSPinIntentParams) (sqlcgen.MediaIpfsPin, error) {
 	row, ok := r.rows[arg.ObjectKey]
@@ -79,6 +102,9 @@ func (r *fakeRepo) RepinIPFSObject(ctx context.Context, arg sqlcgen.RepinIPFSObj
 }
 
 func (r *fakeRepo) EnqueueIPFSUnpin(ctx context.Context, objectKey string) error {
+	if r.failUnpinKeys[objectKey] {
+		return errFakeUnpinEnqueue
+	}
 	if row, ok := r.rows[objectKey]; ok && (row.State == "pinned" || row.State == "pending") {
 		row.State = "unpinning"
 		row.Attempts = 0
@@ -121,8 +147,15 @@ func (r *fakeRepo) MarkIPFSPinned(ctx context.Context, arg sqlcgen.MarkIPFSPinne
 	row.CarRoot = arg.CarRoot
 	row.ByteSize = arg.ByteSize
 	row.LastError = ""
-	if row.State == "pending" || row.State == "pinned" {
+	switch row.State {
+	case "pending", "pinned":
 		row.State = "pinned"
+	case "unpinned":
+		// Round-2 audit: a CID landing on a TERMINAL 'unpinned' row (a concurrent
+		// worker completed the empty-cid unpin before this Add returned) means the
+		// bytes are on the node but the ledger reads a state ClaimDue never re-selects.
+		// Re-arm the removal at the source rather than leak the pin.
+		row.State = "unpinning"
 	}
 	return row.State, nil
 }
@@ -178,6 +211,74 @@ func (r *fakeRepo) RearmFailedIPFSPins(ctx context.Context, batchSize int32) (in
 		}
 	}
 	return n, nil
+}
+
+// SweepIneligibleIPFSPins mirrors the set-based eligibility backstop: flip every
+// live (pinned/pending) row the test marked ineligible to 'unpinning'. The fake uses
+// a test-provided key set in place of the real SQL join against videos/users (whose
+// logic the integration test covers); the wiring — sweep re-arms → worker unpins — is
+// what this exercises. Returns how many rows it re-armed.
+func (r *fakeRepo) SweepIneligibleIPFSPins(ctx context.Context, batchSize int32) (int64, error) {
+	var n int64
+	for key, row := range r.rows {
+		if !r.ineligibleKeys[key] {
+			continue
+		}
+		if row.State != "pinned" && row.State != "pending" {
+			continue
+		}
+		row.State = "unpinning"
+		row.Attempts = 0
+		row.NextAttemptAt = time.Now().UTC()
+		row.LastError = ""
+		n++
+		if n >= int64(batchSize) {
+			break
+		}
+	}
+	return n, nil
+}
+
+// ---- durable per-user re-eval queue (fake) --------------------------------
+
+func (r *fakeRepo) EnqueueIPFSUserReeval(ctx context.Context, userID uuid.UUID) error {
+	if j, ok := r.reevals[userID]; ok {
+		j.Attempts = 0
+		j.NextAttemptAt = time.Now().UTC()
+		j.LastError = ""
+		return nil
+	}
+	r.reevals[userID] = &sqlcgen.MediaIpfsUserReeval{UserID: userID, NextAttemptAt: time.Now().UTC().Add(-time.Second)}
+	return nil
+}
+
+func (r *fakeRepo) ClaimDueIPFSUserReevals(ctx context.Context, arg sqlcgen.ClaimDueIPFSUserReevalsParams) ([]sqlcgen.ClaimDueIPFSUserReevalsRow, error) {
+	now := time.Now().UTC()
+	var out []sqlcgen.ClaimDueIPFSUserReevalsRow
+	for _, j := range r.reevals {
+		if !j.NextAttemptAt.After(now) {
+			j.NextAttemptAt = now.Add(time.Duration(arg.LeaseSeconds) * time.Second)
+			out = append(out, sqlcgen.ClaimDueIPFSUserReevalsRow{UserID: j.UserID, Attempts: j.Attempts})
+			if len(out) >= int(arg.BatchSize) {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) DeleteIPFSUserReeval(ctx context.Context, userID uuid.UUID) error {
+	delete(r.reevals, userID)
+	return nil
+}
+
+func (r *fakeRepo) RescheduleIPFSUserReeval(ctx context.Context, arg sqlcgen.RescheduleIPFSUserReevalParams) error {
+	if j, ok := r.reevals[arg.UserID]; ok {
+		j.Attempts++
+		j.NextAttemptAt = arg.NextAttemptAt
+		j.LastError = arg.LastError
+	}
+	return nil
 }
 
 func (r *fakeRepo) CountIPFSPinsByStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByStateClassRow, error) {
@@ -1281,6 +1382,316 @@ func TestReadModelsExcludeRacedRow(t *testing.T) {
 	}
 	if got[vid] {
 		t.Error("raced 'unpinning' video reported ipfs_pinned=true, want false")
+	}
+}
+
+// TestPinRacedToUnpinnedRetriesTransientUnpinFailure is the round-2 audit's
+// MULTI-WORKER interleaving (the residual leak the single-worker race tests missed):
+// worker A leases a 'pending' row and starts Add; MID-Add a privatize flips the
+// leased row 'pending'→'unpinning' (overriding A's lease), and a SECOND drain claims
+// that now-due cid=” row and completes the empty-cid unpin → TERMINAL 'unpinned' —
+// all BEFORE A's Add returns. A's MarkIPFSPinned then records the CID onto the
+// 'unpinned' row. WITHOUT the fix the CID sits on a terminal 'unpinned' row (which
+// ClaimDue never re-selects and the failed-only reconcile never re-arms) and a
+// transient inline-unpin failure leaks the pin forever. WITH the fix MarkIPFSPinned
+// atomically re-arms 'unpinned'→'unpinning', so the failed removal is durably
+// retried by the next drain and the bytes are removed. Asserts (a) transient-unpin
+// failure ⇒ row re-armed 'unpinning' ⇒ next drain removes the bytes ⇒ terminal
+// 'unpinned', with the node Unpin retried.
+func TestPinRacedToUnpinnedRetriesTransientUnpinFailure(t *testing.T) {
+	repo := newFakeRepo()
+	blobs := newBlobs(t)
+	client := ipfs.NewFakeIPFSClient()
+	vid := uuid.New()
+	key := "web-videos/" + vid.String() + ".mp4"
+	putBlob(t, blobs, key, "raced-terminal-bytes")
+	repo.rows[key] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: key, MediaClass: string(ClassVideoOriginal), State: "pending",
+		VideoID: pgUUID(vid), NextAttemptAt: time.Now().UTC().Add(-time.Second),
+	}
+	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+
+	// The FIRST reference-checked node removal fails transiently; the retry succeeds.
+	var unpinAttempts int
+	client.UnpinHook = func(string) error {
+		unpinAttempts++
+		if unpinAttempts == 1 {
+			return errors.New("transient node unpin failure")
+		}
+		return nil
+	}
+
+	// Interleave worker B between worker A's lease and its MarkIPFSPinned: mid-Add the
+	// privatize flips the leased row to 'unpinning', and a second drain claims the
+	// now-due cid='' row and completes the empty-cid unpin → terminal 'unpinned'.
+	fired := false
+	client.AddHook = func() {
+		if fired {
+			return
+		}
+		fired = true
+		_ = repo.EnqueueIPFSUnpin(context.Background(), key) // → 'unpinning', cid=''
+		if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+			t.Errorf("worker B drain: %v", err)
+		}
+		if got := repo.state(key); got != "unpinned" {
+			t.Errorf("after worker B: state = %q, want unpinned (empty-cid branch)", got)
+		}
+	}
+
+	// Worker A: Add fires the interleave, then MarkIPFSPinned records the CID onto the
+	// 'unpinned' row (re-armed to 'unpinning' by the fix) and pinRacedUnpin's first
+	// removal fails.
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("worker A drain: %v", err)
+	}
+
+	row := repo.rows[key]
+	if row.Cid == "" {
+		t.Fatal("CID not persisted on the raced row; a later unpin could not target the node pin")
+	}
+	if row.State != "unpinning" {
+		t.Fatalf("after the failed inline removal: state = %q, want unpinning (durably re-armed, NOT stranded 'unpinned')", row.State)
+	}
+	if pinned, _ := client.IsPinned(context.Background(), row.Cid); !pinned {
+		t.Fatal("node pin already gone though the first removal failed")
+	}
+
+	// Next drain retries and removes the bytes → terminal 'unpinned'.
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("retry drain: %v", err)
+	}
+	row = repo.rows[key]
+	if row.State != "unpinned" {
+		t.Errorf("state = %q, want unpinned (retry removed the raced bytes)", row.State)
+	}
+	if pinned, _ := client.IsPinned(context.Background(), row.Cid); pinned {
+		t.Error("node pin still present after the retry — permanent public disclosure")
+	}
+	if unpinAttempts < 2 {
+		t.Errorf("node Unpin attempted %d times, want >= 2 (transient failure then retry)", unpinAttempts)
+	}
+	if client.UnpinCount != 1 {
+		t.Errorf("successful node Unpin count = %d, want 1", client.UnpinCount)
+	}
+	// The read model must never report the raced (now-private) video pinned.
+	if got, _ := svc.PinnedVideoIDs(context.Background(), []uuid.UUID{vid}); got[vid] {
+		t.Error("raced video reports ipfs_pinned=true — contract leak")
+	}
+}
+
+// TestPinRacedToUnpinnedRemovesInline is the success companion (b): the SAME
+// multi-worker interleave drives the row to a terminal 'unpinned' before
+// MarkIPFSPinned, but the inline removal succeeds first try — the row must converge
+// to terminal 'unpinned' with the node pin gone in ONE drain.
+func TestPinRacedToUnpinnedRemovesInline(t *testing.T) {
+	repo := newFakeRepo()
+	blobs := newBlobs(t)
+	client := ipfs.NewFakeIPFSClient()
+	vid := uuid.New()
+	key := "web-videos/" + vid.String() + ".mp4"
+	putBlob(t, blobs, key, "raced-terminal-bytes-2")
+	repo.rows[key] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: key, MediaClass: string(ClassVideoOriginal), State: "pending",
+		VideoID: pgUUID(vid), NextAttemptAt: time.Now().UTC().Add(-time.Second),
+	}
+	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+
+	fired := false
+	client.AddHook = func() {
+		if fired {
+			return
+		}
+		fired = true
+		_ = repo.EnqueueIPFSUnpin(context.Background(), key)
+		if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+			t.Errorf("worker B drain: %v", err)
+		}
+	}
+
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("worker A drain: %v", err)
+	}
+	row := repo.rows[key]
+	if row.State != "unpinned" {
+		t.Errorf("state = %q, want unpinned (inline removal succeeded)", row.State)
+	}
+	if row.Cid == "" {
+		t.Error("CID not persisted on the raced row")
+	}
+	if pinned, _ := client.IsPinned(context.Background(), row.Cid); pinned {
+		t.Error("node pin still present after the inline removal")
+	}
+	if client.UnpinCount != 1 {
+		t.Errorf("node Unpin count = %d, want 1", client.UnpinCount)
+	}
+}
+
+// TestEnqueueUserReevalExpandsOffRequestPath is the round-2 MAJOR fix: the
+// unlisted-toggle handler ENQUEUES a compact per-user job and does NOT run the
+// SyncVideo fan-out inline; the mirror worker expands it. Also the crash-shaped case:
+// the job committed by one service instance is expanded by a FRESH instance (a
+// restart) and converges.
+func TestEnqueueUserReevalExpandsOffRequestPath(t *testing.T) {
+	repo := newFakeRepo()
+	owner := uuid.New()
+	vid := uuid.New()
+	avatarKey := "avatars/users/" + owner.String() + ".png"
+	origKey := "web-videos/" + vid.String() + ".mp4"
+	seedPinned(repo, avatarKey, string(ClassUserAvatar), ipfs.RawLeafCIDv1([]byte("av")), uuid.Nil)
+	repo.rows[avatarKey].OwnerUserID = pgUUID(owner)
+	seedPinned(repo, origKey, string(ClassVideoOriginal), ipfs.RawLeafCIDv1([]byte("orig")), vid)
+
+	lk := &fakeLookups{
+		userActive: true, userUnlisted: true, userOK: true, // owner is now unlisted
+		videoPrivacy: "public", videoState: "published", videoOK: true,
+		ownerImages:   []ImageRef{{Class: ClassUserAvatar, ObjectKey: avatarKey, OwnerUserID: owner}},
+		ownerVideoIDs: []uuid.UUID{vid},
+		videoFiles:    []VideoFileRef{{Kind: "original", StorageKey: origKey}},
+	}
+	client := ipfs.NewFakeIPFSClient()
+	ctx := context.Background()
+
+	// The "handler": a cheap enqueue only — it must NOT flip any ledger row inline.
+	svc1 := New(repo, lk, newBlobs(t), client, testConfig())
+	if err := svc1.EnqueueUserReeval(ctx, owner); err != nil {
+		t.Fatalf("EnqueueUserReeval: %v", err)
+	}
+	for _, key := range []string{avatarKey, origKey} {
+		if got := repo.state(key); got != "pinned" {
+			t.Fatalf("after enqueue, %s state = %q, want pinned (NO inline fan-out — the handler must not run SyncVideo)", key, got)
+		}
+	}
+	if _, ok := repo.reevals[owner]; !ok {
+		t.Fatal("no durable re-eval job was enqueued")
+	}
+
+	// Crash + restart: a FRESH service instance over the SAME durable store expands
+	// the committed job and converges.
+	svc2 := New(repo, lk, newBlobs(t), client, testConfig())
+	if n, err := svc2.DrainDueUserReevals(ctx, 10); err != nil || n != 1 {
+		t.Fatalf("DrainDueUserReevals = %d, %v; want 1, nil", n, err)
+	}
+	if _, ok := repo.reevals[owner]; ok {
+		t.Error("re-eval job not deleted after a fully-successful expansion")
+	}
+	for _, key := range []string{avatarKey, origKey} {
+		if got := repo.state(key); got != "unpinning" {
+			t.Errorf("after expansion, %s state = %q, want unpinning", key, got)
+		}
+	}
+	// The worker then removes the bytes.
+	if _, err := svc2.DrainDue(ctx, 10); err != nil {
+		t.Fatalf("drain pins: %v", err)
+	}
+	for _, key := range []string{avatarKey, origKey} {
+		if got := repo.state(key); got != "unpinned" {
+			t.Errorf("after pin drain, %s state = %q, want unpinned", key, got)
+		}
+	}
+}
+
+// TestUserReevalPerVideoIsolationRetries: a mid-batch transient failure on ONE video
+// must NOT abort the batch — the other video converges, the job is rescheduled (not
+// deleted), and a retry (with the transient error cleared) drains the straggler and
+// completes the job. Per-video error isolation + durable retry.
+func TestUserReevalPerVideoIsolationRetries(t *testing.T) {
+	repo := newFakeRepo()
+	owner := uuid.New()
+	vidA, vidB := uuid.New(), uuid.New()
+	origA := "web-videos/" + vidA.String() + ".mp4"
+	origB := "web-videos/" + vidB.String() + ".mp4"
+	seedPinned(repo, origA, string(ClassVideoOriginal), ipfs.RawLeafCIDv1([]byte("a")), vidA)
+	seedPinned(repo, origB, string(ClassVideoOriginal), ipfs.RawLeafCIDv1([]byte("b")), vidB)
+
+	lk := &fakeLookups{
+		userActive: true, userUnlisted: true, userOK: true, // owner unlisted ⇒ both videos ineligible
+		videoPrivacy: "public", videoState: "published", videoOK: true,
+		ownerVideoIDs: []uuid.UUID{vidA, vidB},
+	}
+	svc := New(repo, lk, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+	ctx := context.Background()
+
+	// Video B's unpin fails transiently on the first pass.
+	repo.failUnpinKeys[origB] = true
+	if err := svc.EnqueueUserReeval(ctx, owner); err != nil {
+		t.Fatalf("EnqueueUserReeval: %v", err)
+	}
+	if n, err := svc.DrainDueUserReevals(ctx, 10); err != nil || n != 0 {
+		t.Fatalf("first expansion = %d, %v; want 0, nil (partial failure ⇒ not terminal)", n, err)
+	}
+	// Video A converged; video B did not; the job survives for retry.
+	if got := repo.state(origA); got != "unpinning" {
+		t.Errorf("video A state = %q, want unpinning (isolated — B's failure must not strand it)", got)
+	}
+	if got := repo.state(origB); got != "pinned" {
+		t.Errorf("video B state = %q, want pinned (its unpin failed this pass)", got)
+	}
+	if _, ok := repo.reevals[owner]; !ok {
+		t.Fatal("re-eval job deleted despite a partial failure — the straggler would be stranded")
+	}
+
+	// Clear the transient failure; the retry drains the straggler and completes.
+	repo.failUnpinKeys[origB] = false
+	if n, err := svc.DrainDueUserReevals(ctx, 10); err != nil || n != 1 {
+		t.Fatalf("retry expansion = %d, %v; want 1, nil", n, err)
+	}
+	if got := repo.state(origB); got != "unpinning" {
+		t.Errorf("after retry, video B state = %q, want unpinning", got)
+	}
+	if _, ok := repo.reevals[owner]; ok {
+		t.Error("re-eval job not deleted after the retry fully succeeded")
+	}
+}
+
+// TestSweepReArmsIneligiblePinnedRow is the periodic BACKSTOP: a pinned row made
+// ineligible WITHOUT any enqueue (simulating a missed toggle / crashed re-eval) is
+// re-armed toward removal by the eligibility sweep and then unpinned by the worker.
+// The fake models the SQL join's verdict via ineligibleKeys (the real join is
+// exercised by the integration test); this asserts the sweep→unpin wiring.
+func TestSweepReArmsIneligiblePinnedRow(t *testing.T) {
+	repo := newFakeRepo()
+	client := ipfs.NewFakeIPFSClient()
+	vid := uuid.New()
+	key := "web-videos/" + vid.String() + ".mp4"
+	cid := ipfs.RawLeafCIDv1([]byte("leaked-eligible-bytes"))
+	seedPinned(repo, key, string(ClassVideoOriginal), cid, vid)
+	// Simulate the pin actually being on the node (as a real pinned row would be).
+	if err := client.Pin(context.Background(), cid); err != nil {
+		t.Fatalf("seed node pin: %v", err)
+	}
+	// A clean, still-eligible pinned row that the sweep must NOT touch.
+	cleanKey := "web-videos/clean.mp4"
+	seedPinned(repo, cleanKey, string(ClassVideoOriginal), ipfs.RawLeafCIDv1([]byte("clean")), uuid.New())
+
+	svc := New(repo, &fakeLookups{}, newBlobs(t), client, testConfig())
+	ctx := context.Background()
+
+	// The row went ineligible with NO enqueue — only the sweep can catch it.
+	repo.ineligibleKeys[key] = true
+	n, err := svc.SweepIneligible(ctx)
+	if err != nil {
+		t.Fatalf("SweepIneligible: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("sweep re-armed %d rows, want 1", n)
+	}
+	if got := repo.state(key); got != "unpinning" {
+		t.Errorf("ineligible row state = %q, want unpinning (sweep re-armed it)", got)
+	}
+	if got := repo.state(cleanKey); got != "pinned" {
+		t.Errorf("clean eligible row state = %q, want pinned (sweep must not churn it)", got)
+	}
+
+	// The worker then removes the bytes.
+	if _, err := svc.DrainDue(ctx, 10); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if got := repo.state(key); got != "unpinned" {
+		t.Errorf("after drain, state = %q, want unpinned", got)
+	}
+	if pinned, _ := client.IsPinned(ctx, cid); pinned {
+		t.Error("node pin still present after the sweep-driven unpin")
 	}
 }
 

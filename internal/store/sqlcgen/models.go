@@ -288,6 +288,15 @@ type MediaIpfsPin struct {
 	UpdatedAt     time.Time   `json:"updated_at"`
 }
 
+type MediaIpfsUserReeval struct {
+	UserID        uuid.UUID `json:"user_id"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type Message struct {
 	ID                 uuid.UUID          `json:"id"`
 	ConversationID     uuid.UUID          `json:"conversation_id"`

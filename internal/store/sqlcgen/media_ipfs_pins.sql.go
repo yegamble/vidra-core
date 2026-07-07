@@ -332,7 +332,11 @@ UPDATE media_ipfs_pins
 SET cid = $2,
     car_root = $3,
     byte_size = $4,
-    state = CASE WHEN state IN ('pending', 'pinned') THEN 'pinned' ELSE state END,
+    state = CASE
+        WHEN state IN ('pending', 'pinned') THEN 'pinned'
+        WHEN state = 'unpinned' THEN 'unpinning'
+        ELSE state
+    END,
     last_error = '',
     updated_at = now()
 WHERE object_key = $1
@@ -355,6 +359,19 @@ type MarkIPFSPinnedParams struct {
 // flipped the leased row to 'unpinning' (the object went non-public mid-Add), the
 // CASE KEEPS 'unpinning' so the unpin worker removes the now-non-public bytes: the
 // stale pin worker NEVER clobbers the newer visibility fact back to 'pinned'.
+//
+// ROUND-2 AUDIT (raced-to-terminal-'unpinned' durability): a SECOND worker can
+// claim the concurrently-flipped 'unpinning' row (cid=” at that instant) and
+// complete the empty-cid unpin → terminal 'unpinned' BEFORE this pin's Add returns.
+// When this MarkIPFSPinned then records the freshly-added CID onto that 'unpinned'
+// row, the bytes are on the public node but the ledger reads a TERMINAL state
+// ClaimDue never re-selects (and the failed-only reconcile never re-arms) — a
+// permanent leak. So the CASE also flips 'unpinned' → 'unpinning' HERE, atomically
+// with recording the CID: the removal is re-armed at the source (no crash window,
+// no in-memory/DB divergence), and the worker's pinRacedUnpin drives the durable
+// reference-checked node removal. MarkIPFSPinned only ever runs right after adding
+// bytes to the node, so a CID landing on an 'unpinned' row ALWAYS means those bytes
+// need removal — never a genuinely-clean terminal row.
 // RETURNING state lets the worker learn which outcome happened (pinned vs raced)
 // and, on a loss, execute the unpin immediately instead of leaking until the next
 // reconcile.
@@ -453,6 +470,58 @@ type RescheduleIPFSPinParams struct {
 func (q *Queries) RescheduleIPFSPin(ctx context.Context, arg RescheduleIPFSPinParams) error {
 	_, err := q.db.Exec(ctx, rescheduleIPFSPin, arg.ObjectKey, arg.NextAttemptAt, arg.LastError)
 	return err
+}
+
+const sweepIneligibleIPFSPins = `-- name: SweepIneligibleIPFSPins :execrows
+WITH ineligible AS (
+    SELECT p.object_key
+    FROM media_ipfs_pins p
+    JOIN videos v ON v.id = p.video_id
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users u ON u.id = c.owner_id
+    WHERE p.video_id IS NOT NULL
+      AND p.state IN ('pinned', 'pending')
+      AND (v.privacy <> 'public' OR v.state <> 'published' OR u.unlisted)
+
+    UNION
+
+    SELECT p.object_key
+    FROM media_ipfs_pins p
+    JOIN users u ON u.id = p.owner_user_id
+    WHERE p.owner_user_id IS NOT NULL
+      AND p.video_id IS NULL
+      AND p.state IN ('pinned', 'pending')
+      AND (NOT u.is_active OR u.deleted_at IS NOT NULL OR u.unlisted)
+
+    LIMIT $1
+)
+UPDATE media_ipfs_pins
+SET state = 'unpinning', attempts = 0, next_attempt_at = now(), last_error = '', updated_at = now()
+WHERE object_key IN (SELECT object_key FROM ineligible)
+`
+
+// Periodic eligibility BACKSTOP (P19 round-2 audit, MAJOR): flip to 'unpinning'
+// every live (pinned/pending) mirror row whose CURRENT committed visibility facts
+// make it INELIGIBLE — the set-based safety net that converges the mirror on ANY
+// missed enqueue (a crashed re-eval job, a toggle that raced a worker, or a future
+// eligibility-rule change), mirroring the backfill catalog join (ipfs_backfill.sql)
+// in reverse. This closes the whole class rather than any single trigger.
+//   - video-derived rows (video_id set): ineligible when the parent video is not
+//     public+published OR its owner is unlisted (unlisted is private for mirroring,
+//     spec §7). A deleted video/owner FK-nulls video_id (handled by the delete path).
+//   - identity-image rows (owner_user_id set, video_id NULL): ineligible when the
+//     owner is inactive (deactivated/soft-deleted) OR unlisted.
+//
+// The worker's reference-checked node removal still runs when it drains the flipped
+// 'unpinning' row; this only re-arms the ledger. Playlist-cover rows carry no
+// provenance columns and are re-evaluated by their own EnqueuePlaylistCover hook, so
+// they are deliberately out of this sweep's scope. Bounded per scan.
+func (q *Queries) SweepIneligibleIPFSPins(ctx context.Context, batchSize int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepIneligibleIPFSPins, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertIPFSPinIntent = `-- name: UpsertIPFSPinIntent :one
