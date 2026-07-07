@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +147,47 @@ func seedReadyHLS(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backend, 
 	put(prefix+"/240p/seg_00000.ts", "fake-ts-bytes")
 }
 
+// seedReadyLadder marks videoID's playlist ready with a MULTI-rung ladder
+// (720p/480p/360p) and writes a multi-variant master playlist plus each
+// variant's playlist into blobs. This is the regression fixture for a real HD
+// upload: the tiny-source path (seedReadyHLS) only ever exercises a single
+// rendition, so nothing else proves the multi-resolution ladder is exposed.
+func seedReadyLadder(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backend, videoID string) {
+	t.Helper()
+	id := uuid.MustParse(videoID)
+	prefix := "streaming-playlists/" + videoID
+	repo.playlists[id] = sqlcgen.StreamingPlaylist{VideoID: id, MasterKey: prefix + "/master.m3u8", State: "ready"}
+	// Stored tallest-first (matches ListVideoRenditions' ORDER BY height DESC).
+	rungs := []struct {
+		h, w int
+		bw   int
+	}{{720, 1280, 3220800}, {480, 854, 1680800}, {360, 640, 985600}}
+	var master strings.Builder
+	master.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n")
+	for _, r := range rungs {
+		repo.renditions[id] = append(repo.renditions[id], sqlcgen.VideoRendition{
+			ID: uuid.New(), VideoID: id, Height: int32(r.h), Width: int32(r.w),
+			KeyPrefix: prefix + "/" + itoa(r.h) + "p",
+		})
+		master.WriteString("#EXT-X-STREAM-INF:BANDWIDTH=" + itoa(r.bw) + ",RESOLUTION=" + itoa(r.w) + "x" + itoa(r.h) + "\n")
+		master.WriteString(itoa(r.h) + "p/playlist.m3u8\n")
+		put := func(key, content string) {
+			if _, err := blobs.Put(context.Background(), key, strings.NewReader(content)); err != nil {
+				t.Fatalf("Put %q: %v", key, err)
+			}
+		}
+		put(prefix+"/"+itoa(r.h)+"p/playlist.m3u8",
+			"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXTINF:2.0,\nseg_00000.ts\n#EXT-X-ENDLIST\n")
+		put(prefix+"/"+itoa(r.h)+"p/seg_00000.ts", "fake-ts-bytes")
+	}
+	if _, err := blobs.Put(context.Background(), prefix+"/master.m3u8", strings.NewReader(master.String())); err != nil {
+		t.Fatalf("Put master: %v", err)
+	}
+}
+
+// itoa is a tiny local strconv.Itoa alias to keep the fixture readable.
+func itoa(n int) string { return strconv.Itoa(n) }
+
 func getHLS(srv *Server, path, token string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -193,6 +235,64 @@ func TestHLSServesMasterVariantAndSegment(t *testing.T) {
 	}
 	if rec.Body.String() != "fake-ts-bytes" {
 		t.Errorf("segment bytes = %q", rec.Body.String())
+	}
+}
+
+// TestHLSMultiRenditionLadderExposed is the regression guard for the reported
+// bug ("can't switch resolutions during playback"): a real HD upload must
+// expose MULTIPLE renditions on the detail response AND serve a master playlist
+// with multiple distinct variant streams, which is exactly what the player's
+// quality selector consumes. A single-rendition fixture (seedReadyHLS) can pass
+// while multi-resolution switching is silently broken, so this asserts the
+// multi-variant shape end-to-end through the API.
+func TestHLSMultiRenditionLadderExposed(t *testing.T) {
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"HD","privacy":"public"}`)
+	seedReadyLadder(t, tcRepo, blobs, id)
+
+	// Detail advertises every rung, tallest-first, alongside the master URL.
+	var v videoView
+	rec := getVideo(srv, id, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail = %d", rec.Code)
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &v)
+	wantURL := "/api/v1/videos/" + id + "/hls/master.m3u8"
+	if v.HLSURL == nil || *v.HLSURL != wantURL {
+		t.Fatalf("hls_url = %v, want %q", v.HLSURL, wantURL)
+	}
+	gotHeights := make([]int32, 0, len(v.Renditions))
+	for _, r := range v.Renditions {
+		gotHeights = append(gotHeights, r.Height)
+	}
+	wantHeights := []int32{720, 480, 360}
+	if len(gotHeights) != len(wantHeights) {
+		t.Fatalf("detail renditions = %+v, want 3 (720/480/360)", v.Renditions)
+	}
+	for i, h := range wantHeights {
+		if gotHeights[i] != h {
+			t.Errorf("rendition[%d].height = %d, want %d (tallest-first)", i, gotHeights[i], h)
+		}
+	}
+
+	// The served master playlist is genuinely multivariant — the player parses
+	// these #EXT-X-STREAM-INF entries into its selectable quality levels.
+	master := getHLS(srv, wantURL, "").Body.String()
+	if n := strings.Count(master, "#EXT-X-STREAM-INF"); n != 3 {
+		t.Fatalf("master has %d variant streams, want 3:\n%s", n, master)
+	}
+	for _, want := range []string{"RESOLUTION=1280x720", "RESOLUTION=854x480", "RESOLUTION=640x360"} {
+		if !strings.Contains(master, want) {
+			t.Errorf("master missing %q:\n%s", want, master)
+		}
+	}
+	// Each variant playlist actually serves (players resolve these relatively).
+	for _, h := range wantHeights {
+		p := "/api/v1/videos/" + id + "/hls/" + strconv.Itoa(int(h)) + "p/playlist.m3u8"
+		if rec := getHLS(srv, p, ""); rec.Code != http.StatusOK {
+			t.Errorf("variant GET %s = %d, want 200", p, rec.Code)
+		}
 	}
 }
 

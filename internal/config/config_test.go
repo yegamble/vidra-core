@@ -579,22 +579,27 @@ func TestCookieSecureDerivation(t *testing.T) {
 	}
 }
 
-func TestTranscodingDisabledByDefault(t *testing.T) {
+func TestTranscodingEnabledByDefault(t *testing.T) {
+	// Default ON: an unset TRANSCODING_ENABLED must leave the HLS ladder
+	// pipeline enabled, so a stock upload produces the multi-rendition ladder
+	// the player's quality selector needs (a missing ffmpeg still degrades
+	// gracefully at boot — that is DetectHLSTranscoder's job, not config's).
 	t.Setenv("TRANSCODING_ENABLED", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.TranscodingEnabled {
-		t.Error("TranscodingEnabled = true, want false by default")
+	if !cfg.TranscodingEnabled {
+		t.Error("TranscodingEnabled = false, want true by default")
 	}
-	t.Setenv("TRANSCODING_ENABLED", "true")
+	// Explicit opt-out still works.
+	t.Setenv("TRANSCODING_ENABLED", "false")
 	cfg, err = Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if !cfg.TranscodingEnabled {
-		t.Error("TranscodingEnabled = false with TRANSCODING_ENABLED=true")
+	if cfg.TranscodingEnabled {
+		t.Error("TranscodingEnabled = true with TRANSCODING_ENABLED=false")
 	}
 }
 

@@ -115,3 +115,95 @@ func TestHLSTranscoderRealVideo(t *testing.T) {
 		}
 	}
 }
+
+// TestHLSTranscoderHDLadderMultipleRenditions is the real-ffmpeg regression
+// guard for the reported "can't switch resolutions" bug: a genuine HD (1280x720)
+// source must produce MULTIPLE distinct renditions (720p/480p/360p) with a
+// multivariant master playlist — the shape the player's quality selector needs.
+// TestHLSTranscoderRealVideo above only exercises a 240p single-rung source, so
+// it can pass while multi-resolution laddering is broken; this closes that gap
+// against the real ffmpeg exec path.
+func TestHLSTranscoderHDLadderMultipleRenditions(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	videoID := uuid.New()
+	srcKey := "web-videos/" + videoID.String() + ".mp4"
+	path, err := blobs.Path(srcKey)
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A real 720p clip with audio, so the planned ladder is 720p/480p/360p.
+	gen := exec.Command("ffmpeg", "-y",
+		"-f", "lavfi", "-i", "testsrc=duration=2:size=1280x720:rate=24",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", path)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg generate: %v\n%s", err, out)
+	}
+
+	tc, ok := DetectHLSTranscoder(blobs)
+	if !ok {
+		t.Fatal("DetectHLSTranscoder = false with ffmpeg+ffprobe on PATH")
+	}
+	res, err := tc.Transcode(context.Background(), videoID, srcKey)
+	if err != nil {
+		t.Fatalf("Transcode: %v", err)
+	}
+
+	// Multiple renditions, tallest-first, at the expected ladder heights.
+	if len(res.Renditions) != 3 {
+		t.Fatalf("renditions = %+v, want 3 (720p/480p/360p ladder)", res.Renditions)
+	}
+	wantH := []int{720, 480, 360}
+	wantW := []int{1280, 854, 640}
+	for i, r := range res.Renditions {
+		if r.Height != wantH[i] || r.Width != wantW[i] {
+			t.Errorf("rendition[%d] = %dx%d, want %dx%d", i, r.Width, r.Height, wantW[i], wantH[i])
+		}
+	}
+
+	rc, err := blobs.Open(context.Background(), res.MasterKey)
+	if err != nil {
+		t.Fatalf("open master: %v", err)
+	}
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read master: %v", err)
+	}
+	master := string(b)
+	if n := strings.Count(master, "#EXT-X-STREAM-INF"); n != 3 {
+		t.Fatalf("master has %d variant streams, want 3:\n%s", n, master)
+	}
+	for _, want := range []string{"RESOLUTION=1280x720", "RESOLUTION=854x480", "RESOLUTION=640x360"} {
+		if !strings.Contains(master, want) {
+			t.Errorf("master missing %q:\n%s", want, master)
+		}
+	}
+	// Every variant playlist + its first segment landed in storage.
+	for _, r := range res.Renditions {
+		variant, err := blobs.Open(context.Background(), r.KeyPrefix+"/playlist.m3u8")
+		if err != nil {
+			t.Fatalf("open variant %dp: %v", r.Height, err)
+		}
+		vb, _ := io.ReadAll(variant)
+		_ = variant.Close()
+		if !strings.Contains(string(vb), "#EXT-X-ENDLIST") {
+			t.Errorf("%dp variant playlist malformed:\n%s", r.Height, string(vb))
+		}
+		if exists, err := blobs.Exists(context.Background(), r.KeyPrefix+"/seg_00000.ts"); err != nil || !exists {
+			t.Errorf("%dp first segment not stored (exists=%v err=%v)", r.Height, exists, err)
+		}
+	}
+}

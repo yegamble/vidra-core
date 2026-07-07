@@ -109,9 +109,13 @@ type Config struct {
 
 	// TranscodingEnabled turns on the HLS transcoding pipeline: publishing a
 	// video enqueues a durable transcode job and an in-process worker produces
-	// an H.264/AAC HLS ladder served at /api/v1/videos/{id}/hls/*. Requires
-	// ffmpeg + ffprobe on PATH (detected at boot; a missing binary logs a
-	// warning and leaves transcoding off). Default false.
+	// an H.264/AAC HLS ladder served at /api/v1/videos/{id}/hls/* (this is what
+	// powers the player's resolution/quality selector — without it a video only
+	// serves its single progressive original). Requires ffmpeg + ffprobe on
+	// PATH (detected at boot; a missing binary logs a warning and leaves
+	// transcoding off, so the default is safe on a host without ffmpeg).
+	// Default true — a video platform ladders uploads out of the box; set
+	// TRANSCODING_ENABLED=false to serve originals only.
 	TranscodingEnabled bool
 
 	// TranscodingVP9Enabled additionally emits a progressive VP9/WebM alternate
@@ -411,7 +415,7 @@ func Load() (*Config, error) {
 		MalwareScanEnabled:             getEnvBool("MALWARE_SCAN_ENABLED", false),
 		ClamAVAddr:                     getEnv("CLAMAV_ADDR", ""),
 		MalwareScanMode:                getEnv("MALWARE_SCAN_MODE", "fail-closed"),
-		TranscodingEnabled:             getEnvBool("TRANSCODING_ENABLED", false),
+		TranscodingEnabled:             getEnvBool("TRANSCODING_ENABLED", true),
 		TranscodingVP9Enabled:          getEnvBool("TRANSCODING_VP9_ENABLED", false),
 		TranscodingAV1Enabled:          getEnvBool("TRANSCODING_AV1_ENABLED", false),
 		WhisperEnabled:                 getEnvBool("WHISPER_ENABLED", false),

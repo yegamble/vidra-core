@@ -250,8 +250,12 @@ playback — same visibility as the detail endpoint (private → owner only, els
 requests (`206 Partial Content`) so a `<video>` element can seek; the local
 backend serves via `http.ServeContent`.
 
-**HLS transcoding** (`TRANSCODING_ENABLED=true`, default off; needs `ffmpeg` +
-`ffprobe` on `PATH` — both are in the Docker image): publishing a video enqueues
+**HLS transcoding** (`TRANSCODING_ENABLED`, default **on**; set `=false` to serve
+originals only; needs `ffmpeg` + `ffprobe` on `PATH` — both are in the Docker
+image, and a host without them degrades gracefully to originals-only with a boot
+warning): this ladder is what powers the player's resolution/quality selector —
+with it off a video only serves its single progressive original, so playback is
+stuck at one resolution. Publishing a video enqueues
 a durable job in `transcode_jobs` (mirroring the federation delivery queue) and
 an in-process worker produces an H.264/AAC HLS ladder — rungs from
 1080p/720p/480p/360p, capped at the source height (never upscaled; a smaller
