@@ -26,6 +26,15 @@ type FakeIPFSClient struct {
 	// VersionString is returned by Version when the node is up.
 	VersionString string
 
+	// AddHook, when set, is invoked by Add/AddDirectory AFTER the bytes are pinned
+	// on the fake node but BEFORE the call returns to the caller — i.e. exactly the
+	// window between the worker's ClaimDue lease and its MarkIPFSPinned. Tests use it
+	// to deterministically interleave a concurrent privacy flip "while the Add is
+	// streaming", exercising the lost-update race (P19 audit BLOCKER) without a real
+	// node or timing games. Fired with the fake's mutex released so the hook may
+	// touch other fakes (e.g. the ledger) freely. Nil in production/normal tests.
+	AddHook func()
+
 	// content maps CID → stored bytes; pins is the set of currently-pinned CIDs.
 	content map[string][]byte
 	pins    map[string]bool
@@ -74,27 +83,35 @@ func (f *FakeIPFSClient) Version(ctx context.Context) (string, error) {
 
 func (f *FakeIPFSClient) Add(ctx context.Context, name string, r io.Reader) (AddResult, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.ensure()
 	if f.Down {
+		f.mu.Unlock()
 		return AddResult{}, errNodeDown
 	}
 	data, err := io.ReadAll(r)
 	if err != nil {
+		f.mu.Unlock()
 		return AddResult{}, err
 	}
 	cid := RawLeafCIDv1(data)
 	f.content[cid] = data
 	f.pins[cid] = true
 	f.AddCount++
+	hook := f.AddHook
+	f.mu.Unlock()
+	// Fire the interleaving hook outside the lock (the bytes are already "pinned"),
+	// simulating a concurrent event landing between the lease and MarkIPFSPinned.
+	if hook != nil {
+		hook()
+	}
 	return AddResult{CID: cid, Size: int64(len(data))}, nil
 }
 
 func (f *FakeIPFSClient) AddDirectory(ctx context.Context, entries []DirEntry) (AddResult, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.ensure()
 	if f.Down {
+		f.mu.Unlock()
 		return AddResult{}, errNodeDown
 	}
 	// Content-address the whole tree deterministically: concatenate each entry's
@@ -107,6 +124,7 @@ func (f *FakeIPFSClient) AddDirectory(ctx context.Context, entries []DirEntry) (
 	for _, e := range sorted {
 		data, err := io.ReadAll(e.Data)
 		if err != nil {
+			f.mu.Unlock()
 			return AddResult{}, err
 		}
 		buf = append(buf, e.Path...)
@@ -118,6 +136,13 @@ func (f *FakeIPFSClient) AddDirectory(ctx context.Context, entries []DirEntry) (
 	f.content[root] = buf
 	f.pins[root] = true
 	f.AddCount++
+	hook := f.AddHook
+	f.mu.Unlock()
+	// Interleaving hook (see Add): fires the "mid-Add" concurrent event for the
+	// directory (HLS tree) pin path too.
+	if hook != nil {
+		hook()
+	}
 	return AddResult{CID: root, Size: total}, nil
 }
 

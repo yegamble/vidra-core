@@ -51,7 +51,10 @@ type Repository interface {
 	RepinIPFSObject(ctx context.Context, arg sqlcgen.RepinIPFSObjectParams) error
 	EnqueueIPFSUnpin(ctx context.Context, objectKey string) error
 	ClaimDueIPFSPins(ctx context.Context, arg sqlcgen.ClaimDueIPFSPinsParams) ([]sqlcgen.ClaimDueIPFSPinsRow, error)
-	MarkIPFSPinned(ctx context.Context, arg sqlcgen.MarkIPFSPinnedParams) error
+	// MarkIPFSPinned records the pinned CID and returns the row's RESULTING state:
+	// 'pinned' on the normal path, or 'unpinning' when a concurrent privacy flip won
+	// the lost-update race (the CID is still recorded so the worker can unpin it).
+	MarkIPFSPinned(ctx context.Context, arg sqlcgen.MarkIPFSPinnedParams) (string, error)
 	MarkIPFSPinFailed(ctx context.Context, arg sqlcgen.MarkIPFSPinFailedParams) error
 	MarkIPFSPinUnpinned(ctx context.Context, objectKey string) error
 	RescheduleIPFSPin(ctx context.Context, arg sqlcgen.RescheduleIPFSPinParams) error
@@ -658,11 +661,19 @@ func (s *Service) pin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool
 			"attempts", row.Attempts+1, "reason", "add_pin", "error", err)
 		return false
 	}
-	if err := s.repo.MarkIPFSPinned(ctx, sqlcgen.MarkIPFSPinnedParams{
+	state, err := s.repo.MarkIPFSPinned(ctx, sqlcgen.MarkIPFSPinnedParams{
 		ObjectKey: row.ObjectKey, Cid: res.CID, CarRoot: "", ByteSize: res.Size,
-	}); err != nil {
+	})
+	if err != nil {
 		s.logger.Warn("ipfs mark pinned failed", "object_key", row.ObjectKey, "error", err)
 		return false
+	}
+	if state != "pinned" {
+		// Lost the lost-update race: a concurrent privacy flip flipped the leased row
+		// to 'unpinning' mid-Add, so MarkIPFSPinned recorded the CID but KEPT the row
+		// 'unpinning'. The bytes are now pinned on a public node for a non-public
+		// object — remove them immediately (row.Cid carries any superseded prior CID).
+		return s.pinRacedUnpin(ctx, row, res.CID, row.Cid, state)
 	}
 	// Best-effort cluster replication (STOR-05) of the now-node-pinned CID.
 	s.clusterPin(ctx, res.CID)
@@ -730,11 +741,18 @@ func (s *Service) pinDirectory(ctx context.Context, row sqlcgen.ClaimDueIPFSPins
 			"attempts", row.Attempts+1, "reason", "add_dir", "error", err)
 		return false
 	}
-	if err := s.repo.MarkIPFSPinned(ctx, sqlcgen.MarkIPFSPinnedParams{
+	state, err := s.repo.MarkIPFSPinned(ctx, sqlcgen.MarkIPFSPinnedParams{
 		ObjectKey: row.ObjectKey, Cid: res.CID, CarRoot: res.CID, ByteSize: res.Size,
-	}); err != nil {
+	})
+	if err != nil {
 		s.logger.Warn("ipfs mark pinned failed", "object_key", row.ObjectKey, "error", err)
 		return false
+	}
+	if state != "pinned" {
+		// Lost the lost-update race with a concurrent privacy flip mid-AddDirectory:
+		// the tree is pinned on a public node for a now-non-public video. Remove the
+		// new car_root now (row.CarRoot carries any superseded prior root to also GC).
+		return s.pinRacedUnpin(ctx, row, res.CID, row.CarRoot, state)
 	}
 	// Best-effort cluster replication (STOR-05) of the now-node-pinned car_root.
 	s.clusterPin(ctx, res.CID)
@@ -744,6 +762,29 @@ func (s *Service) pinDirectory(ctx context.Context, row sqlcgen.ClaimDueIPFSPins
 		"attempts", row.Attempts+1, "files", len(entries))
 	s.logger.Debug("ipfs_pin_ok cid", "object_key", row.ObjectKey, "cid", res.CID)
 	return true
+}
+
+// pinRacedUnpin cleans up a pin that LOST the lost-update race with a concurrent
+// privacy flip: MarkIPFSPinned recorded the freshly-added CID but KEPT the row
+// 'unpinning' (the object went non-public while the Add was streaming), so the
+// bytes are now pinned on a public node for a non-public object — a privacy leak
+// the reconcile scan would NOT catch (it only re-arms 'failed' rows). Rather than
+// wait for the next drain to claim the 'unpinning' row, this removes the bytes NOW:
+// it GCs any superseded prior root (oldCID) and then runs the reference-checked
+// node unpin of the new CID, converging the row to 'unpinned'. Returns true only
+// when the node pin was actually removed (row reached the 'unpinned' terminal).
+func (s *Service) pinRacedUnpin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow, newCID, oldCID, racedState string) bool {
+	// Structured, CID-free at info: the CID is a public capability handle.
+	s.logger.Warn("ipfs_pin_raced_unpin", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		"raced_state", racedState, "attempts", row.Attempts+1)
+	// A superseded prior root (re-transcode / webm refresh in flight) is also
+	// orphaned by this add — clean it (reference-checked, no-op when absent/unchanged).
+	s.swapUnpin(ctx, oldCID, newCID, row.ObjectKey)
+	// Reference-checked node unpin of the just-pinned bytes + terminal ledger state.
+	// unpin() reads row.Cid/row.State, so point them at the losing pin's outcome.
+	row.Cid = newCID
+	row.State = "unpinning"
+	return s.unpin(ctx, row)
 }
 
 // swapUnpin removes a superseded CID from the node after a re-pin replaced a
@@ -889,7 +930,13 @@ func (s *Service) unpin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bo
 func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow, reason string) {
 	attempts := int(row.Attempts) + 1
 	if attempts >= s.maxAttempts {
-		_ = s.repo.MarkIPFSPinFailed(ctx, sqlcgen.MarkIPFSPinFailedParams{ObjectKey: row.ObjectKey, LastError: reason})
+		// State-guarded dead-letter: only fail the row if it is STILL in the state the
+		// worker claimed and acted on (row.State — 'pending' for a pin, 'unpinning' for
+		// an unpin). A concurrent privacy flip that re-directed it wins (its newer
+		// intent survives) instead of being clobbered to 'failed'.
+		_ = s.repo.MarkIPFSPinFailed(ctx, sqlcgen.MarkIPFSPinFailedParams{
+			ObjectKey: row.ObjectKey, LastError: reason, ExpectedState: row.State,
+		})
 		return
 	}
 	_ = s.repo.RescheduleIPFSPin(ctx, sqlcgen.RescheduleIPFSPinParams{

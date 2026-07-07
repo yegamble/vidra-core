@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/ipfs"
@@ -106,19 +107,30 @@ func (r *fakeRepo) ClaimDueIPFSPins(ctx context.Context, arg sqlcgen.ClaimDueIPF
 	return out, nil
 }
 
-func (r *fakeRepo) MarkIPFSPinned(ctx context.Context, arg sqlcgen.MarkIPFSPinnedParams) error {
-	if row, ok := r.rows[arg.ObjectKey]; ok {
-		row.State = "pinned"
-		row.Cid = arg.Cid
-		row.CarRoot = arg.CarRoot
-		row.ByteSize = arg.ByteSize
-		row.LastError = ""
+// MarkIPFSPinned mirrors the state-guarded RETURNING query: the CID is ALWAYS
+// recorded, but state advances to 'pinned' only from a pinnable state — a row a
+// concurrent unpin flipped to 'unpinning' KEEPS 'unpinning' (the lost-update guard,
+// P19 audit BLOCKER). Returns the resulting state (pgx.ErrNoRows when absent, as
+// the real :one query does).
+func (r *fakeRepo) MarkIPFSPinned(ctx context.Context, arg sqlcgen.MarkIPFSPinnedParams) (string, error) {
+	row, ok := r.rows[arg.ObjectKey]
+	if !ok {
+		return "", pgx.ErrNoRows
 	}
-	return nil
+	row.Cid = arg.Cid
+	row.CarRoot = arg.CarRoot
+	row.ByteSize = arg.ByteSize
+	row.LastError = ""
+	if row.State == "pending" || row.State == "pinned" {
+		row.State = "pinned"
+	}
+	return row.State, nil
 }
 
+// MarkIPFSPinFailed mirrors the state-guarded dead-letter: only fails a row still
+// in the expected (claimed) state, so a concurrent privacy flip is not clobbered.
 func (r *fakeRepo) MarkIPFSPinFailed(ctx context.Context, arg sqlcgen.MarkIPFSPinFailedParams) error {
-	if row, ok := r.rows[arg.ObjectKey]; ok {
+	if row, ok := r.rows[arg.ObjectKey]; ok && row.State == arg.ExpectedState {
 		row.State = "failed"
 		row.Attempts++
 		row.LastError = arg.LastError
@@ -126,8 +138,11 @@ func (r *fakeRepo) MarkIPFSPinFailed(ctx context.Context, arg sqlcgen.MarkIPFSPi
 	return nil
 }
 
+// MarkIPFSPinUnpinned mirrors the state-guarded terminal-unpin: only completes when
+// the row is STILL 'unpinning' (a concurrent private→public re-arm to 'pending' is
+// preserved, not clobbered).
 func (r *fakeRepo) MarkIPFSPinUnpinned(ctx context.Context, objectKey string) error {
-	if row, ok := r.rows[objectKey]; ok {
+	if row, ok := r.rows[objectKey]; ok && row.State == "unpinning" {
 		row.State = "unpinned"
 		row.LastError = ""
 	}
@@ -891,6 +906,189 @@ func TestHLSCIDInVideoPins(t *testing.T) {
 	}
 	if pins.GatewayURL != "https://gw.example.org" {
 		t.Errorf("GatewayURL = %q, want the configured gateway", pins.GatewayURL)
+	}
+}
+
+// TestPinLosesRaceToPrivacyFlip is the P19 audit BLOCKER regression. A public
+// video's object is leased for pinning; MID-Add the owner flips it private, whose
+// hook enqueues an unpin that flips the leased row 'pending'→'unpinning'. When Add
+// returns, the state-guarded MarkIPFSPinned records the CID but KEEPS 'unpinning'
+// (it never clobbers the newer visibility fact back to 'pinned'), and the worker
+// then removes the just-pinned bytes inline. Final: row 'unpinned', node pin gone,
+// the CID was recorded (so the unpin could target it), ipfs_pinned=false.
+func TestPinLosesRaceToPrivacyFlip(t *testing.T) {
+	repo := newFakeRepo()
+	blobs := newBlobs(t)
+	client := ipfs.NewFakeIPFSClient()
+	vid := uuid.New()
+	key := "web-videos/" + vid.String() + ".mp4"
+	putBlob(t, blobs, key, "non-public-bytes")
+	repo.rows[key] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: key, MediaClass: string(ClassVideoOriginal), State: "pending",
+		VideoID: pgUUID(vid), NextAttemptAt: time.Now().UTC().Add(-time.Second),
+	}
+	// Mid-Add, the owner privatizes the video → the privacy hook unpins all of its
+	// ledger rows (EnqueueIPFSUnpin flips this leased row to 'unpinning').
+	fired := false
+	client.AddHook = func() {
+		if fired {
+			return
+		}
+		fired = true
+		_ = repo.EnqueueIPFSUnpin(context.Background(), key)
+	}
+
+	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("DrainDue: %v", err)
+	}
+
+	row := repo.rows[key]
+	if row.Cid == "" {
+		t.Error("CID not recorded on the raced row; a later unpin could not target the node pin")
+	}
+	if row.State == "pinned" {
+		t.Fatal("raced row is 'pinned' — non-public bytes permanently pinned to the public node (the BLOCKER)")
+	}
+	if row.State != "unpinned" {
+		t.Errorf("state = %q, want unpinned (the worker removed the raced pin inline)", row.State)
+	}
+	if pinned, _ := client.IsPinned(context.Background(), row.Cid); pinned {
+		t.Error("node pin still present for a now-private video — permanent public disclosure")
+	}
+	if client.UnpinCount != 1 {
+		t.Errorf("node Unpin called %d times, want 1 (the raced bytes removed)", client.UnpinCount)
+	}
+	// Contract truthfulness: the read model must NOT report the raced video pinned.
+	got, err := svc.PinnedVideoIDs(context.Background(), []uuid.UUID{vid})
+	if err != nil {
+		t.Fatalf("PinnedVideoIDs: %v", err)
+	}
+	if got[vid] {
+		t.Error("raced (now-private) video reports ipfs_pinned=true — contract leak")
+	}
+}
+
+// TestPinDoubleFlipConvergesToPinned: a public→private→public double-flip lands
+// entirely DURING the Add. The NET visibility is public, so the row must converge
+// to 'pinned' with the node pin intact — the guard must not strand it 'unpinning'
+// (last writer = the latest visibility fact, not the stale mid-flight unpin).
+func TestPinDoubleFlipConvergesToPinned(t *testing.T) {
+	repo := newFakeRepo()
+	blobs := newBlobs(t)
+	client := ipfs.NewFakeIPFSClient()
+	vid := uuid.New()
+	key := "web-videos/" + vid.String() + ".mp4"
+	putBlob(t, blobs, key, "public-bytes")
+	repo.rows[key] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: key, MediaClass: string(ClassVideoOriginal), State: "pending",
+		VideoID: pgUUID(vid), NextAttemptAt: time.Now().UTC().Add(-time.Second),
+	}
+	fired := false
+	client.AddHook = func() {
+		if fired {
+			return
+		}
+		fired = true
+		// private (→unpinning) then public again (→pending, re-armed) — both mid-Add.
+		_ = repo.EnqueueIPFSUnpin(context.Background(), key)
+		_, _ = repo.UpsertIPFSPinIntent(context.Background(), sqlcgen.UpsertIPFSPinIntentParams{
+			ObjectKey: key, MediaClass: string(ClassVideoOriginal), VideoID: pgUUID(vid),
+		})
+	}
+
+	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("DrainDue: %v", err)
+	}
+
+	row := repo.rows[key]
+	if row.State != "pinned" {
+		t.Fatalf("state = %q, want pinned (net-public double-flip converges to pinned)", row.State)
+	}
+	if row.Cid == "" {
+		t.Error("CID not recorded on the converged pin")
+	}
+	if pinned, _ := client.IsPinned(context.Background(), row.Cid); !pinned {
+		t.Error("node pin missing after a net-public double-flip")
+	}
+	if client.UnpinCount != 0 {
+		t.Errorf("node Unpin called %d times, want 0 (final state is public/pinned)", client.UnpinCount)
+	}
+	got, _ := svc.PinnedVideoIDs(context.Background(), []uuid.UUID{vid})
+	if !got[vid] {
+		t.Error("net-public video not reported pinned")
+	}
+}
+
+// TestPinDirectoryLosesRaceToPrivacyFlip: the same lost-update race on the HLS
+// directory-add path (pinDirectory). A mid-AddDirectory privatize must not leave
+// the wrapped tree pinned — final 'unpinned', car_root gone from the node.
+func TestPinDirectoryLosesRaceToPrivacyFlip(t *testing.T) {
+	repo := newFakeRepo()
+	blobs := newBlobs(t)
+	client := ipfs.NewFakeIPFSClient()
+	vid := uuid.New()
+	prefix := "streaming-playlists/" + vid.String() + "/"
+	putBlob(t, blobs, prefix+"master.m3u8", "#EXTM3U\n720p/playlist.m3u8\n")
+	putBlob(t, blobs, prefix+"720p/seg_00000.ts", "ts-bytes")
+	repo.rows[prefix] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: prefix, MediaClass: string(ClassHLS), State: "pending",
+		VideoID: pgUUID(vid), NextAttemptAt: time.Now().UTC().Add(-time.Second),
+	}
+	fired := false
+	client.AddHook = func() {
+		if fired {
+			return
+		}
+		fired = true
+		_ = repo.EnqueueIPFSUnpin(context.Background(), prefix)
+	}
+
+	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("DrainDue: %v", err)
+	}
+
+	row := repo.rows[prefix]
+	if row.State == "pinned" {
+		t.Fatal("raced HLS tree is 'pinned' — a now-private video's tree is publicly pinned")
+	}
+	if row.State != "unpinned" {
+		t.Errorf("state = %q, want unpinned", row.State)
+	}
+	if row.CarRoot == "" {
+		t.Error("car_root not recorded on the raced HLS row")
+	}
+	if pinned, _ := client.IsPinned(context.Background(), row.CarRoot); pinned {
+		t.Error("HLS car_root still pinned on the node after the raced unpin")
+	}
+}
+
+// TestReadModelsExcludeRacedRow: the read models the API trusts (VideoPins for the
+// detail `ipfs` object, PinnedVideoIDs for the card badge) count ONLY 'pinned'
+// rows, so a raced row still in the intermediate 'unpinning' state (a valid CID
+// recorded, but the object is being removed) is NEVER surfaced as pinned — the
+// secondary contract-leak flagged in the P19 audit.
+func TestReadModelsExcludeRacedRow(t *testing.T) {
+	repo := newFakeRepo()
+	vid := uuid.New()
+	cid := ipfs.RawLeafCIDv1([]byte("raced-bytes"))
+	repo.rows["web-videos/x.mp4"] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: "web-videos/x.mp4", MediaClass: string(ClassVideoOriginal),
+		State: "unpinning", Cid: cid, VideoID: pgUUID(vid),
+	}
+	svc := New(repo, &fakeLookups{}, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+
+	if _, ok, err := svc.VideoPins(context.Background(), vid); err != nil || ok {
+		t.Errorf("VideoPins on a raced 'unpinning' row: ok=%v err=%v, want ok=false", ok, err)
+	}
+	got, err := svc.PinnedVideoIDs(context.Background(), []uuid.UUID{vid})
+	if err != nil {
+		t.Fatalf("PinnedVideoIDs: %v", err)
+	}
+	if got[vid] {
+		t.Error("raced 'unpinning' video reported ipfs_pinned=true, want false")
 	}
 }
 

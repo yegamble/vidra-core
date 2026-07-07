@@ -286,39 +286,57 @@ func (q *Queries) ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID) 
 const markIPFSPinFailed = `-- name: MarkIPFSPinFailed :exec
 UPDATE media_ipfs_pins
 SET state = 'failed', attempts = attempts + 1, last_error = $2, updated_at = now()
-WHERE object_key = $1
+WHERE object_key = $1 AND state = $3
 `
 
 type MarkIPFSPinFailedParams struct {
-	ObjectKey string `json:"object_key"`
-	LastError string `json:"last_error"`
+	ObjectKey     string `json:"object_key"`
+	LastError     string `json:"last_error"`
+	ExpectedState string `json:"expected_state"`
 }
 
 // Dead-letter a pin/unpin after max attempts: no further automatic retries (the
 // reconciliation scan can re-arm it later). last_error is a SAFE, client-invisible
-// reason — never the raw node error verbatim.
+// reason — never the raw node error verbatim. STATE-GUARDED (P19 audit): the
+// dead-letter only lands when the row is STILL in the actionable state the worker
+// claimed (sqlc.arg(expected_state) — 'pending' for a pin, 'unpinning' for an
+// unpin). If a concurrent privacy flip re-directed the row (pending↔unpinning), the
+// newer intent is preserved rather than clobbered to 'failed' — which the reconcile
+// scan would otherwise re-arm in the WRONG direction (a failed-pin cid=” re-pins,
+// so a clobbered unpin would re-pin a now-non-public object: a privacy regression).
 func (q *Queries) MarkIPFSPinFailed(ctx context.Context, arg MarkIPFSPinFailedParams) error {
-	_, err := q.db.Exec(ctx, markIPFSPinFailed, arg.ObjectKey, arg.LastError)
+	_, err := q.db.Exec(ctx, markIPFSPinFailed, arg.ObjectKey, arg.LastError, arg.ExpectedState)
 	return err
 }
 
 const markIPFSPinUnpinned = `-- name: MarkIPFSPinUnpinned :exec
 UPDATE media_ipfs_pins
 SET state = 'unpinned', last_error = '', updated_at = now()
-WHERE object_key = $1
+WHERE object_key = $1 AND state = 'unpinning'
 `
 
 // Terminal success for an unpin (the delete/GC path). The row is kept (not
-// deleted) as an audit trail; content-address dedupe (P19.3) reads it.
+// deleted) as an audit trail; content-address dedupe (P19.3) reads it. STATE-GUARDED
+// (P19 audit): only completes the unpin when the row is STILL 'unpinning'. If a
+// concurrent private→public flip re-armed it to 'pending' (UpsertIPFSPinIntent)
+// while the node unpin was in flight, that newer pin intent is preserved (the worker
+// re-pins the now-public object) rather than clobbered to 'unpinned' — the
+// double-flip converges to the latest visibility fact.
 func (q *Queries) MarkIPFSPinUnpinned(ctx context.Context, objectKey string) error {
 	_, err := q.db.Exec(ctx, markIPFSPinUnpinned, objectKey)
 	return err
 }
 
-const markIPFSPinned = `-- name: MarkIPFSPinned :exec
+const markIPFSPinned = `-- name: MarkIPFSPinned :one
 UPDATE media_ipfs_pins
-SET state = 'pinned', cid = $2, car_root = $3, byte_size = $4, last_error = '', updated_at = now()
+SET cid = $2,
+    car_root = $3,
+    byte_size = $4,
+    state = CASE WHEN state IN ('pending', 'pinned') THEN 'pinned' ELSE state END,
+    last_error = '',
+    updated_at = now()
 WHERE object_key = $1
+RETURNING state
 `
 
 type MarkIPFSPinnedParams struct {
@@ -329,15 +347,27 @@ type MarkIPFSPinnedParams struct {
 }
 
 // Terminal success for a pin: record the CID (and wrap-directory root for HLS
-// trees) and the pinned byte size.
-func (q *Queries) MarkIPFSPinned(ctx context.Context, arg MarkIPFSPinnedParams) error {
-	_, err := q.db.Exec(ctx, markIPFSPinned,
+// trees) and the pinned byte size. STATE-GUARDED against a lost-update race with a
+// concurrent privacy flip (P19 audit BLOCKER): the CID/car_root/byte_size are
+// ALWAYS persisted — the bytes ARE on the node now, so a subsequent unpin needs the
+// CID to target them — but state advances to 'pinned' ONLY when the row is still
+// pinnable (pending, or idempotently pinned). If a concurrent EnqueueIPFSUnpin
+// flipped the leased row to 'unpinning' (the object went non-public mid-Add), the
+// CASE KEEPS 'unpinning' so the unpin worker removes the now-non-public bytes: the
+// stale pin worker NEVER clobbers the newer visibility fact back to 'pinned'.
+// RETURNING state lets the worker learn which outcome happened (pinned vs raced)
+// and, on a loss, execute the unpin immediately instead of leaking until the next
+// reconcile.
+func (q *Queries) MarkIPFSPinned(ctx context.Context, arg MarkIPFSPinnedParams) (string, error) {
+	row := q.db.QueryRow(ctx, markIPFSPinned,
 		arg.ObjectKey,
 		arg.Cid,
 		arg.CarRoot,
 		arg.ByteSize,
 	)
-	return err
+	var state string
+	err := row.Scan(&state)
+	return state, err
 }
 
 const rearmFailedIPFSPins = `-- name: RearmFailedIPFSPins :execrows
@@ -414,8 +444,12 @@ type RescheduleIPFSPinParams struct {
 	LastError     string    `json:"last_error"`
 }
 
-// Transient retry with backoff: leave the row in its current actionable state
-// (pending or unpinning) and push next_attempt_at out so a later drain retries it.
+// Transient retry with backoff: leave the row in WHATEVER actionable state it is
+// currently in (pending or unpinning) and push next_attempt_at out so a later drain
+// retries it. Deliberately state-agnostic — it never advances to a terminal state,
+// so a concurrent privacy flip that re-directed the row (pending↔unpinning) is
+// preserved and simply retried in the newer direction; a failed pin never recorded
+// a CID, so a re-directed unpin of it is a harmless node no-op.
 func (q *Queries) RescheduleIPFSPin(ctx context.Context, arg RescheduleIPFSPinParams) error {
 	_, err := q.db.Exec(ctx, rescheduleIPFSPin, arg.ObjectKey, arg.NextAttemptAt, arg.LastError)
 	return err
