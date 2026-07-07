@@ -85,8 +85,8 @@ func TestLiveRTMPEndToEnd(t *testing.T) {
 	username := "rtmp"
 	// Register + login.
 	code, body := api.do(http.MethodPost, "/api/v1/auth/register", "", map[string]any{
-		"username": username + itoa(suffix),
-		"email":    "rtmp" + itoa(suffix) + "@example.test",
+		"username": username + itoa64(suffix),
+		"email":    "rtmp" + itoa64(suffix) + "@example.test",
 		"password": "supersecret123",
 	})
 	if code != http.StatusCreated && code != http.StatusOK {
@@ -102,7 +102,7 @@ func TestLiveRTMPEndToEnd(t *testing.T) {
 	token := reg.Token
 
 	// Channel.
-	handle := "rtmp" + itoa(suffix)
+	handle := "rtmp" + itoa64(suffix)
 	if code, body = api.do(http.MethodPost, "/api/v1/channels", token, map[string]any{
 		"handle": handle, "display_name": "RTMP Test",
 	}); code != http.StatusCreated {
@@ -207,7 +207,10 @@ func waitFor(t *testing.T, d time.Duration, cond func() bool) bool {
 	return cond()
 }
 
-func itoa(n int64) string {
+// itoa64 renders an int64 without importing strconv here (this file's helper;
+// hls_test.go owns the untagged int variant named itoa — keep the names distinct
+// so the package still builds under -tags integration, where both are compiled).
+func itoa64(n int64) string {
 	if n == 0 {
 		return "0"
 	}

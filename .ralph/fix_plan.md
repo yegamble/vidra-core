@@ -148,6 +148,7 @@
 - [x] Add PostgreSQL and Redis service containers for integration tests. (postgres:16-alpine + redis:7-alpine, healthchecked, in both backend-ci.yml and backend-integration.yml)
 - [ ] Add artifact upload for test reports/logs.
 - [~] Keep CI under reasonable runtime by splitting smoke, unit, integration, fuzz, and benchmark jobs. (unit (`make ci`, ~2min) and integration (~2min) are split into separate workflows and the startup smoke rides integration; scheduled fuzz/benchmark jobs still TODO — see P16)
+- [x] Fix a pre-existing `backend-integration` build break (unblocks the integration lane, incl. the new ClamAV EICAR test). (backport-audit slice, 2026-07-07. Commit `44c30ab` added `func itoa(n int) string` to the untagged `internal/httpapi/hls_test.go`, colliding with the pre-existing `func itoa(n int64)` in the `//go:build integration` `live_rtmp_integration_test.go`; under `-tags=integration` both compile → `itoa redeclared` → `internal/httpapi [build failed]`, so `backend-integration.yml` went red on `44c30ab` and stayed red (the canonical `make ci`, which builds untagged, was unaffected and green throughout). Fix: renamed the integration-only helper to `itoa64` (definition + its 3 call sites in that one file); the untagged `hls_test.go` keeps `itoa`. Verified `go vet -tags integration ./...` clean module-wide and untagged `make ci` still green.)
 
 ---
 
