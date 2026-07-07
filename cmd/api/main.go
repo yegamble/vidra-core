@@ -35,6 +35,8 @@ import (
 	"github.com/vidra/vidra-core/internal/httpapi"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/instancesettings"
+	"github.com/vidra/vidra-core/internal/ipfs"
+	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/linkpreview"
 	"github.com/vidra/vidra-core/internal/live"
@@ -288,6 +290,35 @@ func run() error {
 		logger.Info("media storage configured", "backend", cfg.StorageBackend)
 	}
 
+	// Hybrid IPFS media mirror (fix_plan P19, .ralph/specs/ipfs-media.md). A MIRROR
+	// SIDECAR — local/S3 stays authoritative — that add+pins ALREADY-PUBLIC media
+	// to a Kubo node when IPFS_ENABLED. It is constructed unconditionally so every
+	// producing service can hold the hook; when disabled every method is an inert
+	// no-op (and the Kubo client is nil). The eligibility gate is the privacy fence
+	// — nothing non-public is ever enqueued.
+	var ipfsClient ipfs.Client
+	if cfg.IPFSEnabled {
+		ipfsClient = ipfs.NewKuboClient(cfg.IPFSAPIURL, &http.Client{Timeout: cfg.IPFSAddTimeout})
+	}
+	ipfsMirror := ipfsmirror.New(
+		db.Queries(),
+		ipfsmirror.NewSQLLookups(db.Queries()),
+		blobs,
+		ipfsClient,
+		ipfsmirror.Config{
+			Enabled:        cfg.IPFSEnabled,
+			GatewayURL:     cfg.IPFSGatewayURL,
+			ClusterEnabled: cfg.IPFSClusterAPIURL != "",
+			AddTimeout:     cfg.IPFSAddTimeout,
+			Concurrency:    cfg.IPFSPinConcurrency,
+			Logger:         logger,
+		},
+	)
+	opts = append(opts, httpapi.WithIPFSMirrorService(ipfsMirror))
+	if cfg.IPFSEnabled {
+		logger.Info("ipfs media mirror enabled", "gateway", cfg.IPFSGatewayURL, "cluster", cfg.IPFSClusterAPIURL != "")
+	}
+
 	// Wire the FFprobe media prober when ffprobe is on PATH; otherwise uploads
 	// finalise by publishing the original unprobed (no metadata) so a host
 	// without ffmpeg still works.
@@ -401,6 +432,31 @@ func run() error {
 			}),
 		)
 	}
+	// IPFS mirror hooks (fix_plan P19): on publish and on metadata update, re-evaluate
+	// the video's image-derivative pins (thumbnail/storyboard/captions) against its
+	// current privacy+state (public+published pins, anything else unpins); on delete,
+	// unpin all of the video's ledger rows (reference-checked in the worker). Video
+	// originals + VP9 (P19.3) and the HLS tree (P19.4) extend these same transitions.
+	// Guarded by IPFS_ENABLED to avoid registering no-op hooks.
+	if cfg.IPFSEnabled {
+		vopts = append(vopts,
+			video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
+				if err := ipfsMirror.SyncVideo(ctx, videoID); err != nil {
+					logger.Warn("ipfs mirror publish sync failed", "video_id", videoID, "error", err)
+				}
+			}),
+			video.WithUpdateHook(func(ctx context.Context, videoID uuid.UUID) {
+				if err := ipfsMirror.SyncVideo(ctx, videoID); err != nil {
+					logger.Warn("ipfs mirror update sync failed", "video_id", videoID, "error", err)
+				}
+			}),
+			video.WithDeleteHook(func(ctx context.Context, videoID, channelID uuid.UUID, wasPublic bool) {
+				if err := ipfsMirror.UnpinVideo(ctx, videoID); err != nil {
+					logger.Warn("ipfs mirror delete unpin failed", "video_id", videoID, "error", err)
+				}
+			}),
+		)
+	}
 	videosvc := video.NewService(db.Queries(), blobs, vopts...)
 	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(blobs))
 
@@ -442,7 +498,7 @@ func run() error {
 	notifsvc := notification.NewService(db.Queries())
 	opts = append(opts, httpapi.WithNotificationService(notifsvc))
 
-	playlistsvc := playlist.NewService(db.Queries(), playlist.WithStorage(blobs))
+	playlistsvc := playlist.NewService(db.Queries(), playlist.WithStorage(blobs), playlist.WithMirror(ipfsMirror))
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))
 
 	// Media garbage collection: admin-triggered sweep + a daily scheduled sweep.
@@ -502,7 +558,7 @@ func run() error {
 	livesvc := live.NewService(db.Queries(), liveOpts...)
 	opts = append(opts, httpapi.WithLiveService(livesvc))
 
-	imagesvc := profileimage.NewService(db.Queries(), blobs)
+	imagesvc := profileimage.NewService(db.Queries(), blobs, profileimage.WithMirror(ipfsMirror))
 	opts = append(opts, httpapi.WithProfileImageService(imagesvc))
 
 	// Per-user storage quotas: usage is aggregated live from video_files;
@@ -555,7 +611,8 @@ func run() error {
 	// account removes its videos through the video service, so the federation
 	// Delete hooks registered above fire for previously-public videos.
 	accountsvc := account.NewService(db.Queries(), blobs, videosvc,
-		account.WithBaseURL(cfg.PublicBaseURL))
+		account.WithBaseURL(cfg.PublicBaseURL),
+		account.WithMirror(ipfsMirror)) // IPFS P19: unpin a deleted account's media
 	opts = append(opts, httpapi.WithAccountService(accountsvc))
 
 	// Federation (ActivityPub) — the service is always constructed, but its routes
@@ -718,6 +775,16 @@ func run() error {
 		defer workerCancel()
 		go runMediaGCWorker(workerCtx, logger, mediagcsvc, auditsvc)
 		logger.Info("media gc worker started")
+	}
+
+	// Drain the IPFS mirror pin/unpin queue and periodically re-arm dead-letters
+	// (fix_plan P19). Only when IPFS_ENABLED — the mirror is a sidecar, so this
+	// never affects the authoritative write/serve paths.
+	if ipfsMirror.Enabled() {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runIPFSMirrorWorker(workerCtx, logger, ipfsMirror, cfg.IPFSReconcileInterval)
+		logger.Info("ipfs mirror worker started")
 	}
 
 	// Admin operations: the durable-queue depth snapshot + recent-failures
@@ -1101,6 +1168,51 @@ func runUploadSweepWorker(ctx context.Context, logger *slog.Logger, svc *upload.
 				logger.Warn("upload session sweep failed", "error", err)
 			} else if n > 0 {
 				logger.Info("upload session sweep removed sessions", "count", n)
+			}
+		}
+	}
+}
+
+// runIPFSMirrorWorker drains the IPFS mirror pin/unpin queue on a short ticker
+// (add+pin pending rows, reference-checked unpin of unpinning rows) and re-arms
+// dead-lettered rows on the reconcile interval, until ctx is canceled. Per-row
+// failures are persisted in the ledger (rescheduled/dead-lettered), never
+// surfaced — the mirror is non-authoritative, so an outage never blocks anything.
+func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirror.Service, reconcileInterval time.Duration) {
+	const (
+		drainInterval = 10 * time.Second
+		batch         = 8
+	)
+	drain := time.NewTicker(drainInterval)
+	defer drain.Stop()
+	if reconcileInterval <= 0 {
+		reconcileInterval = 5 * time.Minute
+	}
+	reconcile := time.NewTicker(reconcileInterval)
+	defer reconcile.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-drain.C:
+			total := 0
+			for {
+				n, err := svc.DrainDue(ctx, batch)
+				if err != nil {
+					logger.Warn("ipfs mirror drain failed", "error", err)
+					break
+				}
+				total += n
+				if n == 0 {
+					break
+				}
+			}
+			if total > 0 {
+				logger.Info("ipfs mirror drained pins", "count", total)
+			}
+		case <-reconcile.C:
+			if _, err := svc.Reconcile(ctx); err != nil {
+				logger.Warn("ipfs mirror reconcile failed", "error", err)
 			}
 		}
 	}

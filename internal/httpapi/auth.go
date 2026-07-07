@@ -281,6 +281,13 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 		}
 		return err
 	}
+	// IPFS mirror re-evaluation (fix_plan P19): toggling the discovery opt-out
+	// changes identity-image eligibility, so flipping to unlisted pulls the user's
+	// avatar/banner off the public mirror (and re-listing re-pins them). Best-effort
+	// — a mirror hiccup never fails the profile update.
+	if in.Unlisted != nil && s.ipfsmirrorsvc != nil {
+		_ = s.ipfsmirrorsvc.ReevaluateUser(c.Request().Context(), userID)
+	}
 	view := newUserView(user)
 	s.attachUserImageFlags(c.Request().Context(), &view, userID)
 	return c.JSON(http.StatusOK, view)

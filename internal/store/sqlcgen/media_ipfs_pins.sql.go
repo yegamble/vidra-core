@@ -270,6 +270,32 @@ func (q *Queries) MarkIPFSPinned(ctx context.Context, arg MarkIPFSPinnedParams) 
 	return err
 }
 
+const rearmFailedIPFSPins = `-- name: RearmFailedIPFSPins :execrows
+UPDATE media_ipfs_pins
+SET state = CASE WHEN cid = '' THEN 'pending' ELSE 'unpinning' END,
+    attempts = 0, next_attempt_at = now(), last_error = '', updated_at = now()
+WHERE object_key IN (
+    SELECT object_key FROM media_ipfs_pins
+    WHERE state = 'failed'
+    ORDER BY updated_at
+    LIMIT $1
+)
+`
+
+// Reconciliation re-arm (P19.2): move dead-lettered rows back to an actionable
+// state so the worker retries them, bounded per scan. The discriminator is the
+// CID: a failed PIN never recorded a CID (cid = ”) so it re-arms to 'pending'
+// (add+pin again); a failed UNPIN was previously pinned (cid <> ”) so it re-arms
+// to 'unpinning' (retry the removal — dropping an unpin would be a privacy
+// regression). next_attempt_at = now() makes them immediately claimable.
+func (q *Queries) RearmFailedIPFSPins(ctx context.Context, batchSize int32) (int64, error) {
+	result, err := q.db.Exec(ctx, rearmFailedIPFSPins, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const rescheduleIPFSPin = `-- name: RescheduleIPFSPin :exec
 UPDATE media_ipfs_pins
 SET attempts = attempts + 1, next_attempt_at = $2, last_error = $3, updated_at = now()

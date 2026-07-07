@@ -108,6 +108,23 @@ SELECT count(*)::bigint
 FROM media_ipfs_pins
 WHERE cid = $1 AND cid <> '' AND object_key <> $2 AND state IN ('pinned', 'pending');
 
+-- name: RearmFailedIPFSPins :execrows
+-- Reconciliation re-arm (P19.2): move dead-lettered rows back to an actionable
+-- state so the worker retries them, bounded per scan. The discriminator is the
+-- CID: a failed PIN never recorded a CID (cid = '') so it re-arms to 'pending'
+-- (add+pin again); a failed UNPIN was previously pinned (cid <> '') so it re-arms
+-- to 'unpinning' (retry the removal — dropping an unpin would be a privacy
+-- regression). next_attempt_at = now() makes them immediately claimable.
+UPDATE media_ipfs_pins
+SET state = CASE WHEN cid = '' THEN 'pending' ELSE 'unpinning' END,
+    attempts = 0, next_attempt_at = now(), last_error = '', updated_at = now()
+WHERE object_key IN (
+    SELECT object_key FROM media_ipfs_pins
+    WHERE state = 'failed'
+    ORDER BY updated_at
+    LIMIT sqlc.arg(batch_size)
+);
+
 -- name: GetIPFSPinByObjectKey :one
 SELECT * FROM media_ipfs_pins WHERE object_key = $1;
 

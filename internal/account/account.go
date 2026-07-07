@@ -122,13 +122,27 @@ type Service struct {
 	repo   Repository
 	blobs  storage.Backend
 	videos VideoDeleter
+	mirror Mirror
 
 	baseURL string
 	now     func() time.Time
 }
 
+// Mirror is the optional IPFS-mirror unpin hook (fix_plan P19). On a hard account
+// delete, each removed media blob (the account's + its channels' avatars/banners,
+// and any leftover object) is best-effort pulled off the mirror so a deleted
+// user's content does not linger pinned. A video's own derivatives are additionally
+// unpinned via the video-service delete hook (idempotent). nil disables it;
+// *ipfsmirror.Service satisfies it structurally.
+type Mirror interface {
+	EnqueueUnpin(ctx context.Context, objectKey string) error
+}
+
 // Option customises the Service.
 type Option func(*Service)
+
+// WithMirror wires the optional IPFS-mirror unpin hook.
+func WithMirror(m Mirror) Option { return func(s *Service) { s.mirror = m } }
 
 // WithBaseURL sets the instance's public origin, used to render each exported
 // video's original_download_url. Empty renders relative API paths.

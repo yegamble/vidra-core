@@ -205,6 +205,9 @@ func (s *Service) blobDelete(ctx context.Context, key string) {
 	if s.blobs == nil || key == "" {
 		return
 	}
+	if s.mirror != nil {
+		_ = s.mirror.EnqueueUnpin(ctx, key) // best-effort: pull it off the mirror too
+	}
 	_ = s.blobs.Delete(ctx, key)
 }
 

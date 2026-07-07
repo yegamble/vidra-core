@@ -61,16 +61,39 @@ type Repository interface {
 	DeleteChannelImage(ctx context.Context, arg sqlcgen.DeleteChannelImageParams) (int64, error)
 }
 
+// Mirror is the optional IPFS-mirror hook (fix_plan P19). After an authoritative
+// image write or removal, the service calls it BEST-EFFORT so the mirror can
+// enqueue an add+pin (or unpin) intent — a mirror error never fails the image
+// operation (graceful degradation; the reconciliation scan is the backstop). A
+// nil Mirror (the default) disables it. *ipfsmirror.Service satisfies this
+// structurally, so this package does not import the mirror.
+type Mirror interface {
+	EnqueueUserImagePin(ctx context.Context, userID uuid.UUID, kind, objectKey string) error
+	EnqueueChannelImagePin(ctx context.Context, channelID uuid.UUID, kind, objectKey string) error
+	EnqueueUnpin(ctx context.Context, objectKey string) error
+}
+
+// Option customises the Service.
+type Option func(*Service)
+
+// WithMirror wires the optional IPFS-mirror hook.
+func WithMirror(m Mirror) Option { return func(s *Service) { s.mirror = m } }
+
 // Service holds the profile-image application logic.
 type Service struct {
-	repo  Repository
-	blobs storage.Backend
+	repo   Repository
+	blobs  storage.Backend
+	mirror Mirror
 }
 
 // NewService builds the profile-image service. blobs should be the same
 // backend the HTTP layer serves stored media from.
-func NewService(repo Repository, blobs storage.Backend) *Service {
-	return &Service{repo: repo, blobs: blobs}
+func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service {
+	s := &Service{repo: repo, blobs: blobs}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // UploadInput is an image upload as read from the request: the declared
@@ -117,6 +140,9 @@ func (s *Service) SetUserImage(ctx context.Context, userID uuid.UUID, kind strin
 	})
 	if err != nil {
 		return Image{}, err
+	}
+	if s.mirror != nil {
+		_ = s.mirror.EnqueueUserImagePin(ctx, userID, kind, key) // best-effort
 	}
 	return fromUserImage(row), nil
 }
@@ -168,6 +194,9 @@ func (s *Service) SetChannelImage(ctx context.Context, channelID uuid.UUID, kind
 	})
 	if err != nil {
 		return Image{}, err
+	}
+	if s.mirror != nil {
+		_ = s.mirror.EnqueueChannelImagePin(ctx, channelID, kind, key) // best-effort
 	}
 	return fromChannelImage(row), nil
 }
@@ -221,6 +250,9 @@ func (s *Service) putImage(ctx context.Context, kind, ownerDir string, id uuid.U
 	key = imageKey(kind, ownerDir, id, strings.ToLower(filepath.Ext(in.Filename)))
 	if old, oerr := oldKey(); oerr == nil && old != "" && old != key {
 		_ = s.blobs.Delete(ctx, old) // best-effort: Delete is idempotent
+		if s.mirror != nil {
+			_ = s.mirror.EnqueueUnpin(ctx, old) // best-effort: unpin the superseded object
+		}
 	}
 	size, err = s.blobs.Put(ctx, key, in.Reader)
 	if err != nil {
@@ -229,10 +261,16 @@ func (s *Service) putImage(ctx context.Context, kind, ownerDir string, id uuid.U
 	return key, contentType, size, nil
 }
 
-// deleteBlob removes a stored object; a missing backend is a guard error.
+// deleteBlob removes a stored object; a missing backend is a guard error. It also
+// best-effort enqueues an IPFS unpin so a removed avatar/banner is pulled off the
+// mirror (this is the automatic unpin path for account deletion too, which routes
+// its image removals through here).
 func (s *Service) deleteBlob(ctx context.Context, key string) error {
 	if s.blobs == nil {
 		return ErrStorageUnavailable
+	}
+	if s.mirror != nil {
+		_ = s.mirror.EnqueueUnpin(ctx, key) // best-effort
 	}
 	return s.blobs.Delete(ctx, key)
 }

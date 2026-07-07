@@ -59,8 +59,18 @@ type Repository interface {
 // Service holds the playlist application logic. blobs is the media backend used
 // by cover-image uploads; it may be nil when covers are not wired.
 type Service struct {
-	repo  Repository
-	blobs storage.Backend
+	repo   Repository
+	blobs  storage.Backend
+	mirror Mirror
+}
+
+// Mirror is the optional IPFS-mirror hook (fix_plan P19). A public playlist's
+// cover is add+pinned; a non-public playlist's cover is unpinned. Called
+// best-effort — a mirror error never fails the playlist operation. nil disables
+// it; *ipfsmirror.Service satisfies it structurally.
+type Mirror interface {
+	EnqueuePlaylistCover(ctx context.Context, playlistID uuid.UUID) error
+	EnqueueUnpin(ctx context.Context, objectKey string) error
 }
 
 // Option customises the Service.
@@ -69,6 +79,11 @@ type Option func(*Service)
 // WithStorage wires the blob backend used for playlist cover uploads.
 func WithStorage(b storage.Backend) Option {
 	return func(s *Service) { s.blobs = b }
+}
+
+// WithMirror wires the optional IPFS-mirror hook.
+func WithMirror(m Mirror) Option {
+	return func(s *Service) { s.mirror = m }
 }
 
 // NewService builds the playlist service.
@@ -146,12 +161,20 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 	if p.OwnerID != ownerID {
 		return sqlcgen.Playlist{}, ErrForbidden
 	}
-	return s.repo.UpdatePlaylist(ctx, sqlcgen.UpdatePlaylistParams{
+	updated, err := s.repo.UpdatePlaylist(ctx, sqlcgen.UpdatePlaylistParams{
 		ID:          id,
 		Title:       trimPtr(in.Title),
 		Description: trimPtr(in.Description),
 		Visibility:  in.Visibility,
 	})
+	if err != nil {
+		return updated, err
+	}
+	// A visibility change flips cover eligibility (public ⇒ pin, else unpin).
+	if in.Visibility != nil && s.mirror != nil {
+		_ = s.mirror.EnqueuePlaylistCover(ctx, id) // best-effort
+	}
+	return updated, nil
 }
 
 // Delete removes a playlist. Only the owner may delete; non-owner → ErrForbidden,
@@ -301,10 +324,17 @@ func (s *Service) SetThumbnail(ctx context.Context, ownerID, playlistID uuid.UUI
 	}
 	// Remove a stale cover left at a different extension.
 	if p.ThumbnailExt != nil && *p.ThumbnailExt != "" && *p.ThumbnailExt != ext {
-		_ = s.blobs.Delete(ctx, media.PlaylistThumbnailKey(playlistID, *p.ThumbnailExt))
+		staleKey := media.PlaylistThumbnailKey(playlistID, *p.ThumbnailExt)
+		_ = s.blobs.Delete(ctx, staleKey)
+		if s.mirror != nil {
+			_ = s.mirror.EnqueueUnpin(ctx, staleKey) // best-effort: unpin the superseded cover
+		}
 	}
 	if err := s.repo.SetPlaylistThumbnail(ctx, sqlcgen.SetPlaylistThumbnailParams{ID: playlistID, ThumbnailExt: &ext}); err != nil {
 		return "", err
+	}
+	if s.mirror != nil {
+		_ = s.mirror.EnqueuePlaylistCover(ctx, playlistID) // best-effort
 	}
 	return ext, nil
 }
@@ -320,7 +350,11 @@ func (s *Service) ClearThumbnail(ctx context.Context, ownerID, playlistID uuid.U
 		return ErrForbidden
 	}
 	if p.ThumbnailExt != nil && *p.ThumbnailExt != "" && s.blobs != nil {
-		_ = s.blobs.Delete(ctx, media.PlaylistThumbnailKey(playlistID, *p.ThumbnailExt))
+		coverKey := media.PlaylistThumbnailKey(playlistID, *p.ThumbnailExt)
+		_ = s.blobs.Delete(ctx, coverKey)
+		if s.mirror != nil {
+			_ = s.mirror.EnqueueUnpin(ctx, coverKey) // best-effort
+		}
 	}
 	return s.repo.ClearPlaylistThumbnail(ctx, playlistID)
 }

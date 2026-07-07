@@ -100,6 +100,7 @@ type Server struct {
 	mediagcsvc        *mediagc.Service
 	jobStatusSvc      jobStatusProvider
 	peertubeimportsvc peerTubeImportProvider
+	ipfsmirrorsvc     ipfsMirrorProvider
 	metrics           *observability.Metrics
 	media             storage.Backend
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
@@ -323,6 +324,15 @@ func WithJobStatusService(svc jobStatusProvider) Option {
 // sends a DSN or credential. When unset, the routes are not registered.
 func WithPeerTubeImportService(svc peerTubeImportProvider) Option {
 	return func(s *Server) { s.peertubeimportsvc = svc }
+}
+
+// WithIPFSMirrorService wires the hybrid IPFS media-mirror service (fix_plan
+// P19). It backs the real GET /api/v1/ipfs/status payload and the unlisted-toggle
+// re-evaluation. The routes are always mounted (stable contract); when this is
+// unset but IPFS_ENABLED, status answers an honest 501. When unset, the re-eval
+// hook is skipped.
+func WithIPFSMirrorService(svc ipfsMirrorProvider) Option {
+	return func(s *Server) { s.ipfsmirrorsvc = svc }
 }
 
 // WithMetrics attaches the Prometheus RED-metrics registry. When set AND

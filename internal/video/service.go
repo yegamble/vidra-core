@@ -209,8 +209,8 @@ type Service struct {
 	quarantineNewUploads func() bool
 	onPublish            []func(context.Context, uuid.UUID)
 	onTranscode          func(context.Context, uuid.UUID, string)
-	onUpdate             func(context.Context, uuid.UUID)
-	onDelete             func(context.Context, uuid.UUID, uuid.UUID, bool)
+	onUpdate             []func(context.Context, uuid.UUID)
+	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
 }
 
 // Option customises the Service.
@@ -304,17 +304,19 @@ func WithTranscodeHook(fn func(ctx context.Context, videoID uuid.UUID, sourceKey
 }
 
 // WithUpdateHook registers a callback invoked (best-effort) after a video's
-// metadata is updated — federation uses it to propagate an Update to remote
-// followers. Passed the video id.
+// metadata is updated — federation propagates an Update to remote followers, the
+// IPFS mirror re-evaluates derivative pins. Passed the video id. Multiple hooks
+// may be registered (each call appends); they run in registration order.
 func WithUpdateHook(fn func(context.Context, uuid.UUID)) Option {
-	return func(s *Service) { s.onUpdate = fn }
+	return func(s *Service) { s.onUpdate = append(s.onUpdate, fn) }
 }
 
 // WithDeleteHook registers a callback invoked (best-effort) after a video is
-// deleted — federation uses it to propagate a Delete. Passed the video id, its
-// channel id, and whether it was public (i.e. had been federated).
+// deleted — federation propagates a Delete, the IPFS mirror unpins the video's
+// media. Passed the video id, its channel id, and whether it was public (i.e. had
+// been federated). Multiple hooks may be registered (each call appends).
 func WithDeleteHook(fn func(context.Context, uuid.UUID, uuid.UUID, bool)) Option {
-	return func(s *Service) { s.onDelete = fn }
+	return func(s *Service) { s.onDelete = append(s.onDelete, fn) }
 }
 
 // NewService builds the video service. blobs is the media storage backend used
@@ -1092,8 +1094,8 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 			}
 		}
 	}
-	if s.onUpdate != nil {
-		s.onUpdate(ctx, id)
+	for _, hook := range s.onUpdate {
+		hook(ctx, id)
 	}
 	return updated, nil
 }
@@ -1111,8 +1113,8 @@ func (s *Service) Delete(ctx context.Context, ownerID, id uuid.UUID) error {
 	if err := s.repo.DeleteVideo(ctx, id); err != nil {
 		return err
 	}
-	if s.onDelete != nil {
-		s.onDelete(ctx, id, v.ChannelID, v.Privacy == "public")
+	for _, hook := range s.onDelete {
+		hook(ctx, id, v.ChannelID, v.Privacy == "public")
 	}
 	return nil
 }
