@@ -35,6 +35,21 @@ SET media_class   = EXCLUDED.media_class,
     updated_at = now()
 RETURNING *;
 
+-- name: BackfillIPFSPinIntent :execrows
+-- One-shot catalog backfill (P19.6 admin reconcile): seed a pin intent for a
+-- pre-existing eligible object that has NO ledger row yet. Unlike
+-- UpsertIPFSPinIntent (which re-arms a terminal row) this NEVER touches an existing
+-- row in any state — the periodic reconcile re-arms failures; the backfill's sole
+-- job is to seed rows for objects that predate the mirror (or were missed during an
+-- outage). ON CONFLICT DO NOTHING makes it idempotent, and :execrows returns 1 when
+-- a row was inserted, 0 when one already existed, so the caller tallies the
+-- newly-enqueued objects per class and a second run provably enqueues zero. The
+-- eligibility gate is enforced by the caller BEFORE this runs (the privacy fence);
+-- only already-public objects ever reach here.
+INSERT INTO media_ipfs_pins (object_key, media_class, video_id, owner_user_id)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (object_key) DO NOTHING;
+
 -- name: RepinIPFSObject :exec
 -- Force-(re)arm a pin intent for a wholesale-replaced transcode output (P19.4).
 -- The HLS tree (object_key streaming-playlists/<id>/, trailing slash = directory

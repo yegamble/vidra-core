@@ -13,6 +13,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const backfillIPFSPinIntent = `-- name: BackfillIPFSPinIntent :execrows
+INSERT INTO media_ipfs_pins (object_key, media_class, video_id, owner_user_id)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (object_key) DO NOTHING
+`
+
+type BackfillIPFSPinIntentParams struct {
+	ObjectKey   string      `json:"object_key"`
+	MediaClass  string      `json:"media_class"`
+	VideoID     pgtype.UUID `json:"video_id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+// One-shot catalog backfill (P19.6 admin reconcile): seed a pin intent for a
+// pre-existing eligible object that has NO ledger row yet. Unlike
+// UpsertIPFSPinIntent (which re-arms a terminal row) this NEVER touches an existing
+// row in any state — the periodic reconcile re-arms failures; the backfill's sole
+// job is to seed rows for objects that predate the mirror (or were missed during an
+// outage). ON CONFLICT DO NOTHING makes it idempotent, and :execrows returns 1 when
+// a row was inserted, 0 when one already existed, so the caller tallies the
+// newly-enqueued objects per class and a second run provably enqueues zero. The
+// eligibility gate is enforced by the caller BEFORE this runs (the privacy fence);
+// only already-public objects ever reach here.
+func (q *Queries) BackfillIPFSPinIntent(ctx context.Context, arg BackfillIPFSPinIntentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, backfillIPFSPinIntent,
+		arg.ObjectKey,
+		arg.MediaClass,
+		arg.VideoID,
+		arg.OwnerUserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimDueIPFSPins = `-- name: ClaimDueIPFSPins :many
 UPDATE media_ipfs_pins
 SET next_attempt_at = now() + ($1::int * interval '1 second'),

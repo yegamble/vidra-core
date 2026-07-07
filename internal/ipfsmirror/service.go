@@ -47,6 +47,7 @@ const (
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
 	UpsertIPFSPinIntent(ctx context.Context, arg sqlcgen.UpsertIPFSPinIntentParams) (sqlcgen.MediaIpfsPin, error)
+	BackfillIPFSPinIntent(ctx context.Context, arg sqlcgen.BackfillIPFSPinIntentParams) (int64, error)
 	RepinIPFSObject(ctx context.Context, arg sqlcgen.RepinIPFSObjectParams) error
 	EnqueueIPFSUnpin(ctx context.Context, objectKey string) error
 	ClaimDueIPFSPins(ctx context.Context, arg sqlcgen.ClaimDueIPFSPinsParams) ([]sqlcgen.ClaimDueIPFSPinsRow, error)
@@ -107,6 +108,10 @@ type Config struct {
 	// mirror action. In v1 it only ever carries already-node-pinned (public) media
 	// (spec §7); private-media mirroring is out of scope.
 	Cluster ipfs.ClusterClient
+	// Catalog is the read-only source the one-shot admin backfill (P19.6) scans to
+	// seed pin intents for pre-existing eligible objects. Nil except in the wiring
+	// that serves POST /admin/ipfs/reconcile; Backfill errors cleanly when it is nil.
+	Catalog Catalog
 }
 
 // Service is the mirror sidecar: enqueue helpers (called from the authoritative
@@ -119,6 +124,7 @@ type Service struct {
 	blobs   storage.Backend
 	client  ipfs.Client
 	cluster ipfs.ClusterClient
+	catalog Catalog
 
 	enabled        bool
 	gatewayURL     string
@@ -140,6 +146,7 @@ func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Cl
 		blobs:          blobs,
 		client:         client,
 		cluster:        cfg.Cluster,
+		catalog:        cfg.Catalog,
 		enabled:        cfg.Enabled,
 		gatewayURL:     cfg.GatewayURL,
 		clusterEnabled: cfg.ClusterEnabled,

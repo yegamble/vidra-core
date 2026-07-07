@@ -41,6 +41,24 @@ func (r *fakeRepo) UpsertIPFSPinIntent(ctx context.Context, arg sqlcgen.UpsertIP
 	return *row, nil
 }
 
+func (r *fakeRepo) BackfillIPFSPinIntent(ctx context.Context, arg sqlcgen.BackfillIPFSPinIntentParams) (int64, error) {
+	// ON CONFLICT DO NOTHING: insert only when the object has no row yet; return 1
+	// when a row was inserted, 0 when one already existed (any state) — the
+	// idempotency signal the backfill tallies.
+	if _, ok := r.rows[arg.ObjectKey]; ok {
+		return 0, nil
+	}
+	r.rows[arg.ObjectKey] = &sqlcgen.MediaIpfsPin{
+		ObjectKey:     arg.ObjectKey,
+		MediaClass:    arg.MediaClass,
+		VideoID:       arg.VideoID,
+		OwnerUserID:   arg.OwnerUserID,
+		State:         "pending",
+		NextAttemptAt: time.Now().UTC(),
+	}
+	return 1, nil
+}
+
 func (r *fakeRepo) RepinIPFSObject(ctx context.Context, arg sqlcgen.RepinIPFSObjectParams) error {
 	row, ok := r.rows[arg.ObjectKey]
 	if !ok {

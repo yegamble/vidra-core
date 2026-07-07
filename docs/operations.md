@@ -12,7 +12,8 @@ backend-specific companion.
 | Store | Role | Backup? |
 |-------|------|---------|
 | **PostgreSQL** | Durable system of record (users, videos, jobs, moderation, federation). | **Yes — authoritative.** |
-| **Media blobs** (local disk / S3 / IPFS) | Uploaded + transcoded media, thumbnails, captions, export archives. | **Yes — must stay consistent with the DB.** |
+| **Media blobs** (local disk / S3) | Uploaded + transcoded media, thumbnails, captions, export archives. The authoritative store. | **Yes — must stay consistent with the DB.** |
+| **IPFS pinset** (optional mirror) | Content-addressed *copies* of already-public media only (a distribution surface, never authoritative). | **No — re-derivable from the authoritative store via `POST /admin/ipfs/reconcile`.** |
 | **Redis** | Cache, rate-limit counters, idempotency keys, view-dedupe, short locks. | **No.** Ephemeral; safe to flush. It is never the source of truth for data that must survive a restart. |
 
 Back up PostgreSQL and media on the **same cadence** so blob references in the DB
@@ -47,9 +48,45 @@ safe.
   secrets — never commit or log them.
 - **`STORAGE_BACKEND=local`** (dev / small single-host): snapshot the media volume
   (`docker volume` or a filesystem snapshot) on the same schedule as the DB dump.
-- **IPFS**: content is addressed by CID and pinned; ensure the pinning service /
-  local node persists its datastore. CIDs are recorded in PostgreSQL, so the DB
-  dump plus a healthy pinset reconstructs availability.
+
+`STORAGE_BACKEND=ipfs` is **not** a valid backend — IPFS is a mirror sidecar, never
+authoritative (it is rejected at config load). See the next section.
+
+## IPFS mirror (pinset) — a distribution surface, not a backup
+
+When `IPFS_ENABLED=true` (`IPFS_API_URL` + `IPFS_GATEWAY_URL` required), the mirror
+add+pins **only already-public media** — public+published videos and their
+derivatives (HLS tree, thumbnail, storyboard, captions, VP9), non-unlisted
+user/channel avatars+banners, and public playlist covers — to a Kubo node, records
+each CID in the `media_ipfs_pins` ledger, and exposes the CID / gateway URL
+additively in API responses. Nothing private/unlisted/quarantined/DM/export is ever
+pinned (the eligibility gate is a hard privacy fence). Local/S3 stays the only
+authoritative copy.
+
+**The pinset is a distribution surface, never a backup.** Do **not** back up the
+Kubo datastore for durability — it holds only re-derivable copies of already-public
+bytes:
+
+- **Backup source of truth stays PostgreSQL + the authoritative blob store.** The
+  DB dump + media snapshot (above) is a complete, restorable backup on their own.
+- **The pinset is re-derivable.** After a node loss, a fresh node, or a restore,
+  run `POST /api/v1/admin/ipfs/reconcile` (admin, audited). It re-arms any
+  dead-lettered pins and seeds a pin intent for every eligible public object that
+  has no ledger row; the mirror worker then re-adds+pins them from the authoritative
+  store. It is idempotent — a second run enqueues zero. Watch progress and node
+  health with `GET /api/v1/ipfs/status` (counts per state/class + `node_reachable`).
+- **Node GC.** Unpinning (on delete, or when a video goes private / a user goes
+  unlisted) only marks a CID's blocks collectable — actual disk is reclaimed by the
+  node's own garbage collector, `ipfs repo gc` (run it on a schedule or when the
+  datastore grows). A CID is unpinned only after a reference check confirms no other
+  live pin shares it (content-address dedupe).
+- **⚠️ Unpin ≠ erasure on a public network.** Once a CID is public it may have been
+  fetched, cached, or re-pinned by other nodes and the DHT; unpinning removes *our*
+  obligation to serve it but cannot guarantee erasure elsewhere. Treat every public
+  pin as a **permanent public disclosure** — which is exactly why only
+  already-public media is ever eligible, and why `IPFS_MIRROR_PRIVATE=true` is a hard
+  config error without a private `IPFS_CLUSTER_API_URL`. If an object must be
+  provably unrecoverable, it must never have been public in the first place.
 
 ## Restore drill
 

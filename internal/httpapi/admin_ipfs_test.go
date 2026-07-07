@@ -9,9 +9,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
+	"github.com/vidra/vidra-core/internal/observability"
 )
 
 // ipfsServer builds an auth-enabled server with the given config so the IPFS
@@ -34,6 +36,11 @@ type fakeIPFSMirror struct {
 	// PinnedVideoIDs reports true for. Both default to empty/nothing pinned.
 	videoPins map[uuid.UUID]ipfsmirror.VideoIPFS
 	pinnedIDs map[uuid.UUID]bool
+	// reconcile/backfill test knobs + call counters.
+	rearmed       int64
+	backfill      ipfsmirror.BackfillCounts
+	reconcileHits int
+	backfillHits  int
 }
 
 func (f *fakeIPFSMirror) Status(ctx context.Context) (ipfsmirror.Status, error) {
@@ -42,6 +49,14 @@ func (f *fakeIPFSMirror) Status(ctx context.Context) (ipfsmirror.Status, error) 
 func (f *fakeIPFSMirror) ReevaluateUser(ctx context.Context, userID uuid.UUID) error {
 	f.reevalHits++
 	return nil
+}
+func (f *fakeIPFSMirror) Reconcile(ctx context.Context) (int64, error) {
+	f.reconcileHits++
+	return f.rearmed, nil
+}
+func (f *fakeIPFSMirror) Backfill(ctx context.Context) (ipfsmirror.BackfillCounts, error) {
+	f.backfillHits++
+	return f.backfill, nil
 }
 func (f *fakeIPFSMirror) VideoPins(ctx context.Context, videoID uuid.UUID) (ipfsmirror.VideoIPFS, bool, error) {
 	if p, ok := f.videoPins[videoID]; ok {
@@ -121,6 +136,72 @@ func TestIPFSEnabledNotImplemented(t *testing.T) {
 	}
 	if rec := postJSONWithAuth(srv, "/api/v1/admin/ipfs/reconcile", admin, `{}`); rec.Code != http.StatusNotImplemented {
 		t.Errorf("reconcile (enabled) = %d, want 501; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestIPFSReconcileEnabled: enabled with a wired mirror, POST /admin/ipfs/reconcile
+// runs the real one-shot scan — re-arm dead-letters + seed missing pin intents —
+// returning 202 with the per-class counts (schema IPFSReconcileResult). Admin-gated
+// and audit-logged.
+func TestIPFSReconcileEnabled(t *testing.T) {
+	cfg := testConfig()
+	cfg.IPFSEnabled = true
+	cfg.IPFSAPIURL = "http://ipfs:5001"
+	cfg.IPFSGatewayURL = "https://gw.example.org"
+
+	mirror := &fakeIPFSMirror{
+		rearmed: 3,
+		backfill: ipfsmirror.BackfillCounts{
+			Total:   5,
+			ByClass: map[string]int64{"video_original": 2, "thumbnail": 2, "user_avatar": 1},
+		},
+	}
+	auditRepo := &httpAuditFakeRepo{}
+	srv := ipfsServer(t, cfg, WithIPFSMirrorService(mirror), WithAuditLog(audit.NewService(auditRepo)))
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	rec := postJSONWithAuth(srv, "/api/v1/admin/ipfs/reconcile", admin, `{}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("reconcile (enabled+mirror) = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var got ipfsReconcileResultView
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode reconcile result: %v", err)
+	}
+	if got.Enqueued != 5 {
+		t.Errorf("enqueued = %d, want 5", got.Enqueued)
+	}
+	if got.ByClass["video_original"] != 2 || got.ByClass["thumbnail"] != 2 || got.ByClass["user_avatar"] != 1 {
+		t.Errorf("by_class = %+v, want {video_original:2, thumbnail:2, user_avatar:1}", got.ByClass)
+	}
+	if mirror.backfillHits != 1 {
+		t.Errorf("Backfill called %d times, want 1", mirror.backfillHits)
+	}
+	if mirror.reconcileHits != 1 {
+		t.Errorf("Reconcile (re-arm) called %d times, want 1", mirror.reconcileHits)
+	}
+
+	// Audit-logged: exactly one admin.ipfs.reconcile success by the admin.
+	found := false
+	for _, r := range auditRepo.rows {
+		if r.Action == observability.ActionIPFSReconcile && r.Result == observability.ResultSuccess {
+			found = true
+			if !r.ActorID.Valid {
+				t.Error("reconcile audit entry missing actor_id")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no admin.ipfs.reconcile success in the audit log; rows=%+v", auditRepo.rows)
+	}
+
+	// Still admin-gated.
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	if rec := postJSONWithAuth(srv, "/api/v1/admin/ipfs/reconcile", bob, `{}`); rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin reconcile = %d, want 403", rec.Code)
+	}
+	if rec := postJSONWithAuth(srv, "/api/v1/admin/ipfs/reconcile", "", `{}`); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anon reconcile = %d, want 401", rec.Code)
 	}
 }
 

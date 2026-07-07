@@ -29,6 +29,11 @@ type sqlQueries interface {
 	GetUserImage(ctx context.Context, arg sqlcgen.GetUserImageParams) (sqlcgen.UserImage, error)
 	GetChannelImage(ctx context.Context, arg sqlcgen.GetChannelImageParams) (sqlcgen.ChannelImage, error)
 	ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.Channel, error)
+	// Backfill catalog scans (P19.6): the bulk enumeration the one-shot admin
+	// reconcile uses (Catalog interface, backfill.go).
+	ListBackfillVideoObjects(ctx context.Context) ([]sqlcgen.ListBackfillVideoObjectsRow, error)
+	ListBackfillIdentityImages(ctx context.Context) ([]sqlcgen.ListBackfillIdentityImagesRow, error)
+	ListBackfillPlaylistCovers(ctx context.Context) ([]sqlcgen.ListBackfillPlaylistCoversRow, error)
 }
 
 // SQLLookups is the production Lookups backed by sqlc queries. A missing row

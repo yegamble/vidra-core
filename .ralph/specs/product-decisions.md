@@ -74,8 +74,20 @@ exports, upload chunks, the live edge, and remote-cache thumbnails are all
 excluded by the eligibility gate. `IPFS_MIRROR_PRIVATE=true` is a hard config
 error unless a private `IPFS_CLUSTER_API_URL` is set, and private-media mirroring
 stays out of scope until the user signs off AND the Messaging v2 spec defines the
-attachment contract. Tracked in `fix_plan.md#P19` (slices P19.1–P19.6) and the
-extensions ledger row `VIDRA-IPFS-STORAGE` (IN_PROGRESS).
+attachment contract.
+
+**Status 2026-07-07: SHIPPED.** All six slices (P19.1–P19.6) are implemented and
+tested against the shipped spec `.ralph/specs/ipfs-media.md`: migration 0071
+`media_ipfs_pins`, the `IPFS_*` config surface + privacy guard, the `internal/ipfs`
+Kubo client + CID validation, the `internal/ipfsmirror` worker + eligibility privacy
+fence + reconciliation + video/HLS pin lifecycle + optional cluster replication, the
+additive `ipfs`/`ipfs_pinned` API fields, the admin `GET /api/v1/ipfs/status` and the
+one-shot `POST /api/v1/admin/ipfs/reconcile` backfill (audited, idempotent), the
+compose `ipfs` profile + tagged integration tests, and the operator runbook in
+`docs/operations.md`. Tracked in `fix_plan.md#P19` and the extensions ledger row
+`VIDRA-IPFS-STORAGE` (VERIFIED backend). The remaining surface is the cross-repo
+vidra-user IPFS badge/admin panel that consumes the shipped `ipfs_pinned` field +
+`/ipfs/status` endpoint.
 
 ## 6. Signed URLs vs proxy (P6.2) — DECISION (proxy in v1)
 

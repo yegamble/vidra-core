@@ -307,9 +307,12 @@ func run() error {
 			ipfsCluster = ipfs.NewKuboClusterClient(cfg.IPFSClusterAPIURL, cfg.IPFSClusterToken, &http.Client{Timeout: cfg.IPFSAddTimeout})
 		}
 	}
+	// One SQLLookups value serves both the per-entity Lookups (enqueue hooks) and
+	// the bulk Catalog (the one-shot admin backfill, P19.6).
+	ipfsLookups := ipfsmirror.NewSQLLookups(db.Queries())
 	ipfsMirror := ipfsmirror.New(
 		db.Queries(),
-		ipfsmirror.NewSQLLookups(db.Queries()),
+		ipfsLookups,
 		blobs,
 		ipfsClient,
 		ipfsmirror.Config{
@@ -320,6 +323,7 @@ func run() error {
 			Concurrency:    cfg.IPFSPinConcurrency,
 			Logger:         logger,
 			Cluster:        ipfsCluster,
+			Catalog:        ipfsLookups,
 		},
 	)
 	opts = append(opts, httpapi.WithIPFSMirrorService(ipfsMirror))

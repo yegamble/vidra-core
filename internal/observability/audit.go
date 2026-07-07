@@ -55,6 +55,11 @@ const (
 	ActionVideoDelete         = "content.video.delete"
 	ActionChannelDelete       = "content.channel.delete"
 	ActionMediaGC             = "admin.media.gc"
+	// ActionIPFSReconcile records an admin kicking the one-shot IPFS mirror
+	// reconcile/backfill (P19.6): re-arm dead-lettered pins + seed pin intents for
+	// eligible pre-existing public objects. Reason carries only safe counts
+	// (enqueued, classes, rearmed) — never a CID or object key.
+	ActionIPFSReconcile = "admin.ipfs.reconcile"
 	// ActionDonationVerify records a creator proving control of a donation
 	// address by signing the challenge (P14). Reason carries the safe address
 	// id + network only — never the signature, nonce, or any key material.
