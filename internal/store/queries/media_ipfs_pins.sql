@@ -132,3 +132,15 @@ SELECT * FROM media_ipfs_pins WHERE object_key = $1;
 -- Every ledger row for a video (privacy re-evaluation + cascade unpin, P19.3),
 -- off media_ipfs_pins_video_idx.
 SELECT * FROM media_ipfs_pins WHERE video_id = $1 ORDER BY media_class, object_key;
+
+-- name: ListPinnedVideoIDs :many
+-- Feed/card badge batch lookup (P19.3): of the given video ids, which have at
+-- least one currently-pinned ledger row. One indexed scan for a whole page (the
+-- ipfs_pinned boolean), off media_ipfs_pins_video_idx, so the badge never costs
+-- a per-card query. Only 'pinned' rows count — a video whose media was unpinned
+-- (went private) is correctly reported as not pinned.
+SELECT DISTINCT video_id
+FROM media_ipfs_pins
+WHERE state = 'pinned'
+  AND video_id IS NOT NULL
+  AND video_id = ANY(sqlc.arg('video_ids')::uuid[]);

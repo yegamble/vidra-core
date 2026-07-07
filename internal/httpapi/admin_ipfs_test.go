@@ -30,6 +30,10 @@ func ipfsServer(t *testing.T, cfg *config.Config, extra ...Option) *Server {
 type fakeIPFSMirror struct {
 	status     ipfsmirror.Status
 	reevalHits int
+	// videoPins is returned (with ok=true) by VideoPins; pinnedIDs is the set
+	// PinnedVideoIDs reports true for. Both default to empty/nothing pinned.
+	videoPins map[uuid.UUID]ipfsmirror.VideoIPFS
+	pinnedIDs map[uuid.UUID]bool
 }
 
 func (f *fakeIPFSMirror) Status(ctx context.Context) (ipfsmirror.Status, error) {
@@ -38,6 +42,21 @@ func (f *fakeIPFSMirror) Status(ctx context.Context) (ipfsmirror.Status, error) 
 func (f *fakeIPFSMirror) ReevaluateUser(ctx context.Context, userID uuid.UUID) error {
 	f.reevalHits++
 	return nil
+}
+func (f *fakeIPFSMirror) VideoPins(ctx context.Context, videoID uuid.UUID) (ipfsmirror.VideoIPFS, bool, error) {
+	if p, ok := f.videoPins[videoID]; ok {
+		return p, true, nil
+	}
+	return ipfsmirror.VideoIPFS{}, false, nil
+}
+func (f *fakeIPFSMirror) PinnedVideoIDs(ctx context.Context, videoIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := map[uuid.UUID]bool{}
+	for _, id := range videoIDs {
+		if f.pinnedIDs[id] {
+			out[id] = true
+		}
+	}
+	return out, nil
 }
 
 // TestIPFSStatusDisabled: with IPFS off (the default), the admin status endpoint

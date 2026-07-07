@@ -9,6 +9,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -206,6 +207,39 @@ func (q *Queries) ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) 
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPinnedVideoIDs = `-- name: ListPinnedVideoIDs :many
+SELECT DISTINCT video_id
+FROM media_ipfs_pins
+WHERE state = 'pinned'
+  AND video_id IS NOT NULL
+  AND video_id = ANY($1::uuid[])
+`
+
+// Feed/card badge batch lookup (P19.3): of the given video ids, which have at
+// least one currently-pinned ledger row. One indexed scan for a whole page (the
+// ipfs_pinned boolean), off media_ipfs_pins_video_idx, so the badge never costs
+// a per-card query. Only 'pinned' rows count — a video whose media was unpinned
+// (went private) is correctly reported as not pinned.
+func (q *Queries) ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listPinnedVideoIDs, videoIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var video_id pgtype.UUID
+		if err := rows.Scan(&video_id); err != nil {
+			return nil, err
+		}
+		items = append(items, video_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

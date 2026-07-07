@@ -27,6 +27,12 @@ import (
 type ipfsMirrorProvider interface {
 	Status(ctx context.Context) (ipfsmirror.Status, error)
 	ReevaluateUser(ctx context.Context, userID uuid.UUID) error
+	// VideoPins backs the detail `ipfs` object: the pinned original/HLS CIDs +
+	// gateway base for one video (ok=false when nothing is pinned).
+	VideoPins(ctx context.Context, videoID uuid.UUID) (ipfsmirror.VideoIPFS, bool, error)
+	// PinnedVideoIDs backs the card/feed `ipfs_pinned` badge: which of the given
+	// videos have at least one pinned object, in one batched query.
+	PinnedVideoIDs(ctx context.Context, videoIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 }
 
 // ipfsPinCountsView is the {pinned,pending,failed,unpinned} tally (schema

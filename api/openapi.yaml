@@ -9412,6 +9412,54 @@ components:
             hls_url on the detail endpoint once transcoding completed.
           items:
             $ref: "#/components/schemas/VideoRendition"
+        ipfs_pinned:
+          type: boolean
+          description: >-
+            Whether at least one of this video's media objects is currently
+            pinned to IPFS (fix_plan P19, .ralph/specs/ipfs-media.md). Drives the
+            "IPFS" thumbnail badge on card/feed views. Present (true) only for
+            public+published videos whose media the mirror has pinned; omitted
+            (treat as false) otherwise, and always absent when IPFS_ENABLED is
+            off. IPFS is a MIRROR SIDECAR — local/S3 remains authoritative, so a
+            false/absent value never affects playback.
+        ipfs:
+          allOf:
+            - $ref: "#/components/schemas/VideoIPFS"
+          description: >-
+            IPFS mirror CIDs for this video, present on the DETAIL endpoint only
+            when the video is public+published and at least one object is pinned;
+            omitted otherwise. CIDs are NEVER emitted for non-public videos
+            regardless of caller (privacy invariant). Serving is unchanged —
+            these are additive, content-address handles for clients that prefer a
+            gateway fetch.
+    VideoIPFS:
+      type: object
+      description: >-
+        Pinned IPFS content identifiers for a public+published video (fix_plan
+        P19). Each CID is a validated CIDv1; a client resolves an object as
+        {gateway_url}/ipfs/{cid}. Fields are omitted when the corresponding
+        object is not pinned.
+      properties:
+        original_cid:
+          type: string
+          description: >-
+            CIDv1 of the pinned video original (web-videos/<id><ext>). Omitted
+            until the original is pinned.
+          example: bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi
+        hls_cid:
+          type: string
+          description: >-
+            CIDv1 (wrap-directory root) of the pinned HLS tree. Populated once
+            the HLS directory add lands (P19.4); omitted until then or when the
+            video has no transcoded HLS.
+        gateway_url:
+          type: string
+          description: >-
+            Public IPFS gateway base (from IPFS_GATEWAY_URL) under which the CIDs
+            resolve, e.g. https://ipfs.example.org. Built only from the
+            configured gateway and validated CIDs — never a caller-supplied
+            value.
+          example: https://ipfs.example.org
     VideoRendition:
       type: object
       description: One transcoded HLS rendition (ladder rung) of a video.

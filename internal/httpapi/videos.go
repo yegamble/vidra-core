@@ -166,6 +166,24 @@ type videoView struct {
 	// Renditions lists the available ladder rungs alongside it.
 	HLSURL     *string         `json:"hls_url,omitempty"`
 	Renditions []renditionView `json:"renditions,omitempty"`
+	// IPFSPinned drives the card/feed IPFS badge (fix_plan P19): true when at
+	// least one of the video's objects is pinned to IPFS. Emitted only when true
+	// (a false/absent value means not pinned), and never for non-public videos —
+	// only public+published videos have pinned media. Always absent when
+	// IPFS_ENABLED is off.
+	IPFSPinned bool `json:"ipfs_pinned,omitempty"`
+	// IPFS carries the pinned CIDs on the DETAIL view, present only for a
+	// public+published video with at least one pinned object; omitted otherwise.
+	// CIDs are never emitted for non-public videos regardless of caller.
+	IPFS *videoIPFSView `json:"ipfs,omitempty"`
+}
+
+// videoIPFSView is the detail `ipfs` object (schema VideoIPFS): validated CIDs +
+// the gateway base a client resolves them under ({gateway_url}/ipfs/{cid}).
+type videoIPFSView struct {
+	OriginalCID string `json:"original_cid,omitempty"`
+	HLSCID      string `json:"hls_cid,omitempty"`
+	GatewayURL  string `json:"gateway_url,omitempty"`
 }
 
 func newVideoView(v sqlcgen.Video) videoView {
@@ -268,6 +286,72 @@ func (s *Server) attachVideoTags(ctx context.Context, view *videoView, videoID u
 	}
 }
 
+// ipfsMirrorEnabled reports whether the IPFS mirror read surfaces should be
+// consulted at all (master switch on + a mirror service wired on this build).
+func (s *Server) ipfsMirrorEnabled() bool {
+	return s.cfg.IPFSEnabled && s.ipfsmirrorsvc != nil
+}
+
+// attachVideoIPFS populates the detail `ipfs` object for a PUBLIC+PUBLISHED video
+// from the pin ledger (fix_plan P19.3). It is the CID-emission gate: CIDs are
+// NEVER exposed for a non-public/non-published video regardless of caller, and
+// the gateway URL is built only from the configured IPFS_GATEWAY_URL + validated
+// CIDs (inside the mirror service). Best-effort — a lookup failure leaves the
+// field absent rather than failing the read (IPFS is non-authoritative).
+func (s *Server) attachVideoIPFS(ctx context.Context, view *videoView, videoID uuid.UUID, privacy, state string) {
+	if !s.ipfsMirrorEnabled() || privacy != "public" || state != "published" {
+		return
+	}
+	pins, ok, err := s.ipfsmirrorsvc.VideoPins(ctx, videoID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "ipfs video pins lookup failed", "error", err, "video_id", videoID)
+		return
+	}
+	if !ok {
+		return
+	}
+	view.IPFS = &videoIPFSView{
+		OriginalCID: pins.OriginalCID,
+		HLSCID:      pins.HLSCID,
+		GatewayURL:  pins.GatewayURL,
+	}
+}
+
+// attachIPFSPinned sets ipfs_pinned=true on each LOCAL card whose video has at
+// least one pinned object (fix_plan P19.3), resolved in one batched query for the
+// whole page (never a per-card lookup). Remote cards carry no local ledger and are
+// skipped. Best-effort — a lookup failure leaves every badge false.
+func (s *Server) attachIPFSPinned(ctx context.Context, views []videoView) {
+	if !s.ipfsMirrorEnabled() || len(views) == 0 {
+		return
+	}
+	ids := make([]uuid.UUID, 0, len(views))
+	for i := range views {
+		if views[i].Remote {
+			continue
+		}
+		if id, err := uuid.Parse(views[i].ID); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	pinned, err := s.ipfsmirrorsvc.PinnedVideoIDs(ctx, ids)
+	if err != nil {
+		s.logger.WarnContext(ctx, "ipfs pinned-videos lookup failed", "error", err)
+		return
+	}
+	for i := range views {
+		if views[i].Remote {
+			continue
+		}
+		if id, err := uuid.Parse(views[i].ID); err == nil && pinned[id] {
+			views[i].IPFSPinned = true
+		}
+	}
+}
+
 // handleGetVideo returns a video by id. Runs behind optionalAuth: public and
 // unlisted videos are visible to anyone with the link; a private video is
 // visible only to its owner, and is reported as 404 (not 403) to everyone else
@@ -315,6 +399,7 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	view.Views = &views
 	s.attachVideoTags(c.Request().Context(), &view, id)
 	view.HLSURL, view.Renditions = s.hlsDetail(c, id)
+	s.attachVideoIPFS(c.Request().Context(), &view, id, v.Privacy, v.State)
 	return c.JSON(http.StatusOK, view)
 }
 
@@ -416,6 +501,7 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, feedItemView(it))
 	}
+	s.attachIPFSPinned(c.Request().Context(), views)
 	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: sort, Scope: scope, Limit: limit, Offset: offset})
 }
 
@@ -440,6 +526,7 @@ func (s *Server) handleListSubscriptionVideos(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, feedItemView(it))
 	}
+	s.attachIPFSPinned(c.Request().Context(), views)
 	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: "recent", Limit: limit, Offset: offset})
 }
 
@@ -500,6 +587,7 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, feedItemView(it))
 	}
+	s.attachIPFSPinned(c.Request().Context(), views)
 	return c.JSON(http.StatusOK, videoSearchResponse{Query: q, Videos: views, Limit: limit, Offset: offset})
 }
 
@@ -549,6 +637,7 @@ func (s *Server) handleListChannelVideos(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, feedItemView(it))
 	}
+	s.attachIPFSPinned(c.Request().Context(), views)
 	return c.JSON(http.StatusOK, videoListResponse{Videos: views})
 }
 

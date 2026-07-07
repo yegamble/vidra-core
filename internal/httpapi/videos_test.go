@@ -770,6 +770,12 @@ func videoServerEnv(t *testing.T, cfg *config.Config, opts ...video.Option) (*Se
 // that need to manipulate stored video state directly (e.g. rewinding a
 // scheduled publish_at so the sweeper sees it as due).
 func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*Server, storage.Backend, *transcodeFakeRepo, *notifFakeRepo, *videoFakeRepo) {
+	return videoServerFullWith(t, cfg, nil, opts...)
+}
+
+// videoServerFullWith is videoServerFull with extra httpapi options (e.g. a fake
+// IPFS mirror), so a test can exercise the additive IPFS serving fields end to end.
+func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, opts ...video.Option) (*Server, storage.Backend, *transcodeFakeRepo, *notifFakeRepo, *videoFakeRepo) {
 	t.Helper()
 	chRepo := newChannelFakeRepo()
 	authRepo := newAuthFakeRepo()
@@ -877,6 +883,9 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 		WithInstanceModerationService(instancemod.NewService(newInstanceModFakeRepo())),
 		WithMediaStorage(blobs),
 	)
+	for _, opt := range httpOpts {
+		opt(srv)
+	}
 	return srv, blobs, tcRepo, notifRepo, repo
 }
 

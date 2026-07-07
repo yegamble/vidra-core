@@ -48,6 +48,7 @@ type Repository interface {
 	CountIPFSPinsByStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByStateClassRow, error)
 	CountIPFSPinsSharingCID(ctx context.Context, arg sqlcgen.CountIPFSPinsSharingCIDParams) (int64, error)
 	ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) ([]sqlcgen.MediaIpfsPin, error)
+	ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID) ([]pgtype.UUID, error)
 }
 
 // VideoFileRef is one stored video-file object (video_files row) the mirror may
@@ -198,14 +199,21 @@ func (s *Service) EnqueueChannelImage(ctx context.Context, channelID uuid.UUID, 
 	return s.upsertPin(ctx, objectKey, class, uuid.Nil, owner)
 }
 
-// SyncVideo re-evaluates a video's IMAGE-DERIVATIVE ledger rows (thumbnail,
-// storyboard, storyboard vtt, captions) against the video's current
-// privacy+state, enqueuing pins for now-eligible derivatives and unpins for
-// now-ineligible ones. It is the single entrypoint wired to the publish, privacy
-// -update and unpublish transitions — public+published enqueues, anything else
-// unpins — so eligibility is always derived from committed state. Video originals
-// and the HLS tree are added on the publish transition in P19.3/P19.4; this slice
-// handles the derivatives. No-op when disabled.
+// SyncVideo re-evaluates a video's ledger against its current privacy+state and
+// is the single entrypoint wired to the publish, privacy-update and unpublish
+// transitions, so eligibility is always derived from committed state. Every
+// video-derived class shares ONE gate (public+published), so the whole video
+// flips together:
+//   - eligible ⇒ (re)pin the original (web-videos/<id><ext>), the VP9/WebM
+//     alternate, and the image derivatives (thumbnail, storyboard, storyboard
+//     vtt, captions) that currently exist. private→public re-pins them all.
+//   - ineligible (public→private, unpublish, quarantine) ⇒ unpin ALL of the
+//     video's ledger rows — including the HLS row added in P19.4 and any orphan
+//     rows — so nothing non-public lingers pinned. This is the privacy fence at
+//     the video level.
+//
+// The HLS directory add itself is enqueued on transcode completion in P19.4; the
+// unpin-all path here already covers its removal. No-op when disabled.
 func (s *Service) SyncVideo(ctx context.Context, videoID uuid.UUID) error {
 	if !s.enabled {
 		return nil
@@ -214,17 +222,18 @@ func (s *Service) SyncVideo(ctx context.Context, videoID uuid.UUID) error {
 	if err != nil || !ok {
 		return err
 	}
-	refs, err := s.videoDerivativeRefs(ctx, videoID)
+	// A representative video-derived class decides the whole video (they share the
+	// public+published gate).
+	if !Eligible(Subject{Class: ClassVideoOriginal, VideoPrivacy: privacy, VideoState: state}) {
+		return s.unpinAllForVideo(ctx, videoID)
+	}
+	refs, err := s.videoMirrorRefs(ctx, videoID)
 	if err != nil {
 		return err
 	}
 	for _, ref := range refs {
-		if Eligible(Subject{Class: ref.Class, VideoPrivacy: privacy, VideoState: state}) {
-			if perr := s.upsertPin(ctx, ref.ObjectKey, ref.Class, videoID, uuid.Nil); perr != nil {
-				return perr
-			}
-		} else if uerr := s.repo.EnqueueIPFSUnpin(ctx, ref.ObjectKey); uerr != nil {
-			return uerr
+		if perr := s.upsertPin(ctx, ref.ObjectKey, ref.Class, videoID, uuid.Nil); perr != nil {
+			return perr
 		}
 	}
 	return nil
@@ -237,6 +246,14 @@ func (s *Service) UnpinVideo(ctx context.Context, videoID uuid.UUID) error {
 	if !s.enabled {
 		return nil
 	}
+	return s.unpinAllForVideo(ctx, videoID)
+}
+
+// unpinAllForVideo flips every ledger row of a video toward removal. Shared by
+// the unpublish/private transition (SyncVideo) and the delete path (UnpinVideo):
+// listing by video_id catches every class — original, VP9, image derivatives and
+// the HLS tree — plus any orphan row whose object key is no longer a current file.
+func (s *Service) unpinAllForVideo(ctx context.Context, videoID uuid.UUID) error {
 	rows, err := s.repo.ListIPFSPinsByVideo(ctx, pgUUID(videoID))
 	if err != nil {
 		return err
@@ -344,18 +361,18 @@ func (s *Service) upsertPin(ctx context.Context, objectKey string, class MediaCl
 	return err
 }
 
-// videoDerivativeRefs is the video's mirror-eligible IMAGE derivatives: the
-// thumbnail/storyboard/storyboard-vtt video_files plus caption tracks. Originals
-// (video_original) and the VP9 alternate (webm) are enqueued on the publish
-// transition in P19.3; the HLS tree in P19.4 — this slice covers the derivatives.
-func (s *Service) videoDerivativeRefs(ctx context.Context, videoID uuid.UUID) ([]ImageRef, error) {
+// videoMirrorRefs is the video's currently-stored, mirror-eligible objects: the
+// single-file video_files rows (original, VP9/WebM alternate, thumbnail,
+// storyboard, storyboard vtt) plus caption tracks. The HLS tree is a directory
+// add enqueued on transcode completion in P19.4, not from here.
+func (s *Service) videoMirrorRefs(ctx context.Context, videoID uuid.UUID) ([]ImageRef, error) {
 	var refs []ImageRef
 	files, err := s.lookups.VideoFiles(ctx, videoID)
 	if err != nil {
 		return nil, err
 	}
 	for _, f := range files {
-		if cls, ok := imageDerivativeClass(f.Kind); ok {
+		if cls, ok := videoFileMirrorClass(f.Kind); ok {
 			refs = append(refs, ImageRef{Class: cls, ObjectKey: f.StorageKey})
 		}
 	}
@@ -369,11 +386,17 @@ func (s *Service) videoDerivativeRefs(ctx context.Context, videoID uuid.UUID) ([
 	return refs, nil
 }
 
-// imageDerivativeClass maps a video_files.kind to the mirror MediaClass for the
-// classes THIS slice enqueues. 'original' and 'webm' are intentionally absent
-// (P19.3); 'hls' is a directory add (P19.4).
-func imageDerivativeClass(kind string) (MediaClass, bool) {
+// videoFileMirrorClass maps a video_files.kind to the mirror MediaClass for the
+// single-file classes SyncVideo enqueues: the original and VP9/WebM alternate
+// (P19.3) plus the image derivatives (P19.2). 'hls' is intentionally absent — the
+// HLS tree is a directory/wrap add (P19.4), enqueued as one media_class='hls' row
+// on transcode completion, not a per-file row here.
+func videoFileMirrorClass(kind string) (MediaClass, bool) {
 	switch kind {
+	case "original":
+		return ClassVideoOriginal, true
+	case "webm":
+		return ClassWebM, true
 	case "thumbnail":
 		return ClassThumbnail, true
 	case "storyboard":
@@ -387,6 +410,89 @@ func imageDerivativeClass(kind string) (MediaClass, bool) {
 // pgUUID converts a uuid.UUID to pgtype.UUID, leaving the zero UUID as SQL NULL.
 func pgUUID(id uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: id, Valid: id != uuid.Nil}
+}
+
+// ---- read models (additive API serving surfaces) --------------------------
+
+// VideoIPFS is the pinned-CID summary the video-detail handler exposes as the
+// additive `ipfs` object. Every CID is a validated CIDv1; GatewayURL is the
+// configured public gateway base so a client resolves an object as
+// {GatewayURL}/ipfs/{cid}. Empty fields are omitted from the response.
+type VideoIPFS struct {
+	OriginalCID string
+	HLSCID      string
+	GatewayURL  string
+}
+
+// VideoPins returns the pinned original/HLS CIDs for a video, for the detail
+// `ipfs` object. ok is false (and VideoIPFS zero) when the mirror is disabled or
+// nothing is pinned. ONLY 'pinned'-state rows are considered and every CID is
+// re-validated before it is returned — an invalid or unvalidated CID is never
+// emitted, and the gateway URL comes solely from IPFS_GATEWAY_URL. The caller
+// (handler) is still responsible for the public+published gate: this method
+// reports what is pinned, the handler decides whether the video may expose it.
+func (s *Service) VideoPins(ctx context.Context, videoID uuid.UUID) (VideoIPFS, bool, error) {
+	if !s.enabled {
+		return VideoIPFS{}, false, nil
+	}
+	rows, err := s.repo.ListIPFSPinsByVideo(ctx, pgUUID(videoID))
+	if err != nil {
+		return VideoIPFS{}, false, err
+	}
+	var out VideoIPFS
+	for _, r := range rows {
+		if r.State != "pinned" || r.Cid == "" || ipfs.ValidateCID(r.Cid) != nil {
+			continue
+		}
+		switch MediaClass(r.MediaClass) {
+		case ClassVideoOriginal:
+			out.OriginalCID = r.Cid
+		case ClassHLS:
+			out.HLSCID = r.Cid
+		}
+	}
+	if out.OriginalCID == "" && out.HLSCID == "" {
+		return VideoIPFS{}, false, nil
+	}
+	out.GatewayURL = s.gatewayURL
+	return out, true, nil
+}
+
+// PinnedVideoIDs returns the subset of videoIDs that have at least one pinned
+// ledger row — the feed/card `ipfs_pinned` badge, resolved in ONE indexed query
+// for a whole page. Returns an empty set when the mirror is disabled or the input
+// is empty; nil/zero UUIDs are dropped. Only 'pinned' rows count, so a video that
+// went private (its media unpinned) is correctly reported as not pinned.
+func (s *Service) PinnedVideoIDs(ctx context.Context, videoIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	if !s.enabled || len(videoIDs) == 0 {
+		return nil, nil
+	}
+	ids := make([]uuid.UUID, 0, len(videoIDs))
+	seen := make(map[uuid.UUID]struct{}, len(videoIDs))
+	for _, id := range videoIDs {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := s.repo.ListPinnedVideoIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]bool, len(rows))
+	for _, r := range rows {
+		if r.Valid {
+			out[uuid.UUID(r.Bytes)] = true
+		}
+	}
+	return out, nil
 }
 
 // ---- worker ---------------------------------------------------------------

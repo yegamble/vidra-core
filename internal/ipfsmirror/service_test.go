@@ -163,6 +163,30 @@ func (r *fakeRepo) ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID)
 	return out, nil
 }
 
+func (r *fakeRepo) ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID) ([]pgtype.UUID, error) {
+	want := map[uuid.UUID]struct{}{}
+	for _, id := range videoIds {
+		want[id] = struct{}{}
+	}
+	seen := map[uuid.UUID]struct{}{}
+	var out []pgtype.UUID
+	for _, row := range r.rows {
+		if row.State != "pinned" || !row.VideoID.Valid {
+			continue
+		}
+		id := uuid.UUID(row.VideoID.Bytes)
+		if _, ok := want[id]; !ok {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, row.VideoID)
+	}
+	return out, nil
+}
+
 func (r *fakeRepo) state(key string) string {
 	if row, ok := r.rows[key]; ok {
 		return row.State
@@ -233,6 +257,15 @@ func putBlob(t *testing.T, b storage.Backend, key, data string) {
 
 func seedPending(r *fakeRepo, key, class string) {
 	r.rows[key] = &sqlcgen.MediaIpfsPin{ObjectKey: key, MediaClass: class, State: "pending", NextAttemptAt: time.Now().UTC().Add(-time.Second)}
+}
+
+// seedPinned inserts an already-pinned ledger row (state=pinned, valid CID) tied
+// to a video, for the read-model (VideoPins / PinnedVideoIDs) tests.
+func seedPinned(r *fakeRepo, key, class, cid string, videoID uuid.UUID) {
+	r.rows[key] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: key, MediaClass: class, State: "pinned", Cid: cid,
+		VideoID: pgtype.UUID{Bytes: videoID, Valid: videoID != uuid.Nil},
+	}
 }
 
 // ---- tests ----------------------------------------------------------------
@@ -456,44 +489,146 @@ func TestEnqueueUserImageGate(t *testing.T) {
 	}
 }
 
-// TestSyncVideoPublishThenPrivate: publishing a public video enqueues its image
-// derivatives (thumbnail + caption, NOT the original — that is P19.3); flipping it
-// private then unpins them.
+// TestSyncVideoPublishThenPrivate: publishing a public video enqueues its
+// original + VP9/WebM alternate + image derivatives (P19.3); flipping it private
+// then unpins ALL of the video's ledger rows (the video-level privacy fence).
 func TestSyncVideoPublishThenPrivate(t *testing.T) {
 	repo := newFakeRepo()
+	vid := uuid.New()
 	lk := &fakeLookups{
 		videoPrivacy: "public", videoState: "published", videoOK: true,
 		videoFiles: []VideoFileRef{
 			{Kind: "thumbnail", StorageKey: "thumbnails/v.jpg"},
 			{Kind: "original", StorageKey: "web-videos/v.mp4"},
+			{Kind: "webm", StorageKey: "streaming-playlists/v/vp9.webm"},
 		},
 		captionKeys: []string{"captions/v/en.vtt"},
 	}
 	svc := New(repo, lk, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
 
-	if err := svc.SyncVideo(context.Background(), uuid.New()); err != nil {
+	if err := svc.SyncVideo(context.Background(), vid); err != nil {
 		t.Fatalf("SyncVideo publish: %v", err)
 	}
-	if repo.state("thumbnails/v.jpg") != "pending" {
-		t.Errorf("thumbnail state = %q, want pending", repo.state("thumbnails/v.jpg"))
+	for _, key := range []string{"thumbnails/v.jpg", "web-videos/v.mp4", "streaming-playlists/v/vp9.webm", "captions/v/en.vtt"} {
+		if repo.state(key) != "pending" {
+			t.Errorf("%s state = %q, want pending", key, repo.state(key))
+		}
 	}
-	if repo.state("captions/v/en.vtt") != "pending" {
-		t.Errorf("caption state = %q, want pending", repo.state("captions/v/en.vtt"))
+	// The original is now enqueued (P19.3) — with the correct media class.
+	if got := repo.rows["web-videos/v.mp4"].MediaClass; got != string(ClassVideoOriginal) {
+		t.Errorf("original media_class = %q, want %q", got, ClassVideoOriginal)
 	}
-	if _, ok := repo.rows["web-videos/v.mp4"]; ok {
-		t.Error("video original was enqueued in P19.2, want deferred to P19.3")
+	if got := repo.rows["streaming-playlists/v/vp9.webm"].MediaClass; got != string(ClassWebM) {
+		t.Errorf("webm media_class = %q, want %q", got, ClassWebM)
 	}
 
-	// Flip to private ⇒ derivatives unpinned.
+	// Flip to private ⇒ ALL the video's ledger rows unpinned (not just derivatives).
 	lk.videoPrivacy = "private"
-	if err := svc.SyncVideo(context.Background(), uuid.New()); err != nil {
+	if err := svc.SyncVideo(context.Background(), vid); err != nil {
 		t.Fatalf("SyncVideo private: %v", err)
 	}
-	if repo.state("thumbnails/v.jpg") != "unpinning" {
-		t.Errorf("thumbnail state after private = %q, want unpinning", repo.state("thumbnails/v.jpg"))
+	for _, key := range []string{"thumbnails/v.jpg", "web-videos/v.mp4", "streaming-playlists/v/vp9.webm", "captions/v/en.vtt"} {
+		if repo.state(key) != "unpinning" {
+			t.Errorf("%s state after private = %q, want unpinning", key, repo.state(key))
+		}
 	}
-	if repo.state("captions/v/en.vtt") != "unpinning" {
-		t.Errorf("caption state after private = %q, want unpinning", repo.state("captions/v/en.vtt"))
+}
+
+// TestVideoPins: the detail read model returns the pinned original CID + gateway
+// base, surfaces only 'pinned' rows with a VALIDATED CID, and reports ok=false
+// when nothing is pinned.
+func TestVideoPins(t *testing.T) {
+	repo := newFakeRepo()
+	vid := uuid.New()
+	origCID := ipfs.RawLeafCIDv1([]byte("original-bytes"))
+	seedPinned(repo, "web-videos/v.mp4", string(ClassVideoOriginal), origCID, vid)
+	// A pinned thumbnail (not surfaced in the ipfs object) and a still-pending
+	// caption (not yet pinned) must not appear.
+	seedPinned(repo, "thumbnails/v.jpg", string(ClassThumbnail), ipfs.RawLeafCIDv1([]byte("thumb")), vid)
+	repo.rows["captions/v/en.vtt"] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: "captions/v/en.vtt", MediaClass: string(ClassCaption), State: "pending",
+		VideoID: pgtype.UUID{Bytes: vid, Valid: true},
+	}
+	svc := New(repo, &fakeLookups{}, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+
+	pins, ok, err := svc.VideoPins(context.Background(), vid)
+	if err != nil {
+		t.Fatalf("VideoPins: %v", err)
+	}
+	if !ok {
+		t.Fatal("VideoPins ok = false, want true (original is pinned)")
+	}
+	if pins.OriginalCID != origCID {
+		t.Errorf("OriginalCID = %q, want %q", pins.OriginalCID, origCID)
+	}
+	if pins.HLSCID != "" {
+		t.Errorf("HLSCID = %q, want empty (no HLS in P19.3)", pins.HLSCID)
+	}
+	if pins.GatewayURL != "https://gw.example.org" {
+		t.Errorf("GatewayURL = %q, want the configured gateway", pins.GatewayURL)
+	}
+
+	// A video with nothing pinned ⇒ ok=false.
+	if _, ok, _ := svc.VideoPins(context.Background(), uuid.New()); ok {
+		t.Error("VideoPins ok = true for a video with no pins, want false")
+	}
+}
+
+// TestVideoPinsRejectsInvalidCID: a corrupt/unvalidated CID in the ledger is
+// NEVER surfaced (defense in depth for the gateway-URL construction).
+func TestVideoPinsRejectsInvalidCID(t *testing.T) {
+	repo := newFakeRepo()
+	vid := uuid.New()
+	seedPinned(repo, "web-videos/v.mp4", string(ClassVideoOriginal), "Qm-not-a-cidv1-../etc", vid)
+	svc := New(repo, &fakeLookups{}, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+
+	if _, ok, err := svc.VideoPins(context.Background(), vid); err != nil || ok {
+		t.Errorf("VideoPins with an invalid CID: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+}
+
+// TestPinnedVideoIDs: the feed badge batch resolves exactly the videos with a
+// pinned row; a video whose media is only pending/unpinned is not included.
+func TestPinnedVideoIDs(t *testing.T) {
+	repo := newFakeRepo()
+	pinnedVid, pendingVid, absentVid := uuid.New(), uuid.New(), uuid.New()
+	seedPinned(repo, "web-videos/a.mp4", string(ClassVideoOriginal), ipfs.RawLeafCIDv1([]byte("a")), pinnedVid)
+	repo.rows["web-videos/b.mp4"] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: "web-videos/b.mp4", MediaClass: string(ClassVideoOriginal), State: "pending",
+		VideoID: pgtype.UUID{Bytes: pendingVid, Valid: true},
+	}
+	svc := New(repo, &fakeLookups{}, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+
+	got, err := svc.PinnedVideoIDs(context.Background(), []uuid.UUID{pinnedVid, pendingVid, absentVid})
+	if err != nil {
+		t.Fatalf("PinnedVideoIDs: %v", err)
+	}
+	if !got[pinnedVid] {
+		t.Error("pinned video not reported pinned")
+	}
+	if got[pendingVid] {
+		t.Error("pending-only video reported pinned, want not")
+	}
+	if got[absentVid] {
+		t.Error("video with no ledger row reported pinned, want not")
+	}
+}
+
+// TestReadModelsDisabled: with the mirror disabled the read models are inert
+// (no pins, no badges) — the additive fields simply never populate.
+func TestReadModelsDisabled(t *testing.T) {
+	repo := newFakeRepo()
+	vid := uuid.New()
+	seedPinned(repo, "web-videos/v.mp4", string(ClassVideoOriginal), ipfs.RawLeafCIDv1([]byte("x")), vid)
+	cfg := testConfig()
+	cfg.Enabled = false
+	svc := New(repo, &fakeLookups{}, newBlobs(t), ipfs.NewFakeIPFSClient(), cfg)
+
+	if _, ok, _ := svc.VideoPins(context.Background(), vid); ok {
+		t.Error("disabled VideoPins ok = true, want false")
+	}
+	if got, _ := svc.PinnedVideoIDs(context.Background(), []uuid.UUID{vid}); len(got) != 0 {
+		t.Errorf("disabled PinnedVideoIDs = %v, want empty", got)
 	}
 }
 
