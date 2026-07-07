@@ -52,22 +52,24 @@ type ipfsClassPinCountsView struct {
 
 // ipfsStatusView is the GET /ipfs/status body (schema IPFSStatus).
 type ipfsStatusView struct {
-	Enabled        bool                     `json:"enabled"`
-	NodeReachable  bool                     `json:"node_reachable"`
-	GatewayURL     string                   `json:"gateway_url"`
-	ClusterEnabled bool                     `json:"cluster_enabled"`
-	Pins           ipfsPinCountsView        `json:"pins"`
-	ByClass        []ipfsClassPinCountsView `json:"by_class"`
+	Enabled          bool                     `json:"enabled"`
+	NodeReachable    bool                     `json:"node_reachable"`
+	GatewayURL       string                   `json:"gateway_url"`
+	ClusterEnabled   bool                     `json:"cluster_enabled"`
+	ClusterReachable bool                     `json:"cluster_reachable"`
+	Pins             ipfsPinCountsView        `json:"pins"`
+	ByClass          []ipfsClassPinCountsView `json:"by_class"`
 }
 
 func toIPFSStatusView(st ipfsmirror.Status) ipfsStatusView {
 	v := ipfsStatusView{
-		Enabled:        st.Enabled,
-		NodeReachable:  st.NodeReachable,
-		GatewayURL:     st.GatewayURL,
-		ClusterEnabled: st.ClusterEnabled,
-		Pins:           ipfsPinCountsView(st.Pins),
-		ByClass:        make([]ipfsClassPinCountsView, 0, len(st.ByClass)),
+		Enabled:          st.Enabled,
+		NodeReachable:    st.NodeReachable,
+		GatewayURL:       st.GatewayURL,
+		ClusterEnabled:   st.ClusterEnabled,
+		ClusterReachable: st.ClusterReachable,
+		Pins:             ipfsPinCountsView(st.Pins),
+		ByClass:          make([]ipfsClassPinCountsView, 0, len(st.ByClass)),
 	}
 	for _, cc := range st.ByClass {
 		v.ByClass = append(v.ByClass, ipfsClassPinCountsView{

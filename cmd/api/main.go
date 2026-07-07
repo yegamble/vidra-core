@@ -297,8 +297,15 @@ func run() error {
 	// no-op (and the Kubo client is nil). The eligibility gate is the privacy fence
 	// — nothing non-public is ever enqueued.
 	var ipfsClient ipfs.Client
+	var ipfsCluster ipfs.ClusterClient
 	if cfg.IPFSEnabled {
 		ipfsClient = ipfs.NewKuboClient(cfg.IPFSAPIURL, &http.Client{Timeout: cfg.IPFSAddTimeout})
+		// Optional IPFS Cluster replication (STOR-05). Best-effort — the local node
+		// pin is the authoritative mirror action; the cluster replicates it. The
+		// token is a SECRET (Bearer), never logged.
+		if cfg.IPFSClusterAPIURL != "" {
+			ipfsCluster = ipfs.NewKuboClusterClient(cfg.IPFSClusterAPIURL, cfg.IPFSClusterToken, &http.Client{Timeout: cfg.IPFSAddTimeout})
+		}
 	}
 	ipfsMirror := ipfsmirror.New(
 		db.Queries(),
@@ -312,6 +319,7 @@ func run() error {
 			AddTimeout:     cfg.IPFSAddTimeout,
 			Concurrency:    cfg.IPFSPinConcurrency,
 			Logger:         logger,
+			Cluster:        ipfsCluster,
 		},
 	)
 	opts = append(opts, httpapi.WithIPFSMirrorService(ipfsMirror))

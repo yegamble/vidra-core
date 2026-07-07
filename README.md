@@ -506,7 +506,17 @@ download fallback, and HTTP Range/206 serving works through its seekable object
 reader. IPFS is NOT an authoritative backend (`STORAGE_BACKEND=ipfs` is rejected);
 it is an orthogonal, opt-in **mirror sidecar** for eligible already-public media
 (`IPFS_ENABLED`, `IPFS_*`; admin `GET /api/v1/ipfs/status` +
-`POST /api/v1/admin/ipfs/reconcile` answer 503 when disabled). See
+`POST /api/v1/admin/ipfs/reconcile` answer 503 when disabled). For local dev the
+compose `ipfs` profile runs a Kubo node
+(`docker compose --profile core --profile ipfs up`; then `IPFS_ENABLED=true` with
+`IPFS_API_URL=http://ipfs:5001` and dev gateway `http://localhost:9090`, which are
+the compose defaults). The dev node is kept **local** — public-network
+distribution (AutoRelay / DHT server / hole-punching) is an explicit operator
+opt-in, never a default. An optional **IPFS Cluster** (`IPFS_CLUSTER_API_URL`,
+`IPFS_CLUSTER_TOKEN` — a secret Bearer token) replicates node pins across peers
+(STOR-05). Real-node round-trip tests live behind the `ipfs_integration` build tag
+(`make test-ipfs-integration`; self-skips without a node) and a dedicated optional
+CI job — the canonical `make ci` gate stays green nodeless. See
 `.ralph/specs/ipfs-media.md` and fix_plan P19.
 
 ## Observability

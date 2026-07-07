@@ -12075,7 +12075,7 @@ components:
       description: >-
         Status of the hybrid IPFS media mirror (fix_plan P19). IPFS is a mirror
         sidecar; these fields are informational and never gate media serving.
-      required: [enabled, node_reachable, gateway_url, cluster_enabled, pins, by_class]
+      required: [enabled, node_reachable, gateway_url, cluster_enabled, cluster_reachable, pins, by_class]
       properties:
         enabled:
           type: boolean
@@ -12089,6 +12089,11 @@ components:
         cluster_enabled:
           type: boolean
           description: Whether an IPFS Cluster REST API is configured for replication.
+        cluster_reachable:
+          type: boolean
+          description: >-
+            Whether the configured IPFS Cluster REST API answered its /id health
+            probe. Always false when cluster_enabled is false.
         pins:
           $ref: "#/components/schemas/IPFSPinCounts"
         by_class:

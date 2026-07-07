@@ -182,6 +182,10 @@ services:
       whisper:
         condition: service_healthy
         required: false
+      # Waits for the kubo node only when the ipfs profile is active.
+      ipfs:
+        condition: service_healthy
+        required: false
     environment:
       VIDRA_ENV: ${VIDRA_ENV:-development}
       HTTP_PORT: "8080"
@@ -289,6 +293,28 @@ services:
       STORAGE_S3_REGION: ${STORAGE_S3_REGION:-}
       STORAGE_S3_USE_SSL: ${STORAGE_S3_USE_SSL:-true}
       STORAGE_S3_FORCE_PATH_STYLE: ${STORAGE_S3_FORCE_PATH_STYLE:-false}
+      # Hybrid IPFS media mirror (fix_plan P19, .ralph/specs/ipfs-media.md). OFF by
+      # default. To mirror already-PUBLIC media to the compose kubo node, run the
+      # `ipfs` profile (docker compose --profile core --profile ipfs up) and set
+      # IPFS_ENABLED=true — IPFS_API_URL/IPFS_GATEWAY_URL already default to that
+      # service. IPFS is a SIDECAR: local/S3 stays authoritative and an IPFS outage
+      # never blocks uploads or playback. PRIVACY INVARIANT: nothing non-public is
+      # ever pinned (private/unlisted/quarantined videos, DM attachments, exports,
+      # upload chunks, the live edge, and remote thumbnails are all excluded).
+      IPFS_ENABLED: ${IPFS_ENABLED:-false}
+      IPFS_API_URL: ${IPFS_API_URL:-http://ipfs:5001}
+      IPFS_GATEWAY_URL: ${IPFS_GATEWAY_URL:-http://localhost:9090}
+      IPFS_ADD_TIMEOUT: ${IPFS_ADD_TIMEOUT:-60s}
+      IPFS_PIN_CONCURRENCY: ${IPFS_PIN_CONCURRENCY:-2}
+      IPFS_RECONCILE_INTERVAL: ${IPFS_RECONCILE_INTERVAL:-5m}
+      # PRIVACY GATE: true is a HARD CONFIG ERROR unless a private IPFS_CLUSTER_API_URL
+      # is set — private media may only ever go to a private cluster, never the public
+      # network. Private-media mirroring is out of scope in v1.
+      IPFS_MIRROR_PRIVATE: ${IPFS_MIRROR_PRIVATE:-false}
+      # Optional IPFS Cluster replication (STOR-05). IPFS_CLUSTER_TOKEN is a SECRET
+      # (Bearer) — never commit a real value.
+      IPFS_CLUSTER_API_URL: ${IPFS_CLUSTER_API_URL:-}
+      IPFS_CLUSTER_TOKEN: ${IPFS_CLUSTER_TOKEN:-}
     # Make the host reachable as host.docker.internal on Linux too (Docker Desktop
     # provides it already). Lets a backed e2e point URL import at a media origin
     # served on the host (paired with HTTP_IMPORT_ALLOW_PRIVATE_URLS=true). No
@@ -359,9 +385,49 @@ services:
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686" # Jaeger UI
 
+  # Hybrid IPFS media mirror node (profile "ipfs", fix_plan P19.5). A local Kubo
+  # node the mirror add+pins already-PUBLIC media to when IPFS_ENABLED=true. Run:
+  #   docker compose --profile core --profile ipfs up --build
+  # then set IPFS_ENABLED=true (IPFS_API_URL=http://ipfs:5001 and the dev gateway
+  # IPFS_GATEWAY_URL=http://localhost:9090 already default to this service).
+  #
+  # The ipfs/kubo image binds the RPC API + gateway to 0.0.0.0 inside the container
+  # on first init, so `ipfs:5001` is reachable from the api service and the gateway
+  # is exposed on host :9090 (mapped to the in-container 8080 to avoid the api's
+  # :8080). The named volume persists the repo across restarts.
+  #
+  # PRIVACY: the node is kept LOCAL for dev. This does NOT enable public-network
+  # distribution — AutoRelay, DHT-server mode and hole-punching are an explicit
+  # operator OPT-IN, not a default, because pinning to the public IPFS network is a
+  # permanent public-disclosure decision (see .ralph/specs/ipfs-media.md §7,§12).
+  # To go public deliberately, run `ipfs config Routing.Type dhtserver` and enable
+  # the relay/holepunch swarm options in a custom /container-init.d script.
+  ipfs:
+    image: ipfs/kubo:v0.32.1
+    profiles: ["ipfs", "full"]
+    environment:
+      # "server" disables local-network (mDNS) peer discovery — appropriate for a
+      # datacenter/dev node. It does NOT turn on public AutoRelay/hole-punching.
+      IPFS_PROFILE: server
+    ports:
+      - "${IPFS_SWARM_PORT:-4001}:4001"     # libp2p swarm (TCP)
+      - "${IPFS_SWARM_PORT:-4001}:4001/udp" # libp2p swarm (QUIC)
+      - "${IPFS_API_PORT:-5001}:5001"       # Kubo RPC API
+      - "${IPFS_GATEWAY_PORT:-9090}:8080"   # HTTP gateway (9090 avoids the api's :8080)
+    volumes:
+      - ipfs_data:/data/ipfs
+    healthcheck:
+      # `ipfs id` against the local RPC API only answers once the daemon is up.
+      test: ["CMD-SHELL", "ipfs --api=/ip4/127.0.0.1/tcp/5001 id >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 volumes:
   postgres_data:
   minio_data:
   clamav_data:
   live_hls:
   whisper_models:
+  ipfs_data:

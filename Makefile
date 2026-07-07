@@ -51,6 +51,10 @@ cover: ## Run tests with coverage summary
 test-integration: ## Run integration tests (-tags=integration); needs DATABASE_URL, REDIS_URL, ffmpeg — each test self-skips if its dependency is absent
 	go test -tags=integration -race ./...
 
+.PHONY: test-ipfs-integration
+test-ipfs-integration: ## Run IPFS integration tests (-tags=ipfs_integration) against a real kubo node; needs IPFS_TEST_API_URL (+ optional IPFS_TEST_GATEWAY_URL) — self-skips if unset
+	go test -tags=ipfs_integration -race ./internal/ipfs/...
+
 .PHONY: bench
 bench: ## Run the hot-path benchmarks (NOT in the gate); set DATABASE_URL for the store feed/search benches
 	go test -tags=integration -run='^$$' -bench=. -benchmem ./...

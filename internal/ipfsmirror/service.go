@@ -101,6 +101,12 @@ type Config struct {
 	BaseBackoff    time.Duration
 	ReconcileBatch int
 	Logger         *slog.Logger
+	// Cluster is the optional IPFS Cluster replication client (STOR-05). Nil unless
+	// IPFS_CLUSTER_API_URL is configured. Replication is BEST-EFFORT: a cluster
+	// error never fails a ledger row — the local node pin is the authoritative
+	// mirror action. In v1 it only ever carries already-node-pinned (public) media
+	// (spec §7); private-media mirroring is out of scope.
+	Cluster ipfs.ClusterClient
 }
 
 // Service is the mirror sidecar: enqueue helpers (called from the authoritative
@@ -112,6 +118,7 @@ type Service struct {
 	lookups Lookups
 	blobs   storage.Backend
 	client  ipfs.Client
+	cluster ipfs.ClusterClient
 
 	enabled        bool
 	gatewayURL     string
@@ -132,6 +139,7 @@ func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Cl
 		lookups:        lookups,
 		blobs:          blobs,
 		client:         client,
+		cluster:        cfg.Cluster,
 		enabled:        cfg.Enabled,
 		gatewayURL:     cfg.GatewayURL,
 		clusterEnabled: cfg.ClusterEnabled,
@@ -649,6 +657,8 @@ func (s *Service) pin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool
 		s.logger.Warn("ipfs mark pinned failed", "object_key", row.ObjectKey, "error", err)
 		return false
 	}
+	// Best-effort cluster replication (STOR-05) of the now-node-pinned CID.
+	s.clusterPin(ctx, res.CID)
 	// A re-pin under a STABLE key (e.g. a re-transcoded VP9/WebM alternate) whose
 	// content changed leaves the prior CID orphaned — swap it out (reference-checked).
 	s.swapUnpin(ctx, row.Cid, res.CID, row.ObjectKey)
@@ -719,6 +729,8 @@ func (s *Service) pinDirectory(ctx context.Context, row sqlcgen.ClaimDueIPFSPins
 		s.logger.Warn("ipfs mark pinned failed", "object_key", row.ObjectKey, "error", err)
 		return false
 	}
+	// Best-effort cluster replication (STOR-05) of the now-node-pinned car_root.
+	s.clusterPin(ctx, res.CID)
 	// Re-transcode swap: a prior car_root that differs from the new tree is orphaned.
 	s.swapUnpin(ctx, row.CarRoot, res.CID, row.ObjectKey)
 	s.logger.Info("ipfs_pin_ok", "media_class", row.MediaClass, "byte_size", res.Size,
@@ -747,7 +759,39 @@ func (s *Service) swapUnpin(ctx context.Context, oldCID, newCID, objectKey strin
 		s.logger.Warn("ipfs_unpin_failed", "object_key", objectKey, "reason", "swap_superseded", "error", err)
 		return
 	}
+	// Mirror the node unpin to the cluster (best-effort) so a superseded CID does
+	// not linger replicated.
+	s.clusterUnpin(ctx, oldCID)
 	s.logger.Info("ipfs_unpin_ok", "object_key", objectKey, "reason", "superseded")
+}
+
+// clusterPin best-effort replicates a node-pinned CID across the IPFS Cluster
+// (STOR-05). A no-op when no cluster is configured. A cluster error is logged, not
+// surfaced — replication is a redundancy enhancement, not the authoritative mirror
+// action (the local node pin already succeeded). The CID is debug-only (a public
+// capability handle — no info-level spam), matching the node-pin log discipline.
+func (s *Service) clusterPin(ctx context.Context, cid string) {
+	if s.cluster == nil || cid == "" {
+		return
+	}
+	if err := s.cluster.ClusterPin(ctx, cid); err != nil {
+		s.logger.Warn("ipfs_cluster_pin_failed", "reason", "replicate", "error", err)
+		return
+	}
+	s.logger.Debug("ipfs_cluster_pin_ok", "cid", cid)
+}
+
+// clusterUnpin best-effort removes a cluster pin after the node unpin. A no-op
+// when no cluster is configured; a cluster error is logged, not surfaced.
+func (s *Service) clusterUnpin(ctx context.Context, cid string) {
+	if s.cluster == nil || cid == "" {
+		return
+	}
+	if err := s.cluster.ClusterUnpin(ctx, cid); err != nil {
+		s.logger.Warn("ipfs_cluster_unpin_failed", "reason", "replicate", "error", err)
+		return
+	}
+	s.logger.Debug("ipfs_cluster_unpin_ok", "cid", cid)
 }
 
 // lazyBlob is an io.Reader that opens its backing storage object on the first Read
@@ -820,6 +864,8 @@ func (s *Service) unpin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bo
 				"attempts", row.Attempts+1, "error", err)
 			return false
 		}
+		// Mirror the node unpin to the cluster (best-effort).
+		s.clusterUnpin(ctx, row.Cid)
 	} else {
 		s.logger.Debug("ipfs unpin skipped: cid still referenced", "object_key", row.ObjectKey, "shared", shared)
 	}
@@ -898,17 +944,19 @@ type ClassCounts struct {
 
 // Status is the admin mirror status (backs GET /api/v1/ipfs/status).
 type Status struct {
-	Enabled        bool
-	NodeReachable  bool
-	GatewayURL     string
-	ClusterEnabled bool
-	Pins           PinCounts
-	ByClass        []ClassCounts
+	Enabled          bool
+	NodeReachable    bool
+	GatewayURL       string
+	ClusterEnabled   bool
+	ClusterReachable bool
+	Pins             PinCounts
+	ByClass          []ClassCounts
 }
 
 // Status aggregates ledger counts (overall + per class) and probes node health.
 // The health probe never fails the call — IPFS is non-authoritative, so an
-// unreachable node yields node_reachable=false, not an error.
+// unreachable node yields node_reachable=false, not an error. When an IPFS Cluster
+// is configured its /id endpoint is probed the same way for cluster_reachable.
 func (s *Service) Status(ctx context.Context) (Status, error) {
 	st := Status{Enabled: s.enabled, GatewayURL: s.gatewayURL, ClusterEnabled: s.clusterEnabled}
 	if s.client != nil {
@@ -916,6 +964,13 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			st.NodeReachable = true
 		} else {
 			s.logger.Debug("ipfs_node_unhealthy", "error", err)
+		}
+	}
+	if s.cluster != nil {
+		if err := s.cluster.ClusterHealth(ctx); err == nil {
+			st.ClusterReachable = true
+		} else {
+			s.logger.Debug("ipfs_cluster_unhealthy", "error", err)
 		}
 	}
 	rows, err := s.repo.CountIPFSPinsByStateClass(ctx)

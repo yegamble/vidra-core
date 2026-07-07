@@ -1,0 +1,60 @@
+name: ipfs-integration
+
+# Optional job: runs the IPFS-integration-tagged tests (`-tags=ipfs_integration`)
+# against a REAL ipfs/kubo node. These exercise the actual Kubo RPC add→pin→cat
+# round-trip and a directory (HLS-tree) add resolved through the HTTP gateway —
+# coverage the fast `make ci` gate (unit tests against FakeIPFSClient) deliberately
+# does not have.
+#
+# Kept SEPARATE from backend-ci.yml on purpose: the canonical `make ci` gate must
+# stay fast and runnable on hosts WITHOUT a kubo node, so these tests live behind
+# their own `ipfs_integration` build tag + `make test-ipfs-integration` target +
+# this job. Each test self-skips when IPFS_TEST_API_URL is unset, so the target is
+# safe to run locally too. This job does not gate the canonical pipeline.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ipfs-integration:
+    runs-on: ubuntu-latest
+    services:
+      # Dedicated kubo node for the integration tests (the archive's "ipfs-test"
+      # pattern). The ipfs/kubo image binds the RPC API + gateway to 0.0.0.0 inside
+      # the container on first init, so the mapped host ports below reach the daemon.
+      # An isolated CI runner has no local node to clash with, so the default 5001
+      # is used (the archive used :15001 only to avoid a dev-box clash).
+      ipfs:
+        image: ipfs/kubo:v0.32.1
+        env:
+          IPFS_PROFILE: server
+        ports:
+          - 5001:5001
+          - 8080:8080
+        options: >-
+          --health-cmd "ipfs --api=/ip4/127.0.0.1/tcp/5001 id"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 20s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Run IPFS integration tests (make test-ipfs-integration)
+        env:
+          # Point the tests at the kubo service above so they execute (and can fail
+          # the job) instead of self-skipping.
+          IPFS_TEST_API_URL: http://localhost:5001
+          IPFS_TEST_GATEWAY_URL: http://localhost:8080
+        run: make test-ipfs-integration
