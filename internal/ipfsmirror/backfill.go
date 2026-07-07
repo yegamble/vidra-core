@@ -15,14 +15,16 @@ import (
 var ErrCatalogNotConfigured = errors.New("ipfsmirror: backfill catalog not configured")
 
 // VideoObjectRow is one pre-existing, video-derived candidate object for the
-// backfill scan, carrying the parent video's visibility facts so the eligibility
-// fence re-checks it before anything is enqueued.
+// backfill scan, carrying the parent video's visibility facts — privacy, state,
+// AND the owner's unlisted flag — so the eligibility fence re-checks it before
+// anything is enqueued (an unlisted owner's public videos are never mirrored).
 type VideoObjectRow struct {
-	ObjectKey string
-	Class     MediaClass
-	VideoID   uuid.UUID
-	Privacy   string
-	State     string
+	ObjectKey     string
+	Class         MediaClass
+	VideoID       uuid.UUID
+	Privacy       string
+	State         string
+	OwnerUnlisted bool
 }
 
 // IdentityImageRow is one pre-existing user/channel avatar or banner candidate,
@@ -90,7 +92,7 @@ func (s *Service) Backfill(ctx context.Context) (BackfillCounts, error) {
 		return counts, err
 	}
 	for _, r := range videos {
-		if !Eligible(Subject{Class: r.Class, VideoPrivacy: r.Privacy, VideoState: r.State}) {
+		if !Eligible(Subject{Class: r.Class, VideoPrivacy: r.Privacy, VideoState: r.State, OwnerUnlisted: r.OwnerUnlisted}) {
 			continue
 		}
 		if err := s.backfillOne(ctx, r.ObjectKey, r.Class, r.VideoID, uuid.Nil, &counts); err != nil {
@@ -164,11 +166,12 @@ func (l *SQLLookups) ListBackfillVideoObjects(ctx context.Context) ([]VideoObjec
 	out := make([]VideoObjectRow, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, VideoObjectRow{
-			ObjectKey: r.ObjectKey,
-			Class:     MediaClass(r.MediaClass),
-			VideoID:   r.VideoID,
-			Privacy:   r.Privacy,
-			State:     r.State,
+			ObjectKey:     r.ObjectKey,
+			Class:         MediaClass(r.MediaClass),
+			VideoID:       r.VideoID,
+			Privacy:       r.Privacy,
+			State:         r.State,
+			OwnerUnlisted: r.OwnerUnlisted,
 		})
 	}
 	return out, nil

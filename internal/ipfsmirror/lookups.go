@@ -23,6 +23,7 @@ type sqlQueries interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error)
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
+	ListVideoIDsByOwner(ctx context.Context, ownerID uuid.UUID) ([]uuid.UUID, error)
 	ListVideoFiles(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.VideoFile, error)
 	ListCaptionsByVideo(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.Caption, error)
 	GetPlaylistByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetPlaylistByIDRow, error)
@@ -57,6 +58,21 @@ func (l *SQLLookups) VideoVisibility(ctx context.Context, videoID uuid.UUID) (pr
 		return "", "", uuid.Nil, false, err
 	}
 	return v.Privacy, v.State, v.OwnerID, true, nil
+}
+
+// OwnerVideoIDs lists every video (any privacy/state) owned by the user, resolved
+// via their channels (videos → channels.owner_id). The unlisted-toggle
+// re-evaluation runs the per-video fence on each; a user with no videos is a clean
+// empty result, not an error.
+func (l *SQLLookups) OwnerVideoIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := l.q.ListVideoIDsByOwner(ctx, userID)
+	if err != nil {
+		if missing(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return ids, nil
 }
 
 func (l *SQLLookups) VideoFiles(ctx context.Context, videoID uuid.UUID) ([]VideoFileRef, error) {

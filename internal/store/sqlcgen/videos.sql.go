@@ -731,6 +731,39 @@ func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscripti
 	return items, nil
 }
 
+const listVideoIDsByOwner = `-- name: ListVideoIDsByOwner :many
+SELECT v.id
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = $1
+ORDER BY v.id
+`
+
+// Every video (any privacy/state) owned by a user, resolved via their channels.
+// Drives the IPFS mirror's unlisted-toggle re-evaluation (spec §3): flipping a user
+// unlisted must pull ALL their public videos (and derivatives) off the mirror, and
+// re-listing re-pins the still-eligible ones. Returns ALL of the owner's videos —
+// SyncVideo re-derives per-video eligibility (pin vs unpin) from committed state.
+func (q *Queries) ListVideoIDsByOwner(ctx context.Context, ownerID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listVideoIDsByOwner, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVideosByChannel = `-- name: ListVideosByChannel :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at, v.publish_at,

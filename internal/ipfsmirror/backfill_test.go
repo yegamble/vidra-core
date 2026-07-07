@@ -46,13 +46,14 @@ func TestBackfillSeedsEligibleAndFencesNonPublic(t *testing.T) {
 	vidPub := uuid.New()
 	vidPriv := uuid.New()
 	vidDraft := uuid.New()
+	vidUnlistedOwner := uuid.New()
 	ownerListed := uuid.New()
 	ownerUnlisted := uuid.New()
 	ownerInactive := uuid.New()
 
 	cat := &fakeCatalog{
 		videos: []VideoObjectRow{
-			// eligible (public+published) — one per video-derived class shape.
+			// eligible (public+published, owner listed) — one per video-derived class shape.
 			{ObjectKey: "web-videos/" + vidPub.String() + ".mp4", Class: ClassVideoOriginal, VideoID: vidPub, Privacy: "public", State: "published"},
 			{ObjectKey: "thumbnails/" + vidPub.String() + ".jpg", Class: ClassThumbnail, VideoID: vidPub, Privacy: "public", State: "published"},
 			{ObjectKey: "streaming-playlists/" + vidPub.String() + "/", Class: ClassHLS, VideoID: vidPub, Privacy: "public", State: "published"},
@@ -60,6 +61,9 @@ func TestBackfillSeedsEligibleAndFencesNonPublic(t *testing.T) {
 			// NON-public: must be fenced out even though the catalog handed them over.
 			{ObjectKey: "web-videos/" + vidPriv.String() + ".mp4", Class: ClassVideoOriginal, VideoID: vidPriv, Privacy: "private", State: "published"},
 			{ObjectKey: "thumbnails/" + vidDraft.String() + ".jpg", Class: ClassThumbnail, VideoID: vidDraft, Privacy: "public", State: "draft"},
+			// UNLISTED OWNER: a public+published video owned by an unlisted account —
+			// treated as private for mirroring (spec §3/§7), must be fenced out.
+			{ObjectKey: "web-videos/" + vidUnlistedOwner.String() + ".mp4", Class: ClassVideoOriginal, VideoID: vidUnlistedOwner, Privacy: "public", State: "published", OwnerUnlisted: true},
 		},
 		images: []IdentityImageRow{
 			// eligible (active + listed).
@@ -104,6 +108,7 @@ func TestBackfillSeedsEligibleAndFencesNonPublic(t *testing.T) {
 	for _, key := range []string{
 		"web-videos/" + vidPriv.String() + ".mp4",
 		"thumbnails/" + vidDraft.String() + ".jpg",
+		"web-videos/" + vidUnlistedOwner.String() + ".mp4",
 		"avatars/users/u.png",
 		"banners/users/x.png",
 		"playlist-thumbnails/p2.jpg",

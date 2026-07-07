@@ -29,6 +29,18 @@ FROM videos v
 JOIN channels c ON c.id = v.channel_id
 WHERE v.id = $1;
 
+-- name: ListVideoIDsByOwner :many
+-- Every video (any privacy/state) owned by a user, resolved via their channels.
+-- Drives the IPFS mirror's unlisted-toggle re-evaluation (spec §3): flipping a user
+-- unlisted must pull ALL their public videos (and derivatives) off the mirror, and
+-- re-listing re-pins the still-eligible ones. Returns ALL of the owner's videos —
+-- SyncVideo re-derives per-video eligibility (pin vs unpin) from committed state.
+SELECT v.id
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = $1
+ORDER BY v.id;
+
 -- name: ListVideosByChannel :many
 -- A channel's videos (owner view, all states) with discovery-card data plus
 -- publish_at so the studio can badge scheduled videos.

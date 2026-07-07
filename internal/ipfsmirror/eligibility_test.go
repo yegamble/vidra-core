@@ -42,6 +42,24 @@ func TestEligibilityTable(t *testing.T) {
 		}
 	}
 
+	// Owner-unlisted dimension for video-derived classes (spec §3/§7): unlisted is
+	// treated as PRIVATE for mirroring, so an unlisted owner's video is refused even
+	// when the video itself is public+published. The full matrix is video-visibility
+	// × owner{listed,unlisted}: only public+published AND owner-listed may mirror.
+	for _, cls := range videoClasses {
+		for _, col := range videoCols {
+			for _, ownerUnlisted := range []bool{false, true} {
+				// Eligible only when the video passes AND the owner is listed.
+				want := col.want && !ownerUnlisted
+				got := Eligible(Subject{Class: cls, VideoPrivacy: col.privacy, VideoState: col.state, OwnerUnlisted: ownerUnlisted})
+				if got != want {
+					t.Errorf("video class %q [%s privacy=%s state=%s owner_unlisted=%v]: Eligible=%v, want %v",
+						cls, col.name, col.privacy, col.state, ownerUnlisted, got, want)
+				}
+			}
+		}
+	}
+
 	// Identity images: gated by the owning account's active+unlisted flags. "public"
 	// = active & listed → mirror; "unlisted" and a deactivated account → refuse.
 	identityClasses := []MediaClass{

@@ -259,6 +259,7 @@ type fakeLookups struct {
 	playlistVis, playlistKey string
 	playlistHasCover         bool
 	ownerImages              []ImageRef
+	ownerVideoIDs            []uuid.UUID
 }
 
 func (l *fakeLookups) VideoVisibility(ctx context.Context, videoID uuid.UUID) (string, string, uuid.UUID, bool, error) {
@@ -281,6 +282,9 @@ func (l *fakeLookups) PlaylistCover(ctx context.Context, playlistID uuid.UUID) (
 }
 func (l *fakeLookups) OwnerImageRefs(ctx context.Context, userID uuid.UUID) ([]ImageRef, error) {
 	return l.ownerImages, nil
+}
+func (l *fakeLookups) OwnerVideoIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	return l.ownerVideoIDs, nil
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -548,6 +552,7 @@ func TestSyncVideoPublishThenPrivate(t *testing.T) {
 	vid := uuid.New()
 	lk := &fakeLookups{
 		videoPrivacy: "public", videoState: "published", videoOK: true,
+		userOK: true, userUnlisted: false, // owner listed ⇒ video-derived classes eligible
 		videoFiles: []VideoFileRef{
 			{Kind: "thumbnail", StorageKey: "thumbnails/v.jpg"},
 			{Kind: "original", StorageKey: "web-videos/v.mp4"},
@@ -582,6 +587,122 @@ func TestSyncVideoPublishThenPrivate(t *testing.T) {
 		if repo.state(key) != "unpinning" {
 			t.Errorf("%s state after private = %q, want unpinning", key, repo.state(key))
 		}
+	}
+}
+
+// TestSyncVideoUnlistedOwnerNeverPins is the MAJOR-finding regression at the
+// per-video level: a public+published video whose OWNER is unlisted must NOT be
+// mirrored — unlisted is treated as private (spec §3/§7). SyncVideo must unpin
+// (never pin) every derivative even though the video's own privacy+state pass.
+func TestSyncVideoUnlistedOwnerNeverPins(t *testing.T) {
+	repo := newFakeRepo()
+	vid := uuid.New()
+	keys := []string{"thumbnails/v.jpg", "web-videos/v.mp4", "streaming-playlists/v/vp9.webm", "captions/v/en.vtt"}
+	lk := &fakeLookups{
+		videoPrivacy: "public", videoState: "published", videoOK: true,
+		userOK: true, userUnlisted: true, // OWNER UNLISTED ⇒ video-derived classes ineligible
+		videoFiles: []VideoFileRef{
+			{Kind: "thumbnail", StorageKey: "thumbnails/v.jpg"},
+			{Kind: "original", StorageKey: "web-videos/v.mp4"},
+			{Kind: "webm", StorageKey: "streaming-playlists/v/vp9.webm"},
+		},
+		captionKeys: []string{"captions/v/en.vtt"},
+	}
+	svc := New(repo, lk, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+
+	if err := svc.SyncVideo(context.Background(), vid); err != nil {
+		t.Fatalf("SyncVideo (unlisted owner): %v", err)
+	}
+	for _, key := range keys {
+		if _, ok := repo.rows[key]; ok {
+			t.Errorf("unlisted owner: %s was enqueued (state=%q), want NO row (privacy fence breach)", key, repo.state(key))
+		}
+	}
+
+	// OnTranscodeComplete must likewise arm nothing for an unlisted owner's video.
+	repo2 := newFakeRepo()
+	hlsKey := "streaming-playlists/" + vid.String() + "/"
+	svc2 := New(repo2, lk, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+	if err := svc2.OnTranscodeComplete(context.Background(), vid); err != nil {
+		t.Fatalf("OnTranscodeComplete (unlisted owner): %v", err)
+	}
+	if len(repo2.rows) != 0 {
+		t.Errorf("unlisted owner: transcode-complete armed %d rows (incl %s), want 0", len(repo2.rows), hlsKey)
+	}
+}
+
+// TestReevaluateUserUnlistsThenRelistsVideos is the MAJOR-finding lifecycle test:
+// flipping a user unlisted must unpin ALL their mirrored video-derived rows (not
+// just avatars/banners), and re-listing must re-pin the ones still eligible. Both
+// directions transition through the ledger with correct states, and a reconcile is
+// idempotent afterwards.
+func TestReevaluateUserUnlistsThenRelistsVideos(t *testing.T) {
+	repo := newFakeRepo()
+	owner := uuid.New()
+	vid := uuid.New()
+	avatarKey := "avatars/users/" + owner.String() + ".png"
+	origKey := "web-videos/" + vid.String() + ".mp4"
+	thumbKey := "thumbnails/" + vid.String() + ".jpg"
+	hlsKey := "streaming-playlists/" + vid.String() + "/"
+
+	// Pre-seed the owner's currently-mirrored media: an avatar + a video's original,
+	// thumbnail and HLS tree, all pinned (the steady state before the toggle).
+	seedPinned(repo, avatarKey, string(ClassUserAvatar), ipfs.RawLeafCIDv1([]byte("av")), uuid.Nil)
+	repo.rows[avatarKey].OwnerUserID = pgUUID(owner)
+	seedPinned(repo, origKey, string(ClassVideoOriginal), ipfs.RawLeafCIDv1([]byte("orig")), vid)
+	seedPinned(repo, thumbKey, string(ClassThumbnail), ipfs.RawLeafCIDv1([]byte("thumb")), vid)
+	seedPinned(repo, hlsKey, string(ClassHLS), ipfs.DirCIDv1([]byte("hls")), vid)
+
+	lk := &fakeLookups{
+		userActive: true, userOK: true,
+		videoPrivacy: "public", videoState: "published", videoOK: true,
+		ownerImages:   []ImageRef{{Class: ClassUserAvatar, ObjectKey: avatarKey, OwnerUserID: owner}},
+		ownerVideoIDs: []uuid.UUID{vid},
+		videoFiles: []VideoFileRef{
+			{Kind: "original", StorageKey: origKey},
+			{Kind: "thumbnail", StorageKey: thumbKey},
+		},
+	}
+	svc := New(repo, lk, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+	ctx := context.Background()
+
+	// --- flip to unlisted: EVERYTHING (avatar + all video-derived rows) unpins ---
+	lk.userUnlisted = true
+	if err := svc.ReevaluateUser(ctx, owner); err != nil {
+		t.Fatalf("ReevaluateUser (unlist): %v", err)
+	}
+	for _, key := range []string{avatarKey, origKey, thumbKey, hlsKey} {
+		if got := repo.state(key); got != "unpinning" {
+			t.Errorf("after unlist, %s state = %q, want unpinning", key, got)
+		}
+	}
+
+	// Drain: the worker removes them; rows go terminal 'unpinned'.
+	if _, err := svc.DrainDue(ctx, 10); err != nil {
+		t.Fatalf("drain after unlist: %v", err)
+	}
+	for _, key := range []string{avatarKey, origKey, thumbKey, hlsKey} {
+		if got := repo.state(key); got != "unpinned" {
+			t.Errorf("after unlist drain, %s state = %q, want unpinned", key, got)
+		}
+	}
+
+	// --- flip back to listed: the still-eligible video's single-file refs re-pin ---
+	lk.userUnlisted = false
+	if err := svc.ReevaluateUser(ctx, owner); err != nil {
+		t.Fatalf("ReevaluateUser (relist): %v", err)
+	}
+	// Avatar + original + thumbnail re-armed to pending (re-pin). (HLS re-pin is
+	// transcode-driven, matching the private→public path — asserted below.)
+	for _, key := range []string{avatarKey, origKey, thumbKey} {
+		if got := repo.state(key); got != "pending" {
+			t.Errorf("after relist, %s state = %q, want pending (re-pin enqueued)", key, got)
+		}
+	}
+
+	// A reconcile immediately after is idempotent (no failed rows to re-arm).
+	if n, err := svc.Reconcile(ctx); err != nil || n != 0 {
+		t.Errorf("reconcile after relist = %d, %v; want 0, nil (idempotent)", n, err)
 	}
 }
 
@@ -771,6 +892,7 @@ func TestOnTranscodeCompleteEnqueuesHLS(t *testing.T) {
 	repo := newFakeRepo()
 	lk := &fakeLookups{
 		videoPrivacy: "public", videoState: "published", videoOK: true,
+		userOK: true, userUnlisted: false, // owner listed ⇒ eligible
 		videoFiles: []VideoFileRef{{Kind: "webm", StorageKey: webmKey}},
 	}
 	svc := New(repo, lk, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
@@ -794,6 +916,7 @@ func TestOnTranscodeCompleteEnqueuesHLS(t *testing.T) {
 	repo2 := newFakeRepo()
 	lk2 := &fakeLookups{
 		videoPrivacy: "private", videoState: "published", videoOK: true,
+		userOK: true, userUnlisted: false, // owner listed ⇒ privacy alone bars it
 		videoFiles: []VideoFileRef{{Kind: "webm", StorageKey: webmKey}},
 	}
 	svc2 := New(repo2, lk2, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
@@ -815,7 +938,7 @@ func TestHLSPinLifecycle(t *testing.T) {
 	client := ipfs.NewFakeIPFSClient()
 	vid := uuid.New()
 	prefix := "streaming-playlists/" + vid.String() + "/"
-	lk := &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true}
+	lk := &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true}
 	svc := New(repo, lk, blobs, client, testConfig())
 	ctx := context.Background()
 
@@ -966,6 +1089,75 @@ func TestPinLosesRaceToPrivacyFlip(t *testing.T) {
 	}
 	if got[vid] {
 		t.Error("raced (now-private) video reports ipfs_pinned=true — contract leak")
+	}
+}
+
+// TestPinLosesRaceToUnlistedFlip is the MAJOR-finding × BLOCKER interaction: a
+// public video's object is leased for pinning; MID-Add its owner flips UNLISTED,
+// whose re-evaluation (ReevaluateUser → SyncVideo → unpinAllForVideo) flips the
+// leased row 'pending'→'unpinning'. As with the privacy-flip race, the state-guarded
+// MarkIPFSPinned records the CID but KEEPS 'unpinning', and the worker removes the
+// just-pinned bytes inline. Final: row 'unpinned', node pin gone — an unlisted
+// owner's video never lingers on the public network.
+func TestPinLosesRaceToUnlistedFlip(t *testing.T) {
+	repo := newFakeRepo()
+	blobs := newBlobs(t)
+	client := ipfs.NewFakeIPFSClient()
+	owner := uuid.New()
+	vid := uuid.New()
+	key := "web-videos/" + vid.String() + ".mp4"
+	putBlob(t, blobs, key, "now-unlisted-bytes")
+	repo.rows[key] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: key, MediaClass: string(ClassVideoOriginal), State: "pending",
+		VideoID: pgUUID(vid), NextAttemptAt: time.Now().UTC().Add(-time.Second),
+	}
+	// The owner starts listed with this one public+published video.
+	lk := &fakeLookups{
+		userActive: true, userOK: true,
+		videoPrivacy: "public", videoState: "published", videoOK: true,
+		ownerVideoIDs: []uuid.UUID{vid},
+	}
+	svc := New(repo, lk, blobs, client, testConfig())
+
+	// Mid-Add, the owner goes unlisted → the re-evaluation unpins all of their
+	// videos' ledger rows (this leased row flips 'pending'→'unpinning').
+	fired := false
+	client.AddHook = func() {
+		if fired {
+			return
+		}
+		fired = true
+		lk.userUnlisted = true
+		_ = svc.ReevaluateUser(context.Background(), owner)
+	}
+
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("DrainDue: %v", err)
+	}
+
+	row := repo.rows[key]
+	if row.State == "pinned" {
+		t.Fatal("raced row is 'pinned' — an unlisted owner's video permanently pinned to the public node")
+	}
+	if row.State != "unpinned" {
+		t.Errorf("state = %q, want unpinned (the worker removed the raced pin inline)", row.State)
+	}
+	if row.Cid == "" {
+		t.Error("CID not recorded on the raced row; a later unpin could not target the node pin")
+	}
+	if pinned, _ := client.IsPinned(context.Background(), row.Cid); pinned {
+		t.Error("node pin still present for a now-unlisted owner's video — permanent public disclosure")
+	}
+	if client.UnpinCount != 1 {
+		t.Errorf("node Unpin called %d times, want 1", client.UnpinCount)
+	}
+	// The read model must not report the raced (now-unlisted) video pinned.
+	got, err := svc.PinnedVideoIDs(context.Background(), []uuid.UUID{vid})
+	if err != nil {
+		t.Fatalf("PinnedVideoIDs: %v", err)
+	}
+	if got[vid] {
+		t.Error("raced (now-unlisted) video reports ipfs_pinned=true — contract leak")
 	}
 }
 

@@ -18,13 +18,21 @@ type Subject struct {
 	// Video-derived classes (video_original, hls, webm, thumbnail, storyboard,
 	// storyboard_vtt, caption): the parent video's privacy and state. Both must be
 	// public+published — unlisted, private, quarantined, draft, processing,
-	// scheduled and failed all fail the gate.
+	// scheduled and failed all fail the gate. In ADDITION, the owning account must
+	// not be unlisted (OwnerUnlisted below): unlisted is treated as PRIVATE for
+	// mirroring (spec §7), so an unlisted owner's public videos are never pinned.
 	VideoPrivacy string
 	VideoState   string
 
-	// Identity images (user/channel avatar+banner): the owning account's flags. A
-	// non-active (deactivated/deleted) or unlisted account's images are not
-	// mirrored — a permanent public CID would defeat the unlistedness promise.
+	// OwnerActive / OwnerUnlisted are the owning account's flags. For identity
+	// images (user/channel avatar+banner) BOTH gate: a non-active
+	// (deactivated/deleted) or unlisted account's images are not mirrored — a
+	// permanent public CID would defeat the unlistedness promise. For video-derived
+	// classes ONLY OwnerUnlisted gates (in addition to video privacy+state): a
+	// permanent public CID for an unlisted owner's video would defeat the
+	// URL-unguessability that "unlisted" promises (spec §3/§7). Account-active is
+	// not gated for video-derived classes here — deactivation/deletion is a separate
+	// re-evaluation trigger (§3) handled by the account delete/unpin path.
 	OwnerActive   bool
 	OwnerUnlisted bool
 
@@ -44,7 +52,10 @@ type Subject struct {
 func Eligible(s Subject) bool {
 	switch {
 	case isVideoDerived(s.Class):
-		return s.VideoPrivacy == privacyPublic && s.VideoState == statePublished
+		// Public+published AND the owner is not unlisted. Unlisted is treated as
+		// private for mirroring (spec §7): an unlisted owner's public videos and
+		// every derivative are excluded, and flipping a user unlisted unpins them.
+		return s.VideoPrivacy == privacyPublic && s.VideoState == statePublished && !s.OwnerUnlisted
 	case isIdentityImage(s.Class):
 		return s.OwnerActive && !s.OwnerUnlisted
 	case s.Class == ClassPlaylistCover:

@@ -123,11 +123,12 @@ func (q *Queries) ListBackfillPlaylistCovers(ctx context.Context) ([]ListBackfil
 const listBackfillVideoObjects = `-- name: ListBackfillVideoObjects :many
 
 SELECT
-    t.object_key::text  AS object_key,
-    t.media_class::text AS media_class,
-    t.video_id::uuid    AS video_id,
-    t.privacy::text     AS privacy,
-    t.state::text       AS state
+    t.object_key::text     AS object_key,
+    t.media_class::text    AS media_class,
+    t.video_id::uuid       AS video_id,
+    t.privacy::text        AS privacy,
+    t.state::text          AS state,
+    t.owner_unlisted::bool AS owner_unlisted
 FROM (
     SELECT vf.storage_key AS object_key,
            CASE vf.kind
@@ -137,34 +138,41 @@ FROM (
                WHEN 'storyboard'     THEN 'storyboard'
                WHEN 'storyboard_vtt' THEN 'storyboard_vtt'
            END AS media_class,
-           v.id AS video_id, v.privacy, v.state
+           v.id AS video_id, v.privacy, v.state, u.unlisted AS owner_unlisted
     FROM video_files vf
     JOIN videos v ON v.id = vf.video_id
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users u ON u.id = c.owner_id
     WHERE vf.kind IN ('original', 'webm', 'thumbnail', 'storyboard', 'storyboard_vtt')
 
     UNION ALL
 
-    SELECT cap.storage_key, 'caption', v.id, v.privacy, v.state
+    SELECT cap.storage_key, 'caption', v.id, v.privacy, v.state, u.unlisted
     FROM captions cap
     JOIN videos v ON v.id = cap.video_id
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users u ON u.id = c.owner_id
 
     UNION ALL
 
-    SELECT 'streaming-playlists/' || v.id::text || '/', 'hls', v.id, v.privacy, v.state
+    SELECT 'streaming-playlists/' || v.id::text || '/', 'hls', v.id, v.privacy, v.state, u.unlisted
     FROM streaming_playlists sp
     JOIN videos v ON v.id = sp.video_id
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users u ON u.id = c.owner_id
     WHERE sp.state = 'ready'
 ) t
-WHERE t.privacy = 'public' AND t.state = 'published'
+WHERE t.privacy = 'public' AND t.state = 'published' AND NOT t.owner_unlisted
 ORDER BY t.video_id, t.media_class, t.object_key
 `
 
 type ListBackfillVideoObjectsRow struct {
-	ObjectKey  string    `json:"object_key"`
-	MediaClass string    `json:"media_class"`
-	VideoID    uuid.UUID `json:"video_id"`
-	Privacy    string    `json:"privacy"`
-	State      string    `json:"state"`
+	ObjectKey     string    `json:"object_key"`
+	MediaClass    string    `json:"media_class"`
+	VideoID       uuid.UUID `json:"video_id"`
+	Privacy       string    `json:"privacy"`
+	State         string    `json:"state"`
+	OwnerUnlisted bool      `json:"owner_unlisted"`
 }
 
 // IPFS one-shot catalog backfill enumeration (P19.6, .ralph/specs/ipfs-media.md
@@ -181,10 +189,12 @@ type ListBackfillVideoObjectsRow struct {
 // Single-file video-derived objects (original, VP9/WebM alternate, thumbnail,
 // storyboard sprite + vtt), caption tracks, and the finalized HLS tree (as one
 // directory intent streaming-playlists/<id>/, only when the transcode is ready),
-// for public+published videos. media_class matches ipfsmirror's class constants;
-// 'rendition' files are intentionally excluded — they are pinned inside the HLS
-// directory add, not as standalone rows. video_id is the provenance the ledger
-// stores (owner_user_id stays NULL for video-derived rows, matching SyncVideo).
+// for public+published videos whose owner is NOT unlisted. media_class matches
+// ipfsmirror's class constants; 'rendition' files are intentionally excluded — they
+// are pinned inside the HLS directory add, not as standalone rows. video_id is the
+// provenance the ledger stores (owner_user_id stays NULL for video-derived rows,
+// matching SyncVideo). owner_unlisted (via videos → channels → users) is returned so
+// the Go fence re-checks it: an unlisted owner's public videos are never mirrored.
 func (q *Queries) ListBackfillVideoObjects(ctx context.Context) ([]ListBackfillVideoObjectsRow, error) {
 	rows, err := q.db.Query(ctx, listBackfillVideoObjects)
 	if err != nil {
@@ -200,6 +210,7 @@ func (q *Queries) ListBackfillVideoObjects(ctx context.Context) ([]ListBackfillV
 			&i.VideoID,
 			&i.Privacy,
 			&i.State,
+			&i.OwnerUnlisted,
 		); err != nil {
 			return nil, err
 		}

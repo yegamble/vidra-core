@@ -71,10 +71,15 @@ unchanged and now names this spec.
 **Privacy invariant (gating decision, spec §7).** Nothing non-public is ever
 enqueued for a public pin: private/unlisted/quarantined videos, DM attachments,
 exports, upload chunks, the live edge, and remote-cache thumbnails are all
-excluded by the eligibility gate. `IPFS_MIRROR_PRIVATE=true` is a hard config
-error unless a private `IPFS_CLUSTER_API_URL` is set, and private-media mirroring
-stays out of scope until the user signs off AND the Messaging v2 spec defines the
-attachment contract.
+excluded by the eligibility gate. **Unlisted is treated as private for mirroring**
+in BOTH dimensions: an unlisted _video_ fails the gate, and every video-derived
+class (original, VP9, HLS, thumbnail, storyboard, captions) additionally gates on
+the OWNER not being unlisted — flipping an account unlisted unpins all of that
+owner's public videos (and their derivatives), re-listing re-pins the still-eligible
+ones (2026-07-07 audit fix, `fix_plan.md#P19.8`). `IPFS_MIRROR_PRIVATE=true` is a
+hard config error unless a private `IPFS_CLUSTER_API_URL` is set, and private-media
+mirroring stays out of scope until the user signs off AND the Messaging v2 spec
+defines the attachment contract.
 
 **Status 2026-07-07: SHIPPED.** All six slices (P19.1–P19.6) are implemented and
 tested against the shipped spec `.ralph/specs/ipfs-media.md`: migration 0071

@@ -92,6 +92,10 @@ type Lookups interface {
 	ChannelOwner(ctx context.Context, channelID uuid.UUID) (ownerID uuid.UUID, ok bool, err error)
 	PlaylistCover(ctx context.Context, playlistID uuid.UUID) (visibility, objectKey string, hasCover bool, err error)
 	OwnerImageRefs(ctx context.Context, userID uuid.UUID) ([]ImageRef, error)
+	// OwnerVideoIDs lists EVERY video (any privacy/state) owned by the user, so the
+	// unlisted-toggle re-evaluation (ReevaluateUser) can re-run the per-video fence
+	// on each; SyncVideo decides pin vs unpin from committed state.
+	OwnerVideoIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
 }
 
 // Config is the mirror service's tunables (from internal/config).
@@ -227,18 +231,19 @@ func (s *Service) EnqueueChannelImage(ctx context.Context, channelID uuid.UUID, 
 	return s.upsertPin(ctx, objectKey, class, uuid.Nil, owner)
 }
 
-// SyncVideo re-evaluates a video's ledger against its current privacy+state and
-// is the single entrypoint wired to the publish, privacy-update and unpublish
-// transitions, so eligibility is always derived from committed state. Every
-// video-derived class shares ONE gate (public+published), so the whole video
-// flips together:
+// SyncVideo re-evaluates a video's ledger against its current privacy+state AND
+// its owner's unlisted flag, and is the single entrypoint wired to the publish,
+// privacy-update and unpublish transitions (and the unlisted-toggle re-evaluation),
+// so eligibility is always derived from committed state. Every video-derived class
+// shares ONE gate (public+published AND owner-listed), so the whole video flips
+// together:
 //   - eligible ⇒ (re)pin the original (web-videos/<id><ext>), the VP9/WebM
 //     alternate, and the image derivatives (thumbnail, storyboard, storyboard
 //     vtt, captions) that currently exist. private→public re-pins them all.
-//   - ineligible (public→private, unpublish, quarantine) ⇒ unpin ALL of the
-//     video's ledger rows — including the HLS row added in P19.4 and any orphan
-//     rows — so nothing non-public lingers pinned. This is the privacy fence at
-//     the video level.
+//   - ineligible (public→private, unpublish, quarantine, OR the owner going
+//     unlisted) ⇒ unpin ALL of the video's ledger rows — including the HLS row
+//     added in P19.4 and any orphan rows — so nothing non-public lingers pinned.
+//     This is the privacy fence at the video level.
 //
 // The HLS directory add itself is enqueued on transcode completion in P19.4; the
 // unpin-all path here already covers its removal. No-op when disabled.
@@ -246,13 +251,17 @@ func (s *Service) SyncVideo(ctx context.Context, videoID uuid.UUID) error {
 	if !s.enabled {
 		return nil
 	}
-	privacy, state, _, ok, err := s.lookups.VideoVisibility(ctx, videoID)
+	privacy, state, ownerID, ok, err := s.lookups.VideoVisibility(ctx, videoID)
 	if err != nil || !ok {
 		return err
 	}
+	ownerUnlisted, err := s.ownerUnlistedForVideo(ctx, ownerID)
+	if err != nil {
+		return err
+	}
 	// A representative video-derived class decides the whole video (they share the
-	// public+published gate).
-	if !Eligible(Subject{Class: ClassVideoOriginal, VideoPrivacy: privacy, VideoState: state}) {
+	// public+published+owner-listed gate).
+	if !Eligible(Subject{Class: ClassVideoOriginal, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted}) {
 		return s.unpinAllForVideo(ctx, videoID)
 	}
 	refs, err := s.videoMirrorRefs(ctx, videoID)
@@ -294,6 +303,23 @@ func (s *Service) unpinAllForVideo(ctx context.Context, videoID uuid.UUID) error
 	return nil
 }
 
+// ownerUnlistedForVideo resolves whether a video's owner currently bars mirroring
+// of that owner's public videos. Unlisted is treated as PRIVATE for mirroring
+// (spec §7): an unlisted owner's public videos and every derivative must be kept
+// off the public network, since a permanent public CID would defeat the
+// URL-unguessability the unlisted flag promises. Returns true (⇒ ineligible ⇒
+// unpin) when the account is unlisted OR its row is missing (default-deny: an
+// orphaned/mid-deletion video's derivatives are unpinned, never left pinned).
+// Account-active is deliberately NOT gated here — deactivation/deletion is the
+// separate re-evaluation trigger handled by the account delete/unpin path (§3).
+func (s *Service) ownerUnlistedForVideo(ctx context.Context, ownerID uuid.UUID) (bool, error) {
+	_, unlisted, ok, err := s.lookups.UserFlags(ctx, ownerID)
+	if err != nil {
+		return false, err
+	}
+	return unlisted || !ok, nil
+}
+
 // OnTranscodeComplete is the transcode-completion hook (P19.4): the video's HLS
 // tree — and, when VP9 is enabled, the progressive VP9/WebM alternate — have just
 // been produced, or replaced wholesale on a re-transcode ('0039'). For an ELIGIBLE
@@ -317,14 +343,19 @@ func (s *Service) OnTranscodeComplete(ctx context.Context, videoID uuid.UUID) er
 	if !s.enabled {
 		return nil
 	}
-	privacy, state, _, ok, err := s.lookups.VideoVisibility(ctx, videoID)
+	privacy, state, ownerID, ok, err := s.lookups.VideoVisibility(ctx, videoID)
 	if err != nil || !ok {
 		return err
 	}
-	// The whole video shares the public+published gate; ClassHLS is representative.
-	// A private/unlisted/quarantined video re-checked here is refused, so nothing
-	// non-public is ever armed at transcode completion (the privacy fence).
-	if !Eligible(Subject{Class: ClassHLS, VideoPrivacy: privacy, VideoState: state}) {
+	ownerUnlisted, err := s.ownerUnlistedForVideo(ctx, ownerID)
+	if err != nil {
+		return err
+	}
+	// The whole video shares the public+published+owner-listed gate; ClassHLS is
+	// representative. A private/quarantined video — or one whose owner is unlisted —
+	// re-checked here is refused, so nothing non-public is ever armed at transcode
+	// completion (the privacy fence).
+	if !Eligible(Subject{Class: ClassHLS, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted}) {
 		return nil
 	}
 	hlsKey := media.HLSKeyPrefix(videoID) + "/"
@@ -353,11 +384,21 @@ func (s *Service) OnTranscodeComplete(ctx context.Context, videoID uuid.UUID) er
 	return nil
 }
 
-// ReevaluateUser re-evaluates an owner's identity images (their own avatar/banner
-// plus their channels') after an unlisted toggle or a deactivate/reactivate:
-// eligible ⇒ (re)pin, ineligible ⇒ unpin. This is the privacy re-evaluation
-// trigger — flipping a user to unlisted or deactivating them pulls their images
-// off the public network. No-op when disabled.
+// ReevaluateUser re-evaluates ALL of an owner's mirrored media after an unlisted
+// toggle or a deactivate/reactivate:
+//   - identity images (their own avatar/banner plus their channels'): eligible ⇒
+//     (re)pin, ineligible ⇒ unpin.
+//   - the owner's videos and every derivative: unlisted is treated as private for
+//     mirroring (spec §3/§7), so flipping a user unlisted must pull ALL their
+//     public videos (originals, HLS trees, VP9, thumbnails, storyboards, captions)
+//     off the public network, and re-listing must re-pin the ones still eligible.
+//     Each video is routed through SyncVideo so the per-video fence lives in ONE
+//     place — it re-derives the now-updated owner-unlisted fact and either unpins
+//     the whole video's ledger rows or re-pins its current refs.
+//
+// This is the privacy re-evaluation trigger. Everything here is a durable QUEUE
+// operation (upsert/unpin ledger writes) — no synchronous node calls — so the
+// worker performs the actual pin/unpin off the request path. No-op when disabled.
 func (s *Service) ReevaluateUser(ctx context.Context, userID uuid.UUID) error {
 	if !s.enabled {
 		return nil
@@ -377,6 +418,17 @@ func (s *Service) ReevaluateUser(ctx context.Context, userID uuid.UUID) error {
 			}
 		} else if uerr := s.repo.EnqueueIPFSUnpin(ctx, ref.ObjectKey); uerr != nil {
 			return uerr
+		}
+	}
+	// Re-evaluate the owner's videos: SyncVideo re-checks each against the updated
+	// owner-unlisted fact (unpin-all when now ineligible, re-pin refs when eligible).
+	videoIDs, err := s.lookups.OwnerVideoIDs(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, videoID := range videoIDs {
+		if err := s.SyncVideo(ctx, videoID); err != nil {
+			return err
 		}
 	}
 	return nil
