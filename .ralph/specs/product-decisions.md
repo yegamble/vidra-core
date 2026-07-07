@@ -53,12 +53,29 @@ WebTorrent note). The UI keeps no hidden tab; both fix_plans mark the items
 INTENTIONAL_DIFFERENCE referencing this doc. An adapter boundary is unnecessary —
 URL import already covers "fetch a file from elsewhere".
 
-## 5. IPFS storage backend (P6.2) — DECISION (deferred spec, per fix_plan option)
+## 5. IPFS media mirroring (P6.2 → P19) — DECISION (mirror sidecar, public-only v1)
 
-The fix_plan allows "IPFS backend adapter or deferred spec". Deferred: pinning
-economics, GC semantics, and gateway trust need their own spec; local+S3 cover real
-deployments today. `STORAGE_BACKEND=ipfs` keeps returning a config validation error
-naming this doc.
+**Superseded 2026-07-07.** The original P6.2 defer ("IPFS backend adapter or
+deferred spec" — pinning economics, GC semantics, and gateway trust need their
+own spec) is RESOLVED by the P19 spec `.ralph/specs/ipfs-media.md`, which the
+user approved as a public-only v1 on 2026-07-07.
+
+The "IPFS as a third `STORAGE_BACKEND`" framing was the wrong shape and is
+abandoned: IPFS is now an orthogonal **mirror sidecar**, not an authoritative
+backend. Local/S3 remains the authoritative store; when `IPFS_ENABLED=true` and a
+healthy node is reachable, eligible **already-public** media is added+pinned and
+its CID exposed additively in API responses. `STORAGE_BACKEND=ipfs` **stays
+rejected** at config validation (authority ≠ distribution) — that check is
+unchanged and now names this spec.
+
+**Privacy invariant (gating decision, spec §7).** Nothing non-public is ever
+enqueued for a public pin: private/unlisted/quarantined videos, DM attachments,
+exports, upload chunks, the live edge, and remote-cache thumbnails are all
+excluded by the eligibility gate. `IPFS_MIRROR_PRIVATE=true` is a hard config
+error unless a private `IPFS_CLUSTER_API_URL` is set, and private-media mirroring
+stays out of scope until the user signs off AND the Messaging v2 spec defines the
+attachment contract. Tracked in `fix_plan.md#P19` (slices P19.1–P19.6) and the
+extensions ledger row `VIDRA-IPFS-STORAGE` (IN_PROGRESS).
 
 ## 6. Signed URLs vs proxy (P6.2) — DECISION (proxy in v1)
 

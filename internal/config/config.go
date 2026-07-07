@@ -296,9 +296,11 @@ type Config struct {
 	// JWTRefreshTTL is the lifetime of an opaque refresh-token session.
 	JWTRefreshTTL time.Duration
 
-	// Media storage. StorageBackend selects the blob backend: "local" (default)
-	// or "s3" ("ipfs" later). StorageLocalRoot is the directory for the local
-	// backend.
+	// Media storage. StorageBackend selects the AUTHORITATIVE blob backend:
+	// "local" (default) or "s3". "ipfs" is deliberately rejected — IPFS is a
+	// mirror SIDECAR, never an authoritative backend (authority ≠ distribution);
+	// see .ralph/specs/ipfs-media.md and the IPFS* fields below. StorageLocalRoot
+	// is the directory for the local backend.
 	StorageBackend   string
 	StorageLocalRoot string
 
@@ -315,6 +317,38 @@ type Config struct {
 	StorageS3Region         string
 	StorageS3UseSSL         bool
 	StorageS3ForcePathStyle bool
+
+	// Hybrid IPFS media mirroring (fix_plan P19, .ralph/specs/ipfs-media.md). IPFS
+	// is an orthogonal MIRROR of eligible ALREADY-PUBLIC media, present in
+	// addition to the authoritative local/S3 store — never a replacement backend,
+	// never a single point of failure for uploads or playback. All OFF by default,
+	// so existing deploys and `make ci` are unaffected.
+	//
+	// IPFSEnabled is the master switch: off ⇒ no worker, no enqueue, the admin
+	// endpoints answer 503 ipfs_disabled.
+	IPFSEnabled bool
+	// IPFSAPIURL is the Kubo RPC address (e.g. http://ipfs:5001). Required when
+	// enabled. IPFSGatewayURL is the public-facing gateway base emitted in API
+	// responses (e.g. https://ipfs.example.org) — required when enabled so we never
+	// default to ipfs.io.
+	IPFSAPIURL     string
+	IPFSGatewayURL string
+	// IPFSAddTimeout bounds each add/pin RPC; IPFSPinConcurrency bounds worker
+	// parallelism (pinning is I/O heavy); IPFSReconcileInterval is the backfill
+	// scan cadence.
+	IPFSAddTimeout        time.Duration
+	IPFSPinConcurrency    int
+	IPFSReconcileInterval time.Duration
+	// IPFSMirrorPrivate is the PRIVACY GATE. It defaults false and, when true, is
+	// only permitted with a private IPFSClusterAPIURL set (else a hard config
+	// error) — private media may only ever go to a private cluster, NEVER a public
+	// network. Private-media mirroring is otherwise out of scope in v1.
+	IPFSMirrorPrivate bool
+	// IPFSClusterAPIURL is the optional IPFS Cluster REST API for replication.
+	// IPFSClusterToken is the cluster Bearer token — a SECRET, never logged (on the
+	// observability.IsSensitiveKey denylist as ipfs_cluster_token).
+	IPFSClusterAPIURL string
+	IPFSClusterToken  string
 
 	// UploadMaxSize caps a single original-file upload, as an Echo size string
 	// (e.g. "2G", "512M"). It overrides HTTPBodyLimit for the upload route only,
@@ -482,6 +516,14 @@ func Load() (*Config, error) {
 		StorageS3Region:                getEnv("STORAGE_S3_REGION", ""),
 		StorageS3UseSSL:                getEnvBool("STORAGE_S3_USE_SSL", true),
 		StorageS3ForcePathStyle:        getEnvBool("STORAGE_S3_FORCE_PATH_STYLE", false),
+		IPFSEnabled:                    getEnvBool("IPFS_ENABLED", false),
+		IPFSAPIURL:                     strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
+		IPFSGatewayURL:                 strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
+		IPFSAddTimeout:                 getEnvDuration("IPFS_ADD_TIMEOUT", 60*time.Second),
+		IPFSReconcileInterval:          getEnvDuration("IPFS_RECONCILE_INTERVAL", 5*time.Minute),
+		IPFSMirrorPrivate:              getEnvBool("IPFS_MIRROR_PRIVATE", false),
+		IPFSClusterAPIURL:              strings.TrimRight(getEnv("IPFS_CLUSTER_API_URL", ""), "/"),
+		IPFSClusterToken:               getEnv("IPFS_CLUSTER_TOKEN", ""),
 		UploadMaxSize:                  getEnv("UPLOAD_MAX_SIZE", "2G"),
 		PeerTubeImportEnabled:          getEnvBool("PEERTUBE_IMPORT_ENABLED", false),
 		PeerTubeSourceDatabaseURL:      getEnv("PEERTUBE_SOURCE_DATABASE_URL", ""),
@@ -533,6 +575,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.InstanceDefaultQuotaBytes = quotaBytes
+
+	pinConcurrency, err := getEnvInt("IPFS_PIN_CONCURRENCY", 2)
+	if err != nil {
+		return nil, err
+	}
+	cfg.IPFSPinConcurrency = pinConcurrency
 
 	for _, name := range splitAndTrim(getEnv("OAUTH_PROVIDERS", "")) {
 		prefix := "OAUTH_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
@@ -741,6 +789,51 @@ func (c *Config) validate() error {
 	}
 	if err := c.validatePeerTubeImport(); err != nil {
 		return err
+	}
+	if err := c.validateIPFS(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateIPFS checks the hybrid IPFS media-mirroring (P19) configuration. Every
+// value is OFF/inert by default; validation only bites once IPFS_ENABLED is set,
+// EXCEPT the privacy guard which fires whenever IPFS_MIRROR_PRIVATE is true. The
+// privacy guard is the config-level enforcement of the spec §7 invariant: private
+// media must never be pushed to a public network, so mirroring it is only ever
+// permitted onto a private cluster.
+func (c *Config) validateIPFS() error {
+	// Privacy guard first: refusing to mirror private media to a public network is
+	// a hard error regardless of whether the mirror is otherwise enabled.
+	if c.IPFSMirrorPrivate && strings.TrimSpace(c.IPFSClusterAPIURL) == "" {
+		return fmt.Errorf("config: IPFS_MIRROR_PRIVATE requires a private IPFS_CLUSTER_API_URL (refusing to mirror private media to a public network)")
+	}
+	if !c.IPFSEnabled {
+		return nil
+	}
+	if strings.TrimSpace(c.IPFSAPIURL) == "" || strings.TrimSpace(c.IPFSGatewayURL) == "" {
+		return fmt.Errorf("config: IPFS_API_URL and IPFS_GATEWAY_URL are required when IPFS_ENABLED")
+	}
+	for label, raw := range map[string]string{"IPFS_API_URL": c.IPFSAPIURL, "IPFS_GATEWAY_URL": c.IPFSGatewayURL} {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("config: %s must be a valid http(s) URL when IPFS_ENABLED=true", label)
+		}
+	}
+	if c.IPFSClusterAPIURL != "" {
+		u, err := url.Parse(c.IPFSClusterAPIURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("config: IPFS_CLUSTER_API_URL must be a valid http(s) URL")
+		}
+	}
+	if c.IPFSAddTimeout <= 0 {
+		return fmt.Errorf("config: IPFS_ADD_TIMEOUT must be positive")
+	}
+	if c.IPFSPinConcurrency < 1 {
+		return fmt.Errorf("config: IPFS_PIN_CONCURRENCY must be >= 1")
+	}
+	if c.IPFSReconcileInterval <= 0 {
+		return fmt.Errorf("config: IPFS_RECONCILE_INTERVAL must be positive")
 	}
 	return nil
 }

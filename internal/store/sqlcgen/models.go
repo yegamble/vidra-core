@@ -272,6 +272,22 @@ type LiveStream struct {
 	ReplayEnabled bool      `json:"replay_enabled"`
 }
 
+type MediaIpfsPin struct {
+	ObjectKey     string      `json:"object_key"`
+	MediaClass    string      `json:"media_class"`
+	Cid           string      `json:"cid"`
+	CarRoot       string      `json:"car_root"`
+	ByteSize      int64       `json:"byte_size"`
+	State         string      `json:"state"`
+	Attempts      int32       `json:"attempts"`
+	NextAttemptAt time.Time   `json:"next_attempt_at"`
+	LastError     string      `json:"last_error"`
+	VideoID       pgtype.UUID `json:"video_id"`
+	OwnerUserID   pgtype.UUID `json:"owner_user_id"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+}
+
 type Message struct {
 	ID                 uuid.UUID          `json:"id"`
 	ConversationID     uuid.UUID          `json:"conversation_id"`

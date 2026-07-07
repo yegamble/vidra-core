@@ -499,6 +499,124 @@ func TestLoadRejectsAV1(t *testing.T) {
 	}
 }
 
+// TestLoadIPFSDefaults asserts the hybrid IPFS mirror (P19) is inert by default:
+// disabled, with the documented worker defaults, so existing deploys are
+// unaffected and Validate() passes with no IPFS_* env set.
+func TestLoadIPFSDefaults(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.IPFSEnabled {
+		t.Errorf("IPFSEnabled default = true, want false")
+	}
+	if cfg.IPFSMirrorPrivate {
+		t.Errorf("IPFSMirrorPrivate default = true, want false")
+	}
+	if cfg.IPFSAddTimeout != 60*time.Second {
+		t.Errorf("IPFSAddTimeout default = %v, want 60s", cfg.IPFSAddTimeout)
+	}
+	if cfg.IPFSPinConcurrency != 2 {
+		t.Errorf("IPFSPinConcurrency default = %d, want 2", cfg.IPFSPinConcurrency)
+	}
+	if cfg.IPFSReconcileInterval != 5*time.Minute {
+		t.Errorf("IPFSReconcileInterval default = %v, want 5m", cfg.IPFSReconcileInterval)
+	}
+}
+
+// TestLoadIPFSEnabledValid checks the happy path: enabled with both required URLs
+// loads and the values round-trip (trailing slashes trimmed).
+func TestLoadIPFSEnabledValid(t *testing.T) {
+	t.Setenv("IPFS_ENABLED", "true")
+	t.Setenv("IPFS_API_URL", "http://ipfs:5001/")
+	t.Setenv("IPFS_GATEWAY_URL", "https://ipfs.example.org/")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load enabled: %v", err)
+	}
+	if !cfg.IPFSEnabled {
+		t.Fatal("IPFSEnabled = false, want true")
+	}
+	if cfg.IPFSAPIURL != "http://ipfs:5001" {
+		t.Errorf("IPFSAPIURL = %q, want trimmed http://ipfs:5001", cfg.IPFSAPIURL)
+	}
+	if cfg.IPFSGatewayURL != "https://ipfs.example.org" {
+		t.Errorf("IPFSGatewayURL = %q, want trimmed https://ipfs.example.org", cfg.IPFSGatewayURL)
+	}
+}
+
+// TestLoadIPFSValidation is the config validation table, incl. the privacy guard
+// (mirrors the TestLoadRejectsAV1 defer style): IPFS_MIRROR_PRIVATE=true without a
+// private cluster URL is a hard error — private media must never reach a public
+// network.
+func TestLoadIPFSValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{
+			name:    "enabled without urls errors",
+			env:     map[string]string{"IPFS_ENABLED": "true"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled missing gateway errors",
+			env:     map[string]string{"IPFS_ENABLED": "true", "IPFS_API_URL": "http://ipfs:5001"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled bad api scheme errors",
+			env:     map[string]string{"IPFS_ENABLED": "true", "IPFS_API_URL": "ftp://ipfs:5001", "IPFS_GATEWAY_URL": "https://gw.example.org"},
+			wantErr: true,
+		},
+		{
+			name:    "privacy guard: mirror private without cluster errors",
+			env:     map[string]string{"IPFS_MIRROR_PRIVATE": "true"},
+			wantErr: true,
+		},
+		{
+			name:    "privacy guard fires even when mirror disabled",
+			env:     map[string]string{"IPFS_ENABLED": "false", "IPFS_MIRROR_PRIVATE": "true"},
+			wantErr: true,
+		},
+		{
+			name: "mirror private with cluster is allowed",
+			env: map[string]string{
+				"IPFS_ENABLED":         "true",
+				"IPFS_API_URL":         "http://ipfs:5001",
+				"IPFS_GATEWAY_URL":     "https://gw.example.org",
+				"IPFS_MIRROR_PRIVATE":  "true",
+				"IPFS_CLUSTER_API_URL": "http://cluster:9094",
+			},
+			wantErr: false,
+		},
+		{
+			name: "enabled with valid urls ok",
+			env: map[string]string{
+				"IPFS_ENABLED":     "true",
+				"IPFS_API_URL":     "http://ipfs:5001",
+				"IPFS_GATEWAY_URL": "https://gw.example.org",
+			},
+			wantErr: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			_, err := Load()
+			if tc.wantErr && err == nil {
+				t.Fatalf("Load() = nil error, want error for %s", tc.name)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("Load() = %v, want nil error for %s", err, tc.name)
+			}
+		})
+	}
+}
+
 func TestWhisperDefaultsAndOverride(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {

@@ -1013,6 +1013,13 @@ func (s *Server) routes() {
 		api.GET("/admin/peertube-import/:id", s.handleGetPeerTubeImport, s.requireAuth, s.requireRole("admin"))
 	}
 
+	// Hybrid IPFS media mirroring (fix_plan P19). Admin-only, always mounted
+	// (stable contract): status + kick a reconcile. Both answer 503 ipfs_disabled
+	// when IPFS_ENABLED=false; the real payloads land in P19.2 (status) / P19.6
+	// (reconcile). Config-gated inside the handler, so no service wiring is needed.
+	api.GET("/ipfs/status", s.handleIPFSStatus, s.requireAuth, s.requireRole("admin"))
+	api.POST("/admin/ipfs/reconcile", s.handleIPFSReconcile, s.requireAuth, s.requireRole("admin"))
+
 	// Direct messaging (1:1 conversations + messages). All behind requireAuth;
 	// non-participants get 404 so a conversation's existence is not leaked.
 	if s.messagingsvc != nil {

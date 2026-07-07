@@ -503,7 +503,11 @@ missing. Provider endpoint examples live in `.env.example`; for local dev the co
 api-against-minio env is documented at the top of `docker-compose.yml`). The S3
 backend exposes no filesystem paths — ffprobe/ffmpeg/clamav read via the temp-file
 download fallback, and HTTP Range/206 serving works through its seekable object
-reader. IPFS lands later behind the same interface.
+reader. IPFS is NOT an authoritative backend (`STORAGE_BACKEND=ipfs` is rejected);
+it is an orthogonal, opt-in **mirror sidecar** for eligible already-public media
+(`IPFS_ENABLED`, `IPFS_*`; admin `GET /api/v1/ipfs/status` +
+`POST /api/v1/admin/ipfs/reconcile` answer 503 when disabled). See
+`.ralph/specs/ipfs-media.md` and fix_plan P19.
 
 ## Observability
 

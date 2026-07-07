@@ -131,6 +131,10 @@ var sensitiveKeys = map[string]bool{
 	"peertube_source_dsn": true,
 	"source_secret_key":   true,
 	"source_access_key":   true,
+	// IPFS media mirroring (P19): the IPFS Cluster Bearer token is a secret —
+	// never log, span-tag, or return it.
+	"ipfs_cluster_token": true,
+	"cluster_token":      true,
 }
 
 // IsSensitiveKey reports whether a structured-log key is on the denylist

@@ -52,6 +52,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var ve *ValidationError
 	var qe *QuotaExceededError
 	var fd *FeatureDisabledError
+	var id *IPFSDisabledError
 	switch {
 	case errors.As(err, &ve):
 		status = http.StatusUnprocessableEntity
@@ -66,6 +67,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusForbidden
 		message = "this feature is disabled on this instance"
 		code = "feature_disabled"
+	case errors.As(err, &id):
+		status = http.StatusServiceUnavailable
+		message = "IPFS mirroring is not enabled on this instance"
+		code = "ipfs_disabled"
 	case errors.As(err, &he):
 		status = he.Code
 		if he.Message != nil {
@@ -142,6 +147,14 @@ func (e *QuotaExceededError) Error() string { return "storage quota exceeded" }
 type FeatureDisabledError struct{ Feature string }
 
 func (e *FeatureDisabledError) Error() string { return "feature disabled: " + e.Feature }
+
+// IPFSDisabledError renders as 503 with the stable code "ipfs_disabled": the
+// hybrid IPFS media mirror (fix_plan P19) is off (IPFS_ENABLED=false) on this
+// instance, so the admin IPFS endpoints have nothing to report. Mirrors the
+// PeerTube-import "not configured" 503 pattern.
+type IPFSDisabledError struct{}
+
+func (e *IPFSDisabledError) Error() string { return "ipfs mirroring is not enabled" }
 
 // codeForStatus maps an HTTP status to a stable, snake_case error code. Unknown
 // statuses fall back to a generic code derived from the class.

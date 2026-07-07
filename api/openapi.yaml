@@ -8332,6 +8332,98 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/ipfs/status:
+    get:
+      operationId: getIPFSStatus
+      summary: IPFS mirror status (admin)
+      description: >-
+        Reports the hybrid IPFS media mirror's status (fix_plan P19,
+        .ralph/specs/ipfs-media.md): whether it is enabled, node reachability, the
+        public gateway URL in use, whether an IPFS Cluster is configured, and pin
+        counts overall and per media class. IPFS is a MIRROR SIDECAR — local/S3
+        stays authoritative — so this never reflects on the readiness of media
+        serving. Returns 503 ipfs_disabled when IPFS_ENABLED=false. Restricted to
+        admins. (Status aggregation is delivered in P19.2; until then an enabled
+        instance answers 501 not_implemented.)
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The mirror status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Enabled, but status aggregation is not implemented yet (P19.2).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/ipfs/reconcile:
+    post:
+      operationId: reconcileIPFS
+      summary: Kick an IPFS reconciliation/backfill scan (admin)
+      description: >-
+        Triggers an immediate reconciliation scan of the IPFS mirror: re-enqueue
+        failed pins and upsert pin intents for eligible ALREADY-PUBLIC objects that
+        have no ledger row yet (the outage-backfill path). Idempotent — a second
+        run enqueues nothing new. Returns 503 ipfs_disabled when IPFS_ENABLED=false.
+        Restricted to admins; audited. (The real scan is delivered in P19.6; until
+        then an enabled instance answers 501 not_implemented.)
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "202":
+          description: The scan was accepted; counts of what was enqueued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSReconcileResult"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Enabled, but the reconcile scan is not implemented yet (P19.6).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/media/gc:
     post:
       operationId: adminMediaGC
@@ -11930,6 +12022,86 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PeerTubeImportRun"
+    IPFSStatus:
+      type: object
+      description: >-
+        Status of the hybrid IPFS media mirror (fix_plan P19). IPFS is a mirror
+        sidecar; these fields are informational and never gate media serving.
+      required: [enabled, node_reachable, gateway_url, cluster_enabled, pins, by_class]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether IPFS_ENABLED is set on this instance.
+        node_reachable:
+          type: boolean
+          description: Whether the Kubo node answered the /api/v0/version health probe.
+        gateway_url:
+          type: string
+          description: The public gateway base URL emitted in media responses.
+        cluster_enabled:
+          type: boolean
+          description: Whether an IPFS Cluster REST API is configured for replication.
+        pins:
+          $ref: "#/components/schemas/IPFSPinCounts"
+        by_class:
+          type: array
+          description: Pin counts broken down per media class.
+          items:
+            $ref: "#/components/schemas/IPFSClassPinCounts"
+    IPFSPinCounts:
+      type: object
+      description: Pin counts by ledger state.
+      required: [pinned, pending, failed, unpinned]
+      properties:
+        pinned:
+          type: integer
+          format: int64
+        pending:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        unpinned:
+          type: integer
+          format: int64
+    IPFSClassPinCounts:
+      type: object
+      description: Pin counts for one media class.
+      required: [media_class, pinned, pending, failed, unpinned]
+      properties:
+        media_class:
+          type: string
+          description: e.g. video_original, hls, thumbnail, user_avatar.
+        pinned:
+          type: integer
+          format: int64
+        pending:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        unpinned:
+          type: integer
+          format: int64
+    IPFSReconcileResult:
+      type: object
+      description: >-
+        Result of an IPFS reconciliation scan: how many pin intents were enqueued,
+        overall and per media class. Idempotent — a second run enqueues zero.
+      required: [enqueued, by_class]
+      properties:
+        enqueued:
+          type: integer
+          format: int64
+          description: Total pin intents enqueued by this scan.
+        by_class:
+          type: object
+          description: Enqueued counts keyed by media class.
+          additionalProperties:
+            type: integer
+            format: int64
     InstanceSettingsResponse:
       type: object
       required: [settings]

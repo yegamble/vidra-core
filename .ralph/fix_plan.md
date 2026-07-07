@@ -1077,6 +1077,67 @@
 
 ---
 
+# P19 — IPFS Media Mirroring (W6 / P2P-01…04, STOR-04/05)
+
+> Spec: `.ralph/specs/ipfs-media.md` — read it before touching any task.
+> Supersedes the P6.2 defer note (`product-decisions.md §5`, the old
+> `[~] Implement IPFS backend adapter or deferred spec`): that defer is RESOLVED
+> by this spec; `STORAGE_BACKEND=ipfs` stays **rejected** (IPFS is a mirror
+> sidecar, never an authoritative backend). Also closes the long-open "Add
+> optional Compose profile for IPFS/Kubo" (`fix_plan.md:127`) in Slice 5.
+>
+> Rules for every slice, per Operating Rules + Definition of Done: one coherent
+> vertical slice per loop; contract-first (`openapi.yaml` + migration + sqlc
+> BEFORE handlers/worker); no placeholder behavior; evidence in the item note
+> (tests run, contract, migration id); the ledger row `VIDRA-IPFS-STORAGE`
+> (DEFERRED → IN_PROGRESS → …) and `product-decisions.md §5` are updated in the
+> first slice; canonical gate `make ci`
+> (fmt-check vet openapi-verify sqlc-verify test-race) green + pushed each slice.
+> ⚠️ Privacy invariant for EVERY slice: nothing non-public is ever enqueued for a
+> public IPFS pin — the eligibility-gate unit table (Slice 1) is the regression
+> fence and must be extended whenever a media class or visibility rule changes.
+
+## P19.1 Foundation: ledger, config, client (P2P-01 groundwork)
+
+- [x] Migration `media_ipfs_pins` (polymorphic pin ledger + durable queue keyed by `object_key`; states pending/pinned/failed/unpinning/unpinned; partial due-index mirroring `transcode_jobs_due_idx`; provenance `video_id`/`owner_user_id` SET NULL FKs) + down migration + sqlc queries (Upsert intent, ClaimDue FOR UPDATE SKIP LOCKED, MarkPinned/MarkFailed/MarkUnpinned, CountByStateClass, GetByObjectKey, ListByVideo); `make sqlc` regenerated, `sqlc-verify` green. (2026-07-07: `migrations/0071_media_ipfs_pins.{up,down}.sql`; queries `internal/store/queries/media_ipfs_pins.sql` regenerated into `internal/store/sqlcgen`; `make sqlc-verify` green.)
+- [x] Config surface: `IPFS_ENABLED` (default false), `IPFS_API_URL`, `IPFS_GATEWAY_URL` (both required when enabled), `IPFS_ADD_TIMEOUT` (60s), `IPFS_PIN_CONCURRENCY` (2), `IPFS_RECONCILE_INTERVAL` (5m), `IPFS_MIRROR_PRIVATE` (default false; =true WITHOUT `IPFS_CLUSTER_API_URL` is a hard config error — private media never goes to a public network), `IPFS_CLUSTER_API_URL`, `IPFS_CLUSTER_TOKEN` (SECRET — extend `observability.IsSensitiveKey`). Keep `STORAGE_BACKEND=ipfs` rejected; repoint the `config.go` "ipfs later" comment at the spec. Tests: config validation table incl. the privacy guard (mirrors `TestLoadRejectsAV1` style). (2026-07-07: `internal/config/config.go` + `IsSensitiveKey` `ipfs_cluster_token`; `TestLoadIPFSConfig*` in `internal/config/config_test.go`; `.env.example` documents the surface.)
+- [x] `internal/ipfs` package: Kubo RPC client (`/api/v0/add?pin=true&cid-version=1&raw-leaves=true`, `/api/v0/add?...&wrap-with-directory=true&recursive=true` for directory adds, `/api/v0/pin/add`, `/api/v0/pin/rm`, `/api/v0/version` health probe) behind a small interface + in-memory `FakeIPFSClient` for every unit test (guardrail: unit tests NEVER touch a real node). Port the archive's CID validation contract (CIDv1-only, codec whitelist raw/dag-pb/dag-cbor, length cap, traversal/control-char/URL-encoding rejection, SHA-256/Blake2b) with its table/fuzz tests — behavioral reference only, no code copied. (2026-07-07: `internal/ipfs/{client.go,fake.go,cid.go}` + `cid_test.go` (table + `FuzzValidateCID`) + `fake_test.go`; unit tests nodeless.)
+- [x] Contract-first stubs: `GET /api/v1/ipfs/status` (admin) + `POST /api/v1/admin/ipfs/reconcile` (admin) in `openapi.yaml`, handlers answering 503 `ipfs_disabled` when `IPFS_ENABLED=false` (mirrors the PeerTube-import 503 pattern); `openapi-verify` green. Evidence: `make ci` green + pushed; ledger row flipped to IN_PROGRESS with a pointer to the spec. (2026-07-07: `internal/httpapi/admin_ipfs.go` + `IPFSDisabledError` in `errors.go`; routes in `server.go`; `TestIPFSStatusDisabled*`/`TestIPFSReconcileDisabled*` in `admin_ipfs_test.go`; enabled-but-unwired path answers 501 `not_implemented` pending P19.2/P19.6.)
+
+## P19.2 Mirror worker + image classes + reconciliation + admin status (P2P-01)
+
+- [ ] `internal/ipfsmirror` worker: claims due `pending`/`unpinning` rows (SKIP LOCKED, exponential backoff, dead-letter to `failed` after max attempts — same shape as `transcode_jobs`/`import_jobs`), streams bytes from the authoritative `storage.Backend`, add+pin via the client, persists `cid`. Concurrency bounded by `IPFS_PIN_CONCURRENCY`. Structured logs: `ipfs_pin_ok/failed{media_class, byte_size, attempts}` at info WITHOUT the CID (CID at debug only — no CID spam); metrics gauges/counters per spec §9.
+- [ ] Eligibility gate + enqueue hooks for the single-file image classes: user/channel avatars + banners (`internal/profileimage` — enqueue on upload in the same tx; unpin old key on re-upload, matching the existing delete-old-blob behavior), video thumbnails, storyboard jpg+vtt, captions, playlist covers. Gate per spec §3: parent video `public`+`published`; owner not `unlisted`; playlist `visibility='public'`. **The eligibility unit table is the privacy fence**: every class × {public, private, unlisted, quarantined} asserting enqueue/not-enqueue — DM attachments, exports, upload chunks, live edge, remote thumbnails asserted NEVER enqueued.
+- [ ] Re-evaluation triggers: `users.unlisted` toggle and account deactivate/delete enqueue unpin (pin on the reverse); video privacy/state transitions wired here for the image derivatives (originals/HLS follow in P19.3/P19.4).
+- [ ] Reconciliation/backfill scan (every `IPFS_RECONCILE_INTERVAL`): re-enqueues `failed` rows, upserts intents for eligible objects missing a ledger row (the outage-backfill path). Failure-semantics test: node down ⇒ avatar upload still 2xx, row stays `pending`, backfill pins it once the fake node "recovers".
+- [ ] Implement `GET /api/v1/ipfs/status` for real: `{enabled, node_reachable, gateway_url, cluster_enabled, pins{pinned,pending,failed,unpinned}, by_class[]}` from `CountByStateClass` + the version probe; admin-gated; handler tests. Evidence: `make ci` green + pushed.
+
+## P19.3 Video originals + VP9 + truthful API fields (P2P-01, P2P-03)
+
+- [ ] Enqueue video originals (`video_files kind='original'`, `web-videos/<id><ext>`) and the VP9/WebM alternate on the publish transition (same tx as the existing publish hooks — never at upload/quarantine time); privacy public→private enqueues unpin of ALL the video's ledger rows, private→public re-enqueues pins (derivatives included). Video delete ⇒ unpin, **reference-checked**: worker only unpins a CID when no other live ledger row shares it (content-address dedupe; the archive's "never unpin without reference checking" guardrail as a unit test with two rows sharing one CID).
+- [ ] Additive contract fields (openapi.yaml first): video detail `ipfs {original_cid, hls_cid, gateway_url}` (only when public+published+pinned, else omitted); feed/card items `ipfs_pinned` boolean — the field that unblocks the vidra-user W0.4 IPFS badge (tracked there as a backend dependency, `VideoCard.tsx:12`). Never emit CIDs for non-public videos regardless of caller (handler test). Gateway URL built ONLY from `IPFS_GATEWAY_URL` + validated CID.
+- [ ] Failure-semantics test at this layer: mirror totally down ⇒ upload → publish → watch flow fully green with `ipfs_pinned=false` everywhere. Evidence: `make ci` green + pushed; ledger + parity notes updated.
+
+## P19.4 HLS on IPFS: directory add, re-transcode re-pin, delete GC (P2P-01/03, VOD only)
+
+- [ ] Directory add of the finalized VOD HLS tree (`streaming-playlists/<id>/`, wrap-with-directory ⇒ one `car_root` CID; relative playlist URIs resolve under `{gateway}/ipfs/{car_root}/…` — assert with a fixture tree against the fake client). Enqueued on transcode completion for eligible videos; one ledger row `media_class='hls'`. LIVE HLS is asserted NEVER enqueued (mutable edge — only the finalized replay VOD after it passes the public gate, per `0061` replay flow).
+- [ ] Re-transcode lifecycle: wholesale-replace semantics (`0039`) ⇒ unpin old `car_root` + pin new tree; regenerated thumbnails/storyboards re-pinned via upsert. Delete video ⇒ unpin HLS + all derivatives (reference-checked), rows terminal. Unit-test the full pin lifecycle state machine.
+- [ ] `hls_cid` populated in the video-detail `ipfs` object (contract from P19.3 now truthful for HLS). Evidence: `make ci` green + pushed.
+
+## P19.5 Compose kubo, integration tests, optional cluster (STOR-05; closes fix_plan:127)
+
+- [ ] docker-compose `ipfs` profile: `ipfs/kubo` (pinned version), ports 4001/tcp+udp, 5001 API, 9090→8080 gateway, named volume, `/api/v0/version` healthcheck; api wiring documented in `.env.example` + README (`IPFS_API_URL=http://ipfs:5001`, dev gateway `http://localhost:9090`). Do NOT ship the archive's public-network AutoRelay/hole-punch bootstrap as a default — document it as an explicit operator opt-in (privacy-relevant choice).
+- [ ] Integration tests behind `//go:build ipfs_integration` (skipped when no node — `make ci` and default `go test ./...` stay green nodeless): real add→pin→cat round-trip + directory add of a small HLS tree resolved through the gateway, against a dedicated `ipfs-test` kubo (archive CI pattern: `:15001`). Optional separate CI job runs `-tags ipfs_integration` with a kubo service; canonical `backend-ci.yml` gate unchanged.
+- [ ] Optional IPFS Cluster replication (STOR-05): when `IPFS_CLUSTER_API_URL` set, `ClusterPin/ClusterUnpin` after node pin (Bearer via `IPFS_CLUSTER_TOKEN`, secret-redacted); cluster health in `/ipfs/status`; fake-cluster unit tests. This — and ONLY this — is the transport `IPFS_MIRROR_PRIVATE=true` may ever use, and private-media mirroring stays OUT of scope until the user signs off the privacy decision (spec §7) AND the Messaging v2 spec defines the attachment contract. Evidence: `make ci` green + pushed.
+
+## P19.6 Backfill + operational close-out (STOR-04 adjacency)
+
+- [ ] Implement `POST /api/v1/admin/ipfs/reconcile` for real: one-shot scan enqueuing every eligible pre-existing object missing a ledger row (all classes), returns counts by class; idempotent (second run enqueues 0); admin-gated + audit-logged (existing `audit_log` pattern). Handler + service tests.
+- [ ] `docs/operations.md`: replace the aspirational IPFS lines (`:15`, `:50`) with real runbook content — pinset as a distribution surface, backup interplay (authoritative store remains the backup source of truth; the pinset is re-derivable via reconcile), node GC (`repo gc`) guidance, "unpin ≠ erasure on a public network" warning.
+- [ ] Ledger close-out: `VIDRA-IPFS-STORAGE` → TESTED/VERIFIED with evidence (test names, endpoints, migration id); `product-decisions.md §5` updated to point at the shipped spec; extensions-ledger frontend column notes the vidra-user tasks (badge/status page) as the cross-repo dependency. Evidence: `make ci` green + pushed.
+
+---
+
 # Optional / Deferred / Non-Blocking
 
 These items do not block Ralph exit if configured as optional in `.ralphrc` and explicitly kept in this section.
