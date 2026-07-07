@@ -2498,9 +2498,14 @@ paths:
       description: >-
         Public and unlisted videos are returned to anyone with the id. A private
         video is returned only to its owner (with a bearer token); to everyone
-        else it is reported as 404 so its existence is not revealed. The response
-        includes probed technical metadata (duration_seconds, width, height) when
-        a media probe has recorded it.
+        else it is reported as 404 so its existence is not revealed. A
+        password-protected video (privacy=password, CORE-17) returns 401 with
+        error code "password_required" to a caller who is neither the owner/a
+        moderator nor presenting a valid playback token (a plain unknown id is
+        still 404); the caller then unlocks via POST /videos/{id}/unlock and
+        retries with the token (Bearer or ?pt=). The response includes probed
+        technical metadata (duration_seconds, width, height) when a media probe
+        has recorded it.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -2519,6 +2524,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Video"
+        "401":
+          description: >-
+            The video is password protected and the caller presented no valid
+            credential (owner/moderator token or playback token). Error code
+            "password_required".
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No video with that id (or it is private and not yours).
           content:
@@ -3091,6 +3105,323 @@ paths:
           description: >-
             A malformed body, or a chapters-validation violation (bad ordering,
             an out-of-bounds start, a bad title length, or more than 100 chapters).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/unlock:
+    post:
+      operationId: unlockVideo
+      summary: Unlock a password-protected video
+      description: >-
+        Verifies a submitted password against a password-protected video's stored
+        passwords (CORE-17) and, on success, mints a short-lived, video-scoped
+        playback token. The token carries no account identity, is valid for 6
+        hours, and unlocks ONLY this video's read endpoints, presented either as
+        `Authorization: Bearer <playback_token>` or as a `?pt=<playback_token>`
+        query parameter (the header-less path for Safari native-HLS and
+        progressive playback). Optional auth. Rate-limited under the same strict
+        budget as login. The password and the token are never logged.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnlockVideoRequest"
+      responses:
+        "200":
+          description: The password was correct; a playback token is returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnlockVideoResponse"
+        "401":
+          description: Incorrect password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or the video is not password protected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many unlock attempts (rate limited).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/passwords:
+    get:
+      operationId: listVideoPasswords
+      summary: List a video's passwords
+      description: >-
+        Lists a video's passwords (id + created_at only — the plaintext and hash
+        are write-only and never returned). Owner only; a non-owner or unknown id
+        is 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video's passwords (id + created_at).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoPasswords"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: addVideoPassword
+      summary: Add a password to a video
+      description: >-
+        Stores one new password for a video (bcrypt-hashed; the plaintext is never
+        stored, logged, or returned). Owner only. The password must be 6–100
+        characters (else 400). Returns the new row's id + created_at.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetVideoPasswordRequest"
+      responses:
+        "201":
+          description: The stored password's id + created_at.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoPassword"
+        "400":
+          description: The password is not 6–100 characters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: replaceVideoPasswords
+      summary: Replace a video's passwords
+      description: >-
+        Replaces a video's whole password set (owner only). The set must be 1–20
+        entries, each 6–100 characters (else 400). Returns the stored set (id +
+        created_at).
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceVideoPasswordsRequest"
+      responses:
+        "200":
+          description: The stored passwords (id + created_at).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoPasswords"
+        "400":
+          description: The set is empty, has more than 20 entries, or an entry is not 6–100 characters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/passwords/{passwordId}:
+    delete:
+      operationId: deleteVideoPassword
+      summary: Delete a video password
+      description: >-
+        Removes one password from a video (owner only). 204 on success; 404 for an
+        unknown passwordId; 409 when it is the last password of a privacy=password
+        video (which would otherwise leave the video unlockable by no one).
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: passwordId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The password was deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video/password, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: It is the last password of a password-protected video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/embed-privacy:
+    get:
+      operationId: getVideoEmbedPrivacy
+      summary: Get a video's embed-privacy policy
+      description: >-
+        Returns a video's embed-privacy policy (CORE-17): the status tier and,
+        for the "whitelist" tier, the allow-listed hostnames. Same BASE visibility
+        as the detail (private → owner only, blocked → moderators, else 404) but
+        WITHOUT the password gate, so the embed page can read the policy pre-unlock
+        for a password-protected video. Enforcement is at the embed page (referrer
+        / ancestor-origin check); the server only stores and serves the policy.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The embed-privacy policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedPrivacy"
+        "404":
+          description: No such video, or it is not visible to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: setVideoEmbedPrivacy
+      summary: Set a video's embed-privacy policy
+      description: >-
+        Replaces a video's embed-privacy policy (owner only; a non-owner or
+        unknown id is 404). 400 on an unknown status, a "whitelist" with an
+        empty/invalid domain list (bare hostnames only — no scheme, port, or path;
+        at most 50), or allowed_domains supplied with a non-whitelist status.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbedPrivacy"
+      responses:
+        "200":
+          description: The stored embed-privacy policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedPrivacy"
+        "400":
+          description: An unknown status, an invalid whitelist, or domains with a non-whitelist status.
           content:
             application/json:
               schema:
@@ -9383,7 +9714,7 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private]
+          enum: [public, unlisted, private, password]
           description: Present on every local video; omitted on remote cards.
         state:
           type: string
@@ -9607,6 +9938,94 @@ components:
           maxItems: 100
           items:
             $ref: "#/components/schemas/VideoChapter"
+    UnlockVideoRequest:
+      type: object
+      description: A password to unlock a password-protected video (CORE-17).
+      required: [password]
+      properties:
+        password:
+          type: string
+          description: The video's password (write-only; never logged or returned).
+    UnlockVideoResponse:
+      type: object
+      description: >-
+        A minted playback token for a password-protected video. The token is
+        video-scoped, carries no account identity, and is valid for expires_in
+        seconds. Present it as `Authorization: Bearer <playback_token>` or as a
+        `?pt=<playback_token>` query parameter on the video's read endpoints.
+      required: [playback_token, expires_in]
+      properties:
+        playback_token:
+          type: string
+          description: The opaque, video-scoped playback token (a secret — do not log).
+        expires_in:
+          type: integer
+          description: The token lifetime in seconds (21600 = 6 hours).
+          example: 21600
+    VideoPassword:
+      type: object
+      description: >-
+        One video password's public projection. The plaintext and the bcrypt hash
+        are write-only and never appear in any response.
+      required: [id, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+    VideoPasswords:
+      type: object
+      description: A video's passwords (id + created_at only).
+      required: [passwords]
+      properties:
+        passwords:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoPassword"
+    SetVideoPasswordRequest:
+      type: object
+      description: One password to add to a video (6–100 characters).
+      required: [password]
+      properties:
+        password:
+          type: string
+          minLength: 6
+          maxLength: 100
+    ReplaceVideoPasswordsRequest:
+      type: object
+      description: >-
+        The whole password set to store (replaces any existing set). 1–20 entries,
+        each 6–100 characters.
+      required: [passwords]
+      properties:
+        passwords:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: string
+            minLength: 6
+            maxLength: 100
+    EmbedPrivacy:
+      type: object
+      description: >-
+        A video's embed-privacy policy (CORE-17). status is the tier;
+        allowed_domains lists the permitted hostnames and is present/required only
+        for the "whitelist" tier (bare hostnames — no scheme, port, or path; at
+        most 50). Enforcement is at the embed page, not the server.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [enabled, disabled, whitelist]
+        allowed_domains:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+          description: Allow-listed hostnames; present only for the "whitelist" status.
     DailyViews:
       type: object
       description: One day of a stats series (UTC calendar day).
@@ -9720,7 +10139,7 @@ components:
           maxLength: 5000
         privacy:
           type: string
-          enum: [public, unlisted, private]
+          enum: [public, unlisted, private, password]
           description: Defaults to "private" when omitted.
         category:
           type: string
@@ -9760,7 +10179,7 @@ components:
           maxLength: 5000
         privacy:
           type: string
-          enum: [public, unlisted, private]
+          enum: [public, unlisted, private, password]
         category:
           type: string
           description: Set the subject-category id (see GET /videos/config). Unknown/empty value -> 422.
@@ -10539,7 +10958,7 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private]
+          enum: [public, unlisted, private, password]
         state:
           type: string
           enum: [quarantined]
@@ -10669,7 +11088,7 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private]
+          enum: [public, unlisted, private, password]
         state:
           type: string
           enum: [draft, processing, scheduled, quarantined, published, failed]
@@ -10757,7 +11176,7 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private]
+          enum: [public, unlisted, private, password]
         state:
           type: string
           enum: [draft, processing, scheduled, quarantined, published, failed]

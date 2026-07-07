@@ -59,12 +59,14 @@ type videoFakeRepo struct {
 	files      map[uuid.UUID][]sqlcgen.VideoFile
 	metadata   map[uuid.UUID]sqlcgen.VideoMetadatum
 	views      map[uuid.UUID]int64
-	saved      map[string]time.Time                         // "userID|videoID" -> saved-at
-	history    map[string]historyMark                       // "userID|videoID" -> resume position + last-watched
-	captions   map[string]sqlcgen.Caption                   // "videoID|lang" -> caption
-	tags       map[uuid.UUID][]string                       // video ID -> normalized tag set
-	chapters   map[uuid.UUID][]sqlcgen.ListVideoChaptersRow // video ID -> ordered chapters
-	viewDays   map[string]int64                             // "videoID|YYYY-MM-DD" -> rolled-up views
+	saved      map[string]time.Time                          // "userID|videoID" -> saved-at
+	history    map[string]historyMark                        // "userID|videoID" -> resume position + last-watched
+	captions   map[string]sqlcgen.Caption                    // "videoID|lang" -> caption
+	tags       map[uuid.UUID][]string                        // video ID -> normalized tag set
+	chapters   map[uuid.UUID][]sqlcgen.ListVideoChaptersRow  // video ID -> ordered chapters
+	passwords  map[uuid.UUID][]fakeVideoPassword             // video ID -> passwords (CORE-17)
+	embed      map[uuid.UUID]sqlcgen.GetVideoEmbedPrivacyRow // video ID -> embed policy override
+	viewDays   map[string]int64                              // "videoID|YYYY-MM-DD" -> rolled-up views
 	// ratings/commentsRepo mirror the cross-table joins the stats queries do.
 	ratings      *ratingFakeRepo
 	commentsRepo *commentFakeRepo
@@ -857,7 +859,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	if err := settingssvc.Load(context.Background()); err != nil {
 		t.Fatalf("settings load: %v", err)
 	}
-	srv := New(cfg, nil, nil,
+	serverOpts := []Option{
 		WithSettingsService(settingssvc),
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(channel.NewService(chRepo)),
@@ -883,10 +885,11 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		WithCaptionJobService(captionjobsvc),
 		WithInstanceModerationService(instancemod.NewService(newInstanceModFakeRepo())),
 		WithMediaStorage(blobs),
-	)
-	for _, opt := range httpOpts {
-		opt(srv)
 	}
+	// Apply extra httpapi options BEFORE New() registers routes, so options that
+	// affect route middleware (e.g. WithAuthRateLimiter) take effect.
+	serverOpts = append(serverOpts, httpOpts...)
+	srv := New(cfg, nil, nil, serverOpts...)
 	return srv, blobs, tcRepo, notifRepo, repo
 }
 

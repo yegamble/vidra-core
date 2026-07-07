@@ -152,6 +152,33 @@ curl -sX PUT localhost:8080/api/v1/videos/<id>/chapters -H 'authorization: Beare
   -H 'content-type: application/json' \
   -d '{"chapters":[{"start_seconds":0,"title":"Intro"},{"start_seconds":90,"title":"Main"}]}'  # replace-all (owner-only; empty array clears; 400 on non-ascending/dup, start>=duration, title !1..120, >100 rows)
 
+# Video passwords + unlock (CORE-17; privacy gains 'password'. A password video is
+# excluded from public listings like 'unlisted'; its detail returns 401
+# code=password_required until unlocked. Owner CRUD never returns a plaintext/hash;
+# a video may be privacy=password only while it has >=1 password (else 400), and the
+# last password of a password video can't be deleted (409)):
+curl -sX POST localhost:8080/api/v1/videos/<id>/passwords -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"password":"letmein123"}'                    # add (owner-only; 6-100 chars -> else 400) -> 201 {id, created_at}
+curl -s localhost:8080/api/v1/videos/<id>/passwords -H 'authorization: Bearer <token>'  # list (id + created_at only)
+curl -sX PUT localhost:8080/api/v1/videos/<id>/passwords -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"passwords":["one-secret","two-secret"]}'    # replace-all (1-20 entries, each 6-100)
+curl -sX DELETE localhost:8080/api/v1/videos/<id>/passwords/<passwordId> -H 'authorization: Bearer <token>'  # -> 204 (404 unknown; 409 last of a password video)
+# Viewer unlock: verify a password -> a 6h, video-scoped HMAC playback token. Accept
+# it on every video read endpoint as Authorization: Bearer <pt> OR ?pt=<pt> (the
+# header-less path for Safari native-HLS / progressive playback). HLS playlists
+# served with ?pt= rewrite their relative variant/segment URIs to propagate it:
+curl -sX POST localhost:8080/api/v1/videos/<id>/unlock \
+  -H 'content-type: application/json' -d '{"password":"letmein123"}'                     # -> 200 {playback_token, expires_in:21600} (401 wrong; 404 unknown/not-password-video); rate-limited like login
+curl -s 'localhost:8080/api/v1/videos/<id>/hls/master.m3u8?pt=<playback_token>'          # unlocked HLS (variant URIs rewritten with ?pt=)
+
+# Embed privacy (CORE-17; enforcement is at the embed PAGE in vidra-user via
+# referrer/ancestor-origin — server only stores/serves the policy). Read is
+# optional-auth (base visibility, NOT password-gated so the embed page can read it
+# pre-unlock); write is owner-only:
+curl -s localhost:8080/api/v1/videos/<id>/embed-privacy                                  # {status:"enabled"|"disabled"|"whitelist", allowed_domains?}
+curl -sX PUT localhost:8080/api/v1/videos/<id>/embed-privacy -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' -d '{"status":"whitelist","allowed_domains":["example.com"]}'  # 400 on unknown status, empty/invalid whitelist (hostnames only, <=50), or domains with a non-whitelist status
+
 # Captions (WebVTT; owner uploads/removes, anyone lists/downloads on a public video):
 curl -sX POST localhost:8080/api/v1/videos/<id>/captions -H 'authorization: Bearer <token>' \
   -F 'language=en' -F 'label=English' -F 'file=@subs.vtt'                             # upload a caption (owner-only; bad vtt/lang -> 422)

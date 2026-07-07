@@ -2,15 +2,23 @@ package httpapi
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
+
+// maxPlaylistBytes bounds an m3u8 read when rewriting it for a ?pt= playback
+// token. Playlists are tiny (a handful of KiB); 1 MiB is a generous ceiling.
+const maxPlaylistBytes = 1 << 20
 
 // HLS media content types (RFC 8216).
 const (
@@ -58,6 +66,11 @@ func (s *Server) hlsPlaylistForView(c echo.Context, id uuid.UUID) (sqlcgen.Strea
 	if quarantineHidesVideo(c, v.State, v.OwnerID) {
 		return sqlcgen.StreamingPlaylist{}, notFound
 	}
+	// Password-protected videos: owner/mod or a valid playback token (Bearer or
+	// ?pt=) only; everyone else gets 401 password_required (CORE-17 / W1.C2).
+	if err := s.passwordGate(c, id, v.Privacy, v.OwnerID); err != nil {
+		return sqlcgen.StreamingPlaylist{}, err
+	}
 	sp, ok := s.transcodesvc.Playlist(c.Request().Context(), id)
 	if !ok || sp.State != "ready" || sp.MasterKey == "" {
 		return sqlcgen.StreamingPlaylist{}, notFound
@@ -78,7 +91,7 @@ func (s *Server) handleGetHLSMaster(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return s.serveStoredObject(c, sp.MasterKey, contentTypeM3U8)
+	return s.serveHLSPlaylist(c, sp.MasterKey)
 }
 
 // handleGetHLSFile serves one rendition file: a variant playlist
@@ -99,12 +112,70 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 	if _, err := s.hlsPlaylistForView(c, id); err != nil {
 		return err
 	}
-	contentType := contentTypeTS
-	if file == "playlist.m3u8" {
-		contentType = contentTypeM3U8
-	}
 	key := "streaming-playlists/" + id.String() + "/" + rendition + "/" + file
-	return s.serveStoredObject(c, key, contentType)
+	// A variant playlist gets the same ?pt= URI rewrite as the master (so the
+	// native player propagates the token to segment requests); a .ts segment is
+	// binary and streamed as-is.
+	if file == "playlist.m3u8" {
+		return s.serveHLSPlaylist(c, key)
+	}
+	return s.serveStoredObject(c, key, contentTypeTS)
+}
+
+// serveHLSPlaylist streams an m3u8. When the request carries a ?pt= playback
+// token, it reads the playlist and appends ?pt=<token> to every RELATIVE URI line
+// (variant playlists in the master, segments in a variant) so a header-less
+// native-HLS player keeps carrying the token through the whole chain — the
+// adaptation that makes password-protected HLS work in Safari (CORE-17 / W1.C2).
+// Without a ?pt= it streams the stored playlist unchanged (Range-capable).
+func (s *Server) serveHLSPlaylist(c echo.Context, key string) error {
+	token := c.QueryParam(playbackTokenParam)
+	if token == "" {
+		return s.serveStoredObject(c, key, contentTypeM3U8)
+	}
+	if s.media == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
+	}
+	rc, err := s.media.Open(c.Request().Context(), key)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return err
+	}
+	defer func() { _ = rc.Close() }()
+	data, err := io.ReadAll(io.LimitReader(rc, maxPlaylistBytes))
+	if err != nil {
+		return err
+	}
+	return c.Blob(http.StatusOK, contentTypeM3U8, rewritePlaylistToken(data, token))
+}
+
+// rewritePlaylistToken appends ?pt=<token> to every relative URI line of an m3u8.
+// Tag lines (#...), blank lines, and absolute URLs (http(s):// or /-rooted) are
+// left untouched. It preserves the original line order and terminator style.
+func rewritePlaylistToken(playlist []byte, token string) []byte {
+	esc := url.QueryEscape(token)
+	lines := strings.Split(string(playlist), "\n")
+	for i, line := range lines {
+		cr := strings.HasSuffix(line, "\r")
+		uri := strings.TrimSuffix(line, "\r")
+		if uri == "" || strings.HasPrefix(uri, "#") ||
+			strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") ||
+			strings.HasPrefix(uri, "/") {
+			continue
+		}
+		sep := "?"
+		if strings.ContainsRune(uri, '?') {
+			sep = "&"
+		}
+		uri += sep + playbackTokenParam + "=" + esc
+		if cr {
+			uri += "\r"
+		}
+		lines[i] = uri
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 // renditionView is the public projection of an available HLS rendition.

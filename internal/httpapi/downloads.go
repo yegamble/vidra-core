@@ -60,6 +60,9 @@ func (s *Server) handleGetVideoDownloads(c echo.Context) error {
 	if quarantineHidesVideo(c, v.State, v.OwnerID) {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	if err := s.passwordGate(c, id, v.Privacy, v.OwnerID); err != nil {
+		return err
+	}
 
 	files := make([]videoDownloadFileView, 0, 2)
 
@@ -127,6 +130,9 @@ func (s *Server) handleStreamVideoWebM(c echo.Context) error {
 		return err
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if err := s.passwordGateByID(c, id); err != nil {
+		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
 	f, err := s.videosvc.FileForView(c.Request().Context(), id, viewerID, authed, "webm")

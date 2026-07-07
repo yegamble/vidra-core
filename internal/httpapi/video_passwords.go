@@ -1,0 +1,284 @@
+package httpapi
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
+
+	"github.com/vidra/vidra-core/internal/video"
+)
+
+// playbackTokenTTL is the lifetime of a video unlock token (CORE-17 / W1.C2): 6h.
+const playbackTokenTTL = 6 * time.Hour
+
+// playbackTokenParam is the query-string name that carries a playback token for
+// header-less players: Safari native-HLS, progressive <video src>, and <img>
+// posters cannot set an Authorization header, so they append ?pt=<token>. This is
+// the ONLY token type ever honoured in a query string (account tokens never are).
+const playbackTokenParam = "pt"
+
+// playbackTokenFromRequest extracts a candidate playback token: the ?pt= query
+// param takes precedence (the header-less path), else the Bearer token. A Bearer
+// here may actually be an ACCOUNT token — that is harmless, it simply fails
+// playback-token verification (the two token types are cryptographically distinct).
+func playbackTokenFromRequest(c echo.Context) string {
+	if pt := c.QueryParam(playbackTokenParam); pt != "" {
+		return pt
+	}
+	if tok, ok := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization)); ok {
+		return tok
+	}
+	return ""
+}
+
+// redactQueryToken masks the value of a `pt` (playback-token) query parameter in a
+// request URI so the SECRET unlock token never reaches the request log. The path
+// and all other query params are untouched. Used by the request logger.
+func redactQueryToken(uri string) string {
+	i := strings.IndexByte(uri, '?')
+	if i < 0 {
+		return uri
+	}
+	path, query := uri[:i], uri[i+1:]
+	parts := strings.Split(query, "&")
+	changed := false
+	for j, p := range parts {
+		if p == playbackTokenParam || strings.HasPrefix(p, playbackTokenParam+"=") {
+			parts[j] = playbackTokenParam + "=REDACTED"
+			changed = true
+		}
+	}
+	if !changed {
+		return uri
+	}
+	return path + "?" + strings.Join(parts, "&")
+}
+
+// hasPlaybackToken reports whether the request carries a valid, unexpired playback
+// token scoped to videoID.
+func (s *Server) hasPlaybackToken(c echo.Context, videoID uuid.UUID) bool {
+	if s.playbackSigner == nil {
+		return false
+	}
+	tok := playbackTokenFromRequest(c)
+	if tok == "" {
+		return false
+	}
+	return s.playbackSigner.Verify(tok, videoID)
+}
+
+// passwordGate enforces the CORE-17 access rule for a password-protected video on
+// a read path. It is a no-op (returns nil) for any non-password video. For a
+// privacy=password video it returns nil when the caller is the owner, a
+// moderator/admin, or presents a valid playback token for this video; otherwise
+// it returns a 401 password_required. The token/hash/password are never logged or
+// echoed.
+func (s *Server) passwordGate(c echo.Context, videoID uuid.UUID, privacy string, ownerID uuid.UUID) error {
+	if privacy != video.PrivacyPassword {
+		return nil
+	}
+	if userID, role, ok := principalFromContext(c); ok && (userID == ownerID || role == "admin" || role == "moderator") {
+		return nil
+	}
+	if s.hasPlaybackToken(c, videoID) {
+		return nil
+	}
+	return &PasswordRequiredError{}
+}
+
+// passwordGateByID is passwordGate for the media handlers that hold only the id
+// (their existing gates fetch the row separately). It fetches the video and, for
+// a password video with no valid credential, returns the 401. An unknown id is a
+// no-op here — the caller's own lookup reports it as 404.
+func (s *Server) passwordGateByID(c echo.Context, videoID uuid.UUID) error {
+	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
+	if err != nil {
+		return nil
+	}
+	return s.passwordGate(c, videoID, v.Privacy, v.OwnerID)
+}
+
+// --- unlock ---
+
+// unlockRequest is the POST /videos/{id}/unlock body.
+type unlockRequest struct {
+	Password string `json:"password"`
+}
+
+// unlockResponse returns the minted playback token and its lifetime in seconds.
+// The token is a SECRET (video-scoped, 6h, no account identity); it is returned
+// once to the caller and never logged.
+type unlockResponse struct {
+	PlaybackToken string `json:"playback_token"`
+	ExpiresIn     int    `json:"expires_in"`
+}
+
+// handleUnlockVideo verifies a submitted password against a password-protected
+// video's stored hashes and, on success, mints a video-scoped playback token.
+// Optional auth; rate-limited under the same budget family as login (this is a
+// password-guessing surface). 200 with the token on success; 401 on a wrong
+// password; 404 for an unknown video or one that is not privacy=password (so the
+// endpoint reveals nothing about non-password videos). Never logs the password or
+// the token.
+func (s *Server) handleUnlockVideo(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	var in unlockRequest
+	if err := c.Bind(&in); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	ctx := c.Request().Context()
+	v, err := s.videosvc.GetByID(ctx, id)
+	if err != nil || v.Privacy != video.PrivacyPassword {
+		// Unknown video OR not a password video: 404, so the endpoint leaks nothing.
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	ok, err := s.videosvc.VerifyPassword(ctx, id, in.Password)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// Wrong password → 401. The password is never logged; abusive guessing is
+		// throttled by the auth-budget rate limiter (which audits its denials).
+		return echo.NewHTTPError(http.StatusUnauthorized, "incorrect password")
+	}
+	token := s.playbackSigner.Sign(id, playbackTokenTTL)
+	return c.JSON(http.StatusOK, unlockResponse{
+		PlaybackToken: token,
+		ExpiresIn:     int(playbackTokenTTL / time.Second),
+	})
+}
+
+// --- owner password management ---
+
+// videoPasswordView is one password's public projection (id + created_at); the
+// plaintext and hash are write-only and never appear in any response.
+type videoPasswordView struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// videoPasswordsResponse is the GET/PUT listing shape.
+type videoPasswordsResponse struct {
+	Passwords []videoPasswordView `json:"passwords"`
+}
+
+func videoPasswordViews(ps []video.VideoPassword) []videoPasswordView {
+	out := make([]videoPasswordView, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, videoPasswordView{ID: p.ID.String(), CreatedAt: p.CreatedAt})
+	}
+	return out
+}
+
+// setVideoPasswordRequest is the POST body (add one password).
+type setVideoPasswordRequest struct {
+	Password string `json:"password"`
+}
+
+// replaceVideoPasswordsRequest is the PUT body (replace the whole set).
+type replaceVideoPasswordsRequest struct {
+	Passwords []string `json:"passwords"`
+}
+
+// handleListVideoPasswords lists a video's passwords (owner only; id + created_at
+// only). A non-owner or unknown id is 404.
+func (s *Server) handleListVideoPasswords(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	ps, err := s.videosvc.ListPasswords(c.Request().Context(), userID, id)
+	if err != nil {
+		return videoError(err)
+	}
+	return c.JSON(http.StatusOK, videoPasswordsResponse{Passwords: videoPasswordViews(ps)})
+}
+
+// handleAddVideoPassword stores one new password for a video (owner only; 6–100
+// chars → else 400). Returns the new row (id + created_at) with 201. Never logs
+// or echoes the plaintext.
+func (s *Server) handleAddVideoPassword(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	var in setVideoPasswordRequest
+	if err := c.Bind(&in); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	p, err := s.videosvc.AddPassword(c.Request().Context(), userID, id, in.Password)
+	if err != nil {
+		return videoPasswordError(err)
+	}
+	return c.JSON(http.StatusCreated, videoPasswordView{ID: p.ID.String(), CreatedAt: p.CreatedAt})
+}
+
+// handleReplaceVideoPasswords replaces a video's whole password set (owner only;
+// 1–20 entries, each 6–100 chars → else 400). Returns the stored set (GET shape).
+func (s *Server) handleReplaceVideoPasswords(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	var in replaceVideoPasswordsRequest
+	if err := c.Bind(&in); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	ps, err := s.videosvc.ReplacePasswords(c.Request().Context(), userID, id, in.Passwords)
+	if err != nil {
+		return videoPasswordError(err)
+	}
+	return c.JSON(http.StatusOK, videoPasswordsResponse{Passwords: videoPasswordViews(ps)})
+}
+
+// handleDeleteVideoPassword removes one password (owner only). 204 on success;
+// 404 for an unknown passwordId; 409 when it is the last password of a
+// privacy=password video.
+func (s *Server) handleDeleteVideoPassword(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	pwID, err := uuid.Parse(c.Param("passwordId"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "password not found")
+	}
+	if err := s.videosvc.DeletePassword(c.Request().Context(), userID, id, pwID); err != nil {
+		return videoPasswordError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// videoPasswordError maps the password service errors to HTTP responses: a
+// *PasswordValidationError → 400, and the ownership/last-password/not-found
+// sentinels via videoError (404 / 409 / 404).
+func videoPasswordError(err error) error {
+	var ve *video.PasswordValidationError
+	if errors.As(err, &ve) {
+		return echo.NewHTTPError(http.StatusBadRequest, ve.Message)
+	}
+	return videoError(err)
+}

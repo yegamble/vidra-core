@@ -307,6 +307,28 @@ validated in full before any write (400 on: non-ascending/duplicate starts, a
 start `>=` the probed duration, a title not 1–120 chars after trim, or more than
 100 chapters).
 
+**Video passwords + embed privacy** (CORE-17): the `privacy` enum gains
+`password`. A `password` video is excluded from public listings exactly like
+`unlisted`; its detail returns **401 `code=password_required`** (the documented
+exception to 404-for-invisible) until unlocked. The owner manages passwords via
+`GET/POST/PUT /api/v1/videos/{id}/passwords` + `DELETE …/passwords/{passwordId}`
+(bcrypt-hashed, write-only — a plaintext/hash is never returned; each 6–100
+chars, at most 20; a video may be `privacy=password` only while it has ≥1
+password, and the last password of a `password` video can't be deleted → 409).
+A viewer unlocks with `POST /api/v1/videos/{id}/unlock` (`{password}` →
+`{playback_token, expires_in:21600}`), which mints a **6-hour, video-scoped
+HMAC playback token** carrying no account identity. Every video read endpoint
+accepts it as `Authorization: Bearer <playback_token>` **or** `?pt=<token>` (the
+header-less path for Safari native-HLS and progressive playback); an HLS
+playlist requested with `?pt=` has its relative variant/segment URIs rewritten
+to propagate the token. The unlock endpoint is rate-limited under the same
+budget as login; the token is a secret (never logged). Embed privacy lives in
+two columns on `videos`: `GET/PUT /api/v1/videos/{id}/embed-privacy`
+(`{status: enabled|disabled|whitelist, allowed_domains?}`; owner-only write, ≤50
+bare hostnames for `whitelist`). Enforcement is at the embed page in
+`vidra-user` (referrer / ancestor-origin check); server-side Referer enforcement
+is a non-goal.
+
 **Media garbage collection**: `POST /api/v1/admin/media/gc` (admin) lists stored
 objects under the known media prefixes and deletes those with no database
 reference. It defaults to a dry run (`{"dry_run":false}` deletes); it never

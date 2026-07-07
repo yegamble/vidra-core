@@ -36,6 +36,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/playback"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/quota"
@@ -103,6 +104,10 @@ type Server struct {
 	ipfsmirrorsvc     ipfsMirrorProvider
 	metrics           *observability.Metrics
 	media             storage.Backend
+	// playbackSigner mints/verifies the short-lived, video-scoped playback tokens
+	// that unlock password-protected videos (CORE-17 / W1.C2). Derived in New()
+	// from the JWT secret via domain separation, so it is always present.
+	playbackSigner *playback.Signer
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
 	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
 	devMailCapture *auth.CaptureMailer
@@ -461,6 +466,10 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	e.HidePort = true
 
 	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, startedAt: time.Now(), logger: slog.Default()}
+	// Playback-token signer for password-protected videos (CORE-17). Its key is
+	// derived from the JWT secret via domain separation, so a playback token is
+	// cryptographically independent of an account access token.
+	s.playbackSigner = playback.NewSigner([]byte(cfg.JWTSecret))
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -543,7 +552,9 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 			}
 			attrs := []any{
 				"method", v.Method,
-				"uri", v.URI,
+				// Redact any ?pt= playback token (CORE-17) so the secret unlock token
+				// never reaches the request log.
+				"uri", redactQueryToken(v.URI),
 				"status", v.Status,
 				"latency_ms", v.Latency.Milliseconds(),
 				"request_id", v.RequestID,
@@ -792,6 +803,26 @@ func (s *Server) routes() {
 		// owner-only whole-set replace. detail exposes has_chapters.
 		api.GET("/videos/:id/chapters", s.handleGetVideoChapters, s.optionalAuth)
 		api.PUT("/videos/:id/chapters", s.handleSetVideoChapters, s.requireAuth)
+
+		// Video passwords + unlock (CORE-17 / W1.C2). The unlock endpoint is a
+		// password-guessing surface, so it runs under the SAME strict limiter as
+		// login (optional auth: an anonymous viewer may unlock). The owner CRUD
+		// endpoints never return a plaintext or hash.
+		unlockMW := []echo.MiddlewareFunc{s.optionalAuth}
+		if s.authLimit != nil {
+			unlockMW = append(unlockMW, s.authRateLimit(s.authLimit))
+		}
+		api.POST("/videos/:id/unlock", s.handleUnlockVideo, unlockMW...)
+		api.GET("/videos/:id/passwords", s.handleListVideoPasswords, s.requireAuth)
+		api.POST("/videos/:id/passwords", s.handleAddVideoPassword, s.requireAuth)
+		api.PUT("/videos/:id/passwords", s.handleReplaceVideoPasswords, s.requireAuth)
+		api.DELETE("/videos/:id/passwords/:passwordId", s.handleDeleteVideoPassword, s.requireAuth)
+
+		// Embed privacy (CORE-17): read is optional-auth with the detail's BASE
+		// visibility (no password gate, so the embed page can read the policy
+		// pre-unlock); write is owner-only.
+		api.GET("/videos/:id/embed-privacy", s.handleGetVideoEmbedPrivacy, s.optionalAuth)
+		api.PUT("/videos/:id/embed-privacy", s.handleSetVideoEmbedPrivacy, s.requireAuth)
 		// Progressive VP9/WebM alternate (TRANSCODING_VP9_ENABLED); 404 when absent.
 		api.GET("/videos/:id/webm", s.handleStreamVideoWebM, s.optionalAuth)
 		api.POST("/videos/:id/view", s.handleRecordVideoView, s.optionalAuth)

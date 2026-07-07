@@ -53,12 +53,17 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var qe *QuotaExceededError
 	var fd *FeatureDisabledError
 	var id *IPFSDisabledError
+	var pr *PasswordRequiredError
 	switch {
 	case errors.As(err, &ve):
 		status = http.StatusUnprocessableEntity
 		message = "validation failed"
 		code = "unprocessable_entity"
 		fields = ve.Fields
+	case errors.As(err, &pr):
+		status = http.StatusUnauthorized
+		message = "this video is password protected"
+		code = "password_required"
 	case errors.As(err, &qe):
 		status = http.StatusUnprocessableEntity
 		message = "storing this file would exceed your storage quota"
@@ -147,6 +152,15 @@ func (e *QuotaExceededError) Error() string { return "storage quota exceeded" }
 type FeatureDisabledError struct{ Feature string }
 
 func (e *FeatureDisabledError) Error() string { return "feature disabled: " + e.Feature }
+
+// PasswordRequiredError renders as 401 with the stable code "password_required":
+// the requested video is privacy=password and the caller presented neither owner/
+// moderator authority nor a valid playback token (CORE-17 / W1.C2). It is the
+// deliberate exception to the 404-for-invisible rule so the watch/embed page can
+// render an unlock prompt. It carries no secret (no token, no hash, no password).
+type PasswordRequiredError struct{}
+
+func (e *PasswordRequiredError) Error() string { return "password required" }
 
 // IPFSDisabledError renders as 503 with the stable code "ipfs_disabled": the
 // hybrid IPFS media mirror (fix_plan P19) is off (IPFS_ENABLED=false) on this

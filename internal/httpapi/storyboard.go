@@ -31,6 +31,9 @@ func (s *Server) serveVideoStoryboard(c echo.Context, kind, contentType string) 
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	if err := s.passwordGateByID(c, id); err != nil {
+		return err
+	}
 	viewerID, _, authed := principalFromContext(c)
 	f, err := s.videosvc.FileForView(c.Request().Context(), id, viewerID, authed, kind)
 	if err != nil {

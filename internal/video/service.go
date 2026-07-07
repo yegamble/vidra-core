@@ -47,7 +47,32 @@ var (
 	// ErrNotQuarantined means a quarantine approve/reject targeted a video that
 	// is not in the 'quarantined' state.
 	ErrNotQuarantined = errors.New("video: not quarantined")
+	// ErrPasswordRequired means an operation needs the video to hold at least one
+	// password but it has none — e.g. setting privacy=password on a video with no
+	// passwords. The HTTP layer maps it to 400 (CORE-17 / W1.C2).
+	ErrPasswordRequired = errors.New("video: a password-protected video needs at least one password")
+	// ErrLastPassword means deleting/replacing would leave a privacy=password
+	// video with zero passwords. The HTTP layer maps it to 409.
+	ErrLastPassword = errors.New("video: cannot remove the last password of a password-protected video")
+	// ErrPasswordNotFound means the referenced password id does not belong to the
+	// video. The HTTP layer maps it to 404.
+	ErrPasswordNotFound = errors.New("video: password not found")
 )
+
+// PasswordValidationError is a 400-class failure validating a video-password
+// write (a plaintext outside 6–100 chars, or a replace-all set outside 1–20
+// entries). The HTTP layer maps it to 400.
+type PasswordValidationError struct{ Message string }
+
+func (e *PasswordValidationError) Error() string { return e.Message }
+
+// EmbedValidationError is a 400-class failure validating an embed-privacy write
+// (an unknown status, a whitelist with an empty/invalid domain list, or
+// allowed_domains supplied with a non-whitelist status). The HTTP layer maps it
+// to 400.
+type EmbedValidationError struct{ Message string }
+
+func (e *EmbedValidationError) Error() string { return e.Message }
 
 // acceptedVideoExts is the allow-list of original-upload file extensions. It is
 // deliberately a container/extension gate only — the declared content type is
@@ -99,6 +124,16 @@ type Repository interface {
 	VideoHasChapters(ctx context.Context, videoID uuid.UUID) (bool, error)
 	DeleteVideoChapters(ctx context.Context, videoID uuid.UUID) error
 	InsertVideoChapters(ctx context.Context, arg sqlcgen.InsertVideoChaptersParams) error
+	ListVideoPasswords(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.ListVideoPasswordsRow, error)
+	ListVideoPasswordHashes(ctx context.Context, videoID uuid.UUID) ([]string, error)
+	CountVideoPasswords(ctx context.Context, videoID uuid.UUID) (int64, error)
+	InsertVideoPassword(ctx context.Context, arg sqlcgen.InsertVideoPasswordParams) (sqlcgen.InsertVideoPasswordRow, error)
+	VideoPasswordExists(ctx context.Context, arg sqlcgen.VideoPasswordExistsParams) (bool, error)
+	DeleteVideoPassword(ctx context.Context, arg sqlcgen.DeleteVideoPasswordParams) (int64, error)
+	DeleteVideoPasswords(ctx context.Context, videoID uuid.UUID) error
+	InsertVideoPasswords(ctx context.Context, arg sqlcgen.InsertVideoPasswordsParams) error
+	GetVideoEmbedPrivacy(ctx context.Context, videoID uuid.UUID) (sqlcgen.GetVideoEmbedPrivacyRow, error)
+	SetVideoEmbedPrivacy(ctx context.Context, arg sqlcgen.SetVideoEmbedPrivacyParams) error
 	ListDueScheduledVideos(ctx context.Context, limit int32) ([]sqlcgen.ListDueScheduledVideosRow, error)
 	UpsertVideoMetadata(ctx context.Context, arg sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error)
 	GetVideoMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error)
@@ -357,6 +392,12 @@ type CreateInput struct {
 // CreateDraft creates a new draft video under the given channel. Ownership is
 // enforced by the caller (the HTTP layer checks channel ownership first).
 func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in CreateInput) (sqlcgen.Video, error) {
+	// A brand-new video has no passwords, so it can never be created directly as
+	// privacy=password (CORE-17: a password video needs >=1 password). The studio
+	// flow creates the draft, adds a password, then flips privacy.
+	if in.Privacy == PrivacyPassword {
+		return sqlcgen.Video{}, ErrPasswordRequired
+	}
 	v, err := s.repo.CreateVideo(ctx, sqlcgen.CreateVideoParams{
 		ChannelID:   channelID,
 		Title:       strings.TrimSpace(in.Title),
@@ -1073,6 +1114,18 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 	if in.PublishAt != nil && v.State == "published" {
 		// A publish time only makes sense before publication (§17).
 		return sqlcgen.Video{}, ErrPublished
+	}
+	// Switching to privacy=password requires the video to already hold >=1
+	// password (CORE-17). Checked BEFORE the write so a rejected switch leaves the
+	// privacy untouched.
+	if in.Privacy != nil && *in.Privacy == PrivacyPassword {
+		has, hErr := s.HasPassword(ctx, id)
+		if hErr != nil {
+			return sqlcgen.Video{}, hErr
+		}
+		if !has {
+			return sqlcgen.Video{}, ErrPasswordRequired
+		}
 	}
 	updated, err := s.repo.UpdateVideo(ctx, sqlcgen.UpdateVideoParams{
 		ID:          id,

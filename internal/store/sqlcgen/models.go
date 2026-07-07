@@ -613,18 +613,20 @@ type UserMfa struct {
 }
 
 type Video struct {
-	ID          uuid.UUID          `json:"id"`
-	ChannelID   uuid.UUID          `json:"channel_id"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	Privacy     string             `json:"privacy"`
-	State       string             `json:"state"`
-	CreatedAt   time.Time          `json:"created_at"`
-	UpdatedAt   time.Time          `json:"updated_at"`
-	Category    *string            `json:"category"`
-	Language    *string            `json:"language"`
-	License     *string            `json:"license"`
-	PublishAt   pgtype.Timestamptz `json:"publish_at"`
+	ID                  uuid.UUID          `json:"id"`
+	ChannelID           uuid.UUID          `json:"channel_id"`
+	Title               string             `json:"title"`
+	Description         string             `json:"description"`
+	Privacy             string             `json:"privacy"`
+	State               string             `json:"state"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+	Category            *string            `json:"category"`
+	Language            *string            `json:"language"`
+	License             *string            `json:"license"`
+	PublishAt           pgtype.Timestamptz `json:"publish_at"`
+	EmbedPrivacy        string             `json:"embed_privacy"`
+	EmbedAllowedDomains []string           `json:"embed_allowed_domains"`
 }
 
 type VideoBlock struct {
@@ -657,6 +659,13 @@ type VideoMetadatum struct {
 	Width           *int32    `json:"width"`
 	Height          *int32    `json:"height"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type VideoPassword struct {
+	ID           uuid.UUID `json:"id"`
+	VideoID      uuid.UUID `json:"video_id"`
+	PasswordHash string    `json:"password_hash"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type VideoRating struct {

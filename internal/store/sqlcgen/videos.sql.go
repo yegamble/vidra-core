@@ -41,7 +41,7 @@ func (q *Queries) CountPublicVideosByChannel(ctx context.Context, channelID uuid
 const createVideo = `-- name: CreateVideo :one
 INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains
 `
 
 type CreateVideoParams struct {
@@ -80,6 +80,8 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		&i.Language,
 		&i.License,
 		&i.PublishAt,
+		&i.EmbedPrivacy,
+		&i.EmbedAllowedDomains,
 	)
 	return i, err
 }
@@ -1008,7 +1010,7 @@ UPDATE videos
 SET state      = $1,
     updated_at = now()
 WHERE id = $2
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains
 `
 
 type SetVideoStateParams struct {
@@ -1032,6 +1034,8 @@ func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (V
 		&i.Language,
 		&i.License,
 		&i.PublishAt,
+		&i.EmbedPrivacy,
+		&i.EmbedAllowedDomains,
 	)
 	return i, err
 }
@@ -1047,7 +1051,7 @@ SET title       = COALESCE($1, title),
     publish_at  = COALESCE($7, publish_at),
     updated_at  = now()
 WHERE id = $8
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains
 `
 
 type UpdateVideoParams struct {
@@ -1086,6 +1090,8 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		&i.Language,
 		&i.License,
 		&i.PublishAt,
+		&i.EmbedPrivacy,
+		&i.EmbedAllowedDomains,
 	)
 	return i, err
 }

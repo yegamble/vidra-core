@@ -20,21 +20,23 @@ import (
 // fakeRepo is an in-memory video.Repository. Each video remembers its channel's
 // owner so GetVideoByID can return the joined owner_id.
 type fakeRepo struct {
-	videos   map[uuid.UUID]sqlcgen.GetVideoByIDRow
-	files    map[uuid.UUID][]sqlcgen.VideoFile
-	metadata map[uuid.UUID]sqlcgen.VideoMetadatum
-	views    map[uuid.UUID]int64
-	followed map[uuid.UUID]bool                           // channel IDs the test subject follows
-	saved    map[uuid.UUID]bool                           // video IDs the test subject has saved
-	history  map[uuid.UUID]historyMark                    // video ID -> resume position + last-watched
-	captions map[string]sqlcgen.Caption                   // "videoID|lang" -> caption
-	tags     map[uuid.UUID][]string                       // video ID -> normalized tag set
-	chapters map[uuid.UUID][]sqlcgen.ListVideoChaptersRow // video ID -> ordered chapters
-	viewDays map[dayEntry]int64                           // (video, day) -> rolled-up views
-	likes    map[uuid.UUID]int64                          // seedable stats totals
-	dislikes map[uuid.UUID]int64
-	comments map[uuid.UUID]int64
-	owner    uuid.UUID
+	videos    map[uuid.UUID]sqlcgen.GetVideoByIDRow
+	files     map[uuid.UUID][]sqlcgen.VideoFile
+	metadata  map[uuid.UUID]sqlcgen.VideoMetadatum
+	views     map[uuid.UUID]int64
+	followed  map[uuid.UUID]bool                            // channel IDs the test subject follows
+	saved     map[uuid.UUID]bool                            // video IDs the test subject has saved
+	history   map[uuid.UUID]historyMark                     // video ID -> resume position + last-watched
+	captions  map[string]sqlcgen.Caption                    // "videoID|lang" -> caption
+	tags      map[uuid.UUID][]string                        // video ID -> normalized tag set
+	chapters  map[uuid.UUID][]sqlcgen.ListVideoChaptersRow  // video ID -> ordered chapters
+	passwords map[uuid.UUID][]fakePasswordRow               // video ID -> passwords (CORE-17)
+	embed     map[uuid.UUID]sqlcgen.GetVideoEmbedPrivacyRow // video ID -> embed policy override
+	viewDays  map[dayEntry]int64                            // (video, day) -> rolled-up views
+	likes     map[uuid.UUID]int64                           // seedable stats totals
+	dislikes  map[uuid.UUID]int64
+	comments  map[uuid.UUID]int64
+	owner     uuid.UUID
 	// requiresQuarantine mirrors the UploadRequiresQuarantine gate result for
 	// the test subject's uploads (true = role 'user' without bypass).
 	requiresQuarantine bool

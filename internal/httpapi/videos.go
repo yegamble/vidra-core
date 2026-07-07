@@ -24,7 +24,9 @@ import (
 )
 
 // validVideoPrivacy is the allowed privacy set; empty defaults to "private".
-var validVideoPrivacy = map[string]bool{"public": true, "unlisted": true, "private": true}
+// "password" (CORE-17) is accepted here, but the service additionally requires
+// the video to already hold >=1 password (else 400 password_required-style).
+var validVideoPrivacy = map[string]bool{"public": true, "unlisted": true, "private": true, "password": true}
 
 // createVideoRequest is the POST /api/v1/channels/{handle}/videos body.
 type createVideoRequest struct {
@@ -50,7 +52,7 @@ func (r createVideoRequest) Validate() []FieldError {
 		fes = append(fes, FieldError{Field: "description", Message: "must be at most 5000 characters"})
 	}
 	if r.Privacy != "" && !validVideoPrivacy[r.Privacy] {
-		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private"})
+		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private, password"})
 	}
 	fes = append(fes, validateTaxonomy(r.Category, r.Language, r.License)...)
 	fes = append(fes, validateTags(r.Tags)...)
@@ -262,7 +264,7 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 		PublishAt:   in.PublishAt,
 	})
 	if err != nil {
-		return err
+		return videoError(err) // ErrPasswordRequired → 400
 	}
 	s.flagVideoWatchedWords(ctx, v.ID, v.Title, v.Description)
 	view := newVideoView(v)
@@ -659,7 +661,7 @@ func (r updateVideoRequest) Validate() []FieldError {
 		fes = append(fes, FieldError{Field: "description", Message: "must be at most 5000 characters"})
 	}
 	if r.Privacy != nil && !validVideoPrivacy[*r.Privacy] {
-		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private"})
+		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private, password"})
 	}
 	// A provided taxonomy field must be a known, non-empty id (clearing to unset
 	// is not supported via update).
@@ -885,6 +887,9 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	if err := s.passwordGateByID(c, id); err != nil {
+		return err
+	}
 	viewerID, _, authed := principalFromContext(c)
 	f, err := s.videosvc.FileForView(c.Request().Context(), id, viewerID, authed, "original")
 	if err != nil {
@@ -904,6 +909,9 @@ func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
 		return err
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if err := s.passwordGateByID(c, id); err != nil {
+		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
 	f, err := s.videosvc.FileForView(c.Request().Context(), id, viewerID, authed, "thumbnail")
@@ -1074,6 +1082,26 @@ func (s *Server) videoHiddenFromViewer(c echo.Context, videoID uuid.UUID) (bool,
 // failure it returns an *echo.HTTPError the caller returns as-is; otherwise it
 // returns the joined video row. Callers must already have parsed the id.
 func (s *Server) videoVisibleForRead(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	v, err := s.videoReadBase(c, videoID)
+	if err != nil {
+		return sqlcgen.GetVideoByIDRow{}, err
+	}
+	// A password-protected video is gated to owner/moderators or a valid playback
+	// token; everyone else gets 401 password_required (CORE-17 / W1.C2). This is
+	// the deliberate exception to the 404-for-invisible rule so the watch page can
+	// render an unlock prompt.
+	if err := s.passwordGate(c, v.ID, v.Privacy, v.OwnerID); err != nil {
+		return sqlcgen.GetVideoByIDRow{}, err
+	}
+	return v, nil
+}
+
+// videoReadBase applies the base read visibility (unknown id → 404; private →
+// owner only; blocked → moderators only; quarantined → owner + moderators;
+// scheduled → owner) WITHOUT the password gate. GET /embed-privacy uses it so the
+// embed page can read a password video's embed policy pre-unlock; every other
+// read path wraps it via videoVisibleForRead (which adds the password gate).
+func (s *Server) videoReadBase(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
 	if err != nil {
 		if errors.Is(err, video.ErrNotFound) {
@@ -1221,6 +1249,12 @@ func videoError(err error) error {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	case errors.Is(err, video.ErrUnsupportedMedia):
 		return echo.NewHTTPError(http.StatusUnsupportedMediaType, "unsupported media type")
+	case errors.Is(err, video.ErrPasswordRequired):
+		return echo.NewHTTPError(http.StatusBadRequest, "a password-protected video needs at least one password")
+	case errors.Is(err, video.ErrLastPassword):
+		return echo.NewHTTPError(http.StatusConflict, "cannot remove the last password of a password-protected video")
+	case errors.Is(err, video.ErrPasswordNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, "password not found")
 	default:
 		return err
 	}
