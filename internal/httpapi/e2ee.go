@@ -404,3 +404,32 @@ func (s *Server) listEncryptedMessages(c echo.Context, userID, convID uuid.UUID,
 	}
 	return c.JSON(http.StatusOK, encryptedMessageListResponse{Envelopes: views, Limit: limit, Offset: offset})
 }
+
+// listEncryptedMessagesBefore is the keyset (before_id) variant of
+// listEncryptedMessages, so encrypted threads page identically to plaintext ones.
+// An unknown/foreign cursor is a 422 (via *e2ee.InvalidError). Dispatched from
+// handleListMessages.
+func (s *Server) listEncryptedMessagesBefore(c echo.Context, userID, convID, beforeID uuid.UUID, limit int) error {
+	msgs, err := s.e2eesvc.ListMessagesBefore(c.Request().Context(), userID, convID, beforeID, int32(limit))
+	if err != nil {
+		if herr := e2eeError(err); herr != nil {
+			return herr
+		}
+		return err
+	}
+	views := make([]encryptedMessageView, 0, len(msgs))
+	for _, m := range msgs {
+		views = append(views, encryptedMessageView{
+			ID:                m.ID.String(),
+			ConversationID:    m.ConversationID.String(),
+			SenderUserID:      m.SenderUserID.String(),
+			SenderDeviceID:    m.SenderDeviceID.String(),
+			RecipientDeviceID: m.RecipientDeviceID.String(),
+			MessageType:       m.MessageType,
+			Ciphertext:        m.Ciphertext,
+			CreatedAt:         m.CreatedAt,
+			ExpiresAt:         m.ExpiresAt,
+		})
+	}
+	return c.JSON(http.StatusOK, encryptedMessageListResponse{Envelopes: views, Limit: limit, Offset: 0})
+}

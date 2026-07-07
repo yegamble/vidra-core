@@ -1027,6 +1027,55 @@
 
 ---
 
+# Messaging v2
+
+> Frontend-messenger enablement contract deltas against the EXISTING messaging
+> pillar (attachments/read-state/link-previews/tombstones already ship, migration
+> 0064). Spec: `.ralph/specs/messaging-v2.md`. Contract-first (openapi.yaml in the
+> same commit as the handler), additive/backward-compatible only, `make ci` green +
+> pushed before a box ticks. Binding invariants: never log message plaintext or
+> attachment filenames (ids only); encrypted conversations stay opaque (attachment
+> upload on encrypted remains 422); participant gating stays 404-shaped.
+
+## P-MSG2.C1 Attachment image dimensions (D1) — DONE 2026-07-07
+- [x] Migration `dm_attachment_dimensions`: `message_attachments` + nullable `width`/`height` (CHECK > 0); down migration drops them. (`migrations/0068_dm_attachment_dimensions.{up,down}.sql`; up+down verified reversible against real PG.)
+- [x] `UploadAttachment`: `image.DecodeConfig` probe for kind=image via TeeReader before blob write (config-only decode; jpeg/png/gif/webp registered — added `golang.org/x/image/webp` for webp); probe failure non-fatal (NULLs) logged as `attachment dimension probe failed` with attachment_id ONLY; dimensions > 20000px either side → 422 (`ErrAttachmentDimensions`); ClamAV fail-closed path unchanged and still ordered before linkability. (`internal/messaging/service.go` `UploadAttachment`, bounded `capWriter` tees the header of the single Put stream.)
+- [x] Contract: `DMAttachment` + `UploadAttachmentResponse` gain optional `width`/`height` in openapi.yaml (+ upload 422 description); sqlc columns extended (`CreateMessageAttachment`/`GetMessageAttachment`/`ListAttachmentsForMessages`).
+- [x] Tests: `TestDMAttachmentDimensions` (real png/jpeg/gif encode + `testdata/tiny.webp` fixture + corrupt→NULL + non-image→NULL + oversize 20001px→422) echoes on upload + list; DB-proof `TestMessagingV2AttachmentDimensionsPersist` (persisted columns + CHECK>0) green against real PG; existing 413/415/422/scan tests green; observability log-guard green. (Evidence: `make ci` green + `-tags=integration` run.)
+
+## P-MSG2.C2 Keyset pagination `before_id` (D2) — DONE 2026-07-07
+- [x] Contract: optional `before_id` (uuid) query param on `GET /conversations/{id}/messages` — mutually exclusive with `offset` (422), unknown/foreign-conversation cursor 422, malformed 422, non-participant still 404; documented in openapi.yaml (param + 422 response).
+- [x] sqlc `ListMessagesBefore` with row-value keyset `(created_at, id) < (before_created_at::timestamptz, before_id::uuid)` ordered `created_at DESC, id DESC`; index extended in `migrations/0069_messages_keyset_index` (`messages_conversation_created_idx` + `e2ee_messages_recipient_idx` gain trailing `id DESC`); encrypted envelope listing gets the same cursor treatment (`ListE2EEMessagesForRecipientBefore` + `GetE2EEMessageCursor`, e2ee `ListMessagesBefore`).
+- [x] Tests: DB-proof `TestMessagingV2KeysetStablePaging` (page1 → concurrent insert → `before_id` page2, no duplicate/skip; empty boundary) against real PG; handler `TestDMKeysetPagination` (both-params/malformed/unknown/foreign 422, non-participant 404, empty boundary); service `TestKeysetPagination`; encrypted `TestListMessagesBeforeKeyset`. (Evidence: `make ci` green + `-tags=integration` run.)
+
+## P-MSG2.C3 Avatar flags in messaging payloads (D3) — DONE 2026-07-07
+- [x] Contract: optional `other_has_avatar` on `ConversationSummary`, `sender_has_avatar` on `Message` (wording mirrors `/auth/me.has_avatar`); no migration.
+- [x] sqlc: EXISTS-join `user_images (kind='avatar')` into `ListConversations` (+`ListMessages`/`ListMessagesBefore`); service + handler mapping.
+- [x] Tests: DB-proof `TestMessagingV2AvatarFlags` (real `user_images` row flips both flags, per-viewer) against real PG; service `TestAvatarFlags`; payloads otherwise byte-compatible (omitempty). (Evidence: `make ci` green + `-tags=integration` run.)
+
+## P-MSG2.C4 Conversation search param (D4 — optional, small)
+- [ ] Contract: optional `q` on `GET /me/conversations` — ILIKE over other participant username/display_name only (never message bodies; E2EE stays out of any search path).
+- [ ] sqlc narg filter in `ListConversations`; tests for hit/miss/absent-q. (Evidence: tests + `make ci`.)
+
+## P-MSG2.C5 Unread rollup endpoint (D5 — optional, small)
+- [ ] Contract + handler: `GET /me/conversations/unread-count` → `{unread_conversations, unread_messages}` behind auth; single aggregate query reusing the watermark logic.
+- [ ] Tests: zero/nonzero, watermark advance drops counts (integration, DB-proof via direct row setup). (Evidence: tests + `make ci`.)
+
+## P-MSG2.C6 DM attachment platform limits — Messenger parity (D6, DECIDED 2026-07-07)
+- [ ] Record in `product-decisions.md` (§14 amendment): DM attachments do NOT count against the user storage quota; Vidra enforces Messenger-parity platform limits instead (per-file 100 MiB = 104,857,600 bytes; 30 attachments per message; allowlist gains office docs as kind `doc`; sources in messaging-v2 RESEARCH §10).
+- [ ] Migration: `message_attachments.kind` CHECK gains `'doc'`; contract: `DMAttachment.kind`/`UploadAttachmentResponse.kind` enums + `SendMessageRequest.attachment_ids.maxItems: 30` + upload description (100 MiB, kinds) in openapi.yaml.
+- [ ] Implementation: `MaxAttachmentBytes` → 100 MiB (verify global HTTP body limit covers multipart overhead); kind detection adds doc/docx/ppt/pptx/xls/xlsx MIME types; ClamAV scan hook stays fail-closed and ordered before linkability (load-bearing with office formats); per-user rate limit on the upload route via `ratelimit` (60 uploads / 10 min → 429 standard envelope) as the no-quota compensating control.
+- [ ] Tests: 100 MiB boundary 201/413; each office MIME → 201 `kind=doc`; stray type 415; 31 ids 422; EICAR-in-docx 422 fail-closed; upload rate-limit 429; integration DB-proof of persisted `kind='doc'` + tombstone deletion; 25 MiB-era tests updated. No filename/body in any new log line. (Evidence: product-decisions diff + migration + tests + `make ci`.)
+
+## P-MSG2.C7 E2EE × attachments stance (D7 — documentation only)
+- [ ] Record in `.ralph/specs/e2ee.md`: encrypted-thread attachments remain 422 in v2; future design = client-encrypted opaque blobs (ciphertext + size + ids stored; filename/content-type/dimensions/content-key NEVER stored or logged; ClamAV N/A on ciphertext — threat-model note required); D1's dimension probe is confirmed plaintext-path-only.
+- [ ] Ledger rows updated (typing/presence + delivered-receipts remain INTENTIONAL_DIFFERENCE; no WS/SSE). (Evidence: spec + ledger diff.)
+
+## Ordering
+- [ ] C1 and C2 first (they gate frontend S6/S3); C3 next (cheap, unblocks avatar polish); C6 (decided — limits slice) before the attachment-heavy UI ships; C4/C5 opportunistic (unscheduled); C7 alongside C1. Each slice: openapi.yaml + implementation + tests in one commit series, endpoint inventory + ledger updated, `make ci` green, pushed.
+
+---
+
 # Optional / Deferred / Non-Blocking
 
 These items do not block Ralph exit if configured as optional in `.ralphrc` and explicitly kept in this section.

@@ -5,10 +5,15 @@
 package messaging
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"image"
+	_ "image/gif"  // register the GIF decoder for image.DecodeConfig
+	_ "image/jpeg" // register the JPEG decoder for image.DecodeConfig
+	_ "image/png"  // register the PNG decoder for image.DecodeConfig
 	"io"
 	"log/slog"
 	"mime"
@@ -20,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	_ "golang.org/x/image/webp" // register the WebP decoder for image.DecodeConfig
 
 	"github.com/vidra/vidra-core/internal/linkpreview"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -57,6 +63,13 @@ var (
 	ErrInvalidAttachments = errors.New("messaging: invalid attachment reference")
 	// ErrAttachmentNotFound means no attachment matches the id for this caller.
 	ErrAttachmentNotFound = errors.New("messaging: attachment not found")
+	// ErrAttachmentDimensions means a probed image reported absurd pixel
+	// dimensions (either side over maxImageDimension). Mapped to 422 to keep
+	// aspect-ratio math sane and reject decompression-bomb-shaped metadata.
+	ErrAttachmentDimensions = errors.New("messaging: attachment dimensions out of range")
+	// ErrInvalidCursor means a keyset before_id cursor is unknown or belongs to a
+	// different conversation. Mapped to 422.
+	ErrInvalidCursor = errors.New("messaging: invalid pagination cursor")
 )
 
 // MaxAttachmentBytes is the default per-attachment size cap (25 MiB, per
@@ -65,6 +78,18 @@ const MaxAttachmentBytes int64 = 25 << 20
 
 // MaxAttachmentsPerMessage bounds how many attachments one send may reference.
 const MaxAttachmentsPerMessage = 4
+
+// maxImageDimension caps the intrinsic width/height (pixels) a probed image may
+// report before the upload is rejected (messaging-v2.md D1). Bytes are already
+// size-capped; this bounds the metadata so aspect-ratio math stays sane and
+// rejects decompression-bomb-shaped headers.
+const maxImageDimension = 20000
+
+// dimensionProbeMaxBytes caps how many leading bytes of an image are buffered for
+// the config-only DecodeConfig probe. Image headers (JPEG SOF, PNG IHDR, GIF/WebP
+// screen descriptors) live near the start, so this is ample while keeping the
+// probe from buffering large uploads in memory.
+const dimensionProbeMaxBytes = 512 << 10 // 512 KiB
 
 // readReceiptsPrefType is the notification_prefs pseudo-type that stores a user's
 // read-receipts privacy toggle (product-decisions.md §14 — reuse over a
@@ -142,6 +167,7 @@ type Repository interface {
 	GetOtherParticipant(ctx context.Context, arg sqlcgen.GetOtherParticipantParams) (uuid.UUID, error)
 	TouchConversation(ctx context.Context, id uuid.UUID) error
 	ListMessages(ctx context.Context, arg sqlcgen.ListMessagesParams) ([]sqlcgen.ListMessagesRow, error)
+	ListMessagesBefore(ctx context.Context, arg sqlcgen.ListMessagesBeforeParams) ([]sqlcgen.ListMessagesBeforeRow, error)
 	ListConversations(ctx context.Context, arg sqlcgen.ListConversationsParams) ([]sqlcgen.ListConversationsRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	GetUserByUsername(ctx context.Context, lower string) (sqlcgen.User, error)
@@ -265,6 +291,7 @@ type Summary struct {
 	OtherUserID      uuid.UUID
 	OtherUsername    string
 	OtherDisplayName string
+	OtherHasAvatar   bool   // whether the other participant has an avatar set
 	LastMessageBody  string // "" when there are no messages yet
 	LastMessageAt    time.Time
 	UnreadCount      int64 // caller's unread messages (peer messages past their watermark)
@@ -281,6 +308,10 @@ type Attachment struct {
 	Filename       string
 	SizeBytes      int64
 	StorageKey     string // internal; not exposed in views
+	// Width/Height are the probed intrinsic pixel dimensions for kind=image
+	// (nil for non-images, pre-migration rows, or a probe failure).
+	Width  *int32
+	Height *int32
 }
 
 // LinkPreview is the OpenGraph preview joined onto a message, present only once
@@ -302,6 +333,7 @@ type Message struct {
 	SenderID          uuid.UUID
 	SenderUsername    string
 	SenderDisplayName string
+	SenderHasAvatar   bool // whether the sender has an avatar set
 	Body              string
 	CreatedAt         time.Time
 	Deleted           bool
@@ -407,6 +439,7 @@ func (s *Service) ListConversations(ctx context.Context, meID uuid.UUID, limit, 
 		out = append(out, Summary{
 			ID: r.ID, UpdatedAt: r.UpdatedAt, Encrypted: r.Encrypted, OtherUserID: r.OtherUserID,
 			OtherUsername: r.OtherUsername, OtherDisplayName: r.OtherDisplayName,
+			OtherHasAvatar:  r.OtherHasAvatar,
 			LastMessageBody: r.LastMessageBody, LastMessageAt: r.LastMessageAt,
 			UnreadCount: r.UnreadCount,
 		})
@@ -501,17 +534,12 @@ func (s *Service) OtherParticipant(ctx context.Context, conversationID, meID uui
 	})
 }
 
-// ListMessages returns a conversation's messages, newest first. The caller must
-// be a participant, else ErrNotParticipant.
+// ListMessages returns a conversation's messages, newest first, offset-paged. The
+// caller must be a participant, else ErrNotParticipant.
 func (s *Service) ListMessages(ctx context.Context, meID, conversationID uuid.UUID, limit, offset int32) ([]Message, error) {
-	member, err := s.repo.IsConversationParticipant(ctx, sqlcgen.IsConversationParticipantParams{
-		ConversationID: conversationID,
-		UserID:         meID,
-	})
-	if err != nil {
+	if member, err := s.isParticipant(ctx, meID, conversationID); err != nil {
 		return nil, err
-	}
-	if !member {
+	} else if !member {
 		return nil, ErrNotParticipant
 	}
 	rows, err := s.repo.ListMessages(ctx, sqlcgen.ListMessagesParams{
@@ -522,25 +550,110 @@ func (s *Service) ListMessages(ctx context.Context, meID, conversationID uuid.UU
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]uuid.UUID, 0, len(rows))
+	cores := make([]messageCore, 0, len(rows))
 	for _, r := range rows {
-		ids = append(ids, r.ID)
-	}
-	attByMsg := s.attachmentsForMessages(ctx, ids)
-	out := make([]Message, 0, len(rows))
-	for _, r := range rows {
-		m := Message{
+		cores = append(cores, messageCore{
 			ID: r.ID, ConversationID: r.ConversationID, SenderID: r.SenderID,
 			SenderUsername: r.SenderUsername, SenderDisplayName: r.SenderDisplayName,
-			Body: r.Body, CreatedAt: r.CreatedAt, Deleted: r.Deleted,
-			Attachments: attByMsg[r.ID],
+			SenderHasAvatar: r.SenderHasAvatar, Body: r.Body, CreatedAt: r.CreatedAt, Deleted: r.Deleted,
+			PreviewURL: r.PreviewUrl, PreviewTitle: r.PreviewTitle,
+			PreviewDescription: r.PreviewDescription, PreviewImage: r.PreviewImage,
+		})
+	}
+	return s.assembleMessages(ctx, cores), nil
+}
+
+// ListMessagesBefore returns a keyset (cursor) page of a conversation's messages:
+// only those strictly OLDER than beforeID, newest first. Unlike offset paging it
+// is stable as new messages arrive (no duplicate/skip). The caller must be a
+// participant (else ErrNotParticipant); beforeID must be a message in this
+// conversation (else ErrInvalidCursor).
+func (s *Service) ListMessagesBefore(ctx context.Context, meID, conversationID, beforeID uuid.UUID, limit int32) ([]Message, error) {
+	if member, err := s.isParticipant(ctx, meID, conversationID); err != nil {
+		return nil, err
+	} else if !member {
+		return nil, ErrNotParticipant
+	}
+	cursor, err := s.repo.GetMessage(ctx, beforeID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrInvalidCursor
 		}
-		// A tombstoned message never surfaces stale attachments/preview.
-		if !r.Deleted {
-			if r.PreviewUrl != nil {
+		return nil, err
+	}
+	if cursor.ConversationID != conversationID {
+		return nil, ErrInvalidCursor
+	}
+	rows, err := s.repo.ListMessagesBefore(ctx, sqlcgen.ListMessagesBeforeParams{
+		ConversationID:  conversationID,
+		BeforeCreatedAt: cursor.CreatedAt,
+		BeforeID:        cursor.ID,
+		ResultLimit:     limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	cores := make([]messageCore, 0, len(rows))
+	for _, r := range rows {
+		cores = append(cores, messageCore{
+			ID: r.ID, ConversationID: r.ConversationID, SenderID: r.SenderID,
+			SenderUsername: r.SenderUsername, SenderDisplayName: r.SenderDisplayName,
+			SenderHasAvatar: r.SenderHasAvatar, Body: r.Body, CreatedAt: r.CreatedAt, Deleted: r.Deleted,
+			PreviewURL: r.PreviewUrl, PreviewTitle: r.PreviewTitle,
+			PreviewDescription: r.PreviewDescription, PreviewImage: r.PreviewImage,
+		})
+	}
+	return s.assembleMessages(ctx, cores), nil
+}
+
+func (s *Service) isParticipant(ctx context.Context, meID, conversationID uuid.UUID) (bool, error) {
+	return s.repo.IsConversationParticipant(ctx, sqlcgen.IsConversationParticipantParams{
+		ConversationID: conversationID,
+		UserID:         meID,
+	})
+}
+
+// messageCore is the shared per-row shape produced by both the offset and keyset
+// message listings, so assembleMessages (attachment fetch + preview + tombstone
+// handling) is written once.
+type messageCore struct {
+	ID                 uuid.UUID
+	ConversationID     uuid.UUID
+	SenderID           uuid.UUID
+	SenderUsername     string
+	SenderDisplayName  string
+	SenderHasAvatar    bool
+	Body               string
+	CreatedAt          time.Time
+	Deleted            bool
+	PreviewURL         *string
+	PreviewTitle       *string
+	PreviewDescription *string
+	PreviewImage       *string
+}
+
+// assembleMessages decorates a page of message cores with their attachments and
+// resolved link preview. A tombstoned message never surfaces stale attachments or
+// a preview.
+func (s *Service) assembleMessages(ctx context.Context, cores []messageCore) []Message {
+	ids := make([]uuid.UUID, 0, len(cores))
+	for _, c := range cores {
+		ids = append(ids, c.ID)
+	}
+	attByMsg := s.attachmentsForMessages(ctx, ids)
+	out := make([]Message, 0, len(cores))
+	for _, c := range cores {
+		m := Message{
+			ID: c.ID, ConversationID: c.ConversationID, SenderID: c.SenderID,
+			SenderUsername: c.SenderUsername, SenderDisplayName: c.SenderDisplayName,
+			SenderHasAvatar: c.SenderHasAvatar, Body: c.Body, CreatedAt: c.CreatedAt, Deleted: c.Deleted,
+			Attachments: attByMsg[c.ID],
+		}
+		if !c.Deleted {
+			if c.PreviewURL != nil {
 				m.Preview = &LinkPreview{
-					URL: deref(r.PreviewUrl), Title: deref(r.PreviewTitle),
-					Description: deref(r.PreviewDescription), Image: deref(r.PreviewImage),
+					URL: deref(c.PreviewURL), Title: deref(c.PreviewTitle),
+					Description: deref(c.PreviewDescription), Image: deref(c.PreviewImage),
 				}
 			}
 		} else {
@@ -548,7 +661,7 @@ func (s *Service) ListMessages(ctx context.Context, meID, conversationID uuid.UU
 		}
 		out = append(out, m)
 	}
-	return out, nil
+	return out
 }
 
 // attachmentsForMessages groups attachments by message id for the given page of
@@ -568,6 +681,7 @@ func (s *Service) attachmentsForMessages(ctx context.Context, ids []uuid.UUID) m
 		out[mid] = append(out[mid], Attachment{
 			ID: r.ID, Kind: r.Kind, ContentType: r.ContentType,
 			Filename: r.Filename, SizeBytes: r.SizeBytes,
+			Width: r.Width, Height: r.Height,
 		})
 	}
 	return out
@@ -628,8 +742,17 @@ func (s *Service) UploadAttachment(ctx context.Context, meID, conversationID uui
 	key := path.Join("dm-attachments", conversationID.String(), attID.String()+"."+ext)
 
 	// Bound the stored bytes even if the declared size lied: read one extra byte
-	// past the cap to detect an oversize stream.
-	written, err := s.blobs.Put(ctx, key, io.LimitReader(in.Reader, s.maxAttach+1))
+	// past the cap to detect an oversize stream. For images, tee a bounded prefix
+	// of the SAME single stream into a buffer so the config-only dimension probe
+	// runs without a second read or full in-memory copy.
+	limited := io.LimitReader(in.Reader, s.maxAttach+1)
+	var putReader io.Reader = limited
+	var probe *capWriter
+	if kind == "image" {
+		probe = &capWriter{n: dimensionProbeMaxBytes}
+		putReader = io.TeeReader(limited, probe)
+	}
+	written, err := s.blobs.Put(ctx, key, putReader)
 	if err != nil {
 		return Attachment{}, err
 	}
@@ -649,10 +772,26 @@ func (s *Service) UploadAttachment(ctx context.Context, meID, conversationID uui
 			return Attachment{}, ErrAttachmentRejected
 		}
 	}
+	// Probe intrinsic image dimensions (config-only decode, no pixel allocation).
+	// Failure is non-fatal — the upload still succeeds with NULL dimensions;
+	// absurd dimensions are rejected. Never logs the filename or bytes.
+	var width, height *int32
+	if probe != nil {
+		if cfg, _, derr := image.DecodeConfig(bytes.NewReader(probe.bytes())); derr == nil && cfg.Width > 0 && cfg.Height > 0 {
+			if cfg.Width > maxImageDimension || cfg.Height > maxImageDimension {
+				_ = s.blobs.Delete(ctx, key)
+				return Attachment{}, ErrAttachmentDimensions
+			}
+			w, h := int32(cfg.Width), int32(cfg.Height)
+			width, height = &w, &h
+		} else if derr != nil {
+			s.logger.WarnContext(ctx, "attachment dimension probe failed", "attachment_id", attID)
+		}
+	}
 	row, err := s.repo.CreateMessageAttachment(ctx, sqlcgen.CreateMessageAttachmentParams{
 		ID: attID, ConversationID: conversationID, UploaderID: meID,
 		Kind: kind, ContentType: in.ContentType, Filename: in.Filename,
-		SizeBytes: written, StorageKey: key,
+		SizeBytes: written, StorageKey: key, Width: width, Height: height,
 	})
 	if err != nil {
 		_ = s.blobs.Delete(ctx, key)
@@ -661,9 +800,31 @@ func (s *Service) UploadAttachment(ctx context.Context, meID, conversationID uui
 	return Attachment{
 		ID: row.ID, ConversationID: row.ConversationID, Kind: row.Kind,
 		ContentType: row.ContentType, Filename: row.Filename, SizeBytes: row.SizeBytes,
-		StorageKey: row.StorageKey,
+		StorageKey: row.StorageKey, Width: row.Width, Height: row.Height,
 	}, nil
 }
+
+// capWriter captures up to n leading bytes written to it and silently discards
+// the rest, so tee-ing a large upload stream into it stays bounded. It always
+// reports a full write so an io.TeeReader over it never short-circuits.
+type capWriter struct {
+	buf bytes.Buffer
+	n   int // remaining capture capacity
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	if w.n > 0 {
+		take := p
+		if len(take) > w.n {
+			take = take[:w.n]
+		}
+		_, _ = w.buf.Write(take)
+		w.n -= len(take)
+	}
+	return len(p), nil
+}
+
+func (w *capWriter) bytes() []byte { return w.buf.Bytes() }
 
 // AttachmentForDownload returns an attachment (including its storage key) for the
 // caller to stream, gated on participation in the attachment's conversation. An

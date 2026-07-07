@@ -57,6 +57,7 @@ type conversationSummaryView struct {
 	OtherUserID      string    `json:"other_user_id"`
 	OtherUsername    string    `json:"other_username"`
 	OtherDisplayName string    `json:"other_display_name"`
+	OtherHasAvatar   bool      `json:"other_has_avatar,omitempty"`
 	LastMessageBody  string    `json:"last_message_body"`
 	LastMessageAt    time.Time `json:"last_message_at"`
 	UnreadCount      int64     `json:"unread_count"`
@@ -139,6 +140,10 @@ type attachmentView struct {
 	ContentType string `json:"content_type"`
 	Filename    string `json:"filename"`
 	SizeBytes   int64  `json:"size_bytes"`
+	// Width/Height are the probed intrinsic pixel dimensions, present only for
+	// kind=image when the probe succeeded.
+	Width  *int32 `json:"width,omitempty"`
+	Height *int32 `json:"height,omitempty"`
 }
 
 // linkPreviewView is the OpenGraph preview joined onto a message when the async
@@ -157,6 +162,7 @@ type messageView struct {
 	SenderID          string           `json:"sender_id"`
 	SenderUsername    string           `json:"sender_username,omitempty"`
 	SenderDisplayName string           `json:"sender_display_name,omitempty"`
+	SenderHasAvatar   bool             `json:"sender_has_avatar,omitempty"`
 	Body              string           `json:"body"`
 	Deleted           bool             `json:"deleted,omitempty"`
 	CreatedAt         time.Time        `json:"created_at"`
@@ -171,6 +177,7 @@ func newMessageView(m messaging.Message) messageView {
 		SenderID:          m.SenderID.String(),
 		SenderUsername:    m.SenderUsername,
 		SenderDisplayName: m.SenderDisplayName,
+		SenderHasAvatar:   m.SenderHasAvatar,
 		Body:              m.Body,
 		Deleted:           m.Deleted,
 		CreatedAt:         m.CreatedAt,
@@ -179,6 +186,7 @@ func newMessageView(m messaging.Message) messageView {
 		v.Attachments = append(v.Attachments, attachmentView{
 			ID: a.ID.String(), Kind: a.Kind, ContentType: a.ContentType,
 			Filename: a.Filename, SizeBytes: a.SizeBytes,
+			Width: a.Width, Height: a.Height,
 		})
 	}
 	if m.Preview != nil {
@@ -290,6 +298,7 @@ func (s *Server) handleListConversations(c echo.Context) error {
 		views = append(views, conversationSummaryView{
 			ID: it.ID.String(), UpdatedAt: it.UpdatedAt, Encrypted: it.Encrypted, OtherUserID: it.OtherUserID.String(),
 			OtherUsername: it.OtherUsername, OtherDisplayName: it.OtherDisplayName,
+			OtherHasAvatar:  it.OtherHasAvatar,
 			LastMessageBody: it.LastMessageBody, LastMessageAt: it.LastMessageAt,
 			UnreadCount: it.UnreadCount,
 		})
@@ -314,11 +323,28 @@ func (s *Server) handleListMessages(c echo.Context) error {
 	if offset < 0 {
 		offset = 0
 	}
+	// Optional keyset cursor: return only messages strictly older than before_id
+	// (stable upward history paging). Mutually exclusive with offset — both is a
+	// 422; a malformed id is a 422. Unknown/foreign cursors 422 in the service.
+	beforeRaw := strings.TrimSpace(c.QueryParam("before_id"))
+	var beforeID uuid.UUID
+	useKeyset := false
+	if beforeRaw != "" {
+		if strings.TrimSpace(c.QueryParam("offset")) != "" {
+			return &ValidationError{Fields: []FieldError{{Field: "before_id", Message: "cannot be combined with offset"}}}
+		}
+		parsed, perr := uuid.Parse(beforeRaw)
+		if perr != nil {
+			return &ValidationError{Fields: []FieldError{{Field: "before_id", Message: "must be a valid id"}}}
+		}
+		beforeID, useKeyset = parsed, true
+	}
+	ctx := c.Request().Context()
 	// Encrypted conversations return only the CALLER's devices' envelopes;
 	// plaintext ones are exactly as before E2EE existed. The participant check
 	// runs first either way, so existence is never leaked.
 	if s.e2eesvc != nil {
-		encrypted, err := s.e2eesvc.ConversationEncrypted(c.Request().Context(), userID, convID)
+		encrypted, err := s.e2eesvc.ConversationEncrypted(ctx, userID, convID)
 		if err != nil {
 			if herr := e2eeError(err); herr != nil {
 				return herr
@@ -326,15 +352,29 @@ func (s *Server) handleListMessages(c echo.Context) error {
 			return err
 		}
 		if encrypted {
+			if useKeyset {
+				return s.listEncryptedMessagesBefore(c, userID, convID, beforeID, limit)
+			}
 			return s.listEncryptedMessages(c, userID, convID, limit, offset)
 		}
 	}
-	msgs, err := s.messagingsvc.ListMessages(c.Request().Context(), userID, convID, int32(limit), int32(offset))
+	var msgs []messaging.Message
+	if useKeyset {
+		msgs, err = s.messagingsvc.ListMessagesBefore(ctx, userID, convID, beforeID, int32(limit))
+	} else {
+		msgs, err = s.messagingsvc.ListMessages(ctx, userID, convID, int32(limit), int32(offset))
+	}
 	if err != nil {
-		if errors.Is(err, messaging.ErrNotParticipant) {
+		switch {
+		case errors.Is(err, messaging.ErrNotParticipant):
 			return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
+		case errors.Is(err, messaging.ErrInvalidCursor):
+			return &ValidationError{Fields: []FieldError{{Field: "before_id", Message: "must reference a message in this conversation"}}}
 		}
 		return err
+	}
+	if useKeyset {
+		offset = 0 // keyset paging has no offset
 	}
 	views := make([]messageView, 0, len(msgs))
 	for _, m := range msgs {

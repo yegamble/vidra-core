@@ -113,6 +113,33 @@ WHERE m.conversation_id = sqlc.arg('conversation_id')
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: GetE2EEMessageCursor :one
+-- The created_at of one of the CALLER's received envelopes in a conversation, for
+-- keyset-pagination cursor validation. No row = the cursor id is unknown, not in
+-- this conversation, or not addressed to one of the caller's devices — the HTTP
+-- layer maps that to an invalid-cursor 422.
+SELECT m.created_at
+FROM e2ee_messages m
+JOIN e2ee_devices rd ON rd.id = m.recipient_device_id AND rd.user_id = sqlc.arg('user_id')
+WHERE m.id = sqlc.arg('id') AND m.conversation_id = sqlc.arg('conversation_id');
+
+-- name: ListE2EEMessagesForRecipientBefore :many
+-- Keyset page of a conversation's envelopes addressed to the CALLER's devices,
+-- strictly OLDER than the cursor (before_created_at, before_id), newest first,
+-- with expired disappearing messages filtered. Mirrors
+-- ListE2EEMessagesForRecipient so encrypted threads page identically to plaintext
+-- ones; the caller validates the cursor (GetE2EEMessageCursor) first.
+SELECT m.id, m.conversation_id, m.sender_device_id, sd.user_id AS sender_user_id,
+       m.recipient_device_id, m.message_type, m.ciphertext, m.created_at, m.expires_at
+FROM e2ee_messages m
+JOIN e2ee_devices rd ON rd.id = m.recipient_device_id AND rd.user_id = sqlc.arg('user_id')
+JOIN e2ee_devices sd ON sd.id = m.sender_device_id
+WHERE m.conversation_id = sqlc.arg('conversation_id')
+  AND (m.expires_at IS NULL OR m.expires_at > now())
+  AND (m.created_at, m.id) < (sqlc.arg('before_created_at')::timestamptz, sqlc.arg('before_id')::uuid)
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT sqlc.arg('result_limit');
+
 -- name: SweepExpiredE2EEMessages :execrows
 -- Hard-delete up to limit expired disappearing messages (sweeper worker).
 DELETE FROM e2ee_messages

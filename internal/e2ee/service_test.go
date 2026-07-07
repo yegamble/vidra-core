@@ -1,9 +1,11 @@
 package e2ee
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -229,6 +231,58 @@ func (f *fakeRepo) ListE2EEMessagesForRecipient(_ context.Context, a sqlcgen.Lis
 			continue
 		}
 		rows = append(rows, sqlcgen.ListE2EEMessagesForRecipientRow{
+			ID: m.ID, ConversationID: m.ConversationID,
+			SenderDeviceID: m.SenderDeviceID, SenderUserID: f.devices[m.SenderDeviceID].UserID,
+			RecipientDeviceID: m.RecipientDeviceID, MessageType: m.MessageType,
+			Ciphertext: m.Ciphertext, CreatedAt: m.CreatedAt, ExpiresAt: m.ExpiresAt,
+		})
+	}
+	return rows, nil
+}
+
+func (f *fakeRepo) GetE2EEMessageCursor(_ context.Context, a sqlcgen.GetE2EEMessageCursorParams) (time.Time, error) {
+	for _, m := range f.msgs {
+		if m.ID != a.ID || m.ConversationID != a.ConversationID {
+			continue
+		}
+		if rd, ok := f.devices[m.RecipientDeviceID]; ok && rd.UserID == a.UserID {
+			return m.CreatedAt, nil
+		}
+	}
+	return time.Time{}, pgx.ErrNoRows
+}
+
+func (f *fakeRepo) ListE2EEMessagesForRecipientBefore(_ context.Context, a sqlcgen.ListE2EEMessagesForRecipientBeforeParams) ([]sqlcgen.ListE2EEMessagesForRecipientBeforeRow, error) {
+	var matches []sqlcgen.E2eeMessage
+	now := f.now()
+	for _, m := range f.msgs {
+		if m.ConversationID != a.ConversationID {
+			continue
+		}
+		rd, ok := f.devices[m.RecipientDeviceID]
+		if !ok || rd.UserID != a.UserID {
+			continue
+		}
+		if m.ExpiresAt.Valid && !m.ExpiresAt.Time.After(now) {
+			continue
+		}
+		if m.CreatedAt.Before(a.BeforeCreatedAt) ||
+			(m.CreatedAt.Equal(a.BeforeCreatedAt) && bytes.Compare(m.ID[:], a.BeforeID[:]) < 0) {
+			matches = append(matches, m)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if !matches[i].CreatedAt.Equal(matches[j].CreatedAt) {
+			return matches[i].CreatedAt.After(matches[j].CreatedAt)
+		}
+		return bytes.Compare(matches[i].ID[:], matches[j].ID[:]) > 0
+	})
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(matches) {
+		matches = matches[:a.ResultLimit]
+	}
+	rows := make([]sqlcgen.ListE2EEMessagesForRecipientBeforeRow, 0, len(matches))
+	for _, m := range matches {
+		rows = append(rows, sqlcgen.ListE2EEMessagesForRecipientBeforeRow{
 			ID: m.ID, ConversationID: m.ConversationID,
 			SenderDeviceID: m.SenderDeviceID, SenderUserID: f.devices[m.SenderDeviceID].UserID,
 			RecipientDeviceID: m.RecipientDeviceID, MessageType: m.MessageType,

@@ -248,6 +248,30 @@ func (q *Queries) GetE2EEDevice(ctx context.Context, id uuid.UUID) (E2eeDevice, 
 	return i, err
 }
 
+const getE2EEMessageCursor = `-- name: GetE2EEMessageCursor :one
+SELECT m.created_at
+FROM e2ee_messages m
+JOIN e2ee_devices rd ON rd.id = m.recipient_device_id AND rd.user_id = $1
+WHERE m.id = $2 AND m.conversation_id = $3
+`
+
+type GetE2EEMessageCursorParams struct {
+	UserID         uuid.UUID `json:"user_id"`
+	ID             uuid.UUID `json:"id"`
+	ConversationID uuid.UUID `json:"conversation_id"`
+}
+
+// The created_at of one of the CALLER's received envelopes in a conversation, for
+// keyset-pagination cursor validation. No row = the cursor id is unknown, not in
+// this conversation, or not addressed to one of the caller's devices — the HTTP
+// layer maps that to an invalid-cursor 422.
+func (q *Queries) GetE2EEMessageCursor(ctx context.Context, arg GetE2EEMessageCursorParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, getE2EEMessageCursor, arg.UserID, arg.ID, arg.ConversationID)
+	var created_at time.Time
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const insertE2EEOneTimeKey = `-- name: InsertE2EEOneTimeKey :exec
 INSERT INTO e2ee_one_time_keys (device_id, key_id, key)
 VALUES ($1, $2, $3)
@@ -384,6 +408,80 @@ func (q *Queries) ListE2EEMessagesForRecipient(ctx context.Context, arg ListE2EE
 	var items []ListE2EEMessagesForRecipientRow
 	for rows.Next() {
 		var i ListE2EEMessagesForRecipientRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.SenderDeviceID,
+			&i.SenderUserID,
+			&i.RecipientDeviceID,
+			&i.MessageType,
+			&i.Ciphertext,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listE2EEMessagesForRecipientBefore = `-- name: ListE2EEMessagesForRecipientBefore :many
+SELECT m.id, m.conversation_id, m.sender_device_id, sd.user_id AS sender_user_id,
+       m.recipient_device_id, m.message_type, m.ciphertext, m.created_at, m.expires_at
+FROM e2ee_messages m
+JOIN e2ee_devices rd ON rd.id = m.recipient_device_id AND rd.user_id = $1
+JOIN e2ee_devices sd ON sd.id = m.sender_device_id
+WHERE m.conversation_id = $2
+  AND (m.expires_at IS NULL OR m.expires_at > now())
+  AND (m.created_at, m.id) < ($3::timestamptz, $4::uuid)
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $5
+`
+
+type ListE2EEMessagesForRecipientBeforeParams struct {
+	UserID          uuid.UUID `json:"user_id"`
+	ConversationID  uuid.UUID `json:"conversation_id"`
+	BeforeCreatedAt time.Time `json:"before_created_at"`
+	BeforeID        uuid.UUID `json:"before_id"`
+	ResultLimit     int32     `json:"result_limit"`
+}
+
+type ListE2EEMessagesForRecipientBeforeRow struct {
+	ID                uuid.UUID          `json:"id"`
+	ConversationID    uuid.UUID          `json:"conversation_id"`
+	SenderDeviceID    uuid.UUID          `json:"sender_device_id"`
+	SenderUserID      uuid.UUID          `json:"sender_user_id"`
+	RecipientDeviceID uuid.UUID          `json:"recipient_device_id"`
+	MessageType       int32              `json:"message_type"`
+	Ciphertext        string             `json:"ciphertext"`
+	CreatedAt         time.Time          `json:"created_at"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+}
+
+// Keyset page of a conversation's envelopes addressed to the CALLER's devices,
+// strictly OLDER than the cursor (before_created_at, before_id), newest first,
+// with expired disappearing messages filtered. Mirrors
+// ListE2EEMessagesForRecipient so encrypted threads page identically to plaintext
+// ones; the caller validates the cursor (GetE2EEMessageCursor) first.
+func (q *Queries) ListE2EEMessagesForRecipientBefore(ctx context.Context, arg ListE2EEMessagesForRecipientBeforeParams) ([]ListE2EEMessagesForRecipientBeforeRow, error) {
+	rows, err := q.db.Query(ctx, listE2EEMessagesForRecipientBefore,
+		arg.UserID,
+		arg.ConversationID,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListE2EEMessagesForRecipientBeforeRow
+	for rows.Next() {
+		var i ListE2EEMessagesForRecipientBeforeRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ConversationID,

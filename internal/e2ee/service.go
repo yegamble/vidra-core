@@ -94,6 +94,8 @@ type Repository interface {
 
 	CreateE2EEMessage(ctx context.Context, arg sqlcgen.CreateE2EEMessageParams) (sqlcgen.E2eeMessage, error)
 	ListE2EEMessagesForRecipient(ctx context.Context, arg sqlcgen.ListE2EEMessagesForRecipientParams) ([]sqlcgen.ListE2EEMessagesForRecipientRow, error)
+	ListE2EEMessagesForRecipientBefore(ctx context.Context, arg sqlcgen.ListE2EEMessagesForRecipientBeforeParams) ([]sqlcgen.ListE2EEMessagesForRecipientBeforeRow, error)
+	GetE2EEMessageCursor(ctx context.Context, arg sqlcgen.GetE2EEMessageCursorParams) (time.Time, error)
 	SweepExpiredE2EEMessages(ctx context.Context, resultLimit int32) (int64, error)
 }
 
@@ -584,6 +586,58 @@ func (s *Service) ListMessages(ctx context.Context, meID, conversationID uuid.UU
 		ConversationID: conversationID,
 		ResultLimit:    limit,
 		ResultOffset:   offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EncryptedMessage, 0, len(rows))
+	for _, r := range rows {
+		m := EncryptedMessage{
+			ID:                r.ID,
+			ConversationID:    r.ConversationID,
+			SenderUserID:      r.SenderUserID,
+			SenderDeviceID:    r.SenderDeviceID,
+			RecipientDeviceID: r.RecipientDeviceID,
+			MessageType:       r.MessageType,
+			Ciphertext:        r.Ciphertext,
+			CreatedAt:         r.CreatedAt,
+		}
+		if r.ExpiresAt.Valid {
+			t := r.ExpiresAt.Time
+			m.ExpiresAt = &t
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// ListMessagesBefore returns a keyset (cursor) page of the conversation's
+// envelopes addressed to the CALLER's devices, strictly OLDER than beforeID,
+// newest first, with expired disappearing messages filtered — so encrypted
+// threads page identically to plaintext ones. Non-participant → ErrNotParticipant;
+// a cursor that is unknown or not one of the caller's envelopes in this
+// conversation → *InvalidError (422).
+func (s *Service) ListMessagesBefore(ctx context.Context, meID, conversationID, beforeID uuid.UUID, limit int32) ([]EncryptedMessage, error) {
+	if _, err := s.ConversationEncrypted(ctx, meID, conversationID); err != nil {
+		return nil, err
+	}
+	cursorAt, err := s.repo.GetE2EEMessageCursor(ctx, sqlcgen.GetE2EEMessageCursorParams{
+		UserID:         meID,
+		ID:             beforeID,
+		ConversationID: conversationID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &InvalidError{Reason: "before_id is not a message in this conversation"}
+		}
+		return nil, err
+	}
+	rows, err := s.repo.ListE2EEMessagesForRecipientBefore(ctx, sqlcgen.ListE2EEMessagesForRecipientBeforeParams{
+		UserID:          meID,
+		ConversationID:  conversationID,
+		BeforeCreatedAt: cursorAt,
+		BeforeID:        beforeID,
+		ResultLimit:     limit,
 	})
 	if err != nil {
 		return nil, err

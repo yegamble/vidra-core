@@ -42,6 +42,10 @@ type uploadAttachmentResponse struct {
 	ContentType  string `json:"content_type"`
 	Filename     string `json:"filename"`
 	SizeBytes    int64  `json:"size_bytes"`
+	// Width/Height are the probed intrinsic pixel dimensions, present only for
+	// kind=image when the probe succeeded.
+	Width  *int32 `json:"width,omitempty"`
+	Height *int32 `json:"height,omitempty"`
 }
 
 // handleUploadAttachment stores a DM attachment (multipart "file") for a
@@ -94,6 +98,8 @@ func (s *Server) handleUploadAttachment(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusUnsupportedMediaType, "unsupported attachment type (allowed: image, video, audio, pdf)")
 		case errors.Is(err, messaging.ErrAttachmentTooLarge):
 			return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "attachment exceeds the 25 MiB limit")
+		case errors.Is(err, messaging.ErrAttachmentDimensions):
+			return echo.NewHTTPError(http.StatusUnprocessableEntity, "image dimensions exceed the 20000px limit")
 		case errors.Is(err, messaging.ErrAttachmentRejected):
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "attachment failed the malware scan")
 		case errors.Is(err, messaging.ErrAttachmentsUnavailable):
@@ -104,6 +110,7 @@ func (s *Server) handleUploadAttachment(c echo.Context) error {
 	return c.JSON(http.StatusCreated, uploadAttachmentResponse{
 		AttachmentID: att.ID.String(), Kind: att.Kind, ContentType: att.ContentType,
 		Filename: att.Filename, SizeBytes: att.SizeBytes,
+		Width: att.Width, Height: att.Height,
 	})
 }
 

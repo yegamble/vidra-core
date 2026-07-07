@@ -293,6 +293,8 @@ type MessageAttachment struct {
 	SizeBytes      int64       `json:"size_bytes"`
 	StorageKey     string      `json:"storage_key"`
 	CreatedAt      time.Time   `json:"created_at"`
+	Width          *int32      `json:"width"`
+	Height         *int32      `json:"height"`
 }
 
 type MfaRecoveryCode struct {

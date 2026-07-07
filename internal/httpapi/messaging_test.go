@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +32,9 @@ type messagingFakeRepo struct {
 	previews     map[string]sqlcgen.LinkPreview
 	watermark    map[uuid.UUID]map[uuid.UUID]uuid.UUID
 	prefs        map[uuid.UUID]map[string]bool
+	avatars      map[uuid.UUID]bool // user -> has avatar (D3 flag source)
+	base         time.Time          // monotonic clock base for strict message ordering
+	seq          int64              // strictly increasing message counter
 }
 
 func newMessagingFakeRepo(auth *authFakeRepo) *messagingFakeRepo {
@@ -42,6 +47,8 @@ func newMessagingFakeRepo(auth *authFakeRepo) *messagingFakeRepo {
 		previews:     map[string]sqlcgen.LinkPreview{},
 		watermark:    map[uuid.UUID]map[uuid.UUID]uuid.UUID{},
 		prefs:        map[uuid.UUID]map[string]bool{},
+		avatars:      map[uuid.UUID]bool{},
+		base:         time.Now(),
 	}
 }
 
@@ -98,9 +105,12 @@ func (f *messagingFakeRepo) IsConversationParticipant(_ context.Context, a sqlcg
 }
 
 func (f *messagingFakeRepo) CreateMessage(_ context.Context, a sqlcgen.CreateMessageParams) (sqlcgen.CreateMessageRow, error) {
+	// Strictly increasing timestamps so keyset (before_id) paging is deterministic
+	// in tests (real time.Now() could collide for rapid sequential sends).
+	f.seq++
 	m := sqlcgen.Message{
 		ID: uuid.New(), ConversationID: a.ConversationID, SenderID: a.SenderID,
-		Body: a.Body, CreatedAt: time.Now(),
+		Body: a.Body, CreatedAt: f.base.Add(time.Duration(f.seq) * time.Millisecond),
 	}
 	f.messages = append(f.messages, m)
 	return sqlcgen.CreateMessageRow{ID: m.ID, ConversationID: m.ConversationID, SenderID: m.SenderID, Body: m.Body, CreatedAt: m.CreatedAt}, nil
@@ -171,7 +181,7 @@ func (f *messagingFakeRepo) CreateMessageAttachment(_ context.Context, a sqlcgen
 	att := sqlcgen.MessageAttachment{
 		ID: a.ID, ConversationID: a.ConversationID, UploaderID: a.UploaderID,
 		Kind: a.Kind, ContentType: a.ContentType, Filename: a.Filename, SizeBytes: a.SizeBytes,
-		StorageKey: a.StorageKey, CreatedAt: time.Now(),
+		StorageKey: a.StorageKey, CreatedAt: time.Now(), Width: a.Width, Height: a.Height,
 	}
 	f.attachments = append(f.attachments, att)
 	return att, nil
@@ -225,6 +235,7 @@ func (f *messagingFakeRepo) ListAttachmentsForMessages(_ context.Context, ids []
 			out = append(out, sqlcgen.ListAttachmentsForMessagesRow{
 				ID: at.ID, MessageID: at.MessageID, Kind: at.Kind,
 				ContentType: at.ContentType, Filename: at.Filename, SizeBytes: at.SizeBytes,
+				Width: at.Width, Height: at.Height,
 			})
 		}
 	}
@@ -325,6 +336,59 @@ func (f *messagingFakeRepo) ListMessages(ctx context.Context, a sqlcgen.ListMess
 			ID: m.ID, ConversationID: m.ConversationID, SenderID: m.SenderID, Body: m.Body,
 			CreatedAt: m.CreatedAt, Deleted: m.DeletedAt.Valid,
 			SenderUsername: sender.Username, SenderDisplayName: sender.DisplayName,
+			SenderHasAvatar: f.avatars[m.SenderID],
+		}
+		if m.LinkPreviewUrlHash != nil {
+			if lp, ok := f.previews[*m.LinkPreviewUrlHash]; ok && lp.State == "ready" {
+				url, title, desc, img := lp.Url, lp.Title, lp.Description, lp.ImageUrl
+				row.PreviewUrl, row.PreviewTitle, row.PreviewDescription, row.PreviewImage = &url, &title, &desc, &img
+			}
+		}
+		rows = append(rows, row)
+	}
+	// Honour offset then limit (mirrors the SQL LIMIT/OFFSET).
+	if int(a.ResultOffset) < len(rows) {
+		rows = rows[a.ResultOffset:]
+	} else {
+		rows = nil
+	}
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(rows) {
+		rows = rows[:a.ResultLimit]
+	}
+	return rows, nil
+}
+
+// ListMessagesBefore mirrors the keyset SQL against the fake's messages: those in
+// the conversation strictly older than the (before_created_at, before_id) cursor,
+// ordered created_at DESC, id DESC (Postgres compares uuids bytewise), limited.
+func (f *messagingFakeRepo) ListMessagesBefore(ctx context.Context, a sqlcgen.ListMessagesBeforeParams) ([]sqlcgen.ListMessagesBeforeRow, error) {
+	var matches []sqlcgen.Message
+	for _, m := range f.messages {
+		if m.ConversationID != a.ConversationID {
+			continue
+		}
+		if m.CreatedAt.Before(a.BeforeCreatedAt) ||
+			(m.CreatedAt.Equal(a.BeforeCreatedAt) && bytes.Compare(m.ID[:], a.BeforeID[:]) < 0) {
+			matches = append(matches, m)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if !matches[i].CreatedAt.Equal(matches[j].CreatedAt) {
+			return matches[i].CreatedAt.After(matches[j].CreatedAt)
+		}
+		return bytes.Compare(matches[i].ID[:], matches[j].ID[:]) > 0
+	})
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(matches) {
+		matches = matches[:a.ResultLimit]
+	}
+	rows := make([]sqlcgen.ListMessagesBeforeRow, 0, len(matches))
+	for _, m := range matches {
+		sender, _ := f.auth.GetUserByID(ctx, m.SenderID)
+		row := sqlcgen.ListMessagesBeforeRow{
+			ID: m.ID, ConversationID: m.ConversationID, SenderID: m.SenderID, Body: m.Body,
+			CreatedAt: m.CreatedAt, Deleted: m.DeletedAt.Valid,
+			SenderUsername: sender.Username, SenderDisplayName: sender.DisplayName,
+			SenderHasAvatar: f.avatars[m.SenderID],
 		}
 		if m.LinkPreviewUrlHash != nil {
 			if lp, ok := f.previews[*m.LinkPreviewUrlHash]; ok && lp.State == "ready" {
@@ -353,6 +417,7 @@ func (f *messagingFakeRepo) ListConversations(ctx context.Context, a sqlcgen.Lis
 		row := sqlcgen.ListConversationsRow{
 			ID: id, UpdatedAt: updated, Encrypted: f.encrypted[id], OtherUserID: other,
 			OtherUsername: u.Username, OtherDisplayName: u.DisplayName, LastMessageAt: updated,
+			OtherHasAvatar: f.avatars[other],
 		}
 		var wmAt time.Time
 		if w, ok := f.watermark[id][a.UserID]; ok {
