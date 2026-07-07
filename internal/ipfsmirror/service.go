@@ -2,6 +2,7 @@ package ipfsmirror
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"path"
 	"sort"
@@ -14,9 +15,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/ipfs"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
+
+// webmAlternateName is the base name of the VP9/WebM progressive alternate, which
+// lives under the same streaming-playlists/<id>/ prefix as the HLS tree but is a
+// SEPARATE media class pinned on its own — so the HLS directory add excludes it
+// (keeping the car_root a clean playlists+segments tree). Kept in lock-step with
+// media.VP9WebMKey.
+const webmAlternateName = "vp9.webm"
 
 const (
 	// defaultMaxAttempts dead-letters a pin/unpin after this many tries (matches
@@ -38,6 +47,7 @@ const (
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
 	UpsertIPFSPinIntent(ctx context.Context, arg sqlcgen.UpsertIPFSPinIntentParams) (sqlcgen.MediaIpfsPin, error)
+	RepinIPFSObject(ctx context.Context, arg sqlcgen.RepinIPFSObjectParams) error
 	EnqueueIPFSUnpin(ctx context.Context, objectKey string) error
 	ClaimDueIPFSPins(ctx context.Context, arg sqlcgen.ClaimDueIPFSPinsParams) ([]sqlcgen.ClaimDueIPFSPinsRow, error)
 	MarkIPFSPinned(ctx context.Context, arg sqlcgen.MarkIPFSPinnedParams) error
@@ -261,6 +271,65 @@ func (s *Service) unpinAllForVideo(ctx context.Context, videoID uuid.UUID) error
 	for _, r := range rows {
 		if err := s.repo.EnqueueIPFSUnpin(ctx, r.ObjectKey); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// OnTranscodeComplete is the transcode-completion hook (P19.4): the video's HLS
+// tree — and, when VP9 is enabled, the progressive VP9/WebM alternate — have just
+// been produced, or replaced wholesale on a re-transcode ('0039'). For an ELIGIBLE
+// (public+published) VOD it force-(re)pins:
+//   - the finalized HLS tree as ONE directory row (media_class='hls', object_key
+//     streaming-playlists/<id>/ with a trailing slash marking a directory intent
+//     the worker resolves via the storage ObjectLister + AddDirectory into one
+//     car_root CID); and
+//   - the VP9/WebM alternate, which does NOT exist at publish time (it is produced
+//     here), so the publish-hook SyncVideo could not pin it.
+//
+// Both keep a STABLE object_key across re-transcodes while their content — and
+// therefore their CID — changes, so RepinIPFSObject forces a re-claim (the no-op-
+// on-pinned UpsertIPFSPinIntent would not) and the worker swaps the superseded CID.
+//
+// For an INELIGIBLE video this is a no-op: the privacy transition (SyncVideo /
+// UnpinVideo) owns unpinning. LIVE HLS never flows here — only a finalized VOD
+// transcode job completes; the mutable live edge is never mirrored. No-op when
+// disabled.
+func (s *Service) OnTranscodeComplete(ctx context.Context, videoID uuid.UUID) error {
+	if !s.enabled {
+		return nil
+	}
+	privacy, state, _, ok, err := s.lookups.VideoVisibility(ctx, videoID)
+	if err != nil || !ok {
+		return err
+	}
+	// The whole video shares the public+published gate; ClassHLS is representative.
+	// A private/unlisted/quarantined video re-checked here is refused, so nothing
+	// non-public is ever armed at transcode completion (the privacy fence).
+	if !Eligible(Subject{Class: ClassHLS, VideoPrivacy: privacy, VideoState: state}) {
+		return nil
+	}
+	hlsKey := media.HLSKeyPrefix(videoID) + "/"
+	if err := s.repo.RepinIPFSObject(ctx, sqlcgen.RepinIPFSObjectParams{
+		ObjectKey:  hlsKey,
+		MediaClass: string(ClassHLS),
+		VideoID:    pgUUID(videoID),
+	}); err != nil {
+		return err
+	}
+	files, err := s.lookups.VideoFiles(ctx, videoID)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if f.Kind == "webm" {
+			if err := s.repo.RepinIPFSObject(ctx, sqlcgen.RepinIPFSObjectParams{
+				ObjectKey:  f.StorageKey,
+				MediaClass: string(ClassWebM),
+				VideoID:    pgUUID(videoID),
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -554,11 +623,10 @@ func (s *Service) process(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) 
 }
 
 // pin streams the object's bytes from the authoritative store and add+pins them.
+// A trailing-slash object key is a directory intent (the HLS tree) → pinDirectory.
 func (s *Service) pin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool {
-	// Directory (HLS tree) adds — a trailing-slash key — land in P19.4.
 	if strings.HasSuffix(row.ObjectKey, "/") {
-		s.recordFailure(ctx, row, "directory add not supported in this slice")
-		return false
+		return s.pinDirectory(ctx, row)
 	}
 	rc, err := s.blobs.Open(ctx, row.ObjectKey)
 	if err != nil {
@@ -581,11 +649,148 @@ func (s *Service) pin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool
 		s.logger.Warn("ipfs mark pinned failed", "object_key", row.ObjectKey, "error", err)
 		return false
 	}
+	// A re-pin under a STABLE key (e.g. a re-transcoded VP9/WebM alternate) whose
+	// content changed leaves the prior CID orphaned — swap it out (reference-checked).
+	s.swapUnpin(ctx, row.Cid, res.CID, row.ObjectKey)
 	// Info level carries NO cid (CIDs are public capability handles — no spam);
 	// the cid is debug-only.
 	s.logger.Info("ipfs_pin_ok", "media_class", row.MediaClass, "byte_size", res.Size, "attempts", row.Attempts+1)
 	s.logger.Debug("ipfs_pin_ok cid", "object_key", row.ObjectKey, "cid", res.CID)
 	return true
+}
+
+// pinDirectory add+pins a finalized VOD HLS tree as ONE UnixFS directory (P19.4).
+// The trailing-slash object key (streaming-playlists/<id>/) is listed via the
+// storage ObjectLister; every playlist + segment is wrapped with-directory into a
+// single car_root CID, so the relative playlist URIs resolve unchanged under
+// {gateway}/ipfs/{car_root}/…. The VP9/WebM alternate that shares the prefix is
+// EXCLUDED (it is a separate class pinned on its own). On a re-transcode the tree
+// is replaced wholesale under the same key, yielding a new car_root; the superseded
+// root is swap-unpinned (reference-checked).
+func (s *Service) pinDirectory(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool {
+	lister, ok := s.blobs.(storage.ObjectLister)
+	if !ok {
+		s.recordFailure(ctx, row, "backend cannot list a directory tree")
+		s.logger.Warn("ipfs_pin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+			"attempts", row.Attempts+1, "reason", "no_object_lister")
+		return false
+	}
+	prefix := row.ObjectKey
+	keys, err := lister.ListKeys(ctx, prefix)
+	if err != nil {
+		s.recordFailure(ctx, row, "list directory tree failed")
+		s.logger.Warn("ipfs_pin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+			"attempts", row.Attempts+1, "reason", "list_tree", "error", err)
+		return false
+	}
+	var entries []ipfs.DirEntry
+	var openers []*lazyBlob
+	for _, key := range keys {
+		if path.Base(key) == webmAlternateName {
+			continue // separate media class, pinned on its own
+		}
+		lb := &lazyBlob{ctx: ctx, blobs: s.blobs, key: key}
+		openers = append(openers, lb)
+		entries = append(entries, ipfs.DirEntry{Path: strings.TrimPrefix(key, prefix), Data: lb})
+	}
+	// The client reads entries sequentially, so at most one file handle is open at
+	// a time; this defer releases any handle left open on an error/abort path.
+	defer func() {
+		for _, o := range openers {
+			_ = o.Close()
+		}
+	}()
+	if len(entries) == 0 {
+		s.recordFailure(ctx, row, "hls tree is empty")
+		s.logger.Warn("ipfs_pin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+			"attempts", row.Attempts+1, "reason", "empty_tree")
+		return false
+	}
+	res, err := s.client.AddDirectory(ctx, entries)
+	if err != nil {
+		s.recordFailure(ctx, row, "directory add+pin rpc failed")
+		s.logger.Warn("ipfs_pin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+			"attempts", row.Attempts+1, "reason", "add_dir", "error", err)
+		return false
+	}
+	if err := s.repo.MarkIPFSPinned(ctx, sqlcgen.MarkIPFSPinnedParams{
+		ObjectKey: row.ObjectKey, Cid: res.CID, CarRoot: res.CID, ByteSize: res.Size,
+	}); err != nil {
+		s.logger.Warn("ipfs mark pinned failed", "object_key", row.ObjectKey, "error", err)
+		return false
+	}
+	// Re-transcode swap: a prior car_root that differs from the new tree is orphaned.
+	s.swapUnpin(ctx, row.CarRoot, res.CID, row.ObjectKey)
+	s.logger.Info("ipfs_pin_ok", "media_class", row.MediaClass, "byte_size", res.Size,
+		"attempts", row.Attempts+1, "files", len(entries))
+	s.logger.Debug("ipfs_pin_ok cid", "object_key", row.ObjectKey, "cid", res.CID)
+	return true
+}
+
+// swapUnpin removes a superseded CID from the node after a re-pin replaced a
+// stable-key object's content (an HLS re-transcode's old car_root, a refreshed
+// VP9/WebM alternate's old CID). It is reference-checked — a CID still shared by
+// another live ledger row (content-address dedupe) is left pinned. A first pin
+// (oldCID=="") or unchanged content (oldCID==newCID) is a no-op. Best-effort: an
+// unpin failure is logged, not surfaced (the row is already pinned to the new CID).
+func (s *Service) swapUnpin(ctx context.Context, oldCID, newCID, objectKey string) {
+	if oldCID == "" || oldCID == newCID || ipfs.ValidateCID(oldCID) != nil {
+		return
+	}
+	shared, err := s.repo.CountIPFSPinsSharingCID(ctx, sqlcgen.CountIPFSPinsSharingCIDParams{
+		Cid: oldCID, ObjectKey: objectKey,
+	})
+	if err != nil || shared > 0 {
+		return
+	}
+	if err := s.client.Unpin(ctx, oldCID); err != nil {
+		s.logger.Warn("ipfs_unpin_failed", "object_key", objectKey, "reason", "swap_superseded", "error", err)
+		return
+	}
+	s.logger.Info("ipfs_unpin_ok", "object_key", objectKey, "reason", "superseded")
+}
+
+// lazyBlob is an io.Reader that opens its backing storage object on the first Read
+// and closes it at EOF, so a directory add streaming hundreds of HLS segments keeps
+// only ONE file handle open at a time (the client reads directory entries
+// sequentially). Close releases the handle on an error/abort path and is safe to
+// call repeatedly.
+type lazyBlob struct {
+	ctx   context.Context //nolint:containedctx // bounded to one AddDirectory streaming call
+	blobs storage.Backend
+	key   string
+	rc    io.ReadCloser
+	done  bool
+}
+
+func (l *lazyBlob) Read(p []byte) (int, error) {
+	if l.done {
+		return 0, io.EOF
+	}
+	if l.rc == nil {
+		rc, err := l.blobs.Open(l.ctx, l.key)
+		if err != nil {
+			l.done = true
+			return 0, err
+		}
+		l.rc = rc
+	}
+	n, err := l.rc.Read(p)
+	if err == io.EOF {
+		_ = l.rc.Close()
+		l.rc = nil
+		l.done = true
+	}
+	return n, err
+}
+
+func (l *lazyBlob) Close() error {
+	if l.rc != nil {
+		err := l.rc.Close()
+		l.rc = nil
+		return err
+	}
+	return nil
 }
 
 // unpin removes a node pin, but only after a reference check: a CID shared by

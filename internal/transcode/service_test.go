@@ -329,6 +329,47 @@ func TestDrainJobsDeadLettersAfterMaxAttempts(t *testing.T) {
 	}
 }
 
+// TestCompletionHookFiresOnlyOnSuccess (P19.4): the completion hook fires exactly
+// once per SUCCESSFUL job (with the video id — the seam the IPFS mirror uses to
+// pin the finalized HLS tree) and never fires for a job that fails.
+func TestCompletionHookFiresOnlyOnSuccess(t *testing.T) {
+	// Success ⇒ hook fires once with the video id.
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTranscoder{res: media.HLSResult{
+		MasterKey:  "streaming-playlists/" + videoID.String() + "/master.m3u8",
+		Renditions: []media.HLSRendition{{Height: 360, Width: 640, KeyPrefix: "streaming-playlists/" + videoID.String() + "/360p"}},
+	}}
+	var got []uuid.UUID
+	svc := NewService(repo, tc, WithCompletionHook(func(_ context.Context, id uuid.UUID) {
+		got = append(got, id)
+	}))
+	if err := svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4"); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := svc.DrainJobs(context.Background(), 10); err != nil {
+		t.Fatalf("DrainJobs: %v", err)
+	}
+	if len(got) != 1 || got[0] != videoID {
+		t.Fatalf("completion hook fired with %v, want [%s] exactly once", got, videoID)
+	}
+
+	// Failure ⇒ hook does NOT fire (the job did not complete).
+	repo2 := newFakeRepo()
+	failID := uuid.New()
+	fired := false
+	svc2 := NewService(repo2, &fakeTranscoder{err: errors.New("boom")}, WithCompletionHook(func(_ context.Context, _ uuid.UUID) {
+		fired = true
+	}))
+	_ = svc2.Enqueue(context.Background(), failID, "web-videos/y.mp4")
+	if _, err := svc2.DrainJobs(context.Background(), 10); err != nil {
+		t.Fatalf("DrainJobs (failure): %v", err)
+	}
+	if fired {
+		t.Error("completion hook fired for a FAILED job, want no fire")
+	}
+}
+
 func TestBackoffDoublesAndCaps(t *testing.T) {
 	cases := []struct {
 		attempts int

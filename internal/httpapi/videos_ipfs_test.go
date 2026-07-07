@@ -33,9 +33,11 @@ func TestVideoDetailIPFSObject(t *testing.T) {
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Pinned","privacy":"public"}`)
 
-	// The mirror reports the (now-published) video's original as pinned.
+	// The mirror reports the (now-published) video's original AND its HLS tree as
+	// pinned (P19.4 makes hls_cid truthful — the directory car_root CID).
 	mirror.videoPins[uuid.MustParse(id)] = ipfsmirror.VideoIPFS{
 		OriginalCID: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+		HLSCID:      "bafybeibml5jsepzcgep3iowsxlcz5oc5fzfjx3ozc7hbgobht46hpqxvym",
 		GatewayURL:  "https://ipfs.example.org",
 	}
 
@@ -52,6 +54,9 @@ func TestVideoDetailIPFSObject(t *testing.T) {
 	}
 	if v.IPFS.OriginalCID == "" {
 		t.Error("ipfs.original_cid empty, want the pinned CID")
+	}
+	if v.IPFS.HLSCID != "bafybeibml5jsepzcgep3iowsxlcz5oc5fzfjx3ozc7hbgobht46hpqxvym" {
+		t.Errorf("ipfs.hls_cid = %q, want the pinned HLS car_root CID (P19.4)", v.IPFS.HLSCID)
 	}
 	if v.IPFS.GatewayURL != "https://ipfs.example.org" {
 		t.Errorf("ipfs.gateway_url = %q, want the configured gateway", v.IPFS.GatewayURL)

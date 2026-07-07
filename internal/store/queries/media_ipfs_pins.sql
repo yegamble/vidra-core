@@ -35,6 +35,30 @@ SET media_class   = EXCLUDED.media_class,
     updated_at = now()
 RETURNING *;
 
+-- name: RepinIPFSObject :exec
+-- Force-(re)arm a pin intent for a wholesale-replaced transcode output (P19.4).
+-- The HLS tree (object_key streaming-playlists/<id>/, trailing slash = directory
+-- intent) and the VP9/WebM alternate keep a STABLE object_key across re-transcodes
+-- while their content — and therefore their CID — is replaced in full ('0039'
+-- wholesale-replace). Unlike UpsertIPFSPinIntent (which leaves a live 'pinned' row
+-- untouched, correct for stable content), this ALWAYS moves the row back to
+-- 'pending' so the worker re-adds the new tree and swaps the CID. The existing
+-- cid/car_root is PRESERVED (not reset) so the worker can reference-check and unpin
+-- the superseded root after the new add succeeds. A brand-new object_key is
+-- inserted 'pending'. Called ONLY from the transcode-completion hook for an
+-- ELIGIBLE (public+published) video — the privacy gate is re-checked there, so a
+-- private/deleted video never reaches this and no non-public tree is ever armed.
+INSERT INTO media_ipfs_pins (object_key, media_class, video_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (object_key) DO UPDATE
+SET media_class     = EXCLUDED.media_class,
+    video_id        = EXCLUDED.video_id,
+    state           = 'pending',
+    attempts        = 0,
+    next_attempt_at = now(),
+    last_error      = '',
+    updated_at      = now();
+
 -- name: EnqueueIPFSUnpin :exec
 -- Flip a live pin toward removal: the delete/GC path (P19.3+) sets an existing
 -- row to 'unpinning' so ClaimDue leases it to the worker. Only pinned/pending rows

@@ -378,7 +378,19 @@ func run() error {
 			logger.Warn("TRANSCODING_ENABLED=true but ffmpeg/ffprobe not on PATH; transcoding disabled")
 		}
 	}
-	transcodesvc := transcode.NewService(db.Queries(), hlsTranscoder)
+	// IPFS mirror (P19.4): on transcode completion, add+pin the finalized VOD HLS
+	// tree as one directory (car_root) row and refresh the VP9/WebM alternate — for
+	// eligible (public+published) videos only; re-checked in the hook. Best-effort;
+	// registered only when IPFS_ENABLED to avoid a no-op hook.
+	var tcopts []transcode.Option
+	if cfg.IPFSEnabled {
+		tcopts = append(tcopts, transcode.WithCompletionHook(func(ctx context.Context, videoID uuid.UUID) {
+			if err := ipfsMirror.OnTranscodeComplete(ctx, videoID); err != nil {
+				logger.Warn("ipfs mirror transcode-complete sync failed", "video_id", videoID, "error", err)
+			}
+		}))
+	}
+	transcodesvc := transcode.NewService(db.Queries(), hlsTranscoder, tcopts...)
 	opts = append(opts, httpapi.WithTranscodeService(transcodesvc))
 	if hlsTranscoder != nil {
 		vopts = append(vopts, video.WithTranscodeHook(func(ctx context.Context, videoID uuid.UUID, sourceKey string) {

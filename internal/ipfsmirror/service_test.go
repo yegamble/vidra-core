@@ -41,6 +41,24 @@ func (r *fakeRepo) UpsertIPFSPinIntent(ctx context.Context, arg sqlcgen.UpsertIP
 	return *row, nil
 }
 
+func (r *fakeRepo) RepinIPFSObject(ctx context.Context, arg sqlcgen.RepinIPFSObjectParams) error {
+	row, ok := r.rows[arg.ObjectKey]
+	if !ok {
+		row = &sqlcgen.MediaIpfsPin{ObjectKey: arg.ObjectKey}
+		r.rows[arg.ObjectKey] = row
+	}
+	row.MediaClass = arg.MediaClass
+	row.VideoID = arg.VideoID
+	// Force actionable — even a live 'pinned' row — preserving cid/car_root so the
+	// worker can swap the superseded root after the new add (the real query's
+	// wholesale-replace semantics). next_attempt in the past ⇒ immediately claimable.
+	row.State = "pending"
+	row.Attempts = 0
+	row.NextAttemptAt = time.Now().UTC().Add(-time.Second)
+	row.LastError = ""
+	return nil
+}
+
 func (r *fakeRepo) EnqueueIPFSUnpin(ctx context.Context, objectKey string) error {
 	if row, ok := r.rows[objectKey]; ok && (row.State == "pinned" || row.State == "pending") {
 		row.State = "unpinning"
@@ -649,6 +667,212 @@ func TestDisabledNoOps(t *testing.T) {
 	}
 	if n, _ := svc.Reconcile(context.Background()); n != 0 {
 		t.Errorf("disabled Reconcile = %d, want 0", n)
+	}
+}
+
+// TestWorkerPinsDirectoryTree (P19.4): a due HLS directory row (trailing-slash
+// key) is add+pinned as ONE wrapped tree — the fake node stores a single car_root
+// CID whose content-addressed bytes carry the RELATIVE segment paths, the VP9/WebM
+// alternate under the same prefix is EXCLUDED, and cid==car_root.
+func TestWorkerPinsDirectoryTree(t *testing.T) {
+	repo := newFakeRepo()
+	blobs := newBlobs(t)
+	client := ipfs.NewFakeIPFSClient()
+	vid := uuid.New()
+	prefix := "streaming-playlists/" + vid.String() + "/"
+	putBlob(t, blobs, prefix+"master.m3u8", "#EXTM3U\n720p/playlist.m3u8\n")
+	putBlob(t, blobs, prefix+"720p/playlist.m3u8", "#EXTM3U\nseg_00000.ts\n")
+	putBlob(t, blobs, prefix+"720p/seg_00000.ts", "ts-bytes")
+	putBlob(t, blobs, prefix+"vp9.webm", "webm-alt-bytes") // separate class — must be excluded
+	seedPending(repo, prefix, string(ClassHLS))
+
+	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	n, err := svc.DrainDue(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("DrainDue: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("drained %d, want 1", n)
+	}
+	row := repo.rows[prefix]
+	if row.State != "pinned" {
+		t.Fatalf("state = %q, want pinned", row.State)
+	}
+	if row.Cid == "" || row.CarRoot != row.Cid {
+		t.Fatalf("cid=%q car_root=%q, want equal + non-empty (directory root)", row.Cid, row.CarRoot)
+	}
+	if ipfs.ValidateCID(row.Cid) != nil {
+		t.Errorf("car_root %q is not a valid CIDv1", row.Cid)
+	}
+	if client.AddCount != 1 {
+		t.Errorf("AddCount = %d, want 1 (single directory add)", client.AddCount)
+	}
+	// The wrapped tree carries the HLS files by RELATIVE path (so {gateway}/ipfs/
+	// {car_root}/720p/seg_00000.ts resolves) and NOT the VP9/WebM alternate's bytes.
+	data, ok := client.Content(row.Cid)
+	if !ok {
+		t.Fatal("car_root content not stored on the fake node")
+	}
+	if !strings.Contains(string(data), "720p/seg_00000.ts") {
+		t.Error("relative segment path missing from the wrapped tree")
+	}
+	if strings.Contains(string(data), "master.m3u8") == false {
+		t.Error("relative master path missing from the wrapped tree")
+	}
+	if strings.Contains(string(data), "webm-alt-bytes") {
+		t.Error("vp9.webm was wrapped into the HLS car_root, want excluded (separate class)")
+	}
+}
+
+// TestOnTranscodeCompleteEnqueuesHLS (P19.4): the transcode-completion hook arms a
+// media_class='hls' directory row (+ force-repins the VP9/WebM alternate) for an
+// eligible video, and arms NOTHING for an ineligible (private) one — the privacy
+// fence re-checked at completion. LIVE HLS never reaches this (only a finalized VOD
+// job completes).
+func TestOnTranscodeCompleteEnqueuesHLS(t *testing.T) {
+	vid := uuid.New()
+	hlsKey := "streaming-playlists/" + vid.String() + "/"
+	webmKey := "streaming-playlists/" + vid.String() + "/vp9.webm"
+
+	// Eligible ⇒ HLS directory row + webm force-repin.
+	repo := newFakeRepo()
+	lk := &fakeLookups{
+		videoPrivacy: "public", videoState: "published", videoOK: true,
+		videoFiles: []VideoFileRef{{Kind: "webm", StorageKey: webmKey}},
+	}
+	svc := New(repo, lk, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+	if err := svc.OnTranscodeComplete(context.Background(), vid); err != nil {
+		t.Fatalf("OnTranscodeComplete: %v", err)
+	}
+	if repo.state(hlsKey) != "pending" {
+		t.Errorf("HLS row state = %q, want pending", repo.state(hlsKey))
+	}
+	if got := repo.rows[hlsKey].MediaClass; got != string(ClassHLS) {
+		t.Errorf("HLS media_class = %q, want %q", got, ClassHLS)
+	}
+	if !repo.rows[hlsKey].VideoID.Valid {
+		t.Error("HLS row has no video_id provenance (needed for cascade unpin)")
+	}
+	if repo.state(webmKey) != "pending" {
+		t.Errorf("webm row state = %q, want pending (force-repinned at transcode completion)", repo.state(webmKey))
+	}
+
+	// Ineligible (private) ⇒ nothing armed here (privacy fence).
+	repo2 := newFakeRepo()
+	lk2 := &fakeLookups{
+		videoPrivacy: "private", videoState: "published", videoOK: true,
+		videoFiles: []VideoFileRef{{Kind: "webm", StorageKey: webmKey}},
+	}
+	svc2 := New(repo2, lk2, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+	if err := svc2.OnTranscodeComplete(context.Background(), vid); err != nil {
+		t.Fatalf("OnTranscodeComplete (private): %v", err)
+	}
+	if len(repo2.rows) != 0 {
+		t.Errorf("private video armed %d rows at transcode completion, want 0 (privacy fence breach)", len(repo2.rows))
+	}
+}
+
+// TestHLSPinLifecycle (P19.4) exercises the full HLS pin state machine end to end:
+// first transcode → pinned car_root; re-transcode (wholesale-replaced content) →
+// forced re-claim, new car_root, superseded root swap-unpinned; delete → the tree
+// is unpinned (reference-checked) and the row goes terminal.
+func TestHLSPinLifecycle(t *testing.T) {
+	repo := newFakeRepo()
+	blobs := newBlobs(t)
+	client := ipfs.NewFakeIPFSClient()
+	vid := uuid.New()
+	prefix := "streaming-playlists/" + vid.String() + "/"
+	lk := &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true}
+	svc := New(repo, lk, blobs, client, testConfig())
+	ctx := context.Background()
+
+	// --- first transcode ---
+	putBlob(t, blobs, prefix+"master.m3u8", "v1-master")
+	putBlob(t, blobs, prefix+"720p/playlist.m3u8", "v1-playlist")
+	putBlob(t, blobs, prefix+"720p/seg_00000.ts", "v1-seg")
+	if err := svc.OnTranscodeComplete(ctx, vid); err != nil {
+		t.Fatalf("first OnTranscodeComplete: %v", err)
+	}
+	if _, err := svc.DrainDue(ctx, 10); err != nil {
+		t.Fatalf("first drain: %v", err)
+	}
+	if repo.state(prefix) != "pinned" {
+		t.Fatalf("after first drain state = %q, want pinned", repo.state(prefix))
+	}
+	oldRoot := repo.rows[prefix].CarRoot
+	if oldRoot == "" {
+		t.Fatal("no car_root recorded on first pin")
+	}
+	if pinned, _ := client.IsPinned(ctx, oldRoot); !pinned {
+		t.Fatal("old car_root not pinned on the node after first transcode")
+	}
+
+	// --- re-transcode: replace the tree content wholesale (new bytes ⇒ new root) ---
+	putBlob(t, blobs, prefix+"master.m3u8", "v2-master-DIFFERENT")
+	putBlob(t, blobs, prefix+"720p/seg_00000.ts", "v2-seg-DIFFERENT")
+	if err := svc.OnTranscodeComplete(ctx, vid); err != nil {
+		t.Fatalf("re-transcode OnTranscodeComplete: %v", err)
+	}
+	if repo.state(prefix) != "pending" {
+		t.Fatalf("after re-transcode hook state = %q, want pending (forced re-claim)", repo.state(prefix))
+	}
+	if repo.rows[prefix].CarRoot != oldRoot {
+		t.Error("force-repin cleared car_root before the worker ran; the old root must survive for the swap")
+	}
+	if _, err := svc.DrainDue(ctx, 10); err != nil {
+		t.Fatalf("re-transcode drain: %v", err)
+	}
+	newRoot := repo.rows[prefix].CarRoot
+	if newRoot == oldRoot {
+		t.Fatal("car_root unchanged after re-transcode with different content")
+	}
+	if repo.state(prefix) != "pinned" {
+		t.Errorf("after re-drain state = %q, want pinned", repo.state(prefix))
+	}
+	if pinned, _ := client.IsPinned(ctx, newRoot); !pinned {
+		t.Error("new car_root not pinned after re-transcode")
+	}
+	if pinned, _ := client.IsPinned(ctx, oldRoot); pinned {
+		t.Error("superseded car_root still pinned after re-transcode, want swap-unpinned")
+	}
+
+	// --- delete: unpin the HLS tree (reference-checked), row terminal ---
+	if err := svc.UnpinVideo(ctx, vid); err != nil {
+		t.Fatalf("UnpinVideo: %v", err)
+	}
+	if repo.state(prefix) != "unpinning" {
+		t.Fatalf("after delete-enqueue state = %q, want unpinning", repo.state(prefix))
+	}
+	if _, err := svc.DrainDue(ctx, 10); err != nil {
+		t.Fatalf("delete drain: %v", err)
+	}
+	if repo.state(prefix) != "unpinned" {
+		t.Errorf("after delete drain state = %q, want unpinned (terminal)", repo.state(prefix))
+	}
+	if pinned, _ := client.IsPinned(ctx, newRoot); pinned {
+		t.Error("car_root still pinned after delete, want unpinned")
+	}
+}
+
+// TestHLSCIDInVideoPins (P19.4): once the HLS directory row is pinned, the detail
+// read model surfaces its car_root as hls_cid (the P19.3 `ipfs` object is now
+// truthful for HLS), alongside the configured gateway base.
+func TestHLSCIDInVideoPins(t *testing.T) {
+	repo := newFakeRepo()
+	vid := uuid.New()
+	hlsRoot := ipfs.DirCIDv1([]byte("hls-tree"))
+	seedPinned(repo, "streaming-playlists/"+vid.String()+"/", string(ClassHLS), hlsRoot, vid)
+	svc := New(repo, &fakeLookups{}, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+
+	pins, ok, err := svc.VideoPins(context.Background(), vid)
+	if err != nil || !ok {
+		t.Fatalf("VideoPins ok=%v err=%v, want ok=true", ok, err)
+	}
+	if pins.HLSCID != hlsRoot {
+		t.Errorf("HLSCID = %q, want %q", pins.HLSCID, hlsRoot)
+	}
+	if pins.GatewayURL != "https://gw.example.org" {
+		t.Errorf("GatewayURL = %q, want the configured gateway", pins.GatewayURL)
 	}
 }
 

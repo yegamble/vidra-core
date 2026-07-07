@@ -70,12 +70,29 @@ var ErrNoTranscoder = errors.New("transcode: no transcoder configured")
 type Service struct {
 	repo       Repository
 	transcoder Transcoder
+	onComplete func(ctx context.Context, videoID uuid.UUID)
+}
+
+// Option configures the transcode service.
+type Option func(*Service)
+
+// WithCompletionHook registers a best-effort callback fired after a transcode job
+// completes successfully (the video's HLS tree + VP9/WebM alternate are now
+// stored). The IPFS mirror uses it to add+pin the finalized HLS directory (fix_plan
+// P19.4). The hook runs inline on the worker goroutine; it must not block and its
+// failures must not fail the job (the transcode already succeeded).
+func WithCompletionHook(fn func(ctx context.Context, videoID uuid.UUID)) Option {
+	return func(s *Service) { s.onComplete = fn }
 }
 
 // NewService builds the transcode service. transcoder may be nil when only the
 // read side (playlist/rendition lookups) is needed.
-func NewService(repo Repository, transcoder Transcoder) *Service {
-	return &Service{repo: repo, transcoder: transcoder}
+func NewService(repo Repository, transcoder Transcoder, opts ...Option) *Service {
+	s := &Service{repo: repo, transcoder: transcoder}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Enqueue queues a transcode job for a video's stored original. Idempotent per
@@ -114,6 +131,11 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 			continue
 		}
 		_ = s.repo.CompleteTranscodeJob(ctx, row.ID)
+		// Best-effort completion hook (IPFS mirror HLS-tree pin, P19.4). A hook
+		// failure must never fail the job — the transcode already succeeded.
+		if s.onComplete != nil {
+			s.onComplete(ctx, row.VideoID)
+		}
 		done++
 	}
 	return done, nil
