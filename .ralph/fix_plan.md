@@ -1498,6 +1498,39 @@ re-ported.
       **Consumer**: vidra-user W2.U frame-pick UI (BLOCKED-on-backend; Playwright +
       backend-backed e2e are that slice's deliverables) — backend contract shipped
       ahead, exactly like W1/W2.C1–C4.)
+- [x] W2.C6 [security-audit follow-up] Close the three W2 defense-in-depth minors
+      from the security audit (all in `make ci`). (2026-07-08,
+      ytdlp/channelsync/config/httpapi/cmd + openapi.
+      **(1) yt-dlp timeout orphaned a grandchild** — `internal/ytdlp/exec.go`
+      `runCommand` killed only the direct child on ctx expiry, so the ffmpeg
+      grandchild yt-dlp spawns to mux streams could be orphaned (and, holding the
+      stdout pipe, could wedge `Wait`). Fix: start the child in its own process
+      group (`SysProcAttr{Setpgid:true}`) and override `cmd.Cancel` to
+      `syscall.Kill(-pid, SIGKILL)` (whole group), plus `cmd.WaitDelay=5s` as a
+      belt-and-braces bound; the `ytdlp.go` package-doc §5 group-kill claim is now
+      accurate (was over-claiming). Real kill-path proof:
+      `internal/ytdlp/exec_unix_test.go` (`//go:build unix`) — a hermetic `/bin/sh`
+      fixture spawns a background `sleep`, records its pid; after a 300ms deadline
+      the test asserts `runCommand` returns promptly AND the grandchild pid is gone
+      (ESRCH). No real yt-dlp binary; ~0.3s.
+      **(2) playlist count trusted `--playlist-end`** —
+      `internal/channelsync/service.go` `runSync` now defensively clamps the
+      returned entries to `s.batch` in code before importing, so a misbehaving/
+      hostile extractor that ignores `--playlist-end` can never make one pass
+      draft/enqueue more than the configured batch (bounds work + quota per run).
+      Unit: `TestDrainDueClampsEntriesToBatch` (lister returns 5, batch=2 → exactly
+      2 drafts+enqueues, newest kept).
+      **(3) no server-side cooldown on sync-now** — `POST .../sync-now` now rejects
+      429 (`rate_limited`, `Retry-After`) when the last COMPLETED run was less than
+      `CHANNEL_SYNC_COOLDOWN` ago (new config, default `1m`, boot-validated
+      non-negative; `channelsync.WithCooldown` option + `Cooldown()` accessor;
+      never blocks a never-run sync's first refresh; `<=0` disables). Consistent
+      with the codebase's rate-limit convention (429 envelope + `Retry-After`).
+      `api/openapi.yaml` `syncChannelNow` documents the 429 + cooldown. Tests:
+      `internal/channelsync` `TestSyncNowCooldown` (inside/outside window, first-run
+      allowed, disabled); `internal/httpapi` `TestChannelSyncNowCooldown429`
+      (429 + `Retry-After` + `rate_limited` code, then 202 past the window). `make
+      ci` green — fmt-check, vet, openapi-verify, sqlc-verify, test-race.)
 
 ## Optional / Deferred / Non-Blocking (W2)
 - [ ] W2.CD1 [UPLOAD-09 · torrent half] Torrent/magnet import — DEFERRED to W6 by

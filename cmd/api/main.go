@@ -685,6 +685,7 @@ func run() error {
 		channelsync.WithMaxPerUser(cfg.ChannelSyncMaxPerUser),
 		channelsync.WithBatch(cfg.ChannelSyncBatch),
 		channelsync.WithInterval(cfg.ChannelSyncInterval),
+		channelsync.WithCooldown(cfg.ChannelSyncCooldown),
 		channelsync.WithLogger(logger),
 	}
 	if ytdlpClient != nil {

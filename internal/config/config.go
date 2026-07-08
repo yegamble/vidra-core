@@ -427,6 +427,10 @@ type Config struct {
 	// ChannelSyncBatch caps how many of the newest external uploads one sync pass
 	// imports (yt-dlp --playlist-end).
 	ChannelSyncBatch int
+	// ChannelSyncCooldown is the minimum spacing between manual POST .../sync-now
+	// triggers, measured from the last completed run. A request inside the window
+	// is rejected 429. <= 0 disables the throttle.
+	ChannelSyncCooldown time.Duration
 
 	// PeerTube import / migration (fix_plan P18, .ralph/specs/peertube-import.md).
 	// A one-way tool that reads an existing PeerTube instance's PostgreSQL DB +
@@ -606,6 +610,7 @@ func Load() (*Config, error) {
 		YtdlpProxy:                     strings.TrimSpace(getEnv("YTDLP_PROXY", "")),
 		ChannelSyncEnabled:             getEnvBool("CHANNEL_SYNC_ENABLED", false),
 		ChannelSyncInterval:            getEnvDuration("CHANNEL_SYNC_INTERVAL", time.Hour),
+		ChannelSyncCooldown:            getEnvDuration("CHANNEL_SYNC_COOLDOWN", time.Minute),
 		PeerTubeImportEnabled:          getEnvBool("PEERTUBE_IMPORT_ENABLED", false),
 		PeerTubeSourceDatabaseURL:      getEnv("PEERTUBE_SOURCE_DATABASE_URL", ""),
 		PeerTubeSourceStorageBackend:   getEnv("PEERTUBE_SOURCE_STORAGE_BACKEND", "local"),
@@ -897,6 +902,9 @@ func (c *Config) validate() error {
 		}
 		if c.ChannelSyncBatch < 1 || c.ChannelSyncBatch > 100 {
 			return fmt.Errorf("config: CHANNEL_SYNC_BATCH %d out of range (1..100)", c.ChannelSyncBatch)
+		}
+		if c.ChannelSyncCooldown < 0 {
+			return fmt.Errorf("config: CHANNEL_SYNC_COOLDOWN must not be negative")
 		}
 	}
 	if c.MFAKeyKEK != "" {

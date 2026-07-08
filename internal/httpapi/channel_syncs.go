@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -130,7 +131,8 @@ func (s *Server) handleDeleteChannelSync(c echo.Context) error {
 }
 
 // handleSyncChannelNow schedules an owned sync to run on the next worker tick.
-// 503 when disabled; 404 when unknown or not owned.
+// 503 when disabled; 404 when unknown or not owned; 429 (with Retry-After) when
+// the server-side cooldown since the last completed run has not yet elapsed.
 func (s *Server) handleSyncChannelNow(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
@@ -141,6 +143,11 @@ func (s *Server) handleSyncChannelNow(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "channel sync not found")
 	}
 	if serr := s.channelsyncsvc.SyncNow(c.Request().Context(), userID, id); serr != nil {
+		if errors.Is(serr, channelsync.ErrCooldown) {
+			if retry := int(s.channelsyncsvc.Cooldown().Seconds()); retry > 0 {
+				c.Response().Header().Set("Retry-After", strconv.Itoa(retry))
+			}
+		}
 		return channelSyncError(serr)
 	}
 	return c.NoContent(http.StatusAccepted)
@@ -158,6 +165,8 @@ func channelSyncError(err error) error {
 		return &ValidationError{Fields: []FieldError{{Field: "channel_id", Message: "you have reached the maximum number of channel syncs"}}}
 	case errors.Is(err, channelsync.ErrConflict):
 		return echo.NewHTTPError(http.StatusConflict, "this channel is already synced with that URL")
+	case errors.Is(err, channelsync.ErrCooldown):
+		return echo.NewHTTPError(http.StatusTooManyRequests, "this channel was synced too recently; try again shortly")
 	case errors.Is(err, channelsync.ErrChannelNotFound), errors.Is(err, channelsync.ErrNotFound), errors.Is(err, channelsync.ErrForbidden):
 		return echo.NewHTTPError(http.StatusNotFound, "channel sync not found")
 	default:

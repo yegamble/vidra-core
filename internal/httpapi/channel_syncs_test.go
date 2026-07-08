@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
@@ -135,22 +136,34 @@ func (noopLister) Playlist(context.Context, string, int) ([]ytdlp.PlaylistEntry,
 // in-memory fakes, with the feature toggled by `enabled`.
 func channelSyncServer(t *testing.T, enabled bool) *Server {
 	t.Helper()
+	srv, _ := channelSyncServerWithRepo(t, enabled)
+	return srv
+}
+
+// channelSyncServerWithRepo is channelSyncServer but also returns the underlying
+// sync repo (so a test can stamp last_sync_at to exercise the cooldown) and lets
+// callers append extra channelsync options.
+func channelSyncServerWithRepo(t *testing.T, enabled bool, opts ...channelsync.Option) (*Server, *csFakeRepo) {
+	t.Helper()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	authsvc := auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour)
 	chRepo := newChannelFakeRepo()
 	chansvc := channel.NewService(chRepo)
-	cssvc := channelsync.NewService(newCSFakeRepo(chRepo), noopDrafter{}, noopEnqueuer{},
+	csRepo := newCSFakeRepo(chRepo)
+	base := []channelsync.Option{
 		channelsync.WithEnabled(enabled),
 		channelsync.WithLister(noopLister{}),
 		channelsync.WithMaxPerUser(5),
 		channelsync.WithBatch(15),
 		channelsync.WithInterval(time.Hour),
-	)
-	return New(testConfig(), nil, nil,
+	}
+	cssvc := channelsync.NewService(csRepo, noopDrafter{}, noopEnqueuer{}, append(base, opts...)...)
+	srv := New(testConfig(), nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(chansvc),
 		WithChannelSyncService(cssvc),
 	)
+	return srv, csRepo
 }
 
 // channelIDFor creates a channel and returns its uuid (the create response
@@ -283,6 +296,55 @@ func TestChannelSyncLifecycle(t *testing.T) {
 	_ = json.Unmarshal(after.Body.Bytes(), &afterList)
 	if len(afterList.ChannelSyncs) != 0 {
 		t.Errorf("after delete list = %+v, want empty", afterList.ChannelSyncs)
+	}
+}
+
+// TestChannelSyncNowCooldown429 proves the server-side cooldown on
+// POST .../sync-now: a sync whose last run completed inside the cooldown window
+// is rejected 429 (stable code rate_limited) with a Retry-After header, while a
+// sync past the window is accepted 202.
+func TestChannelSyncNowCooldown429(t *testing.T) {
+	srv, repo := channelSyncServerWithRepo(t, true, channelsync.WithCooldown(time.Hour))
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	chID := channelIDFor(t, srv, tok, "ada")
+
+	rec := postJSONAuth(srv, "/api/v1/channel-syncs",
+		`{"channel_id":"`+chID+`","external_channel_url":"https://youtube.com/@ada"}`, tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var created channelSyncResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	syncID := uuid.MustParse(created.ChannelSync.ID)
+
+	// Stamp a very recent completed run so the cooldown is active.
+	s := repo.syncs[syncID]
+	s.LastSyncAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	repo.syncs[syncID] = s
+
+	now := sendJSONAuth(srv, http.MethodPost, "/api/v1/channel-syncs/"+created.ChannelSync.ID+"/sync-now", "", tok)
+	if now.Code != http.StatusTooManyRequests {
+		t.Fatalf("sync-now inside cooldown = %d, want 429; body=%s", now.Code, now.Body.String())
+	}
+	if ra := now.Header().Get("Retry-After"); ra == "" {
+		t.Errorf("429 missing Retry-After header")
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(now.Body.Bytes(), &body)
+	if body.Error.Code != "rate_limited" {
+		t.Errorf("429 code = %q, want rate_limited", body.Error.Code)
+	}
+
+	// Move the last run outside the window → the next trigger is accepted.
+	s = repo.syncs[syncID]
+	s.LastSyncAt = pgtype.Timestamptz{Time: time.Now().Add(-2 * time.Hour), Valid: true}
+	repo.syncs[syncID] = s
+	if after := sendJSONAuth(srv, http.MethodPost, "/api/v1/channel-syncs/"+created.ChannelSync.ID+"/sync-now", "", tok); after.Code != http.StatusAccepted {
+		t.Fatalf("sync-now past cooldown = %d, want 202", after.Code)
 	}
 }
 

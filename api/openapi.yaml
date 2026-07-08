@@ -4208,8 +4208,10 @@ paths:
       summary: Trigger a channel auto-sync now
       description: >-
         Schedules an owned sync to run on the next worker tick (a manual refresh
-        between cadence runs). 503 when the feature is disabled; 404 when the
-        sync is unknown or not owned.
+        between cadence runs). A server-side cooldown (CHANNEL_SYNC_COOLDOWN,
+        measured from the last completed run) throttles repeat triggers: a request
+        inside the window is rejected 429 with a Retry-After header. 503 when the
+        feature is disabled; 404 when the sync is unknown or not owned.
       tags: [channels]
       security:
         - bearerAuth: []
@@ -4231,6 +4233,14 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such channel sync, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: >-
+            The sync ran too recently — the server-side cooldown has not elapsed.
+            Stable code rate_limited; carries a Retry-After header.
           content:
             application/json:
               schema:

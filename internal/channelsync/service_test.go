@@ -3,11 +3,13 @@ package channelsync
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -344,6 +346,54 @@ func TestDeleteAndSyncNow(t *testing.T) {
 	})
 }
 
+// ---- SyncNow cooldown -----------------------------------------------------
+
+func TestSyncNowCooldown(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo()
+	svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, &fakeLister{}, WithCooldown(time.Hour))
+
+	// A sync whose last run completed 'just now' is inside the cooldown → 429.
+	recent := sqlcgen.ChannelSync{
+		ID: uuid.New(), UserID: owner, ChannelID: uuid.New(), State: "idle",
+		LastSyncAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}
+	repo.syncs[recent.ID] = recent
+	if err := svc.SyncNow(context.Background(), owner, recent.ID); !errors.Is(err, ErrCooldown) {
+		t.Fatalf("err = %v, want ErrCooldown while cooling down", err)
+	}
+	if len(repo.triggered) != 0 {
+		t.Fatalf("triggered = %v, want none inside the cooldown", repo.triggered)
+	}
+
+	// A sync whose last run is older than the cooldown → allowed.
+	old := sqlcgen.ChannelSync{
+		ID: uuid.New(), UserID: owner, ChannelID: uuid.New(), State: "idle",
+		LastSyncAt: pgtype.Timestamptz{Time: time.Now().Add(-2 * time.Hour), Valid: true},
+	}
+	repo.syncs[old.ID] = old
+	if err := svc.SyncNow(context.Background(), owner, old.ID); err != nil {
+		t.Fatalf("SyncNow past the cooldown: %v", err)
+	}
+
+	// A never-run sync (LastSyncAt invalid) is always allowed — the first manual
+	// refresh must never be blocked.
+	fresh := sqlcgen.ChannelSync{ID: uuid.New(), UserID: owner, ChannelID: uuid.New(), State: "waiting_first_run"}
+	repo.syncs[fresh.ID] = fresh
+	if err := svc.SyncNow(context.Background(), owner, fresh.ID); err != nil {
+		t.Fatalf("SyncNow first run: %v", err)
+	}
+	if len(repo.triggered) != 2 {
+		t.Fatalf("triggered = %v, want the two allowed syncs", repo.triggered)
+	}
+
+	// Cooldown of 0 disables the throttle entirely.
+	off := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, &fakeLister{}, WithCooldown(0))
+	if err := off.SyncNow(context.Background(), owner, recent.ID); err != nil {
+		t.Fatalf("SyncNow with cooldown disabled: %v", err)
+	}
+}
+
 // ---- DrainDue -------------------------------------------------------------
 
 func claimRow(s sqlcgen.ChannelSync) sqlcgen.ClaimDueChannelSyncsRow {
@@ -447,6 +497,38 @@ func TestDrainDuePerEntryErrorsDoNotFailSync(t *testing.T) {
 	}
 	if len(repo.finished) != 1 || len(repo.failed) != 0 {
 		t.Fatalf("finished=%d failed=%d", len(repo.finished), len(repo.failed))
+	}
+}
+
+func TestDrainDueClampsEntriesToBatch(t *testing.T) {
+	repo := newFakeRepo()
+	sync := sqlcgen.ChannelSync{ID: uuid.New(), UserID: uuid.New(), ChannelID: uuid.New(), ExternalChannelUrl: "https://youtube.com/@chan"}
+	repo.claimed = []sqlcgen.ClaimDueChannelSyncsRow{claimRow(sync)}
+	// The lister returns MORE entries than the batch — a misbehaving/hostile
+	// extractor ignoring --playlist-end. The service must defensively clamp so one
+	// pass never drafts/enqueues more than s.batch.
+	var entries []ytdlp.PlaylistEntry
+	for i := 0; i < 5; i++ {
+		id := "v" + strconv.Itoa(i)
+		entries = append(entries, ytdlp.PlaylistEntry{ExternalID: id, URL: "https://youtube.com/watch?v=" + id, Title: id})
+	}
+	lister := &fakeLister{entries: entries}
+	drafter := &fakeDrafter{}
+	enq := &fakeEnqueuer{}
+	svc := enabledService(repo, drafter, enq, lister, WithBatch(2))
+
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("DrainDue: %v", err)
+	}
+	if len(drafter.calls) != 2 {
+		t.Fatalf("drafted %d entries, want the clamp to batch=2", len(drafter.calls))
+	}
+	if len(enq.calls) != 2 {
+		t.Fatalf("enqueued %d entries, want 2", len(enq.calls))
+	}
+	// Only the first two (newest) entries are imported; the tail is dropped.
+	if drafter.calls[0].in.Title != "v0" || drafter.calls[1].in.Title != "v1" {
+		t.Fatalf("imported the wrong entries: %+v", drafter.calls)
 	}
 }
 

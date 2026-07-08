@@ -60,6 +60,10 @@ var (
 	ErrConflict = errors.New("channelsync: already exists")
 	// ErrMaxReached means the caller is at CHANNEL_SYNC_MAX_PER_USER (422).
 	ErrMaxReached = errors.New("channelsync: per-user limit reached")
+	// ErrCooldown means a manual sync-now was requested less than the configured
+	// cooldown after the last completed run (429). It throttles a caller from
+	// forcing fresh external listings faster than CHANNEL_SYNC_COOLDOWN.
+	ErrCooldown = errors.New("channelsync: sync-now cooldown active")
 )
 
 // Repository is the data access the service needs. *sqlcgen.Queries satisfies it
@@ -108,6 +112,7 @@ type Service struct {
 	maxPerUser   int
 	batch        int
 	interval     time.Duration
+	cooldown     time.Duration
 	logger       *slog.Logger
 }
 
@@ -147,6 +152,17 @@ func WithInterval(d time.Duration) Option {
 	}
 }
 
+// WithCooldown sets the minimum spacing between manual sync-now triggers,
+// measured from the last completed run (CHANNEL_SYNC_COOLDOWN). A request inside
+// the window is rejected with ErrCooldown (429). <= 0 disables the throttle.
+func WithCooldown(d time.Duration) Option {
+	return func(s *Service) {
+		if d >= 0 {
+			s.cooldown = d
+		}
+	}
+}
+
 // WithLister wires the yt-dlp channel lister. Required for the worker to do any
 // real work; without it a due sync fails safely ("channel sync is not available").
 func WithLister(l Lister) Option { return func(s *Service) { s.lister = l } }
@@ -170,6 +186,7 @@ func NewService(repo Repository, drafter Drafter, enqueuer Enqueuer, opts ...Opt
 		maxPerUser: 5,
 		batch:      15,
 		interval:   time.Hour,
+		cooldown:   time.Minute,
 		logger:     slog.Default(),
 	}
 	for _, opt := range opts {
@@ -184,6 +201,10 @@ func (s *Service) Enabled() bool { return s.enabled }
 
 // Interval is the configured sync cadence (used by the worker ticker).
 func (s *Service) Interval() time.Duration { return s.interval }
+
+// Cooldown is the minimum spacing enforced between manual sync-now triggers (the
+// handler uses it to set Retry-After on a 429). 0 means the throttle is off.
+func (s *Service) Cooldown() time.Duration { return s.cooldown }
 
 func (s *Service) guard() urlsafety.Guard { return urlsafety.Guard{AllowPrivate: s.allowPrivate} }
 
@@ -246,7 +267,9 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 }
 
 // SyncNow schedules an owned sync to run on the next worker tick. Unknown id →
-// ErrNotFound; not owner → ErrForbidden.
+// ErrNotFound; not owner → ErrForbidden. A server-side cooldown throttles repeat
+// manual triggers: if the last run completed less than s.cooldown ago the request
+// is rejected with ErrCooldown (429) rather than forcing another external listing.
 func (s *Service) SyncNow(ctx context.Context, userID, id uuid.UUID) error {
 	if !s.enabled {
 		return ErrDisabled
@@ -254,6 +277,11 @@ func (s *Service) SyncNow(ctx context.Context, userID, id uuid.UUID) error {
 	sync, err := s.owned(ctx, userID, id)
 	if err != nil {
 		return err
+	}
+	if s.cooldown > 0 && sync.LastSyncAt.Valid {
+		if since := time.Since(sync.LastSyncAt.Time); since < s.cooldown {
+			return ErrCooldown
+		}
 	}
 	return s.repo.TriggerChannelSyncNow(ctx, sync.ID)
 }
@@ -313,6 +341,13 @@ func (s *Service) runSync(ctx context.Context, row sqlcgen.ClaimDueChannelSyncsR
 	entries, err := s.lister.Playlist(ctx, target.String(), s.batch)
 	if err != nil {
 		return failf("could not list the external channel")
+	}
+	// Defense in depth: --playlist-end already bounds the listing, but do NOT
+	// trust the extractor to have honored it. Clamp to s.batch so a misbehaving or
+	// malicious channel listing can never make one pass draft/enqueue more than the
+	// configured batch (bounding both work and quota consumption per run).
+	if s.batch > 0 && len(entries) > s.batch {
+		entries = entries[:s.batch]
 	}
 	for _, entry := range entries {
 		s.importEntry(ctx, row, entry)
