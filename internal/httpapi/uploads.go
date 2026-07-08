@@ -22,7 +22,16 @@ import (
 type createUploadSessionRequest struct {
 	Size     int64  `json:"size"`
 	Filename string `json:"filename"`
+	// FileFingerprint is an OPAQUE client identity for the file (recommended
+	// recipe: SHA-256 over size + first/last 1 MiB) used for cross-refresh /
+	// cross-device resume (UPLOAD-03). Optional; <=128 chars; stored verbatim,
+	// never parsed.
+	FileFingerprint string `json:"file_fingerprint"`
 }
+
+// maxFileFingerprintLen bounds the opaque resume fingerprint (a SHA-256 hex
+// digest is 64 chars; 128 leaves headroom for other client recipes).
+const maxFileFingerprintLen = 128
 
 func (r createUploadSessionRequest) Validate() []FieldError {
 	var fes []FieldError
@@ -31,6 +40,9 @@ func (r createUploadSessionRequest) Validate() []FieldError {
 	}
 	if r.Size <= 0 {
 		fes = append(fes, FieldError{Field: "size", Message: "must be greater than zero"})
+	}
+	if len(r.FileFingerprint) > maxFileFingerprintLen {
+		fes = append(fes, FieldError{Field: "file_fingerprint", Message: "must be at most 128 characters"})
 	}
 	return fes
 }
@@ -76,6 +88,60 @@ func uploadStatusView(st upload.Status) uploadStatusResponse {
 	}
 }
 
+// activeUploadResponse is one entry in GET /api/v1/me/uploads — a resumable
+// session still open for the caller, with enough to reconstruct/continue it
+// after a refresh or on another device (UPLOAD-03).
+type activeUploadResponse struct {
+	UploadID        string    `json:"upload_id"`
+	VideoID         string    `json:"video_id"`
+	Filename        string    `json:"filename"`
+	Size            int64     `json:"size"`
+	ChunkSize       int       `json:"chunk_size"`
+	TotalChunks     int       `json:"total_chunks"`
+	ReceivedChunks  int       `json:"received_chunks"`
+	FileFingerprint string    `json:"file_fingerprint"`
+	ExpiresAt       time.Time `json:"expires_at"`
+}
+
+// activeUploadsResponse wraps the caller's active resumable sessions.
+type activeUploadsResponse struct {
+	Uploads []activeUploadResponse `json:"uploads"`
+}
+
+// handleListMyUploads lists the caller's ACTIVE resumable upload sessions with
+// each session's received-chunk count — the server-side resume contract
+// (UPLOAD-03) that lets a client recover in-progress uploads after losing its
+// localStorage (a refresh, or a different device). The optional ?fingerprint=
+// query narrows the list to sessions whose file_fingerprint matches, so a client
+// can ask "am I already uploading this exact file?". Auth required; only the
+// caller's own sessions are ever returned.
+func (s *Server) handleListMyUploads(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	fingerprint := strings.TrimSpace(c.QueryParam("fingerprint"))
+	ups, err := s.uploadsvc.ActiveSessionsForUser(c.Request().Context(), userID, fingerprint)
+	if err != nil {
+		return err
+	}
+	out := make([]activeUploadResponse, 0, len(ups))
+	for _, u := range ups {
+		out = append(out, activeUploadResponse{
+			UploadID:        u.ID.String(),
+			VideoID:         u.VideoID.String(),
+			Filename:        u.Filename,
+			Size:            u.TotalSize,
+			ChunkSize:       int(u.ChunkSize),
+			TotalChunks:     u.TotalChunks,
+			ReceivedChunks:  u.ReceivedChunks,
+			FileFingerprint: u.FileFingerprint,
+			ExpiresAt:       u.ExpiresAt,
+		})
+	}
+	return c.JSON(http.StatusOK, activeUploadsResponse{Uploads: out})
+}
+
 // handleCreateUploadSession opens a chunked/resumable upload for a video the
 // caller owns (owner only; non-owner/unknown → 404). The size, filename
 // extension, and storage quota are validated up front: a non-video extension is
@@ -119,7 +185,7 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 			return qerr
 		}
 	}
-	sess, err := s.uploadsvc.CreateSession(ctx, id, userID, strings.TrimSpace(in.Filename), in.Size)
+	sess, err := s.uploadsvc.CreateSession(ctx, id, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint))
 	if err != nil {
 		return err
 	}

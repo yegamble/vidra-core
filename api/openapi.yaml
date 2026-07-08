@@ -3595,6 +3595,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/uploads:
+    get:
+      operationId: listMyUploads
+      summary: List the caller's active resumable uploads (server-side resume)
+      description: >-
+        Lists the caller's ACTIVE (unfinished, unexpired) resumable upload
+        sessions, each with its received-chunk count — the server-side resume
+        contract (UPLOAD-03). A client that lost its localStorage (a refresh, or
+        a different device) reconstructs its in-progress uploads from here, then
+        continues each with PUT /api/v1/uploads/{upload_id}/chunks/{n}. The
+        optional fingerprint query narrows the list to sessions whose
+        file_fingerprint matches, so a client can ask "am I already uploading
+        this exact file?". Only the caller's own sessions are ever returned.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: fingerprint
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 128
+          description: >-
+            Narrow the list to sessions with this exact file_fingerprint (the
+            opaque identity supplied at create time). Omit to list all active
+            sessions.
+      responses:
+        "200":
+          description: The caller's active resumable uploads (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveUploadsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/upload-session:
     post:
       operationId: createUploadSession
@@ -13309,6 +13349,16 @@ components:
             The client filename; its extension must be an accepted video
             container (validated up front).
           example: clip.mp4
+        file_fingerprint:
+          type: string
+          maxLength: 128
+          description: >-
+            Optional OPAQUE client identity for the file, used for cross-refresh
+            / cross-device resume (see GET /api/v1/me/uploads). Recommended
+            recipe: a SHA-256 hex digest over the file size concatenated with its
+            first and last 1 MiB. Stored verbatim (<=128 chars) and never parsed
+            by the server — only compared. Omit or leave empty to supply none.
+          example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
     UploadSessionResponse:
       type: object
       description: The opened resumable upload session.
@@ -13372,6 +13422,60 @@ components:
           type: integer
           format: int64
           description: The total bytes received across all landed chunks.
+        expires_at:
+          type: string
+          format: date-time
+    ActiveUploadsResponse:
+      type: object
+      description: The caller's active resumable upload sessions (UPLOAD-03).
+      required: [uploads]
+      properties:
+        uploads:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActiveUpload"
+    ActiveUpload:
+      type: object
+      description: >-
+        One of the caller's ACTIVE resumable upload sessions, with enough to
+        reconstruct/continue it after a refresh or on another device.
+      required:
+        - upload_id
+        - video_id
+        - filename
+        - size
+        - chunk_size
+        - total_chunks
+        - received_chunks
+        - file_fingerprint
+        - expires_at
+      properties:
+        upload_id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        size:
+          type: integer
+          format: int64
+          description: The declared total file size, in bytes.
+        chunk_size:
+          type: integer
+          description: The fixed chunk size in bytes (every chunk but the last).
+        total_chunks:
+          type: integer
+          description: How many chunks the file is split into.
+        received_chunks:
+          type: integer
+          description: How many chunk indices have landed so far.
+        file_fingerprint:
+          type: string
+          description: >-
+            The opaque file identity supplied at create time (empty when none was
+            provided).
         expires_at:
           type: string
           format: date-time

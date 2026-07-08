@@ -14,18 +14,19 @@ import (
 
 const createUploadSession = `-- name: CreateUploadSession :one
 
-INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at
+INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at, file_fingerprint)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint
 `
 
 type CreateUploadSessionParams struct {
-	VideoID   uuid.UUID `json:"video_id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Filename  string    `json:"filename"`
-	TotalSize int64     `json:"total_size"`
-	ChunkSize int32     `json:"chunk_size"`
-	ExpiresAt time.Time `json:"expires_at"`
+	VideoID         uuid.UUID `json:"video_id"`
+	UserID          uuid.UUID `json:"user_id"`
+	Filename        string    `json:"filename"`
+	TotalSize       int64     `json:"total_size"`
+	ChunkSize       int32     `json:"chunk_size"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	FileFingerprint string    `json:"file_fingerprint"`
 }
 
 // Resumable upload sessions + received-chunk ledger (migration 0059, fix_plan
@@ -39,6 +40,7 @@ func (q *Queries) CreateUploadSession(ctx context.Context, arg CreateUploadSessi
 		arg.TotalSize,
 		arg.ChunkSize,
 		arg.ExpiresAt,
+		arg.FileFingerprint,
 	)
 	var i UploadSession
 	err := row.Scan(
@@ -52,6 +54,7 @@ func (q *Queries) CreateUploadSession(ctx context.Context, arg CreateUploadSessi
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FileFingerprint,
 	)
 	return i, err
 }
@@ -67,7 +70,7 @@ func (q *Queries) DeleteUploadSession(ctx context.Context, id uuid.UUID) error {
 }
 
 const getUploadSession = `-- name: GetUploadSession :one
-SELECT id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at FROM upload_sessions WHERE id = $1
+SELECT id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint FROM upload_sessions WHERE id = $1
 `
 
 func (q *Queries) GetUploadSession(ctx context.Context, id uuid.UUID) (UploadSession, error) {
@@ -84,8 +87,73 @@ func (q *Queries) GetUploadSession(ctx context.Context, id uuid.UUID) (UploadSes
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FileFingerprint,
 	)
 	return i, err
+}
+
+const listActiveUploadSessionsForUser = `-- name: ListActiveUploadSessionsForUser :many
+SELECT s.id, s.video_id, s.filename, s.total_size, s.chunk_size,
+       s.file_fingerprint, s.expires_at,
+       (SELECT count(*) FROM upload_chunks c WHERE c.upload_id = s.id)::bigint AS received_chunks
+FROM upload_sessions s
+WHERE s.user_id = $1
+  AND s.state = 'active'
+  AND s.expires_at > now()
+  AND ($2::text IS NULL OR s.file_fingerprint = $2::text)
+ORDER BY s.created_at DESC
+`
+
+type ListActiveUploadSessionsForUserParams struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Fingerprint *string   `json:"fingerprint"`
+}
+
+type ListActiveUploadSessionsForUserRow struct {
+	ID              uuid.UUID `json:"id"`
+	VideoID         uuid.UUID `json:"video_id"`
+	Filename        string    `json:"filename"`
+	TotalSize       int64     `json:"total_size"`
+	ChunkSize       int32     `json:"chunk_size"`
+	FileFingerprint string    `json:"file_fingerprint"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	ReceivedChunks  int64     `json:"received_chunks"`
+}
+
+// The caller's ACTIVE (not completed/cancelled, not yet expired) upload sessions
+// with the number of chunks received so far — the cross-refresh / cross-device
+// resume contract (UPLOAD-03, GET /api/v1/me/uploads). When @fingerprint is
+// supplied the list narrows to sessions with that file_fingerprint (the partial
+// index from migration 0080 serves this lookup), so a client can ask "am I
+// already uploading this exact file?". localStorage becomes a cache, not the
+// source of truth.
+func (q *Queries) ListActiveUploadSessionsForUser(ctx context.Context, arg ListActiveUploadSessionsForUserParams) ([]ListActiveUploadSessionsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listActiveUploadSessionsForUser, arg.UserID, arg.Fingerprint)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveUploadSessionsForUserRow
+	for rows.Next() {
+		var i ListActiveUploadSessionsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.VideoID,
+			&i.Filename,
+			&i.TotalSize,
+			&i.ChunkSize,
+			&i.FileFingerprint,
+			&i.ExpiresAt,
+			&i.ReceivedChunks,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSweepableUploadSessions = `-- name: ListSweepableUploadSessions :many

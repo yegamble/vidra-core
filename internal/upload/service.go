@@ -71,6 +71,7 @@ type Repository interface {
 	GetUploadSession(ctx context.Context, id uuid.UUID) (sqlcgen.UploadSession, error)
 	UpsertUploadChunk(ctx context.Context, arg sqlcgen.UpsertUploadChunkParams) error
 	ListUploadChunks(ctx context.Context, uploadID uuid.UUID) ([]sqlcgen.ListUploadChunksRow, error)
+	ListActiveUploadSessionsForUser(ctx context.Context, arg sqlcgen.ListActiveUploadSessionsForUserParams) ([]sqlcgen.ListActiveUploadSessionsForUserRow, error)
 	SetUploadSessionState(ctx context.Context, arg sqlcgen.SetUploadSessionStateParams) error
 	ListSweepableUploadSessions(ctx context.Context, limit int32) ([]uuid.UUID, error)
 	DeleteUploadSession(ctx context.Context, id uuid.UUID) error
@@ -116,15 +117,72 @@ func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service
 // CreateSession opens a resumable upload for a video. The caller has already
 // validated ownership, the filename extension, the size against
 // UPLOAD_MAX_SIZE, and the caller's storage quota. size must be > 0.
-func (s *Service) CreateSession(ctx context.Context, videoID, userID uuid.UUID, filename string, size int64) (sqlcgen.UploadSession, error) {
+// fileFingerprint is an OPAQUE client identity for the file (recommended recipe:
+// SHA-256 over size + first/last 1 MiB) used for server-side resume (UPLOAD-03);
+// it is stored verbatim and never parsed. Pass "" when the client supplies none.
+func (s *Service) CreateSession(ctx context.Context, videoID, userID uuid.UUID, filename string, size int64, fileFingerprint string) (sqlcgen.UploadSession, error) {
 	return s.repo.CreateUploadSession(ctx, sqlcgen.CreateUploadSessionParams{
-		VideoID:   videoID,
-		UserID:    userID,
-		Filename:  filename,
-		TotalSize: size,
-		ChunkSize: s.chunkSize,
-		ExpiresAt: s.now().UTC().Add(SessionTTL),
+		VideoID:         videoID,
+		UserID:          userID,
+		Filename:        filename,
+		TotalSize:       size,
+		ChunkSize:       s.chunkSize,
+		ExpiresAt:       s.now().UTC().Add(SessionTTL),
+		FileFingerprint: fileFingerprint,
 	})
+}
+
+// ActiveUpload is one of the caller's resumable sessions still open for resume
+// (UPLOAD-03): the fields the UI needs to reconstruct/continue an upload after a
+// refresh or on another device. ReceivedChunks is how many chunk indices have
+// landed so far, out of TotalChunks.
+type ActiveUpload struct {
+	ID              uuid.UUID
+	VideoID         uuid.UUID
+	Filename        string
+	TotalSize       int64
+	ChunkSize       int32
+	FileFingerprint string
+	ExpiresAt       time.Time
+	ReceivedChunks  int
+	TotalChunks     int
+}
+
+// ActiveSessionsForUser returns the caller's ACTIVE (unfinished, unexpired)
+// upload sessions with each session's received-chunk count — the server-side
+// resume list (UPLOAD-03). A client that lost its localStorage (a refresh, a new
+// device) reconstructs its in-progress uploads from here; localStorage is a
+// cache, not the source of truth. A non-empty fingerprint narrows the list to
+// sessions with that exact file_fingerprint (the "am I already uploading this
+// file?" query); an empty fingerprint returns all of the caller's active
+// sessions.
+func (s *Service) ActiveSessionsForUser(ctx context.Context, userID uuid.UUID, fingerprint string) ([]ActiveUpload, error) {
+	var fp *string
+	if fingerprint != "" {
+		fp = &fingerprint
+	}
+	rows, err := s.repo.ListActiveUploadSessionsForUser(ctx, sqlcgen.ListActiveUploadSessionsForUserParams{
+		UserID:      userID,
+		Fingerprint: fp,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ActiveUpload, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ActiveUpload{
+			ID:              r.ID,
+			VideoID:         r.VideoID,
+			Filename:        r.Filename,
+			TotalSize:       r.TotalSize,
+			ChunkSize:       r.ChunkSize,
+			FileFingerprint: r.FileFingerprint,
+			ExpiresAt:       r.ExpiresAt,
+			ReceivedChunks:  int(r.ReceivedChunks),
+			TotalChunks:     int(totalChunks(r.TotalSize, r.ChunkSize)),
+		})
+	}
+	return out, nil
 }
 
 // session loads a session and enforces ownership, mapping a miss or a

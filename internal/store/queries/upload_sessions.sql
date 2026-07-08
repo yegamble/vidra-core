@@ -3,12 +3,30 @@
 -- these rows are the resume contract + sweeper input.
 
 -- name: CreateUploadSession :one
-INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at, file_fingerprint)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetUploadSession :one
 SELECT * FROM upload_sessions WHERE id = $1;
+
+-- name: ListActiveUploadSessionsForUser :many
+-- The caller's ACTIVE (not completed/cancelled, not yet expired) upload sessions
+-- with the number of chunks received so far — the cross-refresh / cross-device
+-- resume contract (UPLOAD-03, GET /api/v1/me/uploads). When @fingerprint is
+-- supplied the list narrows to sessions with that file_fingerprint (the partial
+-- index from migration 0080 serves this lookup), so a client can ask "am I
+-- already uploading this exact file?". localStorage becomes a cache, not the
+-- source of truth.
+SELECT s.id, s.video_id, s.filename, s.total_size, s.chunk_size,
+       s.file_fingerprint, s.expires_at,
+       (SELECT count(*) FROM upload_chunks c WHERE c.upload_id = s.id)::bigint AS received_chunks
+FROM upload_sessions s
+WHERE s.user_id = sqlc.arg('user_id')
+  AND s.state = 'active'
+  AND s.expires_at > now()
+  AND (sqlc.narg('fingerprint')::text IS NULL OR s.file_fingerprint = sqlc.narg('fingerprint')::text)
+ORDER BY s.created_at DESC;
 
 -- name: UpsertUploadChunk :exec
 -- Idempotent re-PUT: a chunk index that has already landed just updates its

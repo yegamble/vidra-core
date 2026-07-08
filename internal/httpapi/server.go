@@ -862,6 +862,7 @@ func (s *Server) routes() {
 		// pipeline as a direct upload), or cancel.
 		if s.uploadsvc != nil {
 			api.POST("/videos/:id/upload-session", s.handleCreateUploadSession, s.requireAuth)
+			api.GET("/me/uploads", s.handleListMyUploads, s.requireAuth)
 			api.PUT("/uploads/:upload_id/chunks/:n", s.handlePutUploadChunk, s.requireAuth)
 			api.GET("/uploads/:upload_id", s.handleGetUploadSession, s.requireAuth)
 			api.POST("/uploads/:upload_id/complete", s.handleCompleteUploadSession, s.requireAuth)

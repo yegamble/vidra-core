@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,16 +37,17 @@ func newUploadFakeRepo() *uploadFakeRepo {
 
 func (r *uploadFakeRepo) CreateUploadSession(_ context.Context, arg sqlcgen.CreateUploadSessionParams) (sqlcgen.UploadSession, error) {
 	s := sqlcgen.UploadSession{
-		ID:        uuid.New(),
-		VideoID:   arg.VideoID,
-		UserID:    arg.UserID,
-		Filename:  arg.Filename,
-		TotalSize: arg.TotalSize,
-		ChunkSize: arg.ChunkSize,
-		State:     "active",
-		ExpiresAt: arg.ExpiresAt,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:              uuid.New(),
+		VideoID:         arg.VideoID,
+		UserID:          arg.UserID,
+		Filename:        arg.Filename,
+		TotalSize:       arg.TotalSize,
+		ChunkSize:       arg.ChunkSize,
+		State:           "active",
+		ExpiresAt:       arg.ExpiresAt,
+		FileFingerprint: arg.FileFingerprint,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
 	}
 	r.sessions[s.ID] = s
 	return s, nil
@@ -73,6 +75,27 @@ func (r *uploadFakeRepo) ListUploadChunks(_ context.Context, uploadID uuid.UUID)
 		rows = append(rows, sqlcgen.ListUploadChunksRow{N: n, SizeBytes: size})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].N < rows[j].N })
+	return rows, nil
+}
+
+func (r *uploadFakeRepo) ListActiveUploadSessionsForUser(_ context.Context, arg sqlcgen.ListActiveUploadSessionsForUserParams) ([]sqlcgen.ListActiveUploadSessionsForUserRow, error) {
+	var rows []sqlcgen.ListActiveUploadSessionsForUserRow
+	for id, s := range r.sessions {
+		if s.UserID != arg.UserID || s.State != "active" || !s.ExpiresAt.After(time.Now()) {
+			continue
+		}
+		if arg.Fingerprint != nil && s.FileFingerprint != *arg.Fingerprint {
+			continue
+		}
+		rows = append(rows, sqlcgen.ListActiveUploadSessionsForUserRow{
+			ID: id, VideoID: s.VideoID, Filename: s.Filename, TotalSize: s.TotalSize,
+			ChunkSize: s.ChunkSize, FileFingerprint: s.FileFingerprint, ExpiresAt: s.ExpiresAt,
+			ReceivedChunks: int64(len(r.chunks[id])),
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return r.sessions[rows[i].ID].CreatedAt.After(r.sessions[rows[j].ID].CreatedAt)
+	})
 	return rows, nil
 }
 
@@ -446,5 +469,109 @@ func TestUploadSessionOwnershipAndAuth(t *testing.T) {
 	// Unknown session id → 404.
 	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/uploads/"+uuid.NewString(), "", ownerTok); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown session status = %d, want 404", rec.Code)
+	}
+}
+
+// TestListMyUploadsResumeContract drives GET /api/v1/me/uploads (UPLOAD-03): an
+// authenticated caller sees only their own ACTIVE sessions, with the persisted
+// file_fingerprint and the received-chunk count; the ?fingerprint= filter
+// narrows the list; anon is 401.
+func TestListMyUploadsResumeContract(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	// Anonymous → 401.
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/me/uploads", "", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anon list = %d, want 401", rec.Code)
+	}
+
+	// Empty for a caller with no sessions (never null).
+	rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/me/uploads", "", tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty list = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var empty activeUploadsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &empty)
+	if empty.Uploads == nil || len(empty.Uploads) != 0 {
+		t.Errorf("empty list = %+v, want non-null empty slice", empty.Uploads)
+	}
+
+	// Open a session WITH a fingerprint (40 bytes → 3 chunks of 16/16/8) and land
+	// one chunk.
+	openRec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session",
+		`{"size":40,"filename":"clip.mp4","file_fingerprint":"fp-1"}`, tok)
+	if openRec.Code != http.StatusCreated {
+		t.Fatalf("open w/ fingerprint = %d; body=%s", openRec.Code, openRec.Body.String())
+	}
+	var sess uploadSessionResponse
+	_ = json.Unmarshal(openRec.Body.Bytes(), &sess)
+	if r := putChunkAuth(srv, sess.UploadID, 0, []byte("0123456789ABCDEF"), tok); r.Code != http.StatusOK {
+		t.Fatalf("put chunk 0 = %d", r.Code)
+	}
+
+	// The resume list shows the session with its fingerprint + received-chunk count.
+	rec = sendJSONAuth(srv, http.MethodGet, "/api/v1/me/uploads", "", tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var list activeUploadsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list.Uploads) != 1 {
+		t.Fatalf("list len = %d, want 1 (body=%s)", len(list.Uploads), rec.Body.String())
+	}
+	got := list.Uploads[0]
+	if got.UploadID != sess.UploadID || got.VideoID != id {
+		t.Errorf("entry ids = %s/%s, want %s/%s", got.UploadID, got.VideoID, sess.UploadID, id)
+	}
+	if got.FileFingerprint != "fp-1" || got.ReceivedChunks != 1 || got.TotalChunks != 3 || got.Size != 40 {
+		t.Errorf("entry = %+v, want fp-1 / 1 of 3 / size 40", got)
+	}
+
+	// ?fingerprint=fp-1 matches; a non-matching fingerprint returns empty.
+	if r := sendJSONAuth(srv, http.MethodGet, "/api/v1/me/uploads?fingerprint=fp-1", "", tok); r.Code != http.StatusOK {
+		t.Fatalf("filtered list = %d", r.Code)
+	} else {
+		var f activeUploadsResponse
+		_ = json.Unmarshal(r.Body.Bytes(), &f)
+		if len(f.Uploads) != 1 || f.Uploads[0].UploadID != sess.UploadID {
+			t.Errorf("fingerprint filter = %+v, want the fp-1 session", f.Uploads)
+		}
+	}
+	if r := sendJSONAuth(srv, http.MethodGet, "/api/v1/me/uploads?fingerprint=nope", "", tok); r.Code == http.StatusOK {
+		var f activeUploadsResponse
+		_ = json.Unmarshal(r.Body.Bytes(), &f)
+		if len(f.Uploads) != 0 {
+			t.Errorf("non-matching fingerprint = %+v, want empty", f.Uploads)
+		}
+	} else {
+		t.Errorf("non-matching filter = %d, want 200", r.Code)
+	}
+
+	// A different user never sees the owner's session.
+	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	if r := sendJSONAuth(srv, http.MethodGet, "/api/v1/me/uploads", "", otherTok); r.Code != http.StatusOK {
+		t.Fatalf("other-user list = %d", r.Code)
+	} else {
+		var f activeUploadsResponse
+		_ = json.Unmarshal(r.Body.Bytes(), &f)
+		if len(f.Uploads) != 0 {
+			t.Errorf("other-user list = %+v, want empty (owner isolation)", f.Uploads)
+		}
+	}
+}
+
+// TestUploadSessionFingerprintTooLong: a fingerprint over 128 chars is rejected
+// 422 at create time (the opaque string is bounded).
+func TestUploadSessionFingerprintTooLong(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	long := strings.Repeat("a", 129)
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session",
+		`{"size":40,"filename":"clip.mp4","file_fingerprint":"`+long+`"}`, tok)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("129-char fingerprint = %d, want 422; body=%s", rec.Code, rec.Body.String())
 	}
 }

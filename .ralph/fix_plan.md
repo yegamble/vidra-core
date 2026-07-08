@@ -1349,11 +1349,45 @@ re-ported.
       honest stage progress) lands in the frontend wave — backend contract shipped
       ahead, consumer-shaped, exactly like the W1 slices; the Playwright/backed-e2e
       leg of the completeness contract is satisfied in that vidra-user wave.)
-- [ ] W2.C2 [UPLOAD-02/03] Server-side draft recovery: optional `file_fingerprint`
+- [x] W2.C2 [UPLOAD-02/03] Server-side draft recovery: optional `file_fingerprint`
       on session create; `GET /api/v1/me/uploads` (active sessions + received
       chunk counts, `?fingerprint=` filter); migration
       `0080_upload_session_fingerprint` with the partial active index; owner-only
-      handler table tests.
+      handler table tests. (backport W2.C2, 2026-07-08. **Migration**
+      `0080_upload_session_fingerprint` (next free number on disk): adds
+      `file_fingerprint TEXT NOT NULL DEFAULT ''` to `upload_sessions` + a PARTIAL
+      resume index `upload_sessions_user_fingerprint_idx (user_id, file_fingerprint)
+      WHERE state = 'active' AND file_fingerprint <> ''` (small; never indexes the
+      '' default). **Contract** (`api/openapi.yaml`, same slice, drift guard +
+      sqlc-verify green): `CreateUploadSessionRequest` gains optional
+      `file_fingerprint` (<=128 chars, opaque; recipe documented as SHA-256 over
+      size + first/last 1 MiB); NEW `GET /api/v1/me/uploads` (`listMyUploads`, auth,
+      `?fingerprint=` filter) → `ActiveUploadsResponse`/`ActiveUpload`
+      (upload_id, video_id, filename, size, chunk_size, total_chunks,
+      received_chunks, file_fingerprint, expires_at). **sqlc**: `CreateUploadSession`
+      gains the `file_fingerprint` column; new `ListActiveUploadSessionsForUser`
+      (user's active + unexpired sessions, received-chunk count via a scalar
+      subquery, `sqlc.narg('fingerprint')` optional filter, newest-first).
+      **Service** (`internal/upload`): `CreateSession` takes the fingerprint;
+      new `ActiveSessionsForUser(userID, fingerprint)` → `[]ActiveUpload` (computes
+      TotalChunks). **Handler** (`internal/httpapi/uploads.go`): `handleListMyUploads`
+      (owner-scoped by principal; only the caller's rows are ever returned), 128-char
+      fingerprint validation on create; route wired only when `uploadsvc != nil`
+      alongside the other upload routes. **Tests**: service —
+      `TestFingerprintPersistedOnCreate`, `TestActiveSessionsForUser` (received-chunk
+      counts, fingerprint filter, owner isolation, excludes completed/cancelled/
+      expired, newest-first, empty on no match); handler —
+      `TestListMyUploadsResumeContract` (401 anon, non-null empty slice,
+      fingerprint round-trip + progress over HTTP, `?fingerprint=` narrowing,
+      cross-user isolation) + `TestUploadSessionFingerprintTooLong` (129 chars →
+      422). No new ingestion path (no bytes touched; the ClamAV invariant is
+      untouched — this slice is pure resume metadata). `make ci` fully green
+      locally (fmt-check, vet, openapi-verify, sqlc-verify, test-race;
+      MAKECI_EXIT=0). **Consumer:** the vidra-user W2.U resume UI (recover
+      in-progress uploads from `GET /me/uploads`, localStorage → cache) lands in the
+      frontend wave — backend contract shipped ahead, consumer-shaped, exactly like
+      the W1/W2.C1 slices; the Playwright + backend-backed e2e leg of the
+      completeness contract is satisfied in that vidra-user wave.)
 - [ ] W2.C3 [UPLOAD-10] Batch guard: `UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER`
       (default 5) enforced at `createUploadSession` with a stable error code the
       UI queues on; contract documents the limit; NO new tables and NO

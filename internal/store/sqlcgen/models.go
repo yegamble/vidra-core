@@ -564,16 +564,17 @@ type UploadChunk struct {
 }
 
 type UploadSession struct {
-	ID        uuid.UUID `json:"id"`
-	VideoID   uuid.UUID `json:"video_id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Filename  string    `json:"filename"`
-	TotalSize int64     `json:"total_size"`
-	ChunkSize int32     `json:"chunk_size"`
-	State     string    `json:"state"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID              uuid.UUID `json:"id"`
+	VideoID         uuid.UUID `json:"video_id"`
+	UserID          uuid.UUID `json:"user_id"`
+	Filename        string    `json:"filename"`
+	TotalSize       int64     `json:"total_size"`
+	ChunkSize       int32     `json:"chunk_size"`
+	State           string    `json:"state"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	FileFingerprint string    `json:"file_fingerprint"`
 }
 
 type User struct {

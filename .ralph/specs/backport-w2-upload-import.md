@@ -275,3 +275,34 @@ slices (C4 depends on the yt-dlp path):
 - **Consumer**: the vidra-user W2.U import UI (resolver picker + honest stage
   progress) lands in the frontend wave; the backend contract ships ahead,
   consumer-shaped (this mirrors the W1 pattern).
+
+## 9. Execution notes — W2.C2 (2026-07-08, as-built)
+Server-side draft recovery (UPLOAD-02/03) — adaptations from the §W2.C2 sketch:
+- **Migration `0080_upload_session_fingerprint`** (next free number confirmed on
+  disk). Exactly as sketched: `file_fingerprint TEXT NOT NULL DEFAULT ''` on
+  `upload_sessions` + a partial index `upload_sessions_user_fingerprint_idx
+  (user_id, file_fingerprint) WHERE state = 'active' AND file_fingerprint <> ''`.
+  The fingerprint is OPAQUE server-side (<=128 chars, enforced at the HTTP
+  boundary): stored verbatim, never parsed, only compared. Empty backfills every
+  pre-existing row (pre-W2.C2 behaviour).
+- **`GET /api/v1/me/uploads`** (not a top-level `/uploads` surface — house `/me/*`
+  naming, mounted alongside the existing upload routes and only when
+  `uploadsvc != nil`). Returns `ActiveUploadsResponse{uploads: []ActiveUpload}`;
+  the `?fingerprint=` query narrows to sessions with that exact opaque identity.
+  Only ACTIVE, unexpired sessions owned by the caller are ever returned (owner
+  scope comes from the auth principal, not a request field — no cross-user leak).
+- **Received-chunk count** is computed in SQL via a scalar subquery
+  `(SELECT count(*) FROM upload_chunks c WHERE c.upload_id = s.id)::bigint`
+  (avoids a GROUP BY; sqlc emits a clean `int64`). `total_chunks` is derived in
+  the service from `total_size`/`chunk_size` (same formula the session response
+  uses), so the UI gets an honest "received of N" without a second round trip.
+- **No new ingestion path**: this slice is pure resume *metadata* — it moves no
+  bytes and adds no write path into blob storage, so the ClamAV invariant (§1.1)
+  is untouched. `file_fingerprint` is client-computed and never triggers a fetch.
+- **Optional filter** uses the repo's established `sqlc.narg('fingerprint')::text
+  IS NULL OR …` pattern (→ `*string`); an empty client fingerprint maps to a nil
+  pointer (no filter), a non-empty one to the value.
+- **Consumer**: the vidra-user W2.U resume UI (reconstruct in-progress uploads
+  from `GET /me/uploads` after a refresh / on a new device; localStorage demoted
+  to a cache) lands in the frontend wave — backend contract shipped ahead,
+  consumer-shaped, exactly like W1/W2.C1.
