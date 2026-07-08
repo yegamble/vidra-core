@@ -35,6 +35,61 @@ SET media_class   = EXCLUDED.media_class,
     updated_at = now()
 RETURNING *;
 
+-- name: RouteIPFSPinIntent :one
+-- Enqueue (or re-arm) a pin intent ROUTED to a specific swarm (P19.P2, spec §3/§4).
+-- Supersedes UpsertIPFSPinIntent on every eligibility-driven enqueue path: the caller
+-- resolves the target network from the eligibility fence (public+published+listed →
+-- public; private/unlisted/unlisted-owner → private) and this places/keeps the row on
+-- exactly one swarm.
+--
+--   * SAME network as the row already lives on (or a brand-new row): behaves exactly
+--     like UpsertIPFSPinIntent — re-arm a terminal (failed/unpinned/unpinning) row to
+--     'pending', leave a live pinned/pending row untouched (idempotent) — and CLEAR
+--     any in-flight transition target (a flip BACK cancels a not-yet-completed flip).
+--   * DIFFERENT network (a privacy flip public<->private): a two-phase cross-network
+--     transition of the SAME row. Keep the CURRENT network and set state='unpinning'
+--     so the worker removes the bytes from the current node FIRST; record
+--     target_network so MarkIPFSPinUnpinned re-arms the row on the new swarm
+--     (state='pending', cid='') once that unpin completes. Routing through 'unpinning'
+--     (even when cid='' right now) catches an in-flight Add via MarkIPFSPinned's
+--     'unpinning' guard, so a node-specific CID is never recorded onto a row bound for
+--     the other network: the cardinal invariant (never "private content pinned public").
+--     A live pin's cid/car_root are PRESERVED so the worker can reference-check and
+--     unpin them on the current node before the row moves.
+INSERT INTO media_ipfs_pins (object_key, media_class, video_id, owner_user_id, network)
+VALUES ($1, $2, $3, $4, sqlc.arg(target_network))
+ON CONFLICT (object_key) DO UPDATE
+SET media_class   = EXCLUDED.media_class,
+    video_id      = EXCLUDED.video_id,
+    owner_user_id = EXCLUDED.owner_user_id,
+    target_network = CASE
+        WHEN media_ipfs_pins.network = sqlc.arg(target_network) THEN NULL
+        ELSE sqlc.arg(target_network)
+    END,
+    state = CASE
+        WHEN media_ipfs_pins.network = sqlc.arg(target_network) THEN
+            CASE WHEN media_ipfs_pins.state IN ('failed', 'unpinned', 'unpinning') THEN 'pending'
+                 ELSE media_ipfs_pins.state END
+        ELSE 'unpinning'
+    END,
+    attempts = CASE
+        WHEN media_ipfs_pins.network = sqlc.arg(target_network)
+             AND media_ipfs_pins.state NOT IN ('failed', 'unpinned', 'unpinning') THEN media_ipfs_pins.attempts
+        ELSE 0
+    END,
+    next_attempt_at = CASE
+        WHEN media_ipfs_pins.network = sqlc.arg(target_network)
+             AND media_ipfs_pins.state NOT IN ('failed', 'unpinned', 'unpinning') THEN media_ipfs_pins.next_attempt_at
+        ELSE now()
+    END,
+    last_error = CASE
+        WHEN media_ipfs_pins.network = sqlc.arg(target_network)
+             AND media_ipfs_pins.state NOT IN ('failed', 'unpinned', 'unpinning') THEN media_ipfs_pins.last_error
+        ELSE ''
+    END,
+    updated_at = now()
+RETURNING *;
+
 -- name: BackfillIPFSPinIntent :execrows
 -- One-shot catalog backfill (P19.6 admin reconcile): seed a pin intent for a
 -- pre-existing eligible object that has NO ledger row yet. Unlike
@@ -45,9 +100,10 @@ RETURNING *;
 -- a row was inserted, 0 when one already existed, so the caller tallies the
 -- newly-enqueued objects per class and a second run provably enqueues zero. The
 -- eligibility gate is enforced by the caller BEFORE this runs (the privacy fence);
--- only already-public objects ever reach here.
-INSERT INTO media_ipfs_pins (object_key, media_class, video_id, owner_user_id)
-VALUES ($1, $2, $3, $4)
+-- the caller also resolves the routed network (P19.P2) — public objects seed on the
+-- public swarm, private/unlisted objects on the private swarm (when that tier is on).
+INSERT INTO media_ipfs_pins (object_key, media_class, video_id, owner_user_id, network)
+VALUES ($1, $2, $3, $4, sqlc.arg(network))
 ON CONFLICT (object_key) DO NOTHING;
 
 -- name: RepinIPFSObject :exec
@@ -60,11 +116,18 @@ ON CONFLICT (object_key) DO NOTHING;
 -- 'pending' so the worker re-adds the new tree and swaps the CID. The existing
 -- cid/car_root is PRESERVED (not reset) so the worker can reference-check and unpin
 -- the superseded root after the new add succeeds. A brand-new object_key is
--- inserted 'pending'. Called ONLY from the transcode-completion hook for an
--- ELIGIBLE (public+published) video — the privacy gate is re-checked there, so a
--- private/deleted video never reaches this and no non-public tree is ever armed.
-INSERT INTO media_ipfs_pins (object_key, media_class, video_id)
-VALUES ($1, $2, $3)
+-- inserted 'pending' on sqlc.arg(target_network). Called ONLY from the
+-- transcode-completion hook for a mirror-ELIGIBLE video — the eligibility fence
+-- re-checks privacy+state there and resolves the routed network (P19.P2): a
+-- public+published video's tree force-repins on the public swarm, a private/unlisted
+-- one on the private swarm (when that tier is on), and a quarantined/deleted video
+-- never reaches this. The DO UPDATE fires ONLY when the existing row already lives on
+-- the routed network — a re-transcode is a same-swarm wholesale-replace. If a privacy
+-- flip left the row mid-transition on the OTHER swarm, the WHERE makes this a no-op and
+-- the SyncVideo transition + eligibility sweep own the cross-network move (never a
+-- cross-network double-pin from a raced re-transcode).
+INSERT INTO media_ipfs_pins (object_key, media_class, video_id, network)
+VALUES ($1, $2, $3, sqlc.arg(target_network))
 ON CONFLICT (object_key) DO UPDATE
 SET media_class     = EXCLUDED.media_class,
     video_id        = EXCLUDED.video_id,
@@ -72,15 +135,20 @@ SET media_class     = EXCLUDED.media_class,
     attempts        = 0,
     next_attempt_at = now(),
     last_error      = '',
-    updated_at      = now();
+    updated_at      = now()
+WHERE media_ipfs_pins.network = sqlc.arg(target_network);
 
 -- name: EnqueueIPFSUnpin :exec
--- Flip a live pin toward removal: the delete/GC path (P19.3+) sets an existing
--- row to 'unpinning' so ClaimDue leases it to the worker. Only pinned/pending rows
--- transition (a terminal or already-unpinning row is left alone).
+-- Flip a live pin toward TRUE removal (the delete/GC path + the "eligible nowhere"
+-- path — quarantine, DM, private-media-with-the-private-tier-off): set the row to
+-- 'unpinning' so ClaimDue leases it to the worker, and CLEAR target_network so a
+-- delete/removal always WINS over a not-yet-completed cross-network flip (P19.P2) —
+-- the bytes are removed and never re-armed on another swarm. Also catches a row that
+-- is already 'unpinning' mid-transition (target set): clearing the target turns the
+-- transition into a plain removal. A terminal row (unpinned/failed) is left alone.
 UPDATE media_ipfs_pins
-SET state = 'unpinning', attempts = 0, next_attempt_at = now(), last_error = '', updated_at = now()
-WHERE object_key = $1 AND state IN ('pinned', 'pending');
+SET state = 'unpinning', target_network = NULL, attempts = 0, next_attempt_at = now(), last_error = '', updated_at = now()
+WHERE object_key = $1 AND state IN ('pinned', 'pending', 'unpinning');
 
 -- name: ClaimDueIPFSPins :many
 -- Atomically leases due pin/unpin work for ONE network (P19.P1). FOR UPDATE SKIP
@@ -172,15 +240,30 @@ SET attempts = attempts + 1, next_attempt_at = $2, last_error = $3, updated_at =
 WHERE object_key = $1;
 
 -- name: MarkIPFSPinUnpinned :exec
--- Terminal success for an unpin (the delete/GC path). The row is kept (not
--- deleted) as an audit trail; content-address dedupe (P19.3) reads it. STATE-GUARDED
--- (P19 audit): only completes the unpin when the row is STILL 'unpinning'. If a
--- concurrent private→public flip re-armed it to 'pending' (UpsertIPFSPinIntent)
--- while the node unpin was in flight, that newer pin intent is preserved (the worker
--- re-pins the now-public object) rather than clobbered to 'unpinned' — the
--- double-flip converges to the latest visibility fact.
+-- Terminal success for an unpin — OR the pivot of a cross-network transition (P19.P2).
+-- The row is kept (not deleted) as an audit trail; content-address dedupe (P19.3)
+-- reads it. STATE-GUARDED (P19 audit): only fires when the row is STILL 'unpinning'.
+--   * target_network IS NULL (a plain delete/GC removal): terminal 'unpinned'. If a
+--     concurrent flip re-armed the row to 'pending' (RouteIPFSPinIntent, same swarm)
+--     while the node unpin was in flight, the state guard preserves that newer intent
+--     rather than clobbering it — the double-flip converges to the latest fact.
+--   * target_network IS NOT NULL (the second phase of a privacy flip): the bytes have
+--     just been removed from the CURRENT swarm, so re-arm the SAME row onto the target
+--     swarm — network=target_network, state='pending', cid='' / car_root='' (the
+--     worker re-adds+pins on the new node and records the CID it returns) — and clear
+--     the marker. This is how "public→private = unpin public → re-arm private" (and
+--     the reverse) completes atomically on one row, with no cross-network double-pin.
 UPDATE media_ipfs_pins
-SET state = 'unpinned', last_error = '', updated_at = now()
+SET state = CASE WHEN target_network IS NOT NULL THEN 'pending' ELSE 'unpinned' END,
+    network = COALESCE(target_network, network),
+    cid = CASE WHEN target_network IS NOT NULL THEN '' ELSE cid END,
+    car_root = CASE WHEN target_network IS NOT NULL THEN '' ELSE car_root END,
+    byte_size = CASE WHEN target_network IS NOT NULL THEN 0 ELSE byte_size END,
+    attempts = 0,
+    next_attempt_at = now(),
+    target_network = NULL,
+    last_error = '',
+    updated_at = now()
 WHERE object_key = $1 AND state = 'unpinning';
 
 -- name: CountIPFSPinsByNetworkStateClass :many
@@ -196,11 +279,16 @@ ORDER BY network, state, media_class;
 
 -- name: CountIPFSPinsSharingCID :one
 -- Reference count for content-address dedupe (P19.3 "never unpin without
--- reference checking"): how many OTHER live rows (pinned/pending) share this CID.
--- The worker only issues the network unpin when this is zero.
+-- reference checking"): how many OTHER live rows (pinned/pending) share this CID
+-- ON THE SAME SWARM. Scoped to network (P19.P2): identical bytes yield the same CID
+-- on both swarms, but a public-node pin and a private-node pin are DISTINCT physical
+-- pins on DISTINCT nodes — so a private row must never keep a public unpin alive
+-- (and vice versa). The worker issues the node unpin (on that swarm's client) only
+-- when this is zero for that network.
 SELECT count(*)::bigint
 FROM media_ipfs_pins
-WHERE cid = $1 AND cid <> '' AND object_key <> $2 AND state IN ('pinned', 'pending');
+WHERE cid = $1 AND cid <> '' AND object_key <> $2 AND network = sqlc.arg(network)
+  AND state IN ('pinned', 'pending');
 
 -- name: RearmFailedIPFSPins :execrows
 -- Reconciliation re-arm (P19.2): move dead-lettered rows back to an actionable
@@ -235,6 +323,22 @@ WHERE object_key IN (
 -- 'unpinning' row; this only re-arms the ledger. Playlist-cover rows carry no
 -- provenance columns and are re-evaluated by their own EnqueuePlaylistCover hook, so
 -- they are deliberately out of this sweep's scope. Bounded per scan.
+--
+-- NETWORK-AWARE (P19.P2): the sweep is scoped per swarm, and its cardinal job stays
+-- the privacy backstop — non-public bytes off the PUBLIC swarm.
+--   * PUBLIC-swarm rows (branches 1-2): the pre-P19.P privacy fence, now fenced to
+--     network='public'. A private/unlisted/unlisted-owner video's OR an inactive/
+--     unlisted account's PUBLIC-node bytes are re-armed toward removal. (A privacy
+--     flip re-routes the object to the private swarm via the durable re-eval queue;
+--     this backstop guarantees the PUBLIC copy is gone even if that enqueue was missed.)
+--   * PRIVATE-swarm rows (branch 3): removed only when eligible NOWHERE — a video that
+--     is no longer published (quarantined/withdrawn: unvetted/non-live content stays
+--     out of EVERY mirror). A private row that merely became PUBLIC is a re-ROUTE, not
+--     a removal, and is owned by the flip transition + reconcile — NOT swept here, so
+--     this never fights an in-flight cross-network transition (which sits in
+--     'unpinning', excluded by the pinned/pending state filter anyway).
+-- Correctly-private rows (published private/unlisted video, unlisted/deactivated
+-- account images on the private swarm) are LEFT ALONE — the whole point of the tier.
 WITH ineligible AS (
     SELECT p.object_key
     FROM media_ipfs_pins p
@@ -242,6 +346,7 @@ WITH ineligible AS (
     JOIN channels c ON c.id = v.channel_id
     JOIN users u ON u.id = c.owner_id
     WHERE p.video_id IS NOT NULL
+      AND p.network = 'public'
       AND p.state IN ('pinned', 'pending')
       AND (v.privacy <> 'public' OR v.state <> 'published' OR u.unlisted)
 
@@ -252,8 +357,19 @@ WITH ineligible AS (
     JOIN users u ON u.id = p.owner_user_id
     WHERE p.owner_user_id IS NOT NULL
       AND p.video_id IS NULL
+      AND p.network = 'public'
       AND p.state IN ('pinned', 'pending')
       AND (NOT u.is_active OR u.deleted_at IS NOT NULL OR u.unlisted)
+
+    UNION
+
+    SELECT p.object_key
+    FROM media_ipfs_pins p
+    JOIN videos v ON v.id = p.video_id
+    WHERE p.video_id IS NOT NULL
+      AND p.network = 'private'
+      AND p.state IN ('pinned', 'pending')
+      AND v.state <> 'published'
 
     LIMIT sqlc.arg(batch_size)
 )

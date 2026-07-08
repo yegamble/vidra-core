@@ -73,12 +73,18 @@ type BackfillCounts struct {
 // untouched, so a second run enqueues zero (the periodic Reconcile re-arms failed
 // rows separately).
 //
-// Every candidate is passed through the Eligible privacy fence BEFORE it is
+// Every candidate is ROUTED through the eligibility fence (P19.P2) BEFORE it is
 // enqueued — the SQL enumeration's WHERE clauses are only an efficiency
-// coarse-filter; this Go gate is the authoritative public-only guarantee, the same
-// one the eligibility unit table exercises. Nothing private/unlisted/quarantined/
-// non-public is ever seeded. No-op (empty counts) when disabled.
-func (s *Service) Backfill(ctx context.Context) (BackfillCounts, error) {
+// coarse-filter; effectiveNetwork is the authoritative routing gate, the same one the
+// eligibility unit table exercises. A candidate that routes to NetworkNone (a
+// quarantined video, or private-routed media with that tier off) is never seeded; an
+// eligible one is seeded on ITS swarm (public objects → public, private/unlisted →
+// private when that tier is on).
+//
+// networkFilter (optional, "" = all) scopes the seeding to one swarm — the admin
+// reconcile's ?network= filter: a candidate whose routed swarm differs is skipped.
+// No-op (empty counts) when disabled.
+func (s *Service) Backfill(ctx context.Context, networkFilter string) (BackfillCounts, error) {
 	counts := BackfillCounts{ByClass: map[string]int64{}}
 	if !s.enabled {
 		return counts, nil
@@ -92,10 +98,8 @@ func (s *Service) Backfill(ctx context.Context) (BackfillCounts, error) {
 		return counts, err
 	}
 	for _, r := range videos {
-		if !Eligible(Subject{Class: r.Class, VideoPrivacy: r.Privacy, VideoState: r.State, OwnerUnlisted: r.OwnerUnlisted}) {
-			continue
-		}
-		if err := s.backfillOne(ctx, r.ObjectKey, r.Class, r.VideoID, uuid.Nil, &counts); err != nil {
+		net := s.effectiveNetwork(Subject{Class: r.Class, VideoPrivacy: r.Privacy, VideoState: r.State, OwnerUnlisted: r.OwnerUnlisted})
+		if err := s.backfillOne(ctx, r.ObjectKey, r.Class, r.VideoID, uuid.Nil, net, networkFilter, &counts); err != nil {
 			return counts, err
 		}
 	}
@@ -105,10 +109,8 @@ func (s *Service) Backfill(ctx context.Context) (BackfillCounts, error) {
 		return counts, err
 	}
 	for _, r := range images {
-		if !Eligible(Subject{Class: r.Class, OwnerActive: r.OwnerActive, OwnerUnlisted: r.OwnerUnlisted}) {
-			continue
-		}
-		if err := s.backfillOne(ctx, r.ObjectKey, r.Class, uuid.Nil, r.OwnerUserID, &counts); err != nil {
+		net := s.effectiveNetwork(Subject{Class: r.Class, OwnerActive: r.OwnerActive, OwnerUnlisted: r.OwnerUnlisted})
+		if err := s.backfillOne(ctx, r.ObjectKey, r.Class, uuid.Nil, r.OwnerUserID, net, networkFilter, &counts); err != nil {
 			return counts, err
 		}
 	}
@@ -118,10 +120,8 @@ func (s *Service) Backfill(ctx context.Context) (BackfillCounts, error) {
 		return counts, err
 	}
 	for _, r := range covers {
-		if !Eligible(Subject{Class: ClassPlaylistCover, PlaylistVisibility: r.Visibility}) {
-			continue
-		}
-		if err := s.backfillOne(ctx, r.ObjectKey, ClassPlaylistCover, uuid.Nil, uuid.Nil, &counts); err != nil {
+		net := s.effectiveNetwork(Subject{Class: ClassPlaylistCover, PlaylistVisibility: r.Visibility})
+		if err := s.backfillOne(ctx, r.ObjectKey, ClassPlaylistCover, uuid.Nil, uuid.Nil, net, networkFilter, &counts); err != nil {
 			return counts, err
 		}
 	}
@@ -132,14 +132,23 @@ func (s *Service) Backfill(ctx context.Context) (BackfillCounts, error) {
 	return counts, nil
 }
 
-// backfillOne seeds one pin intent (insert-if-missing) and tallies it only when a
-// row was actually inserted (execrows == 1), so ByClass reflects genuinely new work.
-func (s *Service) backfillOne(ctx context.Context, objectKey string, class MediaClass, videoID, ownerID uuid.UUID, counts *BackfillCounts) error {
+// backfillOne seeds one pin intent (insert-if-missing) on its routed swarm and tallies
+// it only when a row was actually inserted (execrows == 1), so ByClass reflects
+// genuinely new work. A candidate routing to NetworkNone — or, when networkFilter is
+// set, to a different swarm — is skipped (the privacy fence + the ?network= scope).
+func (s *Service) backfillOne(ctx context.Context, objectKey string, class MediaClass, videoID, ownerID uuid.UUID, net, networkFilter string, counts *BackfillCounts) error {
+	if net == NetworkNone {
+		return nil
+	}
+	if networkFilter != "" && net != networkFilter {
+		return nil
+	}
 	n, err := s.repo.BackfillIPFSPinIntent(ctx, sqlcgen.BackfillIPFSPinIntentParams{
 		ObjectKey:   objectKey,
 		MediaClass:  string(class),
 		VideoID:     pgUUID(videoID),
 		OwnerUserID: pgUUID(ownerID),
+		Network:     net,
 	})
 	if err != nil {
 		return err

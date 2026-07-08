@@ -83,7 +83,7 @@ func TestBackfillSeedsEligibleAndFencesNonPublic(t *testing.T) {
 	repo := newFakeRepo()
 	svc := New(repo, &fakeLookups{}, newBlobs(t), nil, backfillConfig(cat))
 
-	counts, err := svc.Backfill(context.Background())
+	counts, err := svc.Backfill(context.Background(), "")
 	if err != nil {
 		t.Fatalf("Backfill: %v", err)
 	}
@@ -149,14 +149,14 @@ func TestBackfillIdempotent(t *testing.T) {
 	repo := newFakeRepo()
 	svc := New(repo, &fakeLookups{}, newBlobs(t), nil, backfillConfig(cat))
 
-	first, err := svc.Backfill(context.Background())
+	first, err := svc.Backfill(context.Background(), "")
 	if err != nil {
 		t.Fatalf("first Backfill: %v", err)
 	}
 	if first.Total != 2 {
 		t.Fatalf("first Total = %d, want 2", first.Total)
 	}
-	second, err := svc.Backfill(context.Background())
+	second, err := svc.Backfill(context.Background(), "")
 	if err != nil {
 		t.Fatalf("second Backfill: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestBackfillSkipsExistingLedgerRow(t *testing.T) {
 	}}
 	svc := New(repo, &fakeLookups{}, newBlobs(t), nil, backfillConfig(cat))
 
-	counts, err := svc.Backfill(context.Background())
+	counts, err := svc.Backfill(context.Background(), "")
 	if err != nil {
 		t.Fatalf("Backfill: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestBackfillDisabled(t *testing.T) {
 	repo := newFakeRepo()
 	svc := New(repo, &fakeLookups{}, newBlobs(t), nil, cfg)
 
-	counts, err := svc.Backfill(context.Background())
+	counts, err := svc.Backfill(context.Background(), "")
 	if err != nil {
 		t.Fatalf("Backfill (disabled): %v", err)
 	}
@@ -221,7 +221,7 @@ func TestBackfillDisabled(t *testing.T) {
 // ErrCatalogNotConfigured rather than panicking.
 func TestBackfillNoCatalog(t *testing.T) {
 	svc := New(newFakeRepo(), &fakeLookups{}, newBlobs(t), nil, testConfig()) // no Catalog
-	if _, err := svc.Backfill(context.Background()); !errors.Is(err, ErrCatalogNotConfigured) {
+	if _, err := svc.Backfill(context.Background(), ""); !errors.Is(err, ErrCatalogNotConfigured) {
 		t.Errorf("err = %v, want ErrCatalogNotConfigured", err)
 	}
 }
@@ -231,7 +231,7 @@ func TestBackfillPropagatesCatalogError(t *testing.T) {
 	sentinel := errors.New("db down")
 	cat := &fakeCatalog{videosErr: sentinel}
 	svc := New(newFakeRepo(), &fakeLookups{}, newBlobs(t), nil, backfillConfig(cat))
-	if _, err := svc.Backfill(context.Background()); !errors.Is(err, sentinel) {
+	if _, err := svc.Backfill(context.Background(), ""); !errors.Is(err, sentinel) {
 		t.Errorf("err = %v, want sentinel", err)
 	}
 }

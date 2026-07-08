@@ -68,6 +68,47 @@ func (r *fakeRepo) UpsertIPFSPinIntent(ctx context.Context, arg sqlcgen.UpsertIP
 	return *row, nil
 }
 
+// RouteIPFSPinIntent mirrors the network-routed upsert (P19.P2): a same-network call
+// is an idempotent re-arm (terminal → pending, live pinned/pending left alone) that
+// also clears any transition target; a DIFFERENT-network call transitions the SAME
+// row across swarms — keep the current network + cid, set state='unpinning' and record
+// target_network — so the worker removes the current-node bytes first and
+// MarkIPFSPinUnpinned re-arms it on the target swarm.
+func (r *fakeRepo) RouteIPFSPinIntent(ctx context.Context, arg sqlcgen.RouteIPFSPinIntentParams) (sqlcgen.MediaIpfsPin, error) {
+	row, ok := r.rows[arg.ObjectKey]
+	if !ok {
+		row = &sqlcgen.MediaIpfsPin{ObjectKey: arg.ObjectKey, State: "pending", Network: arg.TargetNetwork, NextAttemptAt: time.Now().UTC()}
+		r.rows[arg.ObjectKey] = row
+		row.MediaClass = arg.MediaClass
+		row.VideoID = arg.VideoID
+		row.OwnerUserID = arg.OwnerUserID
+		return *row, nil
+	}
+	row.MediaClass = arg.MediaClass
+	row.VideoID = arg.VideoID
+	row.OwnerUserID = arg.OwnerUserID
+	if normalizeNetwork(row.Network) == arg.TargetNetwork {
+		// Same swarm: cancel any in-flight transition + idempotent re-arm.
+		row.TargetNetwork = nil
+		switch row.State {
+		case "failed", "unpinned", "unpinning":
+			row.State = "pending"
+			row.Attempts = 0
+			row.NextAttemptAt = time.Now().UTC()
+			row.LastError = ""
+		}
+		return *row, nil
+	}
+	// Cross-swarm transition: keep the current network + cid, remove first.
+	t := arg.TargetNetwork
+	row.TargetNetwork = &t
+	row.State = "unpinning"
+	row.Attempts = 0
+	row.NextAttemptAt = time.Now().UTC()
+	row.LastError = ""
+	return *row, nil
+}
+
 func (r *fakeRepo) BackfillIPFSPinIntent(ctx context.Context, arg sqlcgen.BackfillIPFSPinIntentParams) (int64, error) {
 	// ON CONFLICT DO NOTHING: insert only when the object has no row yet; return 1
 	// when a row was inserted, 0 when one already existed (any state) — the
@@ -81,7 +122,7 @@ func (r *fakeRepo) BackfillIPFSPinIntent(ctx context.Context, arg sqlcgen.Backfi
 		VideoID:       arg.VideoID,
 		OwnerUserID:   arg.OwnerUserID,
 		State:         "pending",
-		Network:       networkPublic,
+		Network:       normalizeNetwork(arg.Network),
 		NextAttemptAt: time.Now().UTC(),
 	}
 	return 1, nil
@@ -90,8 +131,18 @@ func (r *fakeRepo) BackfillIPFSPinIntent(ctx context.Context, arg sqlcgen.Backfi
 func (r *fakeRepo) RepinIPFSObject(ctx context.Context, arg sqlcgen.RepinIPFSObjectParams) error {
 	row, ok := r.rows[arg.ObjectKey]
 	if !ok {
-		row = &sqlcgen.MediaIpfsPin{ObjectKey: arg.ObjectKey, Network: networkPublic}
-		r.rows[arg.ObjectKey] = row
+		// Brand-new key: insert on the routed swarm, pending (P19.P2).
+		r.rows[arg.ObjectKey] = &sqlcgen.MediaIpfsPin{
+			ObjectKey: arg.ObjectKey, MediaClass: arg.MediaClass, VideoID: arg.VideoID,
+			Network: arg.TargetNetwork, State: "pending", NextAttemptAt: time.Now().UTC().Add(-time.Second),
+		}
+		return nil
+	}
+	// The real query's DO UPDATE fires ONLY when the existing row is already on the
+	// routed swarm (same-swarm wholesale-replace); a row mid-transition on the OTHER
+	// swarm is left to the transition + sweep (no-op here).
+	if normalizeNetwork(row.Network) != arg.TargetNetwork {
+		return nil
 	}
 	row.MediaClass = arg.MediaClass
 	row.VideoID = arg.VideoID
@@ -109,8 +160,11 @@ func (r *fakeRepo) EnqueueIPFSUnpin(ctx context.Context, objectKey string) error
 	if r.failUnpinKeys[objectKey] {
 		return errFakeUnpinEnqueue
 	}
-	if row, ok := r.rows[objectKey]; ok && (row.State == "pinned" || row.State == "pending") {
+	// True removal: also catches an in-flight transition ('unpinning' with a target)
+	// and CLEARS the target so a delete/removal wins over a not-yet-completed flip.
+	if row, ok := r.rows[objectKey]; ok && (row.State == "pinned" || row.State == "pending" || row.State == "unpinning") {
 		row.State = "unpinning"
+		row.TargetNetwork = nil
 		row.Attempts = 0
 		row.NextAttemptAt = time.Now().UTC()
 		row.LastError = ""
@@ -185,10 +239,26 @@ func (r *fakeRepo) MarkIPFSPinFailed(ctx context.Context, arg sqlcgen.MarkIPFSPi
 // the row is STILL 'unpinning' (a concurrent private→public re-arm to 'pending' is
 // preserved, not clobbered).
 func (r *fakeRepo) MarkIPFSPinUnpinned(ctx context.Context, objectKey string) error {
-	if row, ok := r.rows[objectKey]; ok && row.State == "unpinning" {
-		row.State = "unpinned"
-		row.LastError = ""
+	row, ok := r.rows[objectKey]
+	if !ok || row.State != "unpinning" {
+		return nil
 	}
+	if row.TargetNetwork != nil {
+		// Second phase of a cross-swarm transition: the current-node bytes are gone, so
+		// re-arm the SAME row on the target swarm (pending, cid/car_root cleared).
+		row.State = "pending"
+		row.Network = *row.TargetNetwork
+		row.TargetNetwork = nil
+		row.Cid = ""
+		row.CarRoot = ""
+		row.ByteSize = 0
+		row.Attempts = 0
+		row.NextAttemptAt = time.Now().UTC()
+		row.LastError = ""
+		return nil
+	}
+	row.State = "unpinned"
+	row.LastError = ""
 	return nil
 }
 
@@ -307,7 +377,10 @@ func (r *fakeRepo) CountIPFSPinsByNetworkStateClass(ctx context.Context) ([]sqlc
 func (r *fakeRepo) CountIPFSPinsSharingCID(ctx context.Context, arg sqlcgen.CountIPFSPinsSharingCIDParams) (int64, error) {
 	var n int64
 	for _, row := range r.rows {
+		// Reference check is per-swarm (P19.P2): a public-node pin and a private-node
+		// pin of identical bytes are distinct physical pins.
 		if row.Cid == arg.Cid && row.Cid != "" && row.ObjectKey != arg.ObjectKey &&
+			normalizeNetwork(row.Network) == arg.Network &&
 			(row.State == "pinned" || row.State == "pending") {
 			n++
 		}

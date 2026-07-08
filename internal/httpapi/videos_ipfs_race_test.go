@@ -66,6 +66,9 @@ func (r *stubLedgerRepo) ListPinnedVideoIDs(ctx context.Context, videoIds []uuid
 func (r *stubLedgerRepo) UpsertIPFSPinIntent(ctx context.Context, arg sqlcgen.UpsertIPFSPinIntentParams) (sqlcgen.MediaIpfsPin, error) {
 	return sqlcgen.MediaIpfsPin{}, nil
 }
+func (r *stubLedgerRepo) RouteIPFSPinIntent(ctx context.Context, arg sqlcgen.RouteIPFSPinIntentParams) (sqlcgen.MediaIpfsPin, error) {
+	return sqlcgen.MediaIpfsPin{}, nil
+}
 func (r *stubLedgerRepo) BackfillIPFSPinIntent(ctx context.Context, arg sqlcgen.BackfillIPFSPinIntentParams) (int64, error) {
 	return 0, nil
 }

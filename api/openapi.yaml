@@ -8928,6 +8928,18 @@ paths:
       tags: [admin]
       security:
         - bearerAuth: []
+      parameters:
+        - in: query
+          name: network
+          required: false
+          schema:
+            type: string
+            enum: [public, private]
+          description: >-
+            Optional swarm filter (fix_plan P19.P2): scope the backfill seeding to the
+            public or private mirror only. Omit to reconcile both. An object is seeded
+            on its own eligible swarm regardless; this only restricts which swarm's
+            objects are considered.
       responses:
         "202":
           description: The scan was accepted; counts of what was enqueued.
@@ -8935,6 +8947,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IPFSReconcileResult"
+        "400":
+          description: The network filter is neither 'public' nor 'private'.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing, invalid, or expired token.
           content:
@@ -12855,7 +12873,7 @@ components:
       description: >-
         Status of the hybrid IPFS media mirror (fix_plan P19). IPFS is a mirror
         sidecar; these fields are informational and never gate media serving.
-      required: [enabled, node_reachable, gateway_url, cluster_enabled, cluster_reachable, pins, by_class]
+      required: [enabled, node_reachable, gateway_url, cluster_enabled, cluster_reachable, pins, by_class, networks]
       properties:
         enabled:
           type: boolean
@@ -12879,6 +12897,47 @@ components:
         by_class:
           type: array
           description: Pin counts broken down per media class.
+          items:
+            $ref: "#/components/schemas/IPFSClassPinCounts"
+        networks:
+          allOf:
+            - $ref: "#/components/schemas/IPFSNetworks"
+          description: >-
+            Per-swarm split of the mirror status (fix_plan P19.P2): the public mirror
+            and the separate private replication swarm each with their own enabled
+            flag, node reachability, and pin counts. The top-level pins/by_class/
+            node_reachable fold across both for back-compat. Additive — private-tier
+            fields are inert (enabled=false, zero counts) unless IPFS_MIRROR_PRIVATE is
+            configured. Never carries a CID or gateway URL for the private swarm (it is
+            replication, not distribution).
+    IPFSNetworks:
+      type: object
+      description: The public + private swarm status blocks (fix_plan P19.P2).
+      required: [public, private]
+      properties:
+        public:
+          $ref: "#/components/schemas/IPFSNetworkStatus"
+        private:
+          $ref: "#/components/schemas/IPFSNetworkStatus"
+    IPFSNetworkStatus:
+      type: object
+      description: >-
+        One swarm's mirror status: whether that tier is enabled on this instance, its
+        node's reachability, and its pin counts overall and per media class. Carries no
+        gateway URL and no CIDs.
+      required: [enabled, node_reachable, pins, by_class]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether this swarm's tier is configured (public = IPFS_ENABLED, private = IPFS_MIRROR_PRIVATE).
+        node_reachable:
+          type: boolean
+          description: Whether this swarm's Kubo node answered its health probe.
+        pins:
+          $ref: "#/components/schemas/IPFSPinCounts"
+        by_class:
+          type: array
+          description: This swarm's pin counts broken down per media class.
           items:
             $ref: "#/components/schemas/IPFSClassPinCounts"
     IPFSPinCounts:

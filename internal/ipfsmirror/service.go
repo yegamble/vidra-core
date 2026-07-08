@@ -88,6 +88,11 @@ type netClient struct {
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
 	UpsertIPFSPinIntent(ctx context.Context, arg sqlcgen.UpsertIPFSPinIntentParams) (sqlcgen.MediaIpfsPin, error)
+	// RouteIPFSPinIntent enqueues/re-arms a pin intent ROUTED to a network (P19.P2):
+	// same-network is an idempotent upsert, a network flip transitions the same row
+	// across swarms (unpin current → re-arm target). Supersedes UpsertIPFSPinIntent on
+	// every eligibility-driven enqueue path.
+	RouteIPFSPinIntent(ctx context.Context, arg sqlcgen.RouteIPFSPinIntentParams) (sqlcgen.MediaIpfsPin, error)
 	BackfillIPFSPinIntent(ctx context.Context, arg sqlcgen.BackfillIPFSPinIntentParams) (int64, error)
 	RepinIPFSObject(ctx context.Context, arg sqlcgen.RepinIPFSObjectParams) error
 	EnqueueIPFSUnpin(ctx context.Context, objectKey string) error
@@ -211,6 +216,13 @@ type Service struct {
 	privateAddTimeout  time.Duration
 	privateConcurrency int
 
+	// publicEnabled is the PUBLIC tier switch (cfg.Enabled). Kept distinct from the
+	// aggregate `enabled` (public OR private) so the eligibility router (P19.P2) can
+	// tier-gate: public-routed media is not mirrored when the public tier is off (a
+	// private-only deployment), and — the default — private-routed media is not
+	// mirrored when the private tier is off (no behavior change vs. pre-P19.P).
+	publicEnabled bool
+
 	enabled        bool
 	gatewayURL     string
 	clusterEnabled bool
@@ -237,6 +249,7 @@ func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Cl
 		privateCluster:     cfg.PrivateCluster,
 		privateAddTimeout:  cfg.PrivateAddTimeout,
 		privateConcurrency: cfg.PrivateConcurrency,
+		publicEnabled:      cfg.Enabled,
 		// The worker runs whenever EITHER tier is active; the enqueue helpers stay
 		// no-ops only when both are off.
 		enabled:        cfg.Enabled || cfg.PrivateEnabled,
@@ -283,12 +296,54 @@ func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Cl
 // the background worker).
 func (s *Service) Enabled() bool { return s.enabled }
 
+// ---- eligibility routing (tier-gated) -------------------------------------
+
+// effectiveNetwork resolves the swarm a subject actually mirrors to on THIS
+// instance: Route decides the eligible swarm from visibility facts, then this drops
+// it to NetworkNone when that swarm's tier is not active. Two consequences:
+//   - DEFAULT (private tier off): private-routed media (private/unlisted videos,
+//     unlisted/deactivated owners' images, non-public covers) resolves to NONE — not
+//     mirrored — so behavior is identical to pre-P19.P.
+//   - private-only deployment (public tier off): public-routed media resolves to NONE.
+//
+// This is the ONE tier-gate; every enqueue path funnels through it, so a private row
+// is never created without the private tier on and vice versa.
+func (s *Service) effectiveNetwork(sub Subject) string {
+	switch Route(sub) {
+	case NetworkPublic:
+		if s.publicEnabled {
+			return NetworkPublic
+		}
+	case NetworkPrivate:
+		if s.privateEnabled {
+			return NetworkPrivate
+		}
+	}
+	return NetworkNone
+}
+
+// routePin enqueues/re-arms a pin intent for one object ROUTED to net (a two-phase
+// transition when the row currently lives on the other swarm). net must be a real
+// network (callers gate on effectiveNetwork != NetworkNone first).
+func (s *Service) routePin(ctx context.Context, objectKey string, class MediaClass, videoID, ownerUserID uuid.UUID, net string) error {
+	_, err := s.repo.RouteIPFSPinIntent(ctx, sqlcgen.RouteIPFSPinIntentParams{
+		ObjectKey:     objectKey,
+		MediaClass:    string(class),
+		VideoID:       pgUUID(videoID),
+		OwnerUserID:   pgUUID(ownerUserID),
+		TargetNetwork: net,
+	})
+	return err
+}
+
 // ---- enqueue helpers (authoritative-write hooks) --------------------------
 
-// EnqueueUserImage records a pin intent for a user's avatar/banner if the owner
-// is active and listed. No-op when disabled. Best-effort: an enqueue error is
-// returned for logging but must never fail the upload (graceful degradation — the
-// reconciliation scan is the backstop).
+// EnqueueUserImage routes a user's avatar/banner to its eligible swarm (public for
+// an active+listed owner, private for an unlisted/deactivated owner when the private
+// tier is on) — or removes any existing pin when the image is not mirrored on any
+// active tier. No-op when disabled. Best-effort: an enqueue error is returned for
+// logging but must never fail the upload (graceful degradation — the reconciliation
+// scan is the backstop).
 func (s *Service) EnqueueUserImage(ctx context.Context, userID uuid.UUID, class MediaClass, objectKey string) error {
 	if !s.enabled {
 		return nil
@@ -297,14 +352,18 @@ func (s *Service) EnqueueUserImage(ctx context.Context, userID uuid.UUID, class 
 	if err != nil || !ok {
 		return err
 	}
-	if !Eligible(Subject{Class: class, OwnerActive: active, OwnerUnlisted: unlisted}) {
-		return nil
+	net := s.effectiveNetwork(Subject{Class: class, OwnerActive: active, OwnerUnlisted: unlisted})
+	if net == NetworkNone {
+		// Not mirrored on any active tier: remove any existing pin (a fresh upload with
+		// no row is a harmless no-op; a re-upload that became ineligible is cleaned up).
+		return s.repo.EnqueueIPFSUnpin(ctx, objectKey)
 	}
-	return s.upsertPin(ctx, objectKey, class, uuid.Nil, userID)
+	return s.routePin(ctx, objectKey, class, uuid.Nil, userID, net)
 }
 
-// EnqueueChannelImage records a pin intent for a channel's avatar/banner if the
-// owning account is active and listed. No-op when disabled.
+// EnqueueChannelImage routes a channel's avatar/banner to its eligible swarm from the
+// owning account's flags, or removes it when not mirrored on any active tier. No-op
+// when disabled.
 func (s *Service) EnqueueChannelImage(ctx context.Context, channelID uuid.UUID, class MediaClass, objectKey string) error {
 	if !s.enabled {
 		return nil
@@ -317,10 +376,11 @@ func (s *Service) EnqueueChannelImage(ctx context.Context, channelID uuid.UUID, 
 	if err != nil || !ok {
 		return err
 	}
-	if !Eligible(Subject{Class: class, OwnerActive: active, OwnerUnlisted: unlisted}) {
-		return nil
+	net := s.effectiveNetwork(Subject{Class: class, OwnerActive: active, OwnerUnlisted: unlisted})
+	if net == NetworkNone {
+		return s.repo.EnqueueIPFSUnpin(ctx, objectKey)
 	}
-	return s.upsertPin(ctx, objectKey, class, uuid.Nil, owner)
+	return s.routePin(ctx, objectKey, class, uuid.Nil, owner, net)
 }
 
 // SyncVideo re-evaluates a video's ledger against its current privacy+state AND
@@ -351,17 +411,41 @@ func (s *Service) SyncVideo(ctx context.Context, videoID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	// A representative video-derived class decides the whole video (they share the
-	// public+published+owner-listed gate).
-	if !Eligible(Subject{Class: ClassVideoOriginal, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted}) {
+	// A representative video-derived class decides the WHOLE video's swarm (every
+	// derivative shares one routing gate). effectiveNetwork tier-gates the result, so
+	// with the private tier off a private/unlisted video routes to NONE (unpin all) —
+	// identical to pre-P19.P.
+	net := s.effectiveNetwork(Subject{Class: ClassVideoOriginal, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted})
+	if net == NetworkNone {
 		return s.unpinAllForVideo(ctx, videoID)
 	}
+	// Route every currently-stored single-file ref to net (RouteIPFSPinIntent
+	// transitions an existing row across swarms on a privacy flip).
 	refs, err := s.videoMirrorRefs(ctx, videoID)
 	if err != nil {
 		return err
 	}
+	seen := make(map[string]bool, len(refs))
 	for _, ref := range refs {
-		if perr := s.upsertPin(ctx, ref.ObjectKey, ref.Class, videoID, uuid.Nil); perr != nil {
+		seen[ref.ObjectKey] = true
+		if perr := s.routePin(ctx, ref.ObjectKey, ref.Class, videoID, uuid.Nil, net); perr != nil {
+			return perr
+		}
+	}
+	// Transition any EXISTING ledger row the single-file refs don't enumerate —
+	// notably the HLS tree (armed by OnTranscodeComplete) and any orphan — so a
+	// privacy flip moves the WHOLE video across swarms, not just its single files. A
+	// terminal 'unpinned' row is left alone (nothing to move; the transcode hook
+	// re-arms HLS on the new swarm when it next runs, matching the P19 HLS lifecycle).
+	rows, err := s.repo.ListIPFSPinsByVideo(ctx, pgUUID(videoID))
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if seen[r.ObjectKey] || r.State == "unpinned" {
+			continue
+		}
+		if perr := s.routePin(ctx, r.ObjectKey, MediaClass(r.MediaClass), videoID, uuid.Nil, net); perr != nil {
 			return perr
 		}
 	}
@@ -443,18 +527,21 @@ func (s *Service) OnTranscodeComplete(ctx context.Context, videoID uuid.UUID) er
 	if err != nil {
 		return err
 	}
-	// The whole video shares the public+published+owner-listed gate; ClassHLS is
-	// representative. A private/quarantined video — or one whose owner is unlisted —
-	// re-checked here is refused, so nothing non-public is ever armed at transcode
-	// completion (the privacy fence).
-	if !Eligible(Subject{Class: ClassHLS, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted}) {
+	// The whole video shares one routing gate; ClassHLS is representative.
+	// effectiveNetwork resolves the swarm (public for a public+published+listed video,
+	// private for a private/unlisted one when that tier is on) and tier-gates it — a
+	// quarantined video, or a private one with the private tier off, routes to NONE and
+	// arms nothing here (the privacy fence at transcode completion).
+	net := s.effectiveNetwork(Subject{Class: ClassHLS, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted})
+	if net == NetworkNone {
 		return nil
 	}
 	hlsKey := media.HLSKeyPrefix(videoID) + "/"
 	if err := s.repo.RepinIPFSObject(ctx, sqlcgen.RepinIPFSObjectParams{
-		ObjectKey:  hlsKey,
-		MediaClass: string(ClassHLS),
-		VideoID:    pgUUID(videoID),
+		ObjectKey:     hlsKey,
+		MediaClass:    string(ClassHLS),
+		VideoID:       pgUUID(videoID),
+		TargetNetwork: net,
 	}); err != nil {
 		return err
 	}
@@ -465,9 +552,10 @@ func (s *Service) OnTranscodeComplete(ctx context.Context, videoID uuid.UUID) er
 	for _, f := range files {
 		if f.Kind == "webm" {
 			if err := s.repo.RepinIPFSObject(ctx, sqlcgen.RepinIPFSObjectParams{
-				ObjectKey:  f.StorageKey,
-				MediaClass: string(ClassWebM),
-				VideoID:    pgUUID(videoID),
+				ObjectKey:     f.StorageKey,
+				MediaClass:    string(ClassWebM),
+				VideoID:       pgUUID(videoID),
+				TargetNetwork: net,
 			}); err != nil {
 				return err
 			}
@@ -522,8 +610,12 @@ func (s *Service) ReevaluateUser(ctx context.Context, userID uuid.UUID) error {
 		failures++
 	}
 	for _, ref := range refs {
-		if Eligible(Subject{Class: ref.Class, OwnerActive: active, OwnerUnlisted: unlisted}) {
-			if perr := s.upsertPin(ctx, ref.ObjectKey, ref.Class, uuid.Nil, userID); perr != nil {
+		net := s.effectiveNetwork(Subject{Class: ref.Class, OwnerActive: active, OwnerUnlisted: unlisted})
+		if net != NetworkNone {
+			// Route (or transition across swarms) the image to its now-eligible network:
+			// unlisting an owner moves their identity assets public→private, re-listing
+			// moves them back — both through the ledger transition, no cross-pin.
+			if perr := s.routePin(ctx, ref.ObjectKey, ref.Class, uuid.Nil, userID, net); perr != nil {
 				s.logger.Warn("ipfs_reeval_image_repin_failed", "object_key", ref.ObjectKey, "error", perr)
 				failures++
 			}
@@ -641,8 +733,9 @@ func (s *Service) EnqueuePlaylistCover(ctx context.Context, playlistID uuid.UUID
 	if err != nil || !has {
 		return err
 	}
-	if Eligible(Subject{Class: ClassPlaylistCover, PlaylistVisibility: vis}) {
-		return s.upsertPin(ctx, key, ClassPlaylistCover, uuid.Nil, uuid.Nil)
+	net := s.effectiveNetwork(Subject{Class: ClassPlaylistCover, PlaylistVisibility: vis})
+	if net != NetworkNone {
+		return s.routePin(ctx, key, ClassPlaylistCover, uuid.Nil, uuid.Nil, net)
 	}
 	return s.repo.EnqueueIPFSUnpin(ctx, key)
 }
@@ -683,17 +776,6 @@ func (s *Service) EnqueueUnpin(ctx context.Context, objectKey string) error {
 		return nil
 	}
 	return s.repo.EnqueueIPFSUnpin(ctx, objectKey)
-}
-
-// upsertPin writes a pending pin intent for one object key.
-func (s *Service) upsertPin(ctx context.Context, objectKey string, class MediaClass, videoID, ownerUserID uuid.UUID) error {
-	_, err := s.repo.UpsertIPFSPinIntent(ctx, sqlcgen.UpsertIPFSPinIntentParams{
-		ObjectKey:   objectKey,
-		MediaClass:  string(class),
-		VideoID:     pgUUID(videoID),
-		OwnerUserID: pgUUID(ownerUserID),
-	})
-	return err
 }
 
 // videoMirrorRefs is the video's currently-stored, mirror-eligible objects: the
@@ -1107,7 +1189,7 @@ func (s *Service) swapUnpin(ctx context.Context, nc netClient, oldCID, newCID, o
 		return
 	}
 	shared, err := s.repo.CountIPFSPinsSharingCID(ctx, sqlcgen.CountIPFSPinsSharingCIDParams{
-		Cid: oldCID, ObjectKey: objectKey,
+		Cid: oldCID, ObjectKey: objectKey, Network: nc.network,
 	})
 	if err != nil || shared > 0 {
 		return
@@ -1208,7 +1290,7 @@ func (s *Service) unpin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueI
 		return true
 	}
 	shared, err := s.repo.CountIPFSPinsSharingCID(ctx, sqlcgen.CountIPFSPinsSharingCIDParams{
-		Cid: row.Cid, ObjectKey: row.ObjectKey,
+		Cid: row.Cid, ObjectKey: row.ObjectKey, Network: nc.network,
 	})
 	if err != nil {
 		s.recordFailure(ctx, row, "reference check failed")
@@ -1305,7 +1387,21 @@ type ClassCounts struct {
 	PinCounts
 }
 
-// Status is the admin mirror status (backs GET /api/v1/ipfs/status).
+// NetworkStatus is one swarm's slice of the admin status (P19.P2): whether that tier
+// is enabled, its node's reachability, and its pin tally overall + per class. The
+// public block carries the pre-P19.P public-mirror counts; the private block is the
+// replication tier's health + pinset. NO gateway URL and NO CIDs appear here — the
+// private swarm is replication, not distribution (spec §5).
+type NetworkStatus struct {
+	Enabled       bool
+	NodeReachable bool
+	Pins          PinCounts
+	ByClass       []ClassCounts
+}
+
+// Status is the admin mirror status (backs GET /api/v1/ipfs/status). The top-level
+// Pins/ByClass/NodeReachable FOLD across swarms for back-compat; Networks splits them
+// per swarm (P19.P2) so the admin UI renders a public + private column.
 type Status struct {
 	Enabled          bool
 	NodeReachable    bool
@@ -1314,6 +1410,8 @@ type Status struct {
 	ClusterReachable bool
 	Pins             PinCounts
 	ByClass          []ClassCounts
+	// Networks is the additive per-swarm split, keyed NetworkPublic / NetworkPrivate.
+	Networks map[string]NetworkStatus
 }
 
 // Status aggregates ledger counts (overall + per class) and probes node health.
@@ -1336,17 +1434,30 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			s.logger.Debug("ipfs_cluster_unhealthy", "error", err)
 		}
 	}
-	// P19.P1: the ledger count is now per (network, state, class). The public admin
-	// status FOLDS across networks (addStateCount ignores the network dimension), so
-	// the response shape is unchanged until the P19.P2 networks split reads it
-	// directly. All rows are public until P19.P2 routes private media, so today the
-	// fold is a no-op on the totals.
+	// Per-swarm probe (P19.P2): the private tier has its OWN node whose reachability is
+	// independent of the public one. The top-level NodeReachable stays the PUBLIC
+	// node's (back-compat); the private node's health lives in Networks[private].
+	privateReachable := false
+	if s.privateEnabled && s.privateClient != nil {
+		if _, err := s.privateClient.Version(ctx); err == nil {
+			privateReachable = true
+		} else {
+			s.logger.Debug("ipfs_private_node_unhealthy", "error", err)
+		}
+	}
+
+	// Ledger counts are per (network, state, class). Fold across swarms for the
+	// top-level totals (back-compat) AND accumulate a per-swarm split for Networks.
 	rows, err := s.repo.CountIPFSPinsByNetworkStateClass(ctx)
 	if err != nil {
 		return st, err
 	}
 	byClass := map[string]*ClassCounts{}
+	// Per-network accumulators: pins tally + per-class map.
+	netPins := map[string]*PinCounts{}
+	netByClass := map[string]map[string]*ClassCounts{}
 	for _, r := range rows {
+		net := normalizeNetwork(r.Network)
 		addStateCount(&st.Pins, r.State, r.Count)
 		cc := byClass[r.MediaClass]
 		if cc == nil {
@@ -1354,16 +1465,60 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			byClass[r.MediaClass] = cc
 		}
 		addStateCount(&cc.PinCounts, r.State, r.Count)
+
+		if netPins[net] == nil {
+			netPins[net] = &PinCounts{}
+			netByClass[net] = map[string]*ClassCounts{}
+		}
+		addStateCount(netPins[net], r.State, r.Count)
+		ncc := netByClass[net][r.MediaClass]
+		if ncc == nil {
+			ncc = &ClassCounts{MediaClass: r.MediaClass}
+			netByClass[net][r.MediaClass] = ncc
+		}
+		addStateCount(&ncc.PinCounts, r.State, r.Count)
 	}
+	st.ByClass = sortClassCounts(byClass)
+
+	// Always publish both swarm blocks (stable two-key object for the admin UI), even
+	// when a tier has no rows. Enabled/NodeReachable come from config + the probes.
+	st.Networks = map[string]NetworkStatus{
+		NetworkPublic: {
+			Enabled:       s.publicEnabled,
+			NodeReachable: st.NodeReachable,
+			Pins:          derefPins(netPins[NetworkPublic]),
+			ByClass:       sortClassCounts(netByClass[NetworkPublic]),
+		},
+		NetworkPrivate: {
+			Enabled:       s.privateEnabled,
+			NodeReachable: privateReachable,
+			Pins:          derefPins(netPins[NetworkPrivate]),
+			ByClass:       sortClassCounts(netByClass[NetworkPrivate]),
+		},
+	}
+	return st, nil
+}
+
+// sortClassCounts flattens a media-class → counts map into a class-sorted slice.
+func sortClassCounts(byClass map[string]*ClassCounts) []ClassCounts {
 	names := make([]string, 0, len(byClass))
 	for name := range byClass {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	out := make([]ClassCounts, 0, len(names))
 	for _, name := range names {
-		st.ByClass = append(st.ByClass, *byClass[name])
+		out = append(out, *byClass[name])
 	}
-	return st, nil
+	return out
+}
+
+// derefPins returns the tally or a zero value when the swarm had no rows.
+func derefPins(p *PinCounts) PinCounts {
+	if p == nil {
+		return PinCounts{}
+	}
+	return *p
 }
 
 // addStateCount folds one (state,count) row into a PinCounts tally. 'unpinning'

@@ -288,6 +288,7 @@ type MediaIpfsPin struct {
 	CreatedAt     time.Time   `json:"created_at"`
 	UpdatedAt     time.Time   `json:"updated_at"`
 	Network       string      `json:"network"`
+	TargetNetwork *string     `json:"target_network"`
 }
 
 type MediaIpfsUserReeval struct {

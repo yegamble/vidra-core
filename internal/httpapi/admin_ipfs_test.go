@@ -39,10 +39,11 @@ type fakeIPFSMirror struct {
 	videoPins map[uuid.UUID]ipfsmirror.VideoIPFS
 	pinnedIDs map[uuid.UUID]bool
 	// reconcile/backfill test knobs + call counters.
-	rearmed       int64
-	backfill      ipfsmirror.BackfillCounts
-	reconcileHits int
-	backfillHits  int
+	rearmed         int64
+	backfill        ipfsmirror.BackfillCounts
+	reconcileHits   int
+	backfillHits    int
+	backfillNetwork string // the ?network= filter the handler passed to Backfill
 }
 
 func (f *fakeIPFSMirror) Status(ctx context.Context) (ipfsmirror.Status, error) {
@@ -56,8 +57,9 @@ func (f *fakeIPFSMirror) Reconcile(ctx context.Context) (int64, error) {
 	f.reconcileHits++
 	return f.rearmed, nil
 }
-func (f *fakeIPFSMirror) Backfill(ctx context.Context) (ipfsmirror.BackfillCounts, error) {
+func (f *fakeIPFSMirror) Backfill(ctx context.Context, networkFilter string) (ipfsmirror.BackfillCounts, error) {
 	f.backfillHits++
+	f.backfillNetwork = networkFilter
 	return f.backfill, nil
 }
 func (f *fakeIPFSMirror) VideoPins(ctx context.Context, videoID uuid.UUID) (ipfsmirror.VideoIPFS, bool, error) {
@@ -207,6 +209,45 @@ func TestIPFSReconcileEnabled(t *testing.T) {
 	}
 }
 
+// TestIPFSReconcileNetworkFilter: the optional ?network= filter (P19.P2) is validated
+// and threaded to Backfill; a bogus value is a 400 and never reaches the service.
+func TestIPFSReconcileNetworkFilter(t *testing.T) {
+	cfg := testConfig()
+	cfg.IPFSEnabled = true
+	cfg.IPFSAPIURL = "http://ipfs:5001"
+	cfg.IPFSGatewayURL = "https://gw.example.org"
+	mirror := &fakeIPFSMirror{}
+	srv := ipfsServer(t, cfg, WithIPFSMirrorService(mirror))
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	// A valid ?network=private is passed straight through to Backfill.
+	rec := postJSONWithAuth(srv, "/api/v1/admin/ipfs/reconcile?network=private", admin, `{}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("reconcile ?network=private = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if mirror.backfillNetwork != "private" {
+		t.Errorf("Backfill network filter = %q, want private", mirror.backfillNetwork)
+	}
+
+	// No filter ⇒ both swarms (empty string).
+	mirror.backfillNetwork = "sentinel"
+	if rec := postJSONWithAuth(srv, "/api/v1/admin/ipfs/reconcile", admin, `{}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("reconcile (no filter) = %d, want 202", rec.Code)
+	}
+	if mirror.backfillNetwork != "" {
+		t.Errorf("Backfill network filter = %q, want empty (both swarms)", mirror.backfillNetwork)
+	}
+
+	// A bogus filter is a 400 and never reaches the service (backfill not called again).
+	before := mirror.backfillHits
+	if rec := postJSONWithAuth(srv, "/api/v1/admin/ipfs/reconcile?network=bogus", admin, `{}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("reconcile ?network=bogus = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if mirror.backfillHits != before {
+		t.Errorf("Backfill was invoked on a bogus network filter, want short-circuited at validation")
+	}
+}
+
 // TestUpdateMeUnlistedEnqueuesReevalNotInline: toggling unlisted via PATCH /auth/me
 // enqueues a durable per-user mirror re-evaluation (a cheap off-request-path write)
 // exactly once; a non-unlisted profile edit does not; and a mirror enqueue error is
@@ -263,6 +304,21 @@ func TestIPFSStatusEnabled(t *testing.T) {
 			{MediaClass: "user_avatar", PinCounts: ipfsmirror.PinCounts{Pinned: 2}},
 			{MediaClass: "thumbnail", PinCounts: ipfsmirror.PinCounts{Pinned: 1, Pending: 1}},
 		},
+		// P19.P2 additive per-swarm split: a public block + a separate private block.
+		Networks: map[string]ipfsmirror.NetworkStatus{
+			ipfsmirror.NetworkPublic: {
+				Enabled: true, NodeReachable: true,
+				Pins: ipfsmirror.PinCounts{Pinned: 2, Unpinned: 2},
+				ByClass: []ipfsmirror.ClassCounts{
+					{MediaClass: "user_avatar", PinCounts: ipfsmirror.PinCounts{Pinned: 2}},
+				},
+			},
+			ipfsmirror.NetworkPrivate: {
+				Enabled: true, NodeReachable: false,
+				Pins:    ipfsmirror.PinCounts{Pinned: 1, Pending: 1},
+				ByClass: []ipfsmirror.ClassCounts{{MediaClass: "thumbnail", PinCounts: ipfsmirror.PinCounts{Pinned: 1, Pending: 1}}},
+			},
+		},
 	}}
 	srv := ipfsServer(t, cfg, WithIPFSMirrorService(mirror))
 	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
@@ -284,10 +340,41 @@ func TestIPFSStatusEnabled(t *testing.T) {
 	if len(got.ByClass) != 2 {
 		t.Fatalf("by_class len = %d, want 2", len(got.ByClass))
 	}
+	// The additive networks split renders both swarm columns (P19.P2). The private
+	// block carries its OWN reachability (independent node) and pin tally — and NEVER a
+	// gateway URL or CID (there is no gateway_url field on a network block at all).
+	if !got.Networks.Public.Enabled || !got.Networks.Public.NodeReachable {
+		t.Errorf("networks.public = %+v, want enabled+reachable", got.Networks.Public)
+	}
+	if got.Networks.Public.Pins.Pinned != 2 {
+		t.Errorf("networks.public.pins.pinned = %d, want 2", got.Networks.Public.Pins.Pinned)
+	}
+	if !got.Networks.Private.Enabled || got.Networks.Private.NodeReachable {
+		t.Errorf("networks.private = %+v, want enabled + node_reachable=false (down)", got.Networks.Private)
+	}
+	if got.Networks.Private.Pins.Pinned != 1 || got.Networks.Private.Pins.Pending != 1 {
+		t.Errorf("networks.private.pins = %+v, want pinned=1 pending=1", got.Networks.Private.Pins)
+	}
+	// The private swarm is replication, not distribution: the networks block carries no
+	// gateway URL and no CID for either swarm (structurally — there is no such field).
+	if networks := gjsonField(t, rec.Body.String(), "networks"); jsonHasKey(t, networks, "gateway_url") || jsonHasKey(t, networks, "cid") {
+		t.Errorf("networks block leaked a gateway_url/cid, want none: %s", networks)
+	}
 
 	// Still admin-gated.
 	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
 	if rec := getWithAuth(srv, "/api/v1/ipfs/status", bob); rec.Code != http.StatusForbidden {
 		t.Errorf("non-admin status = %d, want 403", rec.Code)
 	}
+}
+
+// gjsonField extracts a top-level JSON field's raw object as a string (small test
+// helper for the networks-block gateway/cid-leak assertion).
+func gjsonField(t *testing.T, body, field string) string {
+	t.Helper()
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	return string(m[field])
 }

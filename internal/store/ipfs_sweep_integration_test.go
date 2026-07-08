@@ -58,22 +58,23 @@ func TestSweepIneligibleIPFSPinsJoin(t *testing.T) {
 	imgKey := "avatars/users/" + owner.String() + ".png"
 	coverKey := "playlist-thumbnails/" + uuid.NewString() + ".jpg"
 
-	seedPin := func(key, class string, videoID, ownerID *uuid.UUID) {
+	privKey := "private-videos/" + vidID.String() + ".mp4" // same video, PRIVATE swarm
+	seedPin := func(key, class, network string, videoID, ownerID *uuid.UUID) {
 		if _, err := st.Pool.Exec(ctx,
-			`INSERT INTO media_ipfs_pins (object_key, media_class, cid, state, video_id, owner_user_id)
-			 VALUES ($1, $2, $3, 'pinned', $4, $5)`,
-			key, class, cid, videoID, ownerID,
+			`INSERT INTO media_ipfs_pins (object_key, media_class, cid, state, network, video_id, owner_user_id)
+			 VALUES ($1, $2, $3, 'pinned', $4, $5, $6)`,
+			key, class, cid, network, videoID, ownerID,
 		); err != nil {
 			t.Fatalf("seed pin %s: %v", key, err)
 		}
 	}
 	defer func() {
 		_, _ = st.Pool.Exec(context.Background(),
-			`DELETE FROM media_ipfs_pins WHERE object_key = ANY($1)`, []string{vidKey, imgKey, coverKey})
+			`DELETE FROM media_ipfs_pins WHERE object_key = ANY($1)`, []string{vidKey, imgKey, coverKey, privKey})
 	}()
-	seedPin(vidKey, "video_original", &vidID, nil) // video-derived
-	seedPin(imgKey, "user_avatar", nil, &owner)    // identity image
-	seedPin(coverKey, "playlist_cover", nil, nil)  // no provenance ⇒ out of sweep scope
+	seedPin(vidKey, "video_original", "public", &vidID, nil) // public-swarm video-derived
+	seedPin(imgKey, "user_avatar", "public", nil, &owner)    // public-swarm identity image
+	seedPin(coverKey, "playlist_cover", "public", nil, nil)  // no provenance ⇒ out of sweep scope
 
 	state := func(key string) string {
 		var s string
@@ -149,5 +150,29 @@ func TestSweepIneligibleIPFSPinsJoin(t *testing.T) {
 	// A second sweep with the states already 'unpinning' is a no-op (idempotent).
 	if n := sweep(); n != 0 {
 		t.Errorf("idempotent sweep re-armed %d rows, want 0 (already unpinning)", n)
+	}
+
+	// Case 4 (P19.P2 network-awareness): the video is now private+published, which is
+	// CORRECTLY replicated on the PRIVATE swarm. A private-swarm row for it must be LEFT
+	// ALONE by the sweep — the whole point of the private tier — even though its PUBLIC
+	// counterpart was (correctly) swept off the public swarm in case 3.
+	seedPin(privKey, "video_original", "private", &vidID, nil)
+	if n := sweep(); n != 0 {
+		t.Fatalf("case 4: sweep re-armed %d rows, want 0 (a correctly-private row must not be touched)", n)
+	}
+	if got := state(privKey); got != "pinned" {
+		t.Errorf("case 4: private-swarm row state = %q, want pinned (left alone)", got)
+	}
+
+	// Case 5: the video is QUARANTINED ⇒ eligible NOWHERE, so even the private-swarm row
+	// is re-armed toward removal (unvetted content stays out of EVERY mirror).
+	if _, err := st.Pool.Exec(ctx, `UPDATE videos SET state = 'quarantined' WHERE id = $1`, vidID); err != nil {
+		t.Fatalf("set quarantined: %v", err)
+	}
+	if n := sweep(); n != 1 {
+		t.Fatalf("case 5: quarantine sweep re-armed %d rows, want 1 (the private row)", n)
+	}
+	if got := state(privKey); got != "unpinning" {
+		t.Errorf("case 5: private-swarm row state = %q, want unpinning (quarantined ⇒ off every swarm)", got)
 	}
 }

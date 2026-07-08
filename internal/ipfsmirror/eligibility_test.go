@@ -2,110 +2,100 @@ package ipfsmirror
 
 import "testing"
 
-// TestEligibilityTable is THE privacy fence (spec §3, §11): every media class is
-// asserted across {public, private, unlisted, quarantined} — enqueue for the
-// public case, NOT enqueue for every non-public case — and every never-mirror
-// class (DM attachments, exports, upload chunks, live edge, remote thumbnails) is
-// asserted NEVER enqueued regardless of any facts. If a new media class or
-// visibility rule is added, extend this table; a public IPFS pin of non-public
-// bytes must be a failing test, never a silent regression.
-func TestEligibilityTable(t *testing.T) {
-	// The four canonical visibility columns applied to every video-derived class.
-	// "quarantined" is modeled as state='quarantined' with a public privacy value,
-	// proving the state half of the gate (not just privacy) blocks it.
+// TestRouteTable is THE privacy fence (spec §4, eligibility matrix v2): every media
+// class is asserted across visibility states AND the expected SWARM it routes to —
+// NetworkPublic, NetworkPrivate, or NetworkNone (not mirrored anywhere). This is the
+// class × privacy-state × network regression table the whole phase rests on: a public
+// pin of non-public bytes, a private pin of quarantined/DM bytes, or ANY mirror of a
+// never-mirror class must be a failing test, never a silent regression. Route decides
+// the ELIGIBLE swarm from visibility alone; the tier-gate (effectiveNetwork) that can
+// downgrade it to none when a tier is off is exercised in the service tests.
+func TestRouteTable(t *testing.T) {
 	videoClasses := []MediaClass{
 		ClassVideoOriginal, ClassHLS, ClassWebM, ClassThumbnail,
 		ClassStoryboard, ClassStoryboardVTT, ClassCaption,
 	}
+	// Video-derived routing: only a PUBLISHED video is mirrored at all. Published
+	// public+listed → public; published private/unlisted, OR public+owner-unlisted →
+	// private; every non-published state (quarantined/draft/processing/scheduled/
+	// failed) → none regardless of privacy.
 	videoCols := []struct {
-		name           string
-		privacy, state string
-		want           bool
+		name          string
+		privacy       string
+		state         string
+		ownerUnlisted bool
+		want          string
 	}{
-		{"public", "public", "published", true},
-		{"private", "private", "published", false},
-		{"unlisted", "unlisted", "published", false},
-		{"quarantined", "public", "quarantined", false},
-		// Extra non-public states that must also be refused even when privacy=public.
-		{"draft", "public", "draft", false},
-		{"processing", "public", "processing", false},
-		{"scheduled", "public", "scheduled", false},
-		{"failed", "public", "failed", false},
+		{"public+published+listed", "public", "published", false, NetworkPublic},
+		{"public+published+unlisted-owner", "public", "published", true, NetworkPrivate},
+		{"private+published", "private", "published", false, NetworkPrivate},
+		{"private+published+unlisted-owner", "private", "published", true, NetworkPrivate},
+		{"unlisted+published", "unlisted", "published", false, NetworkPrivate},
+		{"unlisted+published+unlisted-owner", "unlisted", "published", true, NetworkPrivate},
+		// quarantined → nowhere (unvetted content stays out of EVERY mirror).
+		{"quarantined", "public", "quarantined", false, NetworkNone},
+		{"private+quarantined", "private", "quarantined", false, NetworkNone},
+		// Non-live/incomplete states → nowhere (picked up on the publish transition).
+		{"draft", "public", "draft", false, NetworkNone},
+		{"private+draft", "private", "draft", false, NetworkNone},
+		{"processing", "public", "processing", false, NetworkNone},
+		{"scheduled", "public", "scheduled", false, NetworkNone},
+		{"failed", "public", "failed", false, NetworkNone},
 	}
 	for _, cls := range videoClasses {
 		for _, col := range videoCols {
-			got := Eligible(Subject{Class: cls, VideoPrivacy: col.privacy, VideoState: col.state})
+			got := Route(Subject{Class: cls, VideoPrivacy: col.privacy, VideoState: col.state, OwnerUnlisted: col.ownerUnlisted})
 			if got != col.want {
-				t.Errorf("video class %q [%s privacy=%s state=%s]: Eligible=%v, want %v",
-					cls, col.name, col.privacy, col.state, got, col.want)
+				t.Errorf("video class %q [%s]: Route=%q, want %q", cls, col.name, got, col.want)
 			}
 		}
 	}
 
-	// Owner-unlisted dimension for video-derived classes (spec §3/§7): unlisted is
-	// treated as PRIVATE for mirroring, so an unlisted owner's video is refused even
-	// when the video itself is public+published. The full matrix is video-visibility
-	// × owner{listed,unlisted}: only public+published AND owner-listed may mirror.
-	for _, cls := range videoClasses {
-		for _, col := range videoCols {
-			for _, ownerUnlisted := range []bool{false, true} {
-				// Eligible only when the video passes AND the owner is listed.
-				want := col.want && !ownerUnlisted
-				got := Eligible(Subject{Class: cls, VideoPrivacy: col.privacy, VideoState: col.state, OwnerUnlisted: ownerUnlisted})
-				if got != want {
-					t.Errorf("video class %q [%s privacy=%s state=%s owner_unlisted=%v]: Eligible=%v, want %v",
-						cls, col.name, col.privacy, col.state, ownerUnlisted, got, want)
-				}
-			}
-		}
-	}
-
-	// Identity images: gated by the owning account's active+unlisted flags. "public"
-	// = active & listed → mirror; "unlisted" and a deactivated account → refuse.
+	// Identity images: active+listed → public; unlisted OR deactivated → private.
 	identityClasses := []MediaClass{
 		ClassUserAvatar, ClassUserBanner, ClassChannelAvatar, ClassChannelBanner,
 	}
 	identityCols := []struct {
 		name             string
 		active, unlisted bool
-		want             bool
+		want             string
 	}{
-		{"public", true, false, true},
-		{"unlisted", true, true, false},
-		{"deactivated", false, false, false},
-		{"deactivated+unlisted", false, true, false},
+		{"active+listed", true, false, NetworkPublic},
+		{"active+unlisted", true, true, NetworkPrivate},
+		{"deactivated+listed", false, false, NetworkPrivate},
+		{"deactivated+unlisted", false, true, NetworkPrivate},
 	}
 	for _, cls := range identityClasses {
 		for _, col := range identityCols {
-			got := Eligible(Subject{Class: cls, OwnerActive: col.active, OwnerUnlisted: col.unlisted})
+			got := Route(Subject{Class: cls, OwnerActive: col.active, OwnerUnlisted: col.unlisted})
 			if got != col.want {
-				t.Errorf("identity class %q [%s active=%v unlisted=%v]: Eligible=%v, want %v",
-					cls, col.name, col.active, col.unlisted, got, col.want)
+				t.Errorf("identity class %q [%s]: Route=%q, want %q", cls, col.name, got, col.want)
 			}
 		}
 	}
 
-	// Playlist cover: gated by playlist visibility only.
+	// Playlist cover: public playlist → public; any non-public visibility → private.
 	playlistCols := []struct {
 		visibility string
-		want       bool
+		want       string
 	}{
-		{"public", true},
-		{"unlisted", false},
-		{"private", false},
-		{"", false},
+		{"public", NetworkPublic},
+		{"unlisted", NetworkPrivate},
+		{"private", NetworkPrivate},
+		{"", NetworkPrivate}, // unknown visibility defaults to the SAFER swarm, never public
 	}
 	for _, col := range playlistCols {
-		got := Eligible(Subject{Class: ClassPlaylistCover, PlaylistVisibility: col.visibility})
+		got := Route(Subject{Class: ClassPlaylistCover, PlaylistVisibility: col.visibility})
 		if got != col.want {
-			t.Errorf("playlist_cover [visibility=%s]: Eligible=%v, want %v", col.visibility, got, col.want)
+			t.Errorf("playlist_cover [visibility=%q]: Route=%q, want %q", col.visibility, got, col.want)
 		}
 	}
 
-	// NEVER-MIRROR classes: refused for every combination of facts. We throw the
-	// most-permissive-looking facts at them (public video, active listed owner,
-	// public playlist) to prove the class itself — not just missing facts — is what
-	// bars them.
+	// NEVER-MIRROR classes: NetworkNone on EITHER swarm, for every combination of
+	// facts. DM attachments (plaintext today, and the future e2ee-blobs — a class that
+	// does not exist yet) are asserted NEVER mirrored on either network per Messaging
+	// v2 D7. We throw the most-permissive-looking facts at each to prove the class
+	// itself — not just missing facts — bars them.
 	neverClasses := []MediaClass{
 		ClassDMAttachment, ClassAccountExport, ClassUploadChunk, ClassLiveEdge, ClassRemoteThumbnail,
 		MediaClass("some_unknown_future_class"), // default-deny catch-all
@@ -118,8 +108,9 @@ func TestEligibilityTable(t *testing.T) {
 	for _, cls := range neverClasses {
 		s := permissive
 		s.Class = cls
-		if Eligible(s) {
-			t.Errorf("never-mirror class %q: Eligible=true even with permissive facts, want false (privacy fence breach)", cls)
+		if got := Route(s); got != NetworkNone {
+			t.Errorf("never-mirror class %q: Route=%q even with permissive facts, want %q (privacy fence breach)",
+				cls, got, NetworkNone)
 		}
 	}
 }

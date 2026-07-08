@@ -422,7 +422,7 @@ func run() error {
 	// eligible (public+published) videos only; re-checked in the hook. Best-effort;
 	// registered only when IPFS_ENABLED to avoid a no-op hook.
 	var tcopts []transcode.Option
-	if cfg.IPFSEnabled {
+	if cfg.IPFSEnabled || privateEnabled {
 		tcopts = append(tcopts, transcode.WithCompletionHook(func(ctx context.Context, videoID uuid.UUID) {
 			if err := ipfsMirror.OnTranscodeComplete(ctx, videoID); err != nil {
 				logger.Warn("ipfs mirror transcode-complete sync failed", "video_id", videoID, "error", err)
@@ -488,8 +488,10 @@ func run() error {
 	// current privacy+state (public+published pins, anything else unpins); on delete,
 	// unpin all of the video's ledger rows (reference-checked in the worker). Video
 	// originals + VP9 (P19.3) and the HLS tree (P19.4) extend these same transitions.
-	// Guarded by IPFS_ENABLED to avoid registering no-op hooks.
-	if cfg.IPFSEnabled {
+	// Under P19.P2 a privacy flip TRANSITIONS the video's rows across swarms, so these
+	// hooks run whenever EITHER tier is on (a private-only deployment mirrors non-public
+	// media through the same SyncVideo path).
+	if cfg.IPFSEnabled || privateEnabled {
 		vopts = append(vopts,
 			video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
 				if err := ipfsMirror.SyncVideo(ctx, videoID); err != nil {

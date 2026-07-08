@@ -39,9 +39,11 @@ type ipfsMirrorProvider interface {
 	// admin reconcile.
 	Reconcile(ctx context.Context) (int64, error)
 	// Backfill seeds pin intents for every eligible pre-existing object missing a
-	// ledger row (all classes), returning the per-class counts of what was newly
-	// enqueued. Idempotent — a second run enqueues zero.
-	Backfill(ctx context.Context) (ipfsmirror.BackfillCounts, error)
+	// ledger row (all classes), routed to each object's eligible swarm, returning the
+	// per-class counts of what was newly enqueued. Idempotent — a second run enqueues
+	// zero. networkFilter ("" = all) scopes the seeding to one swarm (the ?network=
+	// admin filter, P19.P2).
+	Backfill(ctx context.Context, networkFilter string) (ipfsmirror.BackfillCounts, error)
 	// VideoPins backs the detail `ipfs` object: the pinned original/HLS CIDs +
 	// gateway base for one video (ok=false when nothing is pinned).
 	VideoPins(ctx context.Context, videoID uuid.UUID) (ipfsmirror.VideoIPFS, bool, error)
@@ -65,7 +67,24 @@ type ipfsClassPinCountsView struct {
 	ipfsPinCountsView
 }
 
-// ipfsStatusView is the GET /ipfs/status body (schema IPFSStatus).
+// ipfsNetworkStatusView is one swarm's slice of the status (schema IPFSNetworkStatus,
+// P19.P2): enabled + node reachability + this swarm's pin counts. NO gateway URL and
+// NO CIDs — the private swarm is replication, not distribution (spec §5).
+type ipfsNetworkStatusView struct {
+	Enabled       bool                     `json:"enabled"`
+	NodeReachable bool                     `json:"node_reachable"`
+	Pins          ipfsPinCountsView        `json:"pins"`
+	ByClass       []ipfsClassPinCountsView `json:"by_class"`
+}
+
+// ipfsNetworksView is the additive public/private split (schema IPFSNetworks).
+type ipfsNetworksView struct {
+	Public  ipfsNetworkStatusView `json:"public"`
+	Private ipfsNetworkStatusView `json:"private"`
+}
+
+// ipfsStatusView is the GET /ipfs/status body (schema IPFSStatus). The top-level
+// pins/by_class/node_reachable FOLD across swarms (back-compat); networks splits them.
 type ipfsStatusView struct {
 	Enabled          bool                     `json:"enabled"`
 	NodeReachable    bool                     `json:"node_reachable"`
@@ -74,25 +93,43 @@ type ipfsStatusView struct {
 	ClusterReachable bool                     `json:"cluster_reachable"`
 	Pins             ipfsPinCountsView        `json:"pins"`
 	ByClass          []ipfsClassPinCountsView `json:"by_class"`
+	Networks         ipfsNetworksView         `json:"networks"`
+}
+
+func toClassPinCountsView(ccs []ipfsmirror.ClassCounts) []ipfsClassPinCountsView {
+	out := make([]ipfsClassPinCountsView, 0, len(ccs))
+	for _, cc := range ccs {
+		out = append(out, ipfsClassPinCountsView{
+			MediaClass:        cc.MediaClass,
+			ipfsPinCountsView: ipfsPinCountsView(cc.PinCounts),
+		})
+	}
+	return out
+}
+
+func toNetworkStatusView(ns ipfsmirror.NetworkStatus) ipfsNetworkStatusView {
+	return ipfsNetworkStatusView{
+		Enabled:       ns.Enabled,
+		NodeReachable: ns.NodeReachable,
+		Pins:          ipfsPinCountsView(ns.Pins),
+		ByClass:       toClassPinCountsView(ns.ByClass),
+	}
 }
 
 func toIPFSStatusView(st ipfsmirror.Status) ipfsStatusView {
-	v := ipfsStatusView{
+	return ipfsStatusView{
 		Enabled:          st.Enabled,
 		NodeReachable:    st.NodeReachable,
 		GatewayURL:       st.GatewayURL,
 		ClusterEnabled:   st.ClusterEnabled,
 		ClusterReachable: st.ClusterReachable,
 		Pins:             ipfsPinCountsView(st.Pins),
-		ByClass:          make([]ipfsClassPinCountsView, 0, len(st.ByClass)),
+		ByClass:          toClassPinCountsView(st.ByClass),
+		Networks: ipfsNetworksView{
+			Public:  toNetworkStatusView(st.Networks[ipfsmirror.NetworkPublic]),
+			Private: toNetworkStatusView(st.Networks[ipfsmirror.NetworkPrivate]),
+		},
 	}
-	for _, cc := range st.ByClass {
-		v.ByClass = append(v.ByClass, ipfsClassPinCountsView{
-			MediaClass:        cc.MediaClass,
-			ipfsPinCountsView: ipfsPinCountsView(cc.PinCounts),
-		})
-	}
-	return v
 }
 
 // handleIPFSStatus reports the mirror's status to an admin (P19.2): enabled, node
@@ -140,14 +177,25 @@ func (s *Server) handleIPFSReconcile(c echo.Context) error {
 	}
 	ctx := c.Request().Context()
 
+	// Optional ?network= filter (P19.P2): scope the backfill seeding to one swarm.
+	// Empty = both. Anything else is a 400 (never silently ignored).
+	networkFilter := c.QueryParam("network")
+	switch networkFilter {
+	case "", ipfsmirror.NetworkPublic, ipfsmirror.NetworkPrivate:
+	default:
+		return echo.NewHTTPError(http.StatusBadRequest, "network must be 'public' or 'private'")
+	}
+
 	// Re-arm dead-letters first (best-effort — a failure here must not abort the
-	// backfill, which is the primary work of this endpoint).
+	// backfill, which is the primary work of this endpoint). The re-arm re-derives each
+	// failed row's direction in place, preserving its swarm, so it is network-safe
+	// without a filter.
 	rearmed, err := s.ipfsmirrorsvc.Reconcile(ctx)
 	if err != nil {
 		s.logger.WarnContext(ctx, "ipfs reconcile re-arm failed", "error", err)
 	}
 
-	counts, err := s.ipfsmirrorsvc.Backfill(ctx)
+	counts, err := s.ipfsmirrorsvc.Backfill(ctx, networkFilter)
 	if err != nil {
 		s.audit(c, observability.ActionIPFSReconcile, observability.ResultFailure, userID.String(), "backfill_failed")
 		return err
