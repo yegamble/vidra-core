@@ -154,7 +154,7 @@ func TestImportJobQueuePersists(t *testing.T) {
 	videoID, cleanup := seedVideoRow(t, st)
 	defer cleanup()
 
-	job, err := q.EnqueueImportJob(ctx, sqlcgen.EnqueueImportJobParams{VideoID: videoID, Url: "https://example.com/a.mp4"})
+	job, err := q.EnqueueImportJob(ctx, sqlcgen.EnqueueImportJobParams{VideoID: videoID, Url: "https://example.com/a.mp4", Resolver: "direct"})
 	if err != nil {
 		t.Fatalf("EnqueueImportJob: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestImportJobQueuePersists(t *testing.T) {
 	}
 
 	// Single active per video: a second enqueue while pending is a no-op (no row).
-	if _, err := q.EnqueueImportJob(ctx, sqlcgen.EnqueueImportJobParams{VideoID: videoID, Url: "https://example.com/b.mp4"}); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.EnqueueImportJob(ctx, sqlcgen.EnqueueImportJobParams{VideoID: videoID, Url: "https://example.com/b.mp4", Resolver: "direct"}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("second enqueue err = %v, want pgx.ErrNoRows (single active)", err)
 	}
 
@@ -185,7 +185,7 @@ func TestImportJobQueuePersists(t *testing.T) {
 
 	// A finished job no longer blocks a re-import (single-active only covers
 	// pending/running) → a fresh enqueue succeeds.
-	reimport, err := q.EnqueueImportJob(ctx, sqlcgen.EnqueueImportJobParams{VideoID: videoID, Url: "https://example.com/c.mp4"})
+	reimport, err := q.EnqueueImportJob(ctx, sqlcgen.EnqueueImportJobParams{VideoID: videoID, Url: "https://example.com/c.mp4", Resolver: "direct"})
 	if err != nil {
 		t.Fatalf("re-enqueue after done: %v", err)
 	}
