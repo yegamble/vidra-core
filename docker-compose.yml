@@ -111,6 +111,25 @@ services:
       retries: 20
       start_period: 120s
 
+  # yt-dlp egress proxy (OPTIONAL, production hardening for W2.C1 platform import).
+  # yt-dlp performs its own outbound fetches that the api's dial-time SSRF guard
+  # cannot pin (spec §5 residual risk). In production, route the extractor through
+  # a forward proxy that DENIES internal ranges and point the api at it:
+  #   YTDLP_IMPORT_ENABLED=true YTDLP_PROXY=http://ytdlp-egress:3128
+  # A minimal Squid ACL sketch (uncomment + supply squid.conf denying
+  # to_localnet / RFC1918 / loopback / link-local, allowing only public egress):
+  #
+  #   ytdlp-egress:
+  #     image: ubuntu/squid:latest
+  #     profiles: ["ytdlp"]
+  #     volumes:
+  #       - ./deploy/ytdlp-egress/squid.conf:/etc/squid/squid.conf:ro
+  #     # No published ports: reachable only on the internal compose network by the
+  #     # api/worker, so the proxy itself is not a new external surface.
+  #
+  # This pairing is DOCUMENTED and RECOMMENDED, not enforced (self-hosting the
+  # proxy has an operational cost); the honest residual-risk statement stands.
+
   # Whisper transcription server (captions profile). When enabled, run with the
   # "captions" profile and point the api at it:
   #   WHISPER_ENABLED=true WHISPER_ENDPOINT=http://whisper:8080 \
@@ -264,6 +283,29 @@ services:
       WHISPER_ENDPOINT: ${WHISPER_ENDPOINT:-}
       # Caption language used when a request omits one (also the transcription hint).
       WHISPER_DEFAULT_LANGUAGE: ${WHISPER_DEFAULT_LANGUAGE:-en}
+      # yt-dlp platform-URL import (W2.C1, UPLOAD-09). OFF by default — admin/config
+      # opt-in. When YTDLP_IMPORT_ENABLED=true, a URL import may resolve through the
+      # HARD-SANDBOXED yt-dlp extractor (fixed argv, --ignore-config, no shell, no
+      # --exec, no runtime self-update, private tmp workdir, hard timeout,
+      # --max-filesize). Bytes still land ONLY via AttachOriginal → Process, so the
+      # ClamAV scan hook fires before anything is servable.
+      #
+      # SECURITY — RESIDUAL RISK + EGRESS PROXY (spec §5): yt-dlp makes its OWN
+      # outbound HTTP fetches, which the dial-time SSRF guard cannot pin, so a
+      # hostile page could try to redirect it to internal addresses. Mitigations, in
+      # order: (1) it is OFF by default; (2) set YTDLP_PROXY to a forward proxy that
+      # DENIES RFC1918/loopback/link-local (see the commented `ytdlp-egress` sketch
+      # below); (3) run the api/worker on a network with no route to internal
+      # services. The yt-dlp binary must be PINNED in the image — never self-updated
+      # at runtime.
+      YTDLP_IMPORT_ENABLED: ${YTDLP_IMPORT_ENABLED:-false}
+      YTDLP_PATH: ${YTDLP_PATH:-yt-dlp}
+      YTDLP_TIMEOUT: ${YTDLP_TIMEOUT:-15m}
+      YTDLP_MAX_HEIGHT: ${YTDLP_MAX_HEIGHT:-1080}
+      # Recommended in production: route the extractor through an egress proxy that
+      # blocks internal ranges (e.g. YTDLP_PROXY=http://ytdlp-egress:3128). Empty by
+      # default (documented, not enforced — self-hosting the proxy has a cost).
+      YTDLP_PROXY: ${YTDLP_PROXY:-}
       # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
       # freshly minted stream key (informational; empty by default).
       LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}

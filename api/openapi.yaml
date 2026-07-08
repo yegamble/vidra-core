@@ -3885,8 +3885,14 @@ paths:
         caller's storage quota, and runs the bytes through the same
         AttachOriginal → Process pipeline as a direct upload
         (probe/scan/quarantine/transcode). Poll GET /api/v1/videos/{id}/import
-        for progress. A single import runs per video at a time: while one is in
-        flight, re-posting returns the same job.
+        for progress (resolver + stage). A single import runs per video at a
+        time: while one is in flight, re-posting returns the same job.
+
+
+        The optional `resolver` selects the fetch mechanism (auto|direct|ytdlp).
+        The yt-dlp platform extractor is sandboxed and OFF by default
+        (YTDLP_IMPORT_ENABLED): an explicit resolver=ytdlp is refused with 503
+        when it is disabled; auto simply never falls back to it.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -3923,7 +3929,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: The URL is missing, malformed, or not a public http(s) URL.
+          description: >-
+            The URL is missing, malformed, not a public http(s) URL, or the
+            resolver is not one of auto|direct|ytdlp.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            The requested resolver is disabled on this instance (e.g.
+            resolver=ytdlp while YTDLP_IMPORT_ENABLED is off). Stable code
+            service_unavailable.
           content:
             application/json:
               schema:
@@ -13162,13 +13179,24 @@ components:
           type: string
           format: uri
           description: >-
-            Public http/https URL of the media file to import. The server refuses
-            non-http schemes and non-public addresses (SSRF-guarded).
+            Public http/https URL of the media file (direct) or platform watch
+            page (ytdlp) to import. The server refuses non-http schemes and
+            non-public addresses (SSRF-guarded) before any fetch.
           example: https://example.com/clip.mp4
+        resolver:
+          type: string
+          enum: [auto, direct, ytdlp]
+          default: auto
+          description: >-
+            How to fetch the source. `auto` (default) tries a direct media fetch
+            (by extension/Content-Type) and falls back to the sandboxed yt-dlp
+            platform extractor when it is enabled. `direct` forces a plain
+            HTTP(S) media fetch. `ytdlp` forces the platform extractor and is
+            refused with 503 when YTDLP_IMPORT_ENABLED is off on this instance.
     ImportJob:
       type: object
       description: An asynchronous URL-import job for a video's original file.
-      required: [id, video_id, state, attempts, created_at, updated_at]
+      required: [id, video_id, state, resolver, attempts, created_at, updated_at]
       properties:
         id:
           type: string
@@ -13179,6 +13207,21 @@ components:
         state:
           type: string
           enum: [pending, running, done, failed]
+        resolver:
+          type: string
+          enum: [auto, direct, ytdlp]
+          description: >-
+            The mechanism the worker used. `auto` is the transient requested
+            value until the worker resolves it, then it is rewritten to the
+            concrete `direct` or `ytdlp` that actually ran.
+        stage:
+          type: string
+          enum: [resolving, downloading, processing]
+          description: >-
+            Coarse progress while state is running (omitted otherwise): resolving
+            (picking the concrete resolver for an auto request), downloading
+            (fetching the bytes), processing (scan/probe/transcode). Never
+            carries a secret.
         error:
           type: string
           description: >-

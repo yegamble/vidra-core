@@ -238,6 +238,8 @@ type ImportJob struct {
 	NextAttemptAt time.Time `json:"next_attempt_at"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	Resolver      string    `json:"resolver"`
+	Stage         string    `json:"stage"`
 }
 
 type InstanceSetting struct {

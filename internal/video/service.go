@@ -1038,6 +1038,15 @@ var videoContentTypeExts = map[string]string{
 	"video/3gpp":       ".3gp",
 }
 
+// AcceptedVideoContentType reports the canonical extension for a video-container
+// media type (exact media type, no parameters), and false otherwise. It lets
+// other packages (e.g. the import auto-resolver) reuse the SAME container
+// allow-list the upload gate applies, without duplicating the map.
+func AcceptedVideoContentType(mediaType string) (string, bool) {
+	ext, ok := videoContentTypeExts[strings.ToLower(strings.TrimSpace(mediaType))]
+	return ext, ok
+}
+
 // extForContentType returns a canonical extension for a video-container content
 // type (media type only; any ";charset=…" parameters and case are ignored), and
 // false when the type is not a recognised video container.
@@ -1155,6 +1164,39 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 		hook(ctx, id)
 	}
 	return updated, nil
+}
+
+// PrefillMetadata fills a video's title/description from an importer's metadata
+// probe (e.g. yt-dlp), but ONLY where the current value is empty — it never
+// overwrites text the creator already entered. Blank inputs are ignored. Unknown
+// id → ErrNotFound. It does NOT re-check ownership: the caller (the URL-import
+// worker) has already authorised the video via AttachOriginal, and this only
+// touches the same draft's own metadata.
+func (s *Service) PrefillMetadata(ctx context.Context, videoID uuid.UUID, title, description string) error {
+	v, err := s.GetByID(ctx, videoID)
+	if err != nil {
+		return err
+	}
+	var titlePtr, descPtr *string
+	if strings.TrimSpace(v.Title) == "" {
+		if t := strings.TrimSpace(title); t != "" {
+			titlePtr = &t
+		}
+	}
+	if strings.TrimSpace(v.Description) == "" {
+		if d := strings.TrimSpace(description); d != "" {
+			descPtr = &d
+		}
+	}
+	if titlePtr == nil && descPtr == nil {
+		return nil // nothing to fill — the creator already set both
+	}
+	_, err = s.repo.UpdateVideo(ctx, sqlcgen.UpdateVideoParams{
+		ID:          videoID,
+		Title:       titlePtr,
+		Description: descPtr,
+	})
+	return err
 }
 
 // Delete removes a video. Only the owner may delete; non-owner → ErrForbidden,

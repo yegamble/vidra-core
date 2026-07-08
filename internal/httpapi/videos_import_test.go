@@ -5,9 +5,84 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/video"
+	"github.com/vidra/vidra-core/internal/videoimport"
+	"github.com/vidra/vidra-core/internal/ytdlp"
 )
+
+// stubExtractor is a fake yt-dlp seam for the HTTP-level import tests: it writes
+// fixed bytes into the caller's private workdir (no real binary, no network), so
+// the ytdlp import path can be driven end to end through AttachOriginal → Process
+// (the ClamAV scan hook). It satisfies videoimport.Extractor.
+type stubExtractor struct {
+	body []byte
+	meta ytdlp.Meta
+}
+
+func (s stubExtractor) Metadata(context.Context, string) (ytdlp.Meta, error) { return s.meta, nil }
+func (s stubExtractor) Download(_ context.Context, _, workdir string) (string, error) {
+	p := filepath.Join(workdir, "media.mp4")
+	if err := os.WriteFile(p, s.body, 0o600); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// importServiceWithYtdlp builds a videoimport.Service over the given (real,
+// scanner-wired) video service, driven by the stub extractor — the seam that
+// lets a ytdlp import be exercised without the yt-dlp binary while still landing
+// bytes through the real AttachOriginal → Process scan hook.
+func importServiceWithYtdlp(t *testing.T, videosvc *video.Service, body []byte) *videoimport.Service {
+	t.Helper()
+	return videoimport.NewService(newImportFakeRepo(), videosvc, 1<<20,
+		videoimport.WithYtdlp(stubExtractor{body: body, meta: ytdlp.Meta{Title: "From platform"}}, t.TempDir()),
+	)
+}
+
+// TestImportViaYtdlpInfectedNeverPublishes proves the W2.C1 invariant at the
+// import boundary: bytes fetched by the yt-dlp resolver land EXCLUSIVELY through
+// AttachOriginal → Process, so the malware scan hook fires. With the scanner
+// reporting the imported body infected (fail-closed), the video finishes in
+// 'failed' and is never published/servable — the same guarantee the direct
+// upload path has. (The real-clamd EICAR-bytes variant is the integration test.)
+func TestImportViaYtdlpInfectedNeverPublishes(t *testing.T) {
+	cfg := testConfig()
+	cfg.MalwareScanEnabled = true
+	cfg.MalwareScanMode = "fail-closed"
+	srv := videoServerCfg(t, cfg,
+		video.WithScanner(scanFake{clean: false}), // stands in for an EICAR verdict
+		video.WithScanMode("fail-closed"),
+	)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Imported","privacy":"public"}`)
+
+	imp := importServiceWithYtdlp(t, srv.videosvc, []byte("pretend-platform-mp4"))
+	vid := uuid.MustParse(id)
+	if _, err := imp.Enqueue(context.Background(), vid, "https://platform.example/watch?v=abc", videoimport.ResolverYtdlp); err != nil {
+		t.Fatalf("enqueue ytdlp import: %v", err)
+	}
+	if _, err := imp.DrainJobs(context.Background(), 5); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	got, err := srv.videosvc.GetByID(context.Background(), vid)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	// The scan verdict lives on the VIDEO state (the import job may report done —
+	// it successfully ran the pipeline; the scanner is what rejected the bytes).
+	// The invariant: an infected import is never published/servable.
+	if got.State != "failed" {
+		t.Fatalf("imported infected video state = %q, want failed (never published)", got.State)
+	}
+}
 
 // loopbackAsLocalhost rewrites an httptest server's 127.0.0.1 URL to use the
 // "localhost" hostname. urlsafety.ValidateURL rejects a literal loopback IP up
@@ -196,5 +271,70 @@ func TestImportVideoStatusBeforeAnyImport(t *testing.T) {
 	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
 	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+id+"/import", "", tok); rec.Code != http.StatusNotFound {
 		t.Errorf("status before import = %d, want 404", rec.Code)
+	}
+}
+
+// TestImportResolverRequestValidation: the resolver field is validated up front
+// (unknown → 422) and an explicit resolver=ytdlp is refused with 503 while the
+// yt-dlp platform importer is disabled (the default in the test harness).
+func TestImportResolverRequestValidation(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	// Unknown resolver → 422.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
+		`{"url":"https://example.com/clip.mp4","resolver":"magnet"}`, tok); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("bogus resolver = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	// resolver=ytdlp while disabled → 503 with the stable service_unavailable code.
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
+		`{"url":"https://platform.example/watch?v=abc","resolver":"ytdlp"}`, tok)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("ytdlp-while-disabled = %d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Error.Code != "service_unavailable" {
+		t.Errorf("503 code = %q, want service_unavailable", body.Error.Code)
+	}
+}
+
+// TestImportResolverEchoedInView: an explicit resolver=direct import is accepted
+// and the enqueued + drained job echoes resolver=direct and (after completion) a
+// cleared stage, so the UI can render honest progress.
+func TestImportResolverEchoedInView(t *testing.T) {
+	srv := videoServer(t)
+	media := importMediaServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Imported","privacy":"public"}`)
+
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
+		`{"url":"`+loopbackAsLocalhost(media.URL)+`/clip.mp4","resolver":"direct"}`, tok)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("direct import = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp importJobResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.ImportJob.Resolver != "direct" {
+		t.Errorf("enqueued resolver = %q, want direct", resp.ImportJob.Resolver)
+	}
+
+	if _, err := srv.importsvc.DrainJobs(context.Background(), 5); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	job := getImportStatus(t, srv, id, tok)
+	if job.State != "done" {
+		t.Fatalf("state = %q (err=%q), want done", job.State, job.Error)
+	}
+	if job.Resolver != "direct" {
+		t.Errorf("resolver after drain = %q, want direct", job.Resolver)
+	}
+	if job.Stage != "" {
+		t.Errorf("stage after done = %q, want cleared", job.Stage)
 	}
 }

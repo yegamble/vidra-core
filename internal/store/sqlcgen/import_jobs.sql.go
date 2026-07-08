@@ -21,7 +21,7 @@ WHERE id IN (
     ORDER BY next_attempt_at
     LIMIT $1
 )
-RETURNING id, video_id, url, attempts
+RETURNING id, video_id, url, attempts, resolver, stage
 `
 
 type ClaimDueImportJobsRow struct {
@@ -29,10 +29,13 @@ type ClaimDueImportJobsRow struct {
 	VideoID  uuid.UUID `json:"video_id"`
 	Url      string    `json:"url"`
 	Attempts int32     `json:"attempts"`
+	Resolver string    `json:"resolver"`
+	Stage    string    `json:"stage"`
 }
 
 // Atomically claims due pending jobs (oldest first) by flipping them to
-// 'running', exactly like ClaimDueTranscodeJobs.
+// 'running', exactly like ClaimDueTranscodeJobs. resolver/stage travel with the
+// claim so the worker picks the fetch path and can report honest progress.
 func (q *Queries) ClaimDueImportJobs(ctx context.Context, limit int32) ([]ClaimDueImportJobsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueImportJobs, limit)
 	if err != nil {
@@ -47,6 +50,8 @@ func (q *Queries) ClaimDueImportJobs(ctx context.Context, limit int32) ([]ClaimD
 			&i.VideoID,
 			&i.Url,
 			&i.Attempts,
+			&i.Resolver,
+			&i.Stage,
 		); err != nil {
 			return nil, err
 		}
@@ -60,7 +65,7 @@ func (q *Queries) ClaimDueImportJobs(ctx context.Context, limit int32) ([]ClaimD
 
 const completeImportJob = `-- name: CompleteImportJob :exec
 UPDATE import_jobs
-SET state = 'done', error = '', updated_at = now()
+SET state = 'done', error = '', stage = '', updated_at = now()
 WHERE id = $1
 `
 
@@ -71,15 +76,16 @@ func (q *Queries) CompleteImportJob(ctx context.Context, id uuid.UUID) error {
 
 const enqueueImportJob = `-- name: EnqueueImportJob :one
 
-INSERT INTO import_jobs (video_id, url)
-VALUES ($1, $2)
+INSERT INTO import_jobs (video_id, url, resolver)
+VALUES ($1, $2, $3)
 ON CONFLICT (video_id) WHERE state IN ('pending', 'running') DO NOTHING
-RETURNING id, video_id, url, state, error, attempts, next_attempt_at, created_at, updated_at
+RETURNING id, video_id, url, state, error, attempts, next_attempt_at, created_at, updated_at, resolver, stage
 `
 
 type EnqueueImportJobParams struct {
-	VideoID uuid.UUID `json:"video_id"`
-	Url     string    `json:"url"`
+	VideoID  uuid.UUID `json:"video_id"`
+	Url      string    `json:"url"`
+	Resolver string    `json:"resolver"`
 }
 
 // Asynchronous URL-import job queue (migration 0059, fix_plan P2.2). Mirrors
@@ -87,9 +93,10 @@ type EnqueueImportJobParams struct {
 // exponential backoff on retry, dead-letter after max attempts.
 // Single active import per video: while a pending/running row exists the insert
 // is a no-op (partial unique index) and pgx reports no row — the handler then
-// returns the in-flight job.
+// returns the in-flight job. resolver is 'direct'|'ytdlp' (concrete) or 'auto'
+// (the worker resolves it during the 'resolving' stage).
 func (q *Queries) EnqueueImportJob(ctx context.Context, arg EnqueueImportJobParams) (ImportJob, error) {
-	row := q.db.QueryRow(ctx, enqueueImportJob, arg.VideoID, arg.Url)
+	row := q.db.QueryRow(ctx, enqueueImportJob, arg.VideoID, arg.Url, arg.Resolver)
 	var i ImportJob
 	err := row.Scan(
 		&i.ID,
@@ -101,13 +108,15 @@ func (q *Queries) EnqueueImportJob(ctx context.Context, arg EnqueueImportJobPara
 		&i.NextAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Resolver,
+		&i.Stage,
 	)
 	return i, err
 }
 
 const failImportJob = `-- name: FailImportJob :exec
 UPDATE import_jobs
-SET state = 'failed', attempts = attempts + 1, error = $2, updated_at = now()
+SET state = 'failed', attempts = attempts + 1, error = $2, stage = '', updated_at = now()
 WHERE id = $1
 `
 
@@ -116,14 +125,14 @@ type FailImportJobParams struct {
 	Error string    `json:"error"`
 }
 
-// Dead-letter: no further retries.
+// Dead-letter: no further retries (stage cleared).
 func (q *Queries) FailImportJob(ctx context.Context, arg FailImportJobParams) error {
 	_, err := q.db.Exec(ctx, failImportJob, arg.ID, arg.Error)
 	return err
 }
 
 const getLatestImportJobByVideo = `-- name: GetLatestImportJobByVideo :one
-SELECT id, video_id, url, state, error, attempts, next_attempt_at, created_at, updated_at FROM import_jobs
+SELECT id, video_id, url, state, error, attempts, next_attempt_at, created_at, updated_at, resolver, stage FROM import_jobs
 WHERE video_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT 1
@@ -142,13 +151,15 @@ func (q *Queries) GetLatestImportJobByVideo(ctx context.Context, videoID uuid.UU
 		&i.NextAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Resolver,
+		&i.Stage,
 	)
 	return i, err
 }
 
 const rescheduleImportJob = `-- name: RescheduleImportJob :exec
 UPDATE import_jobs
-SET state = 'pending', attempts = attempts + 1, next_attempt_at = $2, error = $3, updated_at = now()
+SET state = 'pending', attempts = attempts + 1, next_attempt_at = $2, error = $3, stage = '', updated_at = now()
 WHERE id = $1
 `
 
@@ -158,8 +169,47 @@ type RescheduleImportJobParams struct {
 	Error         string    `json:"error"`
 }
 
-// Back to pending with backoff so a later drain retries it.
+// Back to pending with backoff so a later drain retries it (stage resets to
+// queued).
 func (q *Queries) RescheduleImportJob(ctx context.Context, arg RescheduleImportJobParams) error {
 	_, err := q.db.Exec(ctx, rescheduleImportJob, arg.ID, arg.NextAttemptAt, arg.Error)
+	return err
+}
+
+const setImportJobResolver = `-- name: SetImportJobResolver :exec
+UPDATE import_jobs
+SET resolver = $2, stage = $3, updated_at = now()
+WHERE id = $1
+`
+
+type SetImportJobResolverParams struct {
+	ID       uuid.UUID `json:"id"`
+	Resolver string    `json:"resolver"`
+	Stage    string    `json:"stage"`
+}
+
+// Rewrites a job's resolver to the concrete choice once an 'auto' request has
+// been resolved (so the stored/echoed value is always what actually ran), and
+// moves the stage forward in the same write.
+func (q *Queries) SetImportJobResolver(ctx context.Context, arg SetImportJobResolverParams) error {
+	_, err := q.db.Exec(ctx, setImportJobResolver, arg.ID, arg.Resolver, arg.Stage)
+	return err
+}
+
+const setImportJobStage = `-- name: SetImportJobStage :exec
+UPDATE import_jobs
+SET stage = $2, updated_at = now()
+WHERE id = $1
+`
+
+type SetImportJobStageParams struct {
+	ID    uuid.UUID `json:"id"`
+	Stage string    `json:"stage"`
+}
+
+// Records coarse progress for the UI while a job runs (queued → resolving →
+// downloading → processing). Never carries a secret.
+func (q *Queries) SetImportJobStage(ctx context.Context, arg SetImportJobStageParams) error {
+	_, err := q.db.Exec(ctx, setImportJobStage, arg.ID, arg.Stage)
 	return err
 }

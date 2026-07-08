@@ -119,11 +119,16 @@ func (r *importFakeRepo) EnqueueImportJob(_ context.Context, arg sqlcgen.Enqueue
 			return sqlcgen.ImportJob{}, pgx.ErrNoRows // single active per video
 		}
 	}
+	resolver := arg.Resolver
+	if resolver == "" {
+		resolver = "direct"
+	}
 	j := sqlcgen.ImportJob{
 		ID:            uuid.New(),
 		VideoID:       arg.VideoID,
 		Url:           arg.Url,
 		State:         "pending",
+		Resolver:      resolver,
 		NextAttemptAt: time.Now(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
@@ -131,6 +136,25 @@ func (r *importFakeRepo) EnqueueImportJob(_ context.Context, arg sqlcgen.Enqueue
 	r.jobs[j.ID] = j
 	r.order = append(r.order, j.ID)
 	return j, nil
+}
+
+func (r *importFakeRepo) SetImportJobStage(_ context.Context, arg sqlcgen.SetImportJobStageParams) error {
+	if j, ok := r.jobs[arg.ID]; ok {
+		j.Stage = arg.Stage
+		j.UpdatedAt = time.Now()
+		r.jobs[arg.ID] = j
+	}
+	return nil
+}
+
+func (r *importFakeRepo) SetImportJobResolver(_ context.Context, arg sqlcgen.SetImportJobResolverParams) error {
+	if j, ok := r.jobs[arg.ID]; ok {
+		j.Resolver = arg.Resolver
+		j.Stage = arg.Stage
+		j.UpdatedAt = time.Now()
+		r.jobs[arg.ID] = j
+	}
+	return nil
 }
 
 func (r *importFakeRepo) GetLatestImportJobByVideo(_ context.Context, videoID uuid.UUID) (sqlcgen.ImportJob, error) {
@@ -149,7 +173,7 @@ func (r *importFakeRepo) ClaimDueImportJobs(_ context.Context, limit int32) ([]s
 		if j.State == "pending" && !j.NextAttemptAt.After(time.Now()) {
 			j.State = "running"
 			r.jobs[id] = j
-			rows = append(rows, sqlcgen.ClaimDueImportJobsRow{ID: j.ID, VideoID: j.VideoID, Url: j.Url, Attempts: j.Attempts})
+			rows = append(rows, sqlcgen.ClaimDueImportJobsRow{ID: j.ID, VideoID: j.VideoID, Url: j.Url, Attempts: j.Attempts, Resolver: j.Resolver, Stage: j.Stage})
 			if int32(len(rows)) >= limit {
 				break
 			}
@@ -162,6 +186,7 @@ func (r *importFakeRepo) CompleteImportJob(_ context.Context, id uuid.UUID) erro
 	if j, ok := r.jobs[id]; ok {
 		j.State = "done"
 		j.Error = ""
+		j.Stage = ""
 		j.UpdatedAt = time.Now()
 		r.jobs[id] = j
 	}
@@ -174,6 +199,7 @@ func (r *importFakeRepo) RescheduleImportJob(_ context.Context, arg sqlcgen.Resc
 		j.Attempts++
 		j.NextAttemptAt = arg.NextAttemptAt
 		j.Error = arg.Error
+		j.Stage = ""
 		j.UpdatedAt = time.Now()
 		r.jobs[arg.ID] = j
 	}
@@ -185,6 +211,7 @@ func (r *importFakeRepo) FailImportJob(_ context.Context, arg sqlcgen.FailImport
 		j.State = "failed"
 		j.Attempts++
 		j.Error = arg.Error
+		j.Stage = ""
 		j.UpdatedAt = time.Now()
 		r.jobs[arg.ID] = j
 	}

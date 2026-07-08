@@ -377,6 +377,30 @@ type Config struct {
 	// uploads are rejected with 413.
 	UploadMaxSize string
 
+	// yt-dlp platform-URL import (backport W2.C1, UPLOAD-09). OFF BY DEFAULT —
+	// admin/config opt-in only. When on, a URL import may resolve through the
+	// hard-sandboxed yt-dlp extractor (internal/ytdlp) instead of a plain media
+	// fetch. See .ralph/specs/backport-w2-upload-import.md §5 for the sandboxing
+	// and the honest residual-risk stance (yt-dlp's own fetches cannot be
+	// dial-pinned, so production SHOULD pair it with YtdlpProxy / a no-egress
+	// network). None of these are secrets.
+
+	// YtdlpImportEnabled turns on the ytdlp resolver. When false (default) an
+	// explicit resolver=ytdlp import is refused with 503, and resolver=auto never
+	// falls back to yt-dlp.
+	YtdlpImportEnabled bool
+	// YtdlpPath is the yt-dlp executable (PATH lookup name or absolute path).
+	YtdlpPath string
+	// YtdlpTimeout is the hard wall-clock bound on a single yt-dlp invocation
+	// (metadata probe or download); on expiry the child is killed.
+	YtdlpTimeout time.Duration
+	// YtdlpProxy, when set, is passed to yt-dlp as --proxy: the recommended
+	// production egress proxy that denies RFC1918/loopback/link-local so the
+	// extractor's own outbound fetches cannot reach internal addresses.
+	YtdlpProxy string
+	// YtdlpMaxHeight caps the selected video resolution (yt-dlp -f height<=N).
+	YtdlpMaxHeight int
+
 	// PeerTube import / migration (fix_plan P18, .ralph/specs/peertube-import.md).
 	// A one-way tool that reads an existing PeerTube instance's PostgreSQL DB +
 	// media storage and maps it into Vidra. Everything here is OFF BY DEFAULT and
@@ -549,6 +573,10 @@ func Load() (*Config, error) {
 		IPFSPrivateClusterAPIURL:       strings.TrimRight(getEnv("IPFS_PRIVATE_CLUSTER_API_URL", ""), "/"),
 		IPFSPrivateClusterToken:        getEnv("IPFS_PRIVATE_CLUSTER_TOKEN", ""),
 		UploadMaxSize:                  getEnv("UPLOAD_MAX_SIZE", "2G"),
+		YtdlpImportEnabled:             getEnvBool("YTDLP_IMPORT_ENABLED", false),
+		YtdlpPath:                      getEnv("YTDLP_PATH", "yt-dlp"),
+		YtdlpTimeout:                   getEnvDuration("YTDLP_TIMEOUT", 15*time.Minute),
+		YtdlpProxy:                     strings.TrimSpace(getEnv("YTDLP_PROXY", "")),
 		PeerTubeImportEnabled:          getEnvBool("PEERTUBE_IMPORT_ENABLED", false),
 		PeerTubeSourceDatabaseURL:      getEnv("PEERTUBE_SOURCE_DATABASE_URL", ""),
 		PeerTubeSourceStorageBackend:   getEnv("PEERTUBE_SOURCE_STORAGE_BACKEND", "local"),
@@ -593,6 +621,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.SMTPPort = smtpPort
+
+	ytdlpHeight, err := getEnvInt("YTDLP_MAX_HEIGHT", 1080)
+	if err != nil {
+		return nil, err
+	}
+	cfg.YtdlpMaxHeight = ytdlpHeight
 
 	quotaBytes, err := getEnvInt64("INSTANCE_DEFAULT_QUOTA_BYTES", 0)
 	if err != nil {
@@ -783,6 +817,26 @@ func (c *Config) validate() error {
 	}
 	if c.WhisperDefaultLanguage != "" && !languageTag.MatchString(c.WhisperDefaultLanguage) {
 		return fmt.Errorf("config: WHISPER_DEFAULT_LANGUAGE %q must be a BCP-47-ish language tag (e.g. en, pt-BR)", c.WhisperDefaultLanguage)
+	}
+	// yt-dlp platform-URL import: validate the combination only when enabled so a
+	// default (disabled) deployment never trips these. YTDLP_MAX_HEIGHT is bounded
+	// even when disabled (a nonsensical value is always a config error).
+	if c.YtdlpMaxHeight < 0 || c.YtdlpMaxHeight > 4320 {
+		return fmt.Errorf("config: YTDLP_MAX_HEIGHT %d out of range (0 = no cap, else 144..4320)", c.YtdlpMaxHeight)
+	}
+	if c.YtdlpImportEnabled {
+		if strings.TrimSpace(c.YtdlpPath) == "" {
+			return fmt.Errorf("config: YTDLP_PATH is required when YTDLP_IMPORT_ENABLED=true")
+		}
+		if c.YtdlpTimeout <= 0 {
+			return fmt.Errorf("config: YTDLP_TIMEOUT must be a positive duration when YTDLP_IMPORT_ENABLED=true")
+		}
+		if c.YtdlpProxy != "" {
+			u, perr := url.Parse(c.YtdlpProxy)
+			if perr != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5" && u.Scheme != "socks5h") {
+				return fmt.Errorf("config: YTDLP_PROXY must be an http(s) or socks5 URL when set")
+			}
+		}
 	}
 	if c.MFAKeyKEK != "" {
 		if k, err := base64.StdEncoding.DecodeString(c.MFAKeyKEK); err != nil || len(k) != 32 {

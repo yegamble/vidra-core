@@ -1201,3 +1201,87 @@ func TestPeerTubeImportConfig(t *testing.T) {
 		}
 	})
 }
+
+func TestYtdlpImportConfig(t *testing.T) {
+	clean := func(t *testing.T) {
+		for _, k := range []string{
+			"VIDRA_ENV", "DATABASE_URL", "REDIS_URL", "CORS_ALLOWED_ORIGINS",
+			"YTDLP_IMPORT_ENABLED", "YTDLP_PATH", "YTDLP_TIMEOUT", "YTDLP_PROXY",
+			"YTDLP_MAX_HEIGHT",
+		} {
+			t.Setenv(k, "")
+		}
+	}
+
+	t.Run("off by default with sane defaults", func(t *testing.T) {
+		clean(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() = %v", err)
+		}
+		if cfg.YtdlpImportEnabled {
+			t.Error("yt-dlp import must be OFF by default")
+		}
+		if cfg.YtdlpPath != "yt-dlp" {
+			t.Errorf("default YtdlpPath = %q, want yt-dlp", cfg.YtdlpPath)
+		}
+		if cfg.YtdlpTimeout != 15*time.Minute {
+			t.Errorf("default YtdlpTimeout = %v, want 15m", cfg.YtdlpTimeout)
+		}
+		if cfg.YtdlpMaxHeight != 1080 {
+			t.Errorf("default YtdlpMaxHeight = %d, want 1080", cfg.YtdlpMaxHeight)
+		}
+	})
+
+	t.Run("enabled with defaults validates", func(t *testing.T) {
+		clean(t)
+		t.Setenv("YTDLP_IMPORT_ENABLED", "true")
+		if _, err := Load(); err != nil {
+			t.Fatalf("enabled with defaults should validate: %v", err)
+		}
+	})
+
+	t.Run("enabled with empty path is rejected", func(t *testing.T) {
+		clean(t)
+		t.Setenv("YTDLP_IMPORT_ENABLED", "true")
+		t.Setenv("YTDLP_PATH", " ")
+		if _, err := Load(); err == nil {
+			t.Error("enabled with a blank YTDLP_PATH must error")
+		}
+	})
+
+	t.Run("enabled with non-positive timeout is rejected", func(t *testing.T) {
+		clean(t)
+		t.Setenv("YTDLP_IMPORT_ENABLED", "true")
+		t.Setenv("YTDLP_TIMEOUT", "0s")
+		if _, err := Load(); err == nil {
+			t.Error("enabled with a zero YTDLP_TIMEOUT must error")
+		}
+	})
+
+	t.Run("enabled with a bogus proxy scheme is rejected", func(t *testing.T) {
+		clean(t)
+		t.Setenv("YTDLP_IMPORT_ENABLED", "true")
+		t.Setenv("YTDLP_PROXY", "ftp://nope")
+		if _, err := Load(); err == nil {
+			t.Error("a non-http(s)/socks proxy must error")
+		}
+	})
+
+	t.Run("enabled with an http proxy validates", func(t *testing.T) {
+		clean(t)
+		t.Setenv("YTDLP_IMPORT_ENABLED", "true")
+		t.Setenv("YTDLP_PROXY", "http://egress.internal:3128")
+		if _, err := Load(); err != nil {
+			t.Fatalf("http proxy should validate: %v", err)
+		}
+	})
+
+	t.Run("out-of-range max height is rejected even when disabled", func(t *testing.T) {
+		clean(t)
+		t.Setenv("YTDLP_MAX_HEIGHT", "10000")
+		if _, err := Load(); err == nil {
+			t.Error("an absurd YTDLP_MAX_HEIGHT must error")
+		}
+	})
+}

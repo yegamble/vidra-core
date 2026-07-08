@@ -1279,7 +1279,7 @@ re-ported.
       EICAR-through-*import* proof (new yt-dlp path) is a W2.C1 deliverable, not C0.
       No product code in this slice (only `.ralph/` docs); `make ci` green — no
       Go/openapi/sqlc surface touched.)
-- [ ] W2.C1 [UPLOAD-09 · marquee] yt-dlp platform-URL import: `resolver`
+- [x] W2.C1 [UPLOAD-09 · marquee] yt-dlp platform-URL import: `resolver`
       (`auto|direct|ytdlp`) + `stage` on `POST/GET /api/v1/videos/{id}/import`;
       migration `0079_import_jobs_resolver` (next free number at execution time);
       `internal/ytdlp` sandboxed runner (fixed argv, `--ignore-config`,
@@ -1290,6 +1290,65 @@ re-ported.
       `YTDLP_PROXY`, `YTDLP_MAX_HEIGHT`; urlsafety pre-validation before the
       subprocess; EICAR-through-import integration proof (never `published`);
       compose comment documenting the egress-proxy pairing.
+      (2026-07-08, core-store/config/video/videoimport/ytdlp/httpapi/cmd + openapi
+      + compose + Dockerfile + README. **Contract:** `POST /videos/{id}/import`
+      body gains optional `resolver` (`auto|direct|ytdlp`, default `auto`);
+      `ImportJob` view gains `resolver` + `stage`
+      (`resolving|downloading|processing`, omitted when empty); new `503`
+      (`service_unavailable`) when an explicit `resolver=ytdlp` is requested while
+      disabled; `422` extended to a bad resolver. `TestOpenAPIContract` +
+      `make openapi-verify` green; Redocly lint valid (12 pre-existing warnings,
+      none new). **Migration** `0079_import_jobs_resolver.{up,down}.sql` (next free
+      number re-verified on disk): `import_jobs` gains `resolver TEXT NOT NULL
+      DEFAULT 'direct' CHECK (resolver IN ('auto','direct','ytdlp'))` +
+      `stage TEXT NOT NULL DEFAULT ''`. The CHECK is **widened to include `auto`**
+      vs the spec sketch's `('direct','ytdlp')` so the worker owns resolution
+      during the `resolving` stage (recorded in spec §8); default `'direct'` keeps
+      pre-existing rows correct. sqlc: `EnqueueImportJob` takes `resolver`;
+      `ClaimDueImportJobs` returns `resolver`+`stage`; new `SetImportJobStage` +
+      `SetImportJobResolver`; `Complete`/`Reschedule`/`Fail` clear `stage`;
+      `make sqlc` regenerated + `sqlc-verify` green. **Sandboxed runner**
+      `internal/ytdlp` (only shell-out site): pure `metadataArgs`/`downloadArgs`
+      builders unit-tested for the fixed allowlist (`--ignore-config`,
+      `--no-playlist`, `--restrict-filenames`, `--max-filesize`, `--`
+      option-terminator with the URL as the SOLE final positional; ASSERTS the
+      absence of `--exec`/`--update`/`-U`), `exec.CommandContext` with a minimal
+      env (no proxy/credential inheritance), hard `YTDLP_TIMEOUT` (context kill),
+      private `0700` per-job workdir always removed (`workdirCloser`). **Worker**
+      `internal/videoimport`: a `resolver` interface with `directResolver`
+      (existing HTTP fetch) + `ytdlpResolver` (metadata prefill → bounded download
+      → file reader); `selectResolver` maps `auto` via extension/guarded-HEAD
+      content-type/enabled-fallback and rewrites the stored resolver to the
+      concrete choice; every download lands via `AttachOriginal → Process` so the
+      ClamAV scan hook fires (no second storage write path); safe client-visible
+      errors (never the URL/raw extractor output); honest `stage` transitions.
+      Metadata prefill fills only EMPTY draft `title`/`description`
+      (`video.Service.PrefillMetadata`); the remote thumbnail URL is intentionally
+      NOT fetched — `Process`'s ffmpeg poster avoids a second attacker-influenced
+      egress (spec §8). **Config** `YTDLP_IMPORT_ENABLED=false` default +
+      `YTDLP_PATH`/`YTDLP_TIMEOUT`/`YTDLP_PROXY`/`YTDLP_MAX_HEIGHT`, boot-validated
+      (enabled ⇒ path+timeout; proxy scheme http/https/socks5; height range);
+      wired in `cmd/api/main.go` (yt-dlp-on-PATH warning; disabled → resolver=ytdlp
+      is 503, auto stays direct-only). **Tests (all in `make ci`):** ytdlp argv +
+      parse tables; resolver-selection matrix (auto/direct/ytdlp × enabled/disabled
+      × extension/content-type); stage-order + workdir-cleanup + prefill; safe-error
+      (no URL leak); enqueue resolver policy (422/503/default); handler tests
+      (`videos_import_test.go`) for 422/503 + resolver echoed + stage cleared on
+      done; config tests. **EICAR-through-import proof:** unit
+      `TestImportViaYtdlpInfectedNeverPublishes` (fake scanner, runs in `make ci`)
+      + integration `TestImportViaYtdlpEicarRealClamdNeverPublishes`
+      (`//go:build integration`, real clamd via `CLAMAV_TEST_ADDR`, REAL EICAR bytes
+      through the ytdlp stub, self-skips locally) — both assert the imported body
+      ends `failed`, never `published`. **Shipping:** `Dockerfile` `ARG
+      YTDLP_VERSION` bakes a PINNED yt-dlp when set (lean base image by default,
+      never self-updates); `docker-compose.yml` documents `YTDLP_*` env + a
+      commented `ytdlp-egress` Squid proxy pairing (§5 residual-risk); README deploy
+      note carries the honest residual-risk stance + 3 mitigations. `make ci`
+      fully green locally (fmt-check, vet, openapi-verify, sqlc-verify, test-race;
+      MAKECI_EXIT=0). **Consumer:** the vidra-user W2.U import UI (resolver picker +
+      honest stage progress) lands in the frontend wave — backend contract shipped
+      ahead, consumer-shaped, exactly like the W1 slices; the Playwright/backed-e2e
+      leg of the completeness contract is satisfied in that vidra-user wave.)
 - [ ] W2.C2 [UPLOAD-02/03] Server-side draft recovery: optional `file_fingerprint`
       on session create; `GET /api/v1/me/uploads` (active sessions + received
       chunk counts, `?fingerprint=` filter); migration

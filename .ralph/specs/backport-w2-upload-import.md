@@ -231,3 +231,47 @@ the consuming UI slice, (c) for data-mutating flows a backend-backed e2e proving
 the DB row changed AND the UI shows it after refetch; 1:1 feature-ID traceability;
 `make ci` green locally and on branch CI. True deferrals only under
 `## Optional / Deferred / Non-Blocking`.
+
+## 8. Execution notes — W2.C1 (2026-07-08, as-built)
+Adaptations from the §W2.C1 sketch, recorded for the reviewer and downstream
+slices (C4 depends on the yt-dlp path):
+- **Migration `0079_import_jobs_resolver`** (next free number confirmed on disk).
+  The `resolver` CHECK is **widened to `('auto','direct','ytdlp')`** (the sketch
+  listed only `direct|ytdlp`). Rationale: `auto` must be representable as the
+  *requested* value so the worker owns resolution during the `resolving` stage —
+  which is what makes the new `stage` column meaningful. The worker rewrites the
+  column to the concrete `direct`/`ytdlp` it actually ran (`SetImportJobResolver`),
+  so a settled row never shows `auto`. Default stays `'direct'` (pre-existing rows
+  are direct imports). `stage` ∈ `{'', resolving, downloading, processing}`, cleared
+  on done/failed/reschedule.
+- **`auto` resolution** happens in the worker, not the request path: recognised
+  video extension → `direct`; else a bounded, SSRF-guarded HEAD content-type →
+  `direct` when it is a known container; else `ytdlp` when enabled, else a `direct`
+  attempt that fails safely. The enqueue-time `503` fires only for an **explicit**
+  `resolver=ytdlp` while disabled (synchronous, no job created).
+- **`internal/ytdlp`** is the only shell-out site: pure `metadataArgs`/`downloadArgs`
+  builders (unit-tested for the fixed allowlist, `--ignore-config`, `--no-playlist`,
+  `--restrict-filenames`, `--max-filesize`, `--` option-terminator with the URL as
+  the sole final positional, and the ABSENCE of `--exec`/`--update`/`-U`),
+  `exec.CommandContext` with a minimal env (no proxy/credential inheritance), a
+  hard `YTDLP_TIMEOUT`, and a private `0700` per-job workdir the resolver always
+  removes (`workdirCloser`). Metadata + download run as two phases.
+- **Metadata prefill** fills only EMPTY draft `title`/`description`
+  (`video.Service.PrefillMetadata`). The remote **thumbnail URL is intentionally
+  NOT fetched**: `Process` already extracts a poster from the imported original via
+  ffmpeg, so relying on the server-side frame avoids a second attacker-influenced
+  outbound fetch (consistent with the W2.C5 server-side frame-pick philosophy and
+  the "minimise egress surface" stance). `ytdlp.Meta.Thumbnail` is parsed and
+  available but deliberately unused by the resolver.
+- **ClamAV invariant proven on the new path**: unit
+  `TestImportViaYtdlpInfectedNeverPublishes` (fake scanner, runs in `make ci`) +
+  integration `TestImportViaYtdlpEicarRealClamdNeverPublishes`
+  (`//go:build integration`, real clamd via `CLAMAV_TEST_ADDR`, REAL EICAR bytes
+  delivered through the ytdlp stub) — both assert the imported infected/EICAR body
+  ends `failed`, never `published`.
+- **Binary shipping**: `Dockerfile` gains an `ARG YTDLP_VERSION` that, when set,
+  bakes a PINNED yt-dlp; empty (default) keeps the base image lean. `docker-compose.yml`
+  documents `YTDLP_*` env + a commented `ytdlp-egress` Squid proxy pairing.
+- **Consumer**: the vidra-user W2.U import UI (resolver picker + honest stage
+  progress) lands in the frontend wave; the backend contract ships ahead,
+  consumer-shaped (this mirrors the W1 pattern).

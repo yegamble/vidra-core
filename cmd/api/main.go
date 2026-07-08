@@ -66,6 +66,7 @@ import (
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
 	"github.com/vidra/vidra-core/internal/watchword"
+	"github.com/vidra/vidra-core/internal/ytdlp"
 )
 
 func main() {
@@ -637,11 +638,30 @@ func run() error {
 	// runs it through the same pipeline, with the same UPLOAD_MAX_SIZE cap and
 	// per-user quota enforcement the synchronous path had.
 	importMaxBytes, _ := bytes.Parse(cfg.UploadMaxSize) // validated at startup
-	importsvc := videoimport.NewService(db.Queries(), videosvc, importMaxBytes,
+	importOpts := []videoimport.Option{
 		videoimport.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
 		videoimport.WithQuota(quotasvc),
 		videoimport.WithLogger(logger),
-	)
+	}
+	// yt-dlp platform-URL import (W2.C1, UPLOAD-09). OFF by default; admin opt-in.
+	// The binary is pinned in the image (never self-updated at runtime); when the
+	// flag is on but the binary is missing, imports still enqueue and fail SAFELY
+	// per job (no crash). See .ralph/specs/backport-w2-upload-import.md §5.
+	if cfg.YtdlpImportEnabled {
+		if _, lookErr := exec.LookPath(cfg.YtdlpPath); lookErr != nil {
+			logger.Warn("YTDLP_IMPORT_ENABLED but yt-dlp is not on PATH — platform imports will fail until it is installed", "path", cfg.YtdlpPath)
+		}
+		ytdlpClient := ytdlp.New(ytdlp.Config{
+			Path:      cfg.YtdlpPath,
+			Timeout:   cfg.YtdlpTimeout,
+			Proxy:     cfg.YtdlpProxy,
+			MaxHeight: cfg.YtdlpMaxHeight,
+			MaxBytes:  importMaxBytes,
+		})
+		importOpts = append(importOpts, videoimport.WithYtdlp(ytdlpClient, ""))
+		logger.Info("yt-dlp platform-URL import enabled", "max_height", cfg.YtdlpMaxHeight, "proxy_set", cfg.YtdlpProxy != "")
+	}
+	importsvc := videoimport.NewService(db.Queries(), videosvc, importMaxBytes, importOpts...)
 	opts = append(opts, httpapi.WithVideoImportService(importsvc))
 
 	// Auto-caption / Whisper (P13). The endpoints are ALWAYS mounted (so the

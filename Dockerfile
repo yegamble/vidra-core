@@ -16,6 +16,22 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./c
 FROM alpine:3.20
 # ffmpeg provides ffprobe, used to extract media metadata on upload.
 RUN apk add --no-cache ca-certificates wget ffmpeg && adduser -D -u 10001 vidra
+
+# Optional yt-dlp platform-URL import (W2.C1, UPLOAD-09), OFF by default. Build
+# with --build-arg YTDLP_VERSION=<pinned release> to bake in a PINNED yt-dlp
+# (e.g. 2025.06.30); an empty value (the default) skips it so the base image
+# stays lean. The version is PINNED at build time — the runtime never
+# self-updates (the app also forbids --update). The app opt-in is separate
+# (YTDLP_IMPORT_ENABLED=true). yt-dlp is a python zipapp, so it needs python3.
+ARG YTDLP_VERSION=""
+RUN if [ -n "$YTDLP_VERSION" ]; then \
+        apk add --no-cache python3 && \
+        wget -O /usr/local/bin/yt-dlp \
+            "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp" && \
+        chmod 0755 /usr/local/bin/yt-dlp && \
+        /usr/local/bin/yt-dlp --version ; \
+    fi
+
 USER vidra
 WORKDIR /app
 COPY --from=build /out/api /app/api

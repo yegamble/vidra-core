@@ -13,25 +13,40 @@ import (
 	"github.com/vidra/vidra-core/internal/videoimport"
 )
 
-// importVideoRequest is the POST /videos/:id/import body.
+// importVideoRequest is the POST /videos/:id/import body. resolver is optional
+// (default auto): auto tries a direct media fetch and falls back to the yt-dlp
+// platform extractor when enabled; direct forces a plain HTTP(S) fetch; ytdlp
+// forces the extractor.
 type importVideoRequest struct {
-	URL string `json:"url"`
+	URL      string `json:"url"`
+	Resolver string `json:"resolver"`
 }
 
 func (r importVideoRequest) Validate() []FieldError {
+	var errs []FieldError
 	if strings.TrimSpace(r.URL) == "" {
-		return []FieldError{{Field: "url", Message: "is required"}}
+		errs = append(errs, FieldError{Field: "url", Message: "is required"})
 	}
-	return nil
+	switch strings.TrimSpace(strings.ToLower(r.Resolver)) {
+	case "", "auto", "direct", "ytdlp":
+	default:
+		errs = append(errs, FieldError{Field: "resolver", Message: "must be auto, direct, or ytdlp"})
+	}
+	return errs
 }
 
 // importJobView is the public projection of an async URL-import job. `error` is
 // a safe, human-readable reason on failure (never a raw internal error or the
-// source URL); it is omitted while the job has not failed.
+// source URL); it is omitted while the job has not failed. resolver is the
+// concrete mechanism (direct|ytdlp; or auto until the worker resolves it) and
+// stage is coarse progress (queued|resolving|downloading|processing) while
+// running.
 type importJobView struct {
 	ID        string    `json:"id"`
 	VideoID   string    `json:"video_id"`
 	State     string    `json:"state"`
+	Resolver  string    `json:"resolver"`
+	Stage     string    `json:"stage,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	Attempts  int       `json:"attempts"`
 	CreatedAt time.Time `json:"created_at"`
@@ -48,6 +63,8 @@ func newImportJobResponse(row sqlcgen.ImportJob) importJobResponse {
 		ID:        row.ID.String(),
 		VideoID:   row.VideoID.String(),
 		State:     row.State,
+		Resolver:  row.Resolver,
+		Stage:     row.Stage,
 		Error:     row.Error,
 		Attempts:  int(row.Attempts),
 		CreatedAt: row.CreatedAt,
@@ -85,12 +102,19 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	job, err := s.importsvc.Enqueue(ctx, id, in.URL)
+	job, err := s.importsvc.Enqueue(ctx, id, in.URL, in.Resolver)
 	if err != nil {
-		if errors.Is(err, videoimport.ErrInvalidURL) {
+		switch {
+		case errors.Is(err, videoimport.ErrInvalidURL):
 			return &ValidationError{Fields: []FieldError{{Field: "url", Message: "must be a public http(s) URL"}}}
+		case errors.Is(err, videoimport.ErrInvalidResolver):
+			return &ValidationError{Fields: []FieldError{{Field: "resolver", Message: "must be auto, direct, or ytdlp"}}}
+		case errors.Is(err, videoimport.ErrResolverDisabled):
+			// The requested resolver (e.g. ytdlp) is turned off on this instance.
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "platform-URL import is not enabled on this instance")
+		default:
+			return err
 		}
-		return err
 	}
 	return c.JSON(http.StatusAccepted, newImportJobResponse(job))
 }

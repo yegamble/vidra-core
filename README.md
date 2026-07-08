@@ -239,6 +239,26 @@ after 5). Poll `GET /api/v1/videos/{id}/import` for the job status (`state`
 pending/running/done/failed, plus a safe `error` reason on failure). A single
 import runs per video at a time; re-posting while one is in flight returns it.
 
+The import body also takes an optional `resolver` (`auto`|`direct`|`ytdlp`,
+default `auto`) and the job view carries the concrete `resolver` plus a coarse
+`stage` (`resolving`/`downloading`/`processing`). `auto` tries a direct media
+fetch and falls back to the **yt-dlp platform extractor** when it is enabled;
+`ytdlp` forces it and is refused with `503` when disabled. **yt-dlp import is OFF
+by default** (`YTDLP_IMPORT_ENABLED=true` to opt in; `YTDLP_PATH`, `YTDLP_TIMEOUT`,
+`YTDLP_MAX_HEIGHT`, `YTDLP_PROXY`). The extractor is hard-sandboxed: a fixed argv
+allowlist (no shell, `--ignore-config`, no `--exec`, no runtime self-update),
+`--no-playlist`, `--max-filesize`, a private `0700` per-job workdir that is always
+removed, and a hard wall-clock timeout. The source URL is validated by the SSRF
+guard *before* the subprocess sees it, and downloaded bytes enter storage only via
+`AttachOriginal → Process`, so the ClamAV scan hook fires before anything is
+servable. **Residual risk (deploy note):** yt-dlp makes its own outbound fetches
+that the dial-time SSRF guard cannot pin, so a hostile page could try to redirect
+it to internal addresses. Mitigate, in order: (1) it is off by default; (2) set
+`YTDLP_PROXY` to a forward proxy that denies RFC1918/loopback/link-local (see the
+`ytdlp-egress` sketch in `docker-compose.yml`); (3) run the api/worker with no
+route to internal networks. Pin the yt-dlp binary in the image
+(`--build-arg YTDLP_VERSION=…`); it is never self-updated at runtime.
+
 Finalisation runs through an injected `Prober` seam: at startup the server uses
 the FFprobe-backed prober when `ffprobe` is on `PATH` (it is in the Docker image),
 extracting technical metadata (duration, width, height) that the detail endpoint

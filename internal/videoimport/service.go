@@ -19,7 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"path"
+	"net/url"
 	"strings"
 	"time"
 
@@ -59,6 +59,13 @@ var (
 	// ErrInvalidURL means the import URL is missing, malformed, non-http(s), or
 	// a literal non-public address (enqueue → 422, before any fetch).
 	ErrInvalidURL = errors.New("videoimport: invalid url")
+	// ErrInvalidResolver means the requested resolver is not auto|direct|ytdlp
+	// (enqueue → 422).
+	ErrInvalidResolver = errors.New("videoimport: invalid resolver")
+	// ErrResolverDisabled means the requested resolver is turned off on this
+	// instance (enqueue → 503, e.g. resolver=ytdlp while YTDLP_IMPORT_ENABLED is
+	// false).
+	ErrResolverDisabled = errors.New("videoimport: resolver disabled")
 )
 
 // errImportTooLarge / errImportOverQuota flow up from the bounded body reader so
@@ -77,6 +84,8 @@ type Repository interface {
 	CompleteImportJob(ctx context.Context, id uuid.UUID) error
 	RescheduleImportJob(ctx context.Context, arg sqlcgen.RescheduleImportJobParams) error
 	FailImportJob(ctx context.Context, arg sqlcgen.FailImportJobParams) error
+	SetImportJobStage(ctx context.Context, arg sqlcgen.SetImportJobStageParams) error
+	SetImportJobResolver(ctx context.Context, arg sqlcgen.SetImportJobResolverParams) error
 }
 
 // Pipeline is the video ingest seam: store the fetched bytes as the video's
@@ -86,6 +95,9 @@ type Pipeline interface {
 	GetByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
 	AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID, in video.UploadInput) (sqlcgen.Video, sqlcgen.VideoFile, error)
 	Process(ctx context.Context, videoID uuid.UUID, originalKey string) (sqlcgen.Video, error)
+	// PrefillMetadata fills a draft's title/description from an extractor probe,
+	// but only fields the user left EMPTY (never overwriting what they typed).
+	PrefillMetadata(ctx context.Context, videoID uuid.UUID, title, description string) error
 }
 
 // QuotaChecker reports a user's remaining storage headroom (limited=false means
@@ -103,6 +115,12 @@ type Service struct {
 	allowPrivate bool
 	client       *http.Client // test seam; nil → build an SSRF-guarded client per fetch
 	logger       *slog.Logger
+
+	// ytdlp is the sandboxed platform extractor. nil = disabled (the default):
+	// an explicit resolver=ytdlp is refused at enqueue (503) and resolver=auto
+	// never falls back to it.
+	ytdlp     Extractor
+	ytdlpWork string // parent dir for per-job ytdlp workdirs (os.TempDir when "")
 }
 
 // Option customises the Service.
@@ -135,6 +153,16 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
+// WithYtdlp enables the sandboxed yt-dlp platform-import resolver. Wire it only
+// when YTDLP_IMPORT_ENABLED is on. workRoot is the parent for per-job private
+// workdirs (empty → os.TempDir()).
+func WithYtdlp(ext Extractor, workRoot string) Option {
+	return func(s *Service) {
+		s.ytdlp = ext
+		s.ytdlpWork = workRoot
+	}
+}
+
 // NewService builds the import service. maxBytes is the UPLOAD_MAX_SIZE cap in
 // bytes (0 = unbounded).
 func NewService(repo Repository, pipeline Pipeline, maxBytes int64, opts ...Option) *Service {
@@ -150,20 +178,50 @@ func (s *Service) guard() urlsafety.Guard {
 	return urlsafety.Guard{AllowPrivate: s.allowPrivate}
 }
 
-// Enqueue validates the URL and queues an import for a video. The caller has
-// already authorised the video (owner-only) so no fetch is issued on a
-// non-owner's behalf. A single active import per video is enforced: while one is
-// pending/running the in-flight job is returned unchanged (idempotent);
+// YtdlpEnabled reports whether the sandboxed platform-import resolver is wired
+// (YTDLP_IMPORT_ENABLED). The handler uses it to 503 an explicit resolver=ytdlp
+// request up front rather than enqueue a job that can only fail.
+func (s *Service) YtdlpEnabled() bool { return s.ytdlp != nil }
+
+// normalizeResolver validates the requested resolver and applies the disabled
+// policy. Empty defaults to auto. An explicit ytdlp while disabled is
+// ErrResolverDisabled (503); an unknown value is ErrInvalidResolver (422).
+func (s *Service) normalizeResolver(requested string) (string, error) {
+	switch strings.TrimSpace(strings.ToLower(requested)) {
+	case "", ResolverAuto:
+		return ResolverAuto, nil
+	case ResolverDirect:
+		return ResolverDirect, nil
+	case ResolverYtdlp:
+		if !s.YtdlpEnabled() {
+			return "", ErrResolverDisabled
+		}
+		return ResolverYtdlp, nil
+	default:
+		return "", ErrInvalidResolver
+	}
+}
+
+// Enqueue validates the URL + resolver and queues an import for a video. The
+// caller has already authorised the video (owner-only) so no fetch is issued on
+// a non-owner's behalf. A single active import per video is enforced: while one
+// is pending/running the in-flight job is returned unchanged (idempotent);
 // otherwise a fresh job is created (so a finished/failed import can be retried).
-// ErrInvalidURL when the URL is not a public http(s) URL.
-func (s *Service) Enqueue(ctx context.Context, videoID uuid.UUID, rawURL string) (sqlcgen.ImportJob, error) {
+// requestedResolver is auto|direct|ytdlp (empty = auto). Errors: ErrInvalidURL,
+// ErrInvalidResolver, ErrResolverDisabled.
+func (s *Service) Enqueue(ctx context.Context, videoID uuid.UUID, rawURL, requestedResolver string) (sqlcgen.ImportJob, error) {
 	target, err := s.guard().ValidateURL(strings.TrimSpace(rawURL))
 	if err != nil {
 		return sqlcgen.ImportJob{}, ErrInvalidURL
 	}
+	resolver, err := s.normalizeResolver(requestedResolver)
+	if err != nil {
+		return sqlcgen.ImportJob{}, err
+	}
 	job, err := s.repo.EnqueueImportJob(ctx, sqlcgen.EnqueueImportJobParams{
-		VideoID: videoID,
-		Url:     target.String(),
+		VideoID:  videoID,
+		Url:      target.String(),
+		Resolver: resolver,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// An active import already exists — return it (idempotent).
@@ -207,10 +265,12 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	return done, nil
 }
 
-// runImport performs one import: fetch the URL (SSRF-guarded), store the bytes
-// as the video's original, and finalise. Every returned error carries a SAFE,
-// client-visible message (mapped from the failure point); unexpected internal
-// errors are logged and reported generically.
+// runImport performs one import: pick the resolver (SSRF-guarded), fetch the
+// bytes, store them as the video's original, and finalise. Every returned error
+// carries a SAFE, client-visible message (mapped from the failure point);
+// unexpected internal errors are logged and reported generically. Coarse
+// progress is written to import_jobs.stage as it advances so the UI can show
+// honest status.
 func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsRow) error {
 	v, err := s.pipeline.GetByID(ctx, row.VideoID)
 	if err != nil {
@@ -236,32 +296,29 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 		}
 	}
 
-	client := s.client
-	if client == nil {
-		client = guard.NewClient(fetchTimeout)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	// Pick the concrete resolver (auto → direct|ytdlp), recording honest stages.
+	res, err := s.selectResolver(ctx, guard, row, target)
 	if err != nil {
-		return failf("could not fetch the URL")
+		return err // already a safe failure
 	}
-	resp, err := client.Do(req)
+
+	s.setStage(ctx, row.ID, StageDownloading)
+	media, err := res.resolve(ctx, target)
 	if err != nil {
-		// Blocked address (SSRF guard), DNS failure, timeout, TLS error, etc. The
-		// URL is never echoed back.
-		return failf("could not fetch the URL")
+		return err // already a safe failure
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return failf("the URL did not return a downloadable file")
-	}
-	if s.maxBytes > 0 && resp.ContentLength > s.maxBytes {
+	defer func() { _ = media.body.Close() }()
+
+	// Up-front size/quota rejection when the size is known (direct Content-Length
+	// or a yt-dlp file stat) — avoids streaming bytes we will only discard.
+	if s.maxBytes > 0 && media.knownSize > s.maxBytes {
 		return failf("the file is too large")
 	}
-	if quotaRemaining >= 0 && resp.ContentLength > quotaRemaining {
+	if quotaRemaining >= 0 && media.knownSize > quotaRemaining {
 		return failf("storing the file would exceed your storage quota")
 	}
 
-	body := io.Reader(resp.Body)
+	body := io.Reader(media.body)
 	if s.maxBytes > 0 {
 		body = &maxBytesReader{r: body, remaining: s.maxBytes, limitErr: errImportTooLarge}
 	}
@@ -269,9 +326,10 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 		body = &maxBytesReader{r: body, remaining: quotaRemaining, limitErr: errImportOverQuota}
 	}
 
+	s.setStage(ctx, row.ID, StageProcessing)
 	_, file, err := s.pipeline.AttachOriginal(ctx, v.OwnerID, row.VideoID, video.UploadInput{
-		Filename:    path.Base(target.Path),
-		ContentType: resp.Header.Get("Content-Type"),
+		Filename:    media.filename,
+		ContentType: media.contentType,
 		Reader:      body,
 	})
 	if err != nil {
@@ -288,10 +346,110 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 			return s.internalf("import attach original", err)
 		}
 	}
+
+	// Best-effort draft prefill from platform metadata (fills only empty fields;
+	// a failure never fails the import — the bytes already landed).
+	if media.title != "" || media.description != "" {
+		if perr := s.pipeline.PrefillMetadata(ctx, row.VideoID, media.title, media.description); perr != nil {
+			s.logger.Warn("video import metadata prefill failed", "video", row.VideoID, "error", perr)
+		}
+	}
+
 	if _, err := s.pipeline.Process(ctx, row.VideoID, file.StorageKey); err != nil {
 		return s.internalf("import process", err)
 	}
 	return nil
+}
+
+// selectResolver maps a job's requested resolver to a concrete implementation.
+// For an 'auto' request it probes the URL (recognised extension → direct; else a
+// guarded HEAD content-type; else the yt-dlp extractor when enabled) and rewrites
+// the stored resolver so the echoed value is always what actually ran.
+func (s *Service) selectResolver(ctx context.Context, guard urlsafety.Guard, row sqlcgen.ClaimDueImportJobsRow, target *url.URL) (resolver, error) {
+	concrete := row.Resolver
+	switch row.Resolver {
+	case ResolverDirect:
+		concrete = ResolverDirect
+	case ResolverYtdlp:
+		if s.ytdlp == nil {
+			return nil, failf("platform import is not enabled")
+		}
+		concrete = ResolverYtdlp
+	case ResolverAuto:
+		s.setStage(ctx, row.ID, StageResolving)
+		concrete = s.probeAuto(ctx, guard, target)
+		if concrete == "" {
+			return nil, failf("could not import from this URL")
+		}
+		// Rewrite the stored resolver to what actually runs (honest view).
+		_ = s.repo.SetImportJobResolver(ctx, sqlcgen.SetImportJobResolverParams{
+			ID: row.ID, Resolver: concrete, Stage: StageResolving,
+		})
+	default:
+		return nil, failf("could not import from this URL")
+	}
+	return s.buildResolver(guard, concrete)
+}
+
+// buildResolver constructs the concrete resolver.
+func (s *Service) buildResolver(guard urlsafety.Guard, concrete string) (resolver, error) {
+	if concrete == ResolverYtdlp {
+		if s.ytdlp == nil {
+			return nil, failf("platform import is not enabled")
+		}
+		return &ytdlpResolver{ext: s.ytdlp, workRoot: s.ytdlpWork}, nil
+	}
+	return &directResolver{client: s.httpClient(guard)}, nil
+}
+
+// probeAuto decides between the direct and ytdlp resolvers for an 'auto' request
+// without downloading anything: a recognised video extension is direct outright;
+// otherwise a bounded guarded HEAD content-type decides; anything else routes to
+// the platform extractor when enabled, else back to a direct attempt (which
+// fails safely if the body is not an accepted container).
+func (s *Service) probeAuto(ctx context.Context, guard urlsafety.Guard, target *url.URL) string {
+	if _, ok := video.AcceptedVideoExt(target.Path); ok {
+		return ResolverDirect
+	}
+	if ct := s.probeContentType(ctx, guard, target); ct != "" && isAcceptedVideoContentType(ct) {
+		return ResolverDirect
+	}
+	if s.ytdlp != nil {
+		return ResolverYtdlp
+	}
+	return ResolverDirect
+}
+
+// probeContentType issues a bounded, SSRF-guarded HEAD and returns the response
+// Content-Type ("" on any failure). It never surfaces the URL or an error.
+func (s *Service) probeContentType(ctx context.Context, guard urlsafety.Guard, target *url.URL) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, target.String(), nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := s.httpClient(guard).Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	return resp.Header.Get("Content-Type")
+}
+
+// httpClient returns the injected test client, or a fresh SSRF-guarded client.
+func (s *Service) httpClient(guard urlsafety.Guard) *http.Client {
+	if s.client != nil {
+		return s.client
+	}
+	return guard.NewClient(fetchTimeout)
+}
+
+// setStage records coarse progress (best-effort; a bookkeeping write failure
+// never fails the import).
+func (s *Service) setStage(ctx context.Context, id uuid.UUID, stage string) {
+	_ = s.repo.SetImportJobStage(ctx, sqlcgen.SetImportJobStageParams{ID: id, Stage: stage})
 }
 
 // recordFailure reschedules with backoff, or dead-letters after the cap. The

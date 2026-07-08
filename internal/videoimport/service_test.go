@@ -19,8 +19,9 @@ import (
 // ---- fakes ----------------------------------------------------------------
 
 type fakeRepo struct {
-	jobs  map[uuid.UUID]sqlcgen.ImportJob
-	order []uuid.UUID
+	jobs     map[uuid.UUID]sqlcgen.ImportJob
+	order    []uuid.UUID
+	stageLog []string // every stage written (progress ordering assertions)
 }
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{jobs: map[uuid.UUID]sqlcgen.ImportJob{}} }
@@ -32,10 +33,28 @@ func (r *fakeRepo) EnqueueImportJob(_ context.Context, arg sqlcgen.EnqueueImport
 			return sqlcgen.ImportJob{}, pgx.ErrNoRows
 		}
 	}
-	j := sqlcgen.ImportJob{ID: uuid.New(), VideoID: arg.VideoID, Url: arg.Url, State: "pending", NextAttemptAt: time.Now(), CreatedAt: time.Now()}
+	resolver := arg.Resolver
+	if resolver == "" {
+		resolver = "direct"
+	}
+	j := sqlcgen.ImportJob{ID: uuid.New(), VideoID: arg.VideoID, Url: arg.Url, State: "pending", Resolver: resolver, NextAttemptAt: time.Now(), CreatedAt: time.Now()}
 	r.jobs[j.ID] = j
 	r.order = append(r.order, j.ID)
 	return j, nil
+}
+func (r *fakeRepo) SetImportJobStage(_ context.Context, arg sqlcgen.SetImportJobStageParams) error {
+	j := r.jobs[arg.ID]
+	j.Stage = arg.Stage
+	r.jobs[arg.ID] = j
+	r.stageLog = append(r.stageLog, arg.Stage)
+	return nil
+}
+func (r *fakeRepo) SetImportJobResolver(_ context.Context, arg sqlcgen.SetImportJobResolverParams) error {
+	j := r.jobs[arg.ID]
+	j.Resolver, j.Stage = arg.Resolver, arg.Stage
+	r.jobs[arg.ID] = j
+	r.stageLog = append(r.stageLog, arg.Stage)
+	return nil
 }
 func (r *fakeRepo) GetLatestImportJobByVideo(_ context.Context, videoID uuid.UUID) (sqlcgen.ImportJob, error) {
 	for i := len(r.order) - 1; i >= 0; i-- {
@@ -52,7 +71,7 @@ func (r *fakeRepo) ClaimDueImportJobs(_ context.Context, limit int32) ([]sqlcgen
 		if j.State == "pending" && !j.NextAttemptAt.After(time.Now()) {
 			j.State = "running"
 			r.jobs[id] = j
-			rows = append(rows, sqlcgen.ClaimDueImportJobsRow{ID: j.ID, VideoID: j.VideoID, Url: j.Url, Attempts: j.Attempts})
+			rows = append(rows, sqlcgen.ClaimDueImportJobsRow{ID: j.ID, VideoID: j.VideoID, Url: j.Url, Attempts: j.Attempts, Resolver: j.Resolver, Stage: j.Stage})
 			if int32(len(rows)) >= limit {
 				break
 			}
@@ -62,19 +81,19 @@ func (r *fakeRepo) ClaimDueImportJobs(_ context.Context, limit int32) ([]sqlcgen
 }
 func (r *fakeRepo) CompleteImportJob(_ context.Context, id uuid.UUID) error {
 	j := r.jobs[id]
-	j.State, j.Error = "done", ""
+	j.State, j.Error, j.Stage = "done", "", ""
 	r.jobs[id] = j
 	return nil
 }
 func (r *fakeRepo) RescheduleImportJob(_ context.Context, arg sqlcgen.RescheduleImportJobParams) error {
 	j := r.jobs[arg.ID]
-	j.State, j.Attempts, j.NextAttemptAt, j.Error = "pending", j.Attempts+1, arg.NextAttemptAt, arg.Error
+	j.State, j.Attempts, j.NextAttemptAt, j.Error, j.Stage = "pending", j.Attempts+1, arg.NextAttemptAt, arg.Error, ""
 	r.jobs[arg.ID] = j
 	return nil
 }
 func (r *fakeRepo) FailImportJob(_ context.Context, arg sqlcgen.FailImportJobParams) error {
 	j := r.jobs[arg.ID]
-	j.State, j.Attempts, j.Error = "failed", j.Attempts+1, arg.Error
+	j.State, j.Attempts, j.Error, j.Stage = "failed", j.Attempts+1, arg.Error, ""
 	r.jobs[arg.ID] = j
 	return nil
 }
@@ -102,6 +121,7 @@ type fakePipeline struct {
 	owners     map[uuid.UUID]uuid.UUID
 	storedSize map[uuid.UUID]int64
 	published  map[uuid.UUID]bool
+	prefill    map[uuid.UUID][2]string // videoID → {title, description}
 }
 
 func newFakePipeline() *fakePipeline {
@@ -132,6 +152,13 @@ func (p *fakePipeline) Process(_ context.Context, videoID uuid.UUID, _ string) (
 	p.published[videoID] = true
 	return sqlcgen.Video{ID: videoID, State: "published"}, nil
 }
+func (p *fakePipeline) PrefillMetadata(_ context.Context, videoID uuid.UUID, title, description string) error {
+	if p.prefill == nil {
+		p.prefill = map[uuid.UUID][2]string{}
+	}
+	p.prefill[videoID] = [2]string{title, description}
+	return nil
+}
 
 type fakeQuota struct {
 	remaining int64
@@ -155,6 +182,12 @@ func originServer(t *testing.T) *httptest.Server {
 		case "/sized.mp4":
 			w.Header().Set("Content-Type", "video/mp4")
 			_, _ = w.Write(make([]byte, 64)) // Content-Length: 64
+		case "/stream": // no extension, but a video content-type (auto → direct)
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("tiny-video-bytes"))
+		case "/page": // no extension, HTML (auto → ytdlp when enabled)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte("<html>watch page</html>"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -183,14 +216,14 @@ func TestEnqueueValidatesAndIsIdempotent(t *testing.T) {
 	svc := NewService(repo, pipe, 1<<20)
 	vid := seedVideo(pipe, uuid.New())
 
-	if _, err := svc.Enqueue(ctx, vid, "ftp://example.com/x.mp4"); err != ErrInvalidURL {
+	if _, err := svc.Enqueue(ctx, vid, "ftp://example.com/x.mp4", ResolverDirect); err != ErrInvalidURL {
 		t.Errorf("ftp enqueue err = %v, want ErrInvalidURL", err)
 	}
-	first, err := svc.Enqueue(ctx, vid, "https://example.com/a.mp4")
+	first, err := svc.Enqueue(ctx, vid, "https://example.com/a.mp4", ResolverDirect)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	second, err := svc.Enqueue(ctx, vid, "https://example.com/b.mp4")
+	second, err := svc.Enqueue(ctx, vid, "https://example.com/b.mp4", ResolverDirect)
 	if err != nil {
 		t.Fatalf("re-enqueue: %v", err)
 	}
@@ -208,7 +241,7 @@ func TestDrainHappyPath(t *testing.T) {
 	origin := originServer(t)
 	vid := seedVideo(pipe, uuid.New())
 
-	if _, err := svc.Enqueue(ctx, vid, loopbackHost(origin.URL)+"/clip.mp4"); err != nil {
+	if _, err := svc.Enqueue(ctx, vid, loopbackHost(origin.URL)+"/clip.mp4", ResolverDirect); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	n, err := svc.DrainJobs(ctx, 5)
@@ -233,7 +266,7 @@ func TestDrainNonVideoIsSafeFailure(t *testing.T) {
 	vid := seedVideo(pipe, uuid.New())
 
 	url := loopbackHost(origin.URL) + "/notavideo.txt"
-	if _, err := svc.Enqueue(ctx, vid, url); err != nil {
+	if _, err := svc.Enqueue(ctx, vid, url, ResolverDirect); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	if _, err := svc.DrainJobs(ctx, 5); err != nil {
@@ -258,7 +291,7 @@ func TestDrainSSRFGuardBlocksLoopback(t *testing.T) {
 	origin := originServer(t)
 	vid := seedVideo(pipe, uuid.New())
 
-	if _, err := svc.Enqueue(ctx, vid, loopbackHost(origin.URL)+"/clip.mp4"); err != nil {
+	if _, err := svc.Enqueue(ctx, vid, loopbackHost(origin.URL)+"/clip.mp4", ResolverDirect); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	if _, err := svc.DrainJobs(ctx, 5); err != nil {
@@ -278,7 +311,7 @@ func TestDrainAllowPrivateConfig(t *testing.T) {
 	origin := originServer(t)
 	vid := seedVideo(pipe, uuid.New())
 
-	if _, err := svc.Enqueue(ctx, vid, origin.URL+"/clip.mp4"); err != nil { // literal 127.0.0.1
+	if _, err := svc.Enqueue(ctx, vid, origin.URL+"/clip.mp4", ResolverDirect); err != nil { // literal 127.0.0.1
 		t.Fatalf("enqueue: %v", err)
 	}
 	if _, err := svc.DrainJobs(ctx, 5); err != nil {
@@ -298,7 +331,7 @@ func TestDrainQuotaExceeded(t *testing.T) {
 	origin := originServer(t)
 	vid := seedVideo(pipe, uuid.New())
 
-	if _, err := svc.Enqueue(ctx, vid, loopbackHost(origin.URL)+"/sized.mp4"); err != nil { // 64 bytes > 10
+	if _, err := svc.Enqueue(ctx, vid, loopbackHost(origin.URL)+"/sized.mp4", ResolverDirect); err != nil { // 64 bytes > 10
 		t.Fatalf("enqueue: %v", err)
 	}
 	if _, err := svc.DrainJobs(ctx, 5); err != nil {
@@ -324,7 +357,7 @@ func TestRetryThenDeadLetter(t *testing.T) {
 	vid := seedVideo(pipe, uuid.New())
 
 	// A non-video URL fails every attempt.
-	if _, err := svc.Enqueue(ctx, vid, loopbackHost(origin.URL)+"/notavideo.txt"); err != nil {
+	if _, err := svc.Enqueue(ctx, vid, loopbackHost(origin.URL)+"/notavideo.txt", ResolverDirect); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 
