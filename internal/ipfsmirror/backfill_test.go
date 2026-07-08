@@ -134,6 +134,129 @@ func TestBackfillSeedsEligibleAndFencesNonPublic(t *testing.T) {
 	}
 }
 
+// TestBackfillRoutesPrivateEligibleToPrivateSwarm is the P19.P4 close-out evidence
+// that the one-shot admin reconcile is NETWORK-AWARE (the DR-restore-from-the-private-
+// pinset claim the ops runbook makes): with the private tier ON, a backfill seeds
+// each pre-existing eligible object onto ITS routed swarm — public media on
+// network='public', private/unlisted videos & derivatives, unlisted-owner avatars, and
+// non-public playlist covers on network='private' — while a quarantined video is
+// mirrored NOWHERE even with both tiers on. The `?network=` reconcile filter scopes
+// the seeding to exactly one swarm at the backfill layer (in addition to the handler
+// test TestIPFSReconcileNetworkFilter).
+func TestBackfillRoutesPrivateEligibleToPrivateSwarm(t *testing.T) {
+	pubVid := uuid.New()
+	privVid := uuid.New()
+	unlistedVid := uuid.New()
+	quarVid := uuid.New()
+	ownerListed := uuid.New()
+	ownerUnlisted := uuid.New()
+
+	pubOriginal := "web-videos/" + pubVid.String() + ".mp4"
+	privOriginal := "web-videos/" + privVid.String() + ".mp4"
+	privHLS := "streaming-playlists/" + privVid.String() + "/"
+	unlistedOriginal := "web-videos/" + unlistedVid.String() + ".mp4"
+	quarOriginal := "web-videos/" + quarVid.String() + ".mp4"
+
+	newCat := func() *fakeCatalog {
+		return &fakeCatalog{
+			videos: []VideoObjectRow{
+				{ObjectKey: pubOriginal, Class: ClassVideoOriginal, VideoID: pubVid, Privacy: "public", State: "published"},
+				{ObjectKey: privOriginal, Class: ClassVideoOriginal, VideoID: privVid, Privacy: "private", State: "published"},
+				{ObjectKey: privHLS, Class: ClassHLS, VideoID: privVid, Privacy: "private", State: "published"},
+				{ObjectKey: unlistedOriginal, Class: ClassVideoOriginal, VideoID: unlistedVid, Privacy: "unlisted", State: "published"},
+				// quarantined: never mirrored on ANY swarm, even with both tiers on.
+				{ObjectKey: quarOriginal, Class: ClassVideoOriginal, VideoID: quarVid, Privacy: "public", State: "quarantined"},
+			},
+			images: []IdentityImageRow{
+				{ObjectKey: "avatars/users/pub.png", Class: ClassUserAvatar, OwnerUserID: ownerListed, OwnerActive: true, OwnerUnlisted: false},
+				{ObjectKey: "avatars/users/unl.png", Class: ClassUserAvatar, OwnerUserID: ownerUnlisted, OwnerActive: true, OwnerUnlisted: true},
+			},
+			covers: []PlaylistCoverRow{
+				{ObjectKey: "playlist-thumbnails/pub.jpg", Visibility: "public"},
+				{ObjectKey: "playlist-thumbnails/priv.jpg", Visibility: "private"},
+			},
+		}
+	}
+
+	// Both tiers on so public objects route public and private objects route private.
+	privateCfg := func(cat Catalog) Config {
+		cfg := backfillConfig(cat)
+		cfg.PrivateEnabled = true
+		return cfg
+	}
+
+	wantPublic := []string{pubOriginal, "avatars/users/pub.png", "playlist-thumbnails/pub.jpg"}
+	wantPrivate := []string{privOriginal, privHLS, unlistedOriginal, "avatars/users/unl.png", "playlist-thumbnails/priv.jpg"}
+
+	t.Run("no filter routes each object to its swarm", func(t *testing.T) {
+		repo := newFakeRepo()
+		svc := New(repo, &fakeLookups{}, newBlobs(t), nil, privateCfg(newCat()))
+
+		counts, err := svc.Backfill(context.Background(), "")
+		if err != nil {
+			t.Fatalf("Backfill: %v", err)
+		}
+		if counts.Total != int64(len(wantPublic)+len(wantPrivate)) {
+			t.Fatalf("Total = %d, want %d (3 public + 5 private)", counts.Total, len(wantPublic)+len(wantPrivate))
+		}
+		for _, key := range wantPublic {
+			if net := repo.network(key); net != NetworkPublic {
+				t.Errorf("network(%q) = %q, want public", key, net)
+			}
+		}
+		for _, key := range wantPrivate {
+			if net := repo.network(key); net != NetworkPrivate {
+				t.Errorf("network(%q) = %q, want private", key, net)
+			}
+		}
+		// Quarantined content is unvetted: never seeded on either swarm.
+		if s := repo.state(quarOriginal); s != "" {
+			t.Errorf("quarantined video seeded (state=%q) — must be mirrored nowhere", s)
+		}
+	})
+
+	t.Run("network=private filter seeds only the private swarm", func(t *testing.T) {
+		repo := newFakeRepo()
+		svc := New(repo, &fakeLookups{}, newBlobs(t), nil, privateCfg(newCat()))
+
+		counts, err := svc.Backfill(context.Background(), NetworkPrivate)
+		if err != nil {
+			t.Fatalf("Backfill(private): %v", err)
+		}
+		if counts.Total != int64(len(wantPrivate)) {
+			t.Fatalf("private-filtered Total = %d, want %d", counts.Total, len(wantPrivate))
+		}
+		for _, key := range wantPublic {
+			if s := repo.state(key); s != "" {
+				t.Errorf("public object %q seeded under network=private filter (state=%q)", key, s)
+			}
+		}
+		for _, key := range wantPrivate {
+			if net := repo.network(key); net != NetworkPrivate {
+				t.Errorf("private object %q not seeded on the private swarm (net=%q)", key, net)
+			}
+		}
+	})
+
+	t.Run("network=public filter seeds only the public swarm", func(t *testing.T) {
+		repo := newFakeRepo()
+		svc := New(repo, &fakeLookups{}, newBlobs(t), nil, privateCfg(newCat()))
+
+		counts, err := svc.Backfill(context.Background(), NetworkPublic)
+		if err != nil {
+			t.Fatalf("Backfill(public): %v", err)
+		}
+		if counts.Total != int64(len(wantPublic)) {
+			t.Fatalf("public-filtered Total = %d, want %d", counts.Total, len(wantPublic))
+		}
+		for _, key := range wantPrivate {
+			if s := repo.state(key); s != "" {
+				t.Errorf("private object %q seeded under network=public filter (state=%q)", key, s)
+			}
+		}
+	})
+}
+
 // TestBackfillIdempotent: a second run over an unchanged catalog seeds zero (every
 // eligible object already has a ledger row).
 func TestBackfillIdempotent(t *testing.T) {

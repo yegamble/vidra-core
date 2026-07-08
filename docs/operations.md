@@ -13,7 +13,7 @@ backend-specific companion.
 |-------|------|---------|
 | **PostgreSQL** | Durable system of record (users, videos, jobs, moderation, federation). | **Yes — authoritative.** |
 | **Media blobs** (local disk / S3) | Uploaded + transcoded media, thumbnails, captions, export archives. The authoritative store. | **Yes — must stay consistent with the DB.** |
-| **IPFS pinset** (optional mirror) | Content-addressed *copies* of already-public media only (a distribution surface, never authoritative). | **No — re-derivable from the authoritative store via `POST /admin/ipfs/reconcile`.** |
+| **IPFS pinset** (optional mirror) | Content-addressed *copies* — already-public media on the public node, and (when the private tier is enabled) non-public media on a separate swarm.key'd node. A distribution/replication surface, never authoritative. | **No — re-derivable from the authoritative store via `POST /admin/ipfs/reconcile` (optionally `?network=`).** |
 | **Redis** | Cache, rate-limit counters, idempotency keys, view-dedupe, short locks. | **No.** Ephemeral; safe to flush. It is never the source of truth for data that must survive a restart. |
 
 Back up PostgreSQL and media on the **same cadence** so blob references in the DB
@@ -84,9 +84,105 @@ bytes:
   fetched, cached, or re-pinned by other nodes and the DHT; unpinning removes *our*
   obligation to serve it but cannot guarantee erasure elsewhere. Treat every public
   pin as a **permanent public disclosure** — which is exactly why only
-  already-public media is ever eligible, and why `IPFS_MIRROR_PRIVATE=true` is a hard
-  config error without a private `IPFS_CLUSTER_API_URL`. If an object must be
-  provably unrecoverable, it must never have been public in the first place.
+  already-public media is ever eligible. If an object must be provably unrecoverable,
+  it must never have been public in the first place. Replicating **non-public** media
+  is a separate tier with its own node and its own rules — see the next section.
+
+## Private IPFS mirror tier (P19.P) — replication, not distribution
+
+`IPFS_MIRROR_PRIVATE=true` opts the instance into replicating **non-public** media
+(private + unlisted videos and all their derivatives, non-public playlist covers,
+unlisted/deactivated-owner avatars & banners) to a **second, fully separate
+swarm.key'd Kubo node** — never the public-mirror node. Quarantined content is
+mirrored nowhere; DM attachments are never mirrored on any network. This tier is a
+**durability/DR-replication surface (the STOR-05 story for non-public media), not a
+playback path** — the failure mode is always "private content unreachable", never
+"private content public".
+
+**Config (supersedes the old guard).** The shipped v1 used
+`IPFS_MIRROR_PRIVATE ⇒ IPFS_CLUSTER_API_URL` as a proxy for "private infra exists";
+that guard is **replaced** by the correct, stricter shape:
+
+| Env | Meaning |
+|-----|---------|
+| `IPFS_MIRROR_PRIVATE=true` | master opt-in; **requires** `IPFS_PRIVATE_API_URL`. |
+| `IPFS_PRIVATE_API_URL` | RPC of the **dedicated** private-swarm Kubo. `== IPFS_API_URL` is a hard boot error (`refusing to dual-home`). Allowed with `IPFS_ENABLED=false` (private-only tier). |
+| `IPFS_PRIVATE_CLUSTER_API_URL` / `IPFS_PRIVATE_CLUSTER_TOKEN` | optional IPFS Cluster REST + auth token (secret — redacted, never logged/committed) for multi-node replication on the private swarm. |
+| `IPFS_PRIVATE_ADD_TIMEOUT` / `IPFS_PRIVATE_PIN_CONCURRENCY` | per-network worker tuning (inherit the public defaults). |
+
+There is **deliberately no `IPFS_PRIVATE_GATEWAY_URL` knob** — not having it is the
+guarantee that a private CID is never emitted with a gateway URL. Private CIDs never
+appear in any API response (`ipfs_pinned`/`ipfs{}` stay public-network-only signals);
+viewer serving of private/unlisted media is unchanged, straight from the authoritative
+local/S3 store through the authenticated app API.
+
+**Node configuration (the private Kubo).** Run it fail-closed and quiet — the
+`ipfs-private` compose profile does this for dev; production keys are operator-managed:
+
+- `LIBP2P_FORCE_PNET=1` — the daemon **refuses to boot** without a `swarm.key`
+  (fail-closed: keyless never means "fell back to the public network").
+- Default bootstrap **cleared** (`ipfs bootstrap rm --all`) — you self-manage peers;
+  `Routing.Type=none` (explicit peering only, no DHT) + `Reprovider.Interval=0`
+  (no content announcements) keep even the private swarm from advertising CIDs.
+- `Gateway.NoFetch=true`, gateway **bound internally / never host-published** — no
+  public gateway route exists for this node. If DR tooling ever needs gateway reads,
+  that is an infra decision (reverse-proxy auth) outside the app contract; the app
+  never links to it.
+
+**swarm.key custody — the operational realities (accept these before enabling):**
+
+- **Generation** (dev convenience only; prod keys are operator-made): a 32-byte
+  pre-shared key under the PNet header, e.g.
+  ```bash
+  printf '/key/swarm/psk/1.0.0/\n/base16/\n' > swarm.key
+  od -A none -t x1 -v /dev/urandom | head -c 64 | tr -d ' \n' >> swarm.key
+  printf '\n' >> swarm.key
+  ```
+  Place it at `$IPFS_PATH/swarm.key` on the node.
+- **Distribution is manual.** The **same** key must be copied to **every** node in the
+  private swarm (and every cluster peer). Peers holding different keys cannot talk.
+- **Possession = full membership.** There is **no per-node revocation** and no online
+  rotation — holding the key is complete network access, full stop. Treat it like a
+  root credential.
+- **Rotation = new key + coordinated full restart.** To rotate you generate a new key,
+  distribute it to every node, and restart them together; nodes straddling old/new keys
+  are partitioned until they all match. Plan a maintenance window. (These are
+  community-acknowledged gaps in LibP2P PNet, not a Vidra limitation —
+  [kubo experimental-features](https://github.com/ipfs/kubo/blob/master/docs/experimental-features.md),
+  [identity/revocation discussion](https://discuss.ipfs.tech/t/discussion-identity-revocation-and-node-roles-in-private-ipfs-networks/20247).)
+- **Secrets hygiene.** `swarm.key` and `IPFS_PRIVATE_CLUSTER_TOKEN` are secrets:
+  redacted in logs, **never committed** (the compose profile references a gitignored
+  key-file path; `deploy/ipfs-private/*.key`, `swarm.key`, `cluster-secret`, `*.peerid`
+  are `.gitignore`d), and distributed out-of-band.
+
+**What breaks by design (this is correct, not a bug):**
+
+- Public gateways (`ipfs.io`, `dweb.link`, …) can **never** resolve a private-swarm CID.
+- External pinning services **cannot join** — they aren't keyed into the swarm.
+- Cross-instance replication is limited to peers you explicitly key in; there is no
+  federation-wide private fetch. NAT traversal/AutoRelay behave differently on PNet —
+  irrelevant for a LAN/VPC cluster, a consideration if peers span NATed sites.
+- **Unpin behaves better than on the public network.** Inside a closed, un-announced
+  swarm there is no public DHT to have leaked the CID and no outside node that could
+  have cached it, so unpin + `ipfs repo gc` on the keyed nodes is effective removal
+  (contrast the public "unpin ≠ erasure" caveat above).
+
+**DR-restore from the private pinset.** The private pinset is re-derivable exactly like
+the public one — PostgreSQL + the authoritative blob store remain the only backup. After
+a private-node loss / fresh node / restore, re-seed and re-pin the non-public tier:
+
+```bash
+# Re-arm dead-lettered pins + seed a pin intent for every private-eligible object
+# that has no ledger row, scoped to the private swarm. Idempotent (a second run
+# enqueues zero). Admin-only, audited (admin.ipfs.reconcile).
+POST /api/v1/admin/ipfs/reconcile?network=private
+```
+
+Watch progress and node/cluster health at `GET /api/v1/ipfs/status` — the additive
+`networks.private` block reports `{enabled, node_reachable, cluster_enabled,
+cluster_reachable, pins{by state}, by_class[]}` independently of the public block.
+Omit `?network=` to reconcile both swarms; pass `network=public` for the public tier
+only.
 
 ## Restore drill
 

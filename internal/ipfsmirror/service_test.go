@@ -433,6 +433,16 @@ func (r *fakeRepo) state(key string) string {
 	return ""
 }
 
+// network reports the swarm a seeded ledger row lives on ("public"/"private"),
+// normalized so a legacy empty default reads as "public" — used by the backfill
+// network-routing tests to assert each object landed on ITS swarm.
+func (r *fakeRepo) network(key string) string {
+	if row, ok := r.rows[key]; ok {
+		return normalizeNetwork(row.Network)
+	}
+	return ""
+}
+
 // ---- fake Lookups ---------------------------------------------------------
 
 type fakeLookups struct {
