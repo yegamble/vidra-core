@@ -8571,6 +8571,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/stats:
+    get:
+      operationId: adminStats
+      summary: Instance-wide overview counts (admin)
+      description: >-
+        Returns the instance-wide overview the admin dashboard renders as cards:
+        total accounts, public+published videos, total stored media bytes,
+        distinct federated peer instances, and total local comments. Every field
+        is a live, trivially-real COUNT/SUM over a committed column. There are
+        deliberately NO period-over-period deltas — no time-series store exists to
+        compute them (a future analytics dependency). Reports only aggregate
+        counts — no secrets or PII. Restricted to admins.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The current instance-wide overview counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStats"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/system:
     get:
       operationId: systemStatus
@@ -12614,6 +12648,33 @@ components:
         deleted:
           type: integer
           description: Number of orphans actually deleted (0 on a dry run).
+    AdminStats:
+      type: object
+      description: >-
+        Instance-wide overview counts for the admin dashboard cards. Every field
+        is a live COUNT/SUM; no deltas, no secrets/PII.
+      required: [users, published_videos, media_stored_bytes, federated_peers, comments]
+      properties:
+        users:
+          type: integer
+          format: int64
+          description: Total number of accounts (active or not).
+        published_videos:
+          type: integer
+          format: int64
+          description: Public, published videos (the local-posts total NodeInfo advertises).
+        media_stored_bytes:
+          type: integer
+          format: int64
+          description: Total stored bytes of every video file across all accounts.
+        federated_peers:
+          type: integer
+          format: int64
+          description: Distinct remote instances we have cached actors from.
+        comments:
+          type: integer
+          format: int64
+          description: Total number of local comments.
     SystemStatus:
       type: object
       description: Operational snapshot for the admin dashboard. No secrets/PII.

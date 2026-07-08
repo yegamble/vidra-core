@@ -9,6 +9,21 @@ import (
 	"context"
 )
 
+const countFederatedPeers = `-- name: CountFederatedPeers :one
+SELECT count(DISTINCT domain) FROM remote_actors
+`
+
+// Distinct remote instances we have cached actors from — the "federated peers"
+// figure on the admin overview. One count per remote domain we have ever
+// fetched or interacted with (independent of block state; a blocked instance is
+// still a peer we know about).
+func (q *Queries) CountFederatedPeers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countFederatedPeers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteRemoteActor = `-- name: DeleteRemoteActor :execrows
 DELETE FROM remote_actors WHERE actor_url = $1
 `

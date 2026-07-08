@@ -128,6 +128,22 @@ func (q *Queries) ListVideoFiles(ctx context.Context, videoID uuid.UUID) ([]Vide
 	return items, nil
 }
 
+const sumAllStorageUsage = `-- name: SumAllStorageUsage :one
+SELECT COALESCE(SUM(size_bytes), 0)::bigint AS used_bytes
+FROM video_files
+`
+
+// Instance-wide media storage: the total stored bytes of every video file
+// (originals, renditions, thumbnails) across all accounts — the "media stored"
+// figure on the admin overview. The instance-wide counterpart of
+// SumUserStorageUsage; computed live over the same authoritative column.
+func (q *Queries) SumAllStorageUsage(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, sumAllStorageUsage)
+	var used_bytes int64
+	err := row.Scan(&used_bytes)
+	return used_bytes, err
+}
+
 const sumUserStorageUsage = `-- name: SumUserStorageUsage :one
 SELECT COALESCE(SUM(vf.size_bytes), 0)::bigint AS used_bytes
 FROM video_files vf

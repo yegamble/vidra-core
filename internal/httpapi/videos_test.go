@@ -833,6 +833,28 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		}
 		return sum
 	}
+	// Instance-wide overview aggregates (admin.Repository.Stats), wired to the
+	// same fakes so GET /admin/stats reflects created state. Federated peers has
+	// no fake in this harness → 0.
+	authRepo.statPublicVideos = func() int64 {
+		var n int64
+		for _, v := range repo.videos {
+			if v.Privacy == "public" && v.State == "published" {
+				n++
+			}
+		}
+		return n
+	}
+	authRepo.statAllStorage = func() int64 {
+		var sum int64
+		for _, files := range repo.files {
+			for _, vf := range files {
+				sum += vf.SizeBytes
+			}
+		}
+		return sum
+	}
+	authRepo.statComments = func() int64 { return int64(len(cmRepo.comments)) }
 	videosvc := video.NewService(repo, blobs, opts...)
 	quotasvc := quota.NewService(authRepo, cfg.InstanceDefaultQuotaBytes)
 	importMaxBytes, _ := gommonbytes.Parse(cfg.UploadMaxSize)

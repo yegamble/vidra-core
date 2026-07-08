@@ -26,12 +26,13 @@ func (s *Server) serveVideoStoryboard(c echo.Context, kind, contentType string) 
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if hidden, err := s.videoHiddenFromViewer(c, id); err != nil {
+	v, hidden, err := s.videoHiddenFromViewer(c, id)
+	if err != nil {
 		return err
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if err := s.passwordGateByID(c, id); err != nil {
+	if err := s.passwordGate(c, id, v.Privacy, v.OwnerID); err != nil {
 		return err
 	}
 	viewerID, _, authed := principalFromContext(c)

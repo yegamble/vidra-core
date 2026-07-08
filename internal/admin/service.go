@@ -42,6 +42,13 @@ type Repository interface {
 	AdminUpdateUser(ctx context.Context, arg sqlcgen.AdminUpdateUserParams) (sqlcgen.User, error)
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 	SumUserStorageUsage(ctx context.Context, ownerID uuid.UUID) (int64, error)
+	// Instance-wide aggregates for the admin overview (Stats). Each is a single
+	// trivially-real COUNT/SUM over a committed column — no time-series store.
+	CountUsers(ctx context.Context) (int64, error)
+	CountPublicVideos(ctx context.Context) (int64, error)
+	CountComments(ctx context.Context) (int64, error)
+	SumAllStorageUsage(ctx context.Context) (int64, error)
+	CountFederatedPeers(ctx context.Context) (int64, error)
 }
 
 // Service holds the admin application logic.
@@ -122,4 +129,57 @@ func (s *Service) UpdateUser(ctx context.Context, callerID, targetID uuid.UUID, 
 // aggregate the quota service enforces against), for the admin user view.
 func (s *Service) StorageUsed(ctx context.Context, userID uuid.UUID) (int64, error) {
 	return s.repo.SumUserStorageUsage(ctx, userID)
+}
+
+// Stats is the instance-wide overview the admin dashboard renders as cards.
+// Every field is a live, trivially-real aggregate over a committed column;
+// there are deliberately NO period-over-period deltas — no time-series store
+// exists to compute them (that is a W3 analytics dependency).
+type Stats struct {
+	// Users is the total number of accounts (active or not).
+	Users int64
+	// PublishedVideos is the count of public, published videos — the same total
+	// NodeInfo advertises as local posts.
+	PublishedVideos int64
+	// MediaStoredBytes is the total stored bytes of every video file across all
+	// accounts (originals, renditions, thumbnails).
+	MediaStoredBytes int64
+	// FederatedPeers is the number of distinct remote instances we have cached
+	// actors from.
+	FederatedPeers int64
+	// Comments is the total number of local comments.
+	Comments int64
+}
+
+// Stats aggregates the instance-wide admin-overview counts. Each is a single
+// COUNT/SUM; any repository error is returned so the handler fails rather than
+// serving misleading zeros.
+func (s *Service) Stats(ctx context.Context) (Stats, error) {
+	users, err := s.repo.CountUsers(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
+	videos, err := s.repo.CountPublicVideos(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
+	stored, err := s.repo.SumAllStorageUsage(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
+	peers, err := s.repo.CountFederatedPeers(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
+	comments, err := s.repo.CountComments(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
+	return Stats{
+		Users:            users,
+		PublishedVideos:  videos,
+		MediaStoredBytes: stored,
+		FederatedPeers:   peers,
+		Comments:         comments,
+	}, nil
 }

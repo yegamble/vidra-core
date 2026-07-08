@@ -347,6 +347,27 @@ func TestUnlockRateLimited(t *testing.T) {
 	}
 }
 
+// TestUnlockRateLimitedByDefault proves the unlock endpoint is throttled even
+// when NO auth limiter is configured (W1 audit): a built-in in-memory default
+// (defaultUnlockRateLimit / minute) engages so the password-guessing surface is
+// never left unthrottled on a deployment running without Redis.
+func TestUnlockRateLimitedByDefault(t *testing.T) {
+	srv, _, _, _, _ := videoServerFullWith(t, testConfig(), nil) // no auth limiter
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPasswordVideo(t, srv, tok, "ada", "Locked", "default-limited-pw")
+
+	// The first defaultUnlockRateLimit attempts are within budget (they 401 on the
+	// wrong password, not 429); the next one is denied by the built-in default.
+	for i := 1; i <= defaultUnlockRateLimit; i++ {
+		if rec := postTo(srv, "/api/v1/videos/"+id+"/unlock", `{"password":"wrong"}`); rec.Code == http.StatusTooManyRequests {
+			t.Fatalf("unlock #%d throttled too early (built-in default too tight)", i)
+		}
+	}
+	if rec := postTo(srv, "/api/v1/videos/"+id+"/unlock", `{"password":"wrong"}`); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("unlock #%d = %d, want 429 from the built-in default", defaultUnlockRateLimit+1, rec.Code)
+	}
+}
+
 // TestPlaybackTokenNeverLogged proves the ?pt= playback token is redacted from the
 // request log (it is a secret; the spec forbids logging it).
 func TestPlaybackTokenNeverLogged(t *testing.T) {

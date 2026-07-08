@@ -28,3 +28,11 @@ FROM video_files vf
 JOIN videos v ON v.id = vf.video_id
 JOIN channels c ON c.id = v.channel_id
 WHERE c.owner_id = $1;
+
+-- name: SumAllStorageUsage :one
+-- Instance-wide media storage: the total stored bytes of every video file
+-- (originals, renditions, thumbnails) across all accounts — the "media stored"
+-- figure on the admin overview. The instance-wide counterpart of
+-- SumUserStorageUsage; computed live over the same authoritative column.
+SELECT COALESCE(SUM(size_bytes), 0)::bigint AS used_bytes
+FROM video_files;

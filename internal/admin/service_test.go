@@ -16,10 +16,25 @@ type fakeRepo struct {
 	users   map[uuid.UUID]sqlcgen.User
 	used    map[uuid.UUID]int64
 	revoked map[uuid.UUID]bool
+	// Instance-wide aggregate stubs for Stats.
+	publicVideos int64
+	comments     int64
+	storedBytes  int64
+	peers        int64
 }
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{users: map[uuid.UUID]sqlcgen.User{}, used: map[uuid.UUID]int64{}, revoked: map[uuid.UUID]bool{}}
+}
+
+func (f *fakeRepo) CountUsers(_ context.Context) (int64, error) { return int64(len(f.users)), nil }
+func (f *fakeRepo) CountPublicVideos(_ context.Context) (int64, error) {
+	return f.publicVideos, nil
+}
+func (f *fakeRepo) CountComments(_ context.Context) (int64, error)      { return f.comments, nil }
+func (f *fakeRepo) SumAllStorageUsage(_ context.Context) (int64, error) { return f.storedBytes, nil }
+func (f *fakeRepo) CountFederatedPeers(_ context.Context) (int64, error) {
+	return f.peers, nil
 }
 
 func (f *fakeRepo) add(username, role string) uuid.UUID {
@@ -157,6 +172,28 @@ func TestUpdateUserStorageQuota(t *testing.T) {
 	// Changing one's OWN quota is allowed (no lockout risk).
 	if _, err := svc.UpdateUser(ctx, admin, admin, UpdateUserInput{SetStorageQuota: true, StorageQuotaBytes: int64ptr(5)}); err != nil {
 		t.Errorf("self quota change = %v, want nil", err)
+	}
+}
+
+// TestStats proves the admin overview aggregates surface each trivially-real
+// count/sum from the repository unchanged.
+func TestStats(t *testing.T) {
+	repo := newFakeRepo()
+	repo.add("ada", RoleAdmin)
+	repo.add("bob", RoleUser)
+	repo.publicVideos = 7
+	repo.storedBytes = 4096
+	repo.peers = 3
+	repo.comments = 12
+	svc := NewService(repo)
+
+	got, err := svc.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	want := Stats{Users: 2, PublishedVideos: 7, MediaStoredBytes: 4096, FederatedPeers: 3, Comments: 12}
+	if got != want {
+		t.Errorf("Stats = %+v, want %+v", got, want)
 	}
 }
 

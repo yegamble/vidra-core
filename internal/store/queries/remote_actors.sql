@@ -22,6 +22,13 @@ ON CONFLICT (actor_url) DO UPDATE SET
     followers_url      = EXCLUDED.followers_url,
     updated_at         = now();
 
+-- name: CountFederatedPeers :one
+-- Distinct remote instances we have cached actors from — the "federated peers"
+-- figure on the admin overview. One count per remote domain we have ever
+-- fetched or interacted with (independent of block state; a blocked instance is
+-- still a peer we know about).
+SELECT count(DISTINCT domain) FROM remote_actors;
+
 -- name: DeleteRemoteActor :execrows
 -- Inbound actor Delete (remote-content §7): drop the cached actor; its remote
 -- videos, remote-authored comments, and remote-channel follow edges cascade

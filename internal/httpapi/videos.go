@@ -882,12 +882,13 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if hidden, err := s.videoHiddenFromViewer(c, id); err != nil {
+	v, hidden, err := s.videoHiddenFromViewer(c, id)
+	if err != nil {
 		return err
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if err := s.passwordGateByID(c, id); err != nil {
+	if err := s.passwordGate(c, id, v.Privacy, v.OwnerID); err != nil {
 		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
@@ -905,12 +906,13 @@ func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if hidden, err := s.videoHiddenFromViewer(c, id); err != nil {
+	v, hidden, err := s.videoHiddenFromViewer(c, id)
+	if err != nil {
 		return err
 	} else if hidden {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if err := s.passwordGateByID(c, id); err != nil {
+	if err := s.passwordGate(c, id, v.Privacy, v.OwnerID); err != nil {
 		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
@@ -1063,16 +1065,19 @@ func scheduledHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
 // videoHiddenFromViewer combines the moderation visibility rules the media/
 // detail surfaces share: a blocked video is hidden (moderators excepted) and a
 // quarantined one is hidden (owner + moderators excepted). An unknown id is not
-// "hidden" — the caller's own lookup reports it as 404.
-func (s *Server) videoHiddenFromViewer(c echo.Context, videoID uuid.UUID) (bool, error) {
+// "hidden" — the caller's own lookup reports it as 404. It also returns the
+// fetched video row so the caller can apply the password gate without a second
+// GetByID; that row is the zero value when the video is block-hidden or unknown,
+// cases in which the caller returns before ever consulting it.
+func (s *Server) videoHiddenFromViewer(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, bool, error) {
 	if hidden, err := s.videoHiddenByBlock(c, videoID); err != nil || hidden {
-		return hidden, err
+		return sqlcgen.GetVideoByIDRow{}, hidden, err
 	}
 	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
 	if err != nil {
-		return false, nil
+		return sqlcgen.GetVideoByIDRow{}, false, nil
 	}
-	return quarantineHidesVideo(c, v.State, v.OwnerID), nil
+	return v, quarantineHidesVideo(c, v.State, v.OwnerID), nil
 }
 
 // videoVisibleForRead resolves a video for a read endpoint applying the SAME

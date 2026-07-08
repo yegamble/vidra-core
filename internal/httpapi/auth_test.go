@@ -45,6 +45,14 @@ type authFakeRepo struct {
 	// Nil (pure-auth harnesses) means 0; videoServerEnv wires it to sum the
 	// video fake repo's files, mirroring the real aggregate query.
 	usage func(uuid.UUID) int64
+	// Instance-wide aggregate stubs let authFakeRepo satisfy admin.Repository's
+	// overview reads (Stats). Nil means 0; videoServerFullWith wires the
+	// video/comment ones to the real fakes so the admin-stats handler reflects
+	// created state. CountUsers is real (len(users)); peers default to 0.
+	statPublicVideos func() int64
+	statAllStorage   func() int64
+	statComments     func() int64
+	statPeers        func() int64
 }
 
 func newAuthFakeRepo() *authFakeRepo {
@@ -318,6 +326,36 @@ func (f *authFakeRepo) SumUserStorageUsage(_ context.Context, ownerID uuid.UUID)
 		return 0, nil
 	}
 	return f.usage(ownerID), nil
+}
+
+// The instance-wide overview reads (admin.Repository.Stats). Each delegates to a
+// wired stub (0 when unset).
+func (f *authFakeRepo) CountPublicVideos(context.Context) (int64, error) {
+	if f.statPublicVideos == nil {
+		return 0, nil
+	}
+	return f.statPublicVideos(), nil
+}
+
+func (f *authFakeRepo) SumAllStorageUsage(context.Context) (int64, error) {
+	if f.statAllStorage == nil {
+		return 0, nil
+	}
+	return f.statAllStorage(), nil
+}
+
+func (f *authFakeRepo) CountComments(context.Context) (int64, error) {
+	if f.statComments == nil {
+		return 0, nil
+	}
+	return f.statComments(), nil
+}
+
+func (f *authFakeRepo) CountFederatedPeers(context.Context) (int64, error) {
+	if f.statPeers == nil {
+		return 0, nil
+	}
+	return f.statPeers(), nil
 }
 
 // ListUsers + AdminUpdateUser (+ SumUserStorageUsage above) let authFakeRepo

@@ -59,14 +59,20 @@ type Pinger interface {
 
 // Server holds the Echo instance and its dependencies.
 type Server struct {
-	echo              *echo.Echo
-	cfg               *config.Config
-	db                Pinger
-	rdb               Pinger
-	startedAt         time.Time
-	logger            *slog.Logger
-	limiter           *ratelimit.Limiter
-	authLimit         *ratelimit.Limiter
+	echo      *echo.Echo
+	cfg       *config.Config
+	db        Pinger
+	rdb       Pinger
+	startedAt time.Time
+	logger    *slog.Logger
+	limiter   *ratelimit.Limiter
+	authLimit *ratelimit.Limiter
+	// unlockLimit throttles POST /videos/{id}/unlock (a password-guessing
+	// surface). Derived in New(): the configured auth limiter when present
+	// (WithAuthRateLimiter), else a built-in, always-on in-memory default so the
+	// endpoint is never left unthrottled — even on a single-node deployment
+	// running without Redis. Always non-nil after New().
+	unlockLimit       *ratelimit.Limiter
 	attachmentLimit   *ratelimit.Limiter
 	authsvc           *auth.Service
 	authTTL           time.Duration
@@ -482,6 +488,15 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	for _, opt := range opts {
 		opt(s)
 	}
+	// The unlock endpoint is a password-guessing surface, so it is ALWAYS
+	// rate-limited: a configured auth limiter (shared with login) takes
+	// precedence, otherwise a built-in in-memory default engages so the endpoint
+	// is never unthrottled on a deployment without Redis (W1 audit).
+	if s.authLimit != nil {
+		s.unlockLimit = s.authLimit
+	} else {
+		s.unlockLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultUnlockRateLimit, defaultUnlockRateWindow)
+	}
 	e.HTTPErrorHandler = s.httpErrorHandler
 
 	e.Use(middleware.Recover())
@@ -814,13 +829,12 @@ func (s *Server) routes() {
 		api.PUT("/videos/:id/chapters", s.handleSetVideoChapters, s.requireAuth)
 
 		// Video passwords + unlock (CORE-17 / W1.C2). The unlock endpoint is a
-		// password-guessing surface, so it runs under the SAME strict limiter as
-		// login (optional auth: an anonymous viewer may unlock). The owner CRUD
-		// endpoints never return a plaintext or hash.
-		unlockMW := []echo.MiddlewareFunc{s.optionalAuth}
-		if s.authLimit != nil {
-			unlockMW = append(unlockMW, s.authRateLimit(s.authLimit))
-		}
+		// password-guessing surface, so it is ALWAYS rate-limited (optional auth: an
+		// anonymous viewer may unlock): the configured auth limiter when present
+		// (shared with login), else the built-in in-memory default derived in New().
+		// s.unlockLimit is always non-nil. The owner CRUD endpoints never return a
+		// plaintext or hash.
+		unlockMW := []echo.MiddlewareFunc{s.optionalAuth, s.authRateLimit(s.unlockLimit)}
 		api.POST("/videos/:id/unlock", s.handleUnlockVideo, unlockMW...)
 		api.GET("/videos/:id/passwords", s.handleListVideoPasswords, s.requireAuth)
 		api.POST("/videos/:id/passwords", s.handleAddVideoPassword, s.requireAuth)
@@ -1040,6 +1054,9 @@ func (s *Server) routes() {
 	if s.adminsvc != nil {
 		api.GET("/admin/users", s.handleListUsers, s.requireAuth, s.requireRole("admin"))
 		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole("admin"))
+		// Instance-wide overview counts for the admin dashboard cards. Read-only
+		// aggregate; admin-only (this is the vidra-user admin-overview binding).
+		api.GET("/admin/stats", s.handleAdminStats, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// Durable audit trail (admin-only), when the audit-log service is wired.

@@ -15,6 +15,17 @@ import (
 // playbackTokenTTL is the lifetime of a video unlock token (CORE-17 / W1.C2): 6h.
 const playbackTokenTTL = 6 * time.Hour
 
+// defaultUnlockRateLimit / defaultUnlockRateWindow are the built-in, always-on
+// budget for POST /videos/{id}/unlock when no auth limiter is configured (e.g. a
+// single-node deployment running without Redis). unlock is a password-guessing
+// surface, so it must never be left unthrottled; these mirror the login default
+// (10 requests / minute per client IP). A configured auth limiter
+// (WithAuthRateLimiter) overrides this.
+const (
+	defaultUnlockRateLimit  = 10
+	defaultUnlockRateWindow = time.Minute
+)
+
 // playbackTokenParam is the query-string name that carries a playback token for
 // header-less players: Safari native-HLS, progressive <video src>, and <img>
 // posters cannot set an Authorization header, so they append ?pt=<token>. This is
@@ -88,18 +99,6 @@ func (s *Server) passwordGate(c echo.Context, videoID uuid.UUID, privacy string,
 		return nil
 	}
 	return &PasswordRequiredError{}
-}
-
-// passwordGateByID is passwordGate for the media handlers that hold only the id
-// (their existing gates fetch the row separately). It fetches the video and, for
-// a password video with no valid credential, returns the 401. An unknown id is a
-// no-op here — the caller's own lookup reports it as 404.
-func (s *Server) passwordGateByID(c echo.Context, videoID uuid.UUID) error {
-	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
-	if err != nil {
-		return nil
-	}
-	return s.passwordGate(c, videoID, v.Privacy, v.OwnerID)
 }
 
 // --- unlock ---
