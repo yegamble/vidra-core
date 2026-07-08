@@ -1471,10 +1471,33 @@ re-ported.
       cascade). **Consumer:** vidra-user W2.U channel-sync UI (BLOCKED-on-backend,
       Playwright + backend-backed e2e are that slice's deliverables) — backend
       contract shipped ahead, exactly like W1/W2.C1–C3.)
-- [ ] W2.C5 [UPLOAD-04 backend share] Thumbnail frame-pick:
+- [x] W2.C5 [UPLOAD-04 backend share] Thumbnail frame-pick:
       `POST /api/v1/videos/{id}/thumbnail` JSON variant `{at_seconds}` → ffmpeg
       exact-frame extraction into the existing poster path; 409 before original
-      ready, 422 out of range; no migration.
+      ready, 422 out of range; no migration. (backport W2.C5, 2026-07-08. **No
+      migration** — reuses the deterministic `thumbnails/<id>.jpg` poster key +
+      `kind='thumbnail'` file. **Contract**: single endpoint, Content-Type
+      dispatch — `handleSetVideoThumbnail` routes `application/json {at_seconds}`
+      to `setThumbnailFromFrame`, the multipart image upload is unchanged (no new
+      route → `TestOpenAPIContract` + `openapi-verify` green); `api/openapi.yaml`
+      documents the JSON variant + 409/422/503. **Extraction**: new
+      `media.Thumbnailer.ThumbnailAt` (`ffmpeg -ss <t> -i <src> -frames:v 1 -vf
+      scale=640:-2 -q:v 3`, pure sandboxed `thumbnailAtArgs`, added to the
+      `video.Thumbnailer` interface). **Service** `video.SetThumbnailFromFrame`:
+      owner-only (non-owner/unknown → 404); requires a processed original (stored
+      original AND probed duration) else `ErrNoProcessedOriginal` → 409;
+      `at_seconds` in [0, duration) else `ErrThumbnailOutOfRange` → 422; no
+      extractor → `ErrThumbnailUnavailable` → 503; malformed/absent body → 400.
+      **ClamAV invariant preserved**: no new ingestion path — the frame is derived
+      from the already-scanned stored original, no attacker bytes enter storage.
+      **Tests (in `make ci`)**: `internal/media` `TestThumbnailAtArgs` (+ real-video
+      integration, self-skips w/o ffmpeg); `internal/video`
+      `TestSetThumbnailFromFrameStoresFrame` (capturing extractor asserts key+ts) +
+      `TestSetThumbnailFromFrameErrors` (409/422/503/404 matrix); `internal/httpapi`
+      `TestSetVideoThumbnailFromFrame{,OutOfRange,NoOriginal,Unavailable,BadBody,Authz}`.
+      **Consumer**: vidra-user W2.U frame-pick UI (BLOCKED-on-backend; Playwright +
+      backend-backed e2e are that slice's deliverables) — backend contract shipped
+      ahead, exactly like W1/W2.C1–C4.)
 
 ## Optional / Deferred / Non-Blocking (W2)
 - [ ] W2.CD1 [UPLOAD-09 · torrent half] Torrent/magnet import — DEFERRED to W6 by

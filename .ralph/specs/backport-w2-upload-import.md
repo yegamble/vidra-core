@@ -422,3 +422,53 @@ Channel auto-sync (UPLOAD-13) — adaptations from the §W2.C4 sketch:
   state/last_error, trigger sync-now) lands in the frontend wave — backend
   contract shipped ahead, consumer-shaped, exactly like W1/W2.C1–C3. Its
   Playwright + backend-backed e2e are that slice's completeness deliverables.
+
+## 12. Execution notes — W2.C5 (2026-07-08, as-built)
+Thumbnail frame-pick (UPLOAD-04 completion, backend share) — adaptations from the
+§W2.C5 sketch:
+- **NO migration** (as specified): the extracted frame reuses the existing
+  deterministic poster key (`thumbnails/<video_id>.jpg`) and the `kind='thumbnail'`
+  video_file, so exactly one poster exists and `GET /videos/{id}/thumbnail` serves
+  it unchanged.
+- **Contract — one endpoint, Content-Type dispatch** (no new route, so
+  `TestOpenAPIContract` + `openapi-verify` stay green): `POST
+  /api/v1/videos/{id}/thumbnail` now accepts, in addition to the unchanged
+  `multipart/form-data` image upload, an `application/json` body `{at_seconds}`
+  (number, fractional allowed). `handleSetVideoThumbnail` branches on a
+  `Content-Type` starting `application/json` → `setThumbnailFromFrame`; anything
+  else keeps the existing multipart path byte-for-byte (regression-covered by the
+  original `TestSetVideoThumbnail`).
+- **Server-side extraction** (settled decision: server-side frame-pick): a new
+  `media.Thumbnailer.ThumbnailAt(ctx, key, atSeconds float64)` runs
+  `ffmpeg -y -ss <t> -i <src> -frames:v 1 -vf scale=640:-2 -q:v 3 <out.jpg>` — the
+  same scale/quality as auto-generation, seeking to the caller's timestamp. Pure
+  `thumbnailAtArgs` builder is unit-tested (fixed argv; timestamp formatted with
+  the shortest exact decimal, never scientific notation; src/dst stay positional so
+  neither can inject a flag). Added to the `video.Thumbnailer` interface; both
+  in-repo fakes gained the method.
+- **Preconditions & status mapping**: `video.Service.SetThumbnailFromFrame` is
+  owner-only (non-owner → `ErrForbidden` → 404; unknown → `ErrNotFound` → 404) and
+  requires a **processed original** — BOTH a stored `kind='original'` file AND a
+  probed positive duration — else `ErrNoProcessedOriginal` → **409**. `at_seconds`
+  must lie in the half-open interval **[0, duration)** (mirrors the CORE-15 chapter
+  bound: a frame at/after the last second is out of range) else
+  `ErrThumbnailOutOfRange` → **422**. When no ffmpeg-backed extractor is wired the
+  method returns `ErrThumbnailUnavailable` → **503** (honest capability signal;
+  documented in the contract). A missing/malformed JSON body or absent `at_seconds`
+  → **400**. Does not change the video's state.
+- **ClamAV invariant (§1.1) preserved by construction**: no new ingestion path —
+  the frame is derived from the ALREADY-scanned stored original and written to the
+  poster key; no attacker bytes enter storage, no second write path into blobs.
+- **Tests (all in `make ci`)**: `internal/media` — `TestThumbnailAtArgs`
+  (sandboxed argv table) + `TestThumbnailerAtRealVideo` (integration, self-skips
+  without ffmpeg). `internal/video` — `TestSetThumbnailFromFrameStoresFrame`
+  (capturing extractor asserts the exact key + timestamp reach ffmpeg; stored bytes
+  + key verified) and `TestSetThumbnailFromFrameErrors` (at==duration, negative,
+  non-owner, unknown, no-original 409, original-without-duration 409, no-extractor
+  503). `internal/httpapi` — `TestSetVideoThumbnailFromFrame` (201 + served bytes +
+  detail flag + fractional ts), `…OutOfRange` (422), `…NoOriginal` (409),
+  `…Unavailable` (503), `…BadBody` (400), `…Authz` (401/404).
+- **Consumer**: the vidra-user W2.U frame-pick UI (scrub the player, "use this
+  frame", POST the timestamp, refetch the poster) lands in the frontend wave —
+  backend contract shipped ahead, consumer-shaped, exactly like W1/W2.C1–C4. Its
+  Playwright + backend-backed e2e are that slice's completeness deliverables.

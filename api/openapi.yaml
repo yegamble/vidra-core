@@ -2904,12 +2904,18 @@ paths:
       operationId: setVideoThumbnail
       summary: Set a video's poster image
       description: >-
-        Uploads a creator-supplied poster image (owner only) as a multipart form
-        with a single "file" part, replacing any previous or auto-generated
-        thumbnail. Accepted types are JPEG/PNG/WebP (by extension; otherwise 415);
-        the served Content-Type is derived from the extension. Does not change the
-        video's state. A non-owner or unknown id is 404. The upload is bounded by
-        the global HTTP body limit.
+        Sets a video's poster (owner only). Dispatches on Content-Type. With
+        multipart/form-data it uploads a creator-supplied image as a single "file"
+        part (accepted types JPEG/PNG/WebP by extension; otherwise 415; the served
+        Content-Type is derived from the extension). With application/json body
+        {at_seconds} it picks the poster from the exact frame at that timestamp of
+        the video's processed original, extracted server-side with ffmpeg and stored
+        as JPEG (UPLOAD-04 frame-pick). Either variant replaces any previous or
+        auto-generated thumbnail and does not change the video's state. A non-owner
+        or unknown id is 404. The multipart upload is bounded by the global HTTP
+        body limit. Frame-pick specific: 409 while the video has no processed
+        original yet, 422 when at_seconds is outside [0, duration), 503 when the
+        server has no ffmpeg-backed frame extractor configured.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -2932,6 +2938,18 @@ paths:
                   type: string
                   format: binary
                   description: The poster image (JPEG/PNG/WebP).
+          application/json:
+            schema:
+              type: object
+              required: [at_seconds]
+              properties:
+                at_seconds:
+                  type: number
+                  format: double
+                  minimum: 0
+                  description: >-
+                    The timestamp (seconds, fractional allowed) of the frame to
+                    extract from the processed original. Must be in [0, duration).
       responses:
         "201":
           description: The thumbnail was stored.
@@ -2940,7 +2958,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/VideoFile"
         "400":
-          description: The multipart "file" field is missing.
+          description: The multipart "file" field is missing, or the JSON body is malformed / missing at_seconds.
           content:
             application/json:
               schema:
@@ -2957,8 +2975,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Frame-pick requested before the video has a processed original.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "415":
           description: The file extension is not an accepted image type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: at_seconds is outside the video duration [0, duration).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Server-side frame extraction is not available (no ffmpeg-backed extractor).
           content:
             application/json:
               schema:

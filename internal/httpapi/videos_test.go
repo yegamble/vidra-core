@@ -1656,6 +1656,10 @@ func (f fakeThumbnailer) Thumbnail(_ context.Context, _ string, _ int) ([]byte, 
 	return f.jpg, f.err
 }
 
+func (f fakeThumbnailer) ThumbnailAt(_ context.Context, _ string, _ float64) ([]byte, error) {
+	return f.jpg, f.err
+}
+
 func getThumbnail(srv *Server, id, token string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/thumbnail", nil)

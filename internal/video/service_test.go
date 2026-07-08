@@ -1152,6 +1152,10 @@ func (f fakeThumbnailer) Thumbnail(_ context.Context, _ string, _ int) ([]byte, 
 	return f.jpg, f.err
 }
 
+func (f fakeThumbnailer) ThumbnailAt(_ context.Context, _ string, _ float64) ([]byte, error) {
+	return f.jpg, f.err
+}
+
 func TestProcessStoresThumbnail(t *testing.T) {
 	repo := newFakeRepo(uuid.New())
 	blobs, err := storage.NewLocal(t.TempDir())
@@ -1220,6 +1224,168 @@ func TestProcessFailedProbeSkipsThumbnail(t *testing.T) {
 	if svc.HasThumbnail(ctx, v.ID) {
 		t.Error("thumbnail generated for a failed video")
 	}
+}
+
+// capturingThumbnailer records the ThumbnailAt arguments so the frame-pick tests
+// can assert the exact source key and timestamp reach the extractor.
+type capturingThumbnailer struct {
+	jpg    []byte
+	err    error
+	gotKey string
+	gotAt  float64
+	atHits int
+}
+
+func (c *capturingThumbnailer) Thumbnail(_ context.Context, _ string, _ int) ([]byte, error) {
+	return c.jpg, c.err
+}
+
+func (c *capturingThumbnailer) ThumbnailAt(_ context.Context, key string, at float64) ([]byte, error) {
+	c.gotKey, c.gotAt, c.atHits = key, at, c.atHits+1
+	return c.jpg, c.err
+}
+
+// processedVideo creates a draft, attaches an original, and probes it to a known
+// duration so it has a processed original a frame-pick can target. Returns the
+// video id and the original's storage key.
+func processedVideo(t *testing.T, svc *Service, owner uuid.UUID, durationSeconds int) (uuid.UUID, string) {
+	t.Helper()
+	ctx := context.Background()
+	v, err := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+	if err != nil {
+		t.Fatalf("CreateDraft: %v", err)
+	}
+	_, file, err := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{
+		Filename: "clip.mp4", ContentType: "video/mp4", Reader: strings.NewReader("fake original bytes"),
+	})
+	if err != nil {
+		t.Fatalf("AttachOriginal: %v", err)
+	}
+	if _, err := svc.Process(ctx, v.ID, file.StorageKey); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	return v.ID, file.StorageKey
+}
+
+func TestSetThumbnailFromFrameStoresFrame(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	frame := []byte("\xff\xd8\xff\xe0framejpeg")
+	cap := &capturingThumbnailer{jpg: frame}
+	svc := NewService(repo, blobs,
+		WithProber(fakeProber{md: media.Metadata{DurationSeconds: 10, Width: 320, Height: 240}}),
+		WithThumbnailer(cap),
+	)
+	ctx := context.Background()
+	id, origKey := processedVideo(t, svc, owner, 10)
+
+	f, err := svc.SetThumbnailFromFrame(ctx, owner, id, 5.5)
+	if err != nil {
+		t.Fatalf("SetThumbnailFromFrame: %v", err)
+	}
+	// The exact timestamp and the original's key reached the extractor.
+	if cap.atHits != 1 || cap.gotAt != 5.5 || cap.gotKey != origKey {
+		t.Errorf("extractor call = {hits:%d at:%v key:%q}, want {1 5.5 %q}", cap.atHits, cap.gotAt, cap.gotKey, origKey)
+	}
+	// Stored at the deterministic poster key as JPEG.
+	if f.Kind != "thumbnail" || f.ContentType != "image/jpeg" || f.StorageKey != "thumbnails/"+id.String()+".jpg" {
+		t.Errorf("stored file = %+v, want kind=thumbnail image/jpeg at thumbnails/%s.jpg", f, id)
+	}
+	if !svc.HasThumbnail(ctx, id) {
+		t.Error("HasThumbnail = false after frame-pick")
+	}
+	rc, err := blobs.Open(ctx, f.StorageKey)
+	if err != nil {
+		t.Fatalf("open stored frame: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, _ := io.ReadAll(rc)
+	if string(got) != string(frame) {
+		t.Errorf("stored frame bytes = %q, want %q", got, frame)
+	}
+}
+
+func TestSetThumbnailFromFrameErrors(t *testing.T) {
+	owner := uuid.New()
+
+	// Service with a wired extractor and a 10s-duration prober.
+	newSvc := func(t *testing.T) (*Service, uuid.UUID) {
+		t.Helper()
+		repo := newFakeRepo(owner)
+		blobs, err := storage.NewLocal(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewLocal: %v", err)
+		}
+		svc := NewService(repo, blobs,
+			WithProber(fakeProber{md: media.Metadata{DurationSeconds: 10}}),
+			WithThumbnailer(&capturingThumbnailer{jpg: []byte("\xff\xd8jpg")}),
+		)
+		id, _ := processedVideo(t, svc, owner, 10)
+		return svc, id
+	}
+	ctx := context.Background()
+
+	t.Run("at duration is out of range", func(t *testing.T) {
+		svc, id := newSvc(t)
+		if _, err := svc.SetThumbnailFromFrame(ctx, owner, id, 10); !errors.Is(err, ErrThumbnailOutOfRange) {
+			t.Fatalf("at==duration err = %v, want ErrThumbnailOutOfRange", err)
+		}
+	})
+	t.Run("negative is out of range", func(t *testing.T) {
+		svc, id := newSvc(t)
+		if _, err := svc.SetThumbnailFromFrame(ctx, owner, id, -0.5); !errors.Is(err, ErrThumbnailOutOfRange) {
+			t.Fatalf("at<0 err = %v, want ErrThumbnailOutOfRange", err)
+		}
+	})
+	t.Run("non-owner is forbidden", func(t *testing.T) {
+		svc, id := newSvc(t)
+		if _, err := svc.SetThumbnailFromFrame(ctx, uuid.New(), id, 5); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("non-owner err = %v, want ErrForbidden", err)
+		}
+	})
+	t.Run("unknown video is not found", func(t *testing.T) {
+		svc, _ := newSvc(t)
+		if _, err := svc.SetThumbnailFromFrame(ctx, owner, uuid.New(), 5); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("unknown err = %v, want ErrNotFound", err)
+		}
+	})
+	t.Run("no original is a conflict", func(t *testing.T) {
+		repo := newFakeRepo(owner)
+		blobs, _ := storage.NewLocal(t.TempDir())
+		svc := NewService(repo, blobs, WithThumbnailer(&capturingThumbnailer{jpg: []byte("j")}))
+		v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+		if _, err := svc.SetThumbnailFromFrame(ctx, owner, v.ID, 1); !errors.Is(err, ErrNoProcessedOriginal) {
+			t.Fatalf("no-original err = %v, want ErrNoProcessedOriginal", err)
+		}
+	})
+	t.Run("original without probed duration is a conflict", func(t *testing.T) {
+		// No prober -> Process publishes without recording metadata/duration.
+		repo := newFakeRepo(owner)
+		blobs, _ := storage.NewLocal(t.TempDir())
+		svc := NewService(repo, blobs, WithThumbnailer(&capturingThumbnailer{jpg: []byte("j")}))
+		v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+		_, file, _ := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{Filename: "c.mp4", ContentType: "video/mp4", Reader: strings.NewReader("x")})
+		if _, err := svc.Process(ctx, v.ID, file.StorageKey); err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if _, err := svc.SetThumbnailFromFrame(ctx, owner, v.ID, 1); !errors.Is(err, ErrNoProcessedOriginal) {
+			t.Fatalf("no-duration err = %v, want ErrNoProcessedOriginal", err)
+		}
+	})
+	t.Run("no extractor is unavailable", func(t *testing.T) {
+		// No thumbnailer wired: frame extraction is impossible regardless of state.
+		repo := newFakeRepo(owner)
+		blobs, _ := storage.NewLocal(t.TempDir())
+		svc := NewService(repo, blobs, WithProber(fakeProber{md: media.Metadata{DurationSeconds: 10}}))
+		v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
+		if _, err := svc.SetThumbnailFromFrame(ctx, owner, v.ID, 5); !errors.Is(err, ErrThumbnailUnavailable) {
+			t.Fatalf("no-extractor err = %v, want ErrThumbnailUnavailable", err)
+		}
+	})
 }
 
 type fakeDeduper struct{ seen map[string]bool }

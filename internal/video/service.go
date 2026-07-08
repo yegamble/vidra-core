@@ -57,6 +57,16 @@ var (
 	// ErrPasswordNotFound means the referenced password id does not belong to the
 	// video. The HTTP layer maps it to 404.
 	ErrPasswordNotFound = errors.New("video: password not found")
+	// ErrThumbnailUnavailable means server-side frame extraction is not available
+	// (no ffmpeg-backed thumbnailer wired). The HTTP layer maps it to 503 (W2.C5).
+	ErrThumbnailUnavailable = errors.New("video: thumbnail frame extraction unavailable")
+	// ErrNoProcessedOriginal means a frame-pick was requested before the video has
+	// a processed original — no stored original, or no probed duration yet. The
+	// HTTP layer maps it to 409 (W2.C5).
+	ErrNoProcessedOriginal = errors.New("video: no processed original")
+	// ErrThumbnailOutOfRange means the requested frame timestamp is outside the
+	// half-open interval [0, duration). The HTTP layer maps it to 422 (W2.C5).
+	ErrThumbnailOutOfRange = errors.New("video: thumbnail timestamp out of range")
 )
 
 // PasswordValidationError is a 400-class failure validating a video-password
@@ -185,6 +195,10 @@ type Auditor interface {
 // poster.
 type Thumbnailer interface {
 	Thumbnail(ctx context.Context, storageKey string, durationSeconds int) ([]byte, error)
+	// ThumbnailAt extracts the exact frame at atSeconds (fractional seconds) from
+	// the media at storageKey as JPEG bytes. It backs the frame-pick poster path
+	// (UPLOAD-04 / W2.C5); the caller bounds atSeconds against the media duration.
+	ThumbnailAt(ctx context.Context, storageKey string, atSeconds float64) ([]byte, error)
 }
 
 // Storyboarder produces a seek-preview sprite sheet (JPEG bytes) plus its WebVTT
@@ -960,6 +974,74 @@ func (s *Service) SetThumbnail(ctx context.Context, ownerID, videoID uuid.UUID, 
 		ContentType:  contentType,
 		OriginalName: strings.TrimSpace(in.Filename),
 		SizeBytes:    size,
+	})
+}
+
+// SetThumbnailFromFrame extracts the exact frame at atSeconds from the video's
+// processed original and stores it as the poster, replacing any previous (uploaded
+// or auto-generated) thumbnail (UPLOAD-04 / W2.C5). Owner-only (non-owner →
+// ErrForbidden, unknown id → ErrNotFound). It requires a processed original — a
+// stored original AND a probed positive duration — else ErrNoProcessedOriginal
+// (409). atSeconds must lie in the half-open interval [0, duration) else
+// ErrThumbnailOutOfRange (422). Frame extraction needs an ffmpeg-backed
+// thumbnailer; without one it returns ErrThumbnailUnavailable (503). The frame is
+// stored at the deterministic thumbnail key so exactly one poster exists and GET
+// /thumbnail serves it. Unlike SetThumbnail, it does not change the video's state.
+func (s *Service) SetThumbnailFromFrame(ctx context.Context, ownerID, videoID uuid.UUID, atSeconds float64) (sqlcgen.VideoFile, error) {
+	if s.blobs == nil {
+		return sqlcgen.VideoFile{}, ErrStorageUnavailable
+	}
+	if s.thumbnailer == nil {
+		return sqlcgen.VideoFile{}, ErrThumbnailUnavailable
+	}
+	v, err := s.GetByID(ctx, videoID)
+	if err != nil {
+		return sqlcgen.VideoFile{}, err
+	}
+	if v.OwnerID != ownerID {
+		return sqlcgen.VideoFile{}, ErrForbidden
+	}
+	// A frame-pick needs a processed original: the stored source to extract from
+	// and a probed duration to bound the timestamp. Either missing → 409.
+	orig, err := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "original"})
+	if err != nil {
+		return sqlcgen.VideoFile{}, ErrNoProcessedOriginal
+	}
+	md, ok, err := s.GetMetadata(ctx, videoID)
+	if err != nil {
+		return sqlcgen.VideoFile{}, err
+	}
+	if !ok || md.DurationSeconds == nil || *md.DurationSeconds <= 0 {
+		return sqlcgen.VideoFile{}, ErrNoProcessedOriginal
+	}
+	if atSeconds < 0 || atSeconds >= float64(*md.DurationSeconds) {
+		return sqlcgen.VideoFile{}, ErrThumbnailOutOfRange
+	}
+
+	jpg, err := s.thumbnailer.ThumbnailAt(ctx, orig.StorageKey, atSeconds)
+	if err != nil {
+		return sqlcgen.VideoFile{}, err
+	}
+	if len(jpg) == 0 {
+		return sqlcgen.VideoFile{}, errors.New("video: frame extraction produced no image")
+	}
+	key := thumbnailKey(videoID)
+	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
+		VideoID: videoID,
+		Kind:    "thumbnail",
+	}); err != nil {
+		return sqlcgen.VideoFile{}, err
+	}
+	if _, err := s.blobs.Put(ctx, key, bytes.NewReader(jpg)); err != nil {
+		return sqlcgen.VideoFile{}, err
+	}
+	return s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+		VideoID:      videoID,
+		Kind:         "thumbnail",
+		StorageKey:   key,
+		ContentType:  "image/jpeg",
+		OriginalName: "frame.jpg",
+		SizeBytes:    int64(len(jpg)),
 	})
 }
 

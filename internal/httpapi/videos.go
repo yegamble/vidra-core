@@ -838,10 +838,20 @@ func (s *Server) handleUploadVideoFile(c echo.Context) error {
 	})
 }
 
-// handleSetVideoThumbnail stores a creator-supplied poster image (multipart form
-// field "file") for a video owned by the caller, replacing any previous or
-// auto-generated thumbnail. Behind requireAuth; non-owner/unknown → 404; a
-// non-image extension → 415. The 8M global body limit bounds the upload.
+// thumbnailFrameRequest is the application/json variant of POST
+// /videos/{id}/thumbnail (UPLOAD-04 / W2.C5): pick the poster from an exact frame
+// of the processed original. The multipart image-upload variant is unchanged.
+// at_seconds is a pointer so a missing field is distinguishable from 0.
+type thumbnailFrameRequest struct {
+	AtSeconds *float64 `json:"at_seconds"`
+}
+
+// handleSetVideoThumbnail sets a video's poster (owner only, behind requireAuth;
+// non-owner/unknown → 404). It dispatches on Content-Type: an application/json
+// body {at_seconds} extracts that exact frame from the processed original
+// server-side (frame-pick); otherwise a multipart form field "file" stores a
+// creator-supplied image, replacing any previous or auto-generated thumbnail (a
+// non-image extension → 415). The 8M global body limit bounds the upload.
 func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
@@ -850,6 +860,10 @@ func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	ct := strings.ToLower(strings.TrimSpace(c.Request().Header.Get(echo.HeaderContentType)))
+	if strings.HasPrefix(ct, echo.MIMEApplicationJSON) {
+		return s.setThumbnailFromFrame(c, userID, id)
 	}
 	fh, err := c.FormFile("file")
 	if err != nil {
@@ -866,6 +880,26 @@ func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
 		ContentType: fh.Header.Get("Content-Type"),
 		Reader:      f,
 	})
+	if err != nil {
+		return videoError(err)
+	}
+	return c.JSON(http.StatusCreated, newVideoFileView(file))
+}
+
+// setThumbnailFromFrame handles the application/json variant of the thumbnail POST
+// (W2.C5): it extracts the frame at at_seconds from the video's processed original
+// and stores it as the poster. A missing/malformed body → 400; not owner/unknown
+// → 404; no processed original yet → 409; at_seconds outside [0, duration) → 422;
+// no server-side frame extractor → 503.
+func (s *Server) setThumbnailFromFrame(c echo.Context, userID, id uuid.UUID) error {
+	var in thumbnailFrameRequest
+	if err := c.Bind(&in); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid request body")
+	}
+	if in.AtSeconds == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, `"at_seconds" is required`)
+	}
+	file, err := s.videosvc.SetThumbnailFromFrame(c.Request().Context(), userID, id, *in.AtSeconds)
 	if err != nil {
 		return videoError(err)
 	}
@@ -1260,6 +1294,12 @@ func videoError(err error) error {
 		return echo.NewHTTPError(http.StatusConflict, "cannot remove the last password of a password-protected video")
 	case errors.Is(err, video.ErrPasswordNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "password not found")
+	case errors.Is(err, video.ErrNoProcessedOriginal):
+		return echo.NewHTTPError(http.StatusConflict, "the video has no processed original yet")
+	case errors.Is(err, video.ErrThumbnailOutOfRange):
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, "at_seconds is outside the video duration")
+	case errors.Is(err, video.ErrThumbnailUnavailable):
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "server-side frame extraction is not available")
 	default:
 		return err
 	}
