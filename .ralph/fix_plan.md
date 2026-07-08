@@ -1203,6 +1203,125 @@ merge an endpoint here without that consumer wired in the same wave.
 
 ---
 
+# W2 — Upload & import (Backport Programme)
+
+Spec: `.ralph/specs/backport-w2-upload-import.md` — read it fully before touching
+any of these; it fixes the exact endpoint paths, field names, enums, error codes,
+resolver/stage semantics, the yt-dlp sandboxing stance (§5), the torrent deferral
+(§6), and the migration sketches (0079–0081; renumber to the next free number at
+execution time — `0079` is free today). Programme rules:
+`../.ralph/specs/backport/PROGRAM.md` §1 (contracts/ideas, not code) and §4
+(completeness contract). Suggested order: W2.C0 → C2 → C5 → C3 → C1 → C4 (C1 is the
+long pole; C4 depends on C1). The paired UI consumer lands in `vidra-user` (its W2
+tasks, BLOCKED-on-backend like W1) — never merge an endpoint here without that
+consumer wired in the same wave.
+
+Completeness contract (PROGRAM.md §4) binds every box below: vertical slice only;
+`api/openapi.yaml` updated in the same slice (drift guard + `openapi` workflow
+green); a box flips only with (a) unit/service tests, (b) a Playwright e2e on the
+consuming vidra-user slice, (c) for data-mutating flows a backend-backed e2e
+proving the DB row changed AND the UI shows it after refetch; `make ci` green
+locally AND on branch CI. ClamAV invariant: every new ingestion path lands bytes
+exclusively via `video.AttachOriginal` → `video.Process` (scan hook) — nothing is
+servable/linkable before the scan completes; UPLOAD-12 is SHIPPED and must not be
+re-ported.
+
+- [x] W2.C0 [UPLOAD-07 + UPLOAD-12 close-out] Opening slice: copy the wave spec to
+      `.ralph/specs/backport-w2-upload-import.md`; verify + record CLOSED the
+      already-shipped scheduled publication (migration 0045, `publish_at` sweep,
+      `e2e/studio-schedule.spec.ts`) and ClamAV scanning (fail-closed Scanner seam,
+      EICAR integration proof in the `backend-integration` lane). Bookkeeping +
+      evidence only, no product code. (2026-07-08, bookkeeping / no-product-code.
+      **Spec landed** at `.ralph/specs/backport-w2-upload-import.md` (header adapted
+      to the repo convention like W1; §5 yt-dlp subprocess-sandboxing + residual-risk
+      stance and §6 torrent minimum-bar/deferral note carried verbatim). **Next free
+      migration re-verified = `0079`** — last on disk is
+      `0078_media_ipfs_pins_target_network`, so the spec's 0079/0080/0081 sketches
+      hold as written.
+      **UPLOAD-07 scheduled publication — CLOSED, no port:** migration
+      `0045_videos_publish_at.{up,down}.sql` adds `videos.publish_at`, extends
+      `videos_state_check` with `'scheduled'`, and the partial index
+      `videos_due_publish_idx … WHERE state='scheduled'`. `internal/video/service.go`
+      Process parks a future-`publish_at` processed video in `scheduled` (no hooks
+      fire yet); `PublishDue(ctx, limit)` runs each due video through the SAME
+      `publish()` transition (federation-announce + transcode-enqueue hooks), so a
+      scheduled release is byte-identical to a direct publish; the studio channel
+      list badges scheduled rows, and every public surface filters
+      `state='published'` so scheduled videos never leak to feed/search. Background
+      sweeper wired in `cmd/api/main.go` (ticker → `PublishDue`). Tests:
+      `internal/video/schedule_test.go` (not-yet-due leave-alone +
+      `TestPublishDueRunsThePublishTransition`), `internal/httpapi/videos_schedule_test.go`,
+      plus `internal/httpapi/videos_test.go` coverage; `api/openapi.yaml` carries
+      `publish_at` on create/update/detail; vidra-user `e2e/studio-schedule.spec.ts`
+      present (consumer e2e).
+      **UPLOAD-12 ClamAV — CLOSED, integration-only (DO NOT RE-PORT):** the §1.1
+      integration-not-reimplementation invariant is recorded in the spec copy.
+      `internal/media/clamav.go` (INSTREAM); `Scanner` seam +
+      `WithScanner`/`WithScanMode` in `internal/video/service.go`; the scan runs
+      INSIDE `Process` BEFORE `publish()` — infected media ALWAYS → `failed`; a scan
+      ERROR resolves by `MALWARE_SCAN_MODE` (default `fail-closed` → `failed`;
+      `quarantine` → `quarantined`, migration `0048_video_quarantine`; `fail-open` →
+      publish + loud log, never silent). Config default `fail-closed`
+      (`internal/config/config.go:488`, validated at boot). ALL ingestion paths land
+      bytes exclusively via `AttachOriginal → Process` (direct upload `videos.go`,
+      resumable-complete `uploads.go`, URL import `videoimport/service.go`) so the
+      scan hook fires before anything is servable/linkable — the invariant every W2
+      ingestion slice must preserve. Compose `scan` profile pins `clamav/clamav:1.4`
+      (`MALWARE_SCAN_ENABLED`/`CLAMAV_ADDR`/`MALWARE_SCAN_MODE`). EICAR integration
+      proof still runs in the `backend-integration` lane:
+      `internal/media/clamav_integration_test.go` (`//go:build integration`,
+      `TestClamAVRealDetectsEICAR` + `…PassesBenign`) and
+      `internal/messaging/eicar_integration_test.go`; `.github/workflows/backend-integration.yml`
+      stands up a real `clamav/clamav:1.4` service and sets
+      `CLAMAV_TEST_ADDR=localhost:3310` so `make test-integration`
+      (`go test -tags=integration -race ./...`) executes them and fails loudly on a
+      regression (each self-skips locally when the addr is unset). The
+      EICAR-through-*import* proof (new yt-dlp path) is a W2.C1 deliverable, not C0.
+      No product code in this slice (only `.ralph/` docs); `make ci` green — no
+      Go/openapi/sqlc surface touched.)
+- [ ] W2.C1 [UPLOAD-09 · marquee] yt-dlp platform-URL import: `resolver`
+      (`auto|direct|ytdlp`) + `stage` on `POST/GET /api/v1/videos/{id}/import`;
+      migration `0079_import_jobs_resolver` (next free number at execution time);
+      `internal/ytdlp` sandboxed runner (fixed argv, `--ignore-config`,
+      `--no-playlist`, `--max-filesize`, private tmp workdir, hard timeout, no
+      shell, no `--exec`, no runtime self-update); metadata phase prefills the
+      draft; download lands via AttachOriginal → Process (scan hook); config
+      `YTDLP_IMPORT_ENABLED=false` default, `YTDLP_PATH`, `YTDLP_TIMEOUT`,
+      `YTDLP_PROXY`, `YTDLP_MAX_HEIGHT`; urlsafety pre-validation before the
+      subprocess; EICAR-through-import integration proof (never `published`);
+      compose comment documenting the egress-proxy pairing.
+- [ ] W2.C2 [UPLOAD-02/03] Server-side draft recovery: optional `file_fingerprint`
+      on session create; `GET /api/v1/me/uploads` (active sessions + received
+      chunk counts, `?fingerprint=` filter); migration
+      `0080_upload_session_fingerprint` with the partial active index; owner-only
+      handler table tests.
+- [ ] W2.C3 [UPLOAD-10] Batch guard: `UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER`
+      (default 5) enforced at `createUploadSession` with a stable error code the
+      UI queues on; contract documents the limit; NO new tables and NO
+      `/uploads/batch` surface (backup shape rejected).
+- [ ] W2.C4 [UPLOAD-13] Channel auto-sync (depends on W2.C1):
+      `POST/GET /api/v1/channel-syncs`, `DELETE /api/v1/channel-syncs/{id}`,
+      `POST /api/v1/channel-syncs/{id}/sync-now`; migration `0081_channel_syncs`
+      (+ `channel_sync_seen` dedupe ledger); periodic worker lists via sandboxed
+      `yt-dlp -J --flat-playlist`, creates drafts + enqueues `ytdlp` import jobs
+      (scan hook by construction); config `CHANNEL_SYNC_ENABLED=false` default,
+      `CHANNEL_SYNC_INTERVAL=1h`, `CHANNEL_SYNC_MAX_PER_USER=5`,
+      `CHANNEL_SYNC_BATCH=15`; safe last_error; per-user cap tests.
+- [ ] W2.C5 [UPLOAD-04 backend share] Thumbnail frame-pick:
+      `POST /api/v1/videos/{id}/thumbnail` JSON variant `{at_seconds}` → ffmpeg
+      exact-frame extraction into the existing poster path; 409 before original
+      ready, 422 out of range; no migration.
+
+## Optional / Deferred / Non-Blocking (W2)
+- [ ] W2.CD1 [UPLOAD-09 · torrent half] Torrent/magnet import — DEFERRED to W6 by
+      security stance (unguardable swarm traffic, seed-before-scan conflict with
+      the ClamAV invariant, resource-abuse surface; see spec §6). Revisit with the
+      W6 WebTorrent security review. Import contract stays URL-only until decided.
+      Minimum bar if ever wired: magnet-only, no seeding, private-IP peer filter,
+      per-job disk cap, admin-only flag (spec §6).
+
+---
+
 # Optional / Deferred / Non-Blocking
 
 These items do not block Ralph exit if configured as optional in `.ralphrc` and explicitly kept in this section.
