@@ -1567,6 +1567,23 @@ These items do not block Ralph exit if configured as optional in `.ralphrc` and 
 
 ---
 
+# frontend-e2e-backed CI: no backend change required (2026-07-08)
+
+The chronically-red `frontend-e2e-backed` job (it stands up this backend's compose `core`
+stack and drives the vidra-user UI against it) was investigated end to end. **Every failure
+was a stale frontend backed spec** asserting a pre-redesign UI surface that the vidra-user
+W0/DR waves legitimately changed — **the vidra-core API contract was correct throughout, so
+no backend change was made here.** The fixes landed entirely in `vidra-user/e2e-backed/*`
+(playlists/library nav, admin-console `Instance` link, donation `Support` dialog, segmented
+MFA OTP input, admin-users master→detail + SegmentedControl, notifications bell popover,
+messaging split-pane `role=log` scoping, settings `Sign out` exact match). The full backed
+suite now passes against a fresh `core` stack (88 passed / 0 failed, including a CI-parity
+`retries=2` run). Recorded here for provenance so a future loop does not go hunting for a
+backend defect that never existed. NOTE: two backed specs unrelated to this work
+(`instance-mutes`, `upload-cancel`) show a pre-existing load-timing flake under the strict
+local profile (retries=0); they pass under the CI profile (retries=2) — a separate,
+non-blocking follow-up if it ever surfaces remotely.
+
 # Notes for Ralph
 
 - Prefer backend contracts before frontend assumptions.
