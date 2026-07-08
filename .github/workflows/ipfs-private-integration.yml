@@ -1,0 +1,103 @@
+name: ipfs-private-integration
+
+# Optional, NON-GATING job: runs the PRIVATE-swarm integration tests
+# (`-tags=ipfs_private_integration`) against a real swarm.key'd Kubo pair brought up by
+# the compose `ipfs-private-cluster` profile. These prove the network-level isolation
+# the private tier depends on — a keyed pair replicates intra-swarm, an OUTSIDE keyless
+# node cannot fetch a private CID, a keyless `LIBP2P_FORCE_PNET=1` daemon refuses to
+# start, and (when the cluster leg is up) a cluster pin reaches PINNED on every peer.
+#
+# Kept SEPARATE from backend-ci.yml on purpose: the canonical `make ci` gate must stay
+# fast and runnable WITHOUT any Kubo node. Each test self-skips when its env is unset,
+# so this job never fails the canonical pipeline and is safe to run locally too
+# (`make test-ipfs-private-integration`).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ipfs-private-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      # A host-side kubo binary drives the fail-closed boot proof
+      # (TestKeylessDaemonRefusesToStart) — it inits a throwaway repo and asserts the
+      # daemon refuses to start under LIBP2P_FORCE_PNET=1 with no swarm.key.
+      - name: Install kubo binary (matches the compose image)
+        run: |
+          set -eux
+          ver=v0.32.1
+          curl -fsSL "https://dist.ipfs.tech/kubo/${ver}/kubo_${ver}_linux-amd64.tar.gz" -o /tmp/kubo.tgz
+          tar -C /tmp -xzf /tmp/kubo.tgz
+          sudo install /tmp/kubo/ipfs /usr/local/bin/ipfs
+          ipfs --version
+
+      # Bring up the private swarm.key'd pair + a cluster peer, plus the public `ipfs`
+      # node which — having NO swarm.key — is the OUTSIDE node for the isolation proof.
+      # A tiny override publishes kubo-private-2's RPC so the host-run tests can drive B.
+      - name: Bring up the private swarm (compose ipfs-private-cluster profile)
+        run: |
+          set -eux
+          cat > docker-compose.ci-private.yml <<'YAML'
+          services:
+            kubo-private-2:
+              ports:
+                - "5003:5001"
+          YAML
+          docker compose \
+            -f docker-compose.yml -f docker-compose.ci-private.yml \
+            --profile ipfs-private-cluster --profile ipfs \
+            up -d kubo-private kubo-private-2 ipfs-cluster-private ipfs
+
+      - name: Wait for the private nodes to be healthy
+        run: |
+          set -eux
+          for svc in kubo-private kubo-private-2 ipfs; do
+            for i in $(seq 1 30); do
+              cid=$(docker compose -f docker-compose.yml -f docker-compose.ci-private.yml ps -q "$svc")
+              status=$(docker inspect -f '{{ .State.Health.Status }}' "$cid" 2>/dev/null || echo starting)
+              [ "$status" = "healthy" ] && break
+              sleep 3
+            done
+          done
+          docker compose -f docker-compose.yml -f docker-compose.ci-private.yml ps
+
+      - name: Discover the private peers' swarm multiaddrs
+        id: peers
+        run: |
+          set -eux
+          bid=$(docker compose -f docker-compose.yml -f docker-compose.ci-private.yml exec -T kubo-private-2 ipfs config Identity.PeerID)
+          aid=$(docker compose -f docker-compose.yml -f docker-compose.ci-private.yml exec -T kubo-private ipfs config Identity.PeerID)
+          echo "peer_b=/dns4/kubo-private-2/tcp/4001/p2p/${bid}" >> "$GITHUB_OUTPUT"
+          echo "peer_a=/dns4/kubo-private/tcp/4001/p2p/${aid}" >> "$GITHUB_OUTPUT"
+
+      - name: Run private-swarm integration tests
+        env:
+          # Node A (private) via its host-published RPC; B via the override port above.
+          IPFS_PRIVATE_TEST_API_A: http://localhost:5002
+          IPFS_PRIVATE_TEST_API_B: http://localhost:5003
+          # A dials B (and vice versa) over the compose network by dns name.
+          IPFS_PRIVATE_TEST_PEER_B: ${{ steps.peers.outputs.peer_b }}
+          IPFS_PRIVATE_TEST_PEER_A: ${{ steps.peers.outputs.peer_a }}
+          # The keyless public node is the OUTSIDE node for the isolation proof.
+          IPFS_PRIVATE_TEST_API_OUTSIDE: http://localhost:5001
+          # Fail-closed boot proof against the host kubo binary.
+          IPFS_PRIVATE_TEST_KUBO_BIN: /usr/local/bin/ipfs
+          # Optional cluster leg.
+          IPFS_PRIVATE_TEST_CLUSTER_API: http://localhost:9094
+        run: make test-ipfs-private-integration
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci-private.yml --profile ipfs-private-cluster --profile ipfs down -v

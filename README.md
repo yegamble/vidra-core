@@ -569,6 +569,31 @@ opt-in, never a default. An optional **IPFS Cluster** (`IPFS_CLUSTER_API_URL`,
 CI job — the canonical `make ci` gate stays green nodeless. See
 `.ralph/specs/ipfs-media.md` and fix_plan P19.
 
+**Private IPFS tier (fix_plan P19.P, `.ralph/specs/ipfs-media-private.md`).** Non-public
+media (private/unlisted videos + derivatives, unlisted/deactivated-owner avatars &
+banners, non-public playlist covers) is replicated to a **second, fully separate
+`swarm.key`'d Kubo node** — never the public node (dual-homing is a hard config error).
+The design is **replication, not distribution**: private CIDs never appear in any API
+response, there is deliberately **no** `IPFS_PRIVATE_GATEWAY_URL` knob, and viewer
+serving stays on the authenticated app API. The failure mode is always "private content
+unreachable", never "private content public" — `LIBP2P_FORCE_PNET=1` makes the private
+daemon **refuse to boot** without a key. Enable with `IPFS_MIRROR_PRIVATE=true` +
+`IPFS_PRIVATE_API_URL` (may run standalone with `IPFS_ENABLED=false`). For local dev the
+compose **`ipfs-private`** profile runs the private node
+(`docker compose --profile core --profile ipfs-private up`; RPC on host `:5002`, gateway
+NOT published; the init script auto-generates a **dev-only** `swarm.key`, clears
+bootstrap, and sets `Routing.Type=none` / `Reprovider.Interval=0` / `Gateway.NoFetch=true`).
+The optional **`ipfs-private-cluster`** profile adds a second keyed node + an IPFS Cluster
+peer (`IPFS_PRIVATE_CLUSTER_API_URL`, `IPFS_PRIVATE_CLUSTER_SECRET` — both secrets) for
+replication testing. **`swarm.key` custody:** possession == full network membership; there
+is no per-node revocation and rotation means a new key + a coordinated restart of every
+node. In production you generate the key once, distribute the same file to every node,
+mount it read-only, and **never commit it** (`.gitignore` guards `deploy/ipfs-private/*.key`).
+Isolation/fail-closed proofs (keyed pair replicates; an outside node cannot fetch; a
+keyless `LIBP2P_FORCE_PNET=1` daemon refuses to start) live behind the
+`ipfs_private_integration` build tag (`make test-ipfs-private-integration`; self-skips
+without nodes) — `make ci` stays green nodeless.
+
 ## Observability
 
 Structured logging is always on (`slog`; `LOG_LEVEL`, `LOG_FORMAT=json|text`) with

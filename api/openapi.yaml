@@ -12923,9 +12923,9 @@ components:
       type: object
       description: >-
         One swarm's mirror status: whether that tier is enabled on this instance, its
-        node's reachability, and its pin counts overall and per media class. Carries no
-        gateway URL and no CIDs.
-      required: [enabled, node_reachable, pins, by_class]
+        node's reachability, its optional replication-cluster health, and its pin counts
+        overall and per media class. Carries no gateway URL and no CIDs.
+      required: [enabled, node_reachable, cluster_enabled, cluster_reachable, pins, by_class]
       properties:
         enabled:
           type: boolean
@@ -12933,6 +12933,17 @@ components:
         node_reachable:
           type: boolean
           description: Whether this swarm's Kubo node answered its health probe.
+        cluster_enabled:
+          type: boolean
+          description: >-
+            Whether an IPFS Cluster REST API is configured for THIS swarm's replication
+            (public = IPFS_CLUSTER_API_URL, private = IPFS_PRIVATE_CLUSTER_API_URL). The
+            private cluster is a fully separate cluster on the private swarm (fix_plan P19.P3).
+        cluster_reachable:
+          type: boolean
+          description: >-
+            Whether this swarm's IPFS Cluster REST API answered its /id health probe.
+            Always false when cluster_enabled is false.
         pins:
           $ref: "#/components/schemas/IPFSPinCounts"
         by_class:

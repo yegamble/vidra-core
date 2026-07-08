@@ -1388,15 +1388,18 @@ type ClassCounts struct {
 }
 
 // NetworkStatus is one swarm's slice of the admin status (P19.P2): whether that tier
-// is enabled, its node's reachability, and its pin tally overall + per class. The
-// public block carries the pre-P19.P public-mirror counts; the private block is the
-// replication tier's health + pinset. NO gateway URL and NO CIDs appear here — the
-// private swarm is replication, not distribution (spec §5).
+// is enabled, its node's reachability, its optional replication-cluster health
+// (P19.P3), and its pin tally overall + per class. The public block carries the
+// pre-P19.P public-mirror counts; the private block is the replication tier's health +
+// pinset. NO gateway URL and NO CIDs appear here — the private swarm is replication,
+// not distribution (spec §5).
 type NetworkStatus struct {
-	Enabled       bool
-	NodeReachable bool
-	Pins          PinCounts
-	ByClass       []ClassCounts
+	Enabled          bool
+	NodeReachable    bool
+	ClusterEnabled   bool
+	ClusterReachable bool
+	Pins             PinCounts
+	ByClass          []ClassCounts
 }
 
 // Status is the admin mirror status (backs GET /api/v1/ipfs/status). The top-level
@@ -1434,15 +1437,25 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			s.logger.Debug("ipfs_cluster_unhealthy", "error", err)
 		}
 	}
-	// Per-swarm probe (P19.P2): the private tier has its OWN node whose reachability is
-	// independent of the public one. The top-level NodeReachable stays the PUBLIC
-	// node's (back-compat); the private node's health lives in Networks[private].
+	// Per-swarm probe (P19.P2/P19.P3): the private tier has its OWN node AND its OWN
+	// optional replication cluster, both independent of the public ones. The top-level
+	// NodeReachable/ClusterReachable stay the PUBLIC swarm's (back-compat); the private
+	// swarm's health lives in Networks[private].
 	privateReachable := false
 	if s.privateEnabled && s.privateClient != nil {
 		if _, err := s.privateClient.Version(ctx); err == nil {
 			privateReachable = true
 		} else {
 			s.logger.Debug("ipfs_private_node_unhealthy", "error", err)
+		}
+	}
+	privateClusterEnabled := s.privateCluster != nil
+	privateClusterReachable := false
+	if privateClusterEnabled {
+		if err := s.privateCluster.ClusterHealth(ctx); err == nil {
+			privateClusterReachable = true
+		} else {
+			s.logger.Debug("ipfs_private_cluster_unhealthy", "error", err)
 		}
 	}
 
@@ -1484,16 +1497,20 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	// when a tier has no rows. Enabled/NodeReachable come from config + the probes.
 	st.Networks = map[string]NetworkStatus{
 		NetworkPublic: {
-			Enabled:       s.publicEnabled,
-			NodeReachable: st.NodeReachable,
-			Pins:          derefPins(netPins[NetworkPublic]),
-			ByClass:       sortClassCounts(netByClass[NetworkPublic]),
+			Enabled:          s.publicEnabled,
+			NodeReachable:    st.NodeReachable,
+			ClusterEnabled:   st.ClusterEnabled,
+			ClusterReachable: st.ClusterReachable,
+			Pins:             derefPins(netPins[NetworkPublic]),
+			ByClass:          sortClassCounts(netByClass[NetworkPublic]),
 		},
 		NetworkPrivate: {
-			Enabled:       s.privateEnabled,
-			NodeReachable: privateReachable,
-			Pins:          derefPins(netPins[NetworkPrivate]),
-			ByClass:       sortClassCounts(netByClass[NetworkPrivate]),
+			Enabled:          s.privateEnabled,
+			NodeReachable:    privateReachable,
+			ClusterEnabled:   privateClusterEnabled,
+			ClusterReachable: privateClusterReachable,
+			Pins:             derefPins(netPins[NetworkPrivate]),
+			ByClass:          sortClassCounts(netByClass[NetworkPrivate]),
 		},
 	}
 	return st, nil

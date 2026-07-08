@@ -68,13 +68,16 @@ type ipfsClassPinCountsView struct {
 }
 
 // ipfsNetworkStatusView is one swarm's slice of the status (schema IPFSNetworkStatus,
-// P19.P2): enabled + node reachability + this swarm's pin counts. NO gateway URL and
-// NO CIDs — the private swarm is replication, not distribution (spec §5).
+// P19.P2/P19.P3): enabled + node reachability + this swarm's optional replication-cluster
+// health + this swarm's pin counts. NO gateway URL and NO CIDs — the private swarm is
+// replication, not distribution (spec §5).
 type ipfsNetworkStatusView struct {
-	Enabled       bool                     `json:"enabled"`
-	NodeReachable bool                     `json:"node_reachable"`
-	Pins          ipfsPinCountsView        `json:"pins"`
-	ByClass       []ipfsClassPinCountsView `json:"by_class"`
+	Enabled          bool                     `json:"enabled"`
+	NodeReachable    bool                     `json:"node_reachable"`
+	ClusterEnabled   bool                     `json:"cluster_enabled"`
+	ClusterReachable bool                     `json:"cluster_reachable"`
+	Pins             ipfsPinCountsView        `json:"pins"`
+	ByClass          []ipfsClassPinCountsView `json:"by_class"`
 }
 
 // ipfsNetworksView is the additive public/private split (schema IPFSNetworks).
@@ -109,10 +112,12 @@ func toClassPinCountsView(ccs []ipfsmirror.ClassCounts) []ipfsClassPinCountsView
 
 func toNetworkStatusView(ns ipfsmirror.NetworkStatus) ipfsNetworkStatusView {
 	return ipfsNetworkStatusView{
-		Enabled:       ns.Enabled,
-		NodeReachable: ns.NodeReachable,
-		Pins:          ipfsPinCountsView(ns.Pins),
-		ByClass:       toClassPinCountsView(ns.ByClass),
+		Enabled:          ns.Enabled,
+		NodeReachable:    ns.NodeReachable,
+		ClusterEnabled:   ns.ClusterEnabled,
+		ClusterReachable: ns.ClusterReachable,
+		Pins:             ipfsPinCountsView(ns.Pins),
+		ByClass:          toClassPinCountsView(ns.ByClass),
 	}
 }
 

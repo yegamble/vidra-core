@@ -46,6 +46,18 @@ dist/
 .env.local
 .env.*.local
 
+# --- Secrets: private IPFS swarm (fix_plan P19.P3) ---
+# swarm.key == full private-network membership; a cluster secret authenticates cluster
+# membership. Both are operator-managed in production and must NEVER be committed. The
+# compose profile auto-generates a DEV key into a named volume (not the repo tree); this
+# only guards an operator who drops a real key/secret under deploy/ipfs-private/.
+swarm.key
+*.swarm.key
+deploy/ipfs-private/swarm.key
+deploy/ipfs-private/*.key
+deploy/ipfs-private/cluster-secret
+deploy/ipfs-private/*.peerid
+
 # IDE files
 .vscode/
 .idea/

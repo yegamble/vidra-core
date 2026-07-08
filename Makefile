@@ -55,6 +55,10 @@ test-integration: ## Run integration tests (-tags=integration); needs DATABASE_U
 test-ipfs-integration: ## Run IPFS integration tests (-tags=ipfs_integration) against a real kubo node; needs IPFS_TEST_API_URL (+ optional IPFS_TEST_GATEWAY_URL) — self-skips if unset
 	go test -tags=ipfs_integration -race ./internal/ipfs/...
 
+.PHONY: test-ipfs-private-integration
+test-ipfs-private-integration: ## Run PRIVATE-swarm IPFS integration tests (-tags=ipfs_private_integration) against a swarm.key'd kubo pair; needs IPFS_PRIVATE_TEST_API_A/_B (+ _OUTSIDE, _KUBO_BIN, _CLUSTER_API) — self-skips if unset
+	go test -tags=ipfs_private_integration -race ./internal/ipfs/...
+
 .PHONY: bench
 bench: ## Run the hot-path benchmarks (NOT in the gate); set DATABASE_URL for the store feed/search benches
 	go test -tags=integration -run='^$$' -bench=. -benchmem ./...
