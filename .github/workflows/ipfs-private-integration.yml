@@ -84,6 +84,12 @@ jobs:
 
       - name: Run private-swarm integration tests
         env:
+          # CI sentinel (set ONLY here): every would-skip path in the proofs becomes a hard
+          # t.Fatal instead of t.Skip, so all four §9 proofs MUST actually run. If a future
+          # change drops one of the env vars below, the job fails loudly instead of staying
+          # falsely green while silently skipping a proof. Local/dev runs leave this unset
+          # and keep today's self-skip behavior.
+          IPFS_PRIVATE_PROOFS_REQUIRED: "1"
           # Node A (private) via its host-published RPC; B via the override port above.
           IPFS_PRIVATE_TEST_API_A: http://localhost:5002
           IPFS_PRIVATE_TEST_API_B: http://localhost:5003

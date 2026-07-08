@@ -41,11 +41,24 @@ import (
 	"time"
 )
 
+// skipOrFatal self-skips a proof when its inputs are absent — the local/dev default so a
+// nodeless box stays green (the sentinel is unset). In CI the workflow sets
+// IPFS_PRIVATE_PROOFS_REQUIRED=1, which flips every would-skip path into a hard failure:
+// all four §9 proofs MUST actually run, so a future change that drops a required env var
+// can never leave the job falsely green while silently skipping a proof.
+func skipOrFatal(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("IPFS_PRIVATE_PROOFS_REQUIRED") != "" {
+		t.Fatalf("IPFS_PRIVATE_PROOFS_REQUIRED=1 but a required private-swarm proof would skip: "+format, args...)
+	}
+	t.Skipf(format, args...)
+}
+
 func privateAPIClient(t *testing.T, env string) *KuboClient {
 	t.Helper()
 	api := os.Getenv(env)
 	if api == "" {
-		t.Skipf("%s not set; skipping private-swarm integration test", env)
+		skipOrFatal(t, "%s not set; skipping private-swarm integration test", env)
 	}
 	return NewKuboClient(api, &http.Client{Timeout: 30 * time.Second})
 }
@@ -115,7 +128,7 @@ func dialAddrForB(ctx context.Context, t *testing.T, b *KuboClient) string {
 			return a
 		}
 	}
-	t.Skip("no dialable address for B (set IPFS_PRIVATE_TEST_PEER_B to /dns4/<host>/tcp/4001/p2p/<id>)")
+	skipOrFatal(t, "no dialable address for B (set IPFS_PRIVATE_TEST_PEER_B to /dns4/<host>/tcp/4001/p2p/<id>)")
 	return ""
 }
 
@@ -205,7 +218,7 @@ func TestOutsideNodeCannotFetch(t *testing.T) {
 func TestKeylessDaemonRefusesToStart(t *testing.T) {
 	bin := os.Getenv("IPFS_PRIVATE_TEST_KUBO_BIN")
 	if bin == "" {
-		t.Skip("IPFS_PRIVATE_TEST_KUBO_BIN not set; skipping fail-closed boot proof")
+		skipOrFatal(t, "IPFS_PRIVATE_TEST_KUBO_BIN not set; skipping fail-closed boot proof")
 	}
 	repo := t.TempDir()
 	env := append(os.Environ(), "IPFS_PATH="+repo)
@@ -260,7 +273,7 @@ type clusterPeerStatus struct {
 func TestPrivateClusterReplicationPinned(t *testing.T) {
 	clusterAPI := os.Getenv("IPFS_PRIVATE_TEST_CLUSTER_API")
 	if clusterAPI == "" {
-		t.Skip("IPFS_PRIVATE_TEST_CLUSTER_API not set; skipping private-cluster replication test")
+		skipOrFatal(t, "IPFS_PRIVATE_TEST_CLUSTER_API not set; skipping private-cluster replication test")
 	}
 	a := privateAPIClient(t, "IPFS_PRIVATE_TEST_API_A")
 	token := os.Getenv("IPFS_PRIVATE_TEST_CLUSTER_TOKEN")
