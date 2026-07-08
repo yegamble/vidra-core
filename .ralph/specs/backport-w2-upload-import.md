@@ -346,3 +346,79 @@ Batch-upload guard (UPLOAD-10) — adaptations from the §W2.C3 sketch:
 - **Consumer**: the vidra-user W2.U batch-upload UI (queue on
   `too_many_active_uploads`, resume when a slot frees) lands in the frontend wave
   — backend contract shipped ahead, consumer-shaped, exactly like W1/W2.C1–C2.
+
+## 11. Execution notes — W2.C4 (2026-07-08, as-built)
+Channel auto-sync (UPLOAD-13) — adaptations from the §W2.C4 sketch:
+- **Contract (house naming, adopted verbatim from the sketch)**:
+  `POST /api/v1/channel-syncs {channel_id, external_channel_url}` → 201;
+  `GET /api/v1/channel-syncs` → the caller's syncs with `state`
+  (`waiting_first_run|syncing|idle|failed`), `last_sync_at`, safe `last_error`;
+  `DELETE /api/v1/channel-syncs/{id}`; `POST /api/v1/channel-syncs/{id}/sync-now`
+  → 202. The reference `openapi_channel_sync.yaml` (`/video-channel-syncs` +
+  camelCase) was adapted, not copied. `TestOpenAPIContract` + `openapi-verify`
+  green. The routes mount independently of the video service (owner-scoped, no
+  `videosvc` dependency) so the surface is testable in isolation.
+- **Effective-on gate = `CHANNEL_SYNC_ENABLED && YTDLP_IMPORT_ENABLED`** (the sync
+  IS a yt-dlp import path). `create` and `sync-now` answer **503
+  `service_unavailable`** when off (mirrors the C1 resolver-disabled pattern);
+  `list`/`delete` stay available so an operator who turns the feature off can
+  still see/clean up existing rows. `cmd/api/main.go` logs a warning when
+  `CHANNEL_SYNC_ENABLED` is set but `YTDLP_IMPORT_ENABLED` is not, and does not
+  start the worker.
+- **Migration `0081_channel_syncs`** (next free number re-verified on disk; C1 took
+  0079, C2 took 0080, C3 added none): `channel_syncs` (id, channel_id FK ON DELETE
+  CASCADE, user_id FK ON DELETE CASCADE, external_channel_url, `state` CHECK,
+  last_sync_at NULL, last_error NOT NULL DEFAULT '', next_run_at, timestamps,
+  `UNIQUE (channel_id, external_channel_url)`) + `channel_sync_seen` (sync_id FK ON
+  DELETE CASCADE, external_id, PK (sync_id, external_id)) as the dedupe ledger.
+  Partial due-index over `state IN ('waiting_first_run','idle','failed')` — a
+  failed sync is retryable on the next cadence, matching the import-queue retry
+  philosophy. sqlc regenerated + `sqlc-verify` green.
+- **No new ingestion path (ClamAV invariant §1.1 preserved by construction)**: the
+  worker never touches blob storage. For each unseen entry it creates a **PRIVATE
+  draft** video (`video.Service.CreateDraft`, privacy `private` — synced content
+  is owner-reviewed, never auto-published) and enqueues a **`ytdlp` import**
+  (`videoimport.Service.Enqueue(…, ResolverYtdlp)`), so bytes reach storage only
+  through the existing `AttachOriginal → Process` scan hook. The EICAR-through-
+  import proof from C1 covers this path (same enqueue → drain → scan).
+- **Sandboxed lister**: `internal/ytdlp` gains `Playlist(ctx, url, limit)` =
+  `yt-dlp -J --flat-playlist --playlist-end <n> --ignore-config -- <url>` (a new
+  pure `playlistArgs` builder unit-tested for the fixed allowlist: it deliberately
+  keeps the playlist — NOT `--no-playlist` — but asserts the absence of
+  `--exec`/`--update`/`-U` and the single `--` option-terminator with the URL as
+  the sole positional). Same `exec.CommandContext`, minimal env, hard
+  `YTDLP_TIMEOUT`. Entries prefer an absolute `webpage_url`/`url`; a bare
+  playlist id with no absolute URL is dropped, and the external URL is
+  re-validated through `internal/urlsafety` before any import enqueue.
+- **Dedupe = insert-as-claim**: `InsertChannelSyncSeen` is `ON CONFLICT DO NOTHING`
+  `:execrows`; a returned 1 means first-seen (import it), 0 means already handled
+  (skip). Per-ENTRY failures (bad URL, quota, transient draft/enqueue error) are
+  logged and skipped so one bad upload never fails the whole sync (spec:
+  "quota failures mark the item skipped-with-reason, not the sync failed"); only a
+  lister failure fails the pass, recorded as a SAFE `last_error`
+  ("could not list the external channel") — never the raw extractor output/URL.
+- **Config**: `CHANNEL_SYNC_ENABLED` (default false), `CHANNEL_SYNC_INTERVAL`
+  (default `1h`), `CHANNEL_SYNC_MAX_PER_USER` (default `5`, `<=0` disables the
+  cap), `CHANNEL_SYNC_BATCH` (default `15`, boot-validated `1..100`). Worker in
+  `cmd/api/main.go` polls every minute (so `sync-now` is picked up promptly) and
+  claims up to 15 due syncs per tick (settled decision); per-sync cadence lives in
+  the service, which reschedules each row after a run. The single `ytdlp.Client`
+  backs both the import resolver and the sync lister.
+- **Tests (in `make ci`)**: `internal/ytdlp` — `TestPlaylistArgsAreSandboxed`,
+  `TestPlaylistArgsNoLimitWhenZero`, `TestPlaylist` (entry parsing/URL preference/
+  drop-bare/error mapping). `internal/channelsync` — Create (happy, disabled,
+  invalid/private/non-http URL, unknown channel, non-owner, cap-reached,
+  cap-disabled, conflict), Delete/SyncNow (ownership, disabled), DrainDue
+  (dedupe-skip, privacy=private + resolver=ytdlp + correct URL, lister-failure
+  safe error, per-entry error keeps sync healthy, disabled no-op, missing lister).
+  `internal/httpapi` — auth, disabled-503 (+ stable code), create validation
+  (missing/private-URL/unknown-channel), non-owner 404, full lifecycle
+  (create→dup 409→list→sync-now 202→delete 204), delete/sync-now non-owner 404.
+  Integration (`//go:build integration`, DB) —
+  `internal/store/channel_syncs_integration_test.go`: create + unique violation,
+  list/count, due-claim state flip, seen-ledger dedupe, finish/fail transitions,
+  and the channel→sync→seen ON DELETE CASCADE.
+- **Consumer**: the vidra-user W2.U channel-sync UI (manage syncs, show
+  state/last_error, trigger sync-now) lands in the frontend wave — backend
+  contract shipped ahead, consumer-shaped, exactly like W1/W2.C1–C3. Its
+  Playwright + backend-backed e2e are that slice's completeness deliverables.

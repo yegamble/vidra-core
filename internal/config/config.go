@@ -408,6 +408,26 @@ type Config struct {
 	// YtdlpMaxHeight caps the selected video resolution (yt-dlp -f height<=N).
 	YtdlpMaxHeight int
 
+	// Channel auto-sync (backport W2.C4, UPLOAD-13). Mirrors an external platform
+	// channel's uploads into a local channel by listing it with the sandboxed
+	// yt-dlp extractor and enqueuing `ytdlp` imports for unseen entries. OFF by
+	// default and additionally gated on YtdlpImportEnabled (the sync path IS a
+	// yt-dlp import path). None of these are secrets.
+
+	// ChannelSyncEnabled turns on the channel auto-sync HTTP surface + worker.
+	// Effective only when YtdlpImportEnabled is also true; when either is off the
+	// endpoints answer 503 and no worker runs.
+	ChannelSyncEnabled bool
+	// ChannelSyncInterval is the cadence at which a sync re-lists its external
+	// channel (POST .../sync-now schedules an immediate run).
+	ChannelSyncInterval time.Duration
+	// ChannelSyncMaxPerUser caps how many channel syncs one user may hold (<= 0
+	// disables the cap).
+	ChannelSyncMaxPerUser int
+	// ChannelSyncBatch caps how many of the newest external uploads one sync pass
+	// imports (yt-dlp --playlist-end).
+	ChannelSyncBatch int
+
 	// PeerTube import / migration (fix_plan P18, .ralph/specs/peertube-import.md).
 	// A one-way tool that reads an existing PeerTube instance's PostgreSQL DB +
 	// media storage and maps it into Vidra. Everything here is OFF BY DEFAULT and
@@ -584,6 +604,8 @@ func Load() (*Config, error) {
 		YtdlpPath:                      getEnv("YTDLP_PATH", "yt-dlp"),
 		YtdlpTimeout:                   getEnvDuration("YTDLP_TIMEOUT", 15*time.Minute),
 		YtdlpProxy:                     strings.TrimSpace(getEnv("YTDLP_PROXY", "")),
+		ChannelSyncEnabled:             getEnvBool("CHANNEL_SYNC_ENABLED", false),
+		ChannelSyncInterval:            getEnvDuration("CHANNEL_SYNC_INTERVAL", time.Hour),
 		PeerTubeImportEnabled:          getEnvBool("PEERTUBE_IMPORT_ENABLED", false),
 		PeerTubeSourceDatabaseURL:      getEnv("PEERTUBE_SOURCE_DATABASE_URL", ""),
 		PeerTubeSourceStorageBackend:   getEnv("PEERTUBE_SOURCE_STORAGE_BACKEND", "local"),
@@ -634,6 +656,18 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.YtdlpMaxHeight = ytdlpHeight
+
+	channelSyncMax, err := getEnvInt("CHANNEL_SYNC_MAX_PER_USER", 5)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ChannelSyncMaxPerUser = channelSyncMax
+
+	channelSyncBatch, err := getEnvInt("CHANNEL_SYNC_BATCH", 15)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ChannelSyncBatch = channelSyncBatch
 
 	maxActiveUploads, err := getEnvInt("UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER", 5)
 	if err != nil {
@@ -852,6 +886,17 @@ func (c *Config) validate() error {
 			if perr != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5" && u.Scheme != "socks5h") {
 				return fmt.Errorf("config: YTDLP_PROXY must be an http(s) or socks5 URL when set")
 			}
+		}
+	}
+	// Channel auto-sync bounds (W2.C4). Validated only when enabled so a default
+	// deployment never trips them; the effective on/off state is
+	// ChannelSyncEnabled AND YtdlpImportEnabled (checked/logged at wiring time).
+	if c.ChannelSyncEnabled {
+		if c.ChannelSyncInterval <= 0 {
+			return fmt.Errorf("config: CHANNEL_SYNC_INTERVAL must be a positive duration when CHANNEL_SYNC_ENABLED=true")
+		}
+		if c.ChannelSyncBatch < 1 || c.ChannelSyncBatch > 100 {
+			return fmt.Errorf("config: CHANNEL_SYNC_BATCH %d out of range (1..100)", c.ChannelSyncBatch)
 		}
 	}
 	if c.MFAKeyKEK != "" {

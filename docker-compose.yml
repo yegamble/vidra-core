@@ -306,6 +306,18 @@ services:
       # blocks internal ranges (e.g. YTDLP_PROXY=http://ytdlp-egress:3128). Empty by
       # default (documented, not enforced — self-hosting the proxy has a cost).
       YTDLP_PROXY: ${YTDLP_PROXY:-}
+      # Channel auto-sync (W2.C4, UPLOAD-13). Mirrors an external platform channel's
+      # recent uploads into a LOCAL channel by listing it with the sandboxed yt-dlp
+      # extractor (--flat-playlist) and enqueuing `ytdlp` imports for unseen entries
+      # — so bytes still land via AttachOriginal → Process (the ClamAV scan hook).
+      # OFF by default and effective ONLY when YTDLP_IMPORT_ENABLED is also true
+      # (the sync IS a yt-dlp import path); the same egress-proxy / no-internal-route
+      # stance above therefore applies. Synced uploads are created as PRIVATE drafts
+      # for the owner to review — never auto-published.
+      CHANNEL_SYNC_ENABLED: ${CHANNEL_SYNC_ENABLED:-false}
+      CHANNEL_SYNC_INTERVAL: ${CHANNEL_SYNC_INTERVAL:-1h}
+      CHANNEL_SYNC_MAX_PER_USER: ${CHANNEL_SYNC_MAX_PER_USER:-5}
+      CHANNEL_SYNC_BATCH: ${CHANNEL_SYNC_BATCH:-15}
       # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
       # freshly minted stream key (informational; empty by default).
       LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}

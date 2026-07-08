@@ -27,6 +27,7 @@ import (
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/channelsync"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/donation"
@@ -647,12 +648,15 @@ func run() error {
 	// yt-dlp platform-URL import (W2.C1, UPLOAD-09). OFF by default; admin opt-in.
 	// The binary is pinned in the image (never self-updated at runtime); when the
 	// flag is on but the binary is missing, imports still enqueue and fail SAFELY
-	// per job (no crash). See .ralph/specs/backport-w2-upload-import.md §5.
+	// per job (no crash). See .ralph/specs/backport-w2-upload-import.md §5. The
+	// same sandboxed client backs both the import resolver and the channel-sync
+	// lister below.
+	var ytdlpClient *ytdlp.Client
 	if cfg.YtdlpImportEnabled {
 		if _, lookErr := exec.LookPath(cfg.YtdlpPath); lookErr != nil {
 			logger.Warn("YTDLP_IMPORT_ENABLED but yt-dlp is not on PATH — platform imports will fail until it is installed", "path", cfg.YtdlpPath)
 		}
-		ytdlpClient := ytdlp.New(ytdlp.Config{
+		ytdlpClient = ytdlp.New(ytdlp.Config{
 			Path:      cfg.YtdlpPath,
 			Timeout:   cfg.YtdlpTimeout,
 			Proxy:     cfg.YtdlpProxy,
@@ -664,6 +668,30 @@ func run() error {
 	}
 	importsvc := videoimport.NewService(db.Queries(), videosvc, importMaxBytes, importOpts...)
 	opts = append(opts, httpapi.WithVideoImportService(importsvc))
+
+	// Channel auto-sync (W2.C4, UPLOAD-13). Effective only when CHANNEL_SYNC_ENABLED
+	// AND the yt-dlp import resolver are both on (the sync path IS a yt-dlp import
+	// path). The HTTP surface is ALWAYS mounted so the contract is stable; the
+	// service's Enabled() flag 503s create/sync-now and short-circuits the worker
+	// when off. Synced uploads land as PRIVATE drafts + `ytdlp` imports, so bytes
+	// still flow through AttachOriginal → Process (scan hook) — no new write path.
+	channelSyncEffective := cfg.ChannelSyncEnabled && cfg.YtdlpImportEnabled
+	if cfg.ChannelSyncEnabled && !cfg.YtdlpImportEnabled {
+		logger.Warn("CHANNEL_SYNC_ENABLED but YTDLP_IMPORT_ENABLED is off — channel auto-sync stays disabled (it requires the yt-dlp import resolver)")
+	}
+	channelSyncOpts := []channelsync.Option{
+		channelsync.WithEnabled(channelSyncEffective),
+		channelsync.WithAllowPrivateURLs(cfg.ImportAllowPrivateURLs),
+		channelsync.WithMaxPerUser(cfg.ChannelSyncMaxPerUser),
+		channelsync.WithBatch(cfg.ChannelSyncBatch),
+		channelsync.WithInterval(cfg.ChannelSyncInterval),
+		channelsync.WithLogger(logger),
+	}
+	if ytdlpClient != nil {
+		channelSyncOpts = append(channelSyncOpts, channelsync.WithLister(ytdlpClient))
+	}
+	channelsyncsvc := channelsync.NewService(db.Queries(), videosvc, importsvc, channelSyncOpts...)
+	opts = append(opts, httpapi.WithChannelSyncService(channelsyncsvc))
 
 	// Auto-caption / Whisper (P13). The endpoints are ALWAYS mounted (so the
 	// documented contract is stable); the service's Enabled() flag gates the
@@ -822,6 +850,17 @@ func run() error {
 		defer workerCancel()
 		go runVideoImportWorker(workerCtx, logger, importsvc)
 		logger.Info("video import worker started")
+	}
+
+	// Channel auto-sync worker (W2.C4): on a cadence, list each due sync's external
+	// channel and enqueue `ytdlp` imports for unseen uploads. Only started when the
+	// feature is effective (CHANNEL_SYNC_ENABLED + yt-dlp import); otherwise the
+	// service is wired for its stable 503 contract but no worker runs.
+	if channelsyncsvc.Enabled() {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runChannelSyncWorker(workerCtx, logger, channelsyncsvc)
+		logger.Info("channel auto-sync worker started", "interval", cfg.ChannelSyncInterval.String())
 	}
 
 	// Drain the auto-caption (Whisper) queue in the background: extract audio →
@@ -1185,6 +1224,38 @@ func runVideoImportWorker(ctx context.Context, logger *slog.Logger, svc *videoim
 			}
 			if total > 0 {
 				logger.Info("video import drain completed jobs", "count", total)
+			}
+		}
+	}
+}
+
+// runChannelSyncWorker lists due channel syncs on a cadence and enqueues `ytdlp`
+// imports for their unseen external uploads (W2.C4). The poll tick is short so a
+// POST .../sync-now trigger is picked up promptly; per-sync scheduling
+// (CHANNEL_SYNC_INTERVAL) lives in the service, which reschedules each row after
+// a run. Per-sync failures are recorded on the row (state=failed, safe
+// last_error); only the claim-query error is logged.
+func runChannelSyncWorker(ctx context.Context, logger *slog.Logger, svc *channelsync.Service) {
+	const (
+		interval = time.Minute
+		// perTick bounds how many due syncs one tick claims (settled decision:
+		// 15 per tick).
+		perTick = 15
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := svc.DrainDue(ctx, perTick)
+			if err != nil {
+				logger.Warn("channel sync drain failed", "error", err)
+				continue
+			}
+			if n > 0 {
+				logger.Info("channel sync completed passes", "count", n)
 			}
 		}
 	}

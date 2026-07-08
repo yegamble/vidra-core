@@ -22,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/channelsync"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/donation"
@@ -100,6 +101,7 @@ type Server struct {
 	transcodesvc      *transcode.Service
 	uploadsvc         *upload.Service
 	importsvc         *videoimport.Service
+	channelsyncsvc    *channelsync.Service
 	captionjobsvc     *captionjob.Service
 	fedsvc            *federation.Service
 	atprotosvc        *atproto.Service
@@ -379,6 +381,15 @@ func WithUploadService(svc *upload.Service) Option {
 // routes are not registered.
 func WithVideoImportService(svc *videoimport.Service) Option {
 	return func(s *Server) { s.importsvc = svc }
+}
+
+// WithChannelSyncService mounts the channel auto-sync endpoints (W2.C4): create /
+// list / delete / sync-now. The service's Enabled() flag (CHANNEL_SYNC_ENABLED +
+// yt-dlp import) gates the create/sync-now handlers (503 when off); the routes
+// themselves are always registered when the service is present so the contract is
+// stable. When unset, the routes are not registered.
+func WithChannelSyncService(svc *channelsync.Service) Option {
+	return func(s *Server) { s.channelsyncsvc = svc }
 }
 
 // WithCaptionJobService mounts the auto-caption (Whisper) endpoints (request +
@@ -904,6 +915,17 @@ func (s *Server) routes() {
 			api.PUT("/videos/:id/rating", s.handlePutVideoRating, s.requireAuth)
 			api.DELETE("/videos/:id/rating", s.handleDeleteVideoRating, s.requireAuth)
 		}
+	}
+
+	// Channel auto-sync (W2.C4, UPLOAD-13): manage the bindings that mirror an
+	// external channel's uploads into a local channel via `ytdlp` imports. Owner-
+	// scoped and self-contained (no dependency on the video service), so it mounts
+	// independently; the create/sync-now handlers 503 when the feature is disabled.
+	if s.channelsyncsvc != nil {
+		api.POST("/channel-syncs", s.handleCreateChannelSync, s.requireAuth)
+		api.GET("/channel-syncs", s.handleListChannelSyncs, s.requireAuth)
+		api.DELETE("/channel-syncs/:id", s.handleDeleteChannelSync, s.requireAuth)
+		api.POST("/channel-syncs/:id/sync-now", s.handleSyncChannelNow, s.requireAuth)
 	}
 
 	// Storage quota: the caller's own usage + effective cap. The same service

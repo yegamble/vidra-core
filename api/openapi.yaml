@@ -4041,6 +4041,172 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channel-syncs:
+    post:
+      operationId: createChannelSync
+      summary: Create a channel auto-sync
+      description: >-
+        Binds a LOCAL channel you own to an external platform channel URL so a
+        periodic worker mirrors that channel's recent uploads into yours. Each
+        not-yet-seen upload becomes a private draft video plus a sandboxed
+        `ytdlp` URL import, so downloaded bytes land through the same
+        AttachOriginal → Process (scan/probe/transcode) pipeline as any other
+        ingest — nothing is servable before the ClamAV scan. Synced videos are
+        created PRIVATE for you to review and publish; the instance never
+        auto-publishes mirrored content.
+
+
+        OFF by default: the feature runs only when CHANNEL_SYNC_ENABLED and the
+        yt-dlp import resolver (YTDLP_IMPORT_ENABLED) are both on — otherwise
+        this endpoint returns 503. The external URL is SSRF-validated (http/https
+        only, no literal non-public address). At most CHANNEL_SYNC_MAX_PER_USER
+        syncs per user.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChannelSyncRequest"
+      responses:
+        "201":
+          description: The channel sync was created (due to run on the next tick).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSyncResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such channel, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: An identical (channel, external URL) sync already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The external URL is missing, malformed, or not a public http(s) URL,
+            or the caller is at the per-user channel-sync limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            Channel auto-sync is disabled on this instance (CHANNEL_SYNC_ENABLED
+            or YTDLP_IMPORT_ENABLED is off). Stable code service_unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: listChannelSyncs
+      summary: List your channel auto-syncs
+      description: >-
+        Returns the authenticated user's channel syncs (newest first), each with
+        its state (waiting_first_run, syncing, idle, failed), last_sync_at, and a
+        safe last_error.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's channel syncs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSyncListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channel-syncs/{id}:
+    delete:
+      operationId: deleteChannelSync
+      summary: Delete a channel auto-sync
+      description: >-
+        Removes a channel sync you own (its dedupe ledger cascades away). A
+        sync you do not own, or an unknown id, is 404.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The channel sync was deleted.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such channel sync, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channel-syncs/{id}/sync-now:
+    post:
+      operationId: syncChannelNow
+      summary: Trigger a channel auto-sync now
+      description: >-
+        Schedules an owned sync to run on the next worker tick (a manual refresh
+        between cadence runs). 503 when the feature is disabled; 404 when the
+        sync is unknown or not owned.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "202":
+          description: The sync was scheduled to run on the next tick.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such channel sync, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            Channel auto-sync is disabled on this instance. Stable code
+            service_unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/captions/auto:
     post:
       operationId: requestAutoCaption
@@ -13302,6 +13468,68 @@ components:
       properties:
         import_job:
           $ref: "#/components/schemas/ImportJob"
+    CreateChannelSyncRequest:
+      type: object
+      required: [channel_id, external_channel_url]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+          description: The LOCAL channel (owned by the caller) to mirror uploads into.
+        external_channel_url:
+          type: string
+          description: >-
+            Public http/https URL of the external platform channel to mirror.
+            SSRF-validated before use; a non-public address is refused.
+          example: https://www.youtube.com/@example
+    ChannelSync:
+      type: object
+      description: A binding that mirrors an external channel's uploads into a local channel.
+      required: [id, channel_id, external_channel_url, state, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        external_channel_url:
+          type: string
+        state:
+          type: string
+          enum: [waiting_first_run, syncing, idle, failed]
+          description: >-
+            waiting_first_run (never synced), syncing (a run is in progress),
+            idle (last run succeeded), failed (last run errored; see last_error).
+        last_sync_at:
+          type: string
+          format: date-time
+          description: When the last successful run completed (omitted until the first run).
+        last_error:
+          type: string
+          description: >-
+            A safe, human-readable reason for the last failed run (omitted when
+            empty). Never a raw internal error or credentials.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ChannelSyncResponse:
+      type: object
+      required: [channel_sync]
+      properties:
+        channel_sync:
+          $ref: "#/components/schemas/ChannelSync"
+    ChannelSyncListResponse:
+      type: object
+      required: [channel_syncs]
+      properties:
+        channel_syncs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelSync"
     AutoCaptionRequest:
       type: object
       description: >-

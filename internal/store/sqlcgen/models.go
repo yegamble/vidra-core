@@ -127,6 +127,25 @@ type ChannelImage struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type ChannelSync struct {
+	ID                 uuid.UUID          `json:"id"`
+	ChannelID          uuid.UUID          `json:"channel_id"`
+	UserID             uuid.UUID          `json:"user_id"`
+	ExternalChannelUrl string             `json:"external_channel_url"`
+	State              string             `json:"state"`
+	LastSyncAt         pgtype.Timestamptz `json:"last_sync_at"`
+	LastError          string             `json:"last_error"`
+	NextRunAt          time.Time          `json:"next_run_at"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+}
+
+type ChannelSyncSeen struct {
+	SyncID     uuid.UUID `json:"sync_id"`
+	ExternalID string    `json:"external_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type Comment struct {
 	ID               uuid.UUID          `json:"id"`
 	VideoID          uuid.UUID          `json:"video_id"`

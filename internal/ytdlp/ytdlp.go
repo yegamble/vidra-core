@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -171,6 +172,108 @@ func parseMeta(out []byte) (Meta, error) {
 		DurationSeconds: int(raw.Duration),
 		Thumbnail:       strings.TrimSpace(raw.Thumbnail),
 	}, nil
+}
+
+// PlaylistEntry is one entry of a --flat-playlist listing: the extractor-stable
+// ExternalID (the dedupe key), the best absolute webpage/import URL for that
+// entry, and its display Title. All strings are untrusted.
+type PlaylistEntry struct {
+	ExternalID string
+	URL        string
+	Title      string
+}
+
+// playlistArgs builds the FIXED argv for a channel/playlist listing. Unlike the
+// metadata/download probes this deliberately does NOT pass --no-playlist (the
+// whole point is to enumerate the channel), but --flat-playlist keeps it to a
+// cheap id/url listing with no per-video extraction, and --playlist-end bounds
+// the count. url is the only caller-influenced value and is the final positional
+// after "--".
+func playlistArgs(cfg Config, url string, limit int) []string {
+	args := []string{
+		"--ignore-config",
+		"--no-warnings",
+		"--flat-playlist", // list entries only; do NOT extract each video
+		"-J",              // dump a single JSON object to stdout
+	}
+	if limit > 0 {
+		args = append(args, "--playlist-end", strconv.Itoa(limit))
+	}
+	if cfg.Proxy != "" {
+		args = append(args, "--proxy", cfg.Proxy)
+	}
+	args = append(args, "--", url)
+	return args
+}
+
+// Playlist lists a remote channel's recent uploads (newest first, capped at
+// limit) via the sandboxed --flat-playlist probe. channelURL MUST already be
+// urlsafety-validated. On any subprocess failure it returns ErrRun (never the
+// URL or raw stderr). Entries with no usable id or absolute URL are dropped.
+func (c *Client) Playlist(ctx context.Context, channelURL string, limit int) ([]PlaylistEntry, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
+	defer cancel()
+	out, err := c.run(ctx, c.cfg.Path, playlistArgs(c.cfg, channelURL, limit)...)
+	if err != nil {
+		return nil, ErrRun
+	}
+	return parsePlaylist(out)
+}
+
+// parsePlaylist decodes a --flat-playlist -J document into PlaylistEntry values.
+// It prefers an absolute webpage_url, falling back to url; the ExternalID prefers
+// the extractor id, falling back to the url. Entries without an id or an absolute
+// http(s) URL are skipped (nothing importable).
+func parsePlaylist(out []byte) ([]PlaylistEntry, error) {
+	var doc struct {
+		Entries []struct {
+			ID         string `json:"id"`
+			URL        string `json:"url"`
+			WebpageURL string `json:"webpage_url"`
+			Title      string `json:"title"`
+		} `json:"entries"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(out)))
+	if err := dec.Decode(&doc); err != nil {
+		return nil, fmt.Errorf("%w: playlist decode", ErrRun)
+	}
+	entries := make([]PlaylistEntry, 0, len(doc.Entries))
+	for _, e := range doc.Entries {
+		importURL := firstAbsoluteURL(strings.TrimSpace(e.WebpageURL), strings.TrimSpace(e.URL))
+		if importURL == "" {
+			continue
+		}
+		externalID := strings.TrimSpace(e.ID)
+		if externalID == "" {
+			externalID = importURL
+		}
+		entries = append(entries, PlaylistEntry{
+			ExternalID: externalID,
+			URL:        importURL,
+			Title:      strings.TrimSpace(e.Title),
+		})
+	}
+	return entries, nil
+}
+
+// firstAbsoluteURL returns the first candidate that is an absolute http(s) URL
+// with a host, or "" when none qualifies. --flat-playlist sometimes reports a
+// bare id in `url`; those are rejected so only a fetchable URL is ever handed to
+// the import path (which re-validates it through urlsafety anyway).
+func firstAbsoluteURL(candidates ...string) string {
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		u, err := neturl.Parse(c)
+		if err != nil {
+			continue
+		}
+		if (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+			return c
+		}
+	}
+	return ""
 }
 
 // Download runs the bounded download into workdir and returns the absolute path

@@ -1419,7 +1419,7 @@ re-ported.
       (queue on `too_many_active_uploads`, resume when a slot frees) lands in the
       frontend wave — backend contract shipped ahead, consumer-shaped, exactly like
       W1/W2.C1–C2.)
-- [ ] W2.C4 [UPLOAD-13] Channel auto-sync (depends on W2.C1):
+- [x] W2.C4 [UPLOAD-13] Channel auto-sync (depends on W2.C1):
       `POST/GET /api/v1/channel-syncs`, `DELETE /api/v1/channel-syncs/{id}`,
       `POST /api/v1/channel-syncs/{id}/sync-now`; migration `0081_channel_syncs`
       (+ `channel_sync_seen` dedupe ledger); periodic worker lists via sandboxed
@@ -1427,6 +1427,50 @@ re-ported.
       (scan hook by construction); config `CHANNEL_SYNC_ENABLED=false` default,
       `CHANNEL_SYNC_INTERVAL=1h`, `CHANNEL_SYNC_MAX_PER_USER=5`,
       `CHANNEL_SYNC_BATCH=15`; safe last_error; per-user cap tests.
+      (2026-07-08, store/config/ytdlp/channelsync/videoimport-reuse/httpapi/cmd +
+      openapi + compose + README + spec §11. Full as-built notes in
+      `.ralph/specs/backport-w2-upload-import.md §11`. **Contract:** house naming
+      adopted verbatim (`/api/v1/channel-syncs`, snake_case); routes mount
+      independently of the video service (owner-scoped). `create`/`sync-now` 503
+      `service_unavailable` when the feature is off; the effective-on gate is
+      `CHANNEL_SYNC_ENABLED && YTDLP_IMPORT_ENABLED` (the sync IS a yt-dlp import
+      path). `TestOpenAPIContract` + `make openapi-verify` green. **Migration**
+      `0081_channel_syncs.{up,down}.sql` (next free number re-verified: C1=0079,
+      C2=0080, C3 none): `channel_syncs` (`state` CHECK
+      `waiting_first_run|syncing|idle|failed`, `UNIQUE (channel_id,
+      external_channel_url)`, FKs ON DELETE CASCADE, partial due-index over
+      retryable states) + `channel_sync_seen` dedupe ledger (PK (sync_id,
+      external_id)). sqlc regenerated + `sqlc-verify` green. **ClamAV invariant
+      (§1.1) preserved by construction:** the worker never writes blob storage —
+      per unseen entry it creates a PRIVATE draft (`video.CreateDraft`, privacy
+      `private`; synced content is owner-reviewed, never auto-published) and
+      enqueues a `ytdlp` import (`videoimport.Enqueue(…, ResolverYtdlp)`), so bytes
+      land only via the existing `AttachOriginal → Process` scan hook; C1's
+      EICAR-through-import proof covers this path. **Sandboxed lister:**
+      `internal/ytdlp.Playlist` = `yt-dlp -J --flat-playlist --playlist-end <n>
+      --ignore-config -- <url>` (pure `playlistArgs` builder unit-tested for the
+      fixed allowlist — keeps the playlist but asserts no `--exec`/`--update`/`-U`,
+      single `--` terminator, URL sole positional); external URLs re-validated via
+      `internal/urlsafety` before enqueue. **Dedupe = insert-as-claim**
+      (`InsertChannelSyncSeen` ON CONFLICT DO NOTHING `:execrows`; rows>0 =
+      first-seen). Per-entry failures (quota/bad-URL/transient) logged + skipped,
+      never fail the whole sync; a lister failure records a SAFE `last_error`
+      ("could not list the external channel") — never the raw output/URL.
+      **Config** `CHANNEL_SYNC_ENABLED=false` default, `CHANNEL_SYNC_INTERVAL=1h`,
+      `CHANNEL_SYNC_MAX_PER_USER=5` (<=0 disables), `CHANNEL_SYNC_BATCH=15`
+      (boot-validated 1..100); worker polls 1m, claims ≤15 due syncs/tick;
+      documented in `docker-compose.yml` + README. **Tests (all in `make ci`):**
+      `internal/ytdlp` playlist argv/parse; `internal/channelsync` service table
+      (create matrix incl. cap/conflict/ownership/disabled, delete/sync-now
+      ownership, DrainDue dedupe + privacy=private + resolver=ytdlp + safe errors +
+      per-entry-error-keeps-healthy + disabled no-op); `internal/httpapi` handler
+      table (auth, disabled-503+code, validation, non-owner 404, full lifecycle,
+      delete/sync-now non-owner 404). Integration behind `//go:build integration`
+      (real DB): `internal/store/channel_syncs_integration_test.go` (create+unique,
+      list/count, due-claim flip, seen dedupe, finish/fail, channel→sync→seen
+      cascade). **Consumer:** vidra-user W2.U channel-sync UI (BLOCKED-on-backend,
+      Playwright + backend-backed e2e are that slice's deliverables) — backend
+      contract shipped ahead, exactly like W1/W2.C1–C3.)
 - [ ] W2.C5 [UPLOAD-04 backend share] Thumbnail frame-pick:
       `POST /api/v1/videos/{id}/thumbnail` JSON variant `{at_seconds}` → ffmpeg
       exact-frame extraction into the existing poster path; 409 before original

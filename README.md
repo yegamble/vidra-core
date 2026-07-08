@@ -259,6 +259,21 @@ it to internal addresses. Mitigate, in order: (1) it is off by default; (2) set
 route to internal networks. Pin the yt-dlp binary in the image
 (`--build-arg YTDLP_VERSION=…`); it is never self-updated at runtime.
 
+**Channel auto-sync** (`POST/GET /api/v1/channel-syncs`,
+`DELETE /api/v1/channel-syncs/{id}`, `POST /api/v1/channel-syncs/{id}/sync-now`)
+mirrors an external platform channel's recent uploads into a local channel you
+own. A periodic worker lists the remote channel with the sandboxed yt-dlp
+extractor (`--flat-playlist`) and, for each not-yet-seen upload, creates a
+**private draft** video and enqueues a `ytdlp` import — so the bytes flow through
+the same `AttachOriginal → Process` scan pipeline (nothing is servable before the
+ClamAV scan, and the instance never auto-publishes mirrored content). It is **OFF
+by default and effective only when `YTDLP_IMPORT_ENABLED` is also on** — the sync
+*is* a yt-dlp import path, so the same egress-proxy / no-internal-route deploy
+stance above applies. Config: `CHANNEL_SYNC_ENABLED=true` to opt in,
+`CHANNEL_SYNC_INTERVAL` (default `1h`), `CHANNEL_SYNC_MAX_PER_USER` (default `5`),
+`CHANNEL_SYNC_BATCH` (default `15`, newest uploads per pass). When disabled the
+endpoints answer `503`.
+
 Finalisation runs through an injected `Prober` seam: at startup the server uses
 the FFprobe-backed prober when `ffprobe` is on `PATH` (it is in the Docker image),
 extracting technical metadata (duration, width, height) that the detail endpoint

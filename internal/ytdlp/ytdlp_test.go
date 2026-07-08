@@ -118,6 +118,76 @@ func TestMetadataPassesArgvToRunner(t *testing.T) {
 	}
 }
 
+// TestPlaylistArgsAreSandboxed proves the listing argv enumerates the channel
+// (NOT --no-playlist) but stays flat + bounded, with the URL as the sole final
+// positional after "--" and none of the dangerous flags.
+func TestPlaylistArgsAreSandboxed(t *testing.T) {
+	url := "https://www.youtube.com/@example"
+	args := playlistArgs(baseCfg(), url, 15)
+
+	if args[len(args)-1] != url {
+		t.Fatalf("URL is not the final positional: %v", args)
+	}
+	mustContainInOrder(t, args, "--", url)
+	mustHave(t, args, "--ignore-config", "--flat-playlist", "-J")
+	mustHavePair(t, args, "--playlist-end", "15")
+	// A listing MUST NOT suppress the playlist (that is the whole point) and MUST
+	// NOT carry the post-processing / self-update escape hatches.
+	mustNotHave(t, args, "--no-playlist", "--exec", "--update", "-U", "--config-location")
+	if countArg(args, "--") != 1 {
+		t.Errorf("want exactly one option terminator, got %v", args)
+	}
+}
+
+// TestPlaylistArgsNoLimitWhenZero: a non-positive limit omits --playlist-end.
+func TestPlaylistArgsNoLimitWhenZero(t *testing.T) {
+	args := playlistArgs(baseCfg(), "https://x/c", 0)
+	mustNotHave(t, args, "--playlist-end")
+	mustHave(t, args, "--flat-playlist")
+}
+
+// TestPlaylistParsesEntries: a --flat-playlist -J document maps to entries,
+// preferring an absolute webpage_url, falling back to url, and dropping entries
+// with no usable absolute URL. A run failure maps to ErrRun.
+func TestPlaylist(t *testing.T) {
+	doc := `{"_type":"playlist","entries":[
+		{"id":"vid1","url":"https://site/watch?v=vid1","title":"First"},
+		{"id":"vid2","url":"vid2","webpage_url":"https://site/watch?v=vid2","title":"Second"},
+		{"id":"bare","url":"bareid"},
+		{"id":"","url":"https://site/watch?v=anon","title":"Anon"}
+	]}`
+	c := &Client{cfg: baseCfg(), run: fakeRun([]byte(doc), nil)}
+	entries, err := c.Playlist(context.Background(), "https://site/@chan", 15)
+	if err != nil {
+		t.Fatalf("Playlist: %v", err)
+	}
+	// "bare" is dropped (no absolute URL); the other three remain.
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3: %+v", len(entries), entries)
+	}
+	if entries[0].ExternalID != "vid1" || entries[0].URL != "https://site/watch?v=vid1" || entries[0].Title != "First" {
+		t.Errorf("entry0 = %+v", entries[0])
+	}
+	// webpage_url wins over the bare url.
+	if entries[1].URL != "https://site/watch?v=vid2" {
+		t.Errorf("entry1 URL = %q, want webpage_url", entries[1].URL)
+	}
+	// Empty id falls back to the URL as the dedupe key.
+	if entries[2].ExternalID != "https://site/watch?v=anon" {
+		t.Errorf("entry2 ExternalID = %q, want the URL fallback", entries[2].ExternalID)
+	}
+
+	c = &Client{cfg: baseCfg(), run: fakeRun(nil, errors.New("exit status 1"))}
+	if _, err := c.Playlist(context.Background(), "https://site/@chan", 15); !errors.Is(err, ErrRun) {
+		t.Fatalf("run failure err = %v, want ErrRun", err)
+	}
+
+	c = &Client{cfg: baseCfg(), run: fakeRun([]byte("not json"), nil)}
+	if _, err := c.Playlist(context.Background(), "https://site/@chan", 15); !errors.Is(err, ErrRun) {
+		t.Fatalf("bad-json err = %v, want ErrRun", err)
+	}
+}
+
 // ---- helpers --------------------------------------------------------------
 
 func fakeRun(out []byte, err error) runFunc {
