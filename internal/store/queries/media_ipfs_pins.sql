@@ -125,13 +125,20 @@ ON CONFLICT (object_key) DO NOTHING;
 -- the routed network — a re-transcode is a same-swarm wholesale-replace. If a privacy
 -- flip left the row mid-transition on the OTHER swarm, the WHERE makes this a no-op and
 -- the SyncVideo transition + eligibility sweep own the cross-network move (never a
--- cross-network double-pin from a raced re-transcode).
+-- cross-network double-pin from a raced re-transcode). Because the DO UPDATE fires ONLY
+-- on the row's CURRENT network, any target_network marker still on the row is a
+-- SUPERSEDED flip toward the other swarm — the re-transcode's fresh eligibility fence
+-- just re-affirmed THIS swarm — so clear it (target_network = NULL), exactly as
+-- RouteIPFSPinIntent's same-swarm branch does. Leaving it set would strand dead
+-- transition metadata: MarkIPFSPinUnpinned would later read the stale target and try to
+-- re-arm the row onto the wrong swarm on the next unpin.
 INSERT INTO media_ipfs_pins (object_key, media_class, video_id, network)
 VALUES ($1, $2, $3, sqlc.arg(target_network))
 ON CONFLICT (object_key) DO UPDATE
 SET media_class     = EXCLUDED.media_class,
     video_id        = EXCLUDED.video_id,
     state           = 'pending',
+    target_network  = NULL,
     attempts        = 0,
     next_attempt_at = now(),
     last_error      = '',

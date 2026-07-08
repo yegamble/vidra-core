@@ -21,20 +21,33 @@ log() { echo "[private-swarm-init] $*"; }
 # 1. swarm.key: generate a dev key into the shared volume on first boot, else reuse
 #    the operator-mounted / already-generated one. The PSK format is three lines:
 #    the codec header, the base16 line, then 32 random bytes as 64 hex chars.
+# The root entrypoint prelude (000-private-key-perms.sh) has already chowned the shared
+# volume so the ipfs user can write here on the dev auto-gen path. In the operator path
+# the key is mounted read-only and already exists, so generation is skipped entirely.
+KEY_DIR="$(dirname "$KEY_SHARED")"
 if [ ! -f "$KEY_SHARED" ]; then
-	log "generating a DEV swarm.key (NOT for production) at $KEY_SHARED"
-	mkdir -p "$(dirname "$KEY_SHARED")"
-	{
-		printf '/key/swarm/psk/1.0.0/\n'
-		printf '/base16/\n'
-		head -c 32 /dev/urandom | od -A none -t x1 | tr -d ' \n'
-		printf '\n'
-	} >"$KEY_SHARED"
-	chmod 600 "$KEY_SHARED"
+	if [ -w "$KEY_DIR" ]; then
+		log "generating a DEV swarm.key (NOT for production) at $KEY_SHARED"
+		{
+			printf '/key/swarm/psk/1.0.0/\n'
+			printf '/base16/\n'
+			head -c 32 /dev/urandom | od -A none -t x1 | tr -d ' \n'
+			printf '\n'
+		} >"$KEY_SHARED"
+		chmod 600 "$KEY_SHARED"
+	else
+		# No shared key AND the shared dir is not writable: this hook can't provide one.
+		# The daemon then fail-closes (LIBP2P_FORCE_PNET=1 with no swarm.key = refuse to
+		# boot) — "private content unreachable", never "private content public". In
+		# production mount your operator swarm.key at this path read-only so this is skipped.
+		log "WARN: no swarm.key at $KEY_SHARED and $KEY_DIR is not writable — cannot auto-generate"
+	fi
 fi
-cp "$KEY_SHARED" "$KEY_DST"
-chmod 600 "$KEY_DST"
-log "swarm.key installed at $KEY_DST"
+if [ -f "$KEY_SHARED" ]; then
+	cp "$KEY_SHARED" "$KEY_DST"
+	chmod 600 "$KEY_DST"
+	log "swarm.key installed at $KEY_DST"
+fi
 
 # 2. Network isolation (belt-and-suspenders on top of LIBP2P_FORCE_PNET=1): no public
 #    bootstrap peers, routing OFF (explicit peering only), reprovide OFF (keep even the
@@ -44,18 +57,32 @@ ipfs bootstrap rm --all >/dev/null 2>&1 || true
 ipfs config Routing.Type none
 ipfs config Reprovider.Interval 0
 ipfs config --json Gateway.NoFetch true
+# The `server` IPFS_PROFILE (init above) installs Swarm.AddrFilters that BLOCK dialing
+# every private IP range (10/8, 172.16/12, 192.168/16, …) — it assumes a public node.
+# A private swarm lives ENTIRELY on a private network (the compose bridge is 172.x, a
+# prod deployment a VPC), so those filters make the keyed peers unable to dial each other
+# ("gater disallows connection to peer") and replication never happens. Clear them:
+# isolation here comes from the swarm.key / LIBP2P_FORCE_PNET, NOT from IP filtering, so
+# allowing private-address dialing is both correct and required for the swarm to function.
+ipfs config --json Swarm.AddrFilters '[]'
 # Reject any accidental public announce: bind the gateway to the container only and
 # keep the API on all interfaces of the compose network (RPC is the app's path in).
 ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8080
-log "isolation config applied (bootstrap cleared, Routing=none, Reprovider=0, Gateway.NoFetch=true)"
+log "isolation config applied (bootstrap cleared, Routing=none, Reprovider=0, Gateway.NoFetch=true, AddrFilters cleared for intra-swarm private-network dialing)"
 
 # 3. Publish this node's peer id to the shared volume so a peer node can dial it, and —
 #    when PRIVATE_PEER_HOST is set (the optional second node) — configure explicit
 #    Peering to the other node (Routing=none means peers must be pinned explicitly).
 if [ -n "${PRIVATE_SELF_NAME:-}" ]; then
-	SELF_ID="$(ipfs config Identity.PeerID)"
-	echo "$SELF_ID" >"/private-key/${PRIVATE_SELF_NAME}.peerid"
-	log "published peer id for ${PRIVATE_SELF_NAME}"
+	if [ -w /private-key ]; then
+		SELF_ID="$(ipfs config Identity.PeerID)"
+		echo "$SELF_ID" >"/private-key/${PRIVATE_SELF_NAME}.peerid"
+		log "published peer id for ${PRIVATE_SELF_NAME}"
+	else
+		# Read-only shared dir (operator single-node prod): peer-id exchange is a
+		# multi-node dev convenience only, so skip it rather than abort init.
+		log "WARN: /private-key not writable — skipping peer-id publish for ${PRIVATE_SELF_NAME}"
+	fi
 fi
 if [ -n "${PRIVATE_PEER_HOST:-}" ]; then
 	PEER_FILE="/private-key/${PRIVATE_PEER_HOST}.peerid"

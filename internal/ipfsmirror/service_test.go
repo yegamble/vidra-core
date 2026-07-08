@@ -150,6 +150,11 @@ func (r *fakeRepo) RepinIPFSObject(ctx context.Context, arg sqlcgen.RepinIPFSObj
 	// worker can swap the superseded root after the new add (the real query's
 	// wholesale-replace semantics). next_attempt in the past ⇒ immediately claimable.
 	row.State = "pending"
+	// Clear any superseded cross-swarm flip marker: this re-transcode landed on the
+	// row's CURRENT swarm, so an in-flight target toward the OTHER swarm is dead
+	// metadata (mirrors the real query's `target_network = NULL`, and RouteIPFSPinIntent's
+	// same-swarm branch). Leaving it would let MarkIPFSPinUnpinned re-arm to the wrong swarm.
+	row.TargetNetwork = nil
 	row.Attempts = 0
 	row.NextAttemptAt = time.Now().UTC().Add(-time.Second)
 	row.LastError = ""
@@ -1205,6 +1210,57 @@ func TestHLSPinLifecycle(t *testing.T) {
 	}
 	if pinned, _ := client.IsPinned(ctx, newRoot); pinned {
 		t.Error("car_root still pinned after delete, want unpinned")
+	}
+}
+
+// TestRepinClearsSupersededFlipTarget is the P19.P minor-fix regression: a re-transcode
+// that lands on the row's CURRENT swarm must CLEAR any in-flight cross-swarm flip marker
+// (target_network) it supersedes. The DO UPDATE fires ONLY on the row's current network,
+// so a lingering target toward the OTHER swarm is a flip the fresh eligibility fence just
+// overrode — leaving it strands dead metadata that MarkIPFSPinUnpinned would later read to
+// re-arm the row onto the WRONG swarm on the next unpin. Models a public HLS row that a
+// not-yet-completed flip toward the private swarm left marked (network=public,
+// state=unpinning, target=private) while the video is still public+published+listed, so
+// the re-transcode routes back to public and the marker must die.
+func TestRepinClearsSupersededFlipTarget(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	blobs := newBlobs(t)
+	privateFake := ipfs.NewFakeIPFSClient()
+	vid := uuid.New()
+	prefix := "streaming-playlists/" + vid.String() + "/"
+
+	// Public+published+listed ⇒ effectiveNetwork(HLS) = public even with the private tier on.
+	lk := &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true}
+	svc := New(repo, lk, blobs, ipfs.NewFakeIPFSClient(), twoTierConfig(privateFake))
+
+	// Seed the HLS row mid-superseded-flip: still on public, an unfinished unpin toward
+	// the private swarm recorded a target marker; cid/car_root preserved for the swap.
+	target := networkPrivate
+	repo.rows[prefix] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: prefix, MediaClass: string(ClassHLS), VideoID: pgUUID(vid),
+		State: "unpinning", Network: networkPublic, TargetNetwork: &target,
+		Cid: "bafyoldroot", CarRoot: "bafyoldroot",
+		NextAttemptAt: time.Now().UTC(),
+	}
+
+	putBlob(t, blobs, prefix+"master.m3u8", "v2-master")
+	if err := svc.OnTranscodeComplete(ctx, vid); err != nil {
+		t.Fatalf("OnTranscodeComplete: %v", err)
+	}
+
+	row := repo.rows[prefix]
+	if row.State != "pending" {
+		t.Fatalf("state = %q, want pending (re-transcode forced a re-claim on the current swarm)", row.State)
+	}
+	if normalizeNetwork(row.Network) != networkPublic {
+		t.Fatalf("network = %q, want public (a superseded flip must not move the row)", row.Network)
+	}
+	if row.TargetNetwork != nil {
+		t.Errorf("target_network = %q, want nil (the superseded cross-swarm flip marker must be cleared)", *row.TargetNetwork)
+	}
+	if row.CarRoot != "bafyoldroot" {
+		t.Errorf("car_root = %q, want the old root preserved for the worker's swap", row.CarRoot)
 	}
 }
 

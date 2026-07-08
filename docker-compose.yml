@@ -467,6 +467,14 @@ services:
   kubo-private:
     image: ipfs/kubo:v0.32.1
     profiles: ["ipfs-private", "ipfs-private-cluster"]
+    # Root prelude that makes the root-owned `ipfs_private_key` volume writable by the
+    # unprivileged `ipfs` user BEFORE kubo drops privileges — without it the dev-key
+    # init hook can't write /private-key/swarm.key and the daemon aborts (the
+    # ipfs-private-integration CI-never-green fix). Then execs the stock kubo entrypoint.
+    entrypoint: ["/bin/sh", "/usr/local/bin/private-key-perms.sh"]
+    # Overriding entrypoint CLEARS the image's default CMD (compose semantics), so restore
+    # kubo's default daemon invocation — the prelude passes it through to start_ipfs.
+    command: ["daemon", "--migrate=true", "--agent-version-suffix=docker"]
     environment:
       IPFS_PROFILE: server
       # Fail-closed: refuse to start unless a private network (swarm.key) is configured.
@@ -476,6 +484,8 @@ services:
       - ipfs_private_data:/data/ipfs
       # Shared swarm.key + peer-id exchange volume (dev key generation lives here).
       - ipfs_private_key:/private-key
+      # Root entrypoint prelude (chowns /private-key so the ipfs user can write the key).
+      - ./deploy/ipfs-private/000-private-key-perms.sh:/usr/local/bin/private-key-perms.sh:ro
       # The init hook runs before the daemon (generates the dev key + isolation config).
       - ./deploy/ipfs-private/001-init-private-swarm.sh:/container-init.d/001-init-private-swarm.sh:ro
     ports:
@@ -495,6 +505,9 @@ services:
   kubo-private-2:
     image: ipfs/kubo:v0.32.1
     profiles: ["ipfs-private-cluster"]
+    # Same root prelude as kubo-private (writable /private-key before the privilege drop).
+    entrypoint: ["/bin/sh", "/usr/local/bin/private-key-perms.sh"]
+    command: ["daemon", "--migrate=true", "--agent-version-suffix=docker"]
     depends_on:
       # Start after node-1 is healthy so the shared swarm.key + node-1's peer id exist.
       kubo-private:
@@ -507,6 +520,7 @@ services:
     volumes:
       - ipfs_private_data_2:/data/ipfs
       - ipfs_private_key:/private-key
+      - ./deploy/ipfs-private/000-private-key-perms.sh:/usr/local/bin/private-key-perms.sh:ro
       - ./deploy/ipfs-private/001-init-private-swarm.sh:/container-init.d/001-init-private-swarm.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "ipfs --api=/ip4/127.0.0.1/tcp/5001 id >/dev/null 2>&1 || exit 1"]

@@ -137,9 +137,10 @@ func TestPrivateSwarmReplication(t *testing.T) {
 		t.Fatalf("A returned an invalid CID %q: %v", res.CID, err)
 	}
 
-	if err := swarmConnect(ctx, b, dialAddrForB(ctx, t, b)); err != nil {
-		// Connect from B→A is symmetric; if PEER_B pointed at B we retry A→B by
-		// discovering A is not needed — a keyed pair must connect, so this is a failure.
+	// A dials B's multiaddr (IPFS_PRIVATE_TEST_PEER_B, or discovered from B's /id) to
+	// establish the keyed connection — dialing must be A→B, not B→itself. A keyed pair
+	// MUST be able to connect over the private swarm, so a failure here is fatal.
+	if err := swarmConnect(ctx, a, dialAddrForB(ctx, t, b)); err != nil {
 		t.Fatalf("keyed peers failed to connect over the private swarm: %v", err)
 	}
 
