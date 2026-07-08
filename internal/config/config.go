@@ -377,6 +377,13 @@ type Config struct {
 	// uploads are rejected with 413.
 	UploadMaxSize string
 
+	// UploadMaxActiveSessionsPerUser caps how many ACTIVE (unfinished, unexpired)
+	// resumable upload sessions one user may hold at once — the batch-upload guard
+	// (UPLOAD-10). A create past the cap is refused 429 with the stable code
+	// too_many_active_uploads so a batch-upload client queues on it; cancelling or
+	// completing an in-flight session frees a slot. 0 disables the limit. Default 5.
+	UploadMaxActiveSessionsPerUser int
+
 	// yt-dlp platform-URL import (backport W2.C1, UPLOAD-09). OFF BY DEFAULT —
 	// admin/config opt-in only. When on, a URL import may resolve through the
 	// hard-sandboxed yt-dlp extractor (internal/ytdlp) instead of a plain media
@@ -628,6 +635,12 @@ func Load() (*Config, error) {
 	}
 	cfg.YtdlpMaxHeight = ytdlpHeight
 
+	maxActiveUploads, err := getEnvInt("UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER", 5)
+	if err != nil {
+		return nil, err
+	}
+	cfg.UploadMaxActiveSessionsPerUser = maxActiveUploads
+
 	quotaBytes, err := getEnvInt64("INSTANCE_DEFAULT_QUOTA_BYTES", 0)
 	if err != nil {
 		return nil, err
@@ -761,6 +774,9 @@ func (c *Config) validate() error {
 	}
 	if _, err := bytes.Parse(c.UploadMaxSize); err != nil {
 		return fmt.Errorf("config: invalid UPLOAD_MAX_SIZE %q: %w", c.UploadMaxSize, err)
+	}
+	if c.UploadMaxActiveSessionsPerUser < 0 {
+		return fmt.Errorf("config: UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER must be >= 0 (0 = unlimited), got %d", c.UploadMaxActiveSessionsPerUser)
 	}
 	if c.InstanceDefaultQuotaBytes < 0 {
 		return fmt.Errorf("config: INSTANCE_DEFAULT_QUOTA_BYTES must be >= 0 (0 = unlimited), got %d", c.InstanceDefaultQuotaBytes)

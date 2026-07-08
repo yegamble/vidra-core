@@ -62,12 +62,18 @@ var (
 	ErrIncomplete = errors.New("upload: missing or mismatched chunks")
 	// ErrStorageUnavailable means no blob backend is configured.
 	ErrStorageUnavailable = errors.New("upload: storage backend not configured")
+	// ErrTooManyActiveSessions means the caller already holds the maximum number
+	// of concurrent active upload sessions (UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER,
+	// UPLOAD-10). The HTTP layer maps it to 429 with a stable code a batch client
+	// queues on; cancelling or completing an in-flight session frees a slot.
+	ErrTooManyActiveSessions = errors.New("upload: too many active sessions")
 )
 
 // Repository is the data access the upload service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
 	CreateUploadSession(ctx context.Context, arg sqlcgen.CreateUploadSessionParams) (sqlcgen.UploadSession, error)
+	CountActiveUploadSessionsForUser(ctx context.Context, userID uuid.UUID) (int64, error)
 	GetUploadSession(ctx context.Context, id uuid.UUID) (sqlcgen.UploadSession, error)
 	UpsertUploadChunk(ctx context.Context, arg sqlcgen.UpsertUploadChunkParams) error
 	ListUploadChunks(ctx context.Context, uploadID uuid.UUID) ([]sqlcgen.ListUploadChunksRow, error)
@@ -79,10 +85,11 @@ type Repository interface {
 
 // Service holds the resumable-upload logic.
 type Service struct {
-	repo      Repository
-	blobs     storage.Backend
-	chunkSize int32
-	now       func() time.Time
+	repo              Repository
+	blobs             storage.Backend
+	chunkSize         int32
+	maxActiveSessions int
+	now               func() time.Time
 }
 
 // Option customises the Service.
@@ -104,6 +111,15 @@ func WithChunkSize(n int32) Option {
 	}
 }
 
+// WithMaxActiveSessions caps how many ACTIVE (unfinished, unexpired) upload
+// sessions a single user may hold at once — the batch-upload guard (UPLOAD-10,
+// UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER). A create past the cap returns
+// ErrTooManyActiveSessions. n <= 0 disables the limit (the default), preserving
+// the pre-guard behaviour.
+func WithMaxActiveSessions(n int) Option {
+	return func(s *Service) { s.maxActiveSessions = n }
+}
+
 // NewService builds the upload service. blobs stores the chunk bytes; it must
 // be non-nil in production (the routes only mount when it is).
 func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service {
@@ -121,6 +137,20 @@ func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service
 // SHA-256 over size + first/last 1 MiB) used for server-side resume (UPLOAD-03);
 // it is stored verbatim and never parsed. Pass "" when the client supplies none.
 func (s *Service) CreateSession(ctx context.Context, videoID, userID uuid.UUID, filename string, size int64, fileFingerprint string) (sqlcgen.UploadSession, error) {
+	// Batch-upload guard (UPLOAD-10): cap concurrent active sessions per user so a
+	// client's batch orchestration queues instead of opening unbounded sessions.
+	// This is a fairness/backpressure signal, not a security boundary — a small
+	// TOCTOU window between the count and the insert is acceptable (the sweeper
+	// and per-file quota are the hard limits).
+	if s.maxActiveSessions > 0 {
+		active, err := s.repo.CountActiveUploadSessionsForUser(ctx, userID)
+		if err != nil {
+			return sqlcgen.UploadSession{}, err
+		}
+		if active >= int64(s.maxActiveSessions) {
+			return sqlcgen.UploadSession{}, ErrTooManyActiveSessions
+		}
+	}
 	return s.repo.CreateUploadSession(ctx, sqlcgen.CreateUploadSessionParams{
 		VideoID:         videoID,
 		UserID:          userID,

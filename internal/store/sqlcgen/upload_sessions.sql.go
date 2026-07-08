@@ -12,6 +12,26 @@ import (
 	"github.com/google/uuid"
 )
 
+const countActiveUploadSessionsForUser = `-- name: CountActiveUploadSessionsForUser :one
+SELECT count(*)::bigint FROM upload_sessions
+WHERE user_id = $1
+  AND state = 'active'
+  AND expires_at > now()
+`
+
+// The number of the caller's ACTIVE (not completed/cancelled, not yet expired)
+// upload sessions — the batch-upload guard input (UPLOAD-10, W2.C3).
+// createUploadSession refuses to open a new session once this reaches
+// UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER, so a client's batch orchestration queues
+// rather than opening unbounded concurrent sessions. A cancel or complete frees
+// a slot; the 24h-expiry sweeper is the backstop for abandoned ones.
+func (q *Queries) CountActiveUploadSessionsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveUploadSessionsForUser, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createUploadSession = `-- name: CreateUploadSession :one
 
 INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at, file_fingerprint)

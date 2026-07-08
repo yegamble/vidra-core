@@ -78,6 +78,16 @@ func (r *uploadFakeRepo) ListUploadChunks(_ context.Context, uploadID uuid.UUID)
 	return rows, nil
 }
 
+func (r *uploadFakeRepo) CountActiveUploadSessionsForUser(_ context.Context, userID uuid.UUID) (int64, error) {
+	var n int64
+	for _, s := range r.sessions {
+		if s.UserID == userID && s.State == "active" && s.ExpiresAt.After(time.Now()) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (r *uploadFakeRepo) ListActiveUploadSessionsForUser(_ context.Context, arg sqlcgen.ListActiveUploadSessionsForUserParams) ([]sqlcgen.ListActiveUploadSessionsForUserRow, error) {
 	var rows []sqlcgen.ListActiveUploadSessionsForUserRow
 	for id, s := range r.sessions {
@@ -557,6 +567,65 @@ func TestListMyUploadsResumeContract(t *testing.T) {
 		_ = json.Unmarshal(r.Body.Bytes(), &f)
 		if len(f.Uploads) != 0 {
 			t.Errorf("other-user list = %+v, want empty (owner isolation)", f.Uploads)
+		}
+	}
+}
+
+// TestUploadSessionBatchGuard drives the batch-upload guard over HTTP (UPLOAD-10,
+// W2.C3): with UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER=2 a caller can hold two active
+// sessions; the third open is 429 with the stable code too_many_active_uploads a
+// batch client queues on; cancelling an in-flight session frees a slot; and the
+// budget is per-user.
+func TestUploadSessionBatchGuard(t *testing.T) {
+	cfg := testConfig()
+	cfg.UploadMaxActiveSessionsPerUser = 2
+	srv := videoServerCfg(t, cfg)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	body := `{"size":40,"filename":"clip.mp4"}`
+
+	// Two opens fit under the cap of 2.
+	first := openUploadSession(t, srv, id, "clip.mp4", 40, tok)
+	_ = openUploadSession(t, srv, id, "clip.mp4", 40, tok)
+
+	// The third is refused 429 with the stable code (a fairness signal, not 5xx).
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session", body, tok)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("third open = %d, want 429; body=%s", rec.Code, rec.Body.String())
+	}
+	if code := errorCode(t, rec); code != "too_many_active_uploads" {
+		t.Errorf("error code = %q, want too_many_active_uploads", code)
+	}
+
+	// Cancelling an in-flight session frees a slot for the queued upload.
+	if r := sendJSONAuth(srv, http.MethodDelete, "/api/v1/uploads/"+first.UploadID, "", tok); r.Code != http.StatusNoContent {
+		t.Fatalf("cancel = %d; body=%s", r.Code, r.Body.String())
+	}
+	if r := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session", body, tok); r.Code != http.StatusCreated {
+		t.Errorf("open after cancel = %d, want 201; body=%s", r.Code, r.Body.String())
+	}
+
+	// A different user has their own independent budget.
+	otherTok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	id2 := createVideo(t, srv, otherTok, "bob", `{"title":"y"}`)
+	if r := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id2+"/upload-session", body, otherTok); r.Code != http.StatusCreated {
+		t.Errorf("other-user open = %d, want 201 (per-user budget); body=%s", r.Code, r.Body.String())
+	}
+}
+
+// TestUploadSessionBatchGuardDisabled: with UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER=0
+// the guard is off — a caller can open many concurrent sessions.
+func TestUploadSessionBatchGuardDisabled(t *testing.T) {
+	cfg := testConfig()
+	cfg.UploadMaxActiveSessionsPerUser = 0
+	srv := videoServerCfg(t, cfg)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	for i := 0; i < 8; i++ {
+		if r := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session", `{"size":40,"filename":"clip.mp4"}`, tok); r.Code != http.StatusCreated {
+			t.Fatalf("open %d with guard disabled = %d; body=%s", i, r.Code, r.Body.String())
 		}
 	}
 }

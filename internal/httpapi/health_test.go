@@ -28,7 +28,11 @@ func testConfig() *config.Config {
 		HTTPRequestTimeout:  30 * time.Second,
 		HTTPBodyLimit:       "8M",
 		UploadMaxSize:       "64K",
-		JWTRefreshTTL:       720 * time.Hour,
+		// Mirror the production batch-upload guard default (UPLOAD-10); well above
+		// what any single-user test holds open, so it is inert unless a test lowers
+		// it. Tests exercising the guard build a config with a small cap.
+		UploadMaxActiveSessionsPerUser: 5,
+		JWTRefreshTTL:                  720 * time.Hour,
 		// Effective rate-limit config mirrors the production defaults so the admin
 		// system-status page (which surfaces these read-only) has real values to
 		// report. The httpapi layer only enforces limits when a limiter is

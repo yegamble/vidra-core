@@ -187,6 +187,11 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 	}
 	sess, err := s.uploadsvc.CreateSession(ctx, id, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint))
 	if err != nil {
+		// Batch guard (UPLOAD-10): the caller holds the max concurrent active
+		// sessions → 429 too_many_active_uploads so the client queues on it.
+		if errors.Is(err, upload.ErrTooManyActiveSessions) {
+			return &TooManyActiveUploadsError{Max: s.cfg.UploadMaxActiveSessionsPerUser}
+		}
 		return err
 	}
 	total := int((sess.TotalSize + int64(sess.ChunkSize) - 1) / int64(sess.ChunkSize))

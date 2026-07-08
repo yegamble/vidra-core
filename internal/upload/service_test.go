@@ -39,6 +39,18 @@ func (r *fakeRepo) CreateUploadSession(_ context.Context, arg sqlcgen.CreateUplo
 	return s, nil
 }
 
+// CountActiveUploadSessionsForUser mirrors the SQL: the caller's active,
+// unexpired session count — the batch-guard input.
+func (r *fakeRepo) CountActiveUploadSessionsForUser(_ context.Context, userID uuid.UUID) (int64, error) {
+	var n int64
+	for _, s := range r.sessions {
+		if s.UserID == userID && s.State == "active" && s.ExpiresAt.After(time.Now()) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // ListActiveUploadSessionsForUser mirrors the SQL: the caller's active,
 // unexpired sessions (optionally filtered by fingerprint) newest-first, each
 // with its received-chunk count.
@@ -307,6 +319,86 @@ func TestFingerprintPersistedOnCreate(t *testing.T) {
 	}
 	if repo.sessions[sess.ID].FileFingerprint != fp {
 		t.Errorf("persisted fingerprint = %q, want %q", repo.sessions[sess.ID].FileFingerprint, fp)
+	}
+}
+
+// TestMaxActiveSessionsGuard covers the batch-upload guard (UPLOAD-10, W2.C3): a
+// user may hold at most WithMaxActiveSessions concurrent active sessions; a
+// create past the cap is ErrTooManyActiveSessions; cancelling or completing an
+// in-flight session frees a slot; and the cap is scoped per-user.
+func TestMaxActiveSessionsGuard(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	svc := NewService(repo, blobs, WithChunkSize(4), WithMaxActiveSessions(2))
+	user, other, video := uuid.New(), uuid.New(), uuid.New()
+
+	// Two sessions fit under the cap of 2.
+	s1, err := svc.CreateSession(ctx, video, user, "a.mp4", 4, "")
+	if err != nil {
+		t.Fatalf("create 1: %v", err)
+	}
+	s2, err := svc.CreateSession(ctx, video, user, "b.mp4", 4, "")
+	if err != nil {
+		t.Fatalf("create 2: %v", err)
+	}
+
+	// The third is refused with the guard sentinel.
+	if _, err := svc.CreateSession(ctx, video, user, "c.mp4", 4, ""); !errors.Is(err, ErrTooManyActiveSessions) {
+		t.Fatalf("create 3 err = %v, want ErrTooManyActiveSessions", err)
+	}
+
+	// A DIFFERENT user is unaffected by this user's count (per-user budget).
+	if _, err := svc.CreateSession(ctx, video, other, "d.mp4", 4, ""); err != nil {
+		t.Fatalf("other-user create: %v", err)
+	}
+
+	// Cancelling one frees a slot.
+	if err := svc.Cancel(ctx, s1.ID, user); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if _, err := svc.CreateSession(ctx, video, user, "e.mp4", 4, ""); err != nil {
+		t.Fatalf("create after cancel: %v", err)
+	}
+
+	// Back at the cap (s2 + the post-cancel session) → refused again.
+	if _, err := svc.CreateSession(ctx, video, user, "f.mp4", 4, ""); !errors.Is(err, ErrTooManyActiveSessions) {
+		t.Fatalf("create at cap err = %v, want ErrTooManyActiveSessions", err)
+	}
+
+	// Completing one also frees a slot.
+	putAll(t, svc, s2.ID, user, map[int][]byte{0: []byte("AAAA")}, []int{0})
+	if _, reader, err := svc.PrepareComplete(ctx, s2.ID, user); err != nil {
+		t.Fatalf("prepare complete: %v", err)
+	} else {
+		_ = reader.Close()
+	}
+	if err := svc.MarkCompleted(ctx, s2.ID); err != nil {
+		t.Fatalf("mark completed: %v", err)
+	}
+	if _, err := svc.CreateSession(ctx, video, user, "g.mp4", 4, ""); err != nil {
+		t.Fatalf("create after complete: %v", err)
+	}
+}
+
+// TestMaxActiveSessionsDisabled: a cap of 0 (the default) imposes no limit, so
+// the guard is fully opt-in.
+func TestMaxActiveSessionsDisabled(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	svc := NewService(repo, blobs, WithChunkSize(4), WithMaxActiveSessions(0))
+	user, video := uuid.New(), uuid.New()
+	for i := 0; i < 12; i++ {
+		if _, err := svc.CreateSession(ctx, video, user, "clip.mp4", 4, ""); err != nil {
+			t.Fatalf("create %d with guard disabled: %v", i, err)
+		}
 	}
 }
 

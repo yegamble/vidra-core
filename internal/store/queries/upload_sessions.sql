@@ -28,6 +28,18 @@ WHERE s.user_id = sqlc.arg('user_id')
   AND (sqlc.narg('fingerprint')::text IS NULL OR s.file_fingerprint = sqlc.narg('fingerprint')::text)
 ORDER BY s.created_at DESC;
 
+-- name: CountActiveUploadSessionsForUser :one
+-- The number of the caller's ACTIVE (not completed/cancelled, not yet expired)
+-- upload sessions — the batch-upload guard input (UPLOAD-10, W2.C3).
+-- createUploadSession refuses to open a new session once this reaches
+-- UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER, so a client's batch orchestration queues
+-- rather than opening unbounded concurrent sessions. A cancel or complete frees
+-- a slot; the 24h-expiry sweeper is the backstop for abandoned ones.
+SELECT count(*)::bigint FROM upload_sessions
+WHERE user_id = sqlc.arg('user_id')
+  AND state = 'active'
+  AND expires_at > now();
+
 -- name: UpsertUploadChunk :exec
 -- Idempotent re-PUT: a chunk index that has already landed just updates its
 -- recorded size (the blob at uploads/<session>/<n> is overwritten in place).

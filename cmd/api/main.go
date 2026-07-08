@@ -630,7 +630,8 @@ func run() error {
 	// backend at uploads/<session>/<n>; completion assembles them through the
 	// same AttachOriginal → Process pipeline as a direct upload, and a background
 	// sweeper cleans up expired/cancelled sessions' chunks (failed-upload cleanup).
-	uploadsvc := upload.NewService(db.Queries(), blobs)
+	uploadsvc := upload.NewService(db.Queries(), blobs,
+		upload.WithMaxActiveSessions(cfg.UploadMaxActiveSessionsPerUser))
 	opts = append(opts, httpapi.WithUploadService(uploadsvc))
 
 	// Asynchronous URL import (P2.2). POST /videos/:id/import now enqueues a job

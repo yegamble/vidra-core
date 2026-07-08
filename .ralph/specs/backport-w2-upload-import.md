@@ -306,3 +306,43 @@ Server-side draft recovery (UPLOAD-02/03) — adaptations from the §W2.C2 sketc
   from `GET /me/uploads` after a refresh / on a new device; localStorage demoted
   to a cache) lands in the frontend wave — backend contract shipped ahead,
   consumer-shaped, exactly like W1/W2.C1.
+
+## 10. Execution notes — W2.C3 (2026-07-08, as-built)
+Batch-upload guard (UPLOAD-10) — adaptations from the §W2.C3 sketch:
+- **NO migration, NO new table, NO `/uploads/batch` surface** (the backup's
+  `086_add_batch_uploads` shape stays rejected). Batching remains client
+  orchestration over the existing per-video draft + session endpoints; this slice
+  adds only a per-user concurrency cap on `createUploadSession`.
+- **Error code chosen = 429 `too_many_active_uploads`** (of the sketch's
+  "429/422" choice). 429 Too Many Requests is the honest backpressure signal a
+  batch client queues-and-retries on, distinct from 422 validation and from the
+  quota's 422 `quota_exceeded`. Rendered by a dedicated
+  `TooManyActiveUploadsError` in `internal/httpapi/errors.go` (stable code
+  survives the 5xx scrubber), mapped in `handleCreateUploadSession` from the new
+  `upload.ErrTooManyActiveSessions` sentinel.
+- **Config `UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER`** (default `5`, `0` disables),
+  boot-validated `>= 0`. Wired into the upload service via
+  `upload.WithMaxActiveSessions(cfg…)` in `cmd/api/main.go`; documented in
+  `.env.example` and on `POST /videos/{id}/upload-session` in `api/openapi.yaml`
+  (new `429` response + a BATCH GUARD paragraph).
+- **Enforcement point**: inside `upload.Service.CreateSession`, and it runs LAST —
+  after the handler's auth / feature-gate / ownership / extension / size / quota
+  checks — so cheap validations reject before the DB count. The count is a new
+  sqlc query `CountActiveUploadSessionsForUser` (active + unexpired, per user).
+- **Soft guard, not a security boundary**: a small TOCTOU window exists between
+  the count and the insert (two concurrent creates could both pass). Accepted —
+  the hard limits are the per-file `UPLOAD_MAX_SIZE`, the per-user storage quota,
+  and the 24h-expiry sweeper; this cap is fairness/backpressure so a client's
+  batch orchestration queues instead of opening unbounded sessions. Cancel and
+  complete both free a slot immediately.
+- **No new ingestion path**: no bytes move, so the ClamAV invariant (§1.1) is
+  untouched.
+- **Tests (in `make ci`)**: service — `TestMaxActiveSessionsGuard` (cap enforced,
+  cancel frees a slot, complete frees a slot, per-user scope) +
+  `TestMaxActiveSessionsDisabled` (cap 0 = unlimited); handler —
+  `TestUploadSessionBatchGuard` (2 opens → 3rd is 429 `too_many_active_uploads`
+  → cancel → 201; per-user budget) + `TestUploadSessionBatchGuardDisabled`.
+  `testConfig()` mirrors the production default (5), inert for existing tests.
+- **Consumer**: the vidra-user W2.U batch-upload UI (queue on
+  `too_many_active_uploads`, resume when a slot frees) lands in the frontend wave
+  — backend contract shipped ahead, consumer-shaped, exactly like W1/W2.C1–C2.

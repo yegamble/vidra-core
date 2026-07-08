@@ -54,6 +54,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var fd *FeatureDisabledError
 	var id *IPFSDisabledError
 	var pr *PasswordRequiredError
+	var tma *TooManyActiveUploadsError
 	switch {
 	case errors.As(err, &ve):
 		status = http.StatusUnprocessableEntity
@@ -72,6 +73,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusForbidden
 		message = "this feature is disabled on this instance"
 		code = "feature_disabled"
+	case errors.As(err, &tma):
+		status = http.StatusTooManyRequests
+		message = "you have too many uploads in progress; finish or cancel one and try again"
+		code = "too_many_active_uploads"
 	case errors.As(err, &id):
 		status = http.StatusServiceUnavailable
 		message = "IPFS mirroring is not enabled on this instance"
@@ -152,6 +157,19 @@ func (e *QuotaExceededError) Error() string { return "storage quota exceeded" }
 type FeatureDisabledError struct{ Feature string }
 
 func (e *FeatureDisabledError) Error() string { return "feature disabled: " + e.Feature }
+
+// TooManyActiveUploadsError renders as 429 with the stable code
+// "too_many_active_uploads": the caller already holds
+// UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER active resumable upload sessions
+// (UPLOAD-10 / W2.C3 batch guard). It is a backpressure signal, not a failure —
+// a batch-upload client queues and retries once an in-flight session completes
+// or is cancelled (either frees a slot). Max is the configured cap, for
+// diagnostics/logging; the client-facing message is generic.
+type TooManyActiveUploadsError struct{ Max int }
+
+func (e *TooManyActiveUploadsError) Error() string {
+	return "too many active upload sessions"
+}
 
 // PasswordRequiredError renders as 401 with the stable code "password_required":
 // the requested video is privacy=password and the caller presented neither owner/

@@ -1388,10 +1388,37 @@ re-ported.
       frontend wave — backend contract shipped ahead, consumer-shaped, exactly like
       the W1/W2.C1 slices; the Playwright + backend-backed e2e leg of the
       completeness contract is satisfied in that vidra-user wave.)
-- [ ] W2.C3 [UPLOAD-10] Batch guard: `UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER`
+- [x] W2.C3 [UPLOAD-10] Batch guard: `UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER`
       (default 5) enforced at `createUploadSession` with a stable error code the
       UI queues on; contract documents the limit; NO new tables and NO
       `/uploads/batch` surface (backup shape rejected).
+      (backport W2.C3, 2026-07-08, config/upload/httpapi/openapi/sqlc + spec §10 +
+      .env.example. **No migration, no new table, no `/uploads/batch`** — batching
+      stays client orchestration over the per-video session endpoints. **Config**
+      `UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER` (default 5; 0 disables), boot-validated
+      `>= 0`, wired via `upload.WithMaxActiveSessions(cfg…)` in `cmd/api/main.go`.
+      **Enforcement** in `upload.Service.CreateSession` (runs LAST, after
+      auth/feature-gate/ownership/extension/size/quota) via a new sqlc query
+      `CountActiveUploadSessionsForUser` (active + unexpired, per user) →
+      `upload.ErrTooManyActiveSessions`. **Contract**: `POST
+      /videos/{id}/upload-session` gains a `429` response + a BATCH GUARD paragraph
+      in `api/openapi.yaml`; the handler maps the sentinel to a dedicated
+      `TooManyActiveUploadsError` → **429 stable code `too_many_active_uploads`**
+      (chosen over 422 so a batch client queues-and-retries on a distinct
+      backpressure signal). Soft guard (count-then-insert; small TOCTOU window
+      accepted — the hard limits are UPLOAD_MAX_SIZE, per-user quota, and the
+      24h-expiry sweeper). Cancel AND complete each free a slot. No new ingestion
+      path → ClamAV invariant untouched. **Tests (all in `make ci`)**: service
+      `TestMaxActiveSessionsGuard` (cap, cancel/complete free a slot, per-user
+      scope) + `TestMaxActiveSessionsDisabled` (0 = unlimited); handler
+      `TestUploadSessionBatchGuard` (2 opens → 3rd 429 `too_many_active_uploads` →
+      cancel → 201; per-user budget) + `TestUploadSessionBatchGuardDisabled`;
+      `testConfig()` mirrors the prod default 5 (inert for existing tests). `make
+      ci` fully green locally (fmt-check, vet, openapi-verify, sqlc-verify,
+      test-race; MAKECI_EXIT=0). **Consumer**: the vidra-user W2.U batch-upload UI
+      (queue on `too_many_active_uploads`, resume when a slot frees) lands in the
+      frontend wave — backend contract shipped ahead, consumer-shaped, exactly like
+      W1/W2.C1–C2.)
 - [ ] W2.C4 [UPLOAD-13] Channel auto-sync (depends on W2.C1):
       `POST/GET /api/v1/channel-syncs`, `DELETE /api/v1/channel-syncs/{id}`,
       `POST /api/v1/channel-syncs/{id}/sync-now`; migration `0081_channel_syncs`

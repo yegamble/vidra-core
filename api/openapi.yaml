@@ -3650,6 +3650,16 @@ paths:
         /api/v1/uploads/{upload_id}/chunks/{n}, then POST
         /api/v1/uploads/{upload_id}/complete to assemble and finalise the video
         through the same pipeline as a direct upload. Non-owner/unknown video → 404.
+
+
+        BATCH GUARD (UPLOAD-10): a caller may hold at most
+        UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER active (unfinished, unexpired) upload
+        sessions at once (instance default 5; 0 disables the limit). Opening one
+        past the cap is 429 with the stable code too_many_active_uploads — a
+        batch-upload client should queue and retry once an in-flight session
+        completes or is cancelled (either frees a slot). This is a fairness guard,
+        not a security boundary; batching stays client-orchestrated over these
+        per-video session endpoints (there is no /uploads/batch surface).
       tags: [videos]
       security:
         - bearerAuth: []
@@ -3701,6 +3711,15 @@ paths:
           description: >-
             The body is invalid (size must be > 0, filename required) or the file
             would exceed the caller's storage quota (code quota_exceeded).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: >-
+            The caller already holds UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER active
+            upload sessions (code too_many_active_uploads). Queue and retry after
+            an in-flight session completes or is cancelled.
           content:
             application/json:
               schema:

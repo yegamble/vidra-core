@@ -867,7 +867,8 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		videoimport.WithQuota(quotasvc),
 		videoimport.WithHTTPClient(&http.Client{}),
 	)
-	uploadsvc := upload.NewService(uploadRepo, blobs, upload.WithChunkSize(16))
+	uploadsvc := upload.NewService(uploadRepo, blobs, upload.WithChunkSize(16),
+		upload.WithMaxActiveSessions(cfg.UploadMaxActiveSessionsPerUser))
 	// Auto-caption (Whisper) service: enabled follows cfg.WhisperEnabled so the
 	// request endpoint returns 202 (enabled) or 503 (disabled). The transcriber is
 	// nil — handler tests exercise only enqueue/status, never the worker; the
