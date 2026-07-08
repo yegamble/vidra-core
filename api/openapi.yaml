@@ -7333,6 +7333,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/live:
+    get:
+      operationId: listLivePublicStreams
+      summary: Public "Live now" listing
+      description: >-
+        Lists the currently-live PUBLIC streams across all channels for a home
+        "Live now" rail, most-recently-started first. Only streams that are both
+        state=live AND privacy=public appear — unlisted/private and
+        offline/ended streams are never listed. Each card carries id, title,
+        channel identity, started_at (the current session's start), an is_live
+        flag (always true here — this is the card contract that can cheaply and
+        truthfully carry it; the video feed card intentionally does not, since
+        live streams are a table disjoint from videos), and, when a media server
+        is configured, the live HLS playlist path. Stream keys are never
+        returned. There is deliberately NO viewer/concurrent-viewer count: no
+        server-side counter exists yet (a live-completion dependency, wave W4),
+        and the field is omitted rather than faked. A thumbnail/preview is
+        likewise omitted — live streams have no server-generated poster yet.
+        This is a public read and, like GET /live/{id}, is not gated on the live
+        feature toggle (that guards creation/ingest). Paginated with limit
+        (1–100, default 30) and offset (>= 0).
+      tags: [live]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: The currently-live public streams (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivePublicListResponse"
   /api/v1/live/{id}:
     get:
       operationId: getLiveStream
@@ -11853,6 +11901,12 @@ components:
             When true, the media server records each session and the api
             republishes the recording as a normal on-demand video on ingest-stop
             (privacy inherited). Default false.
+        started_at:
+          type: string
+          format: date-time
+          description: >-
+            When the current live session began (stamped on the transition into
+            "live", cleared when it ends). Present only while the stream is live.
         created_at:
           type: string
           format: date-time
@@ -11930,6 +11984,52 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LiveStream"
+    LiveStreamCard:
+      type: object
+      description: >-
+        One entry of the public "Live now" listing — the minimal, truthful
+        projection of a currently-live PUBLIC stream. Omits fields a discovery
+        rail cannot honestly use: no privacy/state (every entry is public+live),
+        no stream key, no viewer/concurrent count (no server-side counter yet —
+        W4 dependency), no thumbnail (live streams have no server-generated
+        poster yet).
+      required: [id, title, channel_handle, channel_display_name, is_live]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        channel_handle:
+          type: string
+        channel_display_name:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          description: When the current live session began (omitted only for pre-tracking streams).
+        is_live:
+          type: boolean
+          description: Always true for a listing entry (discriminator for a shared card renderer).
+        hls_url:
+          type: string
+          description: >-
+            Live HLS playlist path, present only when a media server
+            (LIVE_HLS_ROOT) is configured to serve it.
+    LivePublicListResponse:
+      type: object
+      required: [live_streams, limit, offset]
+      properties:
+        live_streams:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveStreamCard"
+        limit:
+          type: integer
+        offset:
+          type: integer
     LiveStreamKey:
       type: object
       required: [stream_key]

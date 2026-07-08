@@ -333,12 +333,79 @@ foot-gun and no consumer asks for it — dropped, recorded here).
 
 ---
 
+## W1.C4 — Public live-listing contract (W0 audit follow-up)
+
+Not in the original staged W1 scope — this closes a W0 audit gap recorded in the
+root gate: the home "Live now" rail had **no public contract**. The only live
+listing was `GET /api/v1/channels/{handle}/live` (owner-scoped, requires auth,
+returns keys-free owner metadata), and video feed cards carry no live fields, so
+there was no way to render currently-live streams on the home page.
+
+### API contract (add to `api/openapi.yaml`, tag `live`)
+
+`GET /api/v1/live` — public "Live now" listing.
+- Auth: optional (`security: [{bearerAuth: []}, {}]`); it is a **public read**
+  and — like the sibling `GET /live/{id}` — is **not** gated on the live feature
+  toggle (that toggle guards create/ingest). When live is disabled there are
+  simply no live streams to list.
+- Selection: **only** streams that are BOTH `state = 'live'` AND
+  `privacy = 'public'`. Unlisted/private and offline/ended streams are **never**
+  listed. Ordered most-recently-started first. Paginated: `limit` (1–100,
+  default 30), `offset` (>= 0).
+- 200 `LivePublicListResponse`: `{ "live_streams": [ LiveStreamCard ], "limit",
+  "offset" }`.
+- `LiveStreamCard` = `{ id, title, description?, channel_handle,
+  channel_display_name, started_at?, is_live, hls_url? }`. Stream keys are
+  **never** returned.
+
+### Truthful field decisions (never fake it)
+
+- **started_at** — a real, new nullable column `live_streams.started_at`,
+  stamped when a stream transitions offline/ended → live (in `SetLiveStreamState`)
+  and cleared when it leaves live. It is the *current session's* start (not
+  `created_at`, not `updated_at`). Also surfaced on the single-stream views
+  (`LiveStream.started_at`, present while live).
+- **is_live** — always `true` on a listing card; this is the card contract that
+  can cheaply and truthfully carry it, and it gives a shared front-end card
+  renderer a discriminator. The **video feed card deliberately does NOT gain an
+  is_live flag**: in vidra-core live streams are a table **disjoint from
+  `videos`** (unlike PeerTube's `video.isLive`), so a video card cannot
+  truthfully carry it — the dedicated `/api/v1/live` listing is the live surface.
+- **viewer/concurrent-viewer count — OMITTED.** No server-side counter exists
+  today (no live viewer tracking, no presence). Rather than fake it, the field
+  is omitted and recorded as a **wave W4 (live completion) dependency**: when a
+  real concurrent-viewer counter lands, add `viewer_count` to `LiveStreamCard`.
+- **thumbnail/preview — OMITTED.** Live streams have no server-generated poster
+  yet; the field is omitted (the rail can fall back to the channel avatar).
+
+### DB / migration (`0076_live_stream_started_at.{up,down}.sql`)
+
+```sql
+ALTER TABLE live_streams ADD COLUMN started_at TIMESTAMPTZ; -- nullable
+CREATE INDEX live_streams_live_public_idx
+    ON live_streams (started_at DESC)
+    WHERE state = 'live' AND privacy = 'public'; -- partial, matches the listing
+```
+
+sqlc: new `ListLivePublicStreams` (limit/offset); `SetLiveStreamState` extended
+to manage `started_at` via a CASE (stamp on offline→live, preserve on an
+idempotent live re-assert, clear on leaving live); `started_at` added to the
+existing Create/Update/Get/ListByChannel RETURNING lists so the domain `Stream`
+carries it uniformly.
+
+### Consumer
+
+The **rail UI lands in the next frontend wave** (vidra-user) — this slice ships
+the backend contract ahead of it, consumer-shaped (cards, not full stream
+objects). No vidra-user change in this wave.
+
 ## Slice order & pairing with the vidra-user wave
 
 1. **W1.C0** verification (unblocks/pins the quality-selector target).
 2. **W1.C1** chapters → consumed by vidra-user W1.U4.
 3. **W1.C2** passwords + embed privacy → consumed by vidra-user W1.U7.
 4. **W1.C3** player settings → consumed by vidra-user W1.U6.
+5. **W1.C4** public live listing (W0 follow-up) → rail UI in the next FE wave.
 
 Every slice: openapi in the same commit, `make ci` green locally and on branch
 CI, pushed, before its box ticks (PROGRAM §4 — no exceptions).

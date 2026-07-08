@@ -390,6 +390,13 @@ only the key's SHA-256 hash is stored. `GET/PATCH/DELETE /api/v1/live/{id}` read
 edit/delete it (`PATCH` edits title/description/privacy/permanent/replay_enabled),
 `POST /api/v1/live/{id}/key` rotates the key, and `GET /api/v1/channels/{handle}/live`
 lists a channel's streams (owner only; keys are never returned).
+`GET /api/v1/live` is the public "Live now" listing: currently-live PUBLIC
+streams across all channels (never unlisted/private), most-recently-started
+first, paginated (`limit`/`offset`); each card carries `id, title, channel_*,
+started_at, is_live` (+ `hls_url` when a media server is configured). It has no
+viewer/concurrent count (no server-side counter exists yet — a W4 dependency)
+and no live thumbnail (none is generated yet). `started_at` is stamped when a
+stream goes live and also appears on the single-stream views.
 
 The RTMP boundary is the `media` compose profile: an nginx-rtmp server ingests
 RTMP, packages HLS, records sessions, and drives the api via media-server-facing

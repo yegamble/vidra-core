@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -50,6 +51,7 @@ type Repository interface {
 	DeleteLiveStream(ctx context.Context, id uuid.UUID) (int64, error)
 	GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash string) (sqlcgen.GetLiveStreamByKeyHashRow, error)
 	SetLiveStreamState(ctx context.Context, arg sqlcgen.SetLiveStreamStateParams) error
+	ListLivePublicStreams(ctx context.Context, arg sqlcgen.ListLivePublicStreamsParams) ([]sqlcgen.ListLivePublicStreamsRow, error)
 }
 
 // VideoPipeline is the on-demand ingest seam the replay conversion drives: create
@@ -125,19 +127,48 @@ func NewService(repo Repository, opts ...Option) *Service {
 // Stream is a live stream's metadata. OwnerID/ChannelHandle/ChannelDisplayName
 // are populated on Get (from the channel join); zero on Create/List.
 type Stream struct {
-	ID                 uuid.UUID
-	ChannelID          uuid.UUID
-	Title              string
-	Description        string
-	Privacy            string
-	State              string
-	Permanent          bool
-	ReplayEnabled      bool
+	ID            uuid.UUID
+	ChannelID     uuid.UUID
+	Title         string
+	Description   string
+	Privacy       string
+	State         string
+	Permanent     bool
+	ReplayEnabled bool
+	// StartedAt is when the current live session began (stamped on the transition
+	// into "live", cleared when it ends). Nil when the stream is not currently
+	// live / has never gone live.
+	StartedAt          *time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	OwnerID            uuid.UUID
 	ChannelHandle      string
 	ChannelDisplayName string
+}
+
+// LiveCard is one entry of the public "Live now" listing: the minimal, truthful
+// projection of a currently-live public stream for a discovery rail. It carries
+// only public, currently-available fields — no privacy/state (all entries are
+// public+live), no stream key, no viewer count (no server-side counter exists
+// yet — see the W4 live-completion dependency). StartedAt is the current
+// session's start; nil only for a stream that went live before started_at
+// tracking existed.
+type LiveCard struct {
+	ID                 uuid.UUID
+	Title              string
+	Description        string
+	ChannelHandle      string
+	ChannelDisplayName string
+	StartedAt          *time.Time
+}
+
+// timePtr converts a nullable timestamptz to *time.Time (nil when NULL).
+func timePtr(ts pgtype.Timestamptz) *time.Time {
+	if !ts.Valid {
+		return nil
+	}
+	t := ts.Time
+	return &t
 }
 
 // CreateInput is the metadata for a new live stream.
@@ -185,7 +216,7 @@ func (s *Service) Create(ctx context.Context, channelID uuid.UUID, in CreateInpu
 	return Stream{
 		ID: row.ID, ChannelID: row.ChannelID, Title: row.Title, Description: row.Description,
 		Privacy: row.Privacy, State: row.State, Permanent: row.Permanent, ReplayEnabled: row.ReplayEnabled,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		StartedAt: timePtr(row.StartedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}, rawKey, nil
 }
 
@@ -212,7 +243,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (Str
 	return Stream{
 		ID: row.ID, ChannelID: row.ChannelID, Title: row.Title, Description: row.Description,
 		Privacy: row.Privacy, State: row.State, Permanent: row.Permanent, ReplayEnabled: row.ReplayEnabled,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		StartedAt: timePtr(row.StartedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}, nil
 }
 
@@ -226,7 +257,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Stream, error) {
 	return Stream{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		StartedAt: timePtr(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		OwnerID: r.OwnerID, ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
 	}, nil
 }
@@ -242,7 +273,30 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]Str
 		out = append(out, Stream{
 			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-			CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			StartedAt: timePtr(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+// ListLivePublic returns the public "Live now" listing: currently-live PUBLIC
+// streams across all channels, most-recently-started first, paginated. Unlisted
+// and private streams (and any not currently live) never appear. limit/offset are
+// assumed already clamped by the caller.
+func (s *Service) ListLivePublic(ctx context.Context, limit, offset int) ([]LiveCard, error) {
+	rows, err := s.repo.ListLivePublicStreams(ctx, sqlcgen.ListLivePublicStreamsParams{
+		Limit:  int32(limit),
+		Offset: int32(offset),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LiveCard, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, LiveCard{
+			ID: r.ID, Title: r.Title, Description: r.Description,
+			ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
+			StartedAt: timePtr(r.StartedAt),
 		})
 	}
 	return out, nil

@@ -135,7 +135,8 @@ curl -sX POST localhost:8080/api/v1/videos/<id>/thumbnail -H 'authorization: Bea
 curl -sX POST localhost:8080/api/v1/channels/<handle>/live -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' -d '{"title":"My Show","permanent":true}'        # create -> 201 {live_stream, stream_key (once), rtmp_url}
 curl -s localhost:8080/api/v1/channels/<handle>/live -H 'authorization: Bearer <token>' # owner list (no keys)
-curl -s localhost:8080/api/v1/live/<id>                                                # public metadata (private => owner only; no key)
+curl -s 'localhost:8080/api/v1/live?limit=30&offset=0'                                  # public "Live now" listing: currently-live PUBLIC streams across all channels, most-recently-started first (never unlisted/private); cards carry id/title/channel_*/started_at/is_live (+hls_url when a media server is configured). No viewer count (no server counter yet — W4 dep), no thumbnail (none generated yet). Ungated read (not behind the live feature toggle).
+curl -s localhost:8080/api/v1/live/<id>                                                # public metadata (private => owner only; no key). started_at present while live
 curl -sX POST localhost:8080/api/v1/live/<id>/key -H 'authorization: Bearer <token>'   # rotate the stream key -> new {stream_key, rtmp_url} (once)
 curl -sX DELETE localhost:8080/api/v1/live/<id> -H 'authorization: Bearer <token>'     # delete (owner-only)
 # RTMP ingest hooks (media-server-facing; NOT user auth — gated by LIVE_INGEST_SECRET,

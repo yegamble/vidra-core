@@ -9,11 +9,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -61,7 +63,7 @@ func (f *liveFakeRepo) GetLiveStreamByID(_ context.Context, id uuid.UUID) (sqlcg
 	return sqlcgen.GetLiveStreamByIDRow{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		StartedAt: r.StartedAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		OwnerID: ch.OwnerID, ChannelHandle: ch.Handle, ChannelDisplayName: ch.DisplayName,
 	}, nil
 }
@@ -73,9 +75,38 @@ func (f *liveFakeRepo) ListLiveStreamsByChannel(_ context.Context, channelID uui
 			out = append(out, sqlcgen.ListLiveStreamsByChannelRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-				CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				StartedAt: r.StartedAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			})
 		}
+	}
+	return out, nil
+}
+
+// ListLivePublicStreams mirrors the SQL: currently-live PUBLIC streams only,
+// most-recently-started first, with limit/offset paging.
+func (f *liveFakeRepo) ListLivePublicStreams(_ context.Context, a sqlcgen.ListLivePublicStreamsParams) ([]sqlcgen.ListLivePublicStreamsRow, error) {
+	var rows []sqlcgen.CreateLiveStreamRow
+	for _, r := range f.rows {
+		if r.State == "live" && r.Privacy == "public" {
+			rows = append(rows, r)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].StartedAt.Time.After(rows[j].StartedAt.Time) })
+	lo := int(a.Offset)
+	if lo > len(rows) {
+		lo = len(rows)
+	}
+	hi := lo + int(a.Limit)
+	if hi > len(rows) {
+		hi = len(rows)
+	}
+	out := make([]sqlcgen.ListLivePublicStreamsRow, 0, hi-lo)
+	for _, r := range rows[lo:hi] {
+		ch, _ := f.channelByID(r.ChannelID)
+		out = append(out, sqlcgen.ListLivePublicStreamsRow{
+			ID: r.ID, Title: r.Title, Description: r.Description, StartedAt: r.StartedAt,
+			ChannelHandle: ch.Handle, ChannelDisplayName: ch.DisplayName,
+		})
 	}
 	return out, nil
 }
@@ -96,7 +127,7 @@ func (f *liveFakeRepo) UpdateLiveStream(_ context.Context, a sqlcgen.UpdateLiveS
 	return sqlcgen.UpdateLiveStreamRow{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		StartedAt: r.StartedAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}, nil
 }
 
@@ -112,6 +143,12 @@ func (f *liveFakeRepo) GetLiveStreamByKeyHash(_ context.Context, h string) (sqlc
 
 func (f *liveFakeRepo) SetLiveStreamState(_ context.Context, a sqlcgen.SetLiveStreamStateParams) error {
 	if r, ok := f.rows[a.ID]; ok {
+		switch {
+		case a.State == "live" && r.State != "live":
+			r.StartedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		case a.State != "live":
+			r.StartedAt = pgtype.Timestamptz{}
+		}
 		r.State = a.State
 		f.rows[a.ID] = r
 	}
@@ -496,5 +533,132 @@ func TestLiveStreamValidation(t *testing.T) {
 	// Unknown channel → 404.
 	if rec := createLiveStream(srv, "ghost", `{"title":"x"}`, tok); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown channel = %d, want 404", rec.Code)
+	}
+}
+
+// TestListLivePublicStreams: GET /api/v1/live returns only currently-live PUBLIC
+// streams (never unlisted/private, never offline), is_live=true, started_at set,
+// no stream key; it paginates; and an anon caller can read it.
+func TestListLivePublicStreams(t *testing.T) {
+	cfg := testConfig()
+	cfg.LiveIngestSecret = "s3cret"
+	srv := videoServerCfg(t, cfg)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	// Create four streams (all start offline).
+	create := func(title, privacy string) (id, key string) {
+		body := `{"title":"` + title + `","privacy":"` + privacy + `"}`
+		var out createLiveStreamResponse
+		_ = json.Unmarshal(createLiveStream(srv, "ada", body, tok).Body.Bytes(), &out)
+		return out.LiveStream.ID, out.StreamKey
+	}
+	pubAID, pubAKey := create("Public A", "public")
+	pubBID, pubBKey := create("Public B", "public")
+	_, unlistedKey := create("Unlisted show", "unlisted")
+	privID, privKey := create("Private show", "private")
+
+	// Nothing is live yet → empty listing.
+	var empty liveStreamPublicListResponse
+	rec := getWithAuth(srv, "/api/v1/live", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list (none live) = %d, want 200", rec.Code)
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &empty)
+	if len(empty.LiveStreams) != 0 {
+		t.Fatalf("want 0 live streams initially, got %d", len(empty.LiveStreams))
+	}
+
+	// Bring all four live via the ingest hook.
+	for _, key := range []string{pubAKey, pubBKey, unlistedKey, privKey} {
+		if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+key+`"}`, "s3cret"); r.Code != http.StatusOK {
+			t.Fatalf("ingest start = %d", r.Code)
+		}
+	}
+
+	// Anon listing shows ONLY the two public live streams.
+	var got liveStreamPublicListResponse
+	body := getWithAuth(srv, "/api/v1/live", "")
+	if body.Code != http.StatusOK {
+		t.Fatalf("list = %d, want 200", body.Code)
+	}
+	if strings.Contains(body.Body.String(), "stream_key") {
+		t.Fatalf("public listing leaked a stream key: %s", body.Body.String())
+	}
+	// Private/unlisted titles must NEVER appear.
+	if strings.Contains(body.Body.String(), "Unlisted show") || strings.Contains(body.Body.String(), "Private show") {
+		t.Fatalf("public listing leaked a non-public stream: %s", body.Body.String())
+	}
+	_ = json.Unmarshal(body.Body.Bytes(), &got)
+	if len(got.LiveStreams) != 2 {
+		t.Fatalf("want 2 public live streams, got %d: %+v", len(got.LiveStreams), got.LiveStreams)
+	}
+	seen := map[string]bool{}
+	for _, cd := range got.LiveStreams {
+		seen[cd.ID] = true
+		if !cd.IsLive {
+			t.Errorf("card %s is_live = false, want true", cd.ID)
+		}
+		if cd.StartedAt == nil {
+			t.Errorf("card %s missing started_at", cd.ID)
+		}
+		if cd.ChannelHandle != "ada" {
+			t.Errorf("card %s channel_handle = %q, want ada", cd.ID, cd.ChannelHandle)
+		}
+	}
+	if !seen[pubAID] || !seen[pubBID] {
+		t.Errorf("expected both public streams %s,%s; got %+v", pubAID, pubBID, seen)
+	}
+	if seen[privID] {
+		t.Error("private stream appeared in the public listing")
+	}
+
+	// Pagination: limit=1 returns exactly one; offset=1 returns the other.
+	var p1, p2 liveStreamPublicListResponse
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live?limit=1", "").Body.Bytes(), &p1)
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live?limit=1&offset=1", "").Body.Bytes(), &p2)
+	if len(p1.LiveStreams) != 1 || len(p2.LiveStreams) != 1 {
+		t.Fatalf("pagination sizes = %d,%d, want 1,1", len(p1.LiveStreams), len(p2.LiveStreams))
+	}
+	if p1.LiveStreams[0].ID == p2.LiveStreams[0].ID {
+		t.Errorf("offset did not advance: both pages = %s", p1.LiveStreams[0].ID)
+	}
+	if p1.Limit != 1 || p2.Offset != 1 {
+		t.Errorf("echoed paging = limit %d / offset %d, want 1 / 1", p1.Limit, p2.Offset)
+	}
+
+	// The single-stream detail now carries started_at once live.
+	var detail liveStreamView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+pubAID, "").Body.Bytes(), &detail)
+	if detail.StartedAt == nil {
+		t.Error("live detail missing started_at")
+	}
+
+	// Ending a stream drops it from the listing.
+	if r := ingestReq(srv, "/api/v1/live/ingest/stop", `{"stream_key":"`+pubAKey+`"}`, "s3cret"); r.Code != http.StatusNoContent {
+		t.Fatalf("ingest stop = %d", r.Code)
+	}
+	var after liveStreamPublicListResponse
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live", "").Body.Bytes(), &after)
+	if len(after.LiveStreams) != 1 || after.LiveStreams[0].ID != pubBID {
+		t.Fatalf("after ending Public A, want only Public B; got %+v", after.LiveStreams)
+	}
+}
+
+// TestListLivePublicStreamsUngatedRead: the public listing is a read surface —
+// like the sibling GET /live/{id}, it is NOT gated on the live feature toggle
+// (that guards creation/ingest). With live disabled it still returns 200 with an
+// empty list rather than 403/404.
+func TestListLivePublicStreamsUngatedRead(t *testing.T) {
+	cfg := testConfig()
+	cfg.LiveEnabled = false
+	srv := videoServerCfg(t, cfg)
+	rec := getWithAuth(srv, "/api/v1/live", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list with live disabled = %d, want 200 (ungated read)", rec.Code)
+	}
+	var out liveStreamPublicListResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if len(out.LiveStreams) != 0 {
+		t.Fatalf("want 0 live streams, got %d", len(out.LiveStreams))
 	}
 }

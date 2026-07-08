@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -94,10 +96,42 @@ func (f *fakeRepo) GetLiveStreamByKeyHash(_ context.Context, h string) (sqlcgen.
 
 func (f *fakeRepo) SetLiveStreamState(_ context.Context, a sqlcgen.SetLiveStreamStateParams) error {
 	if r, ok := f.rows[a.ID]; ok {
+		switch {
+		case a.State == "live" && r.State != "live":
+			r.StartedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		case a.State != "live":
+			r.StartedAt = pgtype.Timestamptz{}
+		}
 		r.State = a.State
 		f.rows[a.ID] = r
 	}
 	return nil
+}
+
+func (f *fakeRepo) ListLivePublicStreams(_ context.Context, a sqlcgen.ListLivePublicStreamsParams) ([]sqlcgen.ListLivePublicStreamsRow, error) {
+	var rows []sqlcgen.GetLiveStreamByIDRow
+	for _, r := range f.rows {
+		if r.State == "live" && r.Privacy == "public" {
+			rows = append(rows, r)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].StartedAt.Time.After(rows[j].StartedAt.Time) })
+	lo := int(a.Offset)
+	if lo > len(rows) {
+		lo = len(rows)
+	}
+	hi := lo + int(a.Limit)
+	if hi > len(rows) {
+		hi = len(rows)
+	}
+	out := make([]sqlcgen.ListLivePublicStreamsRow, 0, hi-lo)
+	for _, r := range rows[lo:hi] {
+		out = append(out, sqlcgen.ListLivePublicStreamsRow{
+			ID: r.ID, Title: r.Title, Description: r.Description, StartedAt: r.StartedAt,
+			ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
+		})
+	}
+	return out, nil
 }
 
 func (f *fakeRepo) DeleteLiveStream(_ context.Context, id uuid.UUID) (int64, error) {
@@ -297,5 +331,85 @@ func TestRegenerateKey(t *testing.T) {
 	}
 	if got := repo.hashes[s.ID]; got != hashOf(key2) {
 		t.Errorf("stored hash = %q, want sha256(new key) %q", got, hashOf(key2))
+	}
+}
+
+// TestListLivePublicExcludesNonPublicAndOffline proves the public "Live now"
+// listing surfaces ONLY currently-live PUBLIC streams (never unlisted/private,
+// never offline/ended), stamps started_at on go-live, and honours limit/offset.
+func TestListLivePublicExcludesNonPublicAndOffline(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo(uuid.New())
+	svc := NewService(repo)
+	chID := uuid.New()
+
+	mk := func(title, privacy string, goLive bool) uuid.UUID {
+		st, key, err := svc.Create(ctx, chID, CreateInput{Title: title, Privacy: privacy})
+		if err != nil {
+			t.Fatalf("create %q: %v", title, err)
+		}
+		if goLive {
+			if _, err := svc.StartIngest(ctx, key); err != nil {
+				t.Fatalf("start %q: %v", title, err)
+			}
+		}
+		return st.ID
+	}
+
+	pub1 := mk("Public A", "public", true)
+	mk("Public offline", "public", false)
+	mk("Unlisted live", "unlisted", true)
+	mk("Private live", "private", true)
+	pub2 := mk("Public B", "public", true)
+
+	cards, err := svc.ListLivePublic(ctx, 30, 0)
+	if err != nil {
+		t.Fatalf("ListLivePublic: %v", err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("got %d cards, want 2 (only public+live); %+v", len(cards), cards)
+	}
+	got := map[uuid.UUID]bool{}
+	for _, c := range cards {
+		got[c.ID] = true
+		if c.StartedAt == nil {
+			t.Errorf("card %q missing started_at", c.Title)
+		}
+	}
+	if !got[pub1] || !got[pub2] {
+		t.Errorf("expected both public live streams %s,%s; got %+v", pub1, pub2, got)
+	}
+
+	// Pagination: limit clamps the page; offset skips.
+	page1, _ := svc.ListLivePublic(ctx, 1, 0)
+	if len(page1) != 1 {
+		t.Fatalf("limit=1 returned %d, want 1", len(page1))
+	}
+	page2, _ := svc.ListLivePublic(ctx, 1, 1)
+	if len(page2) != 1 {
+		t.Fatalf("limit=1 offset=1 returned %d, want 1", len(page2))
+	}
+	if page1[0].ID == page2[0].ID {
+		t.Errorf("offset did not advance: both pages returned %s", page1[0].ID)
+	}
+
+	// Ending a live stream drops it from the listing and clears started_at.
+	st, err := svc.Get(ctx, pub1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Flip pub1 offline via a permanent-style stop path: set it ended directly.
+	if err := repo.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: st.ID, State: "ended"}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := svc.ListLivePublic(ctx, 30, 0)
+	if len(after) != 1 {
+		t.Fatalf("after ending pub1, got %d cards, want 1", len(after))
+	}
+	if after[0].ID != pub2 {
+		t.Errorf("remaining card = %s, want pub2 %s", after[0].ID, pub2)
+	}
+	if ended, _ := svc.Get(ctx, pub1); ended.StartedAt != nil {
+		t.Errorf("ended stream still has started_at = %v, want nil", ended.StartedAt)
 	}
 }

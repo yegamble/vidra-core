@@ -62,18 +62,19 @@ func (r updateLiveStreamRequest) Validate() []FieldError {
 // liveStreamView is the public projection of a live stream. The stream key is
 // NEVER included here — it is returned only by create/regenerate.
 type liveStreamView struct {
-	ID                 string    `json:"id"`
-	ChannelID          string    `json:"channel_id"`
-	Title              string    `json:"title"`
-	Description        string    `json:"description"`
-	Privacy            string    `json:"privacy"`
-	State              string    `json:"state"`
-	Permanent          bool      `json:"permanent"`
-	ReplayEnabled      bool      `json:"replay_enabled"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	ChannelHandle      string    `json:"channel_handle,omitempty"`
-	ChannelDisplayName string    `json:"channel_display_name,omitempty"`
+	ID                 string     `json:"id"`
+	ChannelID          string     `json:"channel_id"`
+	Title              string     `json:"title"`
+	Description        string     `json:"description"`
+	Privacy            string     `json:"privacy"`
+	State              string     `json:"state"`
+	Permanent          bool       `json:"permanent"`
+	ReplayEnabled      bool       `json:"replay_enabled"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	ChannelHandle      string     `json:"channel_handle,omitempty"`
+	ChannelDisplayName string     `json:"channel_display_name,omitempty"`
 	// HLSURL is the live playlist path, present only while the stream is live and
 	// a media server (LIVE_HLS_ROOT) is configured to serve it.
 	HLSURL string `json:"hls_url,omitempty"`
@@ -85,14 +86,78 @@ func (s *Server) newLiveStreamView(st live.Stream) liveStreamView {
 	v := liveStreamView{
 		ID: st.ID.String(), ChannelID: st.ChannelID.String(), Title: st.Title,
 		Description: st.Description, Privacy: st.Privacy, State: st.State, Permanent: st.Permanent,
-		ReplayEnabled: st.ReplayEnabled,
-		CreatedAt:     st.CreatedAt, UpdatedAt: st.UpdatedAt,
+		ReplayEnabled: st.ReplayEnabled, StartedAt: st.StartedAt,
+		CreatedAt: st.CreatedAt, UpdatedAt: st.UpdatedAt,
 		ChannelHandle: st.ChannelHandle, ChannelDisplayName: st.ChannelDisplayName,
 	}
 	if st.State == live.StateLive && s.cfg.LiveHLSRoot != "" {
 		v.HLSURL = "/api/v1/live/" + st.ID.String() + "/hls/master.m3u8"
 	}
 	return v
+}
+
+// Public "Live now" listing pagination bounds (mirrors the video-feed convention).
+const (
+	defaultLivePublicLimit = 30
+	maxLivePublicLimit     = 100
+)
+
+// liveStreamCardView is one entry of the public "Live now" listing — the minimal,
+// truthful projection of a currently-live PUBLIC stream for a discovery rail. It
+// deliberately omits fields the rail cannot honestly use: no privacy/state (every
+// entry is public+live), no stream key, and no viewer/concurrent count (no
+// server-side counter exists yet — a W4 live-completion dependency). is_live is
+// always true here (this is the card contract that can cheaply carry it; the video
+// feed card intentionally does NOT, since live streams are a disjoint table from
+// videos). A thumbnail/preview is omitted because live streams have no
+// server-generated poster yet.
+type liveStreamCardView struct {
+	ID                 string     `json:"id"`
+	Title              string     `json:"title"`
+	Description        string     `json:"description,omitempty"`
+	ChannelHandle      string     `json:"channel_handle"`
+	ChannelDisplayName string     `json:"channel_display_name"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	IsLive             bool       `json:"is_live"`
+	// HLSURL is the live playlist path, present only when a media server
+	// (LIVE_HLS_ROOT) is configured to serve it (every listed stream is live).
+	HLSURL string `json:"hls_url,omitempty"`
+}
+
+// liveStreamPublicListResponse is the public "Live now" listing envelope.
+type liveStreamPublicListResponse struct {
+	LiveStreams []liveStreamCardView `json:"live_streams"`
+	Limit       int                  `json:"limit"`
+	Offset      int                  `json:"offset"`
+}
+
+// handleListLivePublicStreams lists the currently-live PUBLIC streams across all
+// channels for the home "Live now" rail, most-recently-started first. Public (no
+// auth required); unlisted/private and offline/ended streams never appear. Never
+// returns a stream key. This is a read surface: like the sibling public detail
+// GET /live/{id}, it is NOT gated on the live feature toggle (that gate guards
+// creation/ingest) — when live is disabled there are simply no live streams to
+// list.
+func (s *Server) handleListLivePublicStreams(c echo.Context) error {
+	limit := clampInt(queryInt(c, "limit", defaultLivePublicLimit), 1, maxLivePublicLimit)
+	offset := queryInt(c, "offset", 0)
+	cards, err := s.livesvc.ListLivePublic(c.Request().Context(), limit, offset)
+	if err != nil {
+		return err
+	}
+	views := make([]liveStreamCardView, 0, len(cards))
+	for _, cd := range cards {
+		v := liveStreamCardView{
+			ID: cd.ID.String(), Title: cd.Title, Description: cd.Description,
+			ChannelHandle: cd.ChannelHandle, ChannelDisplayName: cd.ChannelDisplayName,
+			StartedAt: cd.StartedAt, IsLive: true,
+		}
+		if s.cfg.LiveHLSRoot != "" {
+			v.HLSURL = "/api/v1/live/" + cd.ID.String() + "/hls/master.m3u8"
+		}
+		views = append(views, v)
+	}
+	return c.JSON(http.StatusOK, liveStreamPublicListResponse{LiveStreams: views, Limit: limit, Offset: offset})
 }
 
 // liveStreamKeyView carries the raw stream key + ingest URL, returned only on

@@ -1126,6 +1126,9 @@ func (s *Server) routes() {
 	if s.livesvc != nil {
 		api.POST("/channels/:handle/live", s.handleCreateLiveStream, s.requireAuth)
 		api.GET("/channels/:handle/live", s.handleListLiveStreams, s.requireAuth)
+		// Public "Live now" listing (home rail): currently-live PUBLIC streams
+		// across all channels. Public read; unlisted/private never listed.
+		api.GET("/live", s.handleListLivePublicStreams, s.optionalAuth)
 		api.GET("/live/:id", s.handleGetLiveStream, s.optionalAuth)
 		api.PATCH("/live/:id", s.handleUpdateLiveStream, s.requireAuth)
 		api.POST("/live/:id/key", s.handleRegenerateLiveStreamKey, s.requireAuth)
