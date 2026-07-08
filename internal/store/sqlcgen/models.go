@@ -287,6 +287,7 @@ type MediaIpfsPin struct {
 	OwnerUserID   pgtype.UUID `json:"owner_user_id"`
 	CreatedAt     time.Time   `json:"created_at"`
 	UpdatedAt     time.Time   `json:"updated_at"`
+	Network       string      `json:"network"`
 }
 
 type MediaIpfsUserReeval struct {

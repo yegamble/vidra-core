@@ -94,6 +94,71 @@ compose `ipfs` profile + tagged integration tests, and the operator runbook in
 vidra-user IPFS badge/admin panel that consumes the shipped `ipfs_pinned` field +
 `/ipfs/status` endpoint.
 
+### 5.P Private IPFS mirroring tier (P19.P) — DECISION (self-hosted private swarm, NO encryption layer)
+
+**Approved 2026-07-07** (user go/no-go, recorded so Ralph does not relitigate).
+The private tier — designed in `.ralph/specs/ipfs-media-private.md` — replicates
+NON-public media to a **second, fully separate swarm.key'd kubo node** (never
+dual-homed with the public node; `LIBP2P_FORCE_PNET=1` fail-closed; bootstrap
+cleared; `Routing.Type=none`; `Gateway.NoFetch`; no public gateway). This
+SUPERSEDES the "private-media mirroring stays out of scope" clause in §5 above.
+
+- **Config guard superseded.** The shipped `IPFS_MIRROR_PRIVATE=true ⇒
+  IPFS_CLUSTER_API_URL` guard (cluster URL as a proxy for "private infra exists")
+  is REPLACED by the stricter, correct shape: `IPFS_MIRROR_PRIVATE=true` now
+  requires `IPFS_PRIVATE_API_URL` (a DEDICATED private-swarm kubo RPC), and
+  `IPFS_PRIVATE_API_URL == IPFS_API_URL` is a hard error ("refusing to
+  dual-home"). There is deliberately **no `IPFS_PRIVATE_GATEWAY_URL`** — not
+  having the knob is the guarantee that private CIDs are never emitted with a
+  gateway URL. (P19.P1.)
+- **v1 private classes** (routed to `network='private'`): private + unlisted
+  videos and ALL their derivatives; non-public playlist covers;
+  unlisted/deactivated-owner avatars & banners. **Quarantined → nowhere** (no
+  network). **Plaintext DM attachments → NEVER, any network** (Messaging v2 D7:
+  plaintext must not land readable on a multi-node network). E2EE-blobs join
+  later (their upload contract does not exist yet).
+- **Replication-not-distribution invariant.** Private CIDs NEVER appear in any
+  API response; viewer serving of private/unlisted media stays on the
+  authenticated app API reading the authoritative local/S3 store. The private
+  swarm is a durability/DR-replication tier only. The failure mode is always
+  "private content unreachable", never "private content public".
+
+**Encryption verdicts (spec §7 — recorded as DECISIONS, do not relitigate).**
+This phase adds **NO encryption layer**; the private swarm carries plaintext
+bytes inside an operator-controlled network perimeter.
+
+- **(i) Class B — encrypt-then-pin-PUBLICLY (server-readable private media):
+  REJECTED on the merits** (not by reflex). A modern DEK/KEK design is coherent
+  (HLS even supports AES-128 segment encryption), but: rotation cannot
+  re-protect already-harvested public ciphertext (blast radius grows
+  monotonically for the life of the operator's keys — harvest-now-decrypt-later);
+  the metadata leaks (size, timing, pin-graph, instance IP) apply anyway and are
+  worse for video; and the distribution "win" is illusory because only
+  key-holders (served by the operator's own API) can use the ciphertext. The
+  private swarm captures the entire redundancy benefit with none of the
+  permanence/metadata cost.
+- **(ii) Class A — already-E2EE `e2ee-blobs` ciphertext (future Messaging v2 D7
+  slice): private swarm, DEFERRED.** When the client-encrypted-blob upload
+  endpoint ships, its ciphertext is the BEST-suited private content class for
+  IPFS replication (the operator replicates what it cannot read) — but only to
+  the private swarm (public pinning would leak size/timing/pin-graph metadata),
+  and only once that slice defines the storage shape. Deferred, not rejected.
+- **(iii) Lit Protocol — REJECTED as the core privacy layer.** Wallet/on-chain
+  access-control conditions mismatch Vidra's session/JWT + Postgres authz (Vidra
+  users have no wallets); every decrypt would hard-depend on the external Lit
+  network being reachable (unacceptable for a self-hosting platform, compounded
+  under federation); and threshold key custody leaves the operator — precisely
+  what this tier exists to keep. PARKED as a possible FUTURE product feature if
+  Vidra ever ships wallet-native token-gated content (Lit's real shape: public
+  distribution with crypto-native entitlements, not private storage).
+- **(iv) Hosted "private IPFS" providers (Pinata et al.) — NOT adopted.** A
+  third-party data processor for exactly the classes users marked private is a
+  worse privacy posture than the operator-scoped S3, a GDPR/DPA burden, a
+  proprietary (non-standard) API with video-scale egress economics, and a
+  single bearer credential to ALL private media. A narrow client interface
+  (add/pin/unpin/health) is kept as the seam should a hosted adapter ever be
+  justified; nothing is implemented now.
+
 ## 6. Signed URLs vs proxy (P6.2) — DECISION (proxy in v1)
 
 All media serving stays proxied through the API (visibility guards, Range support,

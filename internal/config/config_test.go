@@ -522,6 +522,47 @@ func TestLoadIPFSDefaults(t *testing.T) {
 	if cfg.IPFSReconcileInterval != 5*time.Minute {
 		t.Errorf("IPFSReconcileInterval default = %v, want 5m", cfg.IPFSReconcileInterval)
 	}
+	// Private tier (P19.P1) is inert by default: no URLs, tunables INHERIT the public
+	// defaults so a later opt-in never lands a zero timeout/concurrency.
+	if cfg.IPFSPrivateAPIURL != "" || cfg.IPFSPrivateClusterAPIURL != "" || cfg.IPFSPrivateClusterToken != "" {
+		t.Errorf("private IPFS URLs/token default non-empty: %q %q (token set=%v)",
+			cfg.IPFSPrivateAPIURL, cfg.IPFSPrivateClusterAPIURL, cfg.IPFSPrivateClusterToken != "")
+	}
+	if cfg.IPFSPrivateAddTimeout != 60*time.Second {
+		t.Errorf("IPFSPrivateAddTimeout default = %v, want inherited 60s", cfg.IPFSPrivateAddTimeout)
+	}
+	if cfg.IPFSPrivatePinConcurrency != 2 {
+		t.Errorf("IPFSPrivatePinConcurrency default = %d, want inherited 2", cfg.IPFSPrivatePinConcurrency)
+	}
+}
+
+// TestLoadIPFSPrivateInheritsTunables asserts the private worker tunables inherit
+// the public values when unset, and can be overridden independently.
+func TestLoadIPFSPrivateInheritsTunables(t *testing.T) {
+	t.Setenv("IPFS_ADD_TIMEOUT", "30s")
+	t.Setenv("IPFS_PIN_CONCURRENCY", "5")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.IPFSPrivateAddTimeout != 30*time.Second {
+		t.Errorf("private add timeout = %v, want inherited 30s", cfg.IPFSPrivateAddTimeout)
+	}
+	if cfg.IPFSPrivatePinConcurrency != 5 {
+		t.Errorf("private concurrency = %d, want inherited 5", cfg.IPFSPrivatePinConcurrency)
+	}
+	t.Setenv("IPFS_PRIVATE_ADD_TIMEOUT", "90s")
+	t.Setenv("IPFS_PRIVATE_PIN_CONCURRENCY", "1")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load override: %v", err)
+	}
+	if cfg.IPFSPrivateAddTimeout != 90*time.Second {
+		t.Errorf("private add timeout override = %v, want 90s", cfg.IPFSPrivateAddTimeout)
+	}
+	if cfg.IPFSPrivatePinConcurrency != 1 {
+		t.Errorf("private concurrency override = %d, want 1", cfg.IPFSPrivatePinConcurrency)
+	}
 }
 
 // TestLoadIPFSEnabledValid checks the happy path: enabled with both required URLs
@@ -571,23 +612,95 @@ func TestLoadIPFSValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "privacy guard: mirror private without cluster errors",
+			// SUPERSESSION (P19.P1): mirror-private now requires a DEDICATED
+			// IPFS_PRIVATE_API_URL — a cluster URL no longer satisfies it.
+			name:    "private guard: mirror private without private api url errors",
 			env:     map[string]string{"IPFS_MIRROR_PRIVATE": "true"},
 			wantErr: true,
 		},
 		{
-			name:    "privacy guard fires even when mirror disabled",
+			name:    "private guard fires even when public mirror disabled",
 			env:     map[string]string{"IPFS_ENABLED": "false", "IPFS_MIRROR_PRIVATE": "true"},
 			wantErr: true,
 		},
 		{
-			name: "mirror private with cluster is allowed",
+			// A cluster URL alone is NOT sufficient anymore (the old guard is replaced).
+			name: "private guard: cluster url without private node still errors",
 			env: map[string]string{
 				"IPFS_ENABLED":         "true",
 				"IPFS_API_URL":         "http://ipfs:5001",
 				"IPFS_GATEWAY_URL":     "https://gw.example.org",
 				"IPFS_MIRROR_PRIVATE":  "true",
 				"IPFS_CLUSTER_API_URL": "http://cluster:9094",
+			},
+			wantErr: true,
+		},
+		{
+			name: "mirror private with a dedicated private node is allowed",
+			env: map[string]string{
+				"IPFS_ENABLED":         "true",
+				"IPFS_API_URL":         "http://ipfs:5001",
+				"IPFS_GATEWAY_URL":     "https://gw.example.org",
+				"IPFS_MIRROR_PRIVATE":  "true",
+				"IPFS_PRIVATE_API_URL": "http://ipfs-private:5001",
+			},
+			wantErr: false,
+		},
+		{
+			// Refusing to dual-home: the private node must differ from the public node.
+			name: "dual-home rejected (private api url == public api url)",
+			env: map[string]string{
+				"IPFS_ENABLED":         "true",
+				"IPFS_API_URL":         "http://ipfs:5001",
+				"IPFS_GATEWAY_URL":     "https://gw.example.org",
+				"IPFS_MIRROR_PRIVATE":  "true",
+				"IPFS_PRIVATE_API_URL": "http://ipfs:5001",
+			},
+			wantErr: true,
+		},
+		{
+			// Trailing-slash normalization must not let a dual-home sneak past.
+			name: "dual-home rejected despite trailing slash",
+			env: map[string]string{
+				"IPFS_ENABLED":         "true",
+				"IPFS_API_URL":         "http://ipfs:5001",
+				"IPFS_GATEWAY_URL":     "https://gw.example.org",
+				"IPFS_MIRROR_PRIVATE":  "true",
+				"IPFS_PRIVATE_API_URL": "http://ipfs:5001/",
+			},
+			wantErr: true,
+		},
+		{
+			name: "mirror private bad private api scheme errors",
+			env: map[string]string{
+				"IPFS_ENABLED":         "true",
+				"IPFS_API_URL":         "http://ipfs:5001",
+				"IPFS_GATEWAY_URL":     "https://gw.example.org",
+				"IPFS_MIRROR_PRIVATE":  "true",
+				"IPFS_PRIVATE_API_URL": "ftp://ipfs-private:5001",
+			},
+			wantErr: true,
+		},
+		{
+			// Private-only tier: the operator replicates ONLY non-public media with the
+			// public mirror off. Spec §2 explicitly allows this.
+			name: "private-only tier allowed (public mirror disabled)",
+			env: map[string]string{
+				"IPFS_ENABLED":         "false",
+				"IPFS_MIRROR_PRIVATE":  "true",
+				"IPFS_PRIVATE_API_URL": "http://ipfs-private:5001",
+			},
+			wantErr: false,
+		},
+		{
+			name: "mirror private with private node + private cluster ok",
+			env: map[string]string{
+				"IPFS_ENABLED":                 "true",
+				"IPFS_API_URL":                 "http://ipfs:5001",
+				"IPFS_GATEWAY_URL":             "https://gw.example.org",
+				"IPFS_MIRROR_PRIVATE":          "true",
+				"IPFS_PRIVATE_API_URL":         "http://ipfs-private:5001",
+				"IPFS_PRIVATE_CLUSTER_API_URL": "http://cluster-private:9094",
 			},
 			wantErr: false,
 		},

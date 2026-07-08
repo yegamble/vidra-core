@@ -261,6 +261,12 @@ directory intent), `car_root` = the wrap CID, `cid` = same as `car_root`.
 
 ## 7. ⚠️ PRIVACY — first-class section (the gating decision)
 
+> **See also:** the PRIVATE mirroring tier (a second, fully separate swarm.key'd
+> node for private/unlisted media) is designed in
+> [`ipfs-media-private.md`](./ipfs-media-private.md); its §7 carries the full
+> per-class encryption analysis (Class A/B verdicts + Lit rejection). This §7
+> below governs the PUBLIC mirror only — the v1 "already-public only" gate.
+
 **Threat:** content on the public IPFS network is **world-readable forever** once
 its CID is known, and **unpin does not guarantee erasure** (other nodes may have
 cached/re-pinned it). A CID leaks trivially — it's in gateway URLs, API responses,

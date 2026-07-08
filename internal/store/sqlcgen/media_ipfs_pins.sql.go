@@ -54,18 +54,19 @@ UPDATE media_ipfs_pins
 SET next_attempt_at = now() + ($1::int * interval '1 second'),
     updated_at = now()
 WHERE object_key IN (
-    SELECT object_key FROM media_ipfs_pins
-    WHERE state IN ('pending', 'unpinning') AND next_attempt_at <= now()
-    ORDER BY next_attempt_at
-    LIMIT $2
+    SELECT p.object_key FROM media_ipfs_pins p
+    WHERE p.network = $2 AND p.state IN ('pending', 'unpinning') AND p.next_attempt_at <= now()
+    ORDER BY p.next_attempt_at
+    LIMIT $3
     FOR UPDATE SKIP LOCKED
 )
-RETURNING object_key, media_class, cid, car_root, state, attempts, video_id, owner_user_id
+RETURNING object_key, media_class, cid, car_root, state, attempts, network, video_id, owner_user_id
 `
 
 type ClaimDueIPFSPinsParams struct {
-	LeaseSeconds int32 `json:"lease_seconds"`
-	BatchSize    int32 `json:"batch_size"`
+	LeaseSeconds int32  `json:"lease_seconds"`
+	Network      string `json:"network"`
+	BatchSize    int32  `json:"batch_size"`
 }
 
 type ClaimDueIPFSPinsRow struct {
@@ -75,19 +76,24 @@ type ClaimDueIPFSPinsRow struct {
 	CarRoot     string      `json:"car_root"`
 	State       string      `json:"state"`
 	Attempts    int32       `json:"attempts"`
+	Network     string      `json:"network"`
 	VideoID     pgtype.UUID `json:"video_id"`
 	OwnerUserID pgtype.UUID `json:"owner_user_id"`
 }
 
-// Atomically leases due pin/unpin work for a worker. FOR UPDATE SKIP LOCKED lets
-// IPFS_PIN_CONCURRENCY workers claim disjoint rows without blocking each other;
-// pushing next_attempt_at forward by the lease seconds ($2) is the visibility
+// Atomically leases due pin/unpin work for ONE network (P19.P1). FOR UPDATE SKIP
+// LOCKED lets IPFS_PIN_CONCURRENCY workers claim disjoint rows without blocking each
+// other; pushing next_attempt_at forward by the lease seconds is the visibility
 // timeout (a crashed worker's row is retried after the lease; a concurrent claimer
 // skips it meanwhile). state is PRESERVED — pending ⇒ add+pin, unpinning ⇒ unpin —
 // and the worker sets the terminal state via MarkPinned / MarkFailed / MarkUnpinned
-// (pinning and unpinning are idempotent, so an over-long lease is safe).
+// (pinning and unpinning are idempotent, so an over-long lease is safe). The @network
+// filter is the fail-closed routing boundary: the worker drains each network with its
+// OWN node client, so the private client only ever sees private rows and the public
+// client only public rows — the public client is never even in scope for a private
+// pin (spec §1/§8). network is RETURNED for the worker's log/route assertion.
 func (q *Queries) ClaimDueIPFSPins(ctx context.Context, arg ClaimDueIPFSPinsParams) ([]ClaimDueIPFSPinsRow, error) {
-	rows, err := q.db.Query(ctx, claimDueIPFSPins, arg.LeaseSeconds, arg.BatchSize)
+	rows, err := q.db.Query(ctx, claimDueIPFSPins, arg.LeaseSeconds, arg.Network, arg.BatchSize)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +108,7 @@ func (q *Queries) ClaimDueIPFSPins(ctx context.Context, arg ClaimDueIPFSPinsPara
 			&i.CarRoot,
 			&i.State,
 			&i.Attempts,
+			&i.Network,
 			&i.VideoID,
 			&i.OwnerUserID,
 		); err != nil {
@@ -115,31 +122,40 @@ func (q *Queries) ClaimDueIPFSPins(ctx context.Context, arg ClaimDueIPFSPinsPara
 	return items, nil
 }
 
-const countIPFSPinsByStateClass = `-- name: CountIPFSPinsByStateClass :many
-SELECT state, media_class, count(*)::bigint AS count
+const countIPFSPinsByNetworkStateClass = `-- name: CountIPFSPinsByNetworkStateClass :many
+SELECT network, state, media_class, count(*)::bigint AS count
 FROM media_ipfs_pins
-GROUP BY state, media_class
-ORDER BY state, media_class
+GROUP BY network, state, media_class
+ORDER BY network, state, media_class
 `
 
-type CountIPFSPinsByStateClassRow struct {
+type CountIPFSPinsByNetworkStateClassRow struct {
+	Network    string `json:"network"`
 	State      string `json:"state"`
 	MediaClass string `json:"media_class"`
 	Count      int64  `json:"count"`
 }
 
-// Admin status aggregation (P19.2 /ipfs/status): pin counts per state and media
-// class, cheap off media_ipfs_pins_state_class_idx.
-func (q *Queries) CountIPFSPinsByStateClass(ctx context.Context) ([]CountIPFSPinsByStateClassRow, error) {
-	rows, err := q.db.Query(ctx, countIPFSPinsByStateClass)
+// Admin status aggregation (P19.2 /ipfs/status), now sliced by network (P19.P1):
+// pin counts per (network, state, media_class), cheap off the network_state and
+// state_class indexes. The public-tier admin response folds across networks (all
+// rows are public until P19.P2 routes private media); the P19.P2 admin split reads
+// the network dimension directly to render the second column.
+func (q *Queries) CountIPFSPinsByNetworkStateClass(ctx context.Context) ([]CountIPFSPinsByNetworkStateClassRow, error) {
+	rows, err := q.db.Query(ctx, countIPFSPinsByNetworkStateClass)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []CountIPFSPinsByStateClassRow
+	var items []CountIPFSPinsByNetworkStateClassRow
 	for rows.Next() {
-		var i CountIPFSPinsByStateClassRow
-		if err := rows.Scan(&i.State, &i.MediaClass, &i.Count); err != nil {
+		var i CountIPFSPinsByNetworkStateClassRow
+		if err := rows.Scan(
+			&i.Network,
+			&i.State,
+			&i.MediaClass,
+			&i.Count,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -186,7 +202,7 @@ func (q *Queries) EnqueueIPFSUnpin(ctx context.Context, objectKey string) error 
 }
 
 const getIPFSPinByObjectKey = `-- name: GetIPFSPinByObjectKey :one
-SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at FROM media_ipfs_pins WHERE object_key = $1
+SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network FROM media_ipfs_pins WHERE object_key = $1
 `
 
 func (q *Queries) GetIPFSPinByObjectKey(ctx context.Context, objectKey string) (MediaIpfsPin, error) {
@@ -206,12 +222,13 @@ func (q *Queries) GetIPFSPinByObjectKey(ctx context.Context, objectKey string) (
 		&i.OwnerUserID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Network,
 	)
 	return i, err
 }
 
 const listIPFSPinsByVideo = `-- name: ListIPFSPinsByVideo :many
-SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at FROM media_ipfs_pins WHERE video_id = $1 ORDER BY media_class, object_key
+SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network FROM media_ipfs_pins WHERE video_id = $1 ORDER BY media_class, object_key
 `
 
 // Every ledger row for a video (privacy re-evaluation + cascade unpin, P19.3),
@@ -239,6 +256,7 @@ func (q *Queries) ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) 
 			&i.OwnerUserID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Network,
 		); err != nil {
 			return nil, err
 		}
@@ -254,6 +272,7 @@ const listPinnedVideoIDs = `-- name: ListPinnedVideoIDs :many
 SELECT DISTINCT video_id
 FROM media_ipfs_pins
 WHERE state = 'pinned'
+  AND network = 'public'
   AND video_id IS NOT NULL
   AND video_id = ANY($1::uuid[])
 `
@@ -262,7 +281,10 @@ WHERE state = 'pinned'
 // least one currently-pinned ledger row. One indexed scan for a whole page (the
 // ipfs_pinned boolean), off media_ipfs_pins_video_idx, so the badge never costs
 // a per-card query. Only 'pinned' rows count — a video whose media was unpinned
-// (went private) is correctly reported as not pinned.
+// (went private) is correctly reported as not pinned. PRIVACY FENCE (P19.P1): only
+// network='public' rows count — ipfs_pinned is a PUBLIC-network signal, so a
+// private/unlisted video whose bytes are replicated on the private swarm is NEVER
+// reported pinned in any API payload (no private CID or gateway URL ever leaks).
 func (q *Queries) ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, listPinnedVideoIDs, videoIds)
 	if err != nil {
@@ -549,7 +571,7 @@ SET media_class   = EXCLUDED.media_class,
         ELSE media_ipfs_pins.last_error
     END,
     updated_at = now()
-RETURNING object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at
+RETURNING object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network
 `
 
 type UpsertIPFSPinIntentParams struct {
@@ -591,6 +613,7 @@ func (q *Queries) UpsertIPFSPinIntent(ctx context.Context, arg UpsertIPFSPinInte
 		&i.OwnerUserID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Network,
 	)
 	return i, err
 }

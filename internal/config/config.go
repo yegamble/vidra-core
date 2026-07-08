@@ -339,16 +339,37 @@ type Config struct {
 	IPFSAddTimeout        time.Duration
 	IPFSPinConcurrency    int
 	IPFSReconcileInterval time.Duration
-	// IPFSMirrorPrivate is the PRIVACY GATE. It defaults false and, when true, is
-	// only permitted with a private IPFSClusterAPIURL set (else a hard config
-	// error) — private media may only ever go to a private cluster, NEVER a public
-	// network. Private-media mirroring is otherwise out of scope in v1.
+	// IPFSMirrorPrivate is the master opt-in for the PRIVATE mirroring tier
+	// (fix_plan P19.P, .ralph/specs/ipfs-media-private.md). It defaults false and,
+	// when true, REQUIRES a dedicated private-swarm kubo at IPFSPrivateAPIURL —
+	// non-public media is replicated ONLY within that operator-controlled swarm,
+	// NEVER to the public network. SUPERSESSION: the shipped P19 guard (this flag
+	// required a private IPFSClusterAPIURL, a proxy for "private infra exists") is
+	// REPLACED by the stricter IPFSPrivateAPIURL requirement below — the real
+	// requirement is a separate node, not just a cluster URL. Private-media
+	// eligibility/routing is layered on in P19.P2; P19.P1 lands the config +
+	// second-client foundation only.
 	IPFSMirrorPrivate bool
-	// IPFSClusterAPIURL is the optional IPFS Cluster REST API for replication.
-	// IPFSClusterToken is the cluster Bearer token — a SECRET, never logged (on the
-	// observability.IsSensitiveKey denylist as ipfs_cluster_token).
+	// IPFSClusterAPIURL is the optional IPFS Cluster REST API for PUBLIC-tier
+	// replication. IPFSClusterToken is its Bearer token — a SECRET, never logged
+	// (on the observability.IsSensitiveKey denylist as ipfs_cluster_token).
 	IPFSClusterAPIURL string
 	IPFSClusterToken  string
+	// IPFSPrivateAPIURL is the RPC of the DEDICATED private-swarm kubo (the second,
+	// swarm.key'd node — never the public IPFSAPIURL). REQUIRED when
+	// IPFSMirrorPrivate=true; must differ from IPFSAPIURL (refusing to dual-home,
+	// spec §1). There is deliberately NO IPFSPrivateGatewayURL: private CIDs are
+	// never emitted with a gateway URL, and not having the knob is the guarantee.
+	IPFSPrivateAPIURL string
+	// IPFSPrivateClusterAPIURL / IPFSPrivateClusterToken are the OPTIONAL IPFS
+	// Cluster REST API + Bearer token on the PRIVATE swarm (P19.P3 replication).
+	// The token is a SECRET (denylist ipfs_private_cluster_token).
+	IPFSPrivateClusterAPIURL string
+	IPFSPrivateClusterToken  string
+	// IPFSPrivateAddTimeout / IPFSPrivatePinConcurrency tune the private-network
+	// worker independently; they INHERIT the public defaults when unset.
+	IPFSPrivateAddTimeout     time.Duration
+	IPFSPrivatePinConcurrency int
 
 	// UploadMaxSize caps a single original-file upload, as an Echo size string
 	// (e.g. "2G", "512M"). It overrides HTTPBodyLimit for the upload route only,
@@ -524,6 +545,9 @@ func Load() (*Config, error) {
 		IPFSMirrorPrivate:              getEnvBool("IPFS_MIRROR_PRIVATE", false),
 		IPFSClusterAPIURL:              strings.TrimRight(getEnv("IPFS_CLUSTER_API_URL", ""), "/"),
 		IPFSClusterToken:               getEnv("IPFS_CLUSTER_TOKEN", ""),
+		IPFSPrivateAPIURL:              strings.TrimRight(getEnv("IPFS_PRIVATE_API_URL", ""), "/"),
+		IPFSPrivateClusterAPIURL:       strings.TrimRight(getEnv("IPFS_PRIVATE_CLUSTER_API_URL", ""), "/"),
+		IPFSPrivateClusterToken:        getEnv("IPFS_PRIVATE_CLUSTER_TOKEN", ""),
 		UploadMaxSize:                  getEnv("UPLOAD_MAX_SIZE", "2G"),
 		PeerTubeImportEnabled:          getEnvBool("PEERTUBE_IMPORT_ENABLED", false),
 		PeerTubeSourceDatabaseURL:      getEnv("PEERTUBE_SOURCE_DATABASE_URL", ""),
@@ -581,6 +605,14 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.IPFSPinConcurrency = pinConcurrency
+
+	// Private-tier worker tuning INHERITS the public defaults when unset (spec §2).
+	cfg.IPFSPrivateAddTimeout = getEnvDuration("IPFS_PRIVATE_ADD_TIMEOUT", cfg.IPFSAddTimeout)
+	privatePinConcurrency, err := getEnvInt("IPFS_PRIVATE_PIN_CONCURRENCY", pinConcurrency)
+	if err != nil {
+		return nil, err
+	}
+	cfg.IPFSPrivatePinConcurrency = privatePinConcurrency
 
 	for _, name := range splitAndTrim(getEnv("OAUTH_PROVIDERS", "")) {
 		prefix := "OAUTH_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
@@ -796,17 +828,16 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// validateIPFS checks the hybrid IPFS media-mirroring (P19) configuration. Every
-// value is OFF/inert by default; validation only bites once IPFS_ENABLED is set,
-// EXCEPT the privacy guard which fires whenever IPFS_MIRROR_PRIVATE is true. The
-// privacy guard is the config-level enforcement of the spec §7 invariant: private
-// media must never be pushed to a public network, so mirroring it is only ever
-// permitted onto a private cluster.
+// validateIPFS checks the hybrid IPFS media-mirroring (P19 + P19.P) configuration.
+// Every value is OFF/inert by default; the PUBLIC-tier checks only bite once
+// IPFS_ENABLED is set, but the PRIVATE-tier guard fires whenever IPFS_MIRROR_PRIVATE
+// is true (the private tier may run standalone with IPFS_ENABLED=false — an operator
+// may replicate only non-public media). The private guard is the config-level
+// enforcement of the spec §1/§2 invariant: non-public media is mirrored ONLY to a
+// dedicated, separate private-swarm node — never the public node, never dual-homed.
 func (c *Config) validateIPFS() error {
-	// Privacy guard first: refusing to mirror private media to a public network is
-	// a hard error regardless of whether the mirror is otherwise enabled.
-	if c.IPFSMirrorPrivate && strings.TrimSpace(c.IPFSClusterAPIURL) == "" {
-		return fmt.Errorf("config: IPFS_MIRROR_PRIVATE requires a private IPFS_CLUSTER_API_URL (refusing to mirror private media to a public network)")
+	if err := c.validateIPFSPrivate(); err != nil {
+		return err
 	}
 	if !c.IPFSEnabled {
 		return nil
@@ -836,6 +867,48 @@ func (c *Config) validateIPFS() error {
 		return fmt.Errorf("config: IPFS_RECONCILE_INTERVAL must be positive")
 	}
 	return nil
+}
+
+// validateIPFSPrivate enforces the private-tier (P19.P) config shape (spec §2). It
+// SUPERSEDES the shipped P19 guard (IPFS_MIRROR_PRIVATE ⇒ IPFS_CLUSTER_API_URL): the
+// real requirement is a DEDICATED private-swarm node, not merely a cluster URL. Runs
+// regardless of IPFS_ENABLED because the private tier may be operated standalone.
+func (c *Config) validateIPFSPrivate() error {
+	privateURL := strings.TrimSpace(c.IPFSPrivateAPIURL)
+	// The master opt-in requires a dedicated private-swarm kubo RPC.
+	if c.IPFSMirrorPrivate && privateURL == "" {
+		return fmt.Errorf("config: IPFS_MIRROR_PRIVATE requires IPFS_PRIVATE_API_URL (a dedicated private-swarm kubo — non-public media is never mirrored to the public network)")
+	}
+	if privateURL == "" {
+		return nil
+	}
+	// Never dual-home: the private node must be a DIFFERENT node from the public
+	// mirror. Equality is compared on the trimmed, slash-normalized values both
+	// fields already store, so a trailing-slash difference cannot sneak past.
+	if privateURL == strings.TrimSpace(c.IPFSAPIURL) {
+		return fmt.Errorf("config: the private IPFS mirror must be a separate node from the public mirror (refusing to dual-home)")
+	}
+	if !isHTTPURL(privateURL) {
+		return fmt.Errorf("config: IPFS_PRIVATE_API_URL must be a valid http(s) URL")
+	}
+	if c.IPFSPrivateClusterAPIURL != "" && !isHTTPURL(c.IPFSPrivateClusterAPIURL) {
+		return fmt.Errorf("config: IPFS_PRIVATE_CLUSTER_API_URL must be a valid http(s) URL")
+	}
+	if c.IPFSMirrorPrivate {
+		if c.IPFSPrivateAddTimeout <= 0 {
+			return fmt.Errorf("config: IPFS_PRIVATE_ADD_TIMEOUT must be positive")
+		}
+		if c.IPFSPrivatePinConcurrency < 1 {
+			return fmt.Errorf("config: IPFS_PRIVATE_PIN_CONCURRENCY must be >= 1")
+		}
+	}
+	return nil
+}
+
+// isHTTPURL reports whether raw parses as an absolute http(s) URL with a host.
+func isHTTPURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Host != "" && (u.Scheme == "http" || u.Scheme == "https")
 }
 
 // validatePeerTubeImport checks the PeerTube import (P18) configuration. The

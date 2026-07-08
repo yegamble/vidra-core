@@ -44,6 +44,11 @@ func (r *stubLedgerRepo) ListPinnedVideoIDs(ctx context.Context, videoIds []uuid
 		if row.State != "pinned" || !row.VideoID.Valid {
 			continue
 		}
+		// Privacy fence parity (P19.P1): the real query counts only network='public'
+		// rows, so a private-swarm pin never lights up ipfs_pinned.
+		if row.Network != "" && row.Network != "public" {
+			continue
+		}
 		id := uuid.UUID(row.VideoID.Bytes)
 		if _, ok := want[id]; !ok {
 			continue
@@ -99,7 +104,7 @@ func (r *stubLedgerRepo) DeleteIPFSUserReeval(ctx context.Context, userID uuid.U
 func (r *stubLedgerRepo) RescheduleIPFSUserReeval(ctx context.Context, arg sqlcgen.RescheduleIPFSUserReevalParams) error {
 	return nil
 }
-func (r *stubLedgerRepo) CountIPFSPinsByStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByStateClassRow, error) {
+func (r *stubLedgerRepo) CountIPFSPinsByNetworkStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByNetworkStateClassRow, error) {
 	return nil, nil
 }
 func (r *stubLedgerRepo) CountIPFSPinsSharingCID(ctx context.Context, arg sqlcgen.CountIPFSPinsSharingCIDParams) (int64, error) {

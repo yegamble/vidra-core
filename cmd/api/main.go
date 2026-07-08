@@ -308,6 +308,20 @@ func run() error {
 			ipfsCluster = ipfs.NewKuboClusterClient(cfg.IPFSClusterAPIURL, cfg.IPFSClusterToken, &http.Client{Timeout: cfg.IPFSAddTimeout})
 		}
 	}
+	// Private mirroring tier (P19.P1): a SECOND, fully separate swarm.key'd node —
+	// NEVER dual-homed with the public node (config validation rejects a shared URL).
+	// The mirror worker routes each ledger row to exactly one network and can never
+	// pin a private row through the public client (spec §1/§8). Present only when
+	// IPFS_MIRROR_PRIVATE=true with a dedicated IPFS_PRIVATE_API_URL.
+	var ipfsPrivateClient ipfs.Client
+	var ipfsPrivateCluster ipfs.ClusterClient
+	privateEnabled := cfg.IPFSMirrorPrivate && cfg.IPFSPrivateAPIURL != ""
+	if privateEnabled {
+		ipfsPrivateClient = ipfs.NewKuboClient(cfg.IPFSPrivateAPIURL, &http.Client{Timeout: cfg.IPFSPrivateAddTimeout})
+		if cfg.IPFSPrivateClusterAPIURL != "" {
+			ipfsPrivateCluster = ipfs.NewKuboClusterClient(cfg.IPFSPrivateClusterAPIURL, cfg.IPFSPrivateClusterToken, &http.Client{Timeout: cfg.IPFSPrivateAddTimeout})
+		}
+	}
 	// One SQLLookups value serves both the per-entity Lookups (enqueue hooks) and
 	// the bulk Catalog (the one-shot admin backfill, P19.6).
 	ipfsLookups := ipfsmirror.NewSQLLookups(db.Queries())
@@ -325,11 +339,23 @@ func run() error {
 			Logger:         logger,
 			Cluster:        ipfsCluster,
 			Catalog:        ipfsLookups,
+			// Private tier (P19.P1) — a dedicated private-swarm node client the worker
+			// routes network='private' rows to (and ONLY those rows).
+			PrivateEnabled:     privateEnabled,
+			PrivateClient:      ipfsPrivateClient,
+			PrivateCluster:     ipfsPrivateCluster,
+			PrivateAddTimeout:  cfg.IPFSPrivateAddTimeout,
+			PrivateConcurrency: cfg.IPFSPrivatePinConcurrency,
 		},
 	)
 	opts = append(opts, httpapi.WithIPFSMirrorService(ipfsMirror))
 	if cfg.IPFSEnabled {
 		logger.Info("ipfs media mirror enabled", "gateway", cfg.IPFSGatewayURL, "cluster", cfg.IPFSClusterAPIURL != "")
+	}
+	if privateEnabled {
+		// Never log the private API URL at info (it is infrastructure topology); the
+		// presence + cluster flag is enough. The swarm.key/cluster token are secrets.
+		logger.Info("ipfs private mirror enabled", "cluster", cfg.IPFSPrivateClusterAPIURL != "")
 	}
 
 	// Wire the FFprobe media prober when ffprobe is on PATH; otherwise uploads

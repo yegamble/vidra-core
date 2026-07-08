@@ -51,6 +51,39 @@ const (
 	eligibilitySweepBatch = 500
 )
 
+// Network identifiers for the pin ledger's routing column (P19.P1). Each row lives
+// on exactly one network; the worker pins it through that network's node client and
+// NO other (fail-closed routing, spec §1/§8). networkPublic is the DB default, so a
+// zero-value/legacy row normalizes to public.
+const (
+	networkPublic  = "public"
+	networkPrivate = "private"
+)
+
+// normalizeNetwork maps the empty string to the default public network so pre-P19.P
+// rows and zero-value test literals route to the public swarm. Any other value is
+// returned verbatim (a 'private' row must stay private — never coerced to public).
+func normalizeNetwork(n string) string {
+	if n == "" {
+		return networkPublic
+	}
+	return n
+}
+
+// netClient bundles the node client + optional cluster client + tunables for ONE
+// network, resolved once per drain from the ledger row's network. Threading this
+// (never s.client directly) through the whole pin/unpin call chain is what makes the
+// cardinal invariant STRUCTURAL: on the private path only the private client is ever
+// in scope, so a private row is provably incapable of being pinned via the public
+// client — the failure mode is "private content unreachable", never "public".
+type netClient struct {
+	network     string
+	client      ipfs.Client
+	cluster     ipfs.ClusterClient
+	addTimeout  time.Duration
+	concurrency int
+}
+
 // Repository is the ledger/queue data access the mirror needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
@@ -73,7 +106,7 @@ type Repository interface {
 	// toggle (a crashed re-eval, a raced worker, a future rule change) converges on
 	// the next reconcile tick. Returns how many rows it re-armed.
 	SweepIneligibleIPFSPins(ctx context.Context, batchSize int32) (int64, error)
-	CountIPFSPinsByStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByStateClassRow, error)
+	CountIPFSPinsByNetworkStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByNetworkStateClassRow, error)
 	CountIPFSPinsSharingCID(ctx context.Context, arg sqlcgen.CountIPFSPinsSharingCIDParams) (int64, error)
 	ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) ([]sqlcgen.MediaIpfsPin, error)
 	ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID) ([]pgtype.UUID, error)
@@ -141,6 +174,21 @@ type Config struct {
 	// seed pin intents for pre-existing eligible objects. Nil except in the wiring
 	// that serves POST /admin/ipfs/reconcile; Backfill errors cleanly when it is nil.
 	Catalog Catalog
+
+	// ---- private mirroring tier (P19.P1) --------------------------------------
+	// PrivateEnabled turns on draining the network='private' ledger rows through
+	// PrivateClient (the DEDICATED private-swarm kubo — NEVER the public client).
+	// When false, no private drain runs and behavior is identical to pre-P19.P.
+	PrivateEnabled bool
+	// PrivateClient is the private-swarm node client; PrivateCluster its optional
+	// replication cluster (P19.P3). A private row is pinned ONLY through these — the
+	// worker never falls back to the public client for a private row (spec §8).
+	PrivateClient  ipfs.Client
+	PrivateCluster ipfs.ClusterClient
+	// PrivateAddTimeout / PrivateConcurrency tune the private-network worker; they
+	// fall back to the public AddTimeout / Concurrency when unset.
+	PrivateAddTimeout  time.Duration
+	PrivateConcurrency int
 }
 
 // Service is the mirror sidecar: enqueue helpers (called from the authoritative
@@ -154,6 +202,14 @@ type Service struct {
 	client  ipfs.Client
 	cluster ipfs.ClusterClient
 	catalog Catalog
+
+	// Private-tier (P19.P1): the second, swarm.key'd node client + its tunables. Nil
+	// / privateEnabled=false ⇒ no private drain (default, no behavior change).
+	privateEnabled     bool
+	privateClient      ipfs.Client
+	privateCluster     ipfs.ClusterClient
+	privateAddTimeout  time.Duration
+	privateConcurrency int
 
 	enabled        bool
 	gatewayURL     string
@@ -170,13 +226,20 @@ type Service struct {
 // nil when Enabled is false (the no-op path). All defaults are filled in.
 func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Client, cfg Config) *Service {
 	s := &Service{
-		repo:           repo,
-		lookups:        lookups,
-		blobs:          blobs,
-		client:         client,
-		cluster:        cfg.Cluster,
-		catalog:        cfg.Catalog,
-		enabled:        cfg.Enabled,
+		repo:               repo,
+		lookups:            lookups,
+		blobs:              blobs,
+		client:             client,
+		cluster:            cfg.Cluster,
+		catalog:            cfg.Catalog,
+		privateEnabled:     cfg.PrivateEnabled,
+		privateClient:      cfg.PrivateClient,
+		privateCluster:     cfg.PrivateCluster,
+		privateAddTimeout:  cfg.PrivateAddTimeout,
+		privateConcurrency: cfg.PrivateConcurrency,
+		// The worker runs whenever EITHER tier is active; the enqueue helpers stay
+		// no-ops only when both are off.
+		enabled:        cfg.Enabled || cfg.PrivateEnabled,
 		gatewayURL:     cfg.GatewayURL,
 		clusterEnabled: cfg.ClusterEnabled,
 		addTimeout:     cfg.AddTimeout,
@@ -191,6 +254,13 @@ func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Cl
 	}
 	if s.concurrency < 1 {
 		s.concurrency = 1
+	}
+	// Private tunables inherit the public ones when unset.
+	if s.privateAddTimeout <= 0 {
+		s.privateAddTimeout = s.addTimeout
+	}
+	if s.privateConcurrency < 1 {
+		s.privateConcurrency = s.concurrency
 	}
 	if s.maxAttempts < 1 {
 		s.maxAttempts = defaultMaxAttempts
@@ -706,6 +776,13 @@ func (s *Service) VideoPins(ctx context.Context, videoID uuid.UUID) (VideoIPFS, 
 	}
 	var out VideoIPFS
 	for _, r := range rows {
+		// PRIVACY FENCE (P19.P1): the detail `ipfs` object is a PUBLIC-network signal.
+		// A private-swarm pin (private/unlisted media replicated for durability) is
+		// NEVER exposed — no private CID or gateway URL ever reaches an API payload
+		// (spec §5). Only network='public' rows are eligible to surface.
+		if normalizeNetwork(r.Network) != networkPublic {
+			continue
+		}
 		if r.State != "pinned" || r.Cid == "" || ipfs.ValidateCID(r.Cid) != nil {
 			continue
 		}
@@ -775,7 +852,46 @@ func (s *Service) DrainDue(ctx context.Context, batch int) (int, error) {
 	if batch < 1 {
 		batch = 1
 	}
+	total := 0
+	// Drain each configured network with its OWN client. Public first, deterministic.
+	for _, nc := range s.activeNetworks() {
+		n, err := s.drainNetwork(ctx, nc, batch)
+		total += n
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+// activeNetworks returns the netClient for every configured tier: public when a
+// public node client is present, private when the private tier is enabled with a
+// client. Each bundles its own node/cluster client + tunables, so a per-network drain
+// can never cross wires.
+func (s *Service) activeNetworks() []netClient {
+	var ncs []netClient
+	if s.client != nil {
+		ncs = append(ncs, netClient{
+			network: networkPublic, client: s.client, cluster: s.cluster,
+			addTimeout: s.addTimeout, concurrency: s.concurrency,
+		})
+	}
+	if s.privateEnabled && s.privateClient != nil {
+		ncs = append(ncs, netClient{
+			network: networkPrivate, client: s.privateClient, cluster: s.privateCluster,
+			addTimeout: s.privateAddTimeout, concurrency: s.privateConcurrency,
+		})
+	}
+	return ncs
+}
+
+// drainNetwork claims and processes up to batch due rows for ONE network, using that
+// network's client exclusively. ClaimDue's @network filter returns only this
+// network's rows, so process() only ever touches nc's client — the public client is
+// not even in scope when nc is the private tier (the cardinal invariant, spec §8).
+func (s *Service) drainNetwork(ctx context.Context, nc netClient, batch int) (int, error) {
 	rows, err := s.repo.ClaimDueIPFSPins(ctx, sqlcgen.ClaimDueIPFSPinsParams{
+		Network:      nc.network,
 		LeaseSeconds: leaseSeconds,
 		BatchSize:    int32(batch),
 	})
@@ -785,7 +901,7 @@ func (s *Service) DrainDue(ctx context.Context, batch int) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	sem := make(chan struct{}, s.concurrency)
+	sem := make(chan struct{}, nc.concurrency)
 	var wg sync.WaitGroup
 	var done int64
 	for _, row := range rows {
@@ -794,7 +910,7 @@ func (s *Service) DrainDue(ctx context.Context, batch int) (int, error) {
 		go func(row sqlcgen.ClaimDueIPFSPinsRow) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if s.process(ctx, row) {
+			if s.process(ctx, nc, row) {
 				atomic.AddInt64(&done, 1)
 			}
 		}(row)
@@ -803,16 +919,31 @@ func (s *Service) DrainDue(ctx context.Context, batch int) (int, error) {
 	return int(done), nil
 }
 
-// process handles one claimed row within a per-RPC timeout. Returns true on a
-// terminal success (pinned/unpinned).
-func (s *Service) process(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool {
-	rpcCtx, cancel := context.WithTimeout(ctx, s.addTimeout)
+// process handles one claimed row through nc's client within a per-RPC timeout.
+// Returns true on a terminal success (pinned/unpinned).
+func (s *Service) process(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPFSPinsRow) bool {
+	// Fail-closed routing defense: the row MUST belong to the network we hold a
+	// client for. ClaimDue's @network filter already guarantees this — but if a row's
+	// network ever mismatched the drain, we RESCHEDULE it rather than pin it through
+	// the wrong client. The public client must be provably incapable of pinning a
+	// private row (spec §8); this is the last-line assertion of that invariant.
+	if normalizeNetwork(row.Network) != nc.network {
+		s.logger.Warn("ipfs_route_mismatch", "row_network", row.Network, "drain_network", nc.network,
+			"object_key", row.ObjectKey)
+		_ = s.repo.RescheduleIPFSPin(ctx, sqlcgen.RescheduleIPFSPinParams{
+			ObjectKey:     row.ObjectKey,
+			NextAttemptAt: time.Now().UTC().Add(s.backoff(1)),
+			LastError:     "network route mismatch",
+		})
+		return false
+	}
+	rpcCtx, cancel := context.WithTimeout(ctx, nc.addTimeout)
 	defer cancel()
 	switch row.State {
 	case "pending":
-		return s.pin(rpcCtx, row)
+		return s.pin(rpcCtx, nc, row)
 	case "unpinning":
-		return s.unpin(rpcCtx, row)
+		return s.unpin(rpcCtx, nc, row)
 	default:
 		return false
 	}
@@ -820,22 +951,22 @@ func (s *Service) process(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) 
 
 // pin streams the object's bytes from the authoritative store and add+pins them.
 // A trailing-slash object key is a directory intent (the HLS tree) → pinDirectory.
-func (s *Service) pin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool {
+func (s *Service) pin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPFSPinsRow) bool {
 	if strings.HasSuffix(row.ObjectKey, "/") {
-		return s.pinDirectory(ctx, row)
+		return s.pinDirectory(ctx, nc, row)
 	}
 	rc, err := s.blobs.Open(ctx, row.ObjectKey)
 	if err != nil {
 		s.recordFailure(ctx, row, "open source object failed")
-		s.logger.Warn("ipfs_pin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
 			"attempts", row.Attempts+1, "reason", "open_source", "error", err)
 		return false
 	}
-	res, err := s.client.Add(ctx, path.Base(row.ObjectKey), rc)
+	res, err := nc.client.Add(ctx, path.Base(row.ObjectKey), rc)
 	_ = rc.Close()
 	if err != nil {
 		s.recordFailure(ctx, row, "add+pin rpc failed")
-		s.logger.Warn("ipfs_pin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
 			"attempts", row.Attempts+1, "reason", "add_pin", "error", err)
 		return false
 	}
@@ -849,18 +980,18 @@ func (s *Service) pin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool
 	if state != "pinned" {
 		// Lost the lost-update race: a concurrent privacy flip flipped the leased row
 		// to 'unpinning' mid-Add, so MarkIPFSPinned recorded the CID but KEPT the row
-		// 'unpinning'. The bytes are now pinned on a public node for a non-public
+		// 'unpinning'. The bytes are now pinned on THIS network's node for a non-public
 		// object — remove them immediately (row.Cid carries any superseded prior CID).
-		return s.pinRacedUnpin(ctx, row, res.CID, row.Cid, state)
+		return s.pinRacedUnpin(ctx, nc, row, res.CID, row.Cid, state)
 	}
 	// Best-effort cluster replication (STOR-05) of the now-node-pinned CID.
-	s.clusterPin(ctx, res.CID)
+	s.clusterPin(ctx, nc, res.CID)
 	// A re-pin under a STABLE key (e.g. a re-transcoded VP9/WebM alternate) whose
 	// content changed leaves the prior CID orphaned — swap it out (reference-checked).
-	s.swapUnpin(ctx, row.Cid, res.CID, row.ObjectKey)
+	s.swapUnpin(ctx, nc, row.Cid, res.CID, row.ObjectKey)
 	// Info level carries NO cid (CIDs are public capability handles — no spam);
 	// the cid is debug-only.
-	s.logger.Info("ipfs_pin_ok", "media_class", row.MediaClass, "byte_size", res.Size, "attempts", row.Attempts+1)
+	s.logger.Info("ipfs_pin_ok", "network", nc.network, "media_class", row.MediaClass, "byte_size", res.Size, "attempts", row.Attempts+1)
 	s.logger.Debug("ipfs_pin_ok cid", "object_key", row.ObjectKey, "cid", res.CID)
 	return true
 }
@@ -873,11 +1004,11 @@ func (s *Service) pin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool
 // EXCLUDED (it is a separate class pinned on its own). On a re-transcode the tree
 // is replaced wholesale under the same key, yielding a new car_root; the superseded
 // root is swap-unpinned (reference-checked).
-func (s *Service) pinDirectory(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool {
+func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPFSPinsRow) bool {
 	lister, ok := s.blobs.(storage.ObjectLister)
 	if !ok {
 		s.recordFailure(ctx, row, "backend cannot list a directory tree")
-		s.logger.Warn("ipfs_pin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
 			"attempts", row.Attempts+1, "reason", "no_object_lister")
 		return false
 	}
@@ -885,7 +1016,7 @@ func (s *Service) pinDirectory(ctx context.Context, row sqlcgen.ClaimDueIPFSPins
 	keys, err := lister.ListKeys(ctx, prefix)
 	if err != nil {
 		s.recordFailure(ctx, row, "list directory tree failed")
-		s.logger.Warn("ipfs_pin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
 			"attempts", row.Attempts+1, "reason", "list_tree", "error", err)
 		return false
 	}
@@ -908,14 +1039,14 @@ func (s *Service) pinDirectory(ctx context.Context, row sqlcgen.ClaimDueIPFSPins
 	}()
 	if len(entries) == 0 {
 		s.recordFailure(ctx, row, "hls tree is empty")
-		s.logger.Warn("ipfs_pin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
 			"attempts", row.Attempts+1, "reason", "empty_tree")
 		return false
 	}
-	res, err := s.client.AddDirectory(ctx, entries)
+	res, err := nc.client.AddDirectory(ctx, entries)
 	if err != nil {
 		s.recordFailure(ctx, row, "directory add+pin rpc failed")
-		s.logger.Warn("ipfs_pin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
 			"attempts", row.Attempts+1, "reason", "add_dir", "error", err)
 		return false
 	}
@@ -928,15 +1059,15 @@ func (s *Service) pinDirectory(ctx context.Context, row sqlcgen.ClaimDueIPFSPins
 	}
 	if state != "pinned" {
 		// Lost the lost-update race with a concurrent privacy flip mid-AddDirectory:
-		// the tree is pinned on a public node for a now-non-public video. Remove the
-		// new car_root now (row.CarRoot carries any superseded prior root to also GC).
-		return s.pinRacedUnpin(ctx, row, res.CID, row.CarRoot, state)
+		// the tree is pinned on this network's node for a now-non-public video. Remove
+		// the new car_root now (row.CarRoot carries any superseded prior root to GC too).
+		return s.pinRacedUnpin(ctx, nc, row, res.CID, row.CarRoot, state)
 	}
 	// Best-effort cluster replication (STOR-05) of the now-node-pinned car_root.
-	s.clusterPin(ctx, res.CID)
+	s.clusterPin(ctx, nc, res.CID)
 	// Re-transcode swap: a prior car_root that differs from the new tree is orphaned.
-	s.swapUnpin(ctx, row.CarRoot, res.CID, row.ObjectKey)
-	s.logger.Info("ipfs_pin_ok", "media_class", row.MediaClass, "byte_size", res.Size,
+	s.swapUnpin(ctx, nc, row.CarRoot, res.CID, row.ObjectKey)
+	s.logger.Info("ipfs_pin_ok", "network", nc.network, "media_class", row.MediaClass, "byte_size", res.Size,
 		"attempts", row.Attempts+1, "files", len(entries))
 	s.logger.Debug("ipfs_pin_ok cid", "object_key", row.ObjectKey, "cid", res.CID)
 	return true
@@ -951,18 +1082,18 @@ func (s *Service) pinDirectory(ctx context.Context, row sqlcgen.ClaimDueIPFSPins
 // it GCs any superseded prior root (oldCID) and then runs the reference-checked
 // node unpin of the new CID, converging the row to 'unpinned'. Returns true only
 // when the node pin was actually removed (row reached the 'unpinned' terminal).
-func (s *Service) pinRacedUnpin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow, newCID, oldCID, racedState string) bool {
+func (s *Service) pinRacedUnpin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPFSPinsRow, newCID, oldCID, racedState string) bool {
 	// Structured, CID-free at info: the CID is a public capability handle.
-	s.logger.Warn("ipfs_pin_raced_unpin", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+	s.logger.Warn("ipfs_pin_raced_unpin", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
 		"raced_state", racedState, "attempts", row.Attempts+1)
 	// A superseded prior root (re-transcode / webm refresh in flight) is also
 	// orphaned by this add — clean it (reference-checked, no-op when absent/unchanged).
-	s.swapUnpin(ctx, oldCID, newCID, row.ObjectKey)
+	s.swapUnpin(ctx, nc, oldCID, newCID, row.ObjectKey)
 	// Reference-checked node unpin of the just-pinned bytes + terminal ledger state.
 	// unpin() reads row.Cid/row.State, so point them at the losing pin's outcome.
 	row.Cid = newCID
 	row.State = "unpinning"
-	return s.unpin(ctx, row)
+	return s.unpin(ctx, nc, row)
 }
 
 // swapUnpin removes a superseded CID from the node after a re-pin replaced a
@@ -971,7 +1102,7 @@ func (s *Service) pinRacedUnpin(ctx context.Context, row sqlcgen.ClaimDueIPFSPin
 // another live ledger row (content-address dedupe) is left pinned. A first pin
 // (oldCID=="") or unchanged content (oldCID==newCID) is a no-op. Best-effort: an
 // unpin failure is logged, not surfaced (the row is already pinned to the new CID).
-func (s *Service) swapUnpin(ctx context.Context, oldCID, newCID, objectKey string) {
+func (s *Service) swapUnpin(ctx context.Context, nc netClient, oldCID, newCID, objectKey string) {
 	if oldCID == "" || oldCID == newCID || ipfs.ValidateCID(oldCID) != nil {
 		return
 	}
@@ -981,14 +1112,14 @@ func (s *Service) swapUnpin(ctx context.Context, oldCID, newCID, objectKey strin
 	if err != nil || shared > 0 {
 		return
 	}
-	if err := s.client.Unpin(ctx, oldCID); err != nil {
-		s.logger.Warn("ipfs_unpin_failed", "object_key", objectKey, "reason", "swap_superseded", "error", err)
+	if err := nc.client.Unpin(ctx, oldCID); err != nil {
+		s.logger.Warn("ipfs_unpin_failed", "network", nc.network, "object_key", objectKey, "reason", "swap_superseded", "error", err)
 		return
 	}
 	// Mirror the node unpin to the cluster (best-effort) so a superseded CID does
 	// not linger replicated.
-	s.clusterUnpin(ctx, oldCID)
-	s.logger.Info("ipfs_unpin_ok", "object_key", objectKey, "reason", "superseded")
+	s.clusterUnpin(ctx, nc, oldCID)
+	s.logger.Info("ipfs_unpin_ok", "network", nc.network, "object_key", objectKey, "reason", "superseded")
 }
 
 // clusterPin best-effort replicates a node-pinned CID across the IPFS Cluster
@@ -996,28 +1127,28 @@ func (s *Service) swapUnpin(ctx context.Context, oldCID, newCID, objectKey strin
 // surfaced — replication is a redundancy enhancement, not the authoritative mirror
 // action (the local node pin already succeeded). The CID is debug-only (a public
 // capability handle — no info-level spam), matching the node-pin log discipline.
-func (s *Service) clusterPin(ctx context.Context, cid string) {
-	if s.cluster == nil || cid == "" {
+func (s *Service) clusterPin(ctx context.Context, nc netClient, cid string) {
+	if nc.cluster == nil || cid == "" {
 		return
 	}
-	if err := s.cluster.ClusterPin(ctx, cid); err != nil {
-		s.logger.Warn("ipfs_cluster_pin_failed", "reason", "replicate", "error", err)
+	if err := nc.cluster.ClusterPin(ctx, cid); err != nil {
+		s.logger.Warn("ipfs_cluster_pin_failed", "network", nc.network, "reason", "replicate", "error", err)
 		return
 	}
-	s.logger.Debug("ipfs_cluster_pin_ok", "cid", cid)
+	s.logger.Debug("ipfs_cluster_pin_ok", "network", nc.network, "cid", cid)
 }
 
 // clusterUnpin best-effort removes a cluster pin after the node unpin. A no-op
 // when no cluster is configured; a cluster error is logged, not surfaced.
-func (s *Service) clusterUnpin(ctx context.Context, cid string) {
-	if s.cluster == nil || cid == "" {
+func (s *Service) clusterUnpin(ctx context.Context, nc netClient, cid string) {
+	if nc.cluster == nil || cid == "" {
 		return
 	}
-	if err := s.cluster.ClusterUnpin(ctx, cid); err != nil {
-		s.logger.Warn("ipfs_cluster_unpin_failed", "reason", "replicate", "error", err)
+	if err := nc.cluster.ClusterUnpin(ctx, cid); err != nil {
+		s.logger.Warn("ipfs_cluster_unpin_failed", "network", nc.network, "reason", "replicate", "error", err)
 		return
 	}
-	s.logger.Debug("ipfs_cluster_unpin_ok", "cid", cid)
+	s.logger.Debug("ipfs_cluster_unpin_ok", "network", nc.network, "cid", cid)
 }
 
 // lazyBlob is an io.Reader that opens its backing storage object on the first Read
@@ -1067,7 +1198,7 @@ func (l *lazyBlob) Close() error {
 // another live ledger row (identical bytes ⇒ identical CID) is NOT removed until
 // the last reference is gone. Unpinning does not guarantee erasure on a public
 // network — that is the node's own GC.
-func (s *Service) unpin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bool {
+func (s *Service) unpin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPFSPinsRow) bool {
 	if row.Cid == "" {
 		// Enqueued for pin then removed before it was ever pinned: nothing on the
 		// node to remove.
@@ -1084,21 +1215,21 @@ func (s *Service) unpin(ctx context.Context, row sqlcgen.ClaimDueIPFSPinsRow) bo
 		return false
 	}
 	if shared == 0 {
-		if err := s.client.Unpin(ctx, row.Cid); err != nil {
+		if err := nc.client.Unpin(ctx, row.Cid); err != nil {
 			s.recordFailure(ctx, row, "unpin rpc failed")
-			s.logger.Warn("ipfs_unpin_failed", "media_class", row.MediaClass, "object_key", row.ObjectKey,
+			s.logger.Warn("ipfs_unpin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
 				"attempts", row.Attempts+1, "error", err)
 			return false
 		}
 		// Mirror the node unpin to the cluster (best-effort).
-		s.clusterUnpin(ctx, row.Cid)
+		s.clusterUnpin(ctx, nc, row.Cid)
 	} else {
 		s.logger.Debug("ipfs unpin skipped: cid still referenced", "object_key", row.ObjectKey, "shared", shared)
 	}
 	if err := s.repo.MarkIPFSPinUnpinned(ctx, row.ObjectKey); err != nil {
 		return false
 	}
-	s.logger.Info("ipfs_unpin_ok", "media_class", row.MediaClass, "attempts", row.Attempts+1)
+	s.logger.Info("ipfs_unpin_ok", "network", nc.network, "media_class", row.MediaClass, "attempts", row.Attempts+1)
 	return true
 }
 
@@ -1205,7 +1336,12 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			s.logger.Debug("ipfs_cluster_unhealthy", "error", err)
 		}
 	}
-	rows, err := s.repo.CountIPFSPinsByStateClass(ctx)
+	// P19.P1: the ledger count is now per (network, state, class). The public admin
+	// status FOLDS across networks (addStateCount ignores the network dimension), so
+	// the response shape is unchanged until the P19.P2 networks split reads it
+	// directly. All rows are public until P19.P2 routes private media, so today the
+	// fold is a no-op on the totals.
+	rows, err := s.repo.CountIPFSPinsByNetworkStateClass(ctx)
 	if err != nil {
 		return st, err
 	}

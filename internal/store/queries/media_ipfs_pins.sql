@@ -83,24 +83,28 @@ SET state = 'unpinning', attempts = 0, next_attempt_at = now(), last_error = '',
 WHERE object_key = $1 AND state IN ('pinned', 'pending');
 
 -- name: ClaimDueIPFSPins :many
--- Atomically leases due pin/unpin work for a worker. FOR UPDATE SKIP LOCKED lets
--- IPFS_PIN_CONCURRENCY workers claim disjoint rows without blocking each other;
--- pushing next_attempt_at forward by the lease seconds ($2) is the visibility
+-- Atomically leases due pin/unpin work for ONE network (P19.P1). FOR UPDATE SKIP
+-- LOCKED lets IPFS_PIN_CONCURRENCY workers claim disjoint rows without blocking each
+-- other; pushing next_attempt_at forward by the lease seconds is the visibility
 -- timeout (a crashed worker's row is retried after the lease; a concurrent claimer
 -- skips it meanwhile). state is PRESERVED — pending ⇒ add+pin, unpinning ⇒ unpin —
 -- and the worker sets the terminal state via MarkPinned / MarkFailed / MarkUnpinned
--- (pinning and unpinning are idempotent, so an over-long lease is safe).
+-- (pinning and unpinning are idempotent, so an over-long lease is safe). The @network
+-- filter is the fail-closed routing boundary: the worker drains each network with its
+-- OWN node client, so the private client only ever sees private rows and the public
+-- client only public rows — the public client is never even in scope for a private
+-- pin (spec §1/§8). network is RETURNED for the worker's log/route assertion.
 UPDATE media_ipfs_pins
 SET next_attempt_at = now() + (sqlc.arg(lease_seconds)::int * interval '1 second'),
     updated_at = now()
 WHERE object_key IN (
-    SELECT object_key FROM media_ipfs_pins
-    WHERE state IN ('pending', 'unpinning') AND next_attempt_at <= now()
-    ORDER BY next_attempt_at
+    SELECT p.object_key FROM media_ipfs_pins p
+    WHERE p.network = sqlc.arg(network) AND p.state IN ('pending', 'unpinning') AND p.next_attempt_at <= now()
+    ORDER BY p.next_attempt_at
     LIMIT sqlc.arg(batch_size)
     FOR UPDATE SKIP LOCKED
 )
-RETURNING object_key, media_class, cid, car_root, state, attempts, video_id, owner_user_id;
+RETURNING object_key, media_class, cid, car_root, state, attempts, network, video_id, owner_user_id;
 
 -- name: MarkIPFSPinned :one
 -- Terminal success for a pin: record the CID (and wrap-directory root for HLS
@@ -179,13 +183,16 @@ UPDATE media_ipfs_pins
 SET state = 'unpinned', last_error = '', updated_at = now()
 WHERE object_key = $1 AND state = 'unpinning';
 
--- name: CountIPFSPinsByStateClass :many
--- Admin status aggregation (P19.2 /ipfs/status): pin counts per state and media
--- class, cheap off media_ipfs_pins_state_class_idx.
-SELECT state, media_class, count(*)::bigint AS count
+-- name: CountIPFSPinsByNetworkStateClass :many
+-- Admin status aggregation (P19.2 /ipfs/status), now sliced by network (P19.P1):
+-- pin counts per (network, state, media_class), cheap off the network_state and
+-- state_class indexes. The public-tier admin response folds across networks (all
+-- rows are public until P19.P2 routes private media); the P19.P2 admin split reads
+-- the network dimension directly to render the second column.
+SELECT network, state, media_class, count(*)::bigint AS count
 FROM media_ipfs_pins
-GROUP BY state, media_class
-ORDER BY state, media_class;
+GROUP BY network, state, media_class
+ORDER BY network, state, media_class;
 
 -- name: CountIPFSPinsSharingCID :one
 -- Reference count for content-address dedupe (P19.3 "never unpin without
@@ -267,9 +274,13 @@ SELECT * FROM media_ipfs_pins WHERE video_id = $1 ORDER BY media_class, object_k
 -- least one currently-pinned ledger row. One indexed scan for a whole page (the
 -- ipfs_pinned boolean), off media_ipfs_pins_video_idx, so the badge never costs
 -- a per-card query. Only 'pinned' rows count — a video whose media was unpinned
--- (went private) is correctly reported as not pinned.
+-- (went private) is correctly reported as not pinned. PRIVACY FENCE (P19.P1): only
+-- network='public' rows count — ipfs_pinned is a PUBLIC-network signal, so a
+-- private/unlisted video whose bytes are replicated on the private swarm is NEVER
+-- reported pinned in any API payload (no private CID or gateway URL ever leaks).
 SELECT DISTINCT video_id
 FROM media_ipfs_pins
 WHERE state = 'pinned'
+  AND network = 'public'
   AND video_id IS NOT NULL
   AND video_id = ANY(sqlc.arg('video_ids')::uuid[]);

@@ -49,7 +49,10 @@ func newFakeRepo() *fakeRepo {
 func (r *fakeRepo) UpsertIPFSPinIntent(ctx context.Context, arg sqlcgen.UpsertIPFSPinIntentParams) (sqlcgen.MediaIpfsPin, error) {
 	row, ok := r.rows[arg.ObjectKey]
 	if !ok {
-		row = &sqlcgen.MediaIpfsPin{ObjectKey: arg.ObjectKey, State: "pending", NextAttemptAt: time.Now().UTC()}
+		// The real query has no network param yet (P19.P1 enqueues stay public — the
+		// eligibility-driven private routing lands in P19.P2), so the column takes its
+		// DB default 'public'; the fake mirrors that.
+		row = &sqlcgen.MediaIpfsPin{ObjectKey: arg.ObjectKey, State: "pending", Network: networkPublic, NextAttemptAt: time.Now().UTC()}
 		r.rows[arg.ObjectKey] = row
 	}
 	row.MediaClass = arg.MediaClass
@@ -78,6 +81,7 @@ func (r *fakeRepo) BackfillIPFSPinIntent(ctx context.Context, arg sqlcgen.Backfi
 		VideoID:       arg.VideoID,
 		OwnerUserID:   arg.OwnerUserID,
 		State:         "pending",
+		Network:       networkPublic,
 		NextAttemptAt: time.Now().UTC(),
 	}
 	return 1, nil
@@ -86,7 +90,7 @@ func (r *fakeRepo) BackfillIPFSPinIntent(ctx context.Context, arg sqlcgen.Backfi
 func (r *fakeRepo) RepinIPFSObject(ctx context.Context, arg sqlcgen.RepinIPFSObjectParams) error {
 	row, ok := r.rows[arg.ObjectKey]
 	if !ok {
-		row = &sqlcgen.MediaIpfsPin{ObjectKey: arg.ObjectKey}
+		row = &sqlcgen.MediaIpfsPin{ObjectKey: arg.ObjectKey, Network: networkPublic}
 		r.rows[arg.ObjectKey] = row
 	}
 	row.MediaClass = arg.MediaClass
@@ -118,12 +122,18 @@ func (r *fakeRepo) ClaimDueIPFSPins(ctx context.Context, arg sqlcgen.ClaimDueIPF
 	now := time.Now().UTC()
 	var out []sqlcgen.ClaimDueIPFSPinsRow
 	for _, row := range r.rows {
+		// Per-network claim (P19.P1): a drain leases only its own network's rows, so
+		// the private client never sees a public row and vice versa. normalizeNetwork
+		// treats a legacy/zero-value row as public (matches the DB default).
+		if normalizeNetwork(row.Network) != normalizeNetwork(arg.Network) {
+			continue
+		}
 		if (row.State == "pending" || row.State == "unpinning") && !row.NextAttemptAt.After(now) {
 			row.NextAttemptAt = now.Add(time.Duration(arg.LeaseSeconds) * time.Second)
 			out = append(out, sqlcgen.ClaimDueIPFSPinsRow{
 				ObjectKey: row.ObjectKey, MediaClass: row.MediaClass, Cid: row.Cid,
 				CarRoot: row.CarRoot, State: row.State, Attempts: row.Attempts,
-				VideoID: row.VideoID, OwnerUserID: row.OwnerUserID,
+				Network: normalizeNetwork(row.Network), VideoID: row.VideoID, OwnerUserID: row.OwnerUserID,
 			})
 			if len(out) >= int(arg.BatchSize) {
 				break
@@ -281,15 +291,15 @@ func (r *fakeRepo) RescheduleIPFSUserReeval(ctx context.Context, arg sqlcgen.Res
 	return nil
 }
 
-func (r *fakeRepo) CountIPFSPinsByStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByStateClassRow, error) {
-	type key struct{ state, class string }
+func (r *fakeRepo) CountIPFSPinsByNetworkStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByNetworkStateClassRow, error) {
+	type key struct{ network, state, class string }
 	counts := map[key]int64{}
 	for _, row := range r.rows {
-		counts[key{row.State, row.MediaClass}]++
+		counts[key{normalizeNetwork(row.Network), row.State, row.MediaClass}]++
 	}
-	var out []sqlcgen.CountIPFSPinsByStateClassRow
+	var out []sqlcgen.CountIPFSPinsByNetworkStateClassRow
 	for k, c := range counts {
-		out = append(out, sqlcgen.CountIPFSPinsByStateClassRow{State: k.state, MediaClass: k.class, Count: c})
+		out = append(out, sqlcgen.CountIPFSPinsByNetworkStateClassRow{Network: k.network, State: k.state, MediaClass: k.class, Count: c})
 	}
 	return out, nil
 }
@@ -324,6 +334,10 @@ func (r *fakeRepo) ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID)
 	var out []pgtype.UUID
 	for _, row := range r.rows {
 		if row.State != "pinned" || !row.VideoID.Valid {
+			continue
+		}
+		// Privacy fence (P19.P1): only public-network pins light up ipfs_pinned.
+		if normalizeNetwork(row.Network) != networkPublic {
 			continue
 		}
 		id := uuid.UUID(row.VideoID.Bytes)
