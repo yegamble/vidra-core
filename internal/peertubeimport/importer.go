@@ -32,6 +32,7 @@ type Importer struct {
 	src       *Source
 	srcMedia  storage.Backend // may be nil (metadata-only import)
 	destMedia storage.Backend // may be nil (metadata-only import)
+	mediaMode MediaMode
 	policy    ConflictPolicy
 	force     bool
 	// sealKey seals an actor private-key PEM for at-rest storage (secretbox under
@@ -49,6 +50,7 @@ type Importer struct {
 type Options struct {
 	Policy    ConflictPolicy
 	Force     bool
+	MediaMode MediaMode
 	SrcMedia  storage.Backend
 	DestMedia storage.Backend
 	SealKey   func(pem string) (string, error)
@@ -65,12 +67,17 @@ func NewImporter(dest *pgxpool.Pool, src *Source, opts Options) *Importer {
 	if policy == "" {
 		policy = PolicySkip
 	}
+	mediaMode := opts.MediaMode
+	if mediaMode == "" {
+		mediaMode = MediaModeCopy
+	}
 	return &Importer{
 		dest:      dest,
 		q:         sqlcgen.New(dest),
 		src:       src,
 		srcMedia:  opts.SrcMedia,
 		destMedia: opts.DestMedia,
+		mediaMode: mediaMode,
 		policy:    policy,
 		force:     opts.Force,
 		sealKey:   opts.SealKey,
@@ -99,7 +106,7 @@ func (im *Importer) Preflight(ctx context.Context) (int, error) {
 	}
 	// Storage reachability + free-disk (best effort; only meaningful for a local
 	// destination, where a PathProvider exposes the root).
-	if im.destMedia != nil {
+	if im.mediaMode == MediaModeCopy && im.destMedia != nil {
 		if pp, ok := im.destMedia.(storage.PathProvider); ok {
 			if root, perr := pp.Path("."); perr == nil {
 				if free, derr := freeDiskBytes(root); derr == nil {
@@ -181,6 +188,11 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		if len(files) > 0 {
 			r.count(KindVideoFile).Planned++
 		}
+		if _, ok, err := im.src.HLSPlaylist(ctx, v.ID); err != nil {
+			return nil, err
+		} else if ok {
+			r.count(KindHLSPlaylist).Planned++
+		}
 		if thumb, err := im.src.ThumbnailFilename(ctx, v.ID); err != nil {
 			return nil, err
 		} else if thumb != "" {
@@ -230,7 +242,7 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 // version, surfaced in every report + the docs so operators reconcile them.
 func deferredFamilies() []string {
 	return []string{
-		"HLS streaming playlists / transcoded renditions (regenerate via Vidra transcoding)",
+		"HLS copying in copy mode (reference mode reuses existing PeerTube HLS objects; copy mode regenerates via Vidra transcoding)",
 		"moderation state (video blacklist, account/server blocklists, abuse reports)",
 		"user notification settings and watch history",
 		"live sessions, plugins, themes, runners, redundancy config",

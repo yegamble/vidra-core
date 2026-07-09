@@ -477,6 +477,12 @@ type Config struct {
 	// collision). The CLI / admin request may override it per run.
 	PeerTubeImportConflictPolicy string
 
+	// PeerTubeImportMediaMode selects media handling for admin-launched imports:
+	// "copy" (default) streams source media into this instance's storage,
+	// "reference" records existing PeerTube object keys and requires STORAGE_* to
+	// point at that same bucket, and "none" imports metadata only.
+	PeerTubeImportMediaMode string
+
 	// InstanceDefaultQuotaBytes is the default per-user storage quota in bytes:
 	// the total stored size of a user's video files (originals, renditions,
 	// thumbnails) across the videos owned via their channels. 0 (or unset) =
@@ -623,6 +629,7 @@ func Load() (*Config, error) {
 		PeerTubeSourceS3UseSSL:         getEnvBool("PEERTUBE_SOURCE_S3_USE_SSL", true),
 		PeerTubeSourceS3ForcePathStyle: getEnvBool("PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE", false),
 		PeerTubeImportConflictPolicy:   strings.ToLower(getEnv("PEERTUBE_IMPORT_CONFLICT_POLICY", "skip")),
+		PeerTubeImportMediaMode:        strings.ToLower(getEnv("PEERTUBE_IMPORT_MEDIA_MODE", "copy")),
 	}
 
 	port, err := getEnvInt("HTTP_PORT", 8080)
@@ -1044,6 +1051,11 @@ func (c *Config) validatePeerTubeImport() error {
 	default:
 		return fmt.Errorf("config: PEERTUBE_IMPORT_CONFLICT_POLICY %q must be one of skip, rename, merge, fail", c.PeerTubeImportConflictPolicy)
 	}
+	switch c.PeerTubeImportMediaMode {
+	case "", "copy", "reference", "none": // "" = default copy (Load defaults it)
+	default:
+		return fmt.Errorf("config: PEERTUBE_IMPORT_MEDIA_MODE %q must be one of copy, reference, none", c.PeerTubeImportMediaMode)
+	}
 	switch c.PeerTubeSourceStorageBackend {
 	case "", "local", "s3": // "" = default local (Load defaults it)
 	default:
@@ -1059,7 +1071,7 @@ func (c *Config) validatePeerTubeImport() error {
 	if strings.TrimSpace(c.PeerTubeSourceDatabaseURL) == "" {
 		return fmt.Errorf("config: PEERTUBE_SOURCE_DATABASE_URL is required when PEERTUBE_IMPORT_ENABLED=true")
 	}
-	if c.PeerTubeSourceStorageBackend == "s3" {
+	if c.PeerTubeImportMediaMode != "reference" && c.PeerTubeImportMediaMode != "none" && c.PeerTubeSourceStorageBackend == "s3" {
 		if strings.TrimSpace(c.PeerTubeSourceS3Endpoint) == "" || strings.TrimSpace(c.PeerTubeSourceS3Bucket) == "" {
 			return fmt.Errorf("config: PEERTUBE_SOURCE_S3_ENDPOINT and PEERTUBE_SOURCE_S3_BUCKET are required when the source storage backend is s3")
 		}

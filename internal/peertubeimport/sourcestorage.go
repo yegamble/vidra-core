@@ -30,12 +30,13 @@ type SourceStorageConfig struct {
 }
 
 // PeerTube's default object buckets (subdirectories under the media root). The
-// verified 5.x–6.x layout. Documented in docs/peertube-migration.md; operators
+// verified 5.x–8.x layout. Documented in docs/peertube-migration.md; operators
 // on an older layout mount their tree to match.
 const (
 	ptWebVideosDir = "web-videos"
 	ptThumbnailDir = "thumbnails"
 	ptCaptionDir   = "captions"
+	ptHLSDir       = "streaming-playlists/hls"
 )
 
 // OpenSourceStorage builds a read-only media backend for the source instance.
@@ -75,6 +76,9 @@ func sourceThumbnailKey(filename string) string {
 }
 func sourceCaptionKey(filename string) string {
 	return ptCaptionDir + "/" + path.Base(filename)
+}
+func sourceHLSKey(videoUUID, filename string) string {
+	return ptHLSDir + "/" + path.Base(videoUUID) + "/" + path.Base(filename)
 }
 
 // File-type allowlists applied to what is copied from the source. A source row

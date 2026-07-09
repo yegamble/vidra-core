@@ -9,6 +9,7 @@ const (
 	KindChannel      = "channel"
 	KindVideo        = "video"
 	KindVideoFile    = "video_file"
+	KindHLSPlaylist  = "hls_playlist"
 	KindThumbnail    = "thumbnail"
 	KindCaption      = "caption"
 	KindTag          = "tag"
@@ -21,7 +22,7 @@ const (
 // orderedKinds is the stable order entities are imported and reported in
 // (parents before children).
 var orderedKinds = []string{
-	KindUser, KindChannel, KindVideo, KindVideoFile, KindThumbnail,
+	KindUser, KindChannel, KindVideo, KindVideoFile, KindHLSPlaylist, KindThumbnail,
 	KindCaption, KindTag, KindComment, KindPlaylist, KindPlaylistItem, KindFollow,
 }
 

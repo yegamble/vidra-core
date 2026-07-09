@@ -397,6 +397,8 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 		fileKey, fileType, fileName string
 		fileSize                    int64
 		haveFile                    bool
+		hlsMasterKey                string
+		haveHLS                     bool
 	)
 	files, err := im.src.VideoFiles(ctx, v.ID)
 	if err != nil {
@@ -411,12 +413,31 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 		if !allowedVideoExt[strings.ToLower(f.Extname)] {
 			im.logger.WarnContext(ctx, "peertube import: skipping video file with disallowed extension", "source_uuid", v.UUID)
 		} else {
-			fileKey = "web-videos/" + mediaID.String() + f.Extname
-			size, _, cerr := im.copyMedia(ctx, sourceWebVideoKey(f.Filename), fileKey)
-			if cerr != nil {
-				return cerr
+			switch im.mediaMode {
+			case MediaModeCopy:
+				fileKey = "web-videos/" + mediaID.String() + f.Extname
+				size, _, cerr := im.copyMedia(ctx, sourceWebVideoKey(f.Filename), fileKey)
+				if cerr != nil {
+					return cerr
+				}
+				fileSize = size
+				fileType = contentTypeForExt(f.Extname)
+				fileName = f.Filename
+				haveFile = true
+			case MediaModeReference:
+				fileKey = sourceWebVideoKey(f.Filename)
+				fileSize = f.Size
+				fileType = contentTypeForExt(f.Extname)
+				fileName = f.Filename
+				haveFile = true
 			}
-			fileSize = size
+		}
+	}
+	if len(files) > 0 && im.mediaMode == MediaModeReference && !haveFile {
+		f := files[0]
+		if allowedVideoExt[strings.ToLower(f.Extname)] {
+			fileKey = sourceWebVideoKey(f.Filename)
+			fileSize = f.Size
 			fileType = contentTypeForExt(f.Extname)
 			fileName = f.Filename
 			haveFile = true
@@ -424,14 +445,24 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	}
 
 	var thumbKey string
+	var thumbType string
 	thumbFilename, err := im.src.ThumbnailFilename(ctx, v.ID)
 	if err != nil {
 		return err
 	}
-	if thumbFilename != "" && allowedImageExt[extOf(thumbFilename)] && im.srcMedia != nil && im.destMedia != nil {
-		thumbKey = "thumbnails/" + mediaID.String() + ".jpg"
-		if _, _, cerr := im.copyMedia(ctx, sourceThumbnailKey(thumbFilename), thumbKey); cerr != nil {
-			return cerr
+	if thumbFilename != "" && allowedImageExt[extOf(thumbFilename)] {
+		switch im.mediaMode {
+		case MediaModeCopy:
+			if im.srcMedia != nil && im.destMedia != nil {
+				thumbKey = "thumbnails/" + mediaID.String() + ".jpg"
+				thumbType = imageContentTypeForExt(extOf(thumbFilename))
+				if _, _, cerr := im.copyMedia(ctx, sourceThumbnailKey(thumbFilename), thumbKey); cerr != nil {
+					return cerr
+				}
+			}
+		case MediaModeReference:
+			thumbKey = sourceThumbnailKey(thumbFilename)
+			thumbType = imageContentTypeForExt(extOf(thumbFilename))
 		}
 	}
 
@@ -441,7 +472,7 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	}
 	type capCopy struct{ lang, key string }
 	var copiedCaps []capCopy
-	if im.srcMedia != nil && im.destMedia != nil {
+	if im.mediaMode == MediaModeCopy && im.srcMedia != nil && im.destMedia != nil {
 		for _, capt := range captions {
 			if !allowedCaptionExt[extOf(capt.Filename)] {
 				continue
@@ -451,6 +482,23 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 				return cerr
 			}
 			copiedCaps = append(copiedCaps, capCopy{lang: capt.Language, key: key})
+		}
+	}
+	if im.mediaMode == MediaModeReference {
+		for _, capt := range captions {
+			if !allowedCaptionExt[extOf(capt.Filename)] {
+				continue
+			}
+			copiedCaps = append(copiedCaps, capCopy{lang: capt.Language, key: sourceCaptionKey(capt.Filename)})
+		}
+	}
+
+	if im.mediaMode == MediaModeReference {
+		if hls, ok, err := im.src.HLSPlaylist(ctx, v.ID); err != nil {
+			return err
+		} else if ok {
+			hlsMasterKey = sourceHLSKey(v.UUID, hls.PlaylistFilename)
+			haveHLS = true
 		}
 	}
 
@@ -497,9 +545,19 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 		}
 		if thumbKey != "" {
 			if _, err := q.ImportInsertVideoFile(ctx, sqlcgen.ImportInsertVideoFileParams{
-				VideoID:    id,
-				Kind:       "thumbnail",
-				StorageKey: thumbKey,
+				VideoID:     id,
+				Kind:        "thumbnail",
+				StorageKey:  thumbKey,
+				ContentType: thumbType,
+			}); err != nil {
+				return err
+			}
+		}
+		if haveHLS {
+			if _, err := q.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{
+				VideoID:   id,
+				MasterKey: hlsMasterKey,
+				State:     "ready",
 			}); err != nil {
 				return err
 			}
@@ -530,6 +588,9 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	c.Imported++
 	if haveFile {
 		r.count(KindVideoFile).Imported++
+	}
+	if haveHLS {
+		r.count(KindHLSPlaylist).Imported++
 	}
 	if thumbKey != "" {
 		r.count(KindThumbnail).Imported++
@@ -851,6 +912,21 @@ func contentTypeForExt(ext string) string {
 		return "video/ogg"
 	case ".avi":
 		return "video/x-msvideo"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func imageContentTypeForExt(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
 	default:
 		return "application/octet-stream"
 	}

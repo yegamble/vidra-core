@@ -18,16 +18,18 @@ tool *moves content in*, once.
   their ActivityPub actor keypairs (for federation continuity).
 - Channels.
 - Videos + their metadata (title, description, privacy, category/licence/
-  language, duration), the primary web video file, thumbnail, and captions.
+  language, duration), the primary web video file, thumbnail, captions, and
+  existing PeerTube HLS playlists when `--media-mode=reference` is used.
 - Threaded comments (locally authored).
 - Regular playlists + their items.
 - Tags.
 - Subscriptions (local user → local channel follows).
 
-**Deferred / not imported this version** (reconcile or regenerate afterwards):
+**Deferred / mode-dependent** (reconcile or regenerate afterwards):
 
-- **HLS streaming playlists / transcoded renditions** — regenerate with Vidra's
-  own transcoding pipeline (`TRANSCODING_ENABLED`) after import.
+- **HLS streaming playlists in copy mode** — reference mode reuses PeerTube's
+  existing HLS objects; copy mode still relies on Vidra's own transcoding
+  pipeline (`TRANSCODING_ENABLED`) after import.
 - **Moderation state** (video blacklist, account/server blocklists, abuse reports).
 - **User notification settings and watch history.**
 - Live sessions, plugins, themes, runners, redundancy config, any payment data.
@@ -46,9 +48,15 @@ See the full entity mapping table in `.ralph/specs/peertube-import.md`.
    also pins every session to `default_transaction_read_only = on` as defence in
    depth, but you should still not hand it a writable superuser.
 
-2. **The source instance's media storage**, mounted read-only, either as a local
-   filesystem tree or an S3-compatible bucket. The importer expects PeerTube's
-   default bucket layout: `web-videos/`, `thumbnails/`, `captions/`.
+2. **A media strategy.**
+   - `--media-mode=copy` needs the source instance's media storage mounted
+     read-only, either as a local filesystem tree or an S3-compatible bucket.
+   - `--media-mode=reference` does not copy or read source media during import.
+     Instead, Vidra stores PeerTube's existing object keys and the running Vidra
+     server must have `STORAGE_*` pointed at that same object store.
+
+   The importer expects PeerTube's default object layout: `web-videos/`,
+   `thumbnails/`, `captions/`, and `streaming-playlists/hls/`.
 
 3. **A running Vidra instance** (this destination) with its `DATABASE_URL`,
    storage backend (`STORAGE_*`), and — if you want actor keys sealed at rest —
@@ -56,7 +64,7 @@ See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 
 4. **A supported PeerTube schema version.** Preflight reads
    `application.migrationVersion` and refuses versions outside the verified range
-   (**700–900**, ≈ PeerTube 5.x–6.x). See `.ralph/specs/peertube-reference.md`.
+   (**700–1000**, ≈ PeerTube 5.x–8.x). See `.ralph/specs/peertube-reference.md`.
    `--force` overrides the refusal, but is for a **human who has verified
    compatibility** — automated agents must never pass it.
 
@@ -109,7 +117,7 @@ peertube-import \
   --conflict-policy skip
 ```
 
-For S3-backed source media:
+For S3-backed source media in copy mode:
 
 ```bash
 peertube-import \
@@ -121,8 +129,43 @@ peertube-import \
 #   PEERTUBE_SOURCE_S3_ACCESS_KEY=... PEERTUBE_SOURCE_S3_SECRET_KEY=...
 ```
 
-`--no-media` imports metadata only (skips file copies) if you plan to move media
-separately.
+### Reusing an existing Backblaze/S3 bucket without copying video
+
+Use `--media-mode=reference` when the new Vidra server should serve objects
+directly from the current PeerTube bucket. This is the fastest path for a test
+replacement server: the import writes DB rows only, leaving video, thumbnail,
+caption, and HLS bytes in place.
+
+Configure the Vidra runtime storage (`STORAGE_*`) to the current bucket first:
+
+```bash
+export STORAGE_BACKEND=s3
+export STORAGE_S3_ENDPOINT=s3.us-east-005.backblazeb2.com
+export STORAGE_S3_BUCKET=exampletube
+export STORAGE_S3_REGION=us-east-005
+export STORAGE_S3_USE_SSL=true
+export STORAGE_S3_FORCE_PATH_STYLE=true
+export STORAGE_S3_ACCESS_KEY=...
+export STORAGE_S3_SECRET_KEY=...
+```
+
+Then run the import without any `--source-storage` flags:
+
+```bash
+DATABASE_URL=postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable \
+peertube-import \
+  --source-dsn 'postgres://readonly:pw@localhost:5432/peertube_source?sslmode=disable' \
+  --media-mode reference \
+  --conflict-policy skip \
+  --dry-run
+```
+
+Drop `--dry-run` to commit. Referenced media rows keep PeerTube keys like
+`web-videos/<file>.mp4`, `thumbnails/<file>.jpg`, `captions/<file>.vtt`, and
+`streaming-playlists/hls/<source-video-uuid>/<playlist>.m3u8`.
+
+`--media-mode none` (or the older `--no-media`) imports metadata only and writes
+no media rows.
 
 ### Resuming
 
@@ -147,7 +190,12 @@ PEERTUBE_SOURCE_DATABASE_URL=postgres://readonly:pw@oldhost:5432/peertube?sslmod
 PEERTUBE_SOURCE_STORAGE_BACKEND=local
 PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT=/mnt/peertube-media
 PEERTUBE_IMPORT_CONFLICT_POLICY=skip
+PEERTUBE_IMPORT_MEDIA_MODE=copy
 ```
+
+For Backblaze/S3 reference mode, set `PEERTUBE_IMPORT_MEDIA_MODE=reference` and
+point the normal Vidra `STORAGE_*` settings at the existing PeerTube bucket. The
+admin worker does not need `PEERTUBE_SOURCE_STORAGE_*` in reference mode.
 
 Then (admin bearer token):
 
@@ -169,9 +217,10 @@ fails the run with a clear message for a human to act on.
    source (`SELECT count(*) FROM "user"`, `video`, …). `skipped`/`failed` explain
    any difference; `conflicts` lists resolved collisions.
 2. **Sign-in.** A migrated user can log in with their existing password.
-3. **Playback.** Open an imported public video — the original plays. If you want
-   the adaptive HLS ladder, enable `TRANSCODING_ENABLED` and let Vidra
-   re-transcode (HLS is intentionally not copied).
+3. **Playback.** Open an imported public video. In reference mode, both the
+   original and PeerTube's existing HLS playlist should play through Vidra's
+   authenticated proxy. In copy mode, the original plays immediately; enable
+   `TRANSCODING_ENABLED` if you want Vidra to generate a fresh adaptive ladder.
 4. **Channels/playlists/comments/follows** appear as expected.
 5. **Federation continuity** (if enabled): imported actors keep their keypairs,
    so remote followers continue to resolve them. If you changed domains, plan an

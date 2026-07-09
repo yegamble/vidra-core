@@ -99,6 +99,9 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	if got := plan.Entities[KindVideo].Planned; got != 2 {
 		t.Errorf("plan videos planned = %d, want 2", got)
 	}
+	if got := plan.Entities[KindHLSPlaylist].Planned; got != 1 {
+		t.Errorf("plan hls playlists planned = %d, want 1", got)
+	}
 	if got := plan.Entities[KindComment].Planned; got != 2 {
 		t.Errorf("plan comments planned = %d, want 2 (remote comment excluded)", got)
 	}
@@ -292,6 +295,95 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	}
 }
 
+func TestPeerTubeImportReferenceMediaMode(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	sharedMediaDir := t.TempDir()
+	seedSourceMedia(t, sharedMediaDir)
+	sharedMedia, err := storage.NewLocal(sharedMediaDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{
+		Policy:    PolicySkip,
+		MediaMode: MediaModeReference,
+		DestMedia: sharedMedia,
+	})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if report.Entities[KindVideoFile].Imported != 1 {
+		t.Errorf("video files imported = %d, want 1 referenced original", report.Entities[KindVideoFile].Imported)
+	}
+	if report.Entities[KindHLSPlaylist].Imported != 1 {
+		t.Errorf("hls playlists imported = %d, want 1 referenced playlist", report.Entities[KindHLSPlaylist].Imported)
+	}
+
+	var vidID uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT id FROM videos WHERE title='First Video'`).Scan(&vidID); err != nil {
+		t.Fatalf("read video: %v", err)
+	}
+	var originalKey, thumbKey, hlsKey string
+	if err := dest.QueryRow(ctx, `SELECT storage_key FROM video_files WHERE video_id=$1 AND kind='original'`, vidID).Scan(&originalKey); err != nil {
+		t.Fatalf("read original key: %v", err)
+	}
+	if originalKey != "web-videos/v1-720.mp4" {
+		t.Errorf("original key = %q, want existing PeerTube key", originalKey)
+	}
+	if err := dest.QueryRow(ctx, `SELECT storage_key FROM video_files WHERE video_id=$1 AND kind='thumbnail'`, vidID).Scan(&thumbKey); err != nil {
+		t.Fatalf("read thumbnail key: %v", err)
+	}
+	if thumbKey != "thumbnails/v1-thumb.jpg" {
+		t.Errorf("thumbnail key = %q, want existing PeerTube key", thumbKey)
+	}
+	if err := dest.QueryRow(ctx, `SELECT storage_key FROM captions WHERE video_id=$1 AND language='en'`, vidID).Scan(&thumbKey); err != nil {
+		t.Fatalf("read caption key: %v", err)
+	}
+	if thumbKey != "captions/v1-en.vtt" {
+		t.Errorf("caption key = %q, want existing PeerTube key", thumbKey)
+	}
+	if err := dest.QueryRow(ctx, `SELECT master_key FROM streaming_playlists WHERE video_id=$1 AND state='ready'`, vidID).Scan(&hlsKey); err != nil {
+		t.Fatalf("read hls key: %v", err)
+	}
+	if hlsKey != "streaming-playlists/hls/11111111-1111-1111-1111-111111111111/v1-master.m3u8" {
+		t.Errorf("hls key = %q, want existing PeerTube master key", hlsKey)
+	}
+	rc, err := sharedMedia.Open(ctx, hlsKey)
+	if err != nil {
+		t.Fatalf("open referenced hls master: %v", err)
+	}
+	_ = rc.Close()
+	rc, err = sharedMedia.Open(ctx, originalKey)
+	if err != nil {
+		t.Fatalf("open referenced original: %v", err)
+	}
+	got, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(got) != string(sourceVideoBytes) {
+		t.Errorf("referenced original bytes mismatch")
+	}
+}
+
 func TestPeerTubeImportConflictPolicies(t *testing.T) {
 	base := os.Getenv("DATABASE_URL")
 	if base == "" {
@@ -381,6 +473,12 @@ func seedSourceMedia(t *testing.T, root string) {
 	write("web-videos/v1-720.mp4", sourceVideoBytes)
 	write("thumbnails/v1-thumb.jpg", []byte("FAKE-JPG"))
 	write("captions/v1-en.vtt", []byte("WEBVTT\n\n00:00.000 --> 00:01.000\nhi\n"))
+	write("streaming-playlists/hls/11111111-1111-1111-1111-111111111111/v1-master.m3u8",
+		[]byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720\nv1-720.m3u8\n"))
+	write("streaming-playlists/hls/11111111-1111-1111-1111-111111111111/v1-720.m3u8",
+		[]byte("#EXTM3U\n#EXT-X-MAP:URI=\"v1-init.mp4\"\n#EXTINF:4.0,\nv1-720-fragmented.mp4\n#EXT-X-ENDLIST\n"))
+	write("streaming-playlists/hls/11111111-1111-1111-1111-111111111111/v1-init.mp4", []byte("FAKE-INIT"))
+	write("streaming-playlists/hls/11111111-1111-1111-1111-111111111111/v1-720-fragmented.mp4", []byte("FAKE-FMP4"))
 }
 
 // ── scratch database helpers ──
@@ -511,6 +609,8 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "videoFile" (
 			id serial PRIMARY KEY, "videoId" integer, "videoStreamingPlaylistId" integer,
 			resolution integer NOT NULL, size bigint NOT NULL, extname text, fps integer, filename text)`,
+		`CREATE TABLE "videoStreamingPlaylist" (
+			id serial PRIMARY KEY, "videoId" integer NOT NULL, "playlistFilename" text NOT NULL)`,
 		`CREATE TABLE "thumbnail" (
 			id serial PRIMARY KEY, filename text NOT NULL, type integer NOT NULL, "videoId" integer,
 			height integer, width integer)`,
@@ -556,6 +656,8 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`INSERT INTO "videoFile" (id,"videoId",resolution,size,extname,filename) VALUES
 			(1,1,720,` + strconv.Itoa(len(sourceVideoBytes)) + `,'.mp4','v1-720.mp4'),
 			(2,1,480,10,'.mp4','v1-480.mp4')`,
+		`INSERT INTO "videoStreamingPlaylist" (id,"videoId","playlistFilename") VALUES
+			(1,1,'v1-master.m3u8')`,
 		`INSERT INTO "thumbnail" (id,filename,type,"videoId") VALUES (1,'v1-thumb.jpg',1,1)`,
 		`INSERT INTO "videoCaption" (id,language,filename,"videoId") VALUES (1,'en','v1-en.vtt',1)`,
 		`INSERT INTO "tag" (id,name) VALUES (1,'music'),(2,'test')`,

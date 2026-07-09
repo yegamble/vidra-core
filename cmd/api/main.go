@@ -934,6 +934,7 @@ func run() error {
 	// PEERTUBE_SOURCE_DATABASE_URL). The source connection is built from SERVER
 	// CONFIG per run — never from a request; the browser never sends a DSN.
 	defaultImportPolicy, _ := peertubeimport.ParseConflictPolicy(cfg.PeerTubeImportConflictPolicy)
+	defaultImportMediaMode, _ := peertubeimport.ParseMediaMode(cfg.PeerTubeImportMediaMode)
 	ptImportOpts := []peertubeimport.Option{
 		peertubeimport.WithLogger(logger),
 		peertubeimport.WithDefaultPolicy(defaultImportPolicy),
@@ -969,13 +970,17 @@ func run() error {
 				if err != nil {
 					return nil, nil, err
 				}
-				srcMedia, err := peertubeimport.OpenSourceStorage(srcStorageCfg)
-				if err != nil {
-					src.Close()
-					return nil, nil, err
+				var srcMedia storage.Backend
+				if defaultImportMediaMode == peertubeimport.MediaModeCopy {
+					srcMedia, err = peertubeimport.OpenSourceStorage(srcStorageCfg)
+					if err != nil {
+						src.Close()
+						return nil, nil, err
+					}
 				}
 				imp := peertubeimport.NewImporter(db.Pool, src, peertubeimport.Options{
 					Policy:    policy,
+					MediaMode: defaultImportMediaMode,
 					SrcMedia:  srcMedia,
 					DestMedia: blobs,
 					SealKey:   ptSeal,
@@ -983,7 +988,7 @@ func run() error {
 				})
 				return imp, func() { src.Close() }, nil
 			}))
-		logger.Info("peertube import configured", "source_storage", cfg.PeerTubeSourceStorageBackend)
+		logger.Info("peertube import configured", "source_storage", cfg.PeerTubeSourceStorageBackend, "media_mode", defaultImportMediaMode.String())
 	}
 	ptImportSvc := peertubeimport.NewService(db.Queries(), ptImportOpts...)
 	opts = append(opts, httpapi.WithPeerTubeImportService(ptImportSvc))

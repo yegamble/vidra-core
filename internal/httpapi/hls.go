@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 
@@ -24,6 +25,7 @@ const maxPlaylistBytes = 1 << 20
 const (
 	contentTypeM3U8 = "application/vnd.apple.mpegurl"
 	contentTypeTS   = "video/mp2t"
+	contentTypeMP4  = "video/mp4"
 )
 
 // The two file shapes a rendition directory contains: its variant playlist and
@@ -31,8 +33,10 @@ const (
 // including any traversal attempt — is 404. Rendition directories are named
 // "<height>p" ("720p").
 var (
-	hlsRenditionName = regexp.MustCompile(`^[0-9]{2,4}p$`)
-	hlsFileName      = regexp.MustCompile(`^(playlist\.m3u8|seg_[0-9]+\.ts)$`)
+	hlsRenditionName     = regexp.MustCompile(`^[0-9]{2,4}p$`)
+	hlsFileName          = regexp.MustCompile(`^(playlist\.m3u8|seg_[0-9]+\.ts)$`)
+	hlsPeerTubeFileName  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.(m3u8|mp4|m4s|ts)$`)
+	hlsPlaylistURIAttrRE = regexp.MustCompile(`URI="([^"]+)"`)
 )
 
 // hlsPlaylistForView authorises serving a video's HLS assets and returns its
@@ -91,6 +95,9 @@ func (s *Server) handleGetHLSMaster(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if isPeerTubeHLSMasterKey(sp.MasterKey) {
+		return s.servePeerTubeHLSMaster(c, sp.MasterKey)
+	}
 	return s.serveHLSPlaylist(c, sp.MasterKey)
 }
 
@@ -106,20 +113,33 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	rendition, file := c.Param("rendition"), c.Param("file")
-	if !hlsRenditionName.MatchString(rendition) || !hlsFileName.MatchString(file) {
+	canonical := hlsRenditionName.MatchString(rendition) && hlsFileName.MatchString(file)
+	peertube := rendition == "peertube" && hlsPeerTubeFileName.MatchString(file)
+	if !canonical && !peertube {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if _, err := s.hlsPlaylistForView(c, id); err != nil {
+	sp, err := s.hlsPlaylistForView(c, id)
+	if err != nil {
 		return err
 	}
-	key := "streaming-playlists/" + id.String() + "/" + rendition + "/" + file
+	if peertube && !isPeerTubeHLSMasterKey(sp.MasterKey) {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	prefix := path.Dir(sp.MasterKey)
+	key := prefix + "/" + rendition + "/" + file
+	if peertube {
+		key = prefix + "/" + file
+	}
 	// A variant playlist gets the same ?pt= URI rewrite as the master (so the
 	// native player propagates the token to segment requests); a .ts segment is
 	// binary and streamed as-is.
-	if file == "playlist.m3u8" {
+	if strings.HasSuffix(file, ".m3u8") {
 		return s.serveHLSPlaylist(c, key)
 	}
-	return s.serveStoredObject(c, key, contentTypeTS)
+	if strings.HasSuffix(file, ".ts") {
+		return s.serveStoredObject(c, key, contentTypeTS)
+	}
+	return s.serveStoredObject(c, key, contentTypeMP4)
 }
 
 // serveHLSPlaylist streams an m3u8. When the request carries a ?pt= playback
@@ -151,31 +171,131 @@ func (s *Server) serveHLSPlaylist(c echo.Context, key string) error {
 	return c.Blob(http.StatusOK, contentTypeM3U8, rewritePlaylistToken(data, token))
 }
 
-// rewritePlaylistToken appends ?pt=<token> to every relative URI line of an m3u8.
-// Tag lines (#...), blank lines, and absolute URLs (http(s):// or /-rooted) are
-// left untouched. It preserves the original line order and terminator style.
+func (s *Server) servePeerTubeHLSMaster(c echo.Context, key string) error {
+	if s.media == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
+	}
+	rc, err := s.media.Open(c.Request().Context(), key)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return err
+	}
+	defer func() { _ = rc.Close() }()
+	data, err := io.ReadAll(io.LimitReader(rc, maxPlaylistBytes))
+	if err != nil {
+		return err
+	}
+	return c.Blob(http.StatusOK, contentTypeM3U8, rewritePeerTubeMasterPlaylist(data, c.QueryParam(playbackTokenParam)))
+}
+
+func isPeerTubeHLSMasterKey(key string) bool {
+	return strings.HasPrefix(key, "streaming-playlists/hls/")
+}
+
+// rewritePlaylistToken appends ?pt=<token> to every relative URI in an m3u8,
+// including URI="..." tag attributes such as EXT-X-MAP. Blank lines and
+// absolute/rooted URLs are left untouched. It preserves line order.
 func rewritePlaylistToken(playlist []byte, token string) []byte {
+	return rewritePlaylistReferences(playlist, "", token, false)
+}
+
+// rewritePeerTubeMasterPlaylist maps PeerTube's flat HLS master playlist entries
+// into Vidra's compatibility route: peertube/<basename>. Variant playlists then
+// keep resolving their own segment/media URIs relative to /hls/peertube/.
+func rewritePeerTubeMasterPlaylist(playlist []byte, token string) []byte {
+	return rewritePlaylistReferences(playlist, "peertube", token, true)
+}
+
+func rewritePlaylistReferences(playlist []byte, uriPrefix, token string, forceBasename bool) []byte {
 	esc := url.QueryEscape(token)
 	lines := strings.Split(string(playlist), "\n")
 	for i, line := range lines {
 		cr := strings.HasSuffix(line, "\r")
 		uri := strings.TrimSuffix(line, "\r")
-		if uri == "" || strings.HasPrefix(uri, "#") ||
-			strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") ||
-			strings.HasPrefix(uri, "/") {
+		if uri == "" {
 			continue
 		}
-		sep := "?"
-		if strings.ContainsRune(uri, '?') {
-			sep = "&"
+		if strings.HasPrefix(uri, "#") {
+			rewritten := rewritePlaylistURIAttributes(uri, uriPrefix, esc, forceBasename)
+			if cr {
+				rewritten += "\r"
+			}
+			lines[i] = rewritten
+			continue
 		}
-		uri += sep + playbackTokenParam + "=" + esc
+		rewritten, ok := rewritePlaylistURI(uri, uriPrefix, esc, forceBasename)
+		if !ok {
+			continue
+		}
 		if cr {
-			uri += "\r"
+			rewritten += "\r"
 		}
-		lines[i] = uri
+		lines[i] = rewritten
 	}
 	return []byte(strings.Join(lines, "\n"))
+}
+
+func rewritePlaylistURIAttributes(line, uriPrefix, escapedToken string, forceBasename bool) string {
+	return hlsPlaylistURIAttrRE.ReplaceAllStringFunc(line, func(match string) string {
+		raw := strings.TrimSuffix(strings.TrimPrefix(match, `URI="`), `"`)
+		rewritten, ok := rewritePlaylistURI(raw, uriPrefix, escapedToken, forceBasename)
+		if !ok {
+			return match
+		}
+		return `URI="` + rewritten + `"`
+	})
+}
+
+func rewritePlaylistURI(raw, uriPrefix, escapedToken string, forceBasename bool) (string, bool) {
+	if raw == "" {
+		return raw, false
+	}
+	if uriPrefix == "" && !forceBasename && !isRelativePlaylistURI(raw) {
+		return raw, false
+	}
+	head, suffix := splitURISuffix(raw)
+	if forceBasename {
+		head = uriBasename(head)
+	}
+	if uriPrefix != "" {
+		head = strings.TrimSuffix(uriPrefix, "/") + "/" + path.Base(head)
+	}
+	out := head + suffix
+	if escapedToken == "" {
+		return out, true
+	}
+	frag := ""
+	if idx := strings.IndexRune(out, '#'); idx >= 0 {
+		frag = out[idx:]
+		out = out[:idx]
+	}
+	sep := "?"
+	if strings.ContainsRune(out, '?') {
+		sep = "&"
+	}
+	return out + sep + playbackTokenParam + "=" + escapedToken + frag, true
+}
+
+func isRelativePlaylistURI(raw string) bool {
+	return !strings.HasPrefix(raw, "http://") &&
+		!strings.HasPrefix(raw, "https://") &&
+		!strings.HasPrefix(raw, "/")
+}
+
+func splitURISuffix(raw string) (string, string) {
+	if idx := strings.IndexAny(raw, "?#"); idx >= 0 {
+		return raw[:idx], raw[idx:]
+	}
+	return raw, ""
+}
+
+func uriBasename(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Path != "" && (u.Scheme != "" || strings.HasPrefix(raw, "/")) {
+		return path.Base(u.Path)
+	}
+	return path.Base(raw)
 }
 
 // renditionView is the public projection of an available HLS rendition.
