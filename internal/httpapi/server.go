@@ -73,8 +73,18 @@ type Server struct {
 	// (WithAuthRateLimiter), else a built-in, always-on in-memory default so the
 	// endpoint is never left unthrottled — even on a single-node deployment
 	// running without Redis. Always non-nil after New().
-	unlockLimit       *ratelimit.Limiter
-	attachmentLimit   *ratelimit.Limiter
+	unlockLimit     *ratelimit.Limiter
+	attachmentLimit *ratelimit.Limiter
+	// contactLimit throttles the public contact form (POST /instance/contact) —
+	// its own fixed-window budget, 1 request/IP/hour in production (wired in
+	// cmd/api via WithContactRateLimiter). Nil (e.g. unit tests) mounts the
+	// route unthrottled beyond the general limiter.
+	contactLimit *ratelimit.Limiter
+	// contactMailer delivers contact-form messages to the operator (spec
+	// instance-platform-info). Nil when the deployment has no outbound mail
+	// path — the contact form then reports unavailable (409 / effective
+	// contact_form_enabled=false).
+	contactMailer     auth.Mailer
 	authsvc           *auth.Service
 	authTTL           time.Duration
 	accountsvc        *account.Service
@@ -189,6 +199,22 @@ func WithAuthRateLimiter(l *ratelimit.Limiter) Option {
 // per-IP limiter. When nil/unset, the upload route is not extra-throttled.
 func WithAttachmentRateLimiter(l *ratelimit.Limiter) Option {
 	return func(s *Server) { s.attachmentLimit = l }
+}
+
+// WithContactRateLimiter mounts a dedicated per-IP limiter on the public
+// contact form (POST /instance/contact): 1 request per IP per hour in
+// production wiring. Keyed independently of the general/auth limiters. When
+// nil/unset, the route falls back to the general limiter only.
+func WithContactRateLimiter(l *ratelimit.Limiter) Option {
+	return func(s *Server) { s.contactLimit = l }
+}
+
+// WithContactMailer wires the outbound mail path the public contact form
+// delivers through (the same effective mailer the auth flows use: dev capture
+// wins over SMTP). When unset, the contact form is reported unavailable
+// (effective contact_form_enabled=false; POST answers 409).
+func WithContactMailer(m auth.Mailer) Option {
+	return func(s *Server) { s.contactMailer = m }
 }
 
 // WithChannelService mounts the channel endpoints (create/list-own/get-by-handle).
@@ -684,6 +710,15 @@ func (s *Server) routes() {
 	}
 	api.GET("/nodeinfo", s.handleNodeInfo)
 	api.GET("/instance", s.handleInstance)
+	// Public platform information (spec instance-platform-info): the about-page
+	// markdown document and the operator contact form. The contact form gets its
+	// own hard per-IP budget when wired (1/hour in production).
+	api.GET("/instance/about", s.handleInstanceAbout)
+	var contactMW []echo.MiddlewareFunc
+	if s.contactLimit != nil {
+		contactMW = append(contactMW, s.contactRateLimit(s.contactLimit))
+	}
+	api.POST("/instance/contact", s.handleInstanceContact, contactMW...)
 
 	if s.authsvc != nil {
 		authGroup := api.Group("/auth")

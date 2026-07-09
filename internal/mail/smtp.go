@@ -72,6 +72,24 @@ func NewSMTP(cfg Config, opts ...Option) *SMTP {
 	return s
 }
 
+// SendContactForm delivers a visitor contact-form message to the operator's
+// contact address. The visitor's address rides as Reply-To (never the envelope
+// sender, which stays the configured From), so the operator can answer
+// directly without the relay rejecting a spoofed sender. All header values are
+// sanitized; nothing here is ever logged (visitor + operator addresses and the
+// body are PII).
+func (s *SMTP) SendContactForm(ctx context.Context, to, fromName, fromEmail, subject, body string) error {
+	if strings.ContainsAny(fromEmail, "\r\n") || strings.TrimSpace(fromEmail) == "" {
+		return fmt.Errorf("mail: invalid reply-to address")
+	}
+	subj := "[" + s.cfg.InstanceName + " contact] " + subject
+	msg := "New contact-form message on " + s.cfg.InstanceName + ".\n\n" +
+		"From: " + sanitizeHeader(fromName) + " <" + fromEmail + ">\n" +
+		"Subject: " + sanitizeHeader(subject) + "\n\n" +
+		body + "\n"
+	return s.send(ctx, to, fromEmail, subj, msg)
+}
+
 // SendPasswordReset delivers a password-reset token. The token appears only in
 // the message body; it is never logged.
 func (s *SMTP) SendPasswordReset(ctx context.Context, email, token string) error {
@@ -84,7 +102,7 @@ func (s *SMTP) SendPasswordReset(ctx context.Context, email, token string) error
 		"Enter it on the \"Reset password\" page to choose a new password. " +
 		"The code can be used once and expires soon.\n\n" +
 		"If you did not ask for this, you can ignore this message — your password is unchanged.\n"
-	return s.send(ctx, email, subject, body)
+	return s.send(ctx, email, "", subject, body)
 }
 
 // SendEmailVerification delivers an email-verification token. The token appears
@@ -97,12 +115,14 @@ func (s *SMTP) SendEmailVerification(ctx context.Context, email, token string) e
 		"    " + token + "\n\n" +
 		"Enter it on the \"Verify email\" page. The code can be used once and expires soon.\n\n" +
 		"If you did not create an account, you can ignore this message.\n"
-	return s.send(ctx, email, subject, body)
+	return s.send(ctx, email, "", subject, body)
 }
 
 // send runs one SMTP conversation: EHLO, STARTTLS when offered, AUTH PLAIN when
 // credentials are configured, then a single-recipient plain-text message.
-func (s *SMTP) send(ctx context.Context, to, subject, body string) error {
+// replyTo, when non-empty, is stamped as the Reply-To header (validated by the
+// caller).
+func (s *SMTP) send(ctx context.Context, to, replyTo, subject, body string) error {
 	if strings.ContainsAny(to, "\r\n") || strings.TrimSpace(to) == "" {
 		return fmt.Errorf("mail: invalid recipient address")
 	}
@@ -159,7 +179,7 @@ func (s *SMTP) send(ctx context.Context, to, subject, body string) error {
 	if err != nil {
 		return fmt.Errorf("mail: DATA: %w", err)
 	}
-	if _, err := w.Write(message(s.cfg.From, to, subject, body)); err != nil {
+	if _, err := w.Write(message(s.cfg.From, to, replyTo, subject, body)); err != nil {
 		_ = w.Close()
 		return fmt.Errorf("mail: write message: %w", err)
 	}
@@ -170,12 +190,15 @@ func (s *SMTP) send(ctx context.Context, to, subject, body string) error {
 }
 
 // message renders a minimal RFC 5322 plain-text message with CRLF line endings.
-// Subject is built from trusted config only; the recipient is validated by the
-// caller — neither can inject headers.
-func message(from, to, subject, body string) []byte {
+// The recipient and optional reply-to are validated by the caller; every other
+// header value is sanitized — nothing can inject headers.
+func message(from, to, replyTo, subject, body string) []byte {
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
 	b.WriteString("To: " + to + "\r\n")
+	if replyTo != "" {
+		b.WriteString("Reply-To: " + sanitizeHeader(replyTo) + "\r\n")
+	}
 	b.WriteString("Subject: " + sanitizeHeader(subject) + "\r\n")
 	b.WriteString("Date: " + time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 -0700") + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")

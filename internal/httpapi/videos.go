@@ -38,6 +38,9 @@ type createVideoRequest struct {
 	License     string     `json:"license"`
 	Tags        []string   `json:"tags"`
 	PublishAt   *time.Time `json:"publish_at"`
+	// IsSensitive optionally marks the video as sensitive content
+	// (instance-platform-info); defaults to false.
+	IsSensitive bool `json:"is_sensitive"`
 }
 
 func (r createVideoRequest) Validate() []FieldError {
@@ -116,13 +119,16 @@ func validateTaxonomy(category, language, license string) []FieldError {
 // GET /remote-videos/{id} and its cached poster at
 // GET /remote-videos/{id}/thumbnail.
 type videoView struct {
-	ID              string    `json:"id"`
-	Remote          bool      `json:"remote"`
-	ChannelID       string    `json:"channel_id,omitempty"`
-	Title           string    `json:"title"`
-	Description     string    `json:"description"`
-	Privacy         string    `json:"privacy,omitempty"`
-	State           string    `json:"state,omitempty"`
+	ID          string `json:"id"`
+	Remote      bool   `json:"remote"`
+	ChannelID   string `json:"channel_id,omitempty"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Privacy     string `json:"privacy,omitempty"`
+	State       string `json:"state,omitempty"`
+	// IsSensitive marks sensitive content (instance-platform-info). Always
+	// emitted; false for remote cards (no local flag exists for them).
+	IsSensitive     bool      `json:"is_sensitive"`
 	CreatedAt       time.Time `json:"created_at"`
 	DurationSeconds *int32    `json:"duration_seconds,omitempty"`
 	Width           *int32    `json:"width,omitempty"`
@@ -200,6 +206,7 @@ func newVideoView(v sqlcgen.Video) videoView {
 		Description: v.Description,
 		Privacy:     v.Privacy,
 		State:       v.State,
+		IsSensitive: v.IsSensitive,
 		CreatedAt:   v.CreatedAt,
 		Category:    v.Category,
 		Language:    v.Language,
@@ -217,6 +224,7 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 		Description: v.Description,
 		Privacy:     v.Privacy,
 		State:       v.State,
+		IsSensitive: v.IsSensitive,
 		CreatedAt:   v.CreatedAt,
 		Category:    v.Category,
 		Language:    v.Language,
@@ -262,6 +270,7 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 		License:     in.License,
 		Tags:        in.Tags,
 		PublishAt:   in.PublishAt,
+		IsSensitive: in.IsSensitive,
 	})
 	if err != nil {
 		return videoError(err) // ErrPasswordRequired → 400
@@ -466,6 +475,9 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 		Tag:      strings.TrimSpace(c.QueryParam("tag")),
 		Category: strings.TrimSpace(c.QueryParam("category")),
 		Language: strings.TrimSpace(c.QueryParam("language")),
+		// Sensitive-content policy "hide" is enforced server-side on the public
+		// discovery surfaces only (instance-platform-info).
+		HideSensitive: s.hideSensitiveVideos(),
 	}
 	var fes []FieldError
 	if len(filter.Tag) > video.MaxTagLen {
@@ -552,6 +564,9 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 		Tag:      strings.TrimSpace(c.QueryParam("tag")),
 		Category: strings.TrimSpace(c.QueryParam("category")),
 		Language: strings.TrimSpace(c.QueryParam("language")),
+		// Sensitive-content policy "hide" is enforced server-side on the public
+		// discovery surfaces only (instance-platform-info).
+		HideSensitive: s.hideSensitiveVideos(),
 	}
 	var fes []FieldError
 	if len(filter.Tag) > video.MaxTagLen {
@@ -616,7 +631,7 @@ func (s *Server) handleListChannelVideos(c echo.Context) error {
 	if userID, _, ok := principalFromContext(c); ok && userID == ch.OwnerID {
 		items, err = s.videosvc.ListByChannel(ctx, ch.ID)
 	} else {
-		items, err = s.videosvc.ListPublicByChannel(ctx, ch.ID)
+		items, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.hideSensitiveVideos())
 	}
 	if err != nil {
 		return err
@@ -640,12 +655,13 @@ type updateVideoRequest struct {
 	License     *string    `json:"license"`
 	Tags        *[]string  `json:"tags"`
 	PublishAt   *time.Time `json:"publish_at"`
+	IsSensitive *bool      `json:"is_sensitive"`
 }
 
 func (r updateVideoRequest) Validate() []FieldError {
 	if r.Title == nil && r.Description == nil && r.Privacy == nil &&
 		r.Category == nil && r.Language == nil && r.License == nil && r.Tags == nil &&
-		r.PublishAt == nil {
+		r.PublishAt == nil && r.IsSensitive == nil {
 		return []FieldError{{Field: "title", Message: "at least one updatable field is required"}}
 	}
 	var fes []FieldError
@@ -714,6 +730,7 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		License:     in.License,
 		Tags:        in.Tags,
 		PublishAt:   in.PublishAt,
+		IsSensitive: in.IsSensitive,
 	})
 	if err != nil {
 		if errors.Is(err, video.ErrPublished) {

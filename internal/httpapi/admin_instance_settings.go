@@ -61,14 +61,17 @@ func (s *Server) commentsEnabled() bool {
 // --- admin GET/PATCH /admin/instance-settings ---
 
 // instanceSettingView is one setting's effective state in the admin response:
-// the effective value (a string or a bool), the config default, and whether the
-// DB currently overrides it. value/default are JSON string or bool per type.
+// the effective value (a string, a bool, or an array of strings per type), the
+// config default, and whether the DB currently overrides it. Enum-typed
+// settings additionally list their allowed options.
 type instanceSettingView struct {
 	Key        string `json:"key"`
 	Type       string `json:"type"`
 	Value      any    `json:"value"`
 	Default    any    `json:"default"`
 	Overridden bool   `json:"overridden"`
+	// Options is present for type=enum only: the allowed values, in display order.
+	Options []string `json:"options,omitempty"`
 }
 
 // instanceSettingsResponse is the admin instance-settings document: every
@@ -87,6 +90,7 @@ func (s *Server) instanceSettingsResponse() instanceSettingsResponse {
 			Value:      e.Value,
 			Default:    e.Default,
 			Overridden: e.Overridden,
+			Options:    e.Options,
 		})
 	}
 	return instanceSettingsResponse{Settings: views}
@@ -141,13 +145,24 @@ func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 				continue
 			}
 			updates[key] = instancesettings.Update{Value: instancesettings.FormatBool(b)}
-		case instancesettings.KindString:
+		case instancesettings.KindString, instancesettings.KindEnum:
+			// Enum values are JSON strings too; the settings service validates
+			// them against the option set (like every other content rule).
 			var str string
 			if err := json.Unmarshal(rawVal, &str); err != nil {
 				fields = append(fields, FieldError{Field: key, Message: "must be a string"})
 				continue
 			}
 			updates[key] = instancesettings.Update{Value: str}
+		case instancesettings.KindList:
+			var items []string
+			if err := json.Unmarshal(rawVal, &items); err != nil {
+				fields = append(fields, FieldError{Field: key, Message: "must be an array of strings"})
+				continue
+			}
+			// Canonicalise before storing (compact JSON array); per-item taxonomy
+			// validation happens in the settings service.
+			updates[key] = instancesettings.Update{Value: instancesettings.FormatList(items)}
 		}
 		changed = append(changed, key)
 	}

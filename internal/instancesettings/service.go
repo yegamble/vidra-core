@@ -22,7 +22,9 @@ package instancesettings
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -32,6 +34,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // Setting keys. These are the stable, snake_case identifiers stored in the
@@ -49,6 +52,32 @@ const (
 	KeyImportsEnabled              = "imports_enabled"
 	KeyLiveEnabled                 = "live_enabled"
 	KeyCommentsEnabled             = "comments_enabled"
+
+	// Platform-information keys (spec instance-platform-info). All are pure
+	// key-value overlay rows with HARDCODED defaults (no config/env backing):
+	// zero values, except default_language ("en") and sensitive_content_policy
+	// ("hide"). The markdown keys store/serve raw markdown text.
+	KeyInstanceShortDescription = "instance_short_description"
+	KeyServerCountry            = "server_country"
+	KeySupportText              = "support_text"
+	KeyWebsiteLink              = "website_link"
+	KeyMastodonLink             = "mastodon_link"
+	KeyXLink                    = "x_link"
+	KeyBlueskyLink              = "bluesky_link"
+	KeyTerms                    = "terms" // markdown body; distinct from terms_url
+	KeyCodeOfConduct            = "code_of_conduct"
+	KeyModerationInfo           = "moderation_info"
+	KeyAdministratorInfo        = "administrator_info"
+	KeyCreationReason           = "creation_reason"
+	KeyMaintenanceLifetime      = "maintenance_lifetime"
+	KeyBusinessModel            = "business_model"
+	KeyHardwareInfo             = "hardware_info"
+	KeyDefaultLanguage          = "default_language"
+	KeyContactFormEnabled       = "contact_form_enabled"
+	KeyInstanceIsSensitive      = "instance_is_sensitive"
+	KeySensitiveContentPolicy   = "sensitive_content_policy"
+	KeyInstanceCategories       = "instance_categories"
+	KeyModeratorLanguages       = "moderator_languages"
 )
 
 // Kind is a setting's value type, reported to clients and used to validate the
@@ -58,6 +87,38 @@ type Kind string
 const (
 	KindString Kind = "string"
 	KindBool   Kind = "bool"
+	// KindEnum is a string constrained to a fixed option set; the admin view
+	// exposes the options so a client can render a picker.
+	KindEnum Kind = "enum"
+	// KindList is a list of strings. The TEXT value column stores the canonical
+	// JSON array; the API value is a JSON array of strings.
+	KindList Kind = "list"
+)
+
+// Sensitive-content policy values (KeySensitiveContentPolicy). "hide" is
+// enforced server-side (sensitive videos drop out of the public browse/search
+// surfaces); the others are presentation-only, applied by the frontend.
+const (
+	SensitiveContentPolicyHide    = "hide"
+	SensitiveContentPolicyWarn    = "warn"
+	SensitiveContentPolicyBlur    = "blur"
+	SensitiveContentPolicyDisplay = "display"
+)
+
+// SensitiveContentPolicyOptions is the canonical option order for the
+// sensitive_content_policy enum (also the admin-view/OpenAPI order).
+var SensitiveContentPolicyOptions = []string{
+	SensitiveContentPolicyHide,
+	SensitiveContentPolicyWarn,
+	SensitiveContentPolicyBlur,
+	SensitiveContentPolicyDisplay,
+}
+
+// Hardcoded defaults for the keys with a non-zero default and no config/env
+// backing (spec instance-platform-info: no new env vars).
+const (
+	DefaultDefaultLanguage        = "en"
+	DefaultSensitiveContentPolicy = SensitiveContentPolicyHide
 )
 
 // Defaults are the config-derived fallbacks for every mutable setting: when a
@@ -79,15 +140,21 @@ type Defaults struct {
 }
 
 // spec describes one setting: its key, value kind, how to resolve its default
-// from Defaults, and how to validate a candidate override value (a normalised
-// string — "true"/"false" for bool keys).
+// from Defaults, how to validate a candidate override value (a normalised
+// string — "true"/"false" for bool keys, a canonical JSON array for list keys),
+// and — for enum kinds — the allowed option set.
 type spec struct {
 	key       string
 	kind      Kind
 	defString func(Defaults) string
 	defBool   func(Defaults) bool
+	options   []string // enum kinds only: the allowed values, in display order
 	validate  func(string) error
 }
+
+// hardcoded wraps a config-independent default (the platform-information keys
+// carry no config/env backing; their defaults are fixed by the spec).
+func hardcoded(v string) func(Defaults) string { return func(Defaults) string { return v } }
 
 // specs is the ordered, canonical registry of mutable settings. The order is
 // stable so the GET response and tests are deterministic.
@@ -104,6 +171,34 @@ var specs = []spec{
 	{key: KeyImportsEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.ImportsEnabled }, validate: validateBool},
 	{key: KeyLiveEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.LiveEnabled }, validate: validateBool},
 	{key: KeyCommentsEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.CommentsEnabled }, validate: validateBool},
+
+	// Platform information (spec instance-platform-info). Defaults are hardcoded
+	// (empty, except default_language and sensitive_content_policy) — these keys
+	// have no config/env backing by design.
+	{key: KeyInstanceShortDescription, kind: KindString, defString: hardcoded(""), validate: maxLen(250)},
+	{key: KeyServerCountry, kind: KindString, defString: hardcoded(""), validate: maxLen(100)},
+	{key: KeySupportText, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
+	{key: KeyWebsiteLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL},
+	{key: KeyMastodonLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL},
+	{key: KeyXLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL},
+	{key: KeyBlueskyLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL},
+	{key: KeyTerms, kind: KindString, defString: hardcoded(""), validate: maxLen(10000)},
+	{key: KeyCodeOfConduct, kind: KindString, defString: hardcoded(""), validate: maxLen(10000)},
+	{key: KeyModerationInfo, kind: KindString, defString: hardcoded(""), validate: maxLen(10000)},
+	{key: KeyAdministratorInfo, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
+	{key: KeyCreationReason, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
+	{key: KeyMaintenanceLifetime, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
+	{key: KeyBusinessModel, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
+	{key: KeyHardwareInfo, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
+	{key: KeyDefaultLanguage, kind: KindString, defString: hardcoded(DefaultDefaultLanguage), validate: validateLanguageID},
+	{key: KeyContactFormEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool},
+	{key: KeyInstanceIsSensitive, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool},
+	{key: KeySensitiveContentPolicy, kind: KindEnum, defString: hardcoded(DefaultSensitiveContentPolicy),
+		options: SensitiveContentPolicyOptions, validate: enumOf(SensitiveContentPolicyOptions)},
+	{key: KeyInstanceCategories, kind: KindList, defString: hardcoded(emptyList),
+		validate: listOf(video.IsCategory, "category")},
+	{key: KeyModeratorLanguages, kind: KindList, defString: hardcoded(emptyList),
+		validate: listOf(video.IsLanguage, "language")},
 }
 
 var specByKey = func() map[string]spec {
@@ -199,11 +294,12 @@ func (s *Service) Bool(key string) bool {
 	return sp.defBool(s.defaults)
 }
 
-// String returns the effective string value for a string-kind key: the DB
-// override if present, else the config default. An unknown key returns "".
+// String returns the effective string value for a string- or enum-kind key:
+// the DB override if present, else the config default. An unknown key (or a
+// bool/list key) returns "".
 func (s *Service) String(key string) string {
 	sp, ok := specByKey[key]
-	if !ok || sp.kind != KindString {
+	if !ok || (sp.kind != KindString && sp.kind != KindEnum) {
 		return ""
 	}
 	if raw, set := s.override(key); set {
@@ -212,15 +308,37 @@ func (s *Service) String(key string) string {
 	return sp.defString(s.defaults)
 }
 
+// Strings returns the effective value for a list-kind key: the DB override
+// (stored as a canonical JSON array) if present, else the default. An unknown
+// or non-list key — or an unparseable stored value — returns an empty list.
+// Always non-nil, so callers marshal [] rather than null.
+func (s *Service) Strings(key string) []string {
+	sp, ok := specByKey[key]
+	if !ok || sp.kind != KindList {
+		return []string{}
+	}
+	raw, set := s.override(key)
+	if !set {
+		raw = sp.defString(s.defaults)
+	}
+	items, err := parseList(raw)
+	if err != nil {
+		return []string{}
+	}
+	return items
+}
+
 // Effective is one setting's resolved state for the admin GET response: the
-// effective value (a string or a bool), the config default, and whether the DB
-// currently overrides it.
+// effective value (string, bool, or []string per kind), the config default,
+// whether the DB currently overrides it, and — for enum kinds — the allowed
+// option set.
 type Effective struct {
 	Key        string
 	Kind       Kind
-	Value      any // string (KindString) or bool (KindBool)
-	Default    any // string or bool
+	Value      any // string (KindString/KindEnum), bool (KindBool), or []string (KindList)
+	Default    any // same type as Value
 	Overridden bool
+	Options    []string // enum kinds only; nil otherwise
 }
 
 // Snapshot returns every mutable setting's effective state, in the canonical
@@ -229,11 +347,18 @@ func (s *Service) Snapshot() []Effective {
 	out := make([]Effective, 0, len(specs))
 	for _, sp := range specs {
 		_, overridden := s.override(sp.key)
-		e := Effective{Key: sp.key, Kind: sp.kind, Overridden: overridden}
+		e := Effective{Key: sp.key, Kind: sp.kind, Overridden: overridden, Options: sp.options}
 		switch sp.kind {
 		case KindBool:
 			e.Value = s.Bool(sp.key)
 			e.Default = sp.defBool(s.defaults)
+		case KindList:
+			e.Value = s.Strings(sp.key)
+			def, err := parseList(sp.defString(s.defaults))
+			if err != nil {
+				def = []string{}
+			}
+			e.Default = def
 		default:
 			e.Value = s.String(sp.key)
 			e.Default = sp.defString(s.defaults)
@@ -313,11 +438,90 @@ func validateInstanceName(v string) error {
 	return nil
 }
 
-func validateDescription(v string) error {
-	if len(v) > 5000 {
-		return errors.New("must be at most 5000 characters")
+// validateDescription bounds the long (markdown) instance description.
+func validateDescription(v string) error { return maxLen(10000)(v) }
+
+// maxLen returns a validator accepting any string up to n characters (bytes,
+// like the other length limits here). Empty is always fine — it clears the
+// text back to nothing.
+func maxLen(n int) func(string) error {
+	msg := fmt.Sprintf("must be at most %d characters", n)
+	return func(v string) error {
+		if len(v) > n {
+			return errors.New(msg)
+		}
+		return nil
+	}
+}
+
+// validateLanguageID requires a known taxonomy language id (the GET
+// /videos/config source). Clearing back to the default is done via null, not
+// an empty string, so empty is invalid here.
+func validateLanguageID(v string) error {
+	if !video.IsLanguage(v) {
+		return errors.New("must be a known language id")
 	}
 	return nil
+}
+
+// enumOf returns a validator accepting exactly one of options.
+func enumOf(options []string) func(string) error {
+	msg := "must be one of " + strings.Join(options, ", ")
+	return func(v string) error {
+		for _, o := range options {
+			if v == o {
+				return nil
+			}
+		}
+		return errors.New(msg)
+	}
+}
+
+// listOf returns a validator for a list-kind value: the normalised string must
+// be a canonical JSON array of strings, each item passing the taxonomy check.
+func listOf(valid func(string) bool, itemName string) func(string) error {
+	return func(v string) error {
+		items, err := parseList(v)
+		if err != nil {
+			return errors.New("must be an array of strings")
+		}
+		for _, it := range items {
+			if !valid(it) {
+				return fmt.Errorf("unknown %s %q", itemName, it)
+			}
+		}
+		return nil
+	}
+}
+
+// emptyList is the canonical stored form of an empty list value.
+const emptyList = "[]"
+
+// parseList decodes a stored list value (a JSON array of strings). The result
+// is always non-nil on success.
+func parseList(raw string) ([]string, error) {
+	var items []string
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = []string{}
+	}
+	return items, nil
+}
+
+// FormatList normalises a list value to its canonical stored form (a compact
+// JSON array of strings). Exported for the HTTP layer, which shapes the PATCH
+// payload into Updates.
+func FormatList(items []string) string {
+	if items == nil {
+		items = []string{}
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return emptyList // unreachable for []string; defensive
+	}
+	return string(b)
 }
 
 // validateOptionalURL accepts the empty string (clears the link) or a bounded

@@ -230,6 +230,7 @@ func (f *videoFakeRepo) ListSavedVideos(_ context.Context, a sqlcgen.ListSavedVi
 			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			IsSensitive: r.IsSensitive,
 		})
 	}
 	return rows, nil
@@ -284,6 +285,7 @@ func (f *videoFakeRepo) ListWatchHistory(_ context.Context, a sqlcgen.ListWatchH
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			ChannelHandle: handle, ChannelDisplayName: name,
+			IsSensitive:     r.IsSensitive,
 			PositionSeconds: e.m.position, WatchedAt: e.m.watchedAt,
 		})
 	}
@@ -317,6 +319,7 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				IsSensitive: r.IsSensitive,
 			})
 		}
 	}
@@ -373,15 +376,15 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		ID: uuid.New(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
-		PublishAt: a.PublishAt,
+		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
 		ID: v.ID, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 		Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 		Category: v.Category, Language: v.Language, License: v.License,
-		PublishAt: v.PublishAt,
-		OwnerID:   owner,
+		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive,
+		OwnerID: owner,
 	}
 	return v, nil
 }
@@ -402,6 +405,7 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		Category: r.Category, Language: r.Language, License: r.License, PublishAt: r.PublishAt,
+		IsSensitive: r.IsSensitive,
 	}
 }
 
@@ -412,8 +416,8 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UU
 			out = append(out, sqlcgen.ListVideosByChannelRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				PublishAt: r.PublishAt,
-				Views:     f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				PublishAt: r.PublishAt, IsSensitive: r.IsSensitive,
+				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			})
 		}
 	}
@@ -449,6 +453,7 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID u
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				IsSensitive: r.IsSensitive,
 			})
 		}
 	}
@@ -481,6 +486,9 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	}
 	if a.PublishAt.Valid {
 		r.PublishAt = a.PublishAt
+	}
+	if a.IsSensitive != nil {
+		r.IsSensitive = *a.IsSensitive
 	}
 	f.videos[a.ID] = r
 	return vidRowToVideo(r), nil
@@ -592,6 +600,9 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 	q := strings.ToLower(a.Query)
 	var all []sqlcgen.SearchPublicVideosRow
 	for _, r := range f.videos {
+		if a.HideSensitive && r.IsSensitive {
+			continue // sensitive-content policy "hide" mirrors the SQL filter
+		}
 		if r.Privacy == "public" && r.State == "published" &&
 			(strings.Contains(strings.ToLower(r.Title), q) || f.tagMatches(r.ID, q)) &&
 			!f.mutedFromFeed(a.ViewerID, r.ChannelID) && !f.ownerUnlisted(r.ChannelID) {
@@ -599,6 +610,7 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				IsSensitive: r.IsSensitive,
 			})
 		}
 	}
@@ -712,6 +724,9 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 		if a.Language != nil && (r.Language == nil || *r.Language != *a.Language) {
 			continue
 		}
+		if a.HideSensitive && r.IsSensitive {
+			continue // sensitive-content policy "hide" mirrors the SQL filter
+		}
 		if r.Privacy == "public" && r.State == "published" && !f.mutedFromFeed(a.ViewerID, r.ChannelID) &&
 			!f.ownerUnlisted(r.ChannelID) {
 			ch, cn := f.channelInfo(r.ChannelID)
@@ -720,6 +735,7 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 				ChannelHandle: ch, ChannelDisplayName: cn,
+				IsSensitive: r.IsSensitive,
 			})
 		}
 	}
@@ -1159,6 +1175,7 @@ func TestListChannelVideosOwnerVsPublic(t *testing.T) {
 	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	otherTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
 	_ = createPublishedVideo(t, srv, ownerTok, "ada", `{"title":"pub","privacy":"public"}`)
+	sensitiveID := createPublishedVideo(t, srv, ownerTok, "ada", `{"title":"sensitive","privacy":"public","is_sensitive":true}`)
 	_ = createVideo(t, srv, ownerTok, "ada", `{"title":"priv","privacy":"private"}`)
 
 	list := func(tok string) videoListResponse {
@@ -1176,14 +1193,17 @@ func TestListChannelVideosOwnerVsPublic(t *testing.T) {
 		return body
 	}
 
-	if owner := list(ownerTok); len(owner.Videos) != 2 {
-		t.Errorf("owner list = %d, want 2", len(owner.Videos))
+	if owner := list(ownerTok); len(owner.Videos) != 3 {
+		t.Errorf("owner list = %d, want 3", len(owner.Videos))
 	}
 	if anon := list(""); len(anon.Videos) != 1 || anon.Videos[0].Privacy != "public" {
-		t.Errorf("anon list = %+v, want 1 public", anon.Videos)
+		t.Errorf("anon list = %+v, want 1 public non-sensitive", anon.Videos)
 	}
 	if other := list(otherTok); len(other.Videos) != 1 {
-		t.Errorf("non-owner list = %d, want 1 (public only)", len(other.Videos))
+		t.Errorf("non-owner list = %d, want 1 (public non-sensitive only)", len(other.Videos))
+	}
+	if direct := getVideo(srv, sensitiveID, ""); direct.Code != http.StatusOK {
+		t.Errorf("direct sensitive video read = %d, want 200", direct.Code)
 	}
 }
 

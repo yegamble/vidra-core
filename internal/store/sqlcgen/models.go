@@ -662,6 +662,7 @@ type Video struct {
 	PublishAt           pgtype.Timestamptz `json:"publish_at"`
 	EmbedPrivacy        string             `json:"embed_privacy"`
 	EmbedAllowedDomains []string           `json:"embed_allowed_domains"`
+	IsSensitive         bool               `json:"is_sensitive"`
 }
 
 type VideoBlock struct {

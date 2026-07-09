@@ -3,6 +3,7 @@ package instancesettings
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -210,6 +211,79 @@ func TestApplyValidation(t *testing.T) {
 	}
 }
 
+func TestPlatformInfoEnumAndListSettings(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if got := svc.String(KeyDefaultLanguage); got != DefaultDefaultLanguage {
+		t.Errorf("default_language default = %q, want %q", got, DefaultDefaultLanguage)
+	}
+	if got := svc.String(KeySensitiveContentPolicy); got != DefaultSensitiveContentPolicy {
+		t.Errorf("sensitive_content_policy default = %q, want %q", got, DefaultSensitiveContentPolicy)
+	}
+	if got := svc.Strings(KeyInstanceCategories); len(got) != 0 {
+		t.Errorf("instance_categories default = %#v, want []", got)
+	}
+
+	admin := uuid.New()
+	if err := svc.Apply(ctx, map[string]Update{
+		KeySensitiveContentPolicy: {Value: SensitiveContentPolicyBlur},
+		KeyDefaultLanguage:        {Value: "fr"},
+		KeyInstanceCategories:     {Value: FormatList([]string{"1", "7"})},
+		KeyModeratorLanguages:     {Value: FormatList([]string{"en", "es"})},
+	}, admin); err != nil {
+		t.Fatalf("apply platform info settings: %v", err)
+	}
+	if got := svc.String(KeySensitiveContentPolicy); got != SensitiveContentPolicyBlur {
+		t.Errorf("sensitive_content_policy = %q, want blur", got)
+	}
+	if got := svc.String(KeyDefaultLanguage); got != "fr" {
+		t.Errorf("default_language = %q, want fr", got)
+	}
+	if got := svc.Strings(KeyInstanceCategories); !reflect.DeepEqual(got, []string{"1", "7"}) {
+		t.Errorf("instance_categories = %#v, want [1 7]", got)
+	}
+	if got := svc.Strings(KeyModeratorLanguages); !reflect.DeepEqual(got, []string{"en", "es"}) {
+		t.Errorf("moderator_languages = %#v, want [en es]", got)
+	}
+
+	policy := snapshotByKey(t, svc, KeySensitiveContentPolicy)
+	if policy.Kind != KindEnum || !reflect.DeepEqual(policy.Options, SensitiveContentPolicyOptions) {
+		t.Errorf("policy snapshot = %+v, want enum with options %v", policy, SensitiveContentPolicyOptions)
+	}
+	cats := snapshotByKey(t, svc, KeyInstanceCategories)
+	if cats.Kind != KindList || !reflect.DeepEqual(cats.Value, []string{"1", "7"}) || !reflect.DeepEqual(cats.Default, []string{}) {
+		t.Errorf("categories snapshot = %+v, want list value/default", cats)
+	}
+
+	badCases := []struct {
+		name    string
+		updates map[string]Update
+		wantKey string
+	}{
+		{"bad enum", map[string]Update{KeySensitiveContentPolicy: {Value: "surprise"}}, KeySensitiveContentPolicy},
+		{"bad language", map[string]Update{KeyDefaultLanguage: {Value: "zz-nope"}}, KeyDefaultLanguage},
+		{"bad category list json", map[string]Update{KeyInstanceCategories: {Value: `"1"`}}, KeyInstanceCategories},
+		{"bad category id", map[string]Update{KeyInstanceCategories: {Value: FormatList([]string{"999"})}}, KeyInstanceCategories},
+		{"bad moderator language", map[string]Update{KeyModeratorLanguages: {Value: FormatList([]string{"zz-nope"})}}, KeyModeratorLanguages},
+	}
+	for _, tc := range badCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := svc.Apply(ctx, tc.updates, uuid.New())
+			var ve *ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("err = %v, want *ValidationError", err)
+			}
+			if ve.Key != tc.wantKey {
+				t.Errorf("ValidationError.Key = %q, want %q", ve.Key, tc.wantKey)
+			}
+		})
+	}
+}
+
 func TestApplyEmptyIsNoop(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(newFakeRepo(), testDefaults())
@@ -225,4 +299,15 @@ func overriddenKeys(svc *Service) map[string]bool {
 		m[e.Key] = e.Overridden
 	}
 	return m
+}
+
+func snapshotByKey(t *testing.T, svc *Service, key string) Effective {
+	t.Helper()
+	for _, e := range svc.Snapshot() {
+		if e.Key == key {
+			return e
+		}
+	}
+	t.Fatalf("snapshot missing key %q", key)
+	return Effective{}
 }

@@ -23,27 +23,44 @@ curl localhost:8080/healthz          # liveness
 curl localhost:8080/readyz           # readiness (postgres + redis)
 curl localhost:8080/version          # build version / commit / date
 curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
-curl localhost:8080/api/v1/instance  # public about/config (name, software, registration_enabled)
+curl localhost:8080/api/v1/instance  # public about/config (name, software, policy, features)
+curl localhost:8080/api/v1/instance/about # long-form markdown about-page content
 ```
 
 Registration can be closed per-instance with `REGISTRATION_ENABLED=false`: signup then
 returns `403` and `GET /api/v1/instance` reports `registration_enabled: false` so the
 frontend can hide the form. The instance endpoint also surfaces optional about/legal
-metadata — `description`, `terms_url`, `privacy_url`, `contact_email` (from the matching
-`INSTANCE_*` env vars; empty when unset) — for the frontend's footer/about pages.
+metadata — `description`, `short_description`, `terms_url`, `privacy_url`,
+`contact_email`, `default_language`, `categories`, `moderator_languages`,
+`server_country`, `is_sensitive`, `sensitive_content_policy`,
+`contact_form_enabled`, `social_links`, and `features` (empty/false/defaulted when
+unset) — for the frontend's footer/about pages. Long-form operator markdown lives at
+`GET /api/v1/instance/about`; the public contact form posts to
+`POST /api/v1/instance/contact` and is available only when `contact_form_enabled` is on,
+an effective contact email is set, and outbound mail is configured.
 
 **Runtime-mutable instance settings.** A defined subset of instance settings is a DB
 overlay on top of config: an admin edits them live via `GET`/`PATCH
 /api/v1/admin/instance-settings` and they take effect without a restart. The mutable
-subset is `instance_name`, `instance_description`, `terms_url`, `privacy_url`,
-`contact_email`, `registration_enabled`, `registration_require_approval`,
-`quarantine_new_uploads`, and the feature toggles `uploads_enabled`, `imports_enabled`,
-`live_enabled`, `comments_enabled` (all default true, from `FEATURE_*_ENABLED`). The
-matching env vars are the boot-time DEFAULTS; a stored override wins. When a toggle is
-off, its endpoint returns `403 feature_disabled` (new upload sessions + direct upload,
-URL import, live-stream create, comment create). Boot-time-only settings — the database
-DSN, the KEKs, the JWT secret, the storage backend — deliberately STAY config-only
-(unsafe to hot-swap and/or secret) and are never represented in the overlay table.
+subset is `instance_name`, `instance_description`, `instance_short_description`,
+`terms_url`, `privacy_url`, `contact_email`, the platform-information markdown/link
+keys (`support_text`, `terms`, `code_of_conduct`, `moderation_info`,
+`administrator_info`, `creation_reason`, `maintenance_lifetime`, `business_model`,
+`hardware_info`, `website_link`, `mastodon_link`, `x_link`, `bluesky_link`),
+taxonomy-backed list keys (`instance_categories`, `moderator_languages`), platform
+defaults (`default_language`, `server_country`, `instance_is_sensitive`,
+`sensitive_content_policy`, `contact_form_enabled`), `registration_enabled`,
+`registration_require_approval`, `quarantine_new_uploads`, and the feature toggles
+`uploads_enabled`, `imports_enabled`, `live_enabled`, `comments_enabled` (all default
+true, from `FEATURE_*_ENABLED`). The matching env vars are the boot-time DEFAULTS where
+they exist; platform-information keys otherwise use hardcoded defaults. A stored
+override wins. When a toggle is off, its endpoint returns `403 feature_disabled` (new
+upload sessions + direct upload, URL import, live-stream create, comment create). When
+`sensitive_content_policy` is `hide`, videos marked `is_sensitive` are excluded from
+public browse/list/search surfaces while owner, admin, and direct watch reads remain
+unfiltered. Boot-time-only settings — the database DSN, the KEKs, the JWT secret, the
+storage backend — deliberately STAY config-only (unsafe to hot-swap and/or secret) and
+are never represented in the overlay table.
 
 All non-2xx responses share one envelope: `{"error":{"code","message","request_id"}}`
 (see `api/openapi.yaml` → `ErrorResponse`). The readiness probe returns its own

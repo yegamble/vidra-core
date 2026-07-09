@@ -24,8 +24,19 @@ const (
 // Tokens are held in memory only — never logged, never written to disk or the DB
 // — so a process restart clears them.
 type CaptureMailer struct {
-	mu     sync.Mutex
-	latest map[string]string
+	mu       sync.Mutex
+	latest   map[string]string
+	contacts []CapturedContact
+}
+
+// CapturedContact is one contact-form message recorded by the capture mailer
+// instead of being delivered.
+type CapturedContact struct {
+	To        string
+	FromName  string
+	FromEmail string
+	Subject   string
+	Body      string
 }
 
 // NewCaptureMailer returns an empty capture mailer.
@@ -55,6 +66,24 @@ func (c *CaptureMailer) SendPasswordReset(_ context.Context, email, token string
 func (c *CaptureMailer) SendEmailVerification(_ context.Context, email, token string) error {
 	c.store(TokenKindEmailVerification, email, token)
 	return nil
+}
+
+// SendContactForm records the contact-form message instead of mailing it (in
+// memory only — never logged or persisted, like the tokens).
+func (c *CaptureMailer) SendContactForm(_ context.Context, to, fromName, fromEmail, subject, body string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.contacts = append(c.contacts, CapturedContact{
+		To: to, FromName: fromName, FromEmail: fromEmail, Subject: subject, Body: body,
+	})
+	return nil
+}
+
+// Contacts returns a copy of every captured contact-form message, in send order.
+func (c *CaptureMailer) Contacts() []CapturedContact {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]CapturedContact(nil), c.contacts...)
 }
 
 // Latest returns the most recently captured raw token for the (kind, email) and

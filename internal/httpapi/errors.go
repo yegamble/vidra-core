@@ -55,7 +55,12 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var id *IPFSDisabledError
 	var pr *PasswordRequiredError
 	var tma *TooManyActiveUploadsError
+	var cfd *ContactFormDisabledError
 	switch {
+	case errors.As(err, &cfd):
+		status = http.StatusConflict
+		message = "the contact form is not available on this instance"
+		code = "contact_form_disabled"
 	case errors.As(err, &ve):
 		status = http.StatusUnprocessableEntity
 		message = "validation failed"
@@ -179,6 +184,14 @@ func (e *TooManyActiveUploadsError) Error() string {
 type PasswordRequiredError struct{}
 
 func (e *PasswordRequiredError) Error() string { return "password required" }
+
+// ContactFormDisabledError renders as 409 with the stable code
+// "contact_form_disabled": POST /instance/contact was called while the form's
+// EFFECTIVE availability is false — the admin toggle is off, no contact email
+// is configured, or the deployment has no outbound mail path.
+type ContactFormDisabledError struct{}
+
+func (e *ContactFormDisabledError) Error() string { return "contact form disabled" }
 
 // IPFSDisabledError renders as 503 with the stable code "ipfs_disabled": the
 // hybrid IPFS media mirror (fix_plan P19) is off (IPFS_ENABLED=false) on this

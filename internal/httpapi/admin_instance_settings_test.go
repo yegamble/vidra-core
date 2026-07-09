@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -123,9 +124,10 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	}
 
 	// Default state: instance_name is the config value and nothing is overridden.
+	// 12 original keys + 21 platform-information keys (instance-platform-info).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 12 {
-		t.Fatalf("settings count = %d, want 12", len(got.Settings))
+	if len(got.Settings) != 33 {
+		t.Fatalf("settings count = %d, want 33", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {
@@ -133,6 +135,13 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	}
 	if up := settingView(t, got, instancesettings.KeyUploadsEnabled); up.Value != true || up.Type != "bool" {
 		t.Errorf("uploads_enabled default view = %+v, want value=true type=bool", up)
+	}
+	if policy := settingView(t, got, instancesettings.KeySensitiveContentPolicy); policy.Value != "hide" ||
+		policy.Type != "enum" || !reflect.DeepEqual(policy.Options, instancesettings.SensitiveContentPolicyOptions) {
+		t.Errorf("sensitive_content_policy default view = %+v, want enum hide with options", policy)
+	}
+	if cats := settingView(t, got, instancesettings.KeyInstanceCategories); cats.Type != "list" || len(stringSliceValue(t, cats.Value)) != 0 {
+		t.Errorf("instance_categories default view = %+v, want empty list", cats)
 	}
 
 	// Override a string + a bool + a URL.
@@ -164,6 +173,26 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 		t.Errorf("audit reason leaked a value: %q", reason)
 	}
 
+	// Enum + list values round-trip as JSON strings/arrays, not stringified JSON.
+	rec = sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings",
+		`{"sensitive_content_policy":"blur","default_language":"fr","instance_categories":["1","7"],"moderator_languages":["en","es"]}`, adminTok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch enum/list = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	enumList := instanceSettings(t, srv, adminTok)
+	if v := settingView(t, enumList, instancesettings.KeySensitiveContentPolicy); v.Value != "blur" || v.Type != "enum" {
+		t.Errorf("sensitive_content_policy after patch = %+v, want blur enum", v)
+	}
+	if v := settingView(t, enumList, instancesettings.KeyDefaultLanguage); v.Value != "fr" {
+		t.Errorf("default_language after patch = %+v, want fr", v)
+	}
+	if v := settingView(t, enumList, instancesettings.KeyInstanceCategories); !reflect.DeepEqual(stringSliceValue(t, v.Value), []string{"1", "7"}) {
+		t.Errorf("instance_categories after patch = %+v, want [1 7]", v)
+	}
+	if v := settingView(t, enumList, instancesettings.KeyModeratorLanguages); !reflect.DeepEqual(stringSliceValue(t, v.Value), []string{"en", "es"}) {
+		t.Errorf("moderator_languages after patch = %+v, want [en es]", v)
+	}
+
 	// null resets an override back to the config default.
 	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings", `{"instance_name":null}`, adminTok); rec.Code != http.StatusOK {
 		t.Fatalf("null reset = %d; body=%s", rec.Code, rec.Body.String())
@@ -183,6 +212,10 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 		{"wrong type", `{"uploads_enabled":"yes"}`},
 		{"bad url", `{"terms_url":"not a url"}`},
 		{"empty name", `{"instance_name":"   "}`},
+		{"bad enum", `{"sensitive_content_policy":"surprise"}`},
+		{"list wrong type", `{"instance_categories":"1"}`},
+		{"bad category id", `{"instance_categories":["999"]}`},
+		{"bad language id", `{"moderator_languages":["zz-nope"]}`},
 		{"empty body", `{}`},
 	}
 	for _, tc := range badCases {
@@ -190,6 +223,23 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 			t.Errorf("%s: PATCH = %d, want 422", tc.name, rec.Code)
 		}
 	}
+}
+
+func stringSliceValue(t *testing.T, v any) []string {
+	t.Helper()
+	raw, ok := v.([]any)
+	if !ok {
+		t.Fatalf("value %#v has type %T, want []any from JSON", v, v)
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		s, ok := item.(string)
+		if !ok {
+			t.Fatalf("list item %#v has type %T, want string", item, item)
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // latestInstanceUpdateReason returns the reason of the most recent successful

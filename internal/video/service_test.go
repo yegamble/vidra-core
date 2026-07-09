@@ -226,15 +226,15 @@ func (f *fakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (
 		ID: uuid.New(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
-		PublishAt: a.PublishAt,
+		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
 		ID: v.ID, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 		Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 		Category: v.Category, Language: v.Language, License: v.License,
-		PublishAt: v.PublishAt,
-		OwnerID:   f.owner,
+		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive,
+		OwnerID: f.owner,
 	}
 	return v, nil
 }
@@ -252,6 +252,7 @@ func rowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		Category: r.Category, Language: r.Language, License: r.License, PublishAt: r.PublishAt,
+		IsSensitive: r.IsSensitive,
 	}
 }
 
@@ -278,6 +279,7 @@ func (f *fakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.U
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID), DurationSeconds: f.duration(r.ID),
+				IsSensitive: r.IsSensitive,
 			})
 		}
 	}
@@ -765,9 +767,33 @@ func TestListByChannelVsPublic(t *testing.T) {
 	if len(all) != 2 {
 		t.Errorf("ListByChannel = %d, want 2 (owner sees all states)", len(all))
 	}
-	pub, _ := svc.ListPublicByChannel(ctx, ch)
+	pub, _ := svc.ListPublicByChannel(ctx, ch, false)
 	if len(pub) != 1 || pub[0].Video.Privacy != "public" {
 		t.Errorf("ListPublicByChannel = %+v, want 1 public", pub)
+	}
+}
+
+func TestListPublicByChannelCanHideSensitive(t *testing.T) {
+	owner := uuid.New()
+	svc := NewService(newFakeRepo(owner), nil)
+	ctx := context.Background()
+	ch := uuid.New()
+	publishDraft(t, svc, ctx, ch, CreateInput{Title: "visible", Privacy: "public"})
+	publishDraft(t, svc, ctx, ch, CreateInput{Title: "sensitive", Privacy: "public", IsSensitive: true})
+
+	all, err := svc.ListPublicByChannel(ctx, ch, false)
+	if err != nil {
+		t.Fatalf("ListPublicByChannel all: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListPublicByChannel all = %d, want 2", len(all))
+	}
+	filtered, err := svc.ListPublicByChannel(ctx, ch, true)
+	if err != nil {
+		t.Fatalf("ListPublicByChannel filtered: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].Video.Title != "visible" {
+		t.Errorf("ListPublicByChannel filtered = %+v, want only visible", filtered)
 	}
 }
 

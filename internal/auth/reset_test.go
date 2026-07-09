@@ -28,6 +28,10 @@ func (m *captureMailer) SendEmailVerification(_ context.Context, email, token st
 	return nil
 }
 
+func (m *captureMailer) SendContactForm(context.Context, string, string, string, string, string) error {
+	return nil
+}
+
 func newResetService(repo Repository, mailer Mailer) *Service {
 	return NewService(repo, newTestIssuer(), time.Hour, WithMailer(mailer))
 }

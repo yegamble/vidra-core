@@ -200,10 +200,11 @@ func run() error {
 
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
 	var authOpts []auth.Option
+	var smtpMailer *mail.SMTP
 	if cfg.MailEnabled {
 		// Real outbound email over SMTP. NB: host/port/from are safe to log; the
 		// SMTP credentials are NOT (observability sensitive-key rules).
-		smtpMailer := mail.NewSMTP(mail.Config{
+		smtpMailer = mail.NewSMTP(mail.Config{
 			Host:         cfg.SMTPHost,
 			Port:         cfg.SMTPPort,
 			Username:     cfg.SMTPUsername,
@@ -226,6 +227,24 @@ func run() error {
 		authOpts = append(authOpts, auth.WithMailer(captureMailer))
 		logger.Warn("DEV mail capture ENABLED — account-security tokens are retrievable via GET /api/v1/dev/email-token; NEVER enable this in production (DEV_MAIL_CAPTURE_ENABLED)")
 	}
+	// Public contact form (spec instance-platform-info): POST /instance/contact
+	// delivers through the same effective mailer the auth flows use (dev capture
+	// wins over SMTP). Without any mail path the option stays unset and the form
+	// reports unavailable (409 / effective contact_form_enabled=false). The
+	// endpoint always carries its own hard budget — 1 request per IP per hour —
+	// on the shared Redis counter when rate limiting is on (multi-node
+	// correctness), else an in-process counter, so it is never unthrottled.
+	switch {
+	case captureMailer != nil:
+		opts = append(opts, httpapi.WithContactMailer(captureMailer))
+	case smtpMailer != nil:
+		opts = append(opts, httpapi.WithContactMailer(smtpMailer))
+	}
+	var contactCounter ratelimit.Counter = ratelimit.NewMemoryCounter()
+	if cfg.RateLimitEnabled {
+		contactCounter = ratelimit.NewRedisCounter(rdb.Client)
+	}
+	opts = append(opts, httpapi.WithContactRateLimiter(ratelimit.NewLimiter(contactCounter, 1, time.Hour)))
 	// TOTP two-factor auth (P4). Shared secrets are envelope-encrypted at rest
 	// with MFA_KEY_KEK (falling back to FEDERATION_KEY_KEK); without a KEK (dev)
 	// they are stored raw. NB: the KEK itself is never logged.

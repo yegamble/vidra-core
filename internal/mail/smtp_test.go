@@ -263,6 +263,50 @@ func TestSendEmailVerificationDeliversTokenInBody(t *testing.T) {
 	}
 }
 
+func TestSendContactFormUsesReplyToAndSanitizesHeaders(t *testing.T) {
+	f := newFakeSMTP(t, nil, false)
+	m := newMailer(t, f, "", "")
+
+	err := m.SendContactForm(context.Background(),
+		"admin@example.test",
+		"Ada\r\nBcc: bad@example.test",
+		"ada@example.test",
+		"Hello\r\nBcc: bad@example.test",
+		"Please take a look.\nThanks.",
+	)
+	if err != nil {
+		t.Fatalf("SendContactForm: %v", err)
+	}
+	from, rcpt, data, _, _ := f.snapshot(t)
+	if !strings.Contains(from, "no-reply@vidra.test") {
+		t.Errorf("MAIL FROM = %q, want configured sender", from)
+	}
+	if len(rcpt) != 1 || !strings.Contains(rcpt[0], "admin@example.test") {
+		t.Errorf("RCPT TO = %v, want admin@example.test", rcpt)
+	}
+	for _, want := range []string{
+		"Reply-To: ada@example.test",
+		"Subject: [Vidra Test contact] Hello  Bcc: bad@example.test",
+		"From: Ada  Bcc: bad@example.test <ada@example.test>",
+		"Subject: Hello  Bcc: bad@example.test",
+		"Please take a look.\r\nThanks.",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("message missing %q; data:\n%s", want, data)
+		}
+	}
+	if strings.Contains(data, "\r\nBcc: bad@example.test\r\n") {
+		t.Errorf("header injection survived sanitization; data:\n%s", data)
+	}
+}
+
+func TestSendContactFormRejectsReplyToInjection(t *testing.T) {
+	m := NewSMTP(Config{Host: "smtp.example.test", Port: 587, From: "no-reply@vidra.test", InstanceName: "Vidra"})
+	if err := m.SendContactForm(context.Background(), "admin@example.test", "Ada", "ada@example.test\r\nBcc: bad@example.test", "Hello", "Body"); err == nil {
+		t.Fatal("SendContactForm accepted reply-to header injection")
+	}
+}
+
 func TestSTARTTLSUsedWhenOffered(t *testing.T) {
 	serverTLS, clientTLS := selfSignedTLS(t)
 	f := newFakeSMTP(t, serverTLS, true)

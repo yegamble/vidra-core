@@ -761,6 +761,10 @@ func (m *captureResetMailer) SendEmailVerification(_ context.Context, _, token s
 	return nil
 }
 
+func (m *captureResetMailer) SendContactForm(context.Context, string, string, string, string, string) error {
+	return nil
+}
+
 func authServerWithMailer(t *testing.T) (*Server, *captureResetMailer) {
 	t.Helper()
 	repo := newAuthFakeRepo()

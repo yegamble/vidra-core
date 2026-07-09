@@ -401,6 +401,10 @@ type CreateInput struct {
 	// HTTP layer validates it lies in the future). Nil = publish immediately on
 	// processing.
 	PublishAt *time.Time
+	// IsSensitive marks the video as sensitive content (instance-platform-info):
+	// excluded from public browse/search when the instance policy is "hide";
+	// otherwise presentation-only.
+	IsSensitive bool
 }
 
 // CreateDraft creates a new draft video under the given channel. Ownership is
@@ -421,6 +425,7 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 		Language:    nilIfEmpty(in.Language),
 		License:     nilIfEmpty(in.License),
 		PublishAt:   timestamptz(in.PublishAt),
+		IsSensitive: in.IsSensitive,
 	})
 	if err != nil {
 		return sqlcgen.Video{}, err
@@ -1190,6 +1195,9 @@ type UpdateInput struct {
 	// HTTP layer validates) time sets it. Only accepted while the video is not
 	// yet published (ErrPublished otherwise).
 	PublishAt *time.Time
+	// IsSensitive: nil leaves the sensitive-content flag unchanged; a non-nil
+	// value sets it.
+	IsSensitive *bool
 }
 
 // Update changes a video's mutable metadata. Only the owner may update; a
@@ -1227,6 +1235,7 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 		Language:    in.Language,
 		License:     in.License,
 		PublishAt:   timestamptz(in.PublishAt),
+		IsSensitive: in.IsSensitive,
 	})
 	if err != nil {
 		return sqlcgen.Video{}, err
@@ -1309,7 +1318,7 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]Fee
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
 		it.PublishAt = TimePtr(r.PublishAt) // studio view: badge scheduled videos
 		items = append(items, it)
 	}
@@ -1317,15 +1326,19 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]Fee
 }
 
 // ListPublicByChannel returns only the channel's public, published videos (the
-// anonymous view), newest first, with discovery-card data.
-func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID) ([]FeedItem, error) {
+// anonymous view), newest first, with discovery-card data. When hideSensitive is
+// true, sensitive videos are excluded for the instance-level "hide" policy.
+func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, hideSensitive bool) ([]FeedItem, error) {
 	rows, err := s.repo.ListPublicVideosByChannel(ctx, channelID)
 	if err != nil {
 		return nil, err
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
+		if hideSensitive && r.IsSensitive {
+			continue
+		}
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive))
 	}
 	return items, nil
 }
@@ -1359,11 +1372,12 @@ type FeedItem struct {
 // newFeedItem packages a video's columns and card data into a FeedItem. It lets
 // the (structurally identical but distinct) sqlc row types from the feed,
 // search, and channel-list queries share one conversion.
-func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state string, createdAt, updatedAt time.Time, views int64, hasThumbnail bool, channelHandle, channelDisplayName string, durationSeconds *int32) FeedItem {
+func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state string, createdAt, updatedAt time.Time, views int64, hasThumbnail bool, channelHandle, channelDisplayName string, durationSeconds *int32, isSensitive bool) FeedItem {
 	return FeedItem{
 		Video: sqlcgen.Video{
 			ID: id, ChannelID: channelID, Title: title, Description: description,
 			Privacy: privacy, State: state, CreatedAt: createdAt, UpdatedAt: updatedAt,
+			IsSensitive: isSensitive,
 		},
 		Views:              views,
 		HasThumbnail:       hasThumbnail,
@@ -1415,6 +1429,9 @@ type FeedFilter struct {
 	Tag      string
 	Category string
 	Language string
+	// HideSensitive excludes is_sensitive videos (the server-side enforcement of
+	// the "hide" sensitive-content policy on the public browse/search surfaces).
+	HideSensitive bool
 }
 
 // ListPublic returns the cross-channel public feed in the requested order
@@ -1432,6 +1449,7 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 		Tag:           nilIfEmpty(strings.ToLower(filter.Tag)),
 		Category:      nilIfEmpty(filter.Category),
 		Language:      nilIfEmpty(filter.Language),
+		HideSensitive: filter.HideSensitive,
 		ResultLimit:   limit,
 		ResultOffset:  offset,
 	})
@@ -1440,7 +1458,7 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, nil
@@ -1461,7 +1479,7 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, nil
@@ -1491,7 +1509,7 @@ func (s *Service) ListSaved(ctx context.Context, userID uuid.UUID, limit, offset
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds))
+		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive))
 	}
 	return items, nil
 }
@@ -1545,7 +1563,7 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 	items := make([]HistoryItem, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, HistoryItem{
-			FeedItem:        newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds),
+			FeedItem:        newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive),
 			PositionSeconds: r.PositionSeconds,
 			WatchedAt:       r.WatchedAt,
 		})
@@ -1572,20 +1590,21 @@ func (s *Service) ClearHistory(ctx context.Context, userID uuid.UUID) error {
 // taxonomy). The caller validates/clamps query, limit, and offset.
 func (s *Service) SearchPublic(ctx context.Context, query string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
 	rows, err := s.repo.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
-		Query:        query,
-		ViewerID:     pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
-		Tag:          nilIfEmpty(strings.ToLower(filter.Tag)),
-		Category:     nilIfEmpty(filter.Category),
-		Language:     nilIfEmpty(filter.Language),
-		ResultLimit:  limit,
-		ResultOffset: offset,
+		Query:         query,
+		ViewerID:      pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
+		Tag:           nilIfEmpty(strings.ToLower(filter.Tag)),
+		Category:      nilIfEmpty(filter.Category),
+		Language:      nilIfEmpty(filter.Language),
+		HideSensitive: filter.HideSensitive,
+		ResultLimit:   limit,
+		ResultOffset:  offset,
 	})
 	if err != nil {
 		return nil, err
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, nil

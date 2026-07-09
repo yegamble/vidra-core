@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains;
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -23,7 +23,7 @@ LIMIT $2 OFFSET $3;
 
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
-       v.category, v.language, v.license, v.publish_at,
+       v.category, v.language, v.license, v.publish_at, v.is_sensitive,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
@@ -52,7 +52,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
-       vm.duration_seconds
+       vm.duration_seconds, v.is_sensitive
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
@@ -70,7 +70,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
-       vm.duration_seconds
+       vm.duration_seconds, v.is_sensitive
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
@@ -96,7 +96,8 @@ ORDER BY v.created_at DESC;
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
-       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url
+       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
+       feed.is_sensitive
 FROM (
     SELECT v.id,
            false AS remote,
@@ -112,7 +113,8 @@ FROM (
            vm.duration_seconds,
            ''::text AS domain,
            ''::text AS watch_url,
-           NULL::text AS stream_url
+           NULL::text AS stream_url,
+           v.is_sensitive
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
@@ -135,6 +137,9 @@ FROM (
       AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+      -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
+      -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
+      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -148,7 +153,8 @@ FROM (
            rv.duration_seconds,
            ra.domain,
            rv.watch_url,
-           rv.stream_url
+           rv.stream_url,
+           false AS is_sensitive
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE sqlc.arg('include_remote')::bool
@@ -181,7 +187,8 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
-       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url
+       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
+       feed.is_sensitive
 FROM (
     SELECT v.id,
            false AS remote,
@@ -197,7 +204,8 @@ FROM (
            vm.duration_seconds,
            ''::text AS domain,
            ''::text AS watch_url,
-           NULL::text AS stream_url
+           NULL::text AS stream_url,
+           v.is_sensitive
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
@@ -229,7 +237,8 @@ FROM (
            rv.duration_seconds,
            ra.domain,
            rv.watch_url,
-           rv.stream_url
+           rv.stream_url,
+           false AS is_sensitive
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE EXISTS (
@@ -258,7 +267,8 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
-       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url
+       feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
+       feed.is_sensitive
 FROM (
     SELECT v.id,
            false AS remote,
@@ -275,6 +285,7 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
+           v.is_sensitive,
            similarity(v.title, sqlc.arg('query')) AS search_rank
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
@@ -305,6 +316,9 @@ FROM (
       AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+      -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
+      -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
+      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -319,6 +333,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
+           false AS is_sensitive,
            similarity(rv.title, sqlc.arg('query')) AS search_rank
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -347,16 +362,17 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     language    = COALESCE(sqlc.narg('language'), language),
     license     = COALESCE(sqlc.narg('license'), license),
     publish_at  = COALESCE(sqlc.narg('publish_at'), publish_at),
+    is_sensitive = COALESCE(sqlc.narg('is_sensitive'), is_sensitive),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive;
 
 -- name: ListDueScheduledVideos :many
 -- Videos whose scheduled publish time has arrived, joined with their stored
