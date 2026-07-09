@@ -1149,7 +1149,8 @@ func TestPeerTubeImportConfig(t *testing.T) {
 		for _, k := range []string{
 			"VIDRA_ENV", "DATABASE_URL", "REDIS_URL", "CORS_ALLOWED_ORIGINS",
 			"PEERTUBE_IMPORT_ENABLED", "PEERTUBE_SOURCE_DATABASE_URL",
-			"PEERTUBE_IMPORT_CONFLICT_POLICY", "PEERTUBE_SOURCE_STORAGE_BACKEND",
+			"PEERTUBE_IMPORT_CONFLICT_POLICY", "PEERTUBE_IMPORT_MEDIA_MODE",
+			"PEERTUBE_SOURCE_STORAGE_BACKEND",
 		} {
 			t.Setenv(k, "")
 		}
@@ -1166,6 +1167,9 @@ func TestPeerTubeImportConfig(t *testing.T) {
 		}
 		if cfg.PeerTubeImportConflictPolicy != "skip" {
 			t.Errorf("default policy = %q, want skip", cfg.PeerTubeImportConflictPolicy)
+		}
+		if cfg.PeerTubeImportMediaMode != "copy" {
+			t.Errorf("default media mode = %q, want copy", cfg.PeerTubeImportMediaMode)
 		}
 		if cfg.PeerTubeImportConfigured() {
 			t.Error("must not be configured by default")
@@ -1185,6 +1189,14 @@ func TestPeerTubeImportConfig(t *testing.T) {
 		t.Setenv("PEERTUBE_IMPORT_ENABLED", "true")
 		if _, err := Load(); err == nil {
 			t.Error("enabling import without a source DSN must error")
+		}
+	})
+
+	t.Run("invalid media mode is rejected", func(t *testing.T) {
+		clean(t)
+		t.Setenv("PEERTUBE_IMPORT_MEDIA_MODE", "bogus")
+		if _, err := Load(); err == nil {
+			t.Error("expected error for invalid media mode")
 		}
 	})
 

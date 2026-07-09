@@ -16,7 +16,7 @@ import "fmt"
 // unless a human passes --force.
 //
 // The verified range below is pinned in .ralph/specs/peertube-reference.md. It
-// covers PeerTube's 5.x–6.x schema line (approximate — operators should confirm
+// covers PeerTube's 5.x–8.x schema line (approximate — operators should confirm
 // against that ledger). The bounds are deliberately conservative: importing from
 // an unverified schema risks reading columns that were added/renamed/removed, so
 // it is a HARD STOP requiring operator sign-off — never an autonomous decision.
@@ -26,7 +26,7 @@ const (
 	MinSupportedSchemaVersion = 700
 	// MaxSupportedSchemaVersion is the highest verified migrationVersion. A source
 	// newer than this is refused without --force (its schema may have diverged).
-	MaxSupportedSchemaVersion = 900
+	MaxSupportedSchemaVersion = 1000
 )
 
 // VersionSupport classifies a detected source schema version.

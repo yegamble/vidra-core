@@ -148,6 +148,24 @@ func seedReadyHLS(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backend, 
 	put(prefix+"/240p/seg_00000.ts", "fake-ts-bytes")
 }
 
+// seedReadyPeerTubeHLS marks videoID ready with a PeerTube object-storage HLS
+// tree: one flat directory under streaming-playlists/hls/<source-video-uuid>/.
+func seedReadyPeerTubeHLS(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backend, videoID string) {
+	t.Helper()
+	id := uuid.MustParse(videoID)
+	prefix := "streaming-playlists/hls/11111111-1111-1111-1111-111111111111"
+	repo.playlists[id] = sqlcgen.StreamingPlaylist{VideoID: id, MasterKey: prefix + "/v1-master.m3u8", State: "ready"}
+	put := func(key, content string) {
+		if _, err := blobs.Put(context.Background(), key, strings.NewReader(content)); err != nil {
+			t.Fatalf("Put %q: %v", key, err)
+		}
+	}
+	put(prefix+"/v1-master.m3u8", "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720\nv1-720.m3u8\n")
+	put(prefix+"/v1-720.m3u8", "#EXTM3U\n#EXT-X-MAP:URI=\"v1-init.mp4\"\n#EXTINF:4.0,\nv1-720-fragmented.mp4\n#EXT-X-ENDLIST\n")
+	put(prefix+"/v1-init.mp4", "fake-init")
+	put(prefix+"/v1-720-fragmented.mp4", "fake-fmp4")
+}
+
 // seedReadyLadder marks videoID's playlist ready with a MULTI-rung ladder
 // (720p/480p/360p) and writes a multi-variant master playlist plus each
 // variant's playlist into blobs. This is the regression fixture for a real HD
@@ -236,6 +254,50 @@ func TestHLSServesMasterVariantAndSegment(t *testing.T) {
 	}
 	if rec.Body.String() != "fake-ts-bytes" {
 		t.Errorf("segment bytes = %q", rec.Body.String())
+	}
+}
+
+func TestHLSServesReferencedPeerTubeFlatFMP4Tree(t *testing.T) {
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"PeerTube HLS","privacy":"public"}`)
+	seedReadyPeerTubeHLS(t, tcRepo, blobs, id)
+
+	rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/master.m3u8", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("master = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "\npeertube/v1-720.m3u8\n") {
+		t.Fatalf("master should route PeerTube flat variant through peertube/:\n%s", rec.Body.String())
+	}
+
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/peertube/v1-720.m3u8", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("variant = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `URI="v1-init.mp4"`) || !strings.Contains(rec.Body.String(), "v1-720-fragmented.mp4") {
+		t.Fatalf("variant should keep flat relative media references:\n%s", rec.Body.String())
+	}
+
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/peertube/v1-720-fragmented.mp4", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fmp4 = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "video/mp4" {
+		t.Errorf("fmp4 Content-Type = %q, want video/mp4", ct)
+	}
+	if rec.Body.String() != "fake-fmp4" {
+		t.Errorf("fmp4 bytes = %q", rec.Body.String())
+	}
+
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/master.m3u8?pt=secret", "")
+	if !strings.Contains(rec.Body.String(), "peertube/v1-720.m3u8?pt=secret") {
+		t.Fatalf("master should propagate playback token into rewritten URI:\n%s", rec.Body.String())
+	}
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/peertube/v1-720.m3u8?pt=secret", "")
+	if !strings.Contains(rec.Body.String(), `URI="v1-init.mp4?pt=secret"`) ||
+		!strings.Contains(rec.Body.String(), "v1-720-fragmented.mp4?pt=secret") {
+		t.Fatalf("variant should propagate playback token to URI attrs and media lines:\n%s", rec.Body.String())
 	}
 }
 

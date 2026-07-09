@@ -24,19 +24,20 @@ column and REFUSES to run outside the verified range unless a human passes
 `--force`. Ralph/agents MUST NEVER self-pass `--force` — an unverified version is
 a hard stop requiring operator sign-off.
 
-- Supported `migrationVersion` range: **700 – 900** (constants
+- Supported `migrationVersion` range: **700 – 1000** (constants
   `MinSupportedSchemaVersion` / `MaxSupportedSchemaVersion` in
   `internal/peertubeimport/version.go`).
-- This range approximately covers PeerTube's **5.x – 6.x** schema line
-  (2023–2024). It is deliberately conservative and APPROXIMATE: the exact
+- This range approximately covers PeerTube's **5.x – 8.x** schema line
+  (2023–2026). It is deliberately conservative and APPROXIMATE: the exact
   version↔release mapping is not authoritatively pinned here, so an operator
   migrating from a version near the edges should verify column compatibility by
   hand before `--force`.
 - The importer reads a documented SUBSET of PeerTube's schema (user/account/
   actor, videoChannel, video/videoFile/thumbnail/videoCaption, videoComment,
-  videoPlaylist/element, tag/videoTag, actorFollow) plus `application`. HLS
-  streaming playlists, moderation state, notification settings, and watch history
-  are intentionally deferred (regenerate/reconcile post-import).
+  videoStreamingPlaylist, videoPlaylist/element, tag/videoTag, actorFollow) plus
+  `application`. HLS streaming playlists are supported in media reference mode;
+  HLS copying, moderation state, notification settings, and watch history remain
+  intentionally deferred (regenerate/reconcile post-import).
 - When the reference release is bumped, re-verify this range against a known
   PeerTube dump and update the constants + this note in the same change.
 

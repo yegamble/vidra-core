@@ -3,6 +3,7 @@ package peertubeimport
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,6 +18,12 @@ import (
 // PeerTube code.
 type Source struct {
 	pool *pgxpool.Pool
+
+	mu                       sync.Mutex
+	actorLinksChecked        bool
+	actorLinksOnActor        bool
+	thumbnailTypeChecked     bool
+	thumbnailTypeColumnFound bool
 }
 
 // OpenSource dials the source PeerTube database and verifies connectivity. The
@@ -77,6 +84,68 @@ func (s *Source) DetectVersion(ctx context.Context) (int, error) {
 	return v, nil
 }
 
+func (s *Source) hasColumn(ctx context.Context, table, column string) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = $1
+			  AND column_name = $2
+		)`, table, column).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("peertubeimport: inspect source schema column %s.%s: %w", table, column, err)
+	}
+	return exists, nil
+}
+
+func (s *Source) actorLinksLiveOnActor(ctx context.Context) (bool, error) {
+	s.mu.Lock()
+	if s.actorLinksChecked {
+		onActor := s.actorLinksOnActor
+		s.mu.Unlock()
+		return onActor, nil
+	}
+	s.mu.Unlock()
+
+	accountID, err := s.hasColumn(ctx, "actor", "accountId")
+	if err != nil {
+		return false, err
+	}
+	videoChannelID, err := s.hasColumn(ctx, "actor", "videoChannelId")
+	if err != nil {
+		return false, err
+	}
+	onActor := accountID && videoChannelID
+
+	s.mu.Lock()
+	s.actorLinksOnActor = onActor
+	s.actorLinksChecked = true
+	s.mu.Unlock()
+	return onActor, nil
+}
+
+func (s *Source) thumbnailHasTypeColumn(ctx context.Context) (bool, error) {
+	s.mu.Lock()
+	if s.thumbnailTypeChecked {
+		found := s.thumbnailTypeColumnFound
+		s.mu.Unlock()
+		return found, nil
+	}
+	s.mu.Unlock()
+
+	found, err := s.hasColumn(ctx, "thumbnail", "type")
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	s.thumbnailTypeColumnFound = found
+	s.thumbnailTypeChecked = true
+	s.mu.Unlock()
+	return found, nil
+}
+
 // ── source entity structs (Vidra-shaped, resolved from PeerTube joins) ──
 
 // SourceUser is a LOCAL PeerTube user + its account + actor identity. Remote
@@ -134,6 +203,12 @@ type SourceVideoFile struct {
 	Filename   string
 }
 
+// SourceHLSPlaylist is one PeerTube HLS playlist for a video.
+type SourceHLSPlaylist struct {
+	ID               int64
+	PlaylistFilename string
+}
+
 // SourceCaption is one subtitle track.
 type SourceCaption struct {
 	Language string
@@ -178,6 +253,14 @@ type SourceFollow struct {
 
 // Users returns every local user with its account + actor identity.
 func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actorJoin := `act.id = acc."actorId"`
+	if onActor {
+		actorJoin = `act."accountId" = acc.id`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.id, u.username, u.email, u.password,
 		       u.role, COALESCE(u."emailVerified", false),
@@ -185,7 +268,7 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 		       COALESCE(act."publicKey", ''), COALESCE(act."privateKey", '')
 		FROM "user" u
 		JOIN account acc ON acc."userId" = u.id
-		JOIN actor act ON act.id = acc."actorId"
+		JOIN actor act ON `+actorJoin+`
 		WHERE act."serverId" IS NULL
 		ORDER BY u.id`)
 	if err != nil {
@@ -206,13 +289,21 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 
 // Channels returns every local video channel with its owning user resolved.
 func (s *Source) Channels(ctx context.Context) ([]SourceChannel, error) {
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actorJoin := `cact.id = vc."actorId"`
+	if onActor {
+		actorJoin = `cact."videoChannelId" = vc.id`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT vc.id, acc."userId", cact."preferredUsername", vc.name,
 		       COALESCE(vc.description, ''), vc."createdAt",
 		       COALESCE(cact."publicKey", ''), COALESCE(cact."privateKey", '')
 		FROM "videoChannel" vc
 		JOIN account acc ON acc.id = vc."accountId"
-		JOIN actor cact ON cact.id = vc."actorId"
+		JOIN actor cact ON `+actorJoin+`
 		WHERE cact."serverId" IS NULL AND acc."userId" IS NOT NULL
 		ORDER BY vc.id`)
 	if err != nil {
@@ -233,12 +324,20 @@ func (s *Source) Channels(ctx context.Context) ([]SourceChannel, error) {
 
 // Videos returns every local video's metadata.
 func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actorJoin := `act.id = vc."actorId"`
+	if onActor {
+		actorJoin = `act."videoChannelId" = vc.id`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT v.id, v.uuid::text, v."channelId", v.name, COALESCE(v.description, ''),
 		       v.privacy, v.state, v.category, v.licence, v.language, v.duration, v."createdAt"
 		FROM video v
 		JOIN "videoChannel" vc ON vc.id = v."channelId"
-		JOIN actor act ON act.id = vc."actorId"
+		JOIN actor act ON `+actorJoin+`
 		WHERE act."serverId" IS NULL
 		ORDER BY v.id`)
 	if err != nil {
@@ -282,13 +381,41 @@ func (s *Source) VideoFiles(ctx context.Context, videoID int64) ([]SourceVideoFi
 	return out, rows.Err()
 }
 
+// HLSPlaylist returns the first HLS streaming playlist for a video, when present.
+func (s *Source) HLSPlaylist(ctx context.Context, videoID int64) (SourceHLSPlaylist, bool, error) {
+	var p SourceHLSPlaylist
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, COALESCE("playlistFilename", '')
+		FROM "videoStreamingPlaylist"
+		WHERE "videoId" = $1
+		ORDER BY id LIMIT 1`, videoID).Scan(&p.ID, &p.PlaylistFilename)
+	if err == pgx.ErrNoRows {
+		return SourceHLSPlaylist{}, false, nil
+	}
+	if err != nil {
+		return SourceHLSPlaylist{}, false, fmt.Errorf("peertubeimport: read hls playlist: %w", err)
+	}
+	if p.PlaylistFilename == "" {
+		return SourceHLSPlaylist{}, false, nil
+	}
+	return p, true, nil
+}
+
 // ThumbnailFilename returns the miniature thumbnail filename for a video ("" when
 // none). PeerTube thumbnail type 1 = MINIATURE.
 func (s *Source) ThumbnailFilename(ctx context.Context, videoID int64) (string, error) {
+	hasType, err := s.thumbnailHasTypeColumn(ctx)
+	if err != nil {
+		return "", err
+	}
+	where := `"videoId" = $1`
+	if hasType {
+		where += ` AND type = 1`
+	}
 	var filename string
-	err := s.pool.QueryRow(ctx, `
+	err = s.pool.QueryRow(ctx, `
 		SELECT filename FROM thumbnail
-		WHERE "videoId" = $1 AND type = 1
+		WHERE `+where+`
 		ORDER BY id LIMIT 1`, videoID).Scan(&filename)
 	if err == pgx.ErrNoRows {
 		return "", nil
@@ -347,12 +474,20 @@ func (s *Source) Tags(ctx context.Context, videoID int64) ([]string, error) {
 // before replies (ORDER BY id), so the importer can resolve parent_id from the
 // ledger as it goes.
 func (s *Source) Comments(ctx context.Context) ([]SourceComment, error) {
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actorJoin := `act.id = acc."actorId"`
+	if onActor {
+		actorJoin = `act."accountId" = acc.id`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT vc.id, vc."videoId", acc."userId",
 		       COALESCE(vc."inReplyToCommentId", 0), vc.text, vc."createdAt"
 		FROM "videoComment" vc
 		JOIN account acc ON acc.id = vc."accountId"
-		JOIN actor act ON act.id = acc."actorId"
+		JOIN actor act ON `+actorJoin+`
 		WHERE vc."deletedAt" IS NULL AND act."serverId" IS NULL AND acc."userId" IS NOT NULL
 		ORDER BY vc.id`)
 	if err != nil {
@@ -419,13 +554,23 @@ func (s *Source) PlaylistElements(ctx context.Context, playlistID int64) ([]Sour
 
 // Follows returns every accepted LOCAL-user → LOCAL-channel subscription.
 func (s *Source) Follows(ctx context.Context) ([]SourceFollow, error) {
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	accountJoin := `facc."actorId" = fa.id`
+	channelJoin := `tvc."actorId" = ta.id`
+	if onActor {
+		accountJoin = `facc.id = fa."accountId"`
+		channelJoin = `tvc.id = ta."videoChannelId"`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT facc."userId", tvc.id
 		FROM "actorFollow" af
 		JOIN actor fa ON fa.id = af."actorId"
-		JOIN account facc ON facc."actorId" = fa.id
+		JOIN account facc ON `+accountJoin+`
 		JOIN actor ta ON ta.id = af."targetActorId"
-		JOIN "videoChannel" tvc ON tvc."actorId" = ta.id
+		JOIN "videoChannel" tvc ON `+channelJoin+`
 		WHERE af.state = 'accepted'
 		  AND fa."serverId" IS NULL AND ta."serverId" IS NULL
 		  AND facc."userId" IS NOT NULL

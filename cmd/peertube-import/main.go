@@ -24,6 +24,9 @@
 //	  --source-dsn 'postgres://readonly:pw@oldhost:5432/peertube_prod?sslmode=disable' \
 //	  --source-storage local --source-local-root /mnt/peertube-media \
 //	  --conflict-policy skip --dry-run
+//
+// To reuse an existing PeerTube object-storage bucket without copying media,
+// configure STORAGE_* to that bucket and pass --media-mode reference.
 package main
 
 import (
@@ -60,7 +63,8 @@ func main() {
 		dryRun           = flag.Bool("dry-run", false, "report the plan + conflicts and write NOTHING")
 		resume           = flag.Bool("resume", false, "continue a prior import (default behaviour: already-imported rows are skipped)")
 		force            = flag.Bool("force", false, "override the supported-version refusal (HUMAN operators only; agents MUST NOT set this)")
-		noMedia          = flag.Bool("no-media", false, "import metadata only; do not copy media files")
+		mediaMode        = flag.String("media-mode", "copy", "media handling: copy | reference | none")
+		noMedia          = flag.Bool("no-media", false, "deprecated alias for --media-mode=none")
 	)
 	flag.Parse()
 
@@ -70,6 +74,13 @@ func main() {
 	policy, err := peertubeimport.ParseConflictPolicy(*conflictPolicy)
 	if err != nil {
 		fatal(err.Error())
+	}
+	mode, err := peertubeimport.ParseMediaMode(*mediaMode)
+	if err != nil {
+		fatal(err.Error())
+	}
+	if *noMedia {
+		mode = peertubeimport.MediaModeNone
 	}
 
 	// Source S3 credentials may come from the environment so they are not exposed
@@ -102,7 +113,7 @@ func main() {
 	}
 
 	var srcMedia storage.Backend
-	if !*noMedia {
+	if mode == peertubeimport.MediaModeCopy {
 		srcMedia, err = peertubeimport.OpenSourceStorage(peertubeimport.SourceStorageConfig{
 			Backend:          *sourceStorage,
 			LocalRoot:        *sourceLocalRoot,
@@ -139,6 +150,7 @@ func main() {
 	importer := peertubeimport.NewImporter(db.Pool, src, peertubeimport.Options{
 		Policy:    policy,
 		Force:     *force,
+		MediaMode: mode,
 		SrcMedia:  srcMedia,
 		DestMedia: destMedia,
 		SealKey:   sealKey,
@@ -148,7 +160,7 @@ func main() {
 	if err != nil {
 		fatal(err.Error())
 	}
-	log.Printf("preflight OK: source PeerTube schema version %d (policy=%s, dry-run=%v, resume=%v)", version, policy, *dryRun, *resume)
+	log.Printf("preflight OK: source PeerTube schema version %d (policy=%s, media-mode=%s, dry-run=%v, resume=%v)", version, policy, mode, *dryRun, *resume)
 
 	var report *peertubeimport.Report
 	if *dryRun {
