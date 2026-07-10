@@ -363,17 +363,26 @@ func TestE2EEFullRoundTrip(t *testing.T) {
 	if !conv.Encrypted {
 		t.Fatalf("conversation not flagged encrypted: %+v", conv)
 	}
+	if conv.OtherUserID != bobID {
+		t.Fatalf("ada encrypted start other_user_id = %q, want bob %q", conv.OtherUserID, bobID)
+	}
 	rec2 := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{"recipient_id":"`+adaID+`","encrypted":true}`, bobTok)
 	var conv2 conversationView
 	_ = json.Unmarshal(rec2.Body.Bytes(), &conv2)
 	if conv2.ID != conv.ID {
 		t.Fatalf("encrypted start-or-get mismatch: %s vs %s", conv.ID, conv2.ID)
 	}
+	if conv2.OtherUserID != adaID {
+		t.Fatalf("bob encrypted start other_user_id = %q, want ada %q", conv2.OtherUserID, adaID)
+	}
 	recP := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{"recipient_id":"`+bobID+`"}`, adaTok)
 	var plain conversationView
 	_ = json.Unmarshal(recP.Body.Bytes(), &plain)
 	if plain.ID == conv.ID || plain.Encrypted {
 		t.Fatalf("plaintext conversation should be distinct and unflagged; plain=%+v encrypted=%+v", plain, conv)
+	}
+	if plain.OtherUserID != bobID {
+		t.Fatalf("ada plaintext start other_user_id = %q, want bob %q", plain.OtherUserID, bobID)
 	}
 
 	// Ada lists Bob's devices (participant-gated) and claims one OTK per device.

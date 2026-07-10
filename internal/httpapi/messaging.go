@@ -41,10 +41,11 @@ func (r startConversationRequest) Validate() []FieldError {
 
 // conversationView is the projection of a conversation.
 type conversationView struct {
-	ID        string    `json:"id"`
-	Encrypted bool      `json:"encrypted"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	OtherUserID string    `json:"other_user_id"`
+	Encrypted   bool      `json:"encrypted"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // conversationSummaryView is a conversation in the inbox list: the other
@@ -257,7 +258,8 @@ func (s *Server) handleStartConversation(c echo.Context) error {
 			return err
 		}
 		return c.JSON(http.StatusCreated, conversationView{
-			ID: conv.ID.String(), Encrypted: true, CreatedAt: conv.CreatedAt, UpdatedAt: conv.UpdatedAt,
+			ID: conv.ID.String(), OtherUserID: recipientID.String(), Encrypted: true,
+			CreatedAt: conv.CreatedAt, UpdatedAt: conv.UpdatedAt,
 		})
 	}
 	conv, err := s.messagingsvc.StartConversation(c.Request().Context(), userID, recipientID)
@@ -273,7 +275,8 @@ func (s *Server) handleStartConversation(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusCreated, conversationView{
-		ID: conv.ID.String(), Encrypted: false, CreatedAt: conv.CreatedAt, UpdatedAt: conv.UpdatedAt,
+		ID: conv.ID.String(), OtherUserID: recipientID.String(), Encrypted: false,
+		CreatedAt: conv.CreatedAt, UpdatedAt: conv.UpdatedAt,
 	})
 }
 

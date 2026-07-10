@@ -12629,11 +12629,15 @@ components:
             types are distinct conversations.
     Conversation:
       type: object
-      required: [id, encrypted, created_at, updated_at]
+      required: [id, other_user_id, encrypted, created_at, updated_at]
       properties:
         id:
           type: string
           format: uuid
+        other_user_id:
+          type: string
+          format: uuid
+          description: The other participant's user id from the authenticated caller's perspective.
         encrypted:
           type: boolean
           description: Immutable conversation type, chosen at creation.
