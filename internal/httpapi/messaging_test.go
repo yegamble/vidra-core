@@ -478,6 +478,9 @@ func TestStartConversationByUsername(t *testing.T) {
 	}
 	var byID conversationView
 	_ = json.Unmarshal(rec.Body.Bytes(), &byID)
+	if byID.OtherUserID != bobID {
+		t.Fatalf("start by id other_user_id = %q, want %q", byID.OtherUserID, bobID)
+	}
 
 	// Ada starts with Bob by username (case-insensitive) → the SAME conversation.
 	rec2 := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{"recipient_username":"BOB"}`, adaTok)
@@ -488,6 +491,9 @@ func TestStartConversationByUsername(t *testing.T) {
 	_ = json.Unmarshal(rec2.Body.Bytes(), &byName)
 	if byName.ID != byID.ID {
 		t.Fatalf("start-by-username mismatch: %s (id) vs %s (username)", byID.ID, byName.ID)
+	}
+	if byName.OtherUserID != bobID {
+		t.Fatalf("start by username other_user_id = %q, want resolved peer %q", byName.OtherUserID, bobID)
 	}
 
 	// Blocked-by-username → 403: a block between the two users applies after
@@ -533,6 +539,9 @@ func TestMessagingFlow(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &conv); err != nil {
 		t.Fatalf("unmarshal conversation: %v", err)
 	}
+	if conv.OtherUserID != bobID {
+		t.Fatalf("ada start other_user_id = %q, want bob %q", conv.OtherUserID, bobID)
+	}
 
 	// Bob starting with Ada returns the SAME conversation (idempotent create-or-get).
 	rec2 := sendJSONAuth(srv, http.MethodPost, "/api/v1/conversations", `{"recipient_id":"`+adaID+`"}`, bobTok)
@@ -540,6 +549,9 @@ func TestMessagingFlow(t *testing.T) {
 	_ = json.Unmarshal(rec2.Body.Bytes(), &conv2)
 	if conv2.ID != conv.ID {
 		t.Fatalf("start-or-get mismatch: %s vs %s", conv.ID, conv2.ID)
+	}
+	if conv2.OtherUserID != adaID {
+		t.Fatalf("bob start other_user_id = %q, want ada %q", conv2.OtherUserID, adaID)
 	}
 
 	// Ada sends a message; the response echoes the sender's identity.
