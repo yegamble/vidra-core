@@ -36,7 +36,8 @@ func uploadThumbnail(srv *Server, id, filename, contentType, content, token stri
 }
 
 // TestSetVideoThumbnail: an owner uploads a custom poster; it is stored, served
-// by GET /thumbnail, and the detail endpoint reports has_thumbnail.
+// by owner-authorized GET /thumbnail while the video is still a draft, and the
+// owner detail reports has_thumbnail. Anonymous draft media stays hidden.
 func TestSetVideoThumbnail(t *testing.T) {
 	srv := videoServer(t)
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
@@ -57,8 +58,9 @@ func TestSetVideoThumbnail(t *testing.T) {
 		t.Fatalf("file view = %+v, want kind=thumbnail content_type=image/png", fv)
 	}
 
-	// GET /thumbnail now serves it with the derived content type.
-	g := getThumbnail(srv, id, "")
+	// The owner can inspect draft media; anonymous callers still get a 404 until
+	// the video reaches the published state.
+	g := getThumbnail(srv, id, tok)
 	if g.Code != http.StatusOK {
 		t.Fatalf("thumbnail after upload = %d, want 200", g.Code)
 	}
@@ -68,7 +70,7 @@ func TestSetVideoThumbnail(t *testing.T) {
 
 	// The detail endpoint reports the thumbnail.
 	var detail videoView
-	_ = json.Unmarshal(getVideo(srv, id, "").Body.Bytes(), &detail)
+	_ = json.Unmarshal(getVideo(srv, id, tok).Body.Bytes(), &detail)
 	if detail.HasThumbnail == nil || !*detail.HasThumbnail {
 		t.Errorf("detail has_thumbnail = %v, want true", detail.HasThumbnail)
 	}

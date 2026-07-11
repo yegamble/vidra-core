@@ -114,6 +114,20 @@ func instanceName(t *testing.T, srv *Server) string {
 	return body.Name
 }
 
+func publicInstance(t *testing.T, srv *Server) instanceResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /instance = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body instanceResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal instance: %v", err)
+	}
+	return body
+}
+
 // TestInstanceSettingsAdminFlow covers the admin GET/PATCH overlay: defaults,
 // override + reload reflected in GET /instance, the audit event, null-resets,
 // per-key validation, and the non-admin/anon guards.
@@ -137,10 +151,10 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	}
 
 	// Default state: instance_name is the config value and nothing is overridden.
-	// 12 original keys + 21 platform-information keys (instance-platform-info).
+	// 13 feature/base keys + 21 platform-information keys + 4 operational limits.
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 37 {
-		t.Fatalf("settings count = %d, want 37", len(got.Settings))
+	if len(got.Settings) != 38 {
+		t.Fatalf("settings count = %d, want 38", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {
@@ -148,6 +162,9 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	}
 	if up := settingView(t, got, instancesettings.KeyUploadsEnabled); up.Value != true || up.Type != "bool" {
 		t.Errorf("uploads_enabled default view = %+v, want value=true type=bool", up)
+	}
+	if dl := settingView(t, got, instancesettings.KeyDownloadsEnabled); dl.Value != true || dl.Default != true || dl.Type != "bool" {
+		t.Errorf("downloads_enabled default view = %+v, want value/default=true type=bool", dl)
 	}
 	if policy := settingView(t, got, instancesettings.KeySensitiveContentPolicy); policy.Value != "hide" ||
 		policy.Type != "enum" || !reflect.DeepEqual(policy.Options, instancesettings.SensitiveContentPolicyOptions) {
@@ -159,7 +176,7 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 
 	// Override a string + a bool + a URL.
 	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings",
-		`{"instance_name":"Renamed","uploads_enabled":false,"terms_url":"https://x.test/terms"}`, adminTok)
+		`{"instance_name":"Renamed","uploads_enabled":false,"downloads_enabled":false,"terms_url":"https://x.test/terms"}`, adminTok)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch = %d; body=%s", rec.Code, rec.Body.String())
 	}
@@ -170,17 +187,23 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	if v := settingView(t, after, instancesettings.KeyUploadsEnabled); v.Value != false || !v.Overridden {
 		t.Errorf("uploads_enabled after patch = %+v, want value=false overridden=true", v)
 	}
+	if v := settingView(t, after, instancesettings.KeyDownloadsEnabled); v.Value != false || !v.Overridden {
+		t.Errorf("downloads_enabled after patch = %+v, want value=false overridden=true", v)
+	}
 
 	// The public GET /instance reflects the reloaded overlay.
 	if n := instanceName(t, srv); n != "Renamed" {
 		t.Errorf("GET /instance name = %q, want Renamed", n)
 	}
+	if publicInstance(t, srv).Features.Downloads {
+		t.Error("GET /instance features.downloads = true after disabling downloads")
+	}
 
 	// Audit: admin.instance.update success, reason names the changed keys only
 	// (sorted), never the values.
 	reason := latestInstanceUpdateReason(t, &buf)
-	if reason != "keys=instance_name,terms_url,uploads_enabled" {
-		t.Errorf("audit reason = %q, want keys=instance_name,terms_url,uploads_enabled", reason)
+	if reason != "keys=downloads_enabled,instance_name,terms_url,uploads_enabled" {
+		t.Errorf("audit reason = %q, want keys=downloads_enabled,instance_name,terms_url,uploads_enabled", reason)
 	}
 	if strings.Contains(reason, "Renamed") || strings.Contains(reason, "x.test") {
 		t.Errorf("audit reason leaked a value: %q", reason)

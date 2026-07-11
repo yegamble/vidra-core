@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -146,6 +147,9 @@ func seedReadyHLS(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backend, 
 	put(prefix+"/master.m3u8", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=985600,RESOLUTION=320x240\n240p/playlist.m3u8\n")
 	put(prefix+"/240p/playlist.m3u8", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXTINF:2.0,\nseg_00000.ts\n#EXT-X-ENDLIST\n")
 	put(prefix+"/240p/seg_00000.ts", "fake-ts-bytes")
+	put(media.HLSDownloadKey(prefix+"/240p", true), "fake-muxed-mp4")
+	put(media.HLSDownloadKey(prefix+"/240p", false), "fake-video-only-mp4")
+	put(media.HLSAudioDownloadKey(prefix+"/master.m3u8"), "fake-audio-m4a")
 }
 
 // seedReadyPeerTubeHLS marks videoID ready with a PeerTube object-storage HLS
@@ -198,7 +202,15 @@ func seedReadyLadder(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backen
 		put(prefix+"/"+itoa(r.h)+"p/playlist.m3u8",
 			"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXTINF:2.0,\nseg_00000.ts\n#EXT-X-ENDLIST\n")
 		put(prefix+"/"+itoa(r.h)+"p/seg_00000.ts", "fake-ts-bytes")
+		put(media.HLSDownloadKey(prefix+"/"+itoa(r.h)+"p", true), "fake-muxed-mp4")
+		put(media.HLSDownloadKey(prefix+"/"+itoa(r.h)+"p", false), "fake-video-only-mp4")
 	}
+	put := func(key, content string) {
+		if _, err := blobs.Put(context.Background(), key, strings.NewReader(content)); err != nil {
+			t.Fatalf("Put %q: %v", key, err)
+		}
+	}
+	put(media.HLSAudioDownloadKey(prefix+"/master.m3u8"), "fake-audio-m4a")
 	if _, err := blobs.Put(context.Background(), prefix+"/master.m3u8", strings.NewReader(master.String())); err != nil {
 		t.Fatalf("Put master: %v", err)
 	}

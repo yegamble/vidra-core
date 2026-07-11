@@ -17,6 +17,27 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
+func assertStoredStreamTypes(t *testing.T, blobs *storage.Local, key string, want ...string) {
+	t.Helper()
+	path, err := blobs.Path(key)
+	if err != nil {
+		t.Fatalf("Path %q: %v", key, err)
+	}
+	out, err := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "stream=codec_type",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		path,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffprobe %q: %v\n%s", key, err, out)
+	}
+	got := strings.Fields(string(out))
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("%s stream types = %v, want %v", key, got, want)
+	}
+}
+
 // TestHLSTranscoderRealVideo drives the real ffmpeg exec path: a tiny 320x240
 // testsrc fixture is transcoded and the master playlist, the single 240p rung
 // (cap-at-source), its variant playlist, and its segments must all land in
@@ -33,6 +54,7 @@ func TestHLSTranscoderRealVideo(t *testing.T) {
 		t.Fatalf("NewLocal: %v", err)
 	}
 	videoID := uuid.New()
+	prefix := HLSKeyPrefix(videoID)
 	srcKey := "web-videos/" + videoID.String() + ".mp4"
 	path, err := blobs.Path(srcKey)
 	if err != nil {
@@ -40,6 +62,11 @@ func TestHLSTranscoderRealVideo(t *testing.T) {
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
+	}
+	// Simulate replacing a previously-audible source. The silent transcode below
+	// must remove this optional derivative instead of advertising stale audio.
+	if _, err := blobs.Put(context.Background(), HLSAudioDownloadKey(prefix+"/master.m3u8"), strings.NewReader("stale-audio")); err != nil {
+		t.Fatalf("seed stale audio: %v", err)
 	}
 	gen := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=24", path)
 	if out, err := gen.CombinedOutput(); err != nil {
@@ -55,7 +82,6 @@ func TestHLSTranscoderRealVideo(t *testing.T) {
 		t.Fatalf("Transcode: %v", err)
 	}
 
-	prefix := HLSKeyPrefix(videoID)
 	if res.MasterKey != prefix+"/master.m3u8" {
 		t.Errorf("MasterKey = %q, want %q", res.MasterKey, prefix+"/master.m3u8")
 	}
@@ -113,6 +139,15 @@ func TestHLSTranscoderRealVideo(t *testing.T) {
 		if err != nil || !exists {
 			t.Errorf("segment %q not stored under %s (exists=%v err=%v)", seg, r.KeyPrefix, exists, err)
 		}
+	}
+
+	// Every rendition also has stable progressive MP4 downloads. This fixture
+	// is silent, so the muxed asset contains video alone and no audio-only asset
+	// should be stored.
+	assertStoredStreamTypes(t, blobs, HLSDownloadKey(r.KeyPrefix, true), "video")
+	assertStoredStreamTypes(t, blobs, HLSDownloadKey(r.KeyPrefix, false), "video")
+	if exists, err := blobs.Exists(context.Background(), HLSAudioDownloadKey(res.MasterKey)); err != nil || exists {
+		t.Errorf("silent source audio asset exists=%v err=%v, want absent", exists, err)
 	}
 }
 
@@ -205,5 +240,19 @@ func TestHLSTranscoderHDLadderMultipleRenditions(t *testing.T) {
 		if exists, err := blobs.Exists(context.Background(), r.KeyPrefix+"/seg_00000.ts"); err != nil || !exists {
 			t.Errorf("%dp first segment not stored (exists=%v err=%v)", r.Height, exists, err)
 		}
+		for _, includeAudio := range []bool{true, false} {
+			key := HLSDownloadKey(r.KeyPrefix, includeAudio)
+			if exists, err := blobs.Exists(context.Background(), key); err != nil || !exists {
+				t.Errorf("%dp progressive download %q not stored (exists=%v err=%v)", r.Height, key, exists, err)
+			}
+		}
 	}
+
+	// Probe the top-rung assets to pin their stream composition. The muxed MP4
+	// carries video+audio, video-only omits audio, and the root M4A carries only
+	// the copied AAC stream.
+	top := res.Renditions[0]
+	assertStoredStreamTypes(t, blobs, HLSDownloadKey(top.KeyPrefix, true), "video", "audio")
+	assertStoredStreamTypes(t, blobs, HLSDownloadKey(top.KeyPrefix, false), "video")
+	assertStoredStreamTypes(t, blobs, HLSAudioDownloadKey(res.MasterKey), "audio")
 }

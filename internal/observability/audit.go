@@ -53,6 +53,7 @@ const (
 	// settings overlay (fix_plan P10). Reason carries the changed KEY NAMES only
 	// — never the values, which can include the operator contact email.
 	ActionAdminInstanceUpdate = "admin.instance.update"
+	ActionVideoUpdate         = "content.video.update"
 	ActionVideoDelete         = "content.video.delete"
 	ActionChannelDelete       = "content.channel.delete"
 	ActionMediaGC             = "admin.media.gc"

@@ -156,7 +156,7 @@ func (e *QuotaExceededError) Error() string { return "storage quota exceeded" }
 
 // FeatureDisabledError renders as 403 with the stable code "feature_disabled":
 // the instance operator has turned off this feature via the admin
-// instance-settings overlay (uploads/imports/live/comments). Feature names the
+// instance-settings overlay (uploads/imports/live/comments/downloads). Feature names the
 // toggle that is off, for logging/diagnostics; the client-facing message is
 // generic.
 type FeatureDisabledError struct{ Feature string }

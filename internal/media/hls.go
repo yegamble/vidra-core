@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -17,6 +18,17 @@ import (
 
 // hlsSegmentSeconds is the target MPEG-TS segment duration.
 const hlsSegmentSeconds = 4
+
+// Stable filenames and content types for the progressive download assets
+// emitted alongside HLS playlists. The muxed and video-only files live in a
+// rendition directory; the audio file lives beside the master playlist.
+const (
+	HLSMuxedDownloadFilename     = "video.mp4"
+	HLSVideoOnlyDownloadFilename = "video-only.mp4"
+	HLSAudioDownloadFilename     = "audio.m4a"
+	HLSMP4ContentType            = "video/mp4"
+	HLSM4AContentType            = "audio/mp4"
+)
 
 // hlsLadder is the H.264/AAC encoding ladder, highest rung first. Rungs above
 // the source height are skipped (never upscale); a source shorter than the
@@ -132,6 +144,48 @@ func hlsRungArgs(src, dir string, r HLSRung) []string {
 	}
 }
 
+// hlsProgressiveMP4Args builds an ffmpeg argument vector that remuxes an HLS
+// rendition into a progressive MP4 without re-encoding. The audio map is
+// optional for the muxed asset so a silent source still produces a valid MP4.
+func hlsProgressiveMP4Args(playlist, dst string, includeAudio bool) []string {
+	args := []string{
+		"-y",
+		"-i", playlist,
+		"-map", "0:v:0",
+	}
+	if includeAudio {
+		args = append(args,
+			"-map", "0:a:0?",
+			"-c", "copy",
+		)
+	} else {
+		args = append(args,
+			"-c:v", "copy",
+			"-an",
+		)
+	}
+	return append(args,
+		"-movflags", "+faststart",
+		dst,
+	)
+}
+
+// hlsAudioM4AArgs builds an ffmpeg argument vector that extracts the top HLS
+// rendition's AAC stream into an M4A without re-encoding. Unlike the muxed MP4
+// builder, its audio map is required: no-audio inputs fail this best-effort
+// command and do not leave an advertised asset behind.
+func hlsAudioM4AArgs(playlist, dst string) []string {
+	return []string{
+		"-y",
+		"-i", playlist,
+		"-map", "0:a:0",
+		"-vn",
+		"-c:a", "copy",
+		"-movflags", "+faststart",
+		dst,
+	}
+}
+
 // renderMasterPlaylist renders the HLS master playlist for the given rungs.
 // Variant URIs are RELATIVE ("720p/playlist.m3u8") so the playlist works when
 // proxied from any base path. Pure (no exec/IO) so it is unit-testable.
@@ -170,6 +224,23 @@ type HLSResult struct {
 // .ralph/specs/storage-layout.md).
 func HLSKeyPrefix(videoID uuid.UUID) string {
 	return "streaming-playlists/" + videoID.String()
+}
+
+// HLSDownloadKey returns the stable object key for a rendition's progressive
+// download asset. includeAudio selects the muxed asset; false selects video
+// only. renditionKeyPrefix is the HLSRendition.KeyPrefix value.
+func HLSDownloadKey(renditionKeyPrefix string, includeAudio bool) string {
+	name := HLSVideoOnlyDownloadFilename
+	if includeAudio {
+		name = HLSMuxedDownloadFilename
+	}
+	return path.Join(renditionKeyPrefix, name)
+}
+
+// HLSAudioDownloadKey returns the stable object key for the top rendition's
+// audio-only asset from the corresponding HLSResult.MasterKey.
+func HLSAudioDownloadKey(masterKey string) string {
+	return path.Join(path.Dir(masterKey), HLSAudioDownloadFilename)
 }
 
 // HLSTranscoder produces an H.264/AAC HLS ladder for a stored original by
@@ -228,7 +299,7 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	for _, r := range rungs {
+	for i, r := range rungs {
 		dir := filepath.Join(tmp, r.Name())
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return HLSResult{}, err
@@ -239,6 +310,19 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 		if err := cmd.Run(); err != nil {
 			return HLSResult{}, fmt.Errorf("media: ffmpeg hls %s for %q: %w: %s", r.Name(), sourceKey, err, tailOf(stderr.String()))
 		}
+		playlist := filepath.Join(dir, "playlist.m3u8")
+		if err := t.remuxHLSDownloads(ctx, sourceKey, playlist, dir, r); err != nil {
+			return HLSResult{}, err
+		}
+		if i == 0 {
+			// Audio-only is an optional convenience asset. A silent source (or
+			// any extraction failure) must not fail the canonical HLS transcode.
+			dst := filepath.Join(tmp, HLSAudioDownloadFilename)
+			cmd := exec.CommandContext(ctx, t.bin, hlsAudioM4AArgs(playlist, dst)...)
+			if err := cmd.Run(); err != nil {
+				_ = os.Remove(dst)
+			}
+		}
 	}
 	master := renderMasterPlaylist(rungs)
 	if err := os.WriteFile(filepath.Join(tmp, "master.m3u8"), []byte(master), 0o644); err != nil {
@@ -246,6 +330,16 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 	}
 
 	prefix := HLSKeyPrefix(videoID)
+	// A replacement source may be silent even when the previous generation had
+	// audio. storeTree only overwrites files present in the new tree, so remove
+	// the old optional derivative before storing a generation that omits it.
+	if _, statErr := os.Stat(filepath.Join(tmp, HLSAudioDownloadFilename)); os.IsNotExist(statErr) {
+		if err := t.blobs.Delete(ctx, prefix+"/"+HLSAudioDownloadFilename); err != nil {
+			return HLSResult{}, err
+		}
+	} else if statErr != nil {
+		return HLSResult{}, statErr
+	}
 	if err := t.storeTree(ctx, tmp, prefix); err != nil {
 		return HLSResult{}, err
 	}
@@ -270,6 +364,30 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 		}
 	}
 	return res, nil
+}
+
+// remuxHLSDownloads emits the two required progressive MP4 assets for a
+// rendition. Both are canonical download outputs, so either command failing
+// fails the transcode rather than storing a partial tree.
+func (t *HLSTranscoder) remuxHLSDownloads(ctx context.Context, sourceKey, playlist, dir string, r HLSRung) error {
+	outputs := []struct {
+		includeAudio bool
+		filename     string
+		label        string
+	}{
+		{includeAudio: true, filename: HLSMuxedDownloadFilename, label: "muxed"},
+		{includeAudio: false, filename: HLSVideoOnlyDownloadFilename, label: "video-only"},
+	}
+	for _, output := range outputs {
+		dst := filepath.Join(dir, output.filename)
+		cmd := exec.CommandContext(ctx, t.bin, hlsProgressiveMP4Args(playlist, dst, output.includeAudio)...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("media: ffmpeg hls %s %s download for %q: %w: %s", r.Name(), output.label, sourceKey, err, tailOf(stderr.String()))
+		}
+	}
+	return nil
 }
 
 // storeTree Puts every regular file under root into blobs at

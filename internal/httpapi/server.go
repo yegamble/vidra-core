@@ -875,6 +875,11 @@ func (s *Server) routes() {
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
 		api.GET("/videos/:id/download", s.handleGetVideoDownloads, s.optionalAuth)
+		api.GET("/videos/:id/download/original", s.handleDownloadVideoOriginal, s.optionalAuth)
+		api.GET("/videos/:id/download/webm", s.handleDownloadVideoWebM, s.optionalAuth)
+		api.GET("/videos/:id/download/audio", s.handleDownloadHLSAudio, s.optionalAuth)
+		api.GET("/videos/:id/download/hls/:height", s.handleDownloadHLSRendition, s.optionalAuth)
+		api.GET("/videos/:id/download/subtitles/:lang", s.handleDownloadVideoSubtitle, s.optionalAuth)
 
 		// HLS playback (transcoded ladder): the master playlist plus per-rendition
 		// variant playlists/segments, same visibility as /original. Registered only

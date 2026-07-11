@@ -52,6 +52,7 @@ const (
 	KeyImportsEnabled              = "imports_enabled"
 	KeyLiveEnabled                 = "live_enabled"
 	KeyCommentsEnabled             = "comments_enabled"
+	KeyDownloadsEnabled            = "downloads_enabled"
 
 	// Platform-information keys (spec instance-platform-info). All are pure
 	// key-value overlay rows with HARDCODED defaults (no config/env backing):
@@ -199,6 +200,9 @@ var specs = []spec{
 	{key: KeyImportsEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.ImportsEnabled }, validate: validateBool},
 	{key: KeyLiveEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.LiveEnabled }, validate: validateBool},
 	{key: KeyCommentsEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.CommentsEnabled }, validate: validateBool},
+	// Downloads are enabled by default and intentionally have no env/config
+	// backing: the runtime admin setting is the single operator control.
+	{key: KeyDownloadsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool},
 
 	// Platform information (spec instance-platform-info). Defaults are hardcoded
 	// (empty, except default_language and sensitive_content_policy) — these keys

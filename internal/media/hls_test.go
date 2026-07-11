@@ -2,6 +2,7 @@ package media
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -99,6 +100,66 @@ func TestHLSRungArgs(t *testing.T) {
 	}
 }
 
+func TestHLSProgressiveMP4Args(t *testing.T) {
+	const playlist = "/out/720p/playlist.m3u8"
+	tests := []struct {
+		name         string
+		includeAudio bool
+		dst          string
+		want         []string
+	}{
+		{
+			name:         "muxed with optional audio",
+			includeAudio: true,
+			dst:          "/out/720p/video.mp4",
+			want: []string{
+				"-y", "-i", playlist,
+				"-map", "0:v:0",
+				"-map", "0:a:0?",
+				"-c", "copy",
+				"-movflags", "+faststart",
+				"/out/720p/video.mp4",
+			},
+		},
+		{
+			name:         "video only",
+			includeAudio: false,
+			dst:          "/out/720p/video-only.mp4",
+			want: []string{
+				"-y", "-i", playlist,
+				"-map", "0:v:0",
+				"-c:v", "copy",
+				"-an",
+				"-movflags", "+faststart",
+				"/out/720p/video-only.mp4",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hlsProgressiveMP4Args(playlist, tt.dst, tt.includeAudio)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("hlsProgressiveMP4Args() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHLSAudioM4AArgs(t *testing.T) {
+	got := hlsAudioM4AArgs("/out/720p/playlist.m3u8", "/out/audio.m4a")
+	want := []string{
+		"-y", "-i", "/out/720p/playlist.m3u8",
+		"-map", "0:a:0",
+		"-vn",
+		"-c:a", "copy",
+		"-movflags", "+faststart",
+		"/out/audio.m4a",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("hlsAudioM4AArgs() = %#v, want %#v", got, want)
+	}
+}
+
 func TestRenderMasterPlaylist(t *testing.T) {
 	rungs := []HLSRung{
 		{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128},
@@ -128,5 +189,24 @@ func TestHLSKeyPrefix(t *testing.T) {
 	id := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	if got, want := HLSKeyPrefix(id), "streaming-playlists/6ba7b810-9dad-11d1-80b4-00c04fd430c8"; got != want {
 		t.Errorf("HLSKeyPrefix = %q, want %q", got, want)
+	}
+}
+
+func TestHLSDownloadKeys(t *testing.T) {
+	const (
+		rendition = "streaming-playlists/video-id/720p"
+		master    = "streaming-playlists/video-id/master.m3u8"
+	)
+	if got, want := HLSDownloadKey(rendition, true), rendition+"/"+HLSMuxedDownloadFilename; got != want {
+		t.Errorf("HLSDownloadKey(muxed) = %q, want %q", got, want)
+	}
+	if got, want := HLSDownloadKey(rendition, false), rendition+"/"+HLSVideoOnlyDownloadFilename; got != want {
+		t.Errorf("HLSDownloadKey(video-only) = %q, want %q", got, want)
+	}
+	if got, want := HLSAudioDownloadKey(master), "streaming-playlists/video-id/"+HLSAudioDownloadFilename; got != want {
+		t.Errorf("HLSAudioDownloadKey = %q, want %q", got, want)
+	}
+	if HLSMP4ContentType != "video/mp4" || HLSM4AContentType != "audio/mp4" {
+		t.Errorf("download content types = %q, %q", HLSMP4ContentType, HLSM4AContentType)
 	}
 }

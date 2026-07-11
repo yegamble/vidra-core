@@ -183,6 +183,9 @@ func TestOverlayResolution(t *testing.T) {
 	if !svc.Bool(KeyUploadsEnabled) {
 		t.Error("default uploads_enabled = false, want true")
 	}
+	if !svc.Bool(KeyDownloadsEnabled) {
+		t.Error("default downloads_enabled = false, want true")
+	}
 	for _, e := range svc.Snapshot() {
 		if e.Overridden {
 			t.Errorf("key %q unexpectedly overridden before any write", e.Key)
@@ -229,6 +232,21 @@ func TestOverlayResolution(t *testing.T) {
 	// uploads_enabled override persists independently.
 	if svc.Bool(KeyUploadsEnabled) {
 		t.Error("uploads_enabled override lost after clearing a different key")
+	}
+
+	// downloads_enabled is a hardcoded-default runtime toggle (no config/env
+	// backing): false overrides it and clearing the row restores true.
+	if err := svc.Apply(ctx, map[string]Update{KeyDownloadsEnabled: {Value: "false"}}, admin); err != nil {
+		t.Fatalf("apply downloads override: %v", err)
+	}
+	if svc.Bool(KeyDownloadsEnabled) {
+		t.Error("downloads_enabled override = true, want false")
+	}
+	if err := svc.Apply(ctx, map[string]Update{KeyDownloadsEnabled: {Delete: true}}, admin); err != nil {
+		t.Fatalf("clear downloads override: %v", err)
+	}
+	if !svc.Bool(KeyDownloadsEnabled) {
+		t.Error("downloads_enabled after clear = false, want hardcoded default true")
 	}
 }
 

@@ -20,10 +20,11 @@ type instanceSoftware struct {
 // instance-settings overlay over static config) so the frontend can disable the
 // matching affordances — e.g. hide the studio upload form when uploads are off.
 type instanceFeatures struct {
-	Uploads  bool `json:"uploads"`
-	Imports  bool `json:"imports"`
-	Live     bool `json:"live"`
-	Comments bool `json:"comments"`
+	Uploads   bool `json:"uploads"`
+	Imports   bool `json:"imports"`
+	Live      bool `json:"live"`
+	Comments  bool `json:"comments"`
+	Downloads bool `json:"downloads"`
 }
 
 // instanceSocialLinks is the operator's social/link row (empty strings when
@@ -112,10 +113,11 @@ func (s *Server) handleInstance(c echo.Context) error {
 			Bluesky:  s.settingString(instancesettings.KeyBlueskyLink, ""),
 		},
 		Features: instanceFeatures{
-			Uploads:  s.uploadsEnabled(),
-			Imports:  s.importsEnabled(),
-			Live:     s.liveEnabled(),
-			Comments: s.commentsEnabled(),
+			Uploads:   s.uploadsEnabled(),
+			Imports:   s.importsEnabled(),
+			Live:      s.liveEnabled(),
+			Comments:  s.commentsEnabled(),
+			Downloads: s.downloadsEnabled(),
 		},
 	})
 }
