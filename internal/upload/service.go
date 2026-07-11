@@ -85,11 +85,12 @@ type Repository interface {
 
 // Service holds the resumable-upload logic.
 type Service struct {
-	repo              Repository
-	blobs             storage.Backend
-	chunkSize         int32
-	maxActiveSessions int
-	now               func() time.Time
+	repo                Repository
+	blobs               storage.Backend
+	chunkSize           int32
+	maxActiveSessions   int
+	maxActiveSessionsFn func() int // when set, supersedes maxActiveSessions (live overlay)
+	now                 func() time.Time
 }
 
 // Option customises the Service.
@@ -120,6 +121,13 @@ func WithMaxActiveSessions(n int) Option {
 	return func(s *Service) { s.maxActiveSessions = n }
 }
 
+// WithMaxActiveSessionsFunc makes the active-session cap dynamic: f is consulted
+// per CreateSession so an admin can retune the overlay at runtime. When set it
+// supersedes WithMaxActiveSessions. f returning <= 0 disables the limit.
+func WithMaxActiveSessionsFunc(f func() int) Option {
+	return func(s *Service) { s.maxActiveSessionsFn = f }
+}
+
 // NewService builds the upload service. blobs stores the chunk bytes; it must
 // be non-nil in production (the routes only mount when it is).
 func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service {
@@ -142,12 +150,16 @@ func (s *Service) CreateSession(ctx context.Context, videoID, userID uuid.UUID, 
 	// This is a fairness/backpressure signal, not a security boundary — a small
 	// TOCTOU window between the count and the insert is acceptable (the sweeper
 	// and per-file quota are the hard limits).
-	if s.maxActiveSessions > 0 {
+	maxActive := s.maxActiveSessions
+	if s.maxActiveSessionsFn != nil {
+		maxActive = s.maxActiveSessionsFn()
+	}
+	if maxActive > 0 {
 		active, err := s.repo.CountActiveUploadSessionsForUser(ctx, userID)
 		if err != nil {
 			return sqlcgen.UploadSession{}, err
 		}
-		if active >= int64(s.maxActiveSessions) {
+		if active >= int64(maxActive) {
 			return sqlcgen.UploadSession{}, ErrTooManyActiveSessions
 		}
 	}

@@ -78,6 +78,14 @@ const (
 	KeySensitiveContentPolicy   = "sensitive_content_policy"
 	KeyInstanceCategories       = "instance_categories"
 	KeyModeratorLanguages       = "moderator_languages"
+
+	// Operational-limit keys (config-parity slice). Group-A overlays on already
+	// enforced env knobs: each default comes from config and each value is read
+	// on the request/job hot path, so an admin can retune caps without a restart.
+	KeyDefaultUserQuotaBytes          = "default_user_quota_bytes"
+	KeyUploadMaxSizeBytes             = "upload_max_size_bytes"
+	KeyUploadMaxActiveSessionsPerUser = "upload_max_active_sessions_per_user"
+	KeyImportMaxHeight                = "import_max_height"
 )
 
 // Kind is a setting's value type, reported to clients and used to validate the
@@ -93,7 +101,17 @@ const (
 	// KindList is a list of strings. The TEXT value column stores the canonical
 	// JSON array; the API value is a JSON array of strings.
 	KindList Kind = "list"
+	// KindInt is a bounded integer (operational limits/quotas). The TEXT value
+	// column stores the canonical decimal string; the API value is a JSON number.
+	// Values are capped at maxSafeInt so they round-trip exactly through a JS
+	// double.
+	KindInt Kind = "int"
 )
+
+// maxSafeInt is JavaScript's Number.MAX_SAFE_INTEGER (2^53 - 1): the largest
+// integer a client can hold without silent precision loss. Every int-kind value
+// is bounded to it so GET/PATCH round-trips are exact.
+const maxSafeInt int64 = 1<<53 - 1
 
 // Sensitive-content policy values (KeySensitiveContentPolicy). "hide" is
 // enforced server-side (sensitive videos drop out of the public browse/search
@@ -137,6 +155,15 @@ type Defaults struct {
 	ImportsEnabled              bool
 	LiveEnabled                 bool
 	CommentsEnabled             bool
+
+	// Operational limits (int kinds). Defaults come from the parsed config: the
+	// per-user storage quota (bytes; 0 = unlimited), the max single-upload size
+	// (bytes; 0 = no cap), the max concurrent active upload sessions per user
+	// (0 = unlimited), and the URL-import resolution cap (0 = no cap).
+	DefaultUserQuotaBytes          int64
+	UploadMaxSizeBytes             int64
+	UploadMaxActiveSessionsPerUser int64
+	ImportMaxHeight                int64
 }
 
 // spec describes one setting: its key, value kind, how to resolve its default
@@ -148,7 +175,8 @@ type spec struct {
 	kind      Kind
 	defString func(Defaults) string
 	defBool   func(Defaults) bool
-	options   []string // enum kinds only: the allowed values, in display order
+	defInt    func(Defaults) int64 // int kinds only
+	options   []string             // enum kinds only: the allowed values, in display order
 	validate  func(string) error
 }
 
@@ -199,6 +227,18 @@ var specs = []spec{
 		validate: listOf(video.IsCategory, "category")},
 	{key: KeyModeratorLanguages, kind: KindList, defString: hardcoded(emptyList),
 		validate: listOf(video.IsLanguage, "language")},
+
+	// Operational limits (config-parity slice). Bounds mirror the config
+	// validators exactly (config.go) so a runtime override can never set a value
+	// the boot-time config would have rejected.
+	{key: KeyDefaultUserQuotaBytes, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.DefaultUserQuotaBytes }, validate: intMin(0)},
+	{key: KeyUploadMaxSizeBytes, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.UploadMaxSizeBytes }, validate: intZeroOrRange(1<<20, maxSafeInt)},
+	{key: KeyUploadMaxActiveSessionsPerUser, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.UploadMaxActiveSessionsPerUser }, validate: intRange(0, 10000)},
+	{key: KeyImportMaxHeight, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.ImportMaxHeight }, validate: intZeroOrRange(144, 4320)},
 }
 
 var specByKey = func() map[string]spec {
@@ -308,6 +348,24 @@ func (s *Service) String(key string) string {
 	return sp.defString(s.defaults)
 }
 
+// Int returns the effective value for an int-kind key: the DB override if
+// present and parseable, else the config default. An unknown or non-int key
+// returns 0. A stored value that fails to parse (only reachable via a manual DB
+// edit — Apply validates every write) falls back to the default, mirroring the
+// defensive posture of Strings.
+func (s *Service) Int(key string) int64 {
+	sp, ok := specByKey[key]
+	if !ok || sp.kind != KindInt {
+		return 0
+	}
+	if raw, set := s.override(key); set {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			return v
+		}
+	}
+	return sp.defInt(s.defaults)
+}
+
 // Strings returns the effective value for a list-kind key: the DB override
 // (stored as a canonical JSON array) if present, else the default. An unknown
 // or non-list key — or an unparseable stored value — returns an empty list.
@@ -352,6 +410,9 @@ func (s *Service) Snapshot() []Effective {
 		case KindBool:
 			e.Value = s.Bool(sp.key)
 			e.Default = sp.defBool(s.defaults)
+		case KindInt:
+			e.Value = s.Int(sp.key)
+			e.Default = sp.defInt(s.defaults)
 		case KindList:
 			e.Value = s.Strings(sp.key)
 			def, err := parseList(sp.defString(s.defaults))
@@ -425,6 +486,69 @@ func validateBool(v string) error {
 		return errors.New("must be a boolean")
 	}
 	return nil
+}
+
+// parseIntValue decodes the normalised decimal string form of an int-kind value
+// and enforces the shared upper bound (maxSafeInt) so it round-trips through a
+// client's JS double without precision loss.
+func parseIntValue(v string) (int64, error) {
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, errors.New("must be an integer")
+	}
+	if n > maxSafeInt {
+		return 0, fmt.Errorf("must be at most %d", maxSafeInt)
+	}
+	return n, nil
+}
+
+// intMin returns a validator accepting any integer >= min.
+func intMin(min int64) func(string) error {
+	msg := fmt.Sprintf("must be an integer >= %d", min)
+	return func(v string) error {
+		n, err := parseIntValue(v)
+		if err != nil {
+			return err
+		}
+		if n < min {
+			return errors.New(msg)
+		}
+		return nil
+	}
+}
+
+// intRange returns a validator accepting an integer in [min, max].
+func intRange(min, max int64) func(string) error {
+	msg := fmt.Sprintf("must be an integer between %d and %d", min, max)
+	return func(v string) error {
+		n, err := parseIntValue(v)
+		if err != nil {
+			return err
+		}
+		if n < min || n > max {
+			return errors.New(msg)
+		}
+		return nil
+	}
+}
+
+// intZeroOrRange returns a validator accepting 0 (the "unlimited"/"no cap"
+// sentinel used by the operational limits) or an integer in [min, max].
+func intZeroOrRange(min, max int64) func(string) error {
+	msg := fmt.Sprintf("must be 0 or an integer between %d and %d", min, max)
+	return func(v string) error {
+		n, err := parseIntValue(v)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return nil
+		}
+		if n < min || n > max {
+			return errors.New(msg)
+		}
+		return nil
+	}
 }
 
 func validateInstanceName(v string) error {
@@ -559,3 +683,7 @@ func validateOptionalEmail(v string) error {
 // FormatBool normalises a Go bool to the stored string form. Exported for the
 // HTTP layer, which shapes the PATCH payload into Updates.
 func FormatBool(b bool) string { return strconv.FormatBool(b) }
+
+// FormatInt normalises a Go int64 to the stored decimal-string form. Exported
+// for the HTTP layer, which shapes the PATCH payload into Updates.
+func FormatInt(v int64) string { return strconv.FormatInt(v, 10) }

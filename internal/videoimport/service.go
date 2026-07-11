@@ -112,6 +112,7 @@ type Service struct {
 	pipeline     Pipeline
 	quota        QuotaChecker
 	maxBytes     int64
+	maxBytesFn   func() int64 // when set, supersedes maxBytes (live overlay), resolved per job
 	allowPrivate bool
 	client       *http.Client // test seam; nil → build an SSRF-guarded client per fetch
 	logger       *slog.Logger
@@ -135,6 +136,23 @@ func WithAllowPrivateFetch(allow bool) Option {
 // WithQuota wires per-user storage-quota enforcement on imports.
 func WithQuota(q QuotaChecker) Option {
 	return func(s *Service) { s.quota = q }
+}
+
+// WithMaxBytesFunc makes the per-file size cap dynamic: f is resolved once per
+// import job (at fetch time) so an admin can retune the upload-size overlay at
+// runtime. When set it supersedes the constructor's maxBytes. A running download
+// keeps the cap it started with; only new jobs see a change.
+func WithMaxBytesFunc(f func() int64) Option {
+	return func(s *Service) { s.maxBytesFn = f }
+}
+
+// effectiveMaxBytes resolves the current per-file size cap (0 = unbounded): the
+// live overlay value when a provider is wired, else the static constructor value.
+func (s *Service) effectiveMaxBytes() int64 {
+	if s.maxBytesFn != nil {
+		return s.maxBytesFn()
+	}
+	return s.maxBytes
 }
 
 // WithHTTPClient injects the fetch client (tests use a plain client to reach a
@@ -310,8 +328,10 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 	defer func() { _ = media.body.Close() }()
 
 	// Up-front size/quota rejection when the size is known (direct Content-Length
-	// or a yt-dlp file stat) — avoids streaming bytes we will only discard.
-	if s.maxBytes > 0 && media.knownSize > s.maxBytes {
+	// or a yt-dlp file stat) — avoids streaming bytes we will only discard. The
+	// cap is resolved once per job so a runtime overlay change is honoured.
+	maxBytes := s.effectiveMaxBytes()
+	if maxBytes > 0 && media.knownSize > maxBytes {
 		return failf("the file is too large")
 	}
 	if quotaRemaining >= 0 && media.knownSize > quotaRemaining {
@@ -319,8 +339,8 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 	}
 
 	body := io.Reader(media.body)
-	if s.maxBytes > 0 {
-		body = &maxBytesReader{r: body, remaining: s.maxBytes, limitErr: errImportTooLarge}
+	if maxBytes > 0 {
+		body = &maxBytesReader{r: body, remaining: maxBytes, limitErr: errImportTooLarge}
 	}
 	if quotaRemaining >= 0 {
 		body = &maxBytesReader{r: body, remaining: quotaRemaining, limitErr: errImportOverQuota}

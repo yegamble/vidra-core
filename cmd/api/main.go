@@ -153,6 +153,9 @@ func run() error {
 	// registration/upload/import/live/comment gates consult its effective values
 	// (DB override, else the config default supplied here). A boot load failure is
 	// fatal — the overlay must be authoritative before serving traffic.
+	// Parse the boot-validated UPLOAD_MAX_SIZE once (config.go already rejected an
+	// invalid value) — it seeds both the settings default and the import cap below.
+	uploadMaxBytesDefault, _ := bytes.Parse(cfg.UploadMaxSize)
 	settingssvc := instancesettings.NewService(db.Queries(), instancesettings.Defaults{
 		InstanceName:                cfg.InstanceName,
 		InstanceDescription:         cfg.InstanceDescription,
@@ -166,6 +169,11 @@ func run() error {
 		ImportsEnabled:              cfg.ImportsEnabled,
 		LiveEnabled:                 cfg.LiveEnabled,
 		CommentsEnabled:             cfg.CommentsEnabled,
+
+		DefaultUserQuotaBytes:          cfg.InstanceDefaultQuotaBytes,
+		UploadMaxSizeBytes:             uploadMaxBytesDefault,
+		UploadMaxActiveSessionsPerUser: int64(cfg.UploadMaxActiveSessionsPerUser),
+		ImportMaxHeight:                int64(cfg.YtdlpMaxHeight),
 	})
 	if err := settingssvc.Load(startCtx); err != nil {
 		return err
@@ -640,7 +648,10 @@ func run() error {
 
 	// Per-user storage quotas: usage is aggregated live from video_files;
 	// uploads/imports that would exceed the effective quota get 422.
-	quotasvc := quota.NewService(db.Queries(), cfg.InstanceDefaultQuotaBytes)
+	quotasvc := quota.NewService(db.Queries(), cfg.InstanceDefaultQuotaBytes,
+		quota.WithDefaultBytesFunc(func() int64 {
+			return settingssvc.Int(instancesettings.KeyDefaultUserQuotaBytes)
+		}))
 	opts = append(opts, httpapi.WithQuotaService(quotasvc))
 	if cfg.InstanceDefaultQuotaBytes > 0 {
 		logger.Info("default per-user storage quota enabled", "bytes", cfg.InstanceDefaultQuotaBytes)
@@ -651,18 +662,26 @@ func run() error {
 	// same AttachOriginal → Process pipeline as a direct upload, and a background
 	// sweeper cleans up expired/cancelled sessions' chunks (failed-upload cleanup).
 	uploadsvc := upload.NewService(db.Queries(), blobs,
-		upload.WithMaxActiveSessions(cfg.UploadMaxActiveSessionsPerUser))
+		upload.WithMaxActiveSessions(cfg.UploadMaxActiveSessionsPerUser),
+		upload.WithMaxActiveSessionsFunc(func() int {
+			return int(settingssvc.Int(instancesettings.KeyUploadMaxActiveSessionsPerUser))
+		}))
 	opts = append(opts, httpapi.WithUploadService(uploadsvc))
 
 	// Asynchronous URL import (P2.2). POST /videos/:id/import now enqueues a job
 	// and returns 202; a background worker performs the SSRF-guarded fetch and
 	// runs it through the same pipeline, with the same UPLOAD_MAX_SIZE cap and
 	// per-user quota enforcement the synchronous path had.
-	importMaxBytes, _ := bytes.Parse(cfg.UploadMaxSize) // validated at startup
+	importMaxBytes := uploadMaxBytesDefault // parsed once above (boot-validated)
 	importOpts := []videoimport.Option{
 		videoimport.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
 		videoimport.WithQuota(quotasvc),
 		videoimport.WithLogger(logger),
+		// The per-file cap follows the upload-size overlay at runtime (resolved per
+		// job); the constructor value stays the boot default.
+		videoimport.WithMaxBytesFunc(func() int64 {
+			return settingssvc.Int(instancesettings.KeyUploadMaxSizeBytes)
+		}),
 	}
 	// yt-dlp platform-URL import (W2.C1, UPLOAD-09). OFF by default; admin opt-in.
 	// The binary is pinned in the image (never self-updated at runtime); when the
@@ -681,6 +700,9 @@ func run() error {
 			Proxy:     cfg.YtdlpProxy,
 			MaxHeight: cfg.YtdlpMaxHeight,
 			MaxBytes:  importMaxBytes,
+			// Resolution/size caps follow the overlay at argv-build time (per job).
+			MaxHeightFn: func() int { return int(settingssvc.Int(instancesettings.KeyImportMaxHeight)) },
+			MaxBytesFn:  func() int64 { return settingssvc.Int(instancesettings.KeyUploadMaxSizeBytes) },
 		})
 		importOpts = append(importOpts, videoimport.WithYtdlp(ytdlpClient, ""))
 		logger.Info("yt-dlp platform-URL import enabled", "max_height", cfg.YtdlpMaxHeight, "proxy_set", cfg.YtdlpProxy != "")

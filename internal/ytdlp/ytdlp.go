@@ -60,6 +60,12 @@ type Config struct {
 	// MaxBytes caps the download (--max-filesize); 0 disables the flag (the
 	// caller still enforces its own streaming cap on the resulting file).
 	MaxBytes int64
+	// MaxHeightFn / MaxBytesFn, when set, are resolved at argv-build time so the
+	// resolution and size caps can follow the instance-settings overlay at
+	// runtime. Each supersedes its static field above; the statics remain the
+	// boot defaults. A running download keeps the caps it started with.
+	MaxHeightFn func() int
+	MaxBytesFn  func() int64
 }
 
 // Meta is the subset of yt-dlp -J metadata this repo consumes. Unknown fields
@@ -115,9 +121,19 @@ func metadataArgs(cfg Config, url string) []string {
 // caller-owned path template inside the private workdir; url is the only
 // attacker-influenced value and is again the final positional after "--".
 func downloadArgs(cfg Config, url, outTemplate string) []string {
+	// Resolve the effective caps at argv-build time so a runtime overlay change is
+	// honoured by the next job (the fn supersedes the static boot default).
+	maxHeight := cfg.MaxHeight
+	if cfg.MaxHeightFn != nil {
+		maxHeight = cfg.MaxHeightFn()
+	}
+	maxBytes := cfg.MaxBytes
+	if cfg.MaxBytesFn != nil {
+		maxBytes = cfg.MaxBytesFn()
+	}
 	format := "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best[ext=webm]/best"
-	if cfg.MaxHeight > 0 {
-		h := strconv.Itoa(cfg.MaxHeight)
+	if maxHeight > 0 {
+		h := strconv.Itoa(maxHeight)
 		format = "bestvideo[height<=" + h + "][ext=mp4]+bestaudio[ext=m4a]/" +
 			"best[height<=" + h + "][ext=mp4]/best[height<=" + h + "][ext=webm]/best[height<=" + h + "]"
 	}
@@ -130,8 +146,8 @@ func downloadArgs(cfg Config, url, outTemplate string) []string {
 		"-f", format,
 		"-o", outTemplate,
 	}
-	if cfg.MaxBytes > 0 {
-		args = append(args, "--max-filesize", strconv.FormatInt(cfg.MaxBytes, 10))
+	if maxBytes > 0 {
+		args = append(args, "--max-filesize", strconv.FormatInt(maxBytes, 10))
 	}
 	if cfg.Proxy != "" {
 		args = append(args, "--proxy", cfg.Proxy)

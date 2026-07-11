@@ -62,6 +62,32 @@ func TestDownloadArgsNoMaxWhenZero(t *testing.T) {
 	mustHave(t, args, "--ignore-config", "--no-playlist")
 }
 
+// TestDownloadArgsOverlayFuncs: MaxHeightFn/MaxBytesFn resolve at argv-build
+// time and supersede the static boot defaults (the instance-settings overlay),
+// including a fn returning 0 to disable a cap the static field had set.
+func TestDownloadArgsOverlayFuncs(t *testing.T) {
+	cfg := baseCfg() // static MaxHeight 1080, MaxBytes 100 MiB
+	cfg.MaxHeightFn = func() int { return 480 }
+	cfg.MaxBytesFn = func() int64 { return 5 << 20 } // 5 MiB
+	args := downloadArgs(cfg, "https://example.com/v", "/tmp/j/media.%(ext)s")
+	mustHavePair(t, args, "--max-filesize", "5242880")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "height<=480") {
+		t.Errorf("format selector should use the overlay height 480: %v", args)
+	}
+	if strings.Contains(joined, "height<=1080") {
+		t.Errorf("static height 1080 must not appear when the fn overrides it: %v", args)
+	}
+
+	cfg.MaxHeightFn = func() int { return 0 }
+	cfg.MaxBytesFn = func() int64 { return 0 }
+	args = downloadArgs(cfg, "https://example.com/v", "/tmp/j/media.%(ext)s")
+	mustNotHave(t, args, "--max-filesize")
+	if strings.Contains(strings.Join(args, " "), "height<=") {
+		t.Errorf("no height cap expected when the fn returns 0: %v", args)
+	}
+}
+
 // TestProxyThreadedWhenSet: the operator egress proxy is passed as --proxy on
 // both phases when configured, and omitted otherwise.
 func TestProxyThreadedWhenSet(t *testing.T) {

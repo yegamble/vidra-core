@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	gommonbytes "github.com/labstack/gommon/bytes"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -67,7 +69,18 @@ func settingsDefaultsFromConfig(cfg *config.Config) instancesettings.Defaults {
 		ImportsEnabled:              cfg.ImportsEnabled,
 		LiveEnabled:                 cfg.LiveEnabled,
 		CommentsEnabled:             cfg.CommentsEnabled,
+
+		DefaultUserQuotaBytes:          cfg.InstanceDefaultQuotaBytes,
+		UploadMaxSizeBytes:             uploadMaxSizeBytes(cfg),
+		UploadMaxActiveSessionsPerUser: int64(cfg.UploadMaxActiveSessionsPerUser),
+		ImportMaxHeight:                int64(cfg.YtdlpMaxHeight),
 	}
+}
+
+// uploadMaxSizeBytes mirrors cmd/api's parse of the boot-validated UPLOAD_MAX_SIZE.
+func uploadMaxSizeBytes(cfg *config.Config) int64 {
+	n, _ := gommonbytes.Parse(cfg.UploadMaxSize)
+	return n
 }
 
 func instanceSettings(t *testing.T, srv *Server, token string) instanceSettingsResponse {
@@ -126,8 +139,8 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// Default state: instance_name is the config value and nothing is overridden.
 	// 12 original keys + 21 platform-information keys (instance-platform-info).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 33 {
-		t.Fatalf("settings count = %d, want 33", len(got.Settings))
+	if len(got.Settings) != 37 {
+		t.Fatalf("settings count = %d, want 37", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {
@@ -216,6 +229,11 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 		{"list wrong type", `{"instance_categories":"1"}`},
 		{"bad category id", `{"instance_categories":["999"]}`},
 		{"bad language id", `{"moderator_languages":["zz-nope"]}`},
+		{"int wrong type (string)", `{"upload_max_active_sessions_per_user":"3"}`},
+		{"int wrong type (float)", `{"upload_max_active_sessions_per_user":1.5}`},
+		{"int negative quota", `{"default_user_quota_bytes":-1}`},
+		{"int over range", `{"upload_max_active_sessions_per_user":10001}`},
+		{"int below floor", `{"upload_max_size_bytes":1024}`},
 		{"empty body", `{}`},
 	}
 	for _, tc := range badCases {
@@ -270,6 +288,91 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// setInt overrides an int-kind setting through the admin PATCH endpoint.
+func setInt(t *testing.T, srv *Server, adminTok, key string, v int64) {
+	t.Helper()
+	body := `{"` + key + `":` + strconv.FormatInt(v, 10) + `}`
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings", body, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("set %s=%d = %d; body=%s", key, v, rec.Code, rec.Body.String())
+	}
+}
+
+// TestInstanceSettingsIntKind covers the int-kind admin contract: the GET shape
+// (type=int, numeric value/default), a numeric PATCH round-trip, and null reset.
+func TestInstanceSettingsIntKind(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ida", "ida@example.test", "ida")
+
+	v := settingView(t, instanceSettings(t, srv, adminTok), instancesettings.KeyDefaultUserQuotaBytes)
+	if v.Type != "int" {
+		t.Fatalf("type = %q, want int", v.Type)
+	}
+	if _, ok := v.Value.(float64); !ok { // JSON numbers decode to float64
+		t.Errorf("value = %v (%T), want a JSON number", v.Value, v.Value)
+	}
+	if v.Overridden {
+		t.Error("fresh int setting overridden = true, want false")
+	}
+
+	setInt(t, srv, adminTok, instancesettings.KeyDefaultUserQuotaBytes, 5_000_000)
+	after := settingView(t, instanceSettings(t, srv, adminTok), instancesettings.KeyDefaultUserQuotaBytes)
+	if after.Value.(float64) != 5_000_000 || !after.Overridden {
+		t.Errorf("after patch = %+v, want value=5000000 overridden=true", after)
+	}
+
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings",
+		`{"default_user_quota_bytes":null}`, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("reset = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if settingView(t, instanceSettings(t, srv, adminTok), instancesettings.KeyDefaultUserQuotaBytes).Overridden {
+		t.Error("after reset overridden = true, want false")
+	}
+}
+
+// TestUploadSizeLimitOverlay proves the upload-size cap follows the overlay at
+// runtime: the tiny testConfig default (64K) rejects a 100 KB session, and
+// raising the overlay lets it through with no restart.
+func TestUploadSizeLimitOverlay(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, adminTok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session",
+		`{"size":100000,"filename":"clip.mp4"}`, adminTok); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize vs default cap = %d, want 413; body=%s", rec.Code, rec.Body.String())
+	}
+	setInt(t, srv, adminTok, instancesettings.KeyUploadMaxSizeBytes, 3<<20) // 3 MiB
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session",
+		`{"size":100000,"filename":"clip.mp4"}`, adminTok); rec.Code != http.StatusCreated {
+		t.Fatalf("session after raising cap = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUploadSessionsLimitOverlay proves the per-user active-session cap follows
+// the overlay at runtime: lowering it to 1 makes a second concurrent session 429,
+// and lifting it (0 = unlimited) restores it — no restart.
+func TestUploadSessionsLimitOverlay(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, adminTok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	setInt(t, srv, adminTok, instancesettings.KeyUploadMaxActiveSessionsPerUser, 1)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session",
+		`{"size":40,"filename":"a.mp4"}`, adminTok); rec.Code != http.StatusCreated {
+		t.Fatalf("first session = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session",
+		`{"size":40,"filename":"b.mp4"}`, adminTok)
+	if rec.Code != http.StatusTooManyRequests || errorCode(t, rec) != "too_many_active_uploads" {
+		t.Fatalf("second session over cap = %d code=%q, want 429 too_many_active_uploads", rec.Code, errorCode(t, rec))
+	}
+	setInt(t, srv, adminTok, instancesettings.KeyUploadMaxActiveSessionsPerUser, 0) // unlimited
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session",
+		`{"size":40,"filename":"b.mp4"}`, adminTok); rec.Code != http.StatusCreated {
+		t.Fatalf("session after lifting cap = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 // TestUploadsToggleGate proves uploads_enabled gates BOTH the resumable

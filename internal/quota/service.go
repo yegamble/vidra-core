@@ -32,12 +32,39 @@ type Service struct {
 	// defaultBytes is the instance-wide default quota (0 = unlimited), from
 	// INSTANCE_DEFAULT_QUOTA_BYTES.
 	defaultBytes int64
+	// defaultBytesFn, when set, supersedes defaultBytes so the instance default
+	// quota can be resolved live from the instance-settings overlay. Boot wires it
+	// to settingssvc.Int(default_user_quota_bytes); nil in the plain constructor.
+	defaultBytesFn func() int64
+}
+
+// Option customises the quota service.
+type Option func(*Service)
+
+// WithDefaultBytesFunc makes the instance-default quota dynamic: f is consulted
+// per Status so an admin can retune INSTANCE_DEFAULT_QUOTA_BYTES's overlay at
+// runtime. When set it supersedes the constructor's defaultBytes.
+func WithDefaultBytesFunc(f func() int64) Option {
+	return func(s *Service) { s.defaultBytesFn = f }
 }
 
 // NewService builds the quota service. defaultBytes is the instance default
-// quota in bytes (0 = unlimited).
-func NewService(repo Repository, defaultBytes int64) *Service {
-	return &Service{repo: repo, defaultBytes: defaultBytes}
+// quota in bytes (0 = unlimited); WithDefaultBytesFunc can override it live.
+func NewService(repo Repository, defaultBytes int64, opts ...Option) *Service {
+	s := &Service{repo: repo, defaultBytes: defaultBytes}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// effectiveDefaultBytes resolves the current instance-default quota: the live
+// overlay value when a provider is wired, else the static constructor value.
+func (s *Service) effectiveDefaultBytes() int64 {
+	if s.defaultBytesFn != nil {
+		return s.defaultBytesFn()
+	}
+	return s.defaultBytes
 }
 
 // Effective resolves the storage quota that applies to an account: the
@@ -72,7 +99,7 @@ func (s *Service) Status(ctx context.Context, userID uuid.UUID) (Status, error) 
 	if err != nil {
 		return Status{}, err
 	}
-	return Status{UsedBytes: used, QuotaBytes: Effective(u.StorageQuotaBytes, s.defaultBytes)}, nil
+	return Status{UsedBytes: used, QuotaBytes: Effective(u.StorageQuotaBytes, s.effectiveDefaultBytes())}, nil
 }
 
 // Remaining reports how many more bytes the user may store before hitting
