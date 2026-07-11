@@ -63,3 +63,6 @@ deploy/ipfs-private/*.peerid
 .idea/
 *.swp
 *.swo
+
+# air (docker dev hot-reload) build output
+tmp/
