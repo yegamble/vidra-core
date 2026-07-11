@@ -1,12 +1,17 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancesettings"
+	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/version"
 )
 
@@ -34,6 +39,84 @@ type instanceSocialLinks struct {
 	Mastodon string `json:"mastodon"`
 	X        string `json:"x"`
 	Bluesky  string `json:"bluesky"`
+}
+
+// instanceAssetRef points at one instance branding asset: its public serving
+// URL ("" when unset) and whether the client should fall back to its built-in
+// default imagery.
+type instanceAssetRef struct {
+	URL        string `json:"url"`
+	IsFallback bool   `json:"is_fallback"`
+}
+
+// instanceLogos is the typed logo-slot map (PeerTube LogoType parity).
+type instanceLogos struct {
+	Favicon      instanceAssetRef `json:"favicon"`
+	HeaderWide   instanceAssetRef `json:"header_wide"`
+	HeaderSquare instanceAssetRef `json:"header_square"`
+	Opengraph    instanceAssetRef `json:"opengraph"`
+}
+
+// instanceBranding is the instance imagery block (config-parity W1 shape; W4
+// wires the frontend consumers).
+type instanceBranding struct {
+	Avatar instanceAssetRef `json:"avatar"`
+	Banner instanceAssetRef `json:"banner"`
+	Logos  instanceLogos    `json:"logos"`
+	// HideInstanceName hides the textual instance name in the header (only
+	// meaningful once a header logo is set; header_hide_instance_name).
+	HideInstanceName bool `json:"hide_instance_name"`
+}
+
+// instancePublishDefaults seeds the studio publish form (W9 wires enforcement).
+type instancePublishDefaults struct {
+	Privacy string `json:"privacy"`
+	// Licence is a PT-compatible licence id; 0 = no default licence.
+	Licence         int64  `json:"licence"`
+	CommentPolicy   string `json:"comment_policy"`
+	DownloadEnabled bool   `json:"download_enabled"`
+}
+
+// instanceDefaults carries the operator-tuned client behaviour defaults
+// (feed/landing/theme/player; W5 wires the frontend consumers).
+type instanceDefaults struct {
+	FeedSort                         string                  `json:"feed_sort"`
+	FeedScope                        string                  `json:"feed_scope"`
+	LandingPage                      string                  `json:"landing_page"`
+	Theme                            string                  `json:"theme"`
+	PlayerAutoplay                   bool                    `json:"player_autoplay"`
+	MiniaturePreferAuthorDisplayName bool                    `json:"miniature_prefer_author_display_name"`
+	Publish                          instancePublishDefaults `json:"publish"`
+}
+
+// instanceBroadcast is the operator broadcast-banner block (W3 renders it).
+type instanceBroadcast struct {
+	Enabled     bool   `json:"enabled"`
+	Message     string `json:"message"` // raw markdown
+	Level       string `json:"level"`   // info|warning|error
+	Dismissable bool   `json:"dismissable"`
+}
+
+// instanceCustomization references the operator's custom CSS/JS documents by
+// content hash (never inlined; fetch /instance/custom.css?v={css_hash}) plus
+// the primary-color override ("" when unset).
+type instanceCustomization struct {
+	CSSHash      string `json:"css_hash"`
+	JSHash       string `json:"js_hash"`
+	PrimaryColor string `json:"primary_color"`
+}
+
+// instanceSocialMeta is link-card metadata (twitter:site; distinct from the
+// social_links.x profile URL).
+type instanceSocialMeta struct {
+	TwitterUsername string `json:"twitter_username"`
+}
+
+// instanceHomepage reports the admin-authored homepage document's state; the
+// body is fetched separately from GET /instance/homepage.
+type instanceHomepage struct {
+	Enabled bool   `json:"enabled"`
+	Hash    string `json:"hash"`
 }
 
 // instanceResponse is the public "about this instance" document the frontend
@@ -79,6 +162,17 @@ type instanceResponse struct {
 	// Features carries the effective feature toggles so the frontend can gate
 	// its affordances in lock-step with the backend's enforcement.
 	Features instanceFeatures `json:"features"`
+
+	// Structured effective-config blocks (config-parity W1; see
+	// .ralph/specs/config-parity/instance-contract.md). All additive; every
+	// field is present with its zero-value/fallback content until the wave that
+	// consumes it ships.
+	Branding      instanceBranding      `json:"branding"`
+	Defaults      instanceDefaults      `json:"defaults"`
+	Broadcast     instanceBroadcast     `json:"broadcast"`
+	Customization instanceCustomization `json:"customization"`
+	Social        instanceSocialMeta    `json:"social"`
+	Homepage      instanceHomepage      `json:"homepage"`
 }
 
 // handleInstance returns public instance metadata. No auth required; it exposes
@@ -86,8 +180,31 @@ type instanceResponse struct {
 // credentials). The name/description/legal-contact metadata and the registration
 // gates reflect the EFFECTIVE values — the DB-backed instance-settings overlay
 // (fix_plan P10) when wired, else the static config.
+//
+// The response is cache-friendly (config-parity W1): a strong ETag over the
+// serialized document plus Cache-Control: s-maxage=60, so a fronting cache can
+// absorb the hot app-shell reads while settings changes still show within a
+// minute. Everything the document reads comes from in-memory caches (settings
+// overlay, document hashes, branding image metadata) — no DB round trip.
 func (s *Server) handleInstance(c echo.Context) error {
-	return c.JSON(http.StatusOK, instanceResponse{
+	body, err := json.Marshal(s.instanceDocument())
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(body)
+	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+	h := c.Response().Header()
+	h.Set("ETag", etag)
+	h.Set("Cache-Control", "s-maxage=60")
+	if match := c.Request().Header.Get("If-None-Match"); match != "" && strings.Contains(match, etag) {
+		return c.NoContent(http.StatusNotModified)
+	}
+	return c.JSONBlob(http.StatusOK, body)
+}
+
+// instanceDocument assembles the full public instance document.
+func (s *Server) instanceDocument() instanceResponse {
+	return instanceResponse{
 		Name:                         s.settingString(instancesettings.KeyInstanceName, s.cfg.InstanceName),
 		Description:                  s.settingString(instancesettings.KeyInstanceDescription, s.cfg.InstanceDescription),
 		ShortDescription:             s.settingString(instancesettings.KeyInstanceShortDescription, ""),
@@ -119,7 +236,86 @@ func (s *Server) handleInstance(c echo.Context) error {
 			Comments:  s.commentsEnabled(),
 			Downloads: s.downloadsEnabled(),
 		},
-	})
+		Branding:      s.instanceBrandingBlock(),
+		Defaults:      s.instanceDefaultsBlock(),
+		Broadcast:     s.instanceBroadcastBlock(),
+		Customization: s.instanceCustomizationBlock(),
+		Social: instanceSocialMeta{
+			TwitterUsername: s.settingString(instancesettings.KeySocialMetaTwitterUsername, ""),
+		},
+		Homepage: s.instanceHomepageBlock(),
+	}
+}
+
+// instanceAsset resolves one branding slot to its public URL (the dedicated
+// serving route) or the empty fallback ref when no image is set. Lookups hit
+// the profileimage in-memory instance cache only.
+func (s *Server) instanceAsset(kind, url string) instanceAssetRef {
+	if s.imagesvc != nil {
+		if _, ok := s.imagesvc.InstanceImage(kind); ok {
+			return instanceAssetRef{URL: url, IsFallback: false}
+		}
+	}
+	return instanceAssetRef{URL: "", IsFallback: true}
+}
+
+func (s *Server) instanceBrandingBlock() instanceBranding {
+	return instanceBranding{
+		Avatar: s.instanceAsset(profileimage.KindAvatar, "/api/v1/instance/avatar"),
+		Banner: s.instanceAsset(profileimage.KindBanner, "/api/v1/instance/banner"),
+		Logos: instanceLogos{
+			Favicon:      s.instanceAsset(profileimage.KindLogoFavicon, "/api/v1/instance/logo/favicon"),
+			HeaderWide:   s.instanceAsset(profileimage.KindLogoHeaderWide, "/api/v1/instance/logo/header-wide"),
+			HeaderSquare: s.instanceAsset(profileimage.KindLogoHeaderSquare, "/api/v1/instance/logo/header-square"),
+			Opengraph:    s.instanceAsset(profileimage.KindLogoOpengraph, "/api/v1/instance/logo/opengraph"),
+		},
+		HideInstanceName: s.settingBool(instancesettings.KeyHeaderHideInstanceName, false),
+	}
+}
+
+func (s *Server) instanceDefaultsBlock() instanceDefaults {
+	return instanceDefaults{
+		FeedSort:                         s.settingString(instancesettings.KeyDefaultFeedSort, instancesettings.DefaultFeedSort),
+		FeedScope:                        s.settingString(instancesettings.KeyDefaultFeedScope, instancesettings.DefaultFeedScope),
+		LandingPage:                      s.settingString(instancesettings.KeyDefaultLandingPage, instancesettings.DefaultLandingPage),
+		Theme:                            s.settingString(instancesettings.KeyDefaultTheme, instancesettings.DefaultTheme),
+		PlayerAutoplay:                   s.settingBool(instancesettings.KeyDefaultPlayerAutoplay, true),
+		MiniaturePreferAuthorDisplayName: s.settingBool(instancesettings.KeyMiniaturePreferAuthorDisplayName, false),
+		Publish: instancePublishDefaults{
+			Privacy:         s.settingString(instancesettings.KeyDefaultVideoPrivacy, instancesettings.DefaultVideoPrivacy),
+			Licence:         s.settingInt(instancesettings.KeyDefaultVideoLicence, 0),
+			CommentPolicy:   s.settingString(instancesettings.KeyDefaultCommentPolicy, instancesettings.DefaultCommentPolicy),
+			DownloadEnabled: s.settingBool(instancesettings.KeyDefaultDownloadEnabled, false),
+		},
+	}
+}
+
+func (s *Server) instanceBroadcastBlock() instanceBroadcast {
+	return instanceBroadcast{
+		Enabled:     s.settingBool(instancesettings.KeyBroadcastEnabled, false),
+		Message:     s.settingString(instancesettings.KeyBroadcastMessage, ""),
+		Level:       s.settingString(instancesettings.KeyBroadcastLevel, instancesettings.DefaultBroadcastLevel),
+		Dismissable: s.settingBool(instancesettings.KeyBroadcastDismissable, false),
+	}
+}
+
+func (s *Server) instanceCustomizationBlock() instanceCustomization {
+	block := instanceCustomization{
+		PrimaryColor: s.settingString(instancesettings.KeyThemePrimaryColor, ""),
+	}
+	if s.instancedocssvc != nil {
+		block.CSSHash = s.instancedocssvc.Hash(instancedocs.NameCustomCSS)
+		block.JSHash = s.instancedocssvc.Hash(instancedocs.NameCustomJS)
+	}
+	return block
+}
+
+func (s *Server) instanceHomepageBlock() instanceHomepage {
+	if s.instancedocssvc == nil {
+		return instanceHomepage{}
+	}
+	doc, ok := s.instancedocssvc.Get(instancedocs.NameHomepage)
+	return instanceHomepage{Enabled: ok && doc.Body != "", Hash: doc.SHA256}
 }
 
 // settingStrings returns the effective list value for a list-kind key ([] when

@@ -28,6 +28,7 @@ import (
 	"github.com/vidra/vidra-core/internal/donation"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/live"
@@ -118,6 +119,7 @@ type Server struct {
 	remotevideosvc    *remotevideo.Service
 	instancemodsvc    *instancemod.Service
 	settingssvc       *instancesettings.Service
+	instancedocssvc   *instancedocs.Service
 	mediagcsvc        *mediagc.Service
 	jobStatusSvc      jobStatusProvider
 	jobOperationsSvc  jobOperationsProvider
@@ -478,6 +480,16 @@ func WithSettingsService(svc *instancesettings.Service) Option {
 	return func(s *Server) { s.settingssvc = svc }
 }
 
+// WithInstanceDocumentsService wires the instance-document store (config-parity
+// W1): the admin GET/PUT /admin/instance-documents/{name} editor surface and
+// the public delivery routes (/instance/homepage, /instance/custom.css,
+// /instance/custom.js), plus the customization/homepage hashes on GET
+// /instance. When unset, none of those routes are registered and the hashes
+// report empty.
+func WithInstanceDocumentsService(svc *instancedocs.Service) Option {
+	return func(s *Server) { s.instancedocssvc = svc }
+}
+
 // WithAuditLog wires the durable audit-log service. When set, s.audit persists
 // each security-audit event (best-effort) in addition to logging it, and the
 // GET /api/v1/admin/audit-log endpoint is registered. When unset, audit events
@@ -740,6 +752,18 @@ func (s *Server) routes() {
 	}
 	api.POST("/instance/contact", s.handleInstanceContact, contactMW...)
 
+	// Instance documents (config-parity W1): public delivery of the
+	// admin-authored homepage (markdown JSON) and the custom CSS/JS as
+	// same-origin external files (hash-busted via GET /instance's
+	// customization block), plus the admin editor surface.
+	if s.instancedocssvc != nil {
+		api.GET("/instance/homepage", s.handleGetInstanceHomepage)
+		api.GET("/instance/custom.css", s.handleGetInstanceCustomCSS)
+		api.GET("/instance/custom.js", s.handleGetInstanceCustomJS)
+		api.GET("/admin/instance-documents/:name", s.handleGetInstanceDocumentAdmin, s.requireAuth, s.requireRole("admin"))
+		api.PUT("/admin/instance-documents/:name", s.handlePutInstanceDocument, s.requireAuth, s.requireRole("admin"))
+	}
+
 	if s.authsvc != nil {
 		authGroup := api.Group("/auth")
 		// A stricter limiter throttles credential stuffing / token guessing on the
@@ -852,6 +876,20 @@ func (s *Server) routes() {
 				api.GET("/channels/:handle/"+kind, s.handleGetChannelImage(kind))
 			}
 		}
+
+		// Instance branding assets (config-parity W1): admin pick/delete for the
+		// instance avatar/banner + the four typed logo slots (mirroring PeerTube's
+		// dedicated asset API — these are not registry keys), plus public serving.
+		// URLs are referenced from the GET /instance branding block.
+		api.POST("/admin/instance-avatar", s.handleSetInstanceImage(profileimage.KindAvatar), s.requireAuth, s.requireRole("admin"))
+		api.DELETE("/admin/instance-avatar", s.handleDeleteInstanceImage(profileimage.KindAvatar), s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/instance-banner", s.handleSetInstanceImage(profileimage.KindBanner), s.requireAuth, s.requireRole("admin"))
+		api.DELETE("/admin/instance-banner", s.handleDeleteInstanceImage(profileimage.KindBanner), s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/instance-logo/:type", s.handleSetInstanceLogo, s.requireAuth, s.requireRole("admin"))
+		api.DELETE("/admin/instance-logo/:type", s.handleDeleteInstanceLogo, s.requireAuth, s.requireRole("admin"))
+		api.GET("/instance/avatar", s.handleGetInstanceImage(profileimage.KindAvatar))
+		api.GET("/instance/banner", s.handleGetInstanceImage(profileimage.KindBanner))
+		api.GET("/instance/logo/:type", s.handleGetInstanceLogo)
 	}
 
 	// Video creation needs both the video and channel services (channel for

@@ -276,6 +276,23 @@ type ImportJob struct {
 	Stage         string    `json:"stage"`
 }
 
+type InstanceDocument struct {
+	Name      string      `json:"name"`
+	Body      string      `json:"body"`
+	Sha256    string      `json:"sha256"`
+	UpdatedBy pgtype.UUID `json:"updated_by"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+type InstanceImage struct {
+	Kind        string    `json:"kind"`
+	StorageKey  string    `json:"storage_key"`
+	ContentType string    `json:"content_type"`
+	SizeBytes   int64     `json:"size_bytes"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type InstanceSetting struct {
 	Key       string      `json:"key"`
 	Value     string      `json:"value"`

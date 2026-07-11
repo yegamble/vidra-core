@@ -3,7 +3,7 @@
 //
 // A defined MUTABLE subset of instance settings — the instance name/description
 // and legal-contact metadata, the registration gates, the upload-quarantine
-// gate, and the uploads/imports/live/comments feature toggles — can be changed
+// gate, and the uploads/imports/live/comments/downloads feature toggles — can be changed
 // at runtime by an admin and takes effect without a restart. Every other
 // setting (the database DSN, the KEKs, the JWT signing secret, the storage
 // backend) is boot-time-only and STAYS in config: those are either unsafe to
@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,6 +88,35 @@ const (
 	KeyUploadMaxSizeBytes             = "upload_max_size_bytes"
 	KeyUploadMaxActiveSessionsPerUser = "upload_max_active_sessions_per_user"
 	KeyImportMaxHeight                = "import_max_height"
+
+	// Core-config-surface keys (config-parity W1). Registered NOW with their
+	// kinds/defaults/validators so GET /instance can expose effective values;
+	// ENFORCEMENT/consumption lands in later waves (W3 broadcast banner, W4
+	// branding/social, W5 browse/landing/player defaults, W6 customization +
+	// email, W9 publish defaults). All are pure overlay rows with HARDCODED
+	// defaults — no config/env backing by design.
+	KeyBroadcastEnabled     = "broadcast_enabled"
+	KeyBroadcastMessage     = "broadcast_message" // markdown body (short; document-scale content lives in instance_documents)
+	KeyBroadcastLevel       = "broadcast_level"
+	KeyBroadcastDismissable = "broadcast_dismissable"
+
+	KeyDefaultFeedSort                  = "default_feed_sort"
+	KeyDefaultFeedScope                 = "default_feed_scope"
+	KeyDefaultLandingPage               = "default_landing_page"
+	KeyDefaultTheme                     = "default_theme"
+	KeyDefaultPlayerAutoplay            = "default_player_autoplay"
+	KeyMiniaturePreferAuthorDisplayName = "miniature_prefer_author_display_name"
+
+	KeyDefaultVideoPrivacy    = "default_video_privacy"
+	KeyDefaultVideoLicence    = "default_video_licence" // 0 = no default licence (mirrors PeerTube null)
+	KeyDefaultCommentPolicy   = "default_comment_policy"
+	KeyDefaultDownloadEnabled = "default_download_enabled"
+
+	KeyThemePrimaryColor         = "theme_primary_color" // "#rrggbb" or "" (no override)
+	KeySocialMetaTwitterUsername = "social_meta_twitter_username"
+	KeyHeaderHideInstanceName    = "header_hide_instance_name"
+	KeyEmailSubjectPrefix        = "email_subject_prefix" // supports {instance_name} substitution at the mail seam (W6)
+	KeyEmailBodySignature        = "email_body_signature"
 )
 
 // Kind is a setting's value type, reported to clients and used to validate the
@@ -140,6 +170,60 @@ const (
 	DefaultSensitiveContentPolicy = SensitiveContentPolicyHide
 )
 
+// Enum option sets for the core-config-surface keys (config-parity W1), in
+// canonical display order. Exposed so the admin view and OpenAPI stay in sync.
+var (
+	// BroadcastLevelOptions styles the W3 broadcast banner (PT parity).
+	BroadcastLevelOptions = []string{"info", "warning", "error"}
+	// FeedSortOptions is vidra's 3-way sort universe (deliberate deviation from
+	// PeerTube's seven sort strings — vidra's feed supports exactly these).
+	FeedSortOptions = []string{"recent", "popular", "trending"}
+	// FeedScopeOptions: local (this instance) or all (adds federated content).
+	FeedScopeOptions = []string{"local", "all"}
+	// LandingPageOptions: what "/" shows anonymous visitors. "home" is the
+	// admin-authored homepage document and only takes effect once one is set
+	// (W6); the frontend falls back to home-recent until then.
+	LandingPageOptions = []string{"home-recent", "trending", "local", "home"}
+	// ThemeOptions over the shipped light-dark() token architecture (vidra has
+	// no plugin themes — deliberate deviation).
+	ThemeOptions = []string{"system", "light", "dark"}
+	// VideoPrivacyOptions for the publish default. "password" is deliberately
+	// absent: a password-protected video needs a password, so it cannot be a
+	// seeded default.
+	VideoPrivacyOptions = []string{"public", "unlisted", "private"}
+	// CommentPolicyOptions for the per-video comment-policy default (W9 builds
+	// the per-video field; requires_approval is deliberately deferred).
+	CommentPolicyOptions = []string{"enabled", "disabled"}
+)
+
+// Default values for the core-config-surface keys.
+const (
+	DefaultBroadcastLevel = "info"
+	DefaultFeedSort       = "recent"
+	DefaultFeedScope      = "local"
+	DefaultLandingPage    = "home-recent"
+	DefaultTheme          = "system"
+	DefaultVideoPrivacy   = "public"
+	DefaultCommentPolicy  = "enabled"
+	defaultPlayerAutoplay = true
+)
+
+// Admin-page identifiers for the registry's page/section metadata (config-
+// parity W1): every setting is placed on one of the admin-config IA pages so
+// the metadata-driven admin UI auto-renders new keys into the right place.
+const (
+	PageGeneral       = "general"
+	PageVOD           = "vod"
+	PageLive          = "live"
+	PageFederation    = "federation"
+	PageCustomization = "customization"
+	PageHomepage      = "homepage"
+	PageAdvanced      = "advanced"
+)
+
+// Pages is the canonical page order (the admin UI's left rail).
+var Pages = []string{PageGeneral, PageVOD, PageLive, PageFederation, PageCustomization, PageHomepage, PageAdvanced}
+
 // Defaults are the config-derived fallbacks for every mutable setting: when a
 // key has no override row, its accessor returns the matching Defaults field.
 // cmd/api builds this from the parsed *config.Config.
@@ -170,7 +254,8 @@ type Defaults struct {
 // spec describes one setting: its key, value kind, how to resolve its default
 // from Defaults, how to validate a candidate override value (a normalised
 // string — "true"/"false" for bool keys, a canonical JSON array for list keys),
-// and — for enum kinds — the allowed option set.
+// for enum kinds the allowed option set, and the admin-IA placement (page +
+// in-page section) the metadata-driven admin UI renders it into.
 type spec struct {
 	key       string
 	kind      Kind
@@ -179,6 +264,8 @@ type spec struct {
 	defInt    func(Defaults) int64 // int kinds only
 	options   []string             // enum kinds only: the allowed values, in display order
 	validate  func(string) error
+	page      string // one of the Page* identifiers
+	section   string // in-page section label (stable, snake_case)
 }
 
 // hardcoded wraps a config-independent default (the platform-information keys
@@ -186,63 +273,158 @@ type spec struct {
 func hardcoded(v string) func(Defaults) string { return func(Defaults) string { return v } }
 
 // specs is the ordered, canonical registry of mutable settings. The order is
-// stable so the GET response and tests are deterministic.
+// stable so the GET response and tests are deterministic. Every entry carries
+// its admin-IA placement (page + section, config-parity W1) so the
+// metadata-driven admin UI auto-renders keys into the right page.
 var specs = []spec{
-	{key: KeyInstanceName, kind: KindString, defString: func(d Defaults) string { return d.InstanceName }, validate: validateInstanceName},
-	{key: KeyInstanceDescription, kind: KindString, defString: func(d Defaults) string { return d.InstanceDescription }, validate: validateDescription},
-	{key: KeyTermsURL, kind: KindString, defString: func(d Defaults) string { return d.TermsURL }, validate: validateOptionalURL},
-	{key: KeyPrivacyURL, kind: KindString, defString: func(d Defaults) string { return d.PrivacyURL }, validate: validateOptionalURL},
-	{key: KeyContactEmail, kind: KindString, defString: func(d Defaults) string { return d.ContactEmail }, validate: validateOptionalEmail},
-	{key: KeyRegistrationEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.RegistrationEnabled }, validate: validateBool},
-	{key: KeyRegistrationRequireApproval, kind: KindBool, defBool: func(d Defaults) bool { return d.RegistrationRequireApproval }, validate: validateBool},
-	{key: KeyQuarantineNewUploads, kind: KindBool, defBool: func(d Defaults) bool { return d.QuarantineNewUploads }, validate: validateBool},
-	{key: KeyUploadsEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.UploadsEnabled }, validate: validateBool},
-	{key: KeyImportsEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.ImportsEnabled }, validate: validateBool},
-	{key: KeyLiveEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.LiveEnabled }, validate: validateBool},
-	{key: KeyCommentsEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.CommentsEnabled }, validate: validateBool},
+	{key: KeyInstanceName, kind: KindString, defString: func(d Defaults) string { return d.InstanceName }, validate: validateInstanceName,
+		page: PageGeneral, section: "identity"},
+	{key: KeyInstanceDescription, kind: KindString, defString: func(d Defaults) string { return d.InstanceDescription }, validate: validateDescription,
+		page: PageGeneral, section: "identity"},
+	{key: KeyTermsURL, kind: KindString, defString: func(d Defaults) string { return d.TermsURL }, validate: validateOptionalURL,
+		page: PageGeneral, section: "about"},
+	{key: KeyPrivacyURL, kind: KindString, defString: func(d Defaults) string { return d.PrivacyURL }, validate: validateOptionalURL,
+		page: PageGeneral, section: "about"},
+	{key: KeyContactEmail, kind: KindString, defString: func(d Defaults) string { return d.ContactEmail }, validate: validateOptionalEmail,
+		page: PageGeneral, section: "contact"},
+	{key: KeyRegistrationEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.RegistrationEnabled }, validate: validateBool,
+		page: PageGeneral, section: "signup"},
+	{key: KeyRegistrationRequireApproval, kind: KindBool, defBool: func(d Defaults) bool { return d.RegistrationRequireApproval }, validate: validateBool,
+		page: PageGeneral, section: "signup"},
+	{key: KeyQuarantineNewUploads, kind: KindBool, defBool: func(d Defaults) bool { return d.QuarantineNewUploads }, validate: validateBool,
+		page: PageGeneral, section: "moderation"},
+	{key: KeyUploadsEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.UploadsEnabled }, validate: validateBool,
+		page: PageVOD, section: "uploads"},
+	{key: KeyImportsEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.ImportsEnabled }, validate: validateBool,
+		page: PageVOD, section: "imports"},
+	{key: KeyLiveEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.LiveEnabled }, validate: validateBool,
+		page: PageLive, section: "streaming"},
+	{key: KeyCommentsEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.CommentsEnabled }, validate: validateBool,
+		page: PageVOD, section: "comments"},
 	// Downloads are enabled by default and intentionally have no env/config
 	// backing: the runtime admin setting is the single operator control.
-	{key: KeyDownloadsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool},
+	{key: KeyDownloadsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "downloads"},
 
 	// Platform information (spec instance-platform-info). Defaults are hardcoded
 	// (empty, except default_language and sensitive_content_policy) — these keys
 	// have no config/env backing by design.
-	{key: KeyInstanceShortDescription, kind: KindString, defString: hardcoded(""), validate: maxLen(250)},
-	{key: KeyServerCountry, kind: KindString, defString: hardcoded(""), validate: maxLen(100)},
-	{key: KeySupportText, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
-	{key: KeyWebsiteLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL},
-	{key: KeyMastodonLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL},
-	{key: KeyXLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL},
-	{key: KeyBlueskyLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL},
-	{key: KeyTerms, kind: KindString, defString: hardcoded(""), validate: maxLen(10000)},
-	{key: KeyCodeOfConduct, kind: KindString, defString: hardcoded(""), validate: maxLen(10000)},
-	{key: KeyModerationInfo, kind: KindString, defString: hardcoded(""), validate: maxLen(10000)},
-	{key: KeyAdministratorInfo, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
-	{key: KeyCreationReason, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
-	{key: KeyMaintenanceLifetime, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
-	{key: KeyBusinessModel, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
-	{key: KeyHardwareInfo, kind: KindString, defString: hardcoded(""), validate: maxLen(5000)},
-	{key: KeyDefaultLanguage, kind: KindString, defString: hardcoded(DefaultDefaultLanguage), validate: validateLanguageID},
-	{key: KeyContactFormEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool},
-	{key: KeyInstanceIsSensitive, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool},
+	{key: KeyInstanceShortDescription, kind: KindString, defString: hardcoded(""), validate: maxLen(250),
+		page: PageGeneral, section: "identity"},
+	{key: KeyServerCountry, kind: KindString, defString: hardcoded(""), validate: maxLen(100),
+		page: PageGeneral, section: "identity"},
+	{key: KeySupportText, kind: KindString, defString: hardcoded(""), validate: maxLen(5000),
+		page: PageGeneral, section: "about"},
+	{key: KeyWebsiteLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL,
+		page: PageGeneral, section: "social"},
+	{key: KeyMastodonLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL,
+		page: PageGeneral, section: "social"},
+	{key: KeyXLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL,
+		page: PageGeneral, section: "social"},
+	{key: KeyBlueskyLink, kind: KindString, defString: hardcoded(""), validate: validateOptionalURL,
+		page: PageGeneral, section: "social"},
+	{key: KeyTerms, kind: KindString, defString: hardcoded(""), validate: maxLen(10000),
+		page: PageGeneral, section: "about"},
+	{key: KeyCodeOfConduct, kind: KindString, defString: hardcoded(""), validate: maxLen(10000),
+		page: PageGeneral, section: "about"},
+	{key: KeyModerationInfo, kind: KindString, defString: hardcoded(""), validate: maxLen(10000),
+		page: PageGeneral, section: "about"},
+	{key: KeyAdministratorInfo, kind: KindString, defString: hardcoded(""), validate: maxLen(5000),
+		page: PageGeneral, section: "about"},
+	{key: KeyCreationReason, kind: KindString, defString: hardcoded(""), validate: maxLen(5000),
+		page: PageGeneral, section: "about"},
+	{key: KeyMaintenanceLifetime, kind: KindString, defString: hardcoded(""), validate: maxLen(5000),
+		page: PageGeneral, section: "about"},
+	{key: KeyBusinessModel, kind: KindString, defString: hardcoded(""), validate: maxLen(5000),
+		page: PageGeneral, section: "about"},
+	{key: KeyHardwareInfo, kind: KindString, defString: hardcoded(""), validate: maxLen(5000),
+		page: PageGeneral, section: "about"},
+	{key: KeyDefaultLanguage, kind: KindString, defString: hardcoded(DefaultDefaultLanguage), validate: validateLanguageID,
+		page: PageGeneral, section: "identity"},
+	{key: KeyContactFormEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageGeneral, section: "contact"},
+	{key: KeyInstanceIsSensitive, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageGeneral, section: "moderation"},
 	{key: KeySensitiveContentPolicy, kind: KindEnum, defString: hardcoded(DefaultSensitiveContentPolicy),
-		options: SensitiveContentPolicyOptions, validate: enumOf(SensitiveContentPolicyOptions)},
+		options: SensitiveContentPolicyOptions, validate: enumOf(SensitiveContentPolicyOptions),
+		page: PageGeneral, section: "moderation"},
 	{key: KeyInstanceCategories, kind: KindList, defString: hardcoded(emptyList),
-		validate: listOf(video.IsCategory, "category")},
+		validate: listOf(video.IsCategory, "category"),
+		page:     PageGeneral, section: "identity"},
 	{key: KeyModeratorLanguages, kind: KindList, defString: hardcoded(emptyList),
-		validate: listOf(video.IsLanguage, "language")},
+		validate: listOf(video.IsLanguage, "language"),
+		page:     PageGeneral, section: "identity"},
 
 	// Operational limits (config-parity slice). Bounds mirror the config
 	// validators exactly (config.go) so a runtime override can never set a value
 	// the boot-time config would have rejected.
 	{key: KeyDefaultUserQuotaBytes, kind: KindInt,
-		defInt: func(d Defaults) int64 { return d.DefaultUserQuotaBytes }, validate: intMin(0)},
+		defInt: func(d Defaults) int64 { return d.DefaultUserQuotaBytes }, validate: intMin(0),
+		page: PageVOD, section: "uploads"},
 	{key: KeyUploadMaxSizeBytes, kind: KindInt,
-		defInt: func(d Defaults) int64 { return d.UploadMaxSizeBytes }, validate: intZeroOrRange(1<<20, maxSafeInt)},
+		defInt: func(d Defaults) int64 { return d.UploadMaxSizeBytes }, validate: intZeroOrRange(1<<20, maxSafeInt),
+		page: PageVOD, section: "uploads"},
 	{key: KeyUploadMaxActiveSessionsPerUser, kind: KindInt,
-		defInt: func(d Defaults) int64 { return d.UploadMaxActiveSessionsPerUser }, validate: intRange(0, 10000)},
+		defInt: func(d Defaults) int64 { return d.UploadMaxActiveSessionsPerUser }, validate: intRange(0, 10000),
+		page: PageVOD, section: "uploads"},
 	{key: KeyImportMaxHeight, kind: KindInt,
-		defInt: func(d Defaults) int64 { return d.ImportMaxHeight }, validate: intZeroOrRange(144, 4320)},
+		defInt: func(d Defaults) int64 { return d.ImportMaxHeight }, validate: intZeroOrRange(144, 4320),
+		page: PageVOD, section: "imports"},
+
+	// Core config surface (config-parity W1). Registered now so GET /instance
+	// exposes effective values; enforcement/consumption lands in later waves.
+	// Broadcast banner (W3 consumes).
+	{key: KeyBroadcastEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageGeneral, section: "broadcast"},
+	{key: KeyBroadcastMessage, kind: KindString, defString: hardcoded(""), validate: maxLen(10000),
+		page: PageGeneral, section: "broadcast"},
+	{key: KeyBroadcastLevel, kind: KindEnum, defString: hardcoded(DefaultBroadcastLevel),
+		options: BroadcastLevelOptions, validate: enumOf(BroadcastLevelOptions),
+		page: PageGeneral, section: "broadcast"},
+	{key: KeyBroadcastDismissable, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageGeneral, section: "broadcast"},
+	// Landing & browse defaults (W5 consumes).
+	{key: KeyDefaultFeedSort, kind: KindEnum, defString: hardcoded(DefaultFeedSort),
+		options: FeedSortOptions, validate: enumOf(FeedSortOptions),
+		page: PageGeneral, section: "browse"},
+	{key: KeyDefaultFeedScope, kind: KindEnum, defString: hardcoded(DefaultFeedScope),
+		options: FeedScopeOptions, validate: enumOf(FeedScopeOptions),
+		page: PageGeneral, section: "browse"},
+	{key: KeyDefaultLandingPage, kind: KindEnum, defString: hardcoded(DefaultLandingPage),
+		options: LandingPageOptions, validate: enumOf(LandingPageOptions),
+		page: PageGeneral, section: "browse"},
+	{key: KeyMiniaturePreferAuthorDisplayName, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageGeneral, section: "browse"},
+	// Publish defaults (W9 builds the per-video fields + seeding).
+	{key: KeyDefaultVideoPrivacy, kind: KindEnum, defString: hardcoded(DefaultVideoPrivacy),
+		options: VideoPrivacyOptions, validate: enumOf(VideoPrivacyOptions),
+		page: PageVOD, section: "publish_defaults"},
+	{key: KeyDefaultVideoLicence, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: validateLicenceID,
+		page: PageVOD, section: "publish_defaults"},
+	{key: KeyDefaultCommentPolicy, kind: KindEnum, defString: hardcoded(DefaultCommentPolicy),
+		options: CommentPolicyOptions, validate: enumOf(CommentPolicyOptions),
+		page: PageVOD, section: "publish_defaults"},
+	{key: KeyDefaultDownloadEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageVOD, section: "publish_defaults"},
+	// Customization: theme, header, player, email (W4/W5/W6 consume).
+	{key: KeyDefaultTheme, kind: KindEnum, defString: hardcoded(DefaultTheme),
+		options: ThemeOptions, validate: enumOf(ThemeOptions),
+		page: PageCustomization, section: "theme"},
+	{key: KeyThemePrimaryColor, kind: KindString, defString: hardcoded(""), validate: validateOptionalHexColor,
+		page: PageCustomization, section: "theme"},
+	{key: KeyHeaderHideInstanceName, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageCustomization, section: "header"},
+	{key: KeyDefaultPlayerAutoplay, kind: KindBool, defBool: func(Defaults) bool { return defaultPlayerAutoplay }, validate: validateBool,
+		page: PageCustomization, section: "player"},
+	{key: KeyEmailSubjectPrefix, kind: KindString, defString: hardcoded(""), validate: maxLen(128),
+		page: PageCustomization, section: "email"},
+	{key: KeyEmailBodySignature, kind: KindString, defString: hardcoded(""), validate: maxLen(5000),
+		page: PageCustomization, section: "email"},
+	// Social link-card metadata (W4 consumes; distinct from the x_link
+	// About-page key — twitter:site wants a handle, not a profile URL).
+	{key: KeySocialMetaTwitterUsername, kind: KindString, defString: hardcoded(""), validate: validateOptionalTwitterUsername,
+		page: PageGeneral, section: "social"},
 }
 
 var specByKey = func() map[string]spec {
@@ -401,6 +583,10 @@ type Effective struct {
 	Default    any // same type as Value
 	Overridden bool
 	Options    []string // enum kinds only; nil otherwise
+	// Page/Section are the admin-IA placement metadata (config-parity W1): the
+	// admin-config page this key renders on and its in-page section.
+	Page    string
+	Section string
 }
 
 // Snapshot returns every mutable setting's effective state, in the canonical
@@ -409,7 +595,8 @@ func (s *Service) Snapshot() []Effective {
 	out := make([]Effective, 0, len(specs))
 	for _, sp := range specs {
 		_, overridden := s.override(sp.key)
-		e := Effective{Key: sp.key, Kind: sp.kind, Overridden: overridden, Options: sp.options}
+		e := Effective{Key: sp.key, Kind: sp.kind, Overridden: overridden, Options: sp.options,
+			Page: sp.page, Section: sp.section}
 		switch sp.kind {
 		case KindBool:
 			e.Value = s.Bool(sp.key)
@@ -664,6 +851,54 @@ func validateOptionalURL(v string) error {
 	u, err := url.Parse(v)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return errors.New("must be an absolute http(s) URL")
+	}
+	return nil
+}
+
+// hexColorRe matches a 6-digit CSS hex color ("#rrggbb").
+var hexColorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// validateOptionalHexColor accepts the empty string (no primary-color
+// override) or a strict 6-digit hex color.
+func validateOptionalHexColor(v string) error {
+	if v == "" {
+		return nil
+	}
+	if !hexColorRe.MatchString(v) {
+		return errors.New(`must be a hex color like "#0f62fe"`)
+	}
+	return nil
+}
+
+// twitterUsernameRe matches an X/Twitter handle with an optional leading @
+// (1-15 word characters, the platform's own constraint).
+var twitterUsernameRe = regexp.MustCompile(`^@?[A-Za-z0-9_]{1,15}$`)
+
+// validateOptionalTwitterUsername accepts the empty string (no twitter:site
+// card attribution) or a well-formed handle.
+func validateOptionalTwitterUsername(v string) error {
+	if v == "" {
+		return nil
+	}
+	if !twitterUsernameRe.MatchString(v) {
+		return errors.New(`must be an X/Twitter username like "@vidra"`)
+	}
+	return nil
+}
+
+// validateLicenceID accepts 0 (no default licence, mirroring PeerTube's null)
+// or a known taxonomy licence id (the GET /videos/config source; ids are
+// PT-compatible ints).
+func validateLicenceID(v string) error {
+	n, err := parseIntValue(v)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	if !video.IsLicense(strconv.FormatInt(n, 10)) {
+		return errors.New("must be 0 or a known licence id")
 	}
 	return nil
 }

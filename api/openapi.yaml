@@ -174,6 +174,153 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instance/homepage:
+    get:
+      operationId: getInstanceHomepage
+      summary: Public admin-authored homepage document
+      description: >-
+        The operator-authored homepage document as RAW markdown plus its
+        content hash (config-parity W1). Rendering/sanitisation is the
+        client's job. Public, unauthenticated; 404 while no homepage is set
+        (see the homepage block on GET /api/v1/instance for the enabled flag).
+      tags: [system]
+      responses:
+        "200":
+          description: The homepage document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceHomepageResponse"
+        "404":
+          description: No homepage document is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instance/custom.css:
+    get:
+      operationId: getInstanceCustomCSS
+      summary: Operator custom stylesheet
+      description: >-
+        The operator's custom CSS as a same-origin text/css file (config-parity
+        W1). Consumed hash-busted (`?v={css_hash}` from the GET /api/v1/instance
+        customization block); the response carries the content hash as a strong
+        ETag. Public; 404 while unset.
+      tags: [system]
+      responses:
+        "200":
+          description: The stylesheet body.
+          content:
+            text/css:
+              schema:
+                type: string
+        "304":
+          description: Not modified (If-None-Match matched the content hash).
+        "404":
+          description: No custom stylesheet is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instance/custom.js:
+    get:
+      operationId: getInstanceCustomJS
+      summary: Operator custom script
+      description: >-
+        The operator's custom JavaScript as a same-origin
+        application/javascript file (config-parity W1; external-file delivery
+        keeps a future script-src 'self' CSP viable). Consumed hash-busted
+        (`?v={js_hash}`). Public; 404 while unset.
+      tags: [system]
+      responses:
+        "200":
+          description: The script body.
+          content:
+            application/javascript:
+              schema:
+                type: string
+        "304":
+          description: Not modified (If-None-Match matched the content hash).
+        "404":
+          description: No custom script is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instance/avatar:
+    get:
+      operationId: getInstanceAvatar
+      summary: Instance avatar image
+      description: >-
+        Serves the instance's avatar (config-parity W1), with the content type
+        derived at upload time. Public; 404 when none is set (the GET
+        /api/v1/instance branding block reports is_fallback=true then).
+      tags: [system]
+      responses:
+        "200":
+          description: The image bytes.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No instance avatar is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instance/banner:
+    get:
+      operationId: getInstanceBanner
+      summary: Instance banner image
+      description: >-
+        Serves the instance's banner (config-parity W1). Public; 404 when none
+        is set.
+      tags: [system]
+      responses:
+        "200":
+          description: The image bytes.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No instance banner is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/instance/logo/{type}:
+    get:
+      operationId: getInstanceLogo
+      summary: Instance logo image (typed slot)
+      description: >-
+        Serves one of the instance's typed logo slots (PeerTube LogoType
+        parity). Public; 404 when the slot is unset or the type is unknown.
+      tags: [system]
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [favicon, header-wide, header-square, opengraph]
+      responses:
+        "200":
+          description: The image bytes.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Unknown logo type, or no image set for the slot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/auth/register:
     post:
       operationId: register
@@ -9571,6 +9718,391 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instance-documents/{name}:
+    get:
+      operationId: getInstanceDocument
+      summary: Get an instance document (admin)
+      description: >-
+        Returns one instance document's stored state (config-parity W1): the
+        raw body plus its sha256 content hash. A never-set/cleared document
+        returns an empty body and hash (a stable shape for the admin editor).
+        Restricted to admins.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [homepage, custom_css, custom_js]
+      responses:
+        "200":
+          description: The stored document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceDocumentResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown document name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: putInstanceDocument
+      summary: Set or clear an instance document (admin)
+      description: >-
+        Stores an instance document body (homepage max 100KB; custom_css and
+        custom_js max 200KB) or clears it with an empty body — the public
+        delivery routes 404 while a document is unset. Changes take effect
+        immediately (the in-memory cache reloads) and the new content hash
+        shows in the GET /api/v1/instance customization/homepage blocks for
+        cache busting. Restricted to admins; every write is audited
+        (admin.instance_document.update with the document name + content hash,
+        never the body). Custom JS runs in every visitor's browser — clients
+        must gate the editor behind an explicit warning flow.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [homepage, custom_css, custom_js]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInstanceDocumentRequest"
+      responses:
+        "200":
+          description: The stored (or cleared) document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceDocumentResponse"
+        "400":
+          description: Malformed request body (the body field is required).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown document name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The body exceeds the document's size cap.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instance-avatar:
+    post:
+      operationId: setInstanceAvatar
+      summary: Upload the instance avatar (admin)
+      description: >-
+        Stores the instance's avatar (config-parity W1; multipart form field
+        "file", JPEG/PNG/WebP by extension, otherwise 415 — the same gate as
+        user/channel avatars), replacing any previous one. Bounded by the
+        global HTTP body limit. Restricted to admins; audited
+        (admin.instance_asset.update). The GET /api/v1/instance branding block
+        reflects the new URL immediately.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The image (JPEG/PNG/WebP).
+      responses:
+        "201":
+          description: The stored image metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileImage"
+        "400":
+          description: The multipart "file" field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Not an accepted image type (JPEG/PNG/WebP by extension).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteInstanceAvatar
+      summary: Remove the instance avatar (admin)
+      description: >-
+        Removes the instance's avatar (row + stored object); the branding
+        block falls back. Restricted to admins; audited. 404 when none is set.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No instance avatar is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instance-banner:
+    post:
+      operationId: setInstanceBanner
+      summary: Upload the instance banner (admin)
+      description: >-
+        Stores the instance's banner, replacing any previous one. Same
+        multipart/type gate as the avatar. Restricted to admins; audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The image (JPEG/PNG/WebP).
+      responses:
+        "201":
+          description: The stored image metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileImage"
+        "400":
+          description: The multipart "file" field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Not an accepted image type (JPEG/PNG/WebP by extension).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteInstanceBanner
+      summary: Remove the instance banner (admin)
+      description: >-
+        Removes the instance's banner. Restricted to admins; audited. 404 when
+        none is set.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No instance banner is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instance-logo/{type}:
+    post:
+      operationId: setInstanceLogo
+      summary: Upload an instance logo slot (admin)
+      description: >-
+        Stores one of the instance's typed logo slots (favicon, header-wide,
+        header-square, opengraph — PeerTube LogoType parity; the opengraph
+        slot doubles as the social-card image), replacing any previous one.
+        Same multipart/type gate as the avatar. Restricted to admins; audited.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [favicon, header-wide, header-square, opengraph]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The image (JPEG/PNG/WebP).
+      responses:
+        "201":
+          description: The stored image metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileImage"
+        "400":
+          description: The multipart "file" field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown logo type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Not an accepted image type (JPEG/PNG/WebP by extension).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteInstanceLogo
+      summary: Remove an instance logo slot (admin)
+      description: >-
+        Removes one typed logo slot. Restricted to admins; audited. 404 when
+        the type is unknown or the slot is unset.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [favicon, header-wide, header-square, opengraph]
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown logo type, or no image set for the slot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/peertube-import:
     post:
       operationId: launchPeerTubeImport
@@ -10264,7 +10796,8 @@ components:
                  registration_requires_approval, oauth_providers, federation_enabled,
                  terms_url, privacy_url, contact_email, default_language, categories,
                  moderator_languages, server_country, is_sensitive,
-                 sensitive_content_policy, contact_form_enabled, social_links, features]
+                 sensitive_content_policy, contact_form_enabled, social_links, features,
+                 branding, defaults, broadcast, customization, social, homepage]
       properties:
         name:
           type: string
@@ -10397,6 +10930,150 @@ components:
               description: >-
                 Whether regular users may download video media. Moderators and
                 admins retain download access when this operator toggle is off.
+        branding:
+          type: object
+          description: >-
+            Instance imagery (config-parity W1 shape; W4 populates the
+            frontend consumers). Each slot carries its public serving URL
+            ("" when unset) and an is_fallback flag telling the client to use
+            its built-in default imagery. The response also gains an ETag and
+            Cache-Control s-maxage=60.
+          required: [avatar, banner, logos, hide_instance_name]
+          properties:
+            avatar:
+              $ref: "#/components/schemas/InstanceAssetRef"
+            banner:
+              $ref: "#/components/schemas/InstanceAssetRef"
+            logos:
+              type: object
+              required: [favicon, header_wide, header_square, opengraph]
+              properties:
+                favicon:
+                  $ref: "#/components/schemas/InstanceAssetRef"
+                header_wide:
+                  $ref: "#/components/schemas/InstanceAssetRef"
+                header_square:
+                  $ref: "#/components/schemas/InstanceAssetRef"
+                opengraph:
+                  $ref: "#/components/schemas/InstanceAssetRef"
+            hide_instance_name:
+              type: boolean
+              description: >-
+                Hide the textual instance name in the header (meaningful once
+                a header logo is set).
+        defaults:
+          type: object
+          description: >-
+            Operator-tuned client behaviour defaults (W5/W9 consume): what
+            anonymous visitors see first and how publish forms are seeded.
+          required: [feed_sort, feed_scope, landing_page, theme,
+                     player_autoplay, miniature_prefer_author_display_name, publish]
+          properties:
+            feed_sort:
+              type: string
+              enum: [recent, popular, trending]
+            feed_scope:
+              type: string
+              enum: [local, all]
+            landing_page:
+              type: string
+              enum: [home-recent, trending, local, home]
+              description: >-
+                "home" is the admin-authored homepage document and only takes
+                effect once one is set (homepage.enabled).
+            theme:
+              type: string
+              enum: [system, light, dark]
+            player_autoplay:
+              type: boolean
+              description: >-
+                Seeds BOTH start-on-open and autoplay-next for anonymous/unset
+                users (documented deviation); never overrides an explicit
+                per-user preference.
+            miniature_prefer_author_display_name:
+              type: boolean
+            publish:
+              type: object
+              required: [privacy, licence, comment_policy, download_enabled]
+              properties:
+                privacy:
+                  type: string
+                  enum: [public, unlisted, private]
+                licence:
+                  type: integer
+                  format: int64
+                  description: PT-compatible licence id; 0 = no default licence.
+                comment_policy:
+                  type: string
+                  enum: [enabled, disabled]
+                download_enabled:
+                  type: boolean
+        broadcast:
+          type: object
+          description: Operator broadcast banner (W3 renders it).
+          required: [enabled, message, level, dismissable]
+          properties:
+            enabled:
+              type: boolean
+            message:
+              type: string
+              description: Raw markdown.
+            level:
+              type: string
+              enum: [info, warning, error]
+            dismissable:
+              type: boolean
+        customization:
+          type: object
+          description: >-
+            Custom CSS/JS references by content hash (never inlined; fetch
+            /api/v1/instance/custom.css?v={css_hash}) plus the primary-color
+            override.
+          required: [css_hash, js_hash, primary_color]
+          properties:
+            css_hash:
+              type: string
+              description: sha256 of the custom_css document; "" when unset.
+            js_hash:
+              type: string
+              description: sha256 of the custom_js document; "" when unset.
+            primary_color:
+              type: string
+              description: '"#rrggbb" or "" (no override).'
+        social:
+          type: object
+          description: >-
+            Link-card metadata (distinct from social_links.x — twitter:site
+            wants a handle, not a profile URL).
+          required: [twitter_username]
+          properties:
+            twitter_username:
+              type: string
+              example: "@vidra"
+        homepage:
+          type: object
+          description: >-
+            Admin-authored homepage document state; the body is fetched from
+            GET /api/v1/instance/homepage.
+          required: [enabled, hash]
+          properties:
+            enabled:
+              type: boolean
+            hash:
+              type: string
+              description: sha256 of the homepage document; "" when unset.
+    InstanceAssetRef:
+      type: object
+      description: >-
+        One instance branding asset reference: its public serving URL ("" when
+        unset) and whether the client should fall back to built-in imagery.
+      required: [url, is_fallback]
+      properties:
+        url:
+          type: string
+          description: Public serving path, e.g. /api/v1/instance/avatar.
+        is_fallback:
+          type: boolean
     InstanceAboutResponse:
       type: object
       description: >-
@@ -13975,8 +14652,10 @@ components:
         effective value (a string for text/enum keys, a boolean for toggle
         keys, an integer for limit keys, an array of strings for list keys),
         the default, and whether the database currently overrides it. Enum-typed
-        settings also list their allowed options.
-      required: [key, type, value, default, overridden]
+        settings also list their allowed options. Every setting carries its
+        admin-IA placement (page + section, config-parity W1) so the
+        metadata-driven admin UI auto-places keys into the right page.
+      required: [key, type, value, default, overridden, page, section]
       properties:
         key:
           type: string
@@ -14015,6 +14694,13 @@ components:
           description: >-
             For type=enum only: the allowed values, in display order. Absent
             for other types.
+        page:
+          type: string
+          enum: [general, vod, live, federation, customization, homepage, advanced]
+          description: The admin-config page this key renders on.
+        section:
+          type: string
+          description: The in-page section (stable snake_case label), e.g. "broadcast".
     PeerTubeImportLaunchRequest:
       type: object
       description: >-
@@ -14265,6 +14951,44 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/InstanceSetting"
+    InstanceHomepageResponse:
+      type: object
+      description: >-
+        The admin-authored homepage document (config-parity W1): RAW markdown
+        plus its sha256 content hash.
+      required: [body, hash]
+      properties:
+        body:
+          type: string
+          description: Raw markdown; the client renders/sanitises.
+        hash:
+          type: string
+          description: Lowercase-hex sha256 of the body.
+    InstanceDocumentResponse:
+      type: object
+      description: >-
+        One instance document's stored state (admin editor shape). A never-set
+        or cleared document has an empty body and hash.
+      required: [name, body, hash]
+      properties:
+        name:
+          type: string
+          enum: [homepage, custom_css, custom_js]
+        body:
+          type: string
+        hash:
+          type: string
+          description: Lowercase-hex sha256 of the body ("" when unset).
+    UpdateInstanceDocumentRequest:
+      type: object
+      description: >-
+        The new document body. An empty string clears the document (public
+        delivery 404s while unset). Caps: homepage 100KB; custom_css/custom_js
+        200KB.
+      required: [body]
+      properties:
+        body:
+          type: string
     UpdateInstanceSettingsRequest:
       type: object
       description: >-

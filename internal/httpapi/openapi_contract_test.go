@@ -22,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/donation"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/jobstatus"
@@ -80,6 +81,7 @@ func fullRouteOptions() []Option {
 		WithCaptionJobService(captionjob.NewService(nil, nil, nil)),
 		WithInstanceModerationService(instancemod.NewService(nil)),
 		WithSettingsService(instancesettings.NewService(nil, instancesettings.Defaults{})),
+		WithInstanceDocumentsService(instancedocs.NewService(nil)),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
 		WithMediaGCService(mediagc.NewService(nil, nil)),
 		WithJobStatusService(jobstatus.NewService(nil)),

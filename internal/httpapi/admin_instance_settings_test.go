@@ -151,14 +151,28 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	}
 
 	// Default state: instance_name is the config value and nothing is overridden.
-	// 13 feature/base keys + 21 platform-information keys + 4 operational limits.
+	// 13 feature/base keys + 21 platform-information keys + 4 operational limits
+	// + 19 core-config-surface keys (config-parity W1).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 38 {
-		t.Fatalf("settings count = %d, want 38", len(got.Settings))
+	if len(got.Settings) != 57 {
+		t.Fatalf("settings count = %d, want 57", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {
 		t.Errorf("instance_name default view = %+v, want value=Vidra Test overridden=false", nameView)
+	}
+	// Every setting carries its admin-IA placement metadata (W1).
+	for _, v := range got.Settings {
+		if v.Page == "" || v.Section == "" {
+			t.Errorf("%s: page/section metadata missing (page=%q section=%q)", v.Key, v.Page, v.Section)
+		}
+	}
+	if bc := settingView(t, got, instancesettings.KeyBroadcastLevel); bc.Page != "general" || bc.Section != "broadcast" ||
+		bc.Type != "enum" || bc.Value != "info" || !reflect.DeepEqual(bc.Options, instancesettings.BroadcastLevelOptions) {
+		t.Errorf("broadcast_level view = %+v, want general/broadcast enum info", bc)
+	}
+	if up := settingView(t, got, instancesettings.KeyUploadsEnabled); up.Page != "vod" || up.Section != "uploads" {
+		t.Errorf("uploads_enabled placed at %s/%s, want vod/uploads", up.Page, up.Section)
 	}
 	if up := settingView(t, got, instancesettings.KeyUploadsEnabled); up.Value != true || up.Type != "bool" {
 		t.Errorf("uploads_enabled default view = %+v, want value=true type=bool", up)

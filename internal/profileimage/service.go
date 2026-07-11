@@ -16,6 +16,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,30 @@ const (
 	KindAvatar = "avatar"
 	KindBanner = "banner"
 )
+
+// Instance logo slot kinds (config-parity W1). Together with KindAvatar and
+// KindBanner they are the valid instance_images.kind values; the logo slots
+// mirror PeerTube's LogoType enum and double as the /admin/instance-logo/{type}
+// path segment.
+const (
+	KindLogoFavicon      = "favicon"
+	KindLogoHeaderWide   = "header-wide"
+	KindLogoHeaderSquare = "header-square"
+	KindLogoOpengraph    = "opengraph"
+)
+
+// InstanceLogoKinds is the canonical logo-slot order (admin/OpenAPI order).
+var InstanceLogoKinds = []string{KindLogoFavicon, KindLogoHeaderWide, KindLogoHeaderSquare, KindLogoOpengraph}
+
+// instanceImageKinds is the full valid kind set for instance images.
+var instanceImageKinds = map[string]bool{
+	KindAvatar: true, KindBanner: true,
+	KindLogoFavicon: true, KindLogoHeaderWide: true, KindLogoHeaderSquare: true, KindLogoOpengraph: true,
+}
+
+// IsInstanceImageKind reports whether kind is a valid instance-image kind
+// (avatar, banner, or one of the four logo slots).
+func IsInstanceImageKind(kind string) bool { return instanceImageKinds[kind] }
 
 // Sentinel errors the HTTP layer maps to status codes.
 var (
@@ -73,23 +98,48 @@ type Mirror interface {
 	EnqueueUnpin(ctx context.Context, objectKey string) error
 }
 
+// InstanceRepository is the data access for the singleton instance branding
+// images (config-parity W1; migration 0086). It is a SEPARATE, optional
+// interface so existing Repository fakes keep compiling; *sqlcgen.Queries
+// satisfies both.
+type InstanceRepository interface {
+	ListInstanceImages(ctx context.Context) ([]sqlcgen.InstanceImage, error)
+	UpsertInstanceImage(ctx context.Context, arg sqlcgen.UpsertInstanceImageParams) (sqlcgen.InstanceImage, error)
+	GetInstanceImage(ctx context.Context, kind string) (sqlcgen.InstanceImage, error)
+	DeleteInstanceImage(ctx context.Context, kind string) (int64, error)
+}
+
 // Option customises the Service.
 type Option func(*Service)
 
 // WithMirror wires the optional IPFS-mirror hook.
 func WithMirror(m Mirror) Option { return func(s *Service) { s.mirror = m } }
 
+// WithInstanceImages wires the instance branding-image store (avatar, banner,
+// and the four logo slots). When unset, the instance-image methods report not
+// found / not configured. Call LoadInstanceImages once at boot to populate the
+// read cache (GET /instance reads branding state per request, so lookups are
+// lock-guarded map reads with no DB round trip — the instancesettings pattern).
+func WithInstanceImages(r InstanceRepository) Option {
+	return func(s *Service) { s.instRepo = r }
+}
+
 // Service holds the profile-image application logic.
 type Service struct {
 	repo   Repository
 	blobs  storage.Backend
 	mirror Mirror
+
+	// Instance branding images (optional; nil instRepo disables the surface).
+	instRepo InstanceRepository
+	instMu   sync.RWMutex
+	instance map[string]Image // kind -> stored image metadata
 }
 
 // NewService builds the profile-image service. blobs should be the same
 // backend the HTTP layer serves stored media from.
 func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service {
-	s := &Service{repo: repo, blobs: blobs}
+	s := &Service{repo: repo, blobs: blobs, instance: map[string]Image{}}
 	for _, o := range opts {
 		o(s)
 	}
@@ -231,6 +281,131 @@ func (s *Service) DeleteChannelImage(ctx context.Context, channelID uuid.UUID, k
 		return ErrNotFound
 	}
 	return s.deleteBlob(ctx, img.StorageKey)
+}
+
+// --- instance branding images (config-parity W1) ---
+
+// fromInstanceImage converts a DB row to the unified Image shape.
+func fromInstanceImage(r sqlcgen.InstanceImage) Image {
+	return Image{Kind: r.Kind, StorageKey: r.StorageKey, ContentType: r.ContentType,
+		SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+}
+
+// LoadInstanceImages (re)reads every instance-image row into the in-memory
+// cache. Call once at boot; the write paths keep the cache current afterwards.
+// A service without an instance repository loads an empty cache.
+func (s *Service) LoadInstanceImages(ctx context.Context) error {
+	if s.instRepo == nil {
+		return nil
+	}
+	rows, err := s.instRepo.ListInstanceImages(ctx)
+	if err != nil {
+		return err
+	}
+	m := make(map[string]Image, len(rows))
+	for _, r := range rows {
+		if !instanceImageKinds[r.Kind] {
+			continue // ignore unknown/legacy kinds defensively
+		}
+		m[r.Kind] = fromInstanceImage(r)
+	}
+	s.instMu.Lock()
+	s.instance = m
+	s.instMu.Unlock()
+	return nil
+}
+
+// SetInstanceImage stores an instance branding image (avatar, banner, or a
+// logo slot), replacing any previous one. Same extension gate and
+// replace-evicts-old-blob semantics as the user/channel paths. Instance images
+// are intentionally NOT IPFS-mirrored (they are instance-local branding).
+func (s *Service) SetInstanceImage(ctx context.Context, kind string, in UploadInput) (Image, error) {
+	if !instanceImageKinds[kind] {
+		return Image{}, ErrNotFound
+	}
+	if s.instRepo == nil {
+		return Image{}, ErrStorageUnavailable
+	}
+	if s.blobs == nil {
+		return Image{}, ErrStorageUnavailable
+	}
+	contentType, ok := acceptedImageExt(in.Filename)
+	if !ok {
+		return Image{}, ErrUnsupportedMedia
+	}
+	key := instanceImageKey(kind, strings.ToLower(filepath.Ext(in.Filename)))
+	if old, exists := s.InstanceImage(kind); exists && old.StorageKey != "" && old.StorageKey != key {
+		_ = s.blobs.Delete(ctx, old.StorageKey) // best-effort: Delete is idempotent
+	}
+	size, err := s.blobs.Put(ctx, key, in.Reader)
+	if err != nil {
+		return Image{}, err
+	}
+	row, err := s.instRepo.UpsertInstanceImage(ctx, sqlcgen.UpsertInstanceImageParams{
+		Kind: kind, StorageKey: key, ContentType: contentType, SizeBytes: size,
+	})
+	if err != nil {
+		return Image{}, err
+	}
+	img := fromInstanceImage(row)
+	s.instMu.Lock()
+	s.instance[kind] = img
+	s.instMu.Unlock()
+	return img, nil
+}
+
+// InstanceImage returns the stored instance image for kind from the in-memory
+// cache (no DB round trip — GET /instance reads branding state per request).
+// ok=false when none is set.
+func (s *Service) InstanceImage(kind string) (Image, bool) {
+	s.instMu.RLock()
+	img, ok := s.instance[kind]
+	s.instMu.RUnlock()
+	return img, ok
+}
+
+// DeleteInstanceImage removes an instance branding image: the row and the
+// stored object. ErrNotFound when none is set.
+func (s *Service) DeleteInstanceImage(ctx context.Context, kind string) error {
+	if !instanceImageKinds[kind] {
+		return ErrNotFound
+	}
+	if s.instRepo == nil {
+		return ErrNotFound
+	}
+	img, ok := s.InstanceImage(kind)
+	if !ok {
+		return ErrNotFound
+	}
+	rows, err := s.instRepo.DeleteInstanceImage(ctx, kind)
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	s.instMu.Lock()
+	delete(s.instance, kind)
+	s.instMu.Unlock()
+	if s.blobs == nil {
+		return ErrStorageUnavailable
+	}
+	return s.blobs.Delete(ctx, img.StorageKey)
+}
+
+// instanceImageKey is the deterministic storage key for an instance image:
+// the avatar/banner reuse the per-asset-kind top-level dirs from the user/
+// channel layout with the singleton "instance" owner dir; logo slots live
+// under logos/instance/<slot><ext>.
+func instanceImageKey(kind, ext string) string {
+	switch kind {
+	case KindAvatar:
+		return "avatars/instance/instance" + ext
+	case KindBanner:
+		return "banners/instance/instance" + ext
+	default:
+		return "logos/instance/" + kind + ext
+	}
 }
 
 // putImage runs the shared upload path: gate the extension, evict a previous
