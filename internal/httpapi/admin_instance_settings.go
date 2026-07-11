@@ -99,6 +99,12 @@ type instanceSettingView struct {
 	Overridden bool   `json:"overridden"`
 	// Options is present for type=enum only: the allowed values, in display order.
 	Options []string `json:"options,omitempty"`
+	// Page/Section are the admin-IA placement metadata (config-parity W1): the
+	// admin-config page (general|vod|live|federation|customization|homepage|
+	// advanced) and in-page section this key renders into, so the metadata-driven
+	// admin UI auto-places new keys.
+	Page    string `json:"page"`
+	Section string `json:"section"`
 }
 
 // instanceSettingsResponse is the admin instance-settings document: every
@@ -118,6 +124,8 @@ func (s *Server) instanceSettingsResponse() instanceSettingsResponse {
 			Default:    e.Default,
 			Overridden: e.Overridden,
 			Options:    e.Options,
+			Page:       e.Page,
+			Section:    e.Section,
 		})
 	}
 	return instanceSettingsResponse{Settings: views}

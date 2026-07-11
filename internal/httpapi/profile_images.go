@@ -177,6 +177,8 @@ func profileImageError(err error, kind string) error {
 		return echo.NewHTTPError(http.StatusNotFound, kind+" not found")
 	case errors.Is(err, profileimage.ErrUnsupportedMedia):
 		return echo.NewHTTPError(http.StatusUnsupportedMediaType, "unsupported media type")
+	case errors.Is(err, profileimage.ErrStorageUnavailable):
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
 	default:
 		return err
 	}

@@ -53,10 +53,20 @@ const (
 	// settings overlay (fix_plan P10). Reason carries the changed KEY NAMES only
 	// — never the values, which can include the operator contact email.
 	ActionAdminInstanceUpdate = "admin.instance.update"
-	ActionVideoUpdate         = "content.video.update"
-	ActionVideoDelete         = "content.video.delete"
-	ActionChannelDelete       = "content.channel.delete"
-	ActionMediaGC             = "admin.media.gc"
+	// ActionAdminInstanceDocumentUpdate records an admin writing/clearing an
+	// instance document (homepage / custom_css / custom_js, config-parity W1).
+	// Reason carries the document NAME and the new content sha256 only — never
+	// the body (custom JS/CSS is operator-authored code).
+	ActionAdminInstanceDocumentUpdate = "admin.instance_document.update"
+	// ActionAdminInstanceAssetUpdate / Delete record an admin uploading or
+	// removing an instance branding image (avatar/banner/logo slots,
+	// config-parity W1). Reason carries the asset kind only.
+	ActionAdminInstanceAssetUpdate = "admin.instance_asset.update"
+	ActionAdminInstanceAssetDelete = "admin.instance_asset.delete"
+	ActionVideoUpdate              = "content.video.update"
+	ActionVideoDelete              = "content.video.delete"
+	ActionChannelDelete            = "content.channel.delete"
+	ActionMediaGC                  = "admin.media.gc"
 	// ActionIPFSReconcile records an admin kicking the one-shot IPFS mirror
 	// reconcile/backfill (P19.6): re-arm dead-lettered pins + seed pin intents for
 	// eligible pre-existing public objects. Reason carries only safe counts

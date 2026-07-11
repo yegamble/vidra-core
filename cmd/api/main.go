@@ -34,6 +34,7 @@ import (
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpapi"
+	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/ipfs"
@@ -179,6 +180,16 @@ func run() error {
 		return err
 	}
 	opts = append(opts, httpapi.WithSettingsService(settingssvc))
+
+	// Instance documents (config-parity W1): the admin-authored homepage +
+	// custom CSS/JS store. Loaded at boot into an in-memory cache (same posture
+	// as the settings overlay) so the public delivery routes and the GET
+	// /instance customization/homepage hashes never round-trip to the database.
+	instancedocssvc := instancedocs.NewService(db.Queries())
+	if err := instancedocssvc.Load(startCtx); err != nil {
+		return err
+	}
+	opts = append(opts, httpapi.WithInstanceDocumentsService(instancedocssvc))
 
 	if cfg.RateLimitEnabled {
 		counter := ratelimit.NewRedisCounter(rdb.Client)
@@ -643,7 +654,15 @@ func run() error {
 	livesvc := live.NewService(db.Queries(), liveOpts...)
 	opts = append(opts, httpapi.WithLiveService(livesvc))
 
-	imagesvc := profileimage.NewService(db.Queries(), blobs, profileimage.WithMirror(ipfsMirror))
+	imagesvc := profileimage.NewService(db.Queries(), blobs,
+		profileimage.WithMirror(ipfsMirror),
+		// Instance branding assets (config-parity W1): the singleton instance
+		// avatar/banner/logo slots ride the same pipeline over their own thin
+		// table; metadata is cached at boot for the GET /instance branding block.
+		profileimage.WithInstanceImages(db.Queries()))
+	if err := imagesvc.LoadInstanceImages(startCtx); err != nil {
+		return err
+	}
 	opts = append(opts, httpapi.WithProfileImageService(imagesvc))
 
 	// Per-user storage quotas: usage is aggregated live from video_files;
