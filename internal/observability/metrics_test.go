@@ -88,3 +88,30 @@ func TestQueueDepthGaugeSwallowsSourceError(t *testing.T) {
 		t.Errorf("no gauge samples expected on source error\n%s", out)
 	}
 }
+
+func TestJobQueueHealthGauges(t *testing.T) {
+	m := NewMetrics()
+	m.RegisterJobQueueHealthSource(func(context.Context) ([]JobQueueHealth, error) {
+		return []JobQueueHealth{{
+			Queue: "transcode_jobs", OldestQueuedAgeSeconds: 123, StaleRunning: 2,
+		}}, nil
+	})
+	out := scrape(t, m)
+	if !strings.Contains(out, `vidra_job_oldest_queued_age_seconds{queue="transcode_jobs"} 123`) {
+		t.Errorf("expected queue age gauge\n%s", out)
+	}
+	if !strings.Contains(out, `vidra_job_stale_running{queue="transcode_jobs"} 2`) {
+		t.Errorf("expected stale-running gauge\n%s", out)
+	}
+}
+
+func TestJobQueueHealthGaugeSwallowsSourceError(t *testing.T) {
+	m := NewMetrics()
+	m.RegisterJobQueueHealthSource(func(context.Context) ([]JobQueueHealth, error) {
+		return nil, errors.New("db down")
+	})
+	out := scrape(t, m)
+	if strings.Contains(out, "vidra_job_oldest_queued_age_seconds{") || strings.Contains(out, "vidra_job_stale_running{") {
+		t.Errorf("no job-health samples expected on source error\n%s", out)
+	}
+}

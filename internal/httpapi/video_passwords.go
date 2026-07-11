@@ -3,7 +3,6 @@ package httpapi
 import (
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,29 +43,6 @@ func playbackTokenFromRequest(c echo.Context) string {
 		return tok
 	}
 	return ""
-}
-
-// redactQueryToken masks the value of a `pt` (playback-token) query parameter in a
-// request URI so the SECRET unlock token never reaches the request log. The path
-// and all other query params are untouched. Used by the request logger.
-func redactQueryToken(uri string) string {
-	i := strings.IndexByte(uri, '?')
-	if i < 0 {
-		return uri
-	}
-	path, query := uri[:i], uri[i+1:]
-	parts := strings.Split(query, "&")
-	changed := false
-	for j, p := range parts {
-		if p == playbackTokenParam || strings.HasPrefix(p, playbackTokenParam+"=") {
-			parts[j] = playbackTokenParam + "=REDACTED"
-			changed = true
-		}
-	}
-	if !changed {
-		return uri
-	}
-	return path + "?" + strings.Join(parts, "&")
 }
 
 // hasPlaybackToken reports whether the request carries a valid, unexpired playback

@@ -13,26 +13,38 @@ import (
 // carries secrets/PII; actor_username is resolved best-effort and omitted when
 // the account is unknown/deleted/unauthenticated.
 type auditLogEntryView struct {
-	ID            string    `json:"id"`
-	Action        string    `json:"action"`
-	Result        string    `json:"result"`
-	ActorID       string    `json:"actor_id,omitempty"`
-	ActorUsername string    `json:"actor_username,omitempty"`
-	Reason        string    `json:"reason,omitempty"`
-	RequestID     string    `json:"request_id,omitempty"`
-	OccurredAt    time.Time `json:"occurred_at"`
+	ID            string            `json:"id"`
+	SchemaVersion int16             `json:"schema_version"`
+	Domain        string            `json:"domain"`
+	Action        string            `json:"action"`
+	Result        string            `json:"result"`
+	ActorID       string            `json:"actor_id,omitempty"`
+	ActorKind     string            `json:"actor_kind"`
+	ActorRole     string            `json:"actor_role,omitempty"`
+	ActorUsername string            `json:"actor_username,omitempty"`
+	Reason        string            `json:"reason,omitempty"`
+	RequestID     string            `json:"request_id,omitempty"`
+	CorrelationID string            `json:"correlation_id,omitempty"`
+	TraceID       string            `json:"trace_id,omitempty"`
+	PipelineRunID string            `json:"pipeline_run_id,omitempty"`
+	JobID         string            `json:"job_id,omitempty"`
+	ResourceType  string            `json:"resource_type,omitempty"`
+	ResourceID    string            `json:"resource_id,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	Changes       []audit.Change    `json:"changes,omitempty"`
+	OccurredAt    time.Time         `json:"occurred_at"`
 }
 
 func newAuditLogEntryView(e audit.Entry) auditLogEntryView {
 	return auditLogEntryView{
-		ID:            e.ID.String(),
-		Action:        e.Action,
-		Result:        e.Result,
-		ActorID:       e.ActorID,
-		ActorUsername: e.ActorUsername,
-		Reason:        e.Reason,
-		RequestID:     e.RequestID,
-		OccurredAt:    e.OccurredAt,
+		ID: e.ID.String(), SchemaVersion: e.SchemaVersion, Domain: e.Domain,
+		Action: e.Action, Result: e.Result,
+		ActorID: e.ActorID, ActorKind: e.ActorKind, ActorRole: e.ActorRole,
+		ActorUsername: e.ActorUsername, Reason: e.Reason,
+		RequestID: e.RequestID, CorrelationID: e.CorrelationID, TraceID: e.TraceID,
+		PipelineRunID: e.PipelineRunID, JobID: e.JobID,
+		ResourceType: e.ResourceType, ResourceID: e.ResourceID,
+		Metadata: e.Metadata, Changes: e.Changes, OccurredAt: e.OccurredAt,
 	}
 }
 

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -20,8 +22,13 @@ type httpAuditFakeRepo struct{ rows []sqlcgen.ListAuditLogRow }
 
 func (f *httpAuditFakeRepo) InsertAuditLog(_ context.Context, a sqlcgen.InsertAuditLogParams) error {
 	f.rows = append(f.rows, sqlcgen.ListAuditLogRow{
-		ID: uuid.New(), Action: a.Action, Result: a.Result, ActorID: a.ActorID,
-		Reason: a.Reason, RequestID: a.RequestID, OccurredAt: time.Now(),
+		ID: a.ID, SchemaVersion: a.SchemaVersion, Domain: a.Domain,
+		Action: a.Action, Result: a.Result, ActorID: a.ActorID,
+		ActorKind: a.ActorKind, ActorRole: a.ActorRole,
+		Reason: a.Reason, RequestID: a.RequestID, CorrelationID: a.CorrelationID,
+		TraceID: a.TraceID, PipelineRunID: a.PipelineRunID, JobID: a.JobID,
+		ResourceType: a.ResourceType, ResourceID: a.ResourceID,
+		Metadata: a.Metadata, Changes: a.Changes, OccurredAt: time.Now(),
 	})
 	return nil
 }
@@ -71,6 +78,15 @@ func TestAuditLogPersistsAndLists(t *testing.T) {
 	if reg.ActorID == "" {
 		t.Error("register audit entry should carry the created account's actor_id")
 	}
+	if reg.SchemaVersion != audit.CurrentSchemaVersion || reg.Domain != "auth" {
+		t.Errorf("register envelope = version %d domain %q, want %d/auth", reg.SchemaVersion, reg.Domain, audit.CurrentSchemaVersion)
+	}
+	if reg.ActorKind != "user" {
+		t.Errorf("register actor kind = %s, want user", reg.ActorKind)
+	}
+	if reg.RequestID == "" || reg.CorrelationID == "" {
+		t.Errorf("register correlation = request %q correlation %q, want both", reg.RequestID, reg.CorrelationID)
+	}
 
 	// Action filter returns only matching entries.
 	var logins auditLogListResponse
@@ -91,5 +107,48 @@ func TestAuditLogPersistsAndLists(t *testing.T) {
 	}
 	if rec := getWithAuth(srv, "/api/v1/admin/audit-log", ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anon audit-log = %d, want 401", rec.Code)
+	}
+}
+
+func TestAuditAutomaticallyAttachesRequestCorrelationAndTrace(t *testing.T) {
+	authRepo := newAuthFakeRepo()
+	auditRepo := &httpAuditFakeRepo{}
+	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
+	authsvc := auth.NewService(authRepo, issuer, 720*time.Hour)
+	srv := New(testConfig(), nil, nil,
+		WithAuthService(authsvc, 15*time.Minute),
+		WithAuditLog(audit.NewService(auditRepo)),
+	)
+	registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	tid, _ := trace.TraceIDFromHex("0102030405060708090a0b0c0d0e0f10")
+	sid, _ := trace.SpanIDFromHex("0102030405060708")
+	sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid, TraceFlags: trace.FlagsSampled})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(
+		`{"email":"ada@example.test","password":"supersecret"}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(correlationHeader, "audit-correlation-42")
+	req = req.WithContext(trace.ContextWithSpanContext(req.Context(), sc))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var login *sqlcgen.ListAuditLogRow
+	for i := range auditRepo.rows {
+		if auditRepo.rows[i].Action == observability.ActionLogin && auditRepo.rows[i].Result == observability.ResultSuccess {
+			login = &auditRepo.rows[i]
+		}
+	}
+	if login == nil {
+		t.Fatal("no durable auth.login success event")
+	}
+	if login.RequestID == "" || login.CorrelationID != "audit-correlation-42" || login.TraceID != tid.String() {
+		t.Errorf("audit correlation = request %q correlation %q trace %q", login.RequestID, login.CorrelationID, login.TraceID)
+	}
+	if login.ActorKind != "user" || !login.ActorID.Valid {
+		t.Errorf("audit actor snapshot = kind %q id %+v, want a user UUID", login.ActorKind, login.ActorID)
 	}
 }

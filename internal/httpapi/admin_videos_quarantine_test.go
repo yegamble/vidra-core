@@ -191,7 +191,7 @@ func TestQuarantineFlow(t *testing.T) {
 }
 
 // TestQuarantineRejectNotifiesOwner proves rejection fails the video, notifies
-// the owner (without exposing the moderator), and audits the reason.
+// the owner (without exposing the moderator), and audits a safe classification.
 func TestQuarantineRejectNotifiesOwner(t *testing.T) {
 	hooks := &hookRecorder{}
 	srv := videoServerCfg(t, testConfig(), hooks.options()...)
@@ -257,11 +257,15 @@ func TestQuarantineRejectNotifiesOwner(t *testing.T) {
 		t.Fatalf("owner got no video_rejected notification: %+v", notifs.Notifications)
 	}
 
-	// Audited with the reason; state-guarded on repeat.
+	// Audited without moderator prose; state-guarded on repeat.
 	if ev := findAudit(auditEvents(t, &buf), observability.ActionVideoReject, observability.ResultSuccess); ev == nil {
 		t.Errorf("no %s audit event on reject", observability.ActionVideoReject)
-	} else if reason, _ := ev["reason"].(string); !strings.Contains(reason, "spam") || !strings.Contains(reason, vid) {
-		t.Errorf("reject audit reason = %q, want the video id and reason", reason)
+	} else if reason, _ := ev["reason"].(string); reason != "moderator_rejected" {
+		t.Errorf("reject audit reason = %q, want stable moderator_rejected classification", reason)
+	} else if ev["resource_type"] != "video" || ev["resource_id"] != vid {
+		t.Errorf("reject audit resource = %v/%v, want video/%s", ev["resource_type"], ev["resource_id"], vid)
+	} else if strings.Contains(buf.String(), "spam") {
+		t.Error("moderator-supplied prose leaked into the audit log")
 	}
 	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+vid+"/reject", "", admin); rec.Code != http.StatusConflict {
 		t.Errorf("re-reject = %d, want 409", rec.Code)

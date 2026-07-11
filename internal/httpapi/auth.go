@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
@@ -14,30 +16,63 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// audit emits a security audit event for the current request, pulling the
-// request ID from the response headers. See internal/observability and
-// .ralph/specs/observability.md. actorID/reason may be empty.
+// audit preserves the legacy call shape while writing the typed v2 envelope.
 func (s *Server) audit(c echo.Context, action, result, actorID, reason string) {
+	s.auditEvent(c, audit.Event{
+		Action: action, Result: result, ActorID: actorID, Reason: reason,
+	})
+}
+
+// auditEvent emits and best-effort persists a typed security-audit event for the
+// current request. Request/correlation/trace fields are attached centrally so
+// individual handlers cannot accidentally omit them. Resource ids and metadata
+// still come from explicit, allowlisted event construction at the call site.
+func (s *Server) auditEvent(c echo.Context, ev audit.Event) {
 	ctx := c.Request().Context()
-	reqID := c.Response().Header().Get(echo.HeaderXRequestID)
+	if ev.RequestID == "" {
+		ev.RequestID = c.Response().Header().Get(echo.HeaderXRequestID)
+	}
+	if ev.CorrelationID == "" {
+		ev.CorrelationID = correlationIDFromContext(ctx)
+	}
+	if ev.TraceID == "" {
+		if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
+			ev.TraceID = sc.TraceID().String()
+		}
+	}
+	if ev.Actor.ID == "" {
+		ev.Actor.ID = ev.ActorID
+	}
+	if ev.Actor.Kind == "" {
+		if ev.Actor.ID == "" {
+			ev.Actor.Kind = "anonymous"
+		} else {
+			ev.Actor.Kind = "user"
+		}
+	}
+	if userID, role, ok := principalFromContext(c); ok && ev.Actor.ID == userID.String() {
+		ev.Actor.Role = role
+	}
+	var pipelineRunID, jobID string
+	if ev.PipelineRunID != uuid.Nil {
+		pipelineRunID = ev.PipelineRunID.String()
+	}
+	if ev.JobID != uuid.Nil {
+		jobID = ev.JobID.String()
+	}
 	observability.Audit(ctx, s.logger, observability.AuditEvent{
-		Action:    action,
-		Result:    result,
-		ActorID:   actorID,
-		RequestID: reqID,
-		Reason:    reason,
+		SchemaVersion: ev.SchemaVersion,
+		Domain:        ev.Domain, Action: ev.Action, Result: ev.Result,
+		ActorID: ev.Actor.ID, ActorKind: ev.Actor.Kind, ActorRole: ev.Actor.Role,
+		RequestID: ev.RequestID, CorrelationID: ev.CorrelationID, TraceID: ev.TraceID,
+		PipelineRunID: pipelineRunID, JobID: jobID,
+		ResourceType: ev.ResourceType, ResourceID: ev.ResourceID, Reason: ev.Reason,
 	})
 	// Persist the durable audit trail best-effort when wired; a failure never
 	// blocks the request (the slog line above is still emitted).
 	if s.auditLog != nil {
-		if err := s.auditLog.Record(ctx, audit.Event{
-			Action:    action,
-			Result:    result,
-			ActorID:   actorID,
-			Reason:    reason,
-			RequestID: reqID,
-		}); err != nil {
-			s.logger.WarnContext(ctx, "audit log persist failed", "error", err, "action", action)
+		if err := s.auditLog.Record(ctx, ev); err != nil {
+			s.logger.WarnContext(ctx, "audit log persist failed", "error", err, "action", ev.Action)
 		}
 	}
 }

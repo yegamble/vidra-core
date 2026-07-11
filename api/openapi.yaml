@@ -8886,7 +8886,8 @@ paths:
         Returns the durable audit trail of security-sensitive actions (auth,
         moderation, admin, registration), newest first. Restricted to admins.
         Optional action filters by a specific action id. Paginated via limit
-        (1–100, default 20) and offset. Rows never contain secrets/PII.
+        (1–100, default 20) and offset. Rows never contain secrets, raw content,
+        email/IP data, URLs, headers, cookies, credentials, or process output.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -9031,6 +9032,196 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/jobs/runs:
+    get:
+      operationId: listJobRuns
+      summary: List individual operational job runs (admin)
+      description: >-
+        Returns the sanitized, paginated execution projection for the durable
+        UUID-backed queues integrated in Phase 1. Source queue rows remain the
+        execution authority. Metadata is allowlisted and bounded; source/inbox
+        URLs, payloads, storage keys, credentials, raw process output, and legacy
+        free-form errors are never copied into this projection. event_cursor is
+        an opaque decimal string captured before the snapshot and can seed the
+        resumable SSE stream without a REST-to-stream race.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: state
+          in: query
+          schema:
+            $ref: "#/components/schemas/JobRunState"
+        - name: type
+          in: query
+          schema: { type: string, maxLength: 128 }
+        - name: queue
+          in: query
+          schema: { type: string, maxLength: 128 }
+        - name: resource_type
+          in: query
+          schema: { type: string, maxLength: 64 }
+        - name: resource_id
+          in: query
+          schema: { type: string, maxLength: 255 }
+        - name: worker_id
+          in: query
+          schema: { type: string, maxLength: 255 }
+        - name: failure
+          in: query
+          description: true selects failed/dead-lettered runs; false excludes them.
+          schema: { type: boolean }
+        - name: created_after
+          in: query
+          schema: { type: string, format: date-time }
+        - name: created_before
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: A filtered page of individual job runs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobRunsResponse"
+        "400":
+          description: Invalid filter or timestamp.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/admin/jobs/runs/{id}:
+    get:
+      operationId: getJobRun
+      summary: Get one operational job run and event history (admin)
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: events_limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: events_offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: The run and a newest-first page of durable events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobRunDetailResponse"
+        "400":
+          description: Invalid run id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Run not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/admin/jobs/events:
+    get:
+      operationId: streamJobEvents
+      summary: Resumable operational job-event stream (admin)
+      description: >-
+        Streams durable JobEvent objects oldest-first. The SSE id is the same
+        opaque decimal string as JobEvent.cursor. Last-Event-ID takes precedence
+        over the after query parameter. Connections are short-lived and capped by
+        the access-token expiry so clients reconnect and re-authenticate. The
+        server emits heartbeat comments and event name `job-event`; clients must
+        retain the cursor verbatim rather than converting it to a JavaScript number.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string, pattern: "^[0-9]+$" }
+        - name: after
+          in: query
+          schema: { type: string, pattern: "^[0-9]+$" }
+        - name: job_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: state
+          in: query
+          schema: { $ref: "#/components/schemas/JobRunState" }
+        - name: type
+          in: query
+          schema: { type: string, maxLength: 128 }
+        - name: queue
+          in: query
+          schema: { type: string, maxLength: 128 }
+        - name: resource_type
+          in: query
+          schema: { type: string, maxLength: 64 }
+        - name: resource_id
+          in: query
+          schema: { type: string, maxLength: 255 }
+        - name: worker_id
+          in: query
+          schema: { type: string, maxLength: 255 }
+        - name: failure
+          in: query
+          schema: { type: boolean }
+        - name: created_after
+          in: query
+          schema: { type: string, format: date-time }
+        - name: created_before
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: A text/event-stream of `job-event` events whose data is JobEvent JSON.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400":
+          description: Invalid filter or event cursor.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /api/v1/admin/instance-settings:
     get:
       operationId: getInstanceSettings
@@ -13083,34 +13274,102 @@ components:
           example: 0
     AuditLogEntry:
       type: object
-      description: A durable security-audit record. Never contains secrets/PII.
-      required: [id, action, result, occurred_at]
+      description: >-
+        A durable, low-volume security-audit envelope. Metadata and changes are
+        allowlisted and bounded; raw payloads, content, email/IP data, signed URLs,
+        headers, cookies, credentials, and process output are forbidden. Routine
+        high-volume content activity and job execution events use separate streams.
+      required: [id, schema_version, domain, action, result, actor_kind, occurred_at]
       properties:
         id:
           type: string
           format: uuid
+        schema_version:
+          type: integer
+          minimum: 1
+          description: Audit-envelope schema version (2 for newly written typed events).
+        domain:
+          type: string
+          maxLength: 64
+          description: Stable action domain, such as auth, moderation, admin, or content.
         action:
           type: string
+          maxLength: 160
           description: Stable dot-namespaced action id (e.g. auth.login).
           example: auth.login
         result:
           type: string
           enum: [success, failure]
+          description: The outcome of the attempted action.
         actor_id:
           type: string
           format: uuid
           description: The acting account's id; omitted for unauthenticated events.
+        actor_kind:
+          type: string
+          enum: [anonymous, user, system, service]
+          description: Safe actor snapshot kind at event time.
+        actor_role:
+          type: string
+          enum: [user, moderator, admin]
+          description: Safe authorization-role snapshot; present only for a known user actor.
         actor_username:
           type: string
-          description: Resolved best-effort; omitted if the account is deleted/unknown.
+          description: Current username resolved best-effort at read time; not part of the durable actor snapshot.
         reason:
           type: string
-          description: Safe, non-sensitive classification (e.g. invalid_credentials).
+          maxLength: 512
+          description: Safe, bounded classification (e.g. invalid_credentials), never moderator/user prose.
         request_id:
           type: string
+          maxLength: 128
+        correlation_id:
+          type: string
+          maxLength: 128
+        trace_id:
+          type: string
+          pattern: '^[0-9a-fA-F]{32}$'
+        pipeline_run_id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        resource_type:
+          type: string
+          maxLength: 64
+        resource_id:
+          type: string
+          maxLength: 512
+          description: Bounded opaque identifier; URLs are forbidden.
+        metadata:
+          type: object
+          description: Allowlisted bounded scalar classifications only.
+          additionalProperties:
+            type: string
+            maxLength: 256
+        changes:
+          type: array
+          maxItems: 32
+          description: Allowlisted safe before/after scalar differences; content fields are forbidden.
+          items:
+            $ref: "#/components/schemas/AuditLogChange"
         occurred_at:
           type: string
           format: date-time
+    AuditLogChange:
+      type: object
+      required: [field]
+      properties:
+        field:
+          type: string
+          description: Allowlisted low-sensitivity state/config field.
+        before:
+          type: string
+          maxLength: 256
+        after:
+          type: string
+          maxLength: 256
     AuditLogListResponse:
       type: object
       required: [entries, limit, offset]
@@ -13242,6 +13501,149 @@ components:
               type: integer
               format: int64
               description: The shared fixed-window length in seconds.
+    JobRunState:
+      type: string
+      description: Stable state vocabulary for the unified operational projection.
+      enum:
+        - queued
+        - claimed
+        - running
+        - retry_scheduled
+        - succeeded
+        - failed
+        - dead_lettered
+        - cancel_requested
+        - cancelled
+    JobMetadata:
+      type: object
+      description: >-
+        Bounded, allowlisted operational metadata. Values are short scalar
+        booleans/numbers/enum-like tokens only; URLs, credentials, emails, nested
+        payloads, process output, and arbitrary source data are rejected.
+      additionalProperties: false
+      properties:
+        mode: { type: string, maxLength: 128 }
+        resolver: { type: string, maxLength: 128 }
+        language: { type: string, maxLength: 128 }
+        media_class: { type: string, maxLength: 128 }
+        network: { type: string, maxLength: 128 }
+        dry_run: { type: boolean }
+        conflict_policy: { type: string, maxLength: 128 }
+        source_version: { type: number, minimum: 0 }
+        planned: { type: number, minimum: 0 }
+        imported: { type: number, minimum: 0 }
+        skipped: { type: number, minimum: 0 }
+        failed: { type: number, minimum: 0 }
+        unsupported: { type: number, minimum: 0 }
+        width: { type: number, minimum: 0 }
+        height: { type: number, minimum: 0 }
+        duration_seconds: { type: number, minimum: 0 }
+        bytes: { type: number, minimum: 0 }
+        items: { type: number, minimum: 0 }
+        reason_code: { type: string, maxLength: 128 }
+    JobRun:
+      type: object
+      description: >-
+        One sanitized execution projection. Source queue identifiers, lease
+        tokens, idempotency keys, raw inputs, and unrestricted errors are not exposed.
+      required:
+        - id
+        - type
+        - queue
+        - state
+        - priority
+        - attempt
+        - input_metadata
+        - output_metadata
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        pipeline_run_id: { type: string, format: uuid }
+        parent_job_id: { type: string, format: uuid }
+        type: { type: string, maxLength: 128 }
+        queue: { type: string, maxLength: 128 }
+        state: { $ref: "#/components/schemas/JobRunState" }
+        stage: { type: string, maxLength: 128 }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        priority: { type: integer, format: int32 }
+        attempt: { type: integer, format: int32, minimum: 0 }
+        max_attempts: { type: integer, format: int32, minimum: 1 }
+        actor_id: { type: string, format: uuid }
+        resource_type: { type: string, maxLength: 64 }
+        resource_id: { type: string, maxLength: 255 }
+        request_id: { type: string, maxLength: 128 }
+        correlation_id: { type: string, maxLength: 128 }
+        trace_id: { type: string, maxLength: 32 }
+        worker_id: { type: string, maxLength: 255 }
+        lease_expires_at: { type: string, format: date-time }
+        heartbeat_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        claimed_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        input_metadata: { $ref: "#/components/schemas/JobMetadata" }
+        output_metadata: { $ref: "#/components/schemas/JobMetadata" }
+        error_class: { type: string, maxLength: 64 }
+        error_code: { type: string, maxLength: 128 }
+        error_detail:
+          type: string
+          maxLength: 2048
+          description: Bounded redacted detail; never raw subprocess/network output.
+        error_retryable: { type: boolean }
+    JobEvent:
+      type: object
+      description: One durable sanitized execution transition.
+      required: [id, cursor, job_id, kind, state, attempt, metadata, occurred_at]
+      properties:
+        id: { type: string, format: uuid }
+        cursor:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Opaque BIGINT replay cursor serialized as a decimal string.
+        job_id: { type: string, format: uuid }
+        pipeline_run_id: { type: string, format: uuid }
+        kind: { type: string, maxLength: 128 }
+        state: { $ref: "#/components/schemas/JobRunState" }
+        stage: { type: string, maxLength: 128 }
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        attempt: { type: integer, format: int32, minimum: 0 }
+        worker_id: { type: string, maxLength: 255 }
+        message: { type: string, maxLength: 1024 }
+        metadata: { $ref: "#/components/schemas/JobMetadata" }
+        request_id: { type: string, maxLength: 128 }
+        correlation_id: { type: string, maxLength: 128 }
+        trace_id: { type: string, maxLength: 32 }
+        occurred_at: { type: string, format: date-time }
+    JobRunsResponse:
+      type: object
+      required: [runs, total, limit, offset, event_cursor]
+      properties:
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/JobRun" }
+        total: { type: integer, format: int64, minimum: 0 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        offset: { type: integer, minimum: 0 }
+        event_cursor:
+          type: string
+          pattern: "^[0-9]+$"
+    JobRunDetailResponse:
+      type: object
+      required: [run, events, events_total, events_limit, events_offset, event_cursor]
+      properties:
+        run: { $ref: "#/components/schemas/JobRun" }
+        events:
+          type: array
+          description: Newest-first event page through event_cursor.
+          items: { $ref: "#/components/schemas/JobEvent" }
+        events_total: { type: integer, format: int64, minimum: 0 }
+        events_limit: { type: integer, minimum: 1, maximum: 100 }
+        events_offset: { type: integer, minimum: 0 }
+        event_cursor:
+          type: string
+          pattern: "^[0-9]+$"
     JobsOverview:
       type: object
       description: >-

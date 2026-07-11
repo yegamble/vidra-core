@@ -196,9 +196,13 @@ All opt-in and zero-cost when disabled.
 
 - **Structured logs**: `LOG_LEVEL` (`debug|info|warn|error`) + `LOG_FORMAT`
   (`json` prod / `text` dev). One `slog` line per request with `request_id`,
-  `correlation_id`, and (with tracing on) `trace_id`/`span_id`. No secrets/PII —
-  enforced by the `TestNoSensitiveLogKeys` / `TestNoForbiddenLogging` guards in
-  `make ci`.
+  `correlation_id`, and (with tracing on) `trace_id`/`span_id`. Request logs use
+  the Echo route template (or URL path for an unmatched route), never the raw
+  query string: OAuth codes/state, playback tokens, searches, signed URLs, and
+  future secret parameters therefore cannot leak through the URI field. The
+  `TestNoSensitiveLogKeys` / `TestNoForbiddenLogging` guards in `make ci` prevent
+  unsafe logging primitives and known sensitive structured keys; they cannot
+  prove that arbitrary error/message values are safe.
 - **Metrics** (`METRICS_ENABLED=true`): Prometheus RED metrics at **`GET /metrics`**
   (`vidra_http_requests_total`, `vidra_http_request_duration_seconds` labelled by
   method / route template / status class — bounded cardinality, no ids or raw
@@ -217,6 +221,14 @@ All opt-in and zero-cost when disabled.
   recent failures) back the admin ops pages. A rising `oldest_pending_age_seconds`
   or growing `pending` is the stuck-worker signal; dead-lettered jobs appear as
   `failed` + in `recent_failures`.
+
+There is intentionally no administrator-facing System Logs API yet. Stdout is
+the canonical deployment log stream. Before records can be copied into a
+searchable multi-instance sink, Vidra needs a central recursive value sanitizer
+and record-size bound, a non-blocking bounded writer with a drop metric and no
+recursive self-logging, and independent retention/pruning. Never expose current
+raw `slog` values through a database, file reader, or process-local ring buffer.
+See `docs/operational-observability-phase1.md` for the staged design.
 
 ## Production deployment notes
 

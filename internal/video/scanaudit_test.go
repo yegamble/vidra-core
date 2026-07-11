@@ -81,6 +81,9 @@ func TestProcessAuditsMalwareRejections(t *testing.T) {
 			if ev.Result != observability.ResultFailure {
 				t.Errorf("result = %q, want %q", ev.Result, observability.ResultFailure)
 			}
+			if ev.Actor.Kind != "system" || ev.Actor.ID != "" {
+				t.Errorf("actor = %+v, want system without a user id", ev.Actor)
+			}
 			if !strings.Contains(ev.Reason, "outcome="+tc.wantOutcome) {
 				t.Errorf("reason = %q, want it to contain outcome=%s", ev.Reason, tc.wantOutcome)
 			}

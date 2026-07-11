@@ -135,7 +135,7 @@ func TestRunReplayPublishesRecording(t *testing.T) {
 		t.Errorf("processed key = %q, want the attached original's key", pipe.processedKey)
 	}
 	if len(auditor.events) != 1 || auditor.events[0].Result != observability.ResultSuccess ||
-		auditor.events[0].Action != observability.ActionLiveReplay {
+		auditor.events[0].Action != observability.ActionLiveReplay || auditor.events[0].Actor.Kind != "system" {
 		t.Errorf("audit = %+v, want one success content.live.replay event", auditor.events)
 	}
 }

@@ -55,14 +55,29 @@ type AtprotoPost struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// Low-volume security audit ledger. Do not store routine content activity, raw payloads, secrets, free-form content, signed URLs, or process output.
 type AuditLog struct {
-	ID         uuid.UUID   `json:"id"`
-	Action     string      `json:"action"`
-	Result     string      `json:"result"`
-	ActorID    pgtype.UUID `json:"actor_id"`
-	Reason     string      `json:"reason"`
-	RequestID  string      `json:"request_id"`
-	OccurredAt time.Time   `json:"occurred_at"`
+	ID            uuid.UUID   `json:"id"`
+	Action        string      `json:"action"`
+	Result        string      `json:"result"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+	Reason        string      `json:"reason"`
+	RequestID     string      `json:"request_id"`
+	OccurredAt    time.Time   `json:"occurred_at"`
+	SchemaVersion int16       `json:"schema_version"`
+	Domain        string      `json:"domain"`
+	ActorKind     string      `json:"actor_kind"`
+	ActorRole     string      `json:"actor_role"`
+	ResourceType  string      `json:"resource_type"`
+	ResourceID    string      `json:"resource_id"`
+	CorrelationID string      `json:"correlation_id"`
+	TraceID       string      `json:"trace_id"`
+	PipelineRunID pgtype.UUID `json:"pipeline_run_id"`
+	JobID         pgtype.UUID `json:"job_id"`
+	// Allowlisted, bounded scalar metadata only (application-enforced; 8 KiB DB backstop).
+	Metadata []byte `json:"metadata"`
+	// Allowlisted safe before/after scalar changes only (application-enforced; 8 KiB DB backstop).
+	Changes []byte `json:"changes"`
 }
 
 type BlockedInstance struct {
@@ -268,6 +283,64 @@ type InstanceSetting struct {
 	UpdatedAt time.Time   `json:"updated_at"`
 }
 
+type JobEvent struct {
+	Cursor          int64       `json:"cursor"`
+	ID              uuid.UUID   `json:"id"`
+	SchemaVersion   int16       `json:"schema_version"`
+	JobID           uuid.UUID   `json:"job_id"`
+	PipelineRunID   pgtype.UUID `json:"pipeline_run_id"`
+	Kind            string      `json:"kind"`
+	State           string      `json:"state"`
+	Stage           string      `json:"stage"`
+	ProgressPercent *int16      `json:"progress_percent"`
+	Attempt         int32       `json:"attempt"`
+	WorkerID        string      `json:"worker_id"`
+	Message         string      `json:"message"`
+	Metadata        []byte      `json:"metadata"`
+	RequestID       string      `json:"request_id"`
+	CorrelationID   string      `json:"correlation_id"`
+	TraceID         string      `json:"trace_id"`
+	OccurredAt      time.Time   `json:"occurred_at"`
+}
+
+type JobRun struct {
+	ID                uuid.UUID          `json:"id"`
+	PipelineRunID     pgtype.UUID        `json:"pipeline_run_id"`
+	ParentJobID       pgtype.UUID        `json:"parent_job_id"`
+	Type              string             `json:"type"`
+	Queue             string             `json:"queue"`
+	SourceID          string             `json:"source_id"`
+	State             string             `json:"state"`
+	Stage             string             `json:"stage"`
+	ProgressPercent   *int16             `json:"progress_percent"`
+	Priority          int32              `json:"priority"`
+	Attempt           int32              `json:"attempt"`
+	MaxAttempts       *int32             `json:"max_attempts"`
+	IdempotencyKey    string             `json:"idempotency_key"`
+	ActorID           pgtype.UUID        `json:"actor_id"`
+	ResourceType      string             `json:"resource_type"`
+	ResourceID        string             `json:"resource_id"`
+	RequestID         string             `json:"request_id"`
+	CorrelationID     string             `json:"correlation_id"`
+	TraceID           string             `json:"trace_id"`
+	WorkerID          string             `json:"worker_id"`
+	LeaseToken        pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
+	HeartbeatAt       pgtype.Timestamptz `json:"heartbeat_at"`
+	CancelRequestedAt pgtype.Timestamptz `json:"cancel_requested_at"`
+	InputMetadata     []byte             `json:"input_metadata"`
+	OutputMetadata    []byte             `json:"output_metadata"`
+	ErrorClass        string             `json:"error_class"`
+	ErrorCode         string             `json:"error_code"`
+	ErrorDetail       string             `json:"error_detail"`
+	ErrorRetryable    *bool              `json:"error_retryable"`
+	CreatedAt         time.Time          `json:"created_at"`
+	ClaimedAt         pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	FinishedAt        pgtype.Timestamptz `json:"finished_at"`
+}
+
 type LinkPreview struct {
 	UrlHash     string             `json:"url_hash"`
 	Url         string             `json:"url"`
@@ -430,6 +503,26 @@ type PeertubeImportRun struct {
 	CreatedAt      time.Time          `json:"created_at"`
 	UpdatedAt      time.Time          `json:"updated_at"`
 	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+}
+
+type PipelineRun struct {
+	ID             uuid.UUID          `json:"id"`
+	SchemaVersion  int16              `json:"schema_version"`
+	Type           string             `json:"type"`
+	State          string             `json:"state"`
+	ActorID        pgtype.UUID        `json:"actor_id"`
+	ResourceType   string             `json:"resource_type"`
+	ResourceID     string             `json:"resource_id"`
+	RequestID      string             `json:"request_id"`
+	CorrelationID  string             `json:"correlation_id"`
+	TraceID        string             `json:"trace_id"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	InputMetadata  []byte             `json:"input_metadata"`
+	OutputMetadata []byte             `json:"output_metadata"`
+	CreatedAt      time.Time          `json:"created_at"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
 	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
 }
 

@@ -120,6 +120,7 @@ type Server struct {
 	settingssvc       *instancesettings.Service
 	mediagcsvc        *mediagc.Service
 	jobStatusSvc      jobStatusProvider
+	jobOperationsSvc  jobOperationsProvider
 	peertubeimportsvc peerTubeImportProvider
 	ipfsmirrorsvc     ipfsMirrorProvider
 	metrics           *observability.Metrics
@@ -357,11 +358,16 @@ func WithMediaGCService(svc *mediagc.Service) Option {
 	return func(s *Server) { s.mediagcsvc = svc }
 }
 
-// WithJobStatusService mounts the admin operations jobs endpoint
-// (GET /admin/jobs) — the per-queue depth snapshot + recent-failures list that
-// backs the admin jobs page (P17.4). When unset, the route is not registered.
+// WithJobStatusService mounts the compatibility queue overview plus the unified
+// individual-run/detail/SSE read side. The source queues remain authoritative;
+// job_runs/job_events are a transactionally maintained sanitized projection.
 func WithJobStatusService(svc jobStatusProvider) Option {
-	return func(s *Server) { s.jobStatusSvc = svc }
+	return func(s *Server) {
+		s.jobStatusSvc = svc
+		if operations, ok := svc.(jobOperationsProvider); ok {
+			s.jobOperationsSvc = operations
+		}
+	}
 }
 
 // WithPeerTubeImportService mounts the admin PeerTube-import endpoints (launch a
@@ -598,7 +604,6 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 	return middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		LogStatus:    true,
 		LogMethod:    true,
-		LogURI:       true,
 		LogLatency:   true,
 		LogRequestID: true,
 		LogError:     true,
@@ -613,9 +618,10 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 			}
 			attrs := []any{
 				"method", v.Method,
-				// Redact any ?pt= playback token (CORE-17) so the secret unlock token
-				// never reaches the request log.
-				"uri", redactQueryToken(v.URI),
+				// Log the bounded route template, never the raw URI/query. Query values
+				// can carry OAuth codes/state, playback tokens, searches, signed URLs,
+				// email addresses, or future secrets whose names we do not yet know.
+				"path", requestLogPath(c),
 				"status", v.Status,
 				"latency_ms", v.Latency.Milliseconds(),
 				"request_id", v.RequestID,
@@ -644,6 +650,14 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 	})
 }
 
+func requestLogPath(c echo.Context) string {
+	if path := c.Path(); path != "" {
+		return path
+	}
+	// Unmatched routes have no Echo template. URL.Path excludes RawQuery.
+	return c.Request().URL.Path
+}
+
 // requestDeadline attaches a timeout to each request's context so handlers and
 // the DB/Redis/outbound calls they make observe a deadline and abort cleanly.
 // It does not forcibly interrupt a handler that ignores its context — the
@@ -653,6 +667,12 @@ func (s *Server) requestLogger() echo.MiddlewareFunc {
 func requestDeadline(d time.Duration) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			// SSE owns a bounded (and token-expiry-capped) lifetime in its handler.
+			// Exempt only this exact path; every REST request keeps the normal 30s
+			// deadline and the stream still reconnects/re-authenticates periodically.
+			if c.Request().URL.Path == "/api/v1/admin/jobs/events" {
+				return next(c)
+			}
 			ctx, cancel := context.WithTimeout(c.Request().Context(), d)
 			defer cancel()
 			c.SetRequest(c.Request().WithContext(ctx))
@@ -1130,6 +1150,11 @@ func (s *Server) routes() {
 	// Admin operations: durable-queue depth snapshot + recent failures (P17.4).
 	if s.jobStatusSvc != nil {
 		api.GET("/admin/jobs", s.handleListJobs, s.requireAuth, s.requireRole("admin"))
+	}
+	if s.jobOperationsSvc != nil {
+		api.GET("/admin/jobs/runs", s.handleListJobRuns, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/jobs/runs/:id", s.handleGetJobRun, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/jobs/events", s.handleJobEvents, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// DB-backed instance settings overlay (fix_plan P10): admins read the

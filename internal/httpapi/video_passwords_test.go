@@ -368,8 +368,8 @@ func TestUnlockRateLimitedByDefault(t *testing.T) {
 	}
 }
 
-// TestPlaybackTokenNeverLogged proves the ?pt= playback token is redacted from the
-// request log (it is a secret; the spec forbids logging it).
+// TestPlaybackTokenNeverLogged proves the entire query is omitted from the request
+// log. Redacting only known token names is insufficient for future secret params.
 func TestPlaybackTokenNeverLogged(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
@@ -386,8 +386,8 @@ func TestPlaybackTokenNeverLogged(t *testing.T) {
 	if strings.Contains(logged, token) {
 		t.Fatalf("the playback token must never appear in logs:\n%s", logged)
 	}
-	if !strings.Contains(logged, "pt=REDACTED") {
-		t.Fatalf("expected the request log to carry pt=REDACTED:\n%s", logged)
+	if strings.Contains(logged, "pt=") || !strings.Contains(logged, `"path":"/api/v1/videos/:id"`) {
+		t.Fatalf("request log should contain only the route template, never query parameters:\n%s", logged)
 	}
 }
 

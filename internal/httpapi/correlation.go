@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/vidra/vidra-core/internal/observability"
 )
 
 // correlationHeader is the request/response header carrying a cross-service
@@ -17,8 +19,6 @@ const correlationHeader = "X-Correlation-ID"
 // maxCorrelationIDLen bounds an inbound (untrusted) correlation id so a client
 // cannot bloat log lines or response headers.
 const maxCorrelationIDLen = 128
-
-type correlationCtxKey struct{}
 
 // correlationID accepts an inbound X-Correlation-ID, minting one from the
 // server-generated request id when absent, sanitising it (it is untrusted client
@@ -38,7 +38,10 @@ func correlationID() echo.MiddlewareFunc {
 				cid = c.Response().Header().Get(echo.HeaderXRequestID)
 			}
 			c.Response().Header().Set(correlationHeader, cid)
-			ctx := context.WithValue(c.Request().Context(), correlationCtxKey{}, cid)
+			ctx := observability.ContextWithCorrelation(c.Request().Context(), observability.Correlation{
+				RequestID:     c.Response().Header().Get(echo.HeaderXRequestID),
+				CorrelationID: cid,
+			})
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
@@ -47,8 +50,7 @@ func correlationID() echo.MiddlewareFunc {
 
 // correlationIDFromContext returns the correlation id bound to ctx, or "".
 func correlationIDFromContext(ctx context.Context) string {
-	cid, _ := ctx.Value(correlationCtxKey{}).(string)
-	return cid
+	return observability.CorrelationFromContext(ctx).CorrelationID
 }
 
 // sanitizeCorrelationID keeps only URL-safe token characters and bounds the

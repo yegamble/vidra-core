@@ -497,6 +497,7 @@ func (s *Service) audit(ctx context.Context, result, reason string) {
 	_ = s.auditor.Record(ctx, audit.Event{
 		Action: observability.ActionLiveReplay,
 		Result: result,
+		Actor:  audit.ActorSnapshot{Kind: "system"},
 		Reason: reason,
 	})
 }
