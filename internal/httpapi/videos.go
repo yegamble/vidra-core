@@ -368,15 +368,17 @@ func (s *Server) attachIPFSPinned(ctx context.Context, views []videoView) {
 }
 
 // handleGetVideo returns a video by id. Runs behind optionalAuth: public and
-// unlisted videos are visible to anyone with the link; a private video is
-// visible only to its owner, and is reported as 404 (not 403) to everyone else
-// so its existence is not leaked.
+// unlisted videos are visible to anyone with the link; private/non-public-state
+// videos are visible to their owner and to moderators/admins managing local
+// content. Invisible videos are reported as 404 so their existence is not
+// leaked. This exception is metadata-detail only: media/playback routes keep
+// their own narrower authorization.
 func (s *Server) handleGetVideo(c echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	v, err := s.videoVisibleForRead(c, id)
+	v, err := s.videoVisibleForDetail(c, id)
 	if err != nil {
 		return err
 	}
@@ -398,6 +400,23 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	view.HLSURL, view.Renditions = s.hlsDetail(c, id)
 	s.attachVideoIPFS(c.Request().Context(), &view, id, v.Privacy, v.State)
 	return c.JSON(http.StatusOK, view)
+}
+
+// videoVisibleForDetail applies the ordinary read policy unless the caller is
+// a moderator/admin, in which case any existing local video's metadata is
+// returned for the Manage workflow. It is deliberately used only by
+// handleGetVideo; sharing it with media/playback helpers would widen access to
+// the underlying files.
+func (s *Server) videoVisibleForDetail(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	_, role, ok := principalFromContext(c)
+	if !ok || (role != "admin" && role != "moderator") {
+		return s.videoVisibleForRead(c, videoID)
+	}
+	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
+	if err != nil {
+		return sqlcgen.GetVideoByIDRow{}, videoError(err)
+	}
+	return v, nil
 }
 
 // videoListResponse wraps a list of videos.
@@ -707,9 +726,10 @@ func derefOr(p *string) string {
 	return *p
 }
 
-// handleUpdateVideo updates a video owned by the authenticated user.
+// handleUpdateVideo updates a video owned by the authenticated user. A
+// moderator/admin may manage any local video.
 func (s *Server) handleUpdateVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
+	userID, role, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
@@ -721,7 +741,14 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	v, err := s.videosvc.Update(c.Request().Context(), userID, id, video.UpdateInput{
+	canManage := role == "admin" || role == "moderator"
+	managedOther := false
+	if canManage {
+		if existing, lookupErr := s.videosvc.GetByID(c.Request().Context(), id); lookupErr == nil {
+			managedOther = existing.OwnerID != userID
+		}
+	}
+	v, err := s.videosvc.UpdateForActor(c.Request().Context(), userID, id, video.UpdateInput{
 		Title:       in.Title,
 		Description: in.Description,
 		Privacy:     in.Privacy,
@@ -731,7 +758,7 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		Tags:        in.Tags,
 		PublishAt:   in.PublishAt,
 		IsSensitive: in.IsSensitive,
-	})
+	}, canManage)
 	if err != nil {
 		if errors.Is(err, video.ErrPublished) {
 			return &ValidationError{Fields: []FieldError{{Field: "publish_at", Message: "cannot be set after the video is published"}}}
@@ -741,14 +768,54 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	// Re-flag the edited metadata against the watched-words list (best-effort;
 	// an edit can newly introduce a flagged term — §12).
 	s.flagVideoWatchedWords(c.Request().Context(), v.ID, v.Title, v.Description)
+	if managedOther {
+		s.audit(c, observability.ActionVideoUpdate, observability.ResultSuccess, userID.String(),
+			"video="+id.String()+" fields="+strings.Join(updateVideoFieldNames(in), ","))
+	}
 	view := newVideoView(v)
 	s.attachVideoTags(c.Request().Context(), &view, v.ID)
 	return c.JSON(http.StatusOK, view)
 }
 
-// handleDeleteVideo deletes a video owned by the authenticated user.
+// updateVideoFieldNames returns only the names present in a managed PATCH.
+// Audit reasons must never include creator-authored values.
+func updateVideoFieldNames(in updateVideoRequest) []string {
+	fields := make([]string, 0, 9)
+	if in.Title != nil {
+		fields = append(fields, "title")
+	}
+	if in.Description != nil {
+		fields = append(fields, "description")
+	}
+	if in.Privacy != nil {
+		fields = append(fields, "privacy")
+	}
+	if in.Category != nil {
+		fields = append(fields, "category")
+	}
+	if in.Language != nil {
+		fields = append(fields, "language")
+	}
+	if in.License != nil {
+		fields = append(fields, "license")
+	}
+	if in.Tags != nil {
+		fields = append(fields, "tags")
+	}
+	if in.PublishAt != nil {
+		fields = append(fields, "publish_at")
+	}
+	if in.IsSensitive != nil {
+		fields = append(fields, "is_sensitive")
+	}
+	return fields
+}
+
+// handleDeleteVideo deletes a video owned by the authenticated user. A
+// moderator/admin may delete any local video; the audit actor remains the
+// authenticated caller, never the video's owner.
 func (s *Server) handleDeleteVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
+	userID, role, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
@@ -756,7 +823,8 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if err := s.videosvc.Delete(c.Request().Context(), userID, id); err != nil {
+	canManage := role == "admin" || role == "moderator"
+	if err := s.videosvc.DeleteForActor(c.Request().Context(), userID, id, canManage); err != nil {
 		return videoError(err)
 	}
 	s.audit(c, observability.ActionVideoDelete, observability.ResultSuccess, userID.String(), id.String())
@@ -924,22 +992,17 @@ func (s *Server) setThumbnailFromFrame(c echo.Context, userID, id uuid.UUID) err
 }
 
 // handleStreamVideoOriginal serves a video's stored original file. Behind
-// optionalAuth: visibility mirrors the detail endpoint (public/unlisted to
-// anyone, private only to the owner; otherwise 404), and a video without a
-// stored original is 404. Range requests are honoured for seeking when the
-// backend exposes a filesystem path.
+// optionalAuth: ordinary playback visibility applies (public/unlisted to
+// anyone, private only to the owner; otherwise 404). The manager-only metadata
+// detail exception does not apply, and a video without a stored original is
+// 404. Range requests are honoured for seeking when the backend exposes a
+// filesystem path.
 func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	v, hidden, err := s.videoHiddenFromViewer(c, id)
-	if err != nil {
-		return err
-	} else if hidden {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
-	}
-	if err := s.passwordGate(c, id, v.Privacy, v.OwnerID); err != nil {
+	if _, err := s.videoVisibleForMedia(c, id); err != nil {
 		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
@@ -950,20 +1013,14 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 	return s.serveStoredObject(c, f.StorageKey, f.ContentType)
 }
 
-// handleGetVideoThumbnail serves a video's generated poster image. Same
-// visibility as the detail endpoint; a video without a stored thumbnail is 404.
+// handleGetVideoThumbnail serves a video's generated poster image under the
+// ordinary media visibility policy; a video without a stored thumbnail is 404.
 func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	v, hidden, err := s.videoHiddenFromViewer(c, id)
-	if err != nil {
-		return err
-	} else if hidden {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
-	}
-	if err := s.passwordGate(c, id, v.Privacy, v.OwnerID); err != nil {
+	if _, err := s.videoVisibleForMedia(c, id); err != nil {
 		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
@@ -1034,8 +1091,8 @@ func (s *Server) serveStoredObjectNamed(c echo.Context, key, contentType, notFou
 }
 
 // handleRecordVideoView records a view of a video (deduped per viewer per window
-// when Redis is wired). Behind optionalAuth: visibility mirrors the detail
-// endpoint. Always 204 on success — whether or not the view was newly counted.
+// when Redis is wired). Behind optionalAuth, it retains ordinary playback
+// visibility. Always 204 on success — whether or not the view was newly counted.
 func (s *Server) handleRecordVideoView(c echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -1081,36 +1138,24 @@ func (s *Server) videoHiddenByBlock(c echo.Context, videoID uuid.UUID) (bool, er
 	return true, nil
 }
 
-// quarantineHidesVideo reports whether a quarantined video (§11) is hidden from
-// this caller: everyone except the owner (who sees it badged in the studio) and
-// moderators/admins (who review the queue). Other states are never hidden by
-// this rule — the public discovery surfaces already filter on state=published.
+// quarantineHidesVideo reports whether a quarantined video is hidden from this
+// caller. Owners and moderation staff may inspect it.
 func quarantineHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
 	if state != "quarantined" {
 		return false
 	}
 	userID, role, ok := principalFromContext(c)
-	if ok && (userID == ownerID || role == "admin" || role == "moderator") {
-		return false
-	}
-	return true
+	return !ok || (userID != ownerID && role != "admin" && role != "moderator")
 }
 
-// scheduledHidesVideo reports whether a scheduled video must be hidden as a 404.
-// A scheduled video is not yet public — it is visible only to its owner until the
-// publish sweeper (PublishDue) flips it to "published" at its publish_at. The
-// public discovery surfaces already filter on state=published, but the by-id
-// detail read fetches without a state filter, so it must gate here too (else a
-// scheduled video leaks to anyone with its id before its publish time).
+// scheduledHidesVideo keeps a scheduled video private until the publish
+// sweeper flips it to published. Its owner may preview it meanwhile.
 func scheduledHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
 	if state != "scheduled" {
 		return false
 	}
 	userID, _, ok := principalFromContext(c)
-	if ok && userID == ownerID {
-		return false
-	}
-	return true
+	return !ok || userID != ownerID
 }
 
 // videoHiddenFromViewer combines the moderation visibility rules the media/
@@ -1131,12 +1176,12 @@ func (s *Server) videoHiddenFromViewer(c echo.Context, videoID uuid.UUID) (sqlcg
 	return v, quarantineHidesVideo(c, v.State, v.OwnerID), nil
 }
 
-// videoVisibleForRead resolves a video for a read endpoint applying the SAME
-// visibility as GET /videos/{id}: an unknown id → 404; a private video → owner
-// only (else 404 so existence is not leaked); a blocked video → moderators only;
-// a quarantined video → owner + moderators; a scheduled video → owner. On any
-// failure it returns an *echo.HTTPError the caller returns as-is; otherwise it
-// returns the joined video row. Callers must already have parsed the id.
+// videoVisibleForRead resolves a video under the ordinary read/media policy: an
+// unknown id → 404; a private video → owner only (else 404 so existence is not
+// leaked); a blocked video → moderators only; quarantined → owner + moderators;
+// scheduled → owner. GET /videos/{id} layers its metadata-only manager exception
+// separately. On any failure this returns an *echo.HTTPError; otherwise it
+// returns the joined video row.
 func (s *Server) videoVisibleForRead(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	v, err := s.videoReadBase(c, videoID)
 	if err != nil {
@@ -1150,6 +1195,25 @@ func (s *Server) videoVisibleForRead(c echo.Context, videoID uuid.UUID) (sqlcgen
 		return sqlcgen.GetVideoByIDRow{}, err
 	}
 	return v, nil
+}
+
+// videoVisibleForMedia adds a publication-state gate to ordinary metadata
+// visibility. Draft/processing/failed public rows may remain readable as
+// metadata for compatibility, but their stored bytes must never be public by
+// UUID. Owners and moderation staff may inspect non-published media.
+func (s *Server) videoVisibleForMedia(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	v, err := s.videoVisibleForRead(c, videoID)
+	if err != nil {
+		return sqlcgen.GetVideoByIDRow{}, err
+	}
+	if v.State == "published" {
+		return v, nil
+	}
+	userID, role, ok := principalFromContext(c)
+	if ok && (userID == v.OwnerID || role == "admin" || role == "moderator") {
+		return v, nil
+	}
+	return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 }
 
 // videoReadBase applies the base read visibility (unknown id → 404; private →

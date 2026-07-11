@@ -37,7 +37,8 @@ func TestInstanceEndpoint(t *testing.T) {
 	}
 	// Feature toggles default on, so the frontend can gate affordances in
 	// lock-step with backend enforcement (fix_plan P10 instance features).
-	if !body.Features.Uploads || !body.Features.Imports || !body.Features.Live || !body.Features.Comments {
+	if !body.Features.Uploads || !body.Features.Imports || !body.Features.Live ||
+		!body.Features.Comments || !body.Features.Downloads {
 		t.Errorf("features = %+v, want all enabled by default", body.Features)
 	}
 }

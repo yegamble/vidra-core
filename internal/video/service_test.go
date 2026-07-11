@@ -598,8 +598,18 @@ func TestUpdateVideoOwnerNonOwnerNotFound(t *testing.T) {
 	if _, err := svc.Update(ctx, uuid.New(), v.ID, UpdateInput{Title: strptr("hax")}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("non-owner err = %v, want ErrForbidden", err)
 	}
+	// A caller explicitly authorized by the HTTP policy layer may manage a
+	// non-owned local video, while the ordinary Update contract stays owner-only.
+	manager := uuid.New()
+	managed, err := svc.UpdateForActor(ctx, manager, v.ID, UpdateInput{Title: strptr("moderated")}, true)
+	if err != nil {
+		t.Fatalf("managed update: %v", err)
+	}
+	if managed.Title != "moderated" {
+		t.Errorf("managed title = %q, want moderated", managed.Title)
+	}
 	// Unknown id not found.
-	if _, err := svc.Update(ctx, owner, uuid.New(), UpdateInput{Title: strptr("x")}); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.UpdateForActor(ctx, manager, uuid.New(), UpdateInput{Title: strptr("x")}, true); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown err = %v, want ErrNotFound", err)
 	}
 }
@@ -613,10 +623,18 @@ func TestDeleteVideoOwnerAndNonOwner(t *testing.T) {
 	if err := svc.Delete(ctx, uuid.New(), v.ID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("non-owner delete err = %v, want ErrForbidden", err)
 	}
-	if err := svc.Delete(ctx, owner, v.ID); err != nil {
-		t.Fatalf("owner delete: %v", err)
+	if err := svc.DeleteForActor(ctx, uuid.New(), v.ID, true); err != nil {
+		t.Fatalf("managed delete: %v", err)
 	}
 	if _, err := svc.GetByID(ctx, v.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after managed delete err = %v, want ErrNotFound", err)
+	}
+
+	owned, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "owned", Privacy: "private"})
+	if err := svc.Delete(ctx, owner, owned.ID); err != nil {
+		t.Fatalf("owner delete: %v", err)
+	}
+	if _, err := svc.GetByID(ctx, owned.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("after delete err = %v, want ErrNotFound", err)
 	}
 }

@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // TestScheduledPublishFlow drives the whole §17 flow over HTTP: create with a
@@ -17,7 +20,7 @@ import (
 // feed, badge-able in the studio list), then the sweeper (PublishDue) comes due
 // and publishes it onto the feed.
 func TestScheduledPublishFlow(t *testing.T) {
-	srv, _, _, _, repo := videoServerFull(t, testConfig())
+	srv, blobs, tcRepo, _, repo := videoServerFull(t, testConfig())
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 
 	future := time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339)
@@ -42,6 +45,26 @@ func TestScheduledPublishFlow(t *testing.T) {
 	if uploaded.Video.State != "scheduled" {
 		t.Fatalf("state after upload = %q, want scheduled", uploaded.Video.State)
 	}
+	id := uuid.MustParse(created.ID)
+
+	// Seed every derived-media shape so the scheduled visibility assertions
+	// below prove policy, not merely a missing-object 404.
+	putDerived := func(kind, key, contentType, body string) {
+		t.Helper()
+		if _, err := blobs.Put(context.Background(), key, strings.NewReader(body)); err != nil {
+			t.Fatalf("put %s: %v", kind, err)
+		}
+		if _, err := repo.CreateVideoFile(context.Background(), sqlcgen.CreateVideoFileParams{
+			VideoID: id, Kind: kind, StorageKey: key, ContentType: contentType,
+			OriginalName: key, SizeBytes: int64(len(body)),
+		}); err != nil {
+			t.Fatalf("record %s: %v", kind, err)
+		}
+	}
+	putDerived("thumbnail", "thumbnails/"+created.ID+".jpg", "image/jpeg", "fake-jpeg")
+	putDerived("storyboard", "storyboards/"+created.ID+".jpg", "image/jpeg", "fake-storyboard")
+	putDerived("storyboard_vtt", "storyboards/"+created.ID+".vtt", "text/vtt", "WEBVTT\n")
+	seedReadyHLS(t, tcRepo, blobs, created.ID)
 
 	feedTitles := func() []string {
 		rec := httptest.NewRecorder()
@@ -77,6 +100,22 @@ func TestScheduledPublishFlow(t *testing.T) {
 	if rec := getVideo(srv, created.ID, ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("public detail of scheduled video = %d, want 404 (not yet published)", rec.Code)
 	}
+	mediaPaths := []string{
+		"/api/v1/videos/" + created.ID + "/original",
+		"/api/v1/videos/" + created.ID + "/download",
+		"/api/v1/videos/" + created.ID + "/thumbnail",
+		"/api/v1/videos/" + created.ID + "/storyboard.jpg",
+		"/api/v1/videos/" + created.ID + "/storyboard.vtt",
+		"/api/v1/videos/" + created.ID + "/hls/master.m3u8",
+	}
+	for _, path := range mediaPaths {
+		if rec := sendJSONAuth(srv, http.MethodGet, path, "", ""); rec.Code != http.StatusNotFound {
+			t.Errorf("anonymous scheduled media %s = %d, want 404", path, rec.Code)
+		}
+		if rec := sendJSONAuth(srv, http.MethodGet, path, "", tok); rec.Code != http.StatusOK {
+			t.Errorf("owner scheduled media %s = %d, want 200; body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
 
 	// Not due yet: the sweeper is a no-op.
 	if n, err := srv.videosvc.PublishDue(context.Background(), 10); err != nil || n != 0 {
@@ -84,7 +123,6 @@ func TestScheduledPublishFlow(t *testing.T) {
 	}
 
 	// Rewind the schedule so it is due, then sweep.
-	id := uuid.MustParse(created.ID)
 	row := repo.videos[id]
 	row.PublishAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true}
 	repo.videos[id] = row

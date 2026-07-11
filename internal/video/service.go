@@ -1201,14 +1201,23 @@ type UpdateInput struct {
 	IsSensitive *bool
 }
 
-// Update changes a video's mutable metadata. Only the owner may update; a
-// non-owner gets ErrForbidden and an unknown id gets ErrNotFound.
+// Update changes a video's mutable metadata. It preserves the owner-only
+// service contract used by creator flows; a non-owner gets ErrForbidden and an
+// unknown id gets ErrNotFound.
 func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateInput) (sqlcgen.Video, error) {
+	return s.UpdateForActor(ctx, ownerID, id, in, false)
+}
+
+// UpdateForActor changes a video's mutable metadata for its owner or, when
+// canManage is true, a moderator/admin acting through the HTTP policy layer.
+// actorID remains distinct from the video's owner so callers can preserve the
+// real actor in audit/event context. Unknown ids still return ErrNotFound.
+func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in UpdateInput, canManage bool) (sqlcgen.Video, error) {
 	v, err := s.GetByID(ctx, id)
 	if err != nil {
 		return sqlcgen.Video{}, err
 	}
-	if v.OwnerID != ownerID {
+	if v.OwnerID != actorID && !canManage {
 		return sqlcgen.Video{}, ErrForbidden
 	}
 	if in.PublishAt != nil && v.State == "published" {
@@ -1291,14 +1300,20 @@ func (s *Service) PrefillMetadata(ctx context.Context, videoID uuid.UUID, title,
 	return err
 }
 
-// Delete removes a video. Only the owner may delete; non-owner → ErrForbidden,
-// unknown id → ErrNotFound.
+// Delete removes a video under the owner-only service contract.
 func (s *Service) Delete(ctx context.Context, ownerID, id uuid.UUID) error {
+	return s.DeleteForActor(ctx, ownerID, id, false)
+}
+
+// DeleteForActor removes a video for its owner or, when canManage is true, a
+// moderator/admin acting through the HTTP policy layer. actorID is used only
+// for authorization; the handler retains it as the audit actor.
+func (s *Service) DeleteForActor(ctx context.Context, actorID, id uuid.UUID, canManage bool) error {
 	v, err := s.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if v.OwnerID != ownerID {
+	if v.OwnerID != actorID && !canManage {
 		return ErrForbidden
 	}
 	if err := s.repo.DeleteVideo(ctx, id); err != nil {

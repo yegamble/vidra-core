@@ -79,6 +79,12 @@ func (s *Server) commentsEnabled() bool {
 	return s.settingBool(instancesettings.KeyCommentsEnabled, s.cfg.CommentsEnabled)
 }
 
+// downloadsEnabled reports the runtime download-policy toggle. Downloads have
+// no env/config backing and default on when the settings service is not wired.
+func (s *Server) downloadsEnabled() bool {
+	return s.settingBool(instancesettings.KeyDownloadsEnabled, true)
+}
+
 // --- admin GET/PATCH /admin/instance-settings ---
 
 // instanceSettingView is one setting's effective state in the admin response:

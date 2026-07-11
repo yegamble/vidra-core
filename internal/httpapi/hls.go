@@ -14,7 +14,6 @@ import (
 
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
-	"github.com/vidra/vidra-core/internal/video"
 )
 
 // maxPlaylistBytes bounds an m3u8 read when rewriting it for a ?pt= playback
@@ -49,30 +48,7 @@ func (s *Server) hlsPlaylistForView(c echo.Context, id uuid.UUID) (sqlcgen.Strea
 	if s.transcodesvc == nil {
 		return sqlcgen.StreamingPlaylist{}, notFound
 	}
-	v, err := s.videosvc.GetByID(c.Request().Context(), id)
-	if err != nil {
-		if errors.Is(err, video.ErrNotFound) {
-			return sqlcgen.StreamingPlaylist{}, notFound
-		}
-		return sqlcgen.StreamingPlaylist{}, err
-	}
-	if v.Privacy == "private" {
-		userID, _, ok := principalFromContext(c)
-		if !ok || userID != v.OwnerID {
-			return sqlcgen.StreamingPlaylist{}, notFound
-		}
-	}
-	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
-		return sqlcgen.StreamingPlaylist{}, err
-	} else if hidden {
-		return sqlcgen.StreamingPlaylist{}, notFound
-	}
-	if quarantineHidesVideo(c, v.State, v.OwnerID) {
-		return sqlcgen.StreamingPlaylist{}, notFound
-	}
-	// Password-protected videos: owner/mod or a valid playback token (Bearer or
-	// ?pt=) only; everyone else gets 401 password_required (CORE-17 / W1.C2).
-	if err := s.passwordGate(c, id, v.Privacy, v.OwnerID); err != nil {
+	if _, err := s.videoVisibleForMedia(c, id); err != nil {
 		return sqlcgen.StreamingPlaylist{}, err
 	}
 	sp, ok := s.transcodesvc.Playlist(c.Request().Context(), id)
