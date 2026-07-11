@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func decodeRecord(t *testing.T, b []byte) map[string]any {
@@ -31,6 +33,9 @@ func TestAuditEmitsRequiredFields(t *testing.T) {
 	if rec["msg"] != "audit" {
 		t.Errorf("msg = %v, want audit", rec["msg"])
 	}
+	if rec["schema_version"] != float64(2) || rec["domain"] != "auth" || rec["actor_kind"] != "user" {
+		t.Errorf("typed envelope fields = version %v domain %v actor_kind %v", rec["schema_version"], rec["domain"], rec["actor_kind"])
+	}
 	if rec["action"] != "auth.login" {
 		t.Errorf("action = %v, want auth.login", rec["action"])
 	}
@@ -45,6 +50,33 @@ func TestAuditEmitsRequiredFields(t *testing.T) {
 	}
 	if _, ok := rec["time"]; !ok {
 		t.Error("record should carry a timestamp (occurred_at)")
+	}
+}
+
+func TestAuditEmitsCorrelationAndBoundsReason(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	Audit(context.Background(), logger, AuditEvent{
+		Action: ActionVideoReject, Result: ResultFailure,
+		ActorID: "u1", ActorRole: "moderator",
+		RequestID: "r1", CorrelationID: "c1",
+		TraceID:       "0102030405060708090a0b0c0d0e0f10",
+		PipelineRunID: "pipeline", JobID: "job",
+		ResourceType: "video", ResourceID: "v1",
+		Reason: strings.Repeat("é", 512),
+	})
+	rec := decodeRecord(t, buf.Bytes())
+	for key, want := range map[string]any{
+		"correlation_id": "c1", "trace_id": "0102030405060708090a0b0c0d0e0f10",
+		"pipeline_run_id": "pipeline", "job_id": "job",
+		"resource_type": "video", "resource_id": "v1", "actor_role": "moderator",
+	} {
+		if rec[key] != want {
+			t.Errorf("%s = %v, want %v", key, rec[key], want)
+		}
+	}
+	if reason, _ := rec["reason"].(string); len(reason) > 512 || !utf8.ValidString(reason) {
+		t.Errorf("bounded reason bytes/utf8 = %d/%v, want <=512/true", len(reason), utf8.ValidString(reason))
 	}
 }
 

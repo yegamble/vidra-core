@@ -14,32 +14,78 @@ import (
 )
 
 const insertAuditLog = `-- name: InsertAuditLog :exec
-INSERT INTO audit_log (action, result, actor_id, reason, request_id)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO audit_log (
+    id, schema_version, domain, action, result,
+    actor_id, actor_kind, actor_role,
+    reason, request_id, correlation_id, trace_id,
+    pipeline_run_id, job_id, resource_type, resource_id,
+    metadata, changes
+)
+VALUES (
+    $1, $2, $3,
+    $4, $5, $6,
+    $7, $8, $9,
+    $10, $11, $12,
+    $13, $14,
+    $15, $16,
+    $17::jsonb, $18::jsonb
+)
 `
 
 type InsertAuditLogParams struct {
-	Action    string      `json:"action"`
-	Result    string      `json:"result"`
-	ActorID   pgtype.UUID `json:"actor_id"`
-	Reason    string      `json:"reason"`
-	RequestID string      `json:"request_id"`
+	ID            uuid.UUID   `json:"id"`
+	SchemaVersion int16       `json:"schema_version"`
+	Domain        string      `json:"domain"`
+	Action        string      `json:"action"`
+	Result        string      `json:"result"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+	ActorKind     string      `json:"actor_kind"`
+	ActorRole     string      `json:"actor_role"`
+	Reason        string      `json:"reason"`
+	RequestID     string      `json:"request_id"`
+	CorrelationID string      `json:"correlation_id"`
+	TraceID       string      `json:"trace_id"`
+	PipelineRunID pgtype.UUID `json:"pipeline_run_id"`
+	JobID         pgtype.UUID `json:"job_id"`
+	ResourceType  string      `json:"resource_type"`
+	ResourceID    string      `json:"resource_id"`
+	Metadata      []byte      `json:"metadata"`
+	Changes       []byte      `json:"changes"`
 }
 
-// Append a security-audit row. actor_id is nullable (unauthenticated events).
+// Append a typed security-audit envelope. actor_id/job_id/pipeline_run_id are
+// nullable. metadata and changes have already passed the audit package's strict
+// allowlists and bounds; DB constraints are the final size/shape backstop.
 func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error {
 	_, err := q.db.Exec(ctx, insertAuditLog,
+		arg.ID,
+		arg.SchemaVersion,
+		arg.Domain,
 		arg.Action,
 		arg.Result,
 		arg.ActorID,
+		arg.ActorKind,
+		arg.ActorRole,
 		arg.Reason,
 		arg.RequestID,
+		arg.CorrelationID,
+		arg.TraceID,
+		arg.PipelineRunID,
+		arg.JobID,
+		arg.ResourceType,
+		arg.ResourceID,
+		arg.Metadata,
+		arg.Changes,
 	)
 	return err
 }
 
 const listAuditLog = `-- name: ListAuditLog :many
-SELECT a.id, a.action, a.result, a.actor_id, a.reason, a.request_id, a.occurred_at,
+SELECT a.id, a.schema_version, a.domain, a.action, a.result,
+       a.actor_id, a.actor_kind, a.actor_role,
+       a.reason, a.request_id, a.correlation_id, a.trace_id,
+       a.pipeline_run_id, a.job_id, a.resource_type, a.resource_id,
+       a.metadata, a.changes, a.occurred_at,
        u.username AS actor_username
 FROM audit_log a
 LEFT JOIN users u ON u.id = a.actor_id
@@ -56,11 +102,23 @@ type ListAuditLogParams struct {
 
 type ListAuditLogRow struct {
 	ID            uuid.UUID   `json:"id"`
+	SchemaVersion int16       `json:"schema_version"`
+	Domain        string      `json:"domain"`
 	Action        string      `json:"action"`
 	Result        string      `json:"result"`
 	ActorID       pgtype.UUID `json:"actor_id"`
+	ActorKind     string      `json:"actor_kind"`
+	ActorRole     string      `json:"actor_role"`
 	Reason        string      `json:"reason"`
 	RequestID     string      `json:"request_id"`
+	CorrelationID string      `json:"correlation_id"`
+	TraceID       string      `json:"trace_id"`
+	PipelineRunID pgtype.UUID `json:"pipeline_run_id"`
+	JobID         pgtype.UUID `json:"job_id"`
+	ResourceType  string      `json:"resource_type"`
+	ResourceID    string      `json:"resource_id"`
+	Metadata      []byte      `json:"metadata"`
+	Changes       []byte      `json:"changes"`
 	OccurredAt    time.Time   `json:"occurred_at"`
 	ActorUsername *string     `json:"actor_username"`
 }
@@ -79,11 +137,23 @@ func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]L
 		var i ListAuditLogRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.SchemaVersion,
+			&i.Domain,
 			&i.Action,
 			&i.Result,
 			&i.ActorID,
+			&i.ActorKind,
+			&i.ActorRole,
 			&i.Reason,
 			&i.RequestID,
+			&i.CorrelationID,
+			&i.TraceID,
+			&i.PipelineRunID,
+			&i.JobID,
+			&i.ResourceType,
+			&i.ResourceID,
+			&i.Metadata,
+			&i.Changes,
 			&i.OccurredAt,
 			&i.ActorUsername,
 		); err != nil {

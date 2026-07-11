@@ -3,12 +3,14 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -159,7 +161,8 @@ func (r rejectQuarantinedVideoRequest) Validate() []FieldError {
 // handleRejectQuarantinedVideo fails a quarantined video (it never publishes)
 // and notifies the owner (best-effort; the moderator's identity is not
 // exposed). Behind requireRole(admin, moderator). Unknown id → 404; a video not
-// in quarantine → 409. Emits an audit event carrying the reason.
+// in quarantine → 409. Emits an audit event with a stable rejection
+// classification; moderator prose remains outside the security ledger.
 func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
@@ -191,10 +194,16 @@ func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
 			s.logger.WarnContext(ctx, "notify video rejection failed", "error", nerr, "video_id", id)
 		}
 	}
-	reason := "video=" + id.String()
-	if trimmed := strings.TrimSpace(in.Reason); trimmed != "" {
-		reason += " reason=" + trimmed
-	}
-	s.audit(c, observability.ActionVideoReject, observability.ResultSuccess, userID.String(), reason)
+	// The moderator's prose remains in the moderation workflow/notification; the
+	// security ledger stores only a stable classification and whether prose was
+	// supplied. Free-form content can contain PII and must never enter audit_log.
+	s.auditEvent(c, audit.Event{
+		Action: observability.ActionVideoReject, Result: observability.ResultSuccess,
+		ActorID: userID.String(), Reason: "moderator_rejected",
+		ResourceType: "video", ResourceID: id.String(),
+		Metadata: []audit.MetadataField{{
+			Key: "reason_provided", Value: strconv.FormatBool(strings.TrimSpace(in.Reason) != ""),
+		}},
+	})
 	return c.NoContent(http.StatusNoContent)
 }

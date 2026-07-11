@@ -1,0 +1,11 @@
+DROP TRIGGER IF EXISTS peertube_import_runs_operational_projection ON peertube_import_runs;
+DROP TRIGGER IF EXISTS atproto_posts_operational_projection ON atproto_posts;
+DROP TRIGGER IF EXISTS account_exports_operational_projection ON account_exports;
+DROP TRIGGER IF EXISTS caption_jobs_operational_projection ON caption_jobs;
+DROP TRIGGER IF EXISTS import_jobs_operational_projection ON import_jobs;
+DROP TRIGGER IF EXISTS federation_deliveries_operational_projection ON federation_deliveries;
+DROP TRIGGER IF EXISTS transcode_jobs_operational_projection ON transcode_jobs;
+DROP FUNCTION IF EXISTS sync_legacy_job_run();
+DROP TABLE IF EXISTS job_events;
+DROP TABLE IF EXISTS job_runs;
+DROP TABLE IF EXISTS pipeline_runs;

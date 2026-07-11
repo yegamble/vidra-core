@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -11,8 +12,9 @@ import (
 // Echo context keys for the authenticated principal. Unexported so only this
 // package can set them; handlers read via principalFromContext.
 const (
-	ctxKeyUserID = "auth.user_id"
-	ctxKeyRole   = "auth.role"
+	ctxKeyUserID         = "auth.user_id"
+	ctxKeyRole           = "auth.role"
+	ctxKeyTokenExpiresAt = "auth.token_expires_at"
 )
 
 // requireAuth authenticates the request from a Bearer access token and stores the
@@ -35,6 +37,9 @@ func (s *Server) requireAuth(next echo.HandlerFunc) echo.HandlerFunc {
 		}
 		c.Set(ctxKeyUserID, userID)
 		c.Set(ctxKeyRole, claims.Role)
+		if claims.ExpiresAt != nil {
+			c.Set(ctxKeyTokenExpiresAt, claims.ExpiresAt.Time)
+		}
 		return next(c)
 	}
 }
@@ -103,4 +108,12 @@ func principalFromContext(c echo.Context) (id uuid.UUID, role string, ok bool) {
 	id, idOK := c.Get(ctxKeyUserID).(uuid.UUID)
 	role, roleOK := c.Get(ctxKeyRole).(string)
 	return id, role, idOK && roleOK
+}
+
+// tokenExpiryFromContext returns the authenticated access-token expiry. Long
+// lived streaming handlers cap their connection lifetime to this value so role
+// and token validity are re-evaluated on reconnect.
+func tokenExpiryFromContext(c echo.Context) (time.Time, bool) {
+	expires, ok := c.Get(ctxKeyTokenExpiresAt).(time.Time)
+	return expires, ok
 }

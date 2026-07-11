@@ -82,6 +82,14 @@ type QueueDepth struct {
 	Count int64
 }
 
+// JobQueueHealth contains DB-derived operational gauges. Queue is a fixed
+// application queue identifier; no resource/job/worker ids become labels.
+type JobQueueHealth struct {
+	Queue                  string
+	OldestQueuedAgeSeconds int64
+	StaleRunning           int64
+}
+
 // RegisterQueueDepthSource installs a gauge (vidra_queue_depth{queue,state}) whose
 // values are pulled from source at scrape time. Scrape-time collection keeps the
 // gauge fresh with no background goroutine; a source error or timeout is swallowed
@@ -97,6 +105,26 @@ func (m *Metrics) RegisterQueueDepthSource(source func(context.Context) ([]Queue
 	})
 }
 
+// RegisterJobQueueHealthSource exposes queue age and stale-running gauges. They
+// are gauges rather than retry/failure counters because the Phase-1 projection
+// includes a historical backfill and cannot honestly reconstruct monotonic
+// process counters.
+func (m *Metrics) RegisterJobQueueHealthSource(source func(context.Context) ([]JobQueueHealth, error)) {
+	m.registry.MustRegister(&jobQueueHealthCollector{
+		age: prometheus.NewDesc(
+			"vidra_job_oldest_queued_age_seconds",
+			"Age in seconds of the oldest queued or retry-scheduled job.",
+			[]string{"queue"}, nil,
+		),
+		stale: prometheus.NewDesc(
+			"vidra_job_stale_running",
+			"Number of claimed/running jobs whose lease expired or update heartbeat is stale.",
+			[]string{"queue"}, nil,
+		),
+		source: source,
+	})
+}
+
 // Handler returns the Prometheus scrape handler for this registry.
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
@@ -106,6 +134,32 @@ func (m *Metrics) Handler() http.Handler {
 type queueDepthCollector struct {
 	desc   *prometheus.Desc
 	source func(context.Context) ([]QueueDepth, error)
+}
+
+type jobQueueHealthCollector struct {
+	age    *prometheus.Desc
+	stale  *prometheus.Desc
+	source func(context.Context) ([]JobQueueHealth, error)
+}
+
+func (c *jobQueueHealthCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.age
+	ch <- c.stale
+}
+
+func (c *jobQueueHealthCollector) Collect(ch chan<- prometheus.Metric) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rows, err := c.source(ctx)
+	if err != nil {
+		return
+	}
+	for _, row := range rows {
+		ch <- prometheus.MustNewConstMetric(c.age, prometheus.GaugeValue,
+			float64(row.OldestQueuedAgeSeconds), row.Queue)
+		ch <- prometheus.MustNewConstMetric(c.stale, prometheus.GaugeValue,
+			float64(row.StaleRunning), row.Queue)
+	}
 }
 
 func (c *queueDepthCollector) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"unicode/utf8"
 )
 
 // Audit results classify the outcome of a security-sensitive action.
@@ -153,11 +154,21 @@ func IsSensitiveKey(key string) bool { return sensitiveKeys[strings.ToLower(key)
 // actors are identified by ID, never by email, and Reason must be a safe,
 // non-sensitive classification (e.g. "invalid_credentials"), never a token.
 type AuditEvent struct {
-	Action    string // one of the Action* constants
-	Result    string // ResultSuccess or ResultFailure
-	ActorID   string // user id; empty when unauthenticated/unknown
-	RequestID string // correlates with request logs
-	Reason    string // safe, non-sensitive detail; omitted when empty
+	SchemaVersion int16  // typed-envelope version; 2 for newly emitted events
+	Domain        string // stable action domain (auth, admin, moderation, content...)
+	Action        string // one of the Action* constants
+	Result        string // ResultSuccess or ResultFailure
+	ActorID       string // user UUID; empty for anonymous/system/service actors
+	ActorKind     string // anonymous|user|system|service
+	ActorRole     string // user|moderator|admin; user actors only
+	RequestID     string // correlates with request logs
+	CorrelationID string // stable cross-service correlation id
+	TraceID       string // W3C trace id when tracing is active
+	PipelineRunID string // unified job pipeline id, when applicable
+	JobID         string // unified job id, when applicable
+	ResourceType  string // bounded resource classification
+	ResourceID    string // bounded opaque id; never a URL
+	Reason        string // safe, bounded classification; omitted when empty
 }
 
 // Audit emits ev on logger at info level. The slog record's timestamp is the
@@ -166,10 +177,26 @@ func Audit(ctx context.Context, logger *slog.Logger, ev AuditEvent) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if ev.SchemaVersion == 0 {
+		ev.SchemaVersion = 2
+	}
+	if ev.Domain == "" {
+		ev.Domain = auditDomain(ev.Action)
+	}
+	if ev.ActorKind == "" {
+		if ev.ActorID == "" {
+			ev.ActorKind = "anonymous"
+		} else {
+			ev.ActorKind = "user"
+		}
+	}
 	args := []any{
 		"audit", true,
+		"schema_version", ev.SchemaVersion,
+		"domain", ev.Domain,
 		"action", ev.Action,
 		"result", ev.Result,
+		"actor_kind", ev.ActorKind,
 	}
 	if ev.ActorID != "" {
 		args = append(args, "actor_id", ev.ActorID)
@@ -177,8 +204,45 @@ func Audit(ctx context.Context, logger *slog.Logger, ev AuditEvent) {
 	if ev.RequestID != "" {
 		args = append(args, "request_id", ev.RequestID)
 	}
+	if ev.ActorRole != "" {
+		args = append(args, "actor_role", ev.ActorRole)
+	}
+	if ev.CorrelationID != "" {
+		args = append(args, "correlation_id", ev.CorrelationID)
+	}
+	if ev.TraceID != "" {
+		args = append(args, "trace_id", ev.TraceID)
+	}
+	if ev.PipelineRunID != "" {
+		args = append(args, "pipeline_run_id", ev.PipelineRunID)
+	}
+	if ev.JobID != "" {
+		args = append(args, "job_id", ev.JobID)
+	}
+	if ev.ResourceType != "" {
+		args = append(args, "resource_type", ev.ResourceType)
+	}
+	if ev.ResourceID != "" {
+		args = append(args, "resource_id", ev.ResourceID)
+	}
 	if ev.Reason != "" {
-		args = append(args, "reason", ev.Reason)
+		args = append(args, "reason", boundedAuditText(ev.Reason, 512))
 	}
 	logger.InfoContext(ctx, "audit", args...)
+}
+
+func auditDomain(action string) string {
+	if i := strings.IndexByte(action, '.'); i > 0 {
+		return action[:i]
+	}
+	return "legacy"
+}
+
+func boundedAuditText(value string, maxBytes int) string {
+	value = strings.ToValidUTF8(strings.TrimSpace(value), "")
+	for len(value) > maxBytes {
+		_, size := utf8.DecodeLastRuneInString(value)
+		value = value[:len(value)-size]
+	}
+	return value
 }

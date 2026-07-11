@@ -1,17 +1,20 @@
-// Package audit persists and reads the durable security-audit trail (auth,
-// moderation, admin, and registration actions). Rows are append-only and never
-// contain secrets/PII — only a stable action id, result, the actor's id, a safe
-// reason, and the request id. It mirrors observability.AuditEvent, which remains
-// the slog side of the same events.
+// Package audit persists and reads the durable, low-volume security-audit trail.
+// Typed, bounded envelopes correlate to requests, traces and jobs without copying
+// raw payloads or content. Routine/high-volume content activity is deliberately a
+// separate stream; job execution details belong in job_events.
 package audit
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -28,24 +31,44 @@ type Service struct{ repo Repository }
 // NewService builds the audit service.
 func NewService(repo Repository) *Service { return &Service{repo: repo} }
 
-// Event is a security-audit record to persist. ActorID is the actor's user id as
-// a string ("" when unauthenticated); a non-UUID/empty value is stored as NULL.
-type Event struct {
-	Action    string
-	Result    string
-	ActorID   string
-	Reason    string
-	RequestID string
-}
-
-// Record appends an audit event.
+// Record validates, bounds and appends a typed audit event. An empty actor id is
+// stored as NULL; a user actor with a non-UUID id is rejected.
 func (s *Service) Record(ctx context.Context, ev Event) error {
+	ids := observability.CorrelationFromContext(ctx)
+	if ev.RequestID == "" {
+		ev.RequestID = ids.RequestID
+	}
+	if ev.CorrelationID == "" {
+		ev.CorrelationID = ids.CorrelationID
+	}
+	if ev.TraceID == "" {
+		if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
+			ev.TraceID = sc.TraceID().String()
+		}
+	}
+	n, err := normalizeEvent(ev)
+	if err != nil {
+		return err
+	}
 	return s.repo.InsertAuditLog(ctx, sqlcgen.InsertAuditLogParams{
-		Action:    ev.Action,
-		Result:    ev.Result,
-		ActorID:   parseActor(ev.ActorID),
-		Reason:    ev.Reason,
-		RequestID: ev.RequestID,
+		ID:            n.ID,
+		SchemaVersion: n.SchemaVersion,
+		Domain:        n.Domain,
+		Action:        n.Action,
+		Result:        n.Result,
+		ActorID:       parseActor(n.Actor.ID),
+		ActorKind:     n.Actor.Kind,
+		ActorRole:     n.Actor.Role,
+		Reason:        n.Reason,
+		RequestID:     n.RequestID,
+		CorrelationID: n.CorrelationID,
+		TraceID:       n.TraceID,
+		PipelineRunID: nullableUUID(n.PipelineRunID),
+		JobID:         nullableUUID(n.JobID),
+		ResourceType:  n.ResourceType,
+		ResourceID:    n.ResourceID,
+		Metadata:      n.metadataJSON,
+		Changes:       n.changesJSON,
 	})
 }
 
@@ -53,12 +76,24 @@ func (s *Service) Record(ctx context.Context, ev Event) error {
 // unknown, deleted, or unauthenticated.
 type Entry struct {
 	ID            uuid.UUID
+	SchemaVersion int16
+	Domain        string
 	Action        string
 	Result        string
 	ActorID       string
+	ActorKind     string
+	ActorRole     string
 	ActorUsername string
 	Reason        string
 	RequestID     string
+	CorrelationID string
+	TraceID       string
+	PipelineRunID string
+	JobID         string
+	ResourceType  string
+	ResourceID    string
+	Metadata      map[string]string
+	Changes       []Change
 	OccurredAt    time.Time
 }
 
@@ -80,14 +115,30 @@ func (s *Service) List(ctx context.Context, action string, limit, offset int32) 
 	out := make([]Entry, 0, len(rows))
 	for _, r := range rows {
 		e := Entry{
-			ID: r.ID, Action: r.Action, Result: r.Result, Reason: r.Reason,
-			RequestID: r.RequestID, OccurredAt: r.OccurredAt,
+			ID: r.ID, SchemaVersion: r.SchemaVersion, Domain: r.Domain,
+			Action: r.Action, Result: r.Result, ActorKind: r.ActorKind,
+			ActorRole: r.ActorRole, Reason: r.Reason, RequestID: r.RequestID,
+			CorrelationID: r.CorrelationID, TraceID: r.TraceID,
+			ResourceType: r.ResourceType, ResourceID: r.ResourceID,
+			OccurredAt: r.OccurredAt,
 		}
 		if r.ActorID.Valid {
 			e.ActorID = uuid.UUID(r.ActorID.Bytes).String()
 		}
 		if r.ActorUsername != nil {
 			e.ActorUsername = *r.ActorUsername
+		}
+		if r.PipelineRunID.Valid {
+			e.PipelineRunID = uuid.UUID(r.PipelineRunID.Bytes).String()
+		}
+		if r.JobID.Valid {
+			e.JobID = uuid.UUID(r.JobID.Bytes).String()
+		}
+		if err := json.Unmarshal(r.Metadata, &e.Metadata); err != nil {
+			return nil, fmt.Errorf("audit: decode metadata for %s: %w", r.ID, err)
+		}
+		if err := json.Unmarshal(r.Changes, &e.Changes); err != nil {
+			return nil, fmt.Errorf("audit: decode changes for %s: %w", r.ID, err)
 		}
 		out = append(out, e)
 	}
@@ -101,4 +152,11 @@ func parseActor(s string) pgtype.UUID {
 		return pgtype.UUID{Bytes: id, Valid: true}
 	}
 	return pgtype.UUID{}
+}
+
+func nullableUUID(id uuid.UUID) pgtype.UUID {
+	if id == uuid.Nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: id, Valid: true}
 }

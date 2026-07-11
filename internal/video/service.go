@@ -549,6 +549,7 @@ func (s *Service) auditMalwareRejected(ctx context.Context, videoID uuid.UUID, o
 	_ = s.auditor.Record(ctx, audit.Event{
 		Action: observability.ActionUploadMalwareRejected,
 		Result: observability.ResultFailure,
+		Actor:  audit.ActorSnapshot{Kind: "system"},
 		Reason: "video=" + videoID.String() + " outcome=" + outcome + " policy=" + policy,
 	})
 }

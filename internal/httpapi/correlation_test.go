@@ -91,3 +91,22 @@ func TestCorrelationIDAppearsInRequestLog(t *testing.T) {
 		t.Errorf("request log line should carry correlation_id=corr-42; logs:\n%s", buf.String())
 	}
 }
+
+func TestRequestLogOmitsAllQueryNamesAndValues(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	srv := New(testConfig(), nil, nil, WithLogger(logger))
+
+	getWithHeaders(srv, "/healthz?code=oauth-code-secret&state=oauth-state-secret&q=private-search", nil)
+	logged := buf.String()
+	for _, forbidden := range []string{
+		"oauth-code-secret", "oauth-state-secret", "private-search", "code=", "state=", "q=",
+	} {
+		if strings.Contains(logged, forbidden) {
+			t.Fatalf("request query leaked through %q in logs:\n%s", forbidden, logged)
+		}
+	}
+	if !strings.Contains(logged, `"path":"/healthz"`) {
+		t.Fatalf("request log should retain the route template:\n%s", logged)
+	}
+}

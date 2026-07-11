@@ -1,0 +1,35 @@
+DROP INDEX IF EXISTS audit_log_pipeline_idx;
+DROP INDEX IF EXISTS audit_log_job_idx;
+DROP INDEX IF EXISTS audit_log_resource_idx;
+DROP INDEX IF EXISTS audit_log_correlation_idx;
+DROP INDEX IF EXISTS audit_log_domain_occurred_idx;
+
+ALTER TABLE audit_log
+    DROP CONSTRAINT IF EXISTS audit_log_changes_size_check,
+    DROP CONSTRAINT IF EXISTS audit_log_changes_shape_check,
+    DROP CONSTRAINT IF EXISTS audit_log_metadata_size_check,
+    DROP CONSTRAINT IF EXISTS audit_log_metadata_shape_check,
+    DROP CONSTRAINT IF EXISTS audit_log_resource_id_length_check,
+    DROP CONSTRAINT IF EXISTS audit_log_resource_type_length_check,
+    DROP CONSTRAINT IF EXISTS audit_log_trace_id_length_check,
+    DROP CONSTRAINT IF EXISTS audit_log_correlation_id_length_check,
+    DROP CONSTRAINT IF EXISTS audit_log_request_id_length_check,
+    DROP CONSTRAINT IF EXISTS audit_log_reason_length_check,
+    DROP CONSTRAINT IF EXISTS audit_log_actor_role_check,
+    DROP CONSTRAINT IF EXISTS audit_log_actor_kind_check,
+    DROP CONSTRAINT IF EXISTS audit_log_result_check,
+    DROP CONSTRAINT IF EXISTS audit_log_action_length_check,
+    DROP CONSTRAINT IF EXISTS audit_log_domain_length_check,
+    DROP CONSTRAINT IF EXISTS audit_log_schema_version_check,
+    DROP COLUMN IF EXISTS changes,
+    DROP COLUMN IF EXISTS metadata,
+    DROP COLUMN IF EXISTS job_id,
+    DROP COLUMN IF EXISTS pipeline_run_id,
+    DROP COLUMN IF EXISTS trace_id,
+    DROP COLUMN IF EXISTS correlation_id,
+    DROP COLUMN IF EXISTS resource_id,
+    DROP COLUMN IF EXISTS resource_type,
+    DROP COLUMN IF EXISTS actor_role,
+    DROP COLUMN IF EXISTS actor_kind,
+    DROP COLUMN IF EXISTS domain,
+    DROP COLUMN IF EXISTS schema_version;

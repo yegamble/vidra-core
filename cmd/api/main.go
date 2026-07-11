@@ -927,6 +927,12 @@ func run() error {
 	// endpoint (P17.4) and the queue-depth Prometheus gauge both read from here.
 	jobStatusSvc := jobstatus.NewService(db.Queries())
 	opts = append(opts, httpapi.WithJobStatusService(jobStatusSvc))
+	{
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runOperationalJobRetentionWorker(workerCtx, logger, jobStatusSvc)
+		logger.Info("operational job retention worker started")
+	}
 
 	// PeerTube import / migration (fix_plan P18). The admin API is ALWAYS wired
 	// (stable contract for the vidra-user import UI); the launch endpoint answers
@@ -1011,6 +1017,20 @@ func run() error {
 			out := make([]observability.QueueDepth, len(depths))
 			for i, d := range depths {
 				out[i] = observability.QueueDepth{Queue: d.Queue, State: d.State, Count: d.Count}
+			}
+			return out, nil
+		})
+		metrics.RegisterJobQueueHealthSource(func(ctx context.Context) ([]observability.JobQueueHealth, error) {
+			health, err := jobStatusSvc.QueueHealth(ctx, 5*time.Minute)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]observability.JobQueueHealth, len(health))
+			for i, row := range health {
+				out[i] = observability.JobQueueHealth{
+					Queue: row.Queue, OldestQueuedAgeSeconds: row.OldestQueuedAgeSeconds,
+					StaleRunning: row.StaleRunning,
+				}
 			}
 			return out, nil
 		})
@@ -1410,7 +1430,7 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 
 // runMediaGCWorker runs the media garbage collector once a day (deleting
 // orphaned storage blobs) until ctx is canceled. Each run is audited with its
-// counts (actor "" = system). A listing-unsupported backend disables the sweep
+// counts under an explicit system actor. A listing-unsupported backend disables the sweep
 // after one warning.
 func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Service, auditsvc *audit.Service) {
 	const interval = 24 * time.Hour
@@ -1435,6 +1455,7 @@ func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Ser
 				_ = auditsvc.Record(ctx, audit.Event{
 					Action: observability.ActionMediaGC,
 					Result: observability.ResultSuccess,
+					Actor:  audit.ActorSnapshot{Kind: "system"},
 					Reason: fmt.Sprintf("mode=delete scanned=%d orphans=%d deleted=%d", res.Scanned, len(res.Orphans), res.Deleted),
 				})
 			}
@@ -1456,6 +1477,31 @@ func runPeerTubeImportWorker(ctx context.Context, logger *slog.Logger, svc *peer
 		case <-ticker.C:
 			if _, err := svc.DrainDueRuns(ctx, 1); err != nil {
 				logger.Warn("peertube import drain failed", "error", err)
+			}
+		}
+	}
+}
+
+// runOperationalJobRetentionWorker prunes only bounded batches. Events are
+// removed after 30 days only when their parent is terminal; terminal runs and
+// pipelines are retained for 90 days. Active execution history is never pruned.
+func runOperationalJobRetentionWorker(ctx context.Context, logger *slog.Logger, svc *jobstatus.Service) {
+	const interval = 24 * time.Hour
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			events, runs, pipelines, err := svc.Prune(ctx, now.UTC())
+			if err != nil {
+				logger.Warn("operational job retention failed", "error", err)
+				continue
+			}
+			if events+runs+pipelines > 0 {
+				logger.Info("operational job retention pruned rows",
+					"events", events, "runs", runs, "pipelines", pipelines)
 			}
 		}
 	}
