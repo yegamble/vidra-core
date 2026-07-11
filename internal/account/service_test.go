@@ -955,3 +955,64 @@ func TestExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip summary = %+v", sum)
 	}
 }
+
+// TestExportTTLFunc covers the user_export_expiration_hours runtime overlay
+// (config-parity W8): a wired provider supersedes the static 7-day ExportTTL
+// at completion time, and a TTL of 0 stamps NO expiry — the archive stays
+// downloadable and the sweeper never collects it.
+func TestExportTTLFunc(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("custom ttl stamps expires_at", func(t *testing.T) {
+		user := testUser()
+		repo := newFakeRepo(user)
+		svc := NewService(repo, newFakeBlobs(), nil,
+			WithExportTTLFunc(func() time.Duration { return 24 * time.Hour }))
+		if _, err := svc.RequestExport(ctx, user.ID); err != nil {
+			t.Fatalf("RequestExport: %v", err)
+		}
+		if n, err := svc.DrainExports(ctx, 10); err != nil || n != 1 {
+			t.Fatalf("DrainExports = %d, %v", n, err)
+		}
+		row, err := svc.LatestExport(ctx, user.ID)
+		if err != nil || row.State != ExportDone {
+			t.Fatalf("LatestExport = %+v, %v", row, err)
+		}
+		if !row.ExpiresAt.Valid {
+			t.Fatal("expires_at not stamped")
+		}
+		if until := time.Until(row.ExpiresAt.Time); until > 24*time.Hour || until < 23*time.Hour {
+			t.Fatalf("expires_at %v out from now, want ~24h", until)
+		}
+	})
+
+	t.Run("ttl 0 never expires", func(t *testing.T) {
+		user := testUser()
+		repo := newFakeRepo(user)
+		svc := NewService(repo, newFakeBlobs(), nil,
+			WithExportTTLFunc(func() time.Duration { return 0 }))
+		if _, err := svc.RequestExport(ctx, user.ID); err != nil {
+			t.Fatalf("RequestExport: %v", err)
+		}
+		if n, err := svc.DrainExports(ctx, 10); err != nil || n != 1 {
+			t.Fatalf("DrainExports = %d, %v", n, err)
+		}
+		row, err := svc.LatestExport(ctx, user.ID)
+		if err != nil || row.State != ExportDone {
+			t.Fatalf("LatestExport = %+v, %v", row, err)
+		}
+		if row.ExpiresAt.Valid {
+			t.Fatalf("expires_at = %v, want unset (never expires)", row.ExpiresAt.Time)
+		}
+		// Still downloadable (no expiry check applies)…
+		rc, _, err := svc.OpenExport(ctx, user.ID)
+		if err != nil {
+			t.Fatalf("OpenExport: %v", err)
+		}
+		_ = rc.Close()
+		// …and the sweeper collects nothing.
+		if n, err := svc.SweepExpiredExports(ctx, 10); err != nil || n != 0 {
+			t.Fatalf("SweepExpiredExports = %d, %v; want 0 removed", n, err)
+		}
+	})
+}

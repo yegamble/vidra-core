@@ -122,6 +122,10 @@ type Service struct {
 	// never falls back to it.
 	ytdlp     Extractor
 	ytdlpWork string // parent dir for per-job ytdlp workdirs (os.TempDir when "")
+	// ytdlpGate is the runtime admin toggle over the wired extractor
+	// (import_http_enabled, config-parity W8). nil = always allowed; the boot
+	// capability (ytdlp != nil) still applies either way.
+	ytdlpGate func() bool
 }
 
 // Option customises the Service.
@@ -181,6 +185,15 @@ func WithYtdlp(ext Extractor, workRoot string) Option {
 	}
 }
 
+// WithYtdlpGate wires the runtime admin toggle over the platform resolver
+// (import_http_enabled, config-parity W8): f is consulted per enqueue/resolve
+// so an admin can turn the yt-dlp import path off without a restart. It can
+// only narrow availability — with no extractor wired (boot capability off) the
+// resolver stays disabled regardless of f.
+func WithYtdlpGate(f func() bool) Option {
+	return func(s *Service) { s.ytdlpGate = f }
+}
+
 // NewService builds the import service. maxBytes is the UPLOAD_MAX_SIZE cap in
 // bytes (0 = unbounded).
 func NewService(repo Repository, pipeline Pipeline, maxBytes int64, opts ...Option) *Service {
@@ -196,10 +209,14 @@ func (s *Service) guard() urlsafety.Guard {
 	return urlsafety.Guard{AllowPrivate: s.allowPrivate}
 }
 
-// YtdlpEnabled reports whether the sandboxed platform-import resolver is wired
-// (YTDLP_IMPORT_ENABLED). The handler uses it to 503 an explicit resolver=ytdlp
-// request up front rather than enqueue a job that can only fail.
-func (s *Service) YtdlpEnabled() bool { return s.ytdlp != nil }
+// YtdlpEnabled reports whether the sandboxed platform-import resolver is
+// EFFECTIVELY available: wired at boot (YTDLP_IMPORT_ENABLED) AND allowed by
+// the runtime import_http_enabled gate when one is wired. The handler uses it
+// to refuse an explicit resolver=ytdlp request up front rather than enqueue a
+// job that can only fail.
+func (s *Service) YtdlpEnabled() bool {
+	return s.ytdlp != nil && (s.ytdlpGate == nil || s.ytdlpGate())
+}
 
 // normalizeResolver validates the requested resolver and applies the disabled
 // policy. Empty defaults to auto. An explicit ytdlp while disabled is
@@ -391,7 +408,7 @@ func (s *Service) selectResolver(ctx context.Context, guard urlsafety.Guard, row
 	case ResolverDirect:
 		concrete = ResolverDirect
 	case ResolverYtdlp:
-		if s.ytdlp == nil {
+		if !s.YtdlpEnabled() {
 			return nil, failf("platform import is not enabled")
 		}
 		concrete = ResolverYtdlp
@@ -414,7 +431,7 @@ func (s *Service) selectResolver(ctx context.Context, guard urlsafety.Guard, row
 // buildResolver constructs the concrete resolver.
 func (s *Service) buildResolver(guard urlsafety.Guard, concrete string) (resolver, error) {
 	if concrete == ResolverYtdlp {
-		if s.ytdlp == nil {
+		if !s.YtdlpEnabled() {
 			return nil, failf("platform import is not enabled")
 		}
 		return &ytdlpResolver{ext: s.ytdlp, workRoot: s.ytdlpWork}, nil
@@ -434,7 +451,7 @@ func (s *Service) probeAuto(ctx context.Context, guard urlsafety.Guard, target *
 	if ct := s.probeContentType(ctx, guard, target); ct != "" && isAcceptedVideoContentType(ct) {
 		return ResolverDirect
 	}
-	if s.ytdlp != nil {
+	if s.YtdlpEnabled() {
 		return ResolverYtdlp
 	}
 	return ResolverDirect

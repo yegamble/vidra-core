@@ -11,6 +11,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -97,32 +98,54 @@ type accountExportView struct {
 	State string `json:"state"`
 	// DownloadReady is true when GET /api/v1/me/export/download will serve the
 	// archive (state done and not yet expired).
-	DownloadReady bool       `json:"download_ready"`
-	RequestedAt   time.Time  `json:"requested_at"`
-	ExpiresAt     *time.Time `json:"expires_at"`
+	DownloadReady bool      `json:"download_ready"`
+	RequestedAt   time.Time `json:"requested_at"`
+	// ExpiresAt is null while the export is unfinished — and for a finished
+	// archive completed under user_export_expiration_hours=0 (never expires).
+	ExpiresAt *time.Time `json:"expires_at"`
 }
 
 func (s *Server) accountExportView(row sqlcgen.AccountExport) accountExportView {
 	v := accountExportView{
-		ID:          row.ID.String(),
-		State:       row.State,
-		RequestedAt: row.CreatedAt,
+		ID:            row.ID.String(),
+		State:         row.State,
+		RequestedAt:   row.CreatedAt,
+		DownloadReady: row.State == account.ExportDone,
 	}
 	if row.ExpiresAt.Valid {
 		t := row.ExpiresAt.Time
 		v.ExpiresAt = &t
-		v.DownloadReady = row.State == account.ExportDone && time.Now().Before(t)
+		v.DownloadReady = v.DownloadReady && time.Now().Before(t)
 	}
 	return v
 }
 
 // handleRequestAccountExport enqueues a fresh export of the caller's account
-// data (P4). Single active export per user: 409 while one is pending/running;
-// a finished/failed export is replaced. 202 with the queued job's status.
+// data (P4). 403 feature_disabled when the operator has turned exports off
+// (user_export_enabled, W8), and 403 when the caller's stored media exceeds the
+// operator's export cap (user_export_max_quota_bytes; 0 = no cap). Single
+// active export per user: 409 while one is pending/running; a finished/failed
+// export is replaced. 202 with the queued job's status.
 func (s *Server) handleRequestAccountExport(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	if !s.userExportEnabled() {
+		return &FeatureDisabledError{Feature: "user_export"}
+	}
+	// Export-generation quota gate (W8): refuse when the user's stored bytes
+	// exceed the operator cap. Vidra archives exclude media so this is cheaper
+	// than PeerTube's equivalent, but the knob is honoured all the same.
+	if maxBytes := s.settingInt(instancesettings.KeyUserExportMaxQuotaBytes, 0); maxBytes > 0 && s.quotasvc != nil {
+		st, qerr := s.quotasvc.Status(c.Request().Context(), userID)
+		if qerr != nil {
+			return qerr
+		}
+		if st.UsedBytes > maxBytes {
+			return echo.NewHTTPError(http.StatusForbidden,
+				"your stored media exceeds this instance's export limit")
+		}
 	}
 	row, err := s.accountsvc.RequestExport(c.Request().Context(), userID)
 	if err != nil {
@@ -186,6 +209,10 @@ func (s *Server) handleImportAccount(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	// Operator toggle (user_import_enabled, W8): 403 feature_disabled when off.
+	if !s.userImportEnabled() {
+		return &FeatureDisabledError{Feature: "user_import"}
 	}
 	raw, err := io.ReadAll(c.Request().Body)
 	if err != nil {

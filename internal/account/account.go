@@ -126,6 +126,10 @@ type Service struct {
 
 	baseURL string
 	now     func() time.Time
+	// exportTTLFn, when set, supersedes the static ExportTTL (runtime overlay,
+	// user_export_expiration_hours; config-parity W8), resolved per finished
+	// export. A returned 0 means archives never expire.
+	exportTTLFn func() time.Duration
 }
 
 // Mirror is the optional IPFS-mirror unpin hook (fix_plan P19). On a hard account
@@ -153,6 +157,17 @@ func WithBaseURL(u string) Option {
 // WithClock injects a deterministic clock for tests.
 func WithClock(now func() time.Time) Option {
 	return func(s *Service) { s.now = now }
+}
+
+// WithExportTTLFunc makes the export-archive retention dynamic
+// (user_export_expiration_hours, config-parity W8): f is resolved once per
+// finished export (at completion time, stamping expires_at) so an admin can
+// retune the retention without a restart. A returned 0 means the archive never
+// expires (the sweeper then never collects it; it is still replaced by the
+// user's next export request). Already-stamped rows keep the expiry they were
+// completed with. When unset the static ExportTTL (7 days) applies.
+func WithExportTTLFunc(f func() time.Duration) Option {
+	return func(s *Service) { s.exportTTLFn = f }
 }
 
 // NewService builds the account service.

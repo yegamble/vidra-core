@@ -117,6 +117,23 @@ const (
 	KeyHeaderHideInstanceName    = "header_hide_instance_name"
 	KeyEmailSubjectPrefix        = "email_subject_prefix" // supports {instance_name} substitution at the mail seam (W6)
 	KeyEmailBodySignature        = "email_body_signature"
+
+	// Shipped-feature toggle batch (config-parity W8): runtime knobs over
+	// features that already exist, applied through provider-func seams (or
+	// handler gates) so an admin can flip them without a restart. Boot
+	// capabilities stay env-only (yt-dlp binary/proxy, WHISPER_ENDPOINT,
+	// channel-sync cadence): a runtime toggle can never conjure a dependency
+	// the deployment lacks — the effective value is settingAND(boot).
+	KeyImportHTTPEnabled         = "import_http_enabled"          // yt-dlp platform-URL import path; imports_enabled stays the master
+	KeyChannelSyncEnabled        = "channel_sync_enabled"         // channel auto-sync create + ticker pickup
+	KeyChannelSyncMaxPerUser     = "channel_sync_max_per_user"    // 0 = unlimited
+	KeyStoryboardsEnabled        = "storyboards_enabled"          // seek-preview sprite generation at publish
+	KeyTranscriptionEnabled      = "transcription_enabled"        // Whisper auto-captions; effective only with WHISPER_ENDPOINT
+	KeyUserImportEnabled         = "user_import_enabled"          // POST /me/import
+	KeyUserExportEnabled         = "user_export_enabled"          // POST /me/export
+	KeyUserExportExpirationHours = "user_export_expiration_hours" // 0 = archives never expire
+	KeyUserExportMaxQuotaBytes   = "user_export_max_quota_bytes"  // refuse export gen above this usage; 0 = unlimited
+	KeyMaxChannelsPerUser        = "max_channels_per_user"        // 0 = unlimited
 )
 
 // Kind is a setting's value type, reported to clients and used to validate the
@@ -206,6 +223,11 @@ const (
 	DefaultVideoPrivacy   = "public"
 	DefaultCommentPolicy  = "enabled"
 	defaultPlayerAutoplay = true
+
+	// DefaultUserExportExpirationHours is how long a finished account-export
+	// archive stays downloadable (W8; mirrors account.ExportTTL's 7 days —
+	// a deliberate deviation from PeerTube's 2). 0 = never expires.
+	DefaultUserExportExpirationHours = 168
 )
 
 // Admin-page identifiers for the registry's page/section metadata (config-
@@ -249,6 +271,15 @@ type Defaults struct {
 	UploadMaxSizeBytes             int64
 	UploadMaxActiveSessionsPerUser int64
 	ImportMaxHeight                int64
+
+	// Shipped-feature toggles (config-parity W8) whose defaults come from
+	// existing env knobs. ChannelSyncEnabled mirrors CHANNEL_SYNC_ENABLED and
+	// ChannelSyncMaxPerUser CHANNEL_SYNC_MAX_PER_USER (0 = unlimited);
+	// TranscriptionEnabled mirrors WHISPER_ENABLED (effective only while
+	// WHISPER_ENDPOINT is configured — the boot capability stays env-only).
+	ChannelSyncEnabled    bool
+	ChannelSyncMaxPerUser int64
+	TranscriptionEnabled  bool
 }
 
 // spec describes one setting: its key, value kind, how to resolve its default
@@ -425,6 +456,43 @@ var specs = []spec{
 	// About-page key — twitter:site wants a handle, not a profile URL).
 	{key: KeySocialMetaTwitterUsername, kind: KindString, defString: hardcoded(""), validate: validateOptionalTwitterUsername,
 		page: PageGeneral, section: "social"},
+
+	// Shipped-feature toggle batch (config-parity W8). Every key gates a
+	// feature that already exists; enforcement is a provider-func seam or a
+	// handler 403 feature_disabled gate at the documented apply point.
+	// The yt-dlp platform-URL import path (imports_enabled stays the master
+	// switch above it). Default ON: with no override the path is governed by
+	// the boot capability alone (YTDLP_IMPORT_ENABLED wiring the resolver).
+	{key: KeyImportHTTPEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "imports"},
+	{key: KeyChannelSyncEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.ChannelSyncEnabled }, validate: validateBool,
+		page: PageVOD, section: "imports"},
+	{key: KeyChannelSyncMaxPerUser, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.ChannelSyncMaxPerUser }, validate: intRange(0, 10000),
+		page: PageVOD, section: "imports"},
+	// Storyboards default ON and have no env backing: the runtime setting is
+	// the single operator control (generation additionally needs ffmpeg).
+	{key: KeyStoryboardsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "storyboards"},
+	{key: KeyTranscriptionEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.TranscriptionEnabled }, validate: validateBool,
+		page: PageVOD, section: "transcription"},
+	// User data portability (shipped internal/account flows). Both default ON
+	// with no env backing — the runtime settings are the operator controls.
+	{key: KeyUserImportEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageAdvanced, section: "user_data"},
+	{key: KeyUserExportEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageAdvanced, section: "user_data"},
+	{key: KeyUserExportExpirationHours, kind: KindInt,
+		defInt: func(Defaults) int64 { return DefaultUserExportExpirationHours }, validate: intZeroOrRange(1, 8760),
+		page: PageAdvanced, section: "user_data"},
+	{key: KeyUserExportMaxQuotaBytes, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: intMin(0),
+		page: PageAdvanced, section: "user_data"},
+	// Channel cap (distinct from channel_sync_max_per_user — this caps
+	// CHANNELS, that caps sync bindings). 0 = unlimited, the shipped default.
+	{key: KeyMaxChannelsPerUser, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: intRange(0, 10000),
+		page: PageGeneral, section: "channels"},
 }
 
 var specByKey = func() map[string]spec {

@@ -158,7 +158,12 @@ func channelSyncServerWithRepo(t *testing.T, enabled bool, opts ...channelsync.O
 		channelsync.WithInterval(time.Hour),
 	}
 	cssvc := channelsync.NewService(csRepo, noopDrafter{}, noopEnqueuer{}, append(base, opts...)...)
-	srv := New(testConfig(), nil, nil,
+	// The handler's runtime gate (channel_sync_enabled, W8) falls back to
+	// cfg.ChannelSyncEnabled when no settings service is wired — keep it in
+	// step with the service flag so `enabled` still means what it says.
+	cfg := testConfig()
+	cfg.ChannelSyncEnabled = enabled
+	srv := New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(chansvc),
 		WithChannelSyncService(cssvc),
@@ -189,15 +194,54 @@ func TestChannelSyncRequiresAuth(t *testing.T) {
 	}
 }
 
-func TestChannelSyncDisabled503(t *testing.T) {
+// TestChannelSyncDisabled403: with the runtime admin setting off (W8 gate
+// idiom), create is refused 403 with the stable feature_disabled code — the
+// same shape as every other feature toggle.
+func TestChannelSyncDisabled403(t *testing.T) {
 	srv := channelSyncServer(t, false)
 	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 	chID := channelIDFor(t, srv, tok, "ada")
 
 	rec := postJSONAuth(srv, "/api/v1/channel-syncs",
 		`{"channel_id":"`+chID+`","external_channel_url":"https://youtube.com/@ada"}`, tok)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("disabled create = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Error.Code != "feature_disabled" {
+		t.Errorf("403 code = %q, want feature_disabled", body.Error.Code)
+	}
+}
+
+// TestChannelSyncBootDisabled503: the runtime setting is ON but the deployment
+// lacks the boot capability (service constructed disabled — no yt-dlp
+// resolver): the service's 503 is preserved for that distinct state.
+func TestChannelSyncBootDisabled503(t *testing.T) {
+	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
+	authsvc := auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour)
+	chRepo := newChannelFakeRepo()
+	csRepo := newCSFakeRepo(chRepo)
+	cssvc := channelsync.NewService(csRepo, noopDrafter{}, noopEnqueuer{},
+		channelsync.WithEnabled(false)) // boot capability off
+	cfg := testConfig()
+	cfg.ChannelSyncEnabled = true // runtime setting on
+	srv := New(cfg, nil, nil,
+		WithAuthService(authsvc, 15*time.Minute),
+		WithChannelService(channel.NewService(chRepo)),
+		WithChannelSyncService(cssvc),
+	)
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	chID := channelIDFor(t, srv, tok, "ada")
+
+	rec := postJSONAuth(srv, "/api/v1/channel-syncs",
+		`{"channel_id":"`+chID+`","external_channel_url":"https://youtube.com/@ada"}`, tok)
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("disabled create = %d, want 503; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("boot-disabled create = %d, want 503; body=%s", rec.Code, rec.Body.String())
 	}
 	var body struct {
 		Error struct {

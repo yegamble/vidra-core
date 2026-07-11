@@ -89,7 +89,9 @@ type followedChannelsResponse struct {
 	Offset   int                   `json:"offset"`
 }
 
-// handleCreateChannel creates a channel owned by the authenticated user.
+// handleCreateChannel creates a channel owned by the authenticated user. 422
+// when the caller is at the operator's per-user channel limit
+// (max_channels_per_user, W8; 0 = unlimited).
 func (s *Server) handleCreateChannel(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
@@ -107,6 +109,10 @@ func (s *Server) handleCreateChannel(c echo.Context) error {
 	if err != nil {
 		if errors.Is(err, channel.ErrConflict) {
 			return echo.NewHTTPError(http.StatusConflict, "channel handle already taken")
+		}
+		if errors.Is(err, channel.ErrMaxReached) {
+			return echo.NewHTTPError(http.StatusUnprocessableEntity,
+				"you have reached the maximum number of channels allowed on this instance")
 		}
 		return err
 	}

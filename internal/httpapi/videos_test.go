@@ -907,7 +907,10 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	serverOpts := []Option{
 		WithSettingsService(settingssvc),
 		WithAuthService(authsvc, 15*time.Minute),
-		WithChannelService(channel.NewService(chRepo)),
+		// The per-user channel cap follows the overlay (max_channels_per_user,
+		// W8), mirroring cmd/api's wiring; default 0 = unlimited.
+		WithChannelService(channel.NewService(chRepo,
+			channel.WithMaxPerUserFunc(func() int64 { return settingssvc.Int(instancesettings.KeyMaxChannelsPerUser) }))),
 		WithVideoService(videosvc),
 		WithCommentService(comment.NewService(cmRepo)),
 		WithRatingService(rating.NewService(ratingRepo)),

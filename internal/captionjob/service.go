@@ -104,6 +104,7 @@ type Service struct {
 	transcriber     Transcriber
 	notifier        Notifier
 	enabled         bool
+	enabledFn       func() bool // when set, supersedes enabled (runtime overlay), resolved per call
 	defaultLanguage string
 	logger          *slog.Logger
 }
@@ -115,6 +116,16 @@ type Option func(*Service)
 // false, Enqueue returns ErrDisabled and DrainJobs is a no-op.
 func WithEnabled(enabled bool) Option {
 	return func(s *Service) { s.enabled = enabled }
+}
+
+// WithEnabledFunc makes the gate dynamic (transcription_enabled, config-parity
+// W8): f is resolved per enqueue and per worker tick so an admin can toggle
+// auto-captioning without a restart (the worker stays constructed and simply
+// picks nothing up while off). When set it supersedes WithEnabled; wire f to
+// fold in the boot capability (WHISPER_ENABLED/WHISPER_ENDPOINT) so the
+// effective value is always settingAND(whisper configured).
+func WithEnabledFunc(f func() bool) Option {
+	return func(s *Service) { s.enabledFn = f }
 }
 
 // WithDefaultLanguage sets the caption language used when a request omits one
@@ -157,8 +168,15 @@ func NewService(repo Repository, videos VideoStore, transcriber Transcriber, opt
 	return s
 }
 
-// Enabled reports whether auto-captioning is turned on.
-func (s *Service) Enabled() bool { return s.enabled }
+// Enabled reports whether auto-captioning is EFFECTIVELY on: the runtime
+// provider when wired (which folds in the boot capability), else the static
+// boot flag.
+func (s *Service) Enabled() bool {
+	if s.enabledFn != nil {
+		return s.enabledFn()
+	}
+	return s.enabled
+}
 
 // Enqueue queues an auto-caption job for a video. The caller has already
 // authorised the video (owner-only). language is optional; empty uses the
@@ -166,7 +184,7 @@ func (s *Service) Enabled() bool { return s.enabled }
 // pending/running, a re-request returns ErrJobActive (→ 409). ErrDisabled when
 // auto-captioning is off; ErrInvalidLanguage when the language tag is malformed.
 func (s *Service) Enqueue(ctx context.Context, videoID uuid.UUID, language string) (sqlcgen.CaptionJob, error) {
-	if !s.enabled {
+	if !s.Enabled() {
 		return sqlcgen.CaptionJob{}, ErrDisabled
 	}
 	lang := language
@@ -207,7 +225,7 @@ func (s *Service) LatestForVideo(ctx context.Context, videoID uuid.UUID) (sqlcge
 // persisted. Intended to be called on a ticker by a single worker. A no-op when
 // auto-captioning is disabled.
 func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
-	if !s.enabled {
+	if !s.Enabled() {
 		return 0, nil
 	}
 	rows, err := s.repo.ClaimDueCaptionJobs(ctx, int32(limit))

@@ -96,6 +96,14 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	// Runtime gate on the platform-import path (import_http_enabled, W8): an
+	// explicit resolver=ytdlp while the admin setting is off is 403
+	// feature_disabled. The boot-capability case (yt-dlp not wired at all)
+	// keeps its 503 below; resolver=auto simply never falls back to yt-dlp
+	// while the setting is off (service-side gate).
+	if strings.TrimSpace(strings.ToLower(in.Resolver)) == "ytdlp" && !s.importHTTPEnabled() {
+		return &FeatureDisabledError{Feature: "import_http"}
+	}
 	ctx := c.Request().Context()
 	// Authorize before any enqueue: a non-owner (or unknown video) gets 404 and no
 	// import runs on their behalf.

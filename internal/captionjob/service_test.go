@@ -2,6 +2,7 @@ package captionjob
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -317,5 +318,36 @@ func TestLatestForVideoNotFound(t *testing.T) {
 	svc := NewService(newFakeRepo(), &fakeVideoStore{}, nil, WithEnabled(true))
 	if _, err := svc.LatestForVideo(context.Background(), uuid.New()); err != ErrNotFound {
 		t.Errorf("LatestForVideo err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestEnabledFunc covers the transcription_enabled runtime overlay
+// (config-parity W8): the provider supersedes the static flag and is re-read
+// per call, so Enqueue and the worker's DrainJobs follow an admin flip without
+// reconstruction.
+func TestEnabledFunc(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	enabled := false
+	svc := NewService(repo, &fakeVideoStore{owner: uuid.New()}, nil,
+		WithEnabled(true), // superseded by the provider below
+		WithEnabledFunc(func() bool { return enabled }))
+
+	if svc.Enabled() {
+		t.Fatal("Enabled() = true while the provider says off")
+	}
+	if _, err := svc.Enqueue(ctx, uuid.New(), "en"); !errors.Is(err, ErrDisabled) {
+		t.Fatalf("gated-off Enqueue err = %v, want ErrDisabled", err)
+	}
+	if n, err := svc.DrainJobs(ctx, 10); err != nil || n != 0 {
+		t.Fatalf("gated-off DrainJobs = (%d, %v), want no-op", n, err)
+	}
+
+	enabled = true // runtime flip
+	if !svc.Enabled() {
+		t.Fatal("Enabled() = false after the provider flipped on")
+	}
+	if _, err := svc.Enqueue(ctx, uuid.New(), "en"); err != nil {
+		t.Fatalf("gated-on Enqueue: %v", err)
 	}
 }

@@ -175,6 +175,13 @@ func run() error {
 		UploadMaxSizeBytes:             uploadMaxBytesDefault,
 		UploadMaxActiveSessionsPerUser: int64(cfg.UploadMaxActiveSessionsPerUser),
 		ImportMaxHeight:                int64(cfg.YtdlpMaxHeight),
+
+		// Shipped-feature toggle batch (config-parity W8): defaults come from
+		// the existing env knobs; the boot capabilities themselves (yt-dlp
+		// wiring, WHISPER_ENDPOINT) stay env-only and are ANDed in at each seam.
+		ChannelSyncEnabled:    cfg.ChannelSyncEnabled,
+		ChannelSyncMaxPerUser: int64(cfg.ChannelSyncMaxPerUser),
+		TranscriptionEnabled:  cfg.WhisperEnabled,
 	})
 	if err := settingssvc.Load(startCtx); err != nil {
 		return err
@@ -301,7 +308,12 @@ func run() error {
 		opts = append(opts, httpapi.WithOAuthService(auth.NewOAuthService(db.Queries(), authsvc, providers)))
 	}
 
-	channelsvc := channel.NewService(db.Queries())
+	// The per-user channel cap (max_channels_per_user, config-parity W8) is
+	// resolved per create from the settings overlay; 0 (the default) = unlimited.
+	channelsvc := channel.NewService(db.Queries(),
+		channel.WithMaxPerUserFunc(func() int64 {
+			return settingssvc.Int(instancesettings.KeyMaxChannelsPerUser)
+		}))
 	opts = append(opts, httpapi.WithChannelService(channelsvc))
 
 	// Simple crypto donation addresses (P14). The instance identifier is bound
@@ -439,6 +451,12 @@ func run() error {
 	// toggle it at runtime; with no DB override it returns cfg.QuarantineNewUploads.
 	vopts = append(vopts, video.WithQuarantineGate(func() bool {
 		return settingssvc.Bool(instancesettings.KeyQuarantineNewUploads)
+	}))
+	// Storyboard generation follows the storyboards_enabled overlay at runtime
+	// (config-parity W8, default on). Stored storyboards keep serving when the
+	// gate is off — it covers generation only.
+	vopts = append(vopts, video.WithStoryboardGate(func() bool {
+		return settingssvc.Bool(instancesettings.KeyStoryboardsEnabled)
 	}))
 	if cfg.QuarantineNewUploads {
 		logger.Info("upload quarantine enabled by default (QUARANTINE_NEW_UPLOADS)")
@@ -701,6 +719,12 @@ func run() error {
 		videoimport.WithMaxBytesFunc(func() int64 {
 			return settingssvc.Int(instancesettings.KeyUploadMaxSizeBytes)
 		}),
+		// The platform (yt-dlp) resolver follows the import_http_enabled overlay
+		// (config-parity W8): the gate can pause the path at runtime but never
+		// enable it on a deployment that did not wire the extractor below.
+		videoimport.WithYtdlpGate(func() bool {
+			return settingssvc.Bool(instancesettings.KeyImportHTTPEnabled)
+		}),
 	}
 	// yt-dlp platform-URL import (W2.C1, UPLOAD-09). OFF by default; admin opt-in.
 	// The binary is pinned in the image (never self-updated at runtime); when the
@@ -741,8 +765,23 @@ func run() error {
 	}
 	channelSyncOpts := []channelsync.Option{
 		channelsync.WithEnabled(channelSyncEffective),
+		// Runtime overlay (config-parity W8): the effective gate is the boot
+		// capability (the yt-dlp resolver) AND the channel_sync_enabled setting
+		// AND the import_http_enabled setting (the sync path IS a yt-dlp import
+		// path). Resolved per call/tick so an admin can pause and resume syncs
+		// without a restart; the worker below stays constructed either way.
+		channelsync.WithEnabledFunc(func() bool {
+			return cfg.YtdlpImportEnabled &&
+				settingssvc.Bool(instancesettings.KeyChannelSyncEnabled) &&
+				settingssvc.Bool(instancesettings.KeyImportHTTPEnabled)
+		}),
 		channelsync.WithAllowPrivateURLs(cfg.ImportAllowPrivateURLs),
 		channelsync.WithMaxPerUser(cfg.ChannelSyncMaxPerUser),
+		// The per-user cap follows the channel_sync_max_per_user overlay
+		// (0 = unlimited, default CHANNEL_SYNC_MAX_PER_USER).
+		channelsync.WithMaxPerUserFunc(func() int {
+			return int(settingssvc.Int(instancesettings.KeyChannelSyncMaxPerUser))
+		}),
 		channelsync.WithBatch(cfg.ChannelSyncBatch),
 		channelsync.WithInterval(cfg.ChannelSyncInterval),
 		channelsync.WithCooldown(cfg.ChannelSyncCooldown),
@@ -767,6 +806,12 @@ func run() error {
 	}
 	captionjobsvc := captionjob.NewService(db.Queries(), videosvc, transcriber,
 		captionjob.WithEnabled(cfg.WhisperEnabled),
+		// Runtime overlay (config-parity W8): effective = transcription_enabled
+		// setting AND the Whisper boot capability (WHISPER_ENABLED/ENDPOINT stay
+		// env-only — mirroring the contact_form_enabled env-dependency pattern).
+		captionjob.WithEnabledFunc(func() bool {
+			return cfg.WhisperEnabled && settingssvc.Bool(instancesettings.KeyTranscriptionEnabled)
+		}),
 		captionjob.WithDefaultLanguage(cfg.WhisperDefaultLanguage),
 		captionjob.WithNotifier(notifsvc),
 		captionjob.WithLogger(logger),
@@ -778,7 +823,13 @@ func run() error {
 	// Delete hooks registered above fire for previously-public videos.
 	accountsvc := account.NewService(db.Queries(), blobs, videosvc,
 		account.WithBaseURL(cfg.PublicBaseURL),
-		account.WithMirror(ipfsMirror)) // IPFS P19: unpin a deleted account's media
+		account.WithMirror(ipfsMirror), // IPFS P19: unpin a deleted account's media
+		// Export retention follows the user_export_expiration_hours overlay
+		// (config-parity W8; default 168h, 0 = archives never expire), resolved
+		// when each export finishes.
+		account.WithExportTTLFunc(func() time.Duration {
+			return time.Duration(settingssvc.Int(instancesettings.KeyUserExportExpirationHours)) * time.Hour
+		}))
 	opts = append(opts, httpapi.WithAccountService(accountsvc))
 
 	// Federation (ActivityPub) — the service is always constructed, but its routes

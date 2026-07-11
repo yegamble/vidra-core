@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -159,15 +160,38 @@ func TestAutoCaptionConflict(t *testing.T) {
 	}
 }
 
-// TestAutoCaptionDisabled: with auto-captioning off, the request endpoint is 503.
+// TestAutoCaptionDisabled: with the transcription_enabled runtime setting off
+// (testConfig defaults it from WhisperEnabled=false), the request endpoint is
+// 403 feature_disabled — the uniform W8 gate idiom.
 func TestAutoCaptionDisabled(t *testing.T) {
-	srv := videoServer(t) // testConfig: WhisperEnabled=false
+	srv := videoServer(t) // testConfig: WhisperEnabled=false → setting default off
 	owner := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	vid := createPublishedVideo(t, srv, owner, "ada", `{"title":"Clip","privacy":"public"}`)
 
 	rec := requestAutoCaption(srv, vid, `{}`, owner)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("disabled request = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	var env ErrorResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &env)
+	if env.Error.Code != "feature_disabled" {
+		t.Errorf("error code = %q, want feature_disabled", env.Error.Code)
+	}
+}
+
+// TestAutoCaptionBootDisabled503: the runtime setting is ON (an admin
+// override) but the Whisper boot capability is absent (the caption service
+// stays disabled): the request endpoint keeps its 503 for that distinct state
+// — a runtime toggle can never conjure a dependency the deployment lacks.
+func TestAutoCaptionBootDisabled503(t *testing.T) {
+	srv := videoServer(t) // WhisperEnabled=false → captionjobsvc disabled
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, adminTok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	setToggle(t, srv, adminTok, instancesettings.KeyTranscriptionEnabled, true)
+	rec := requestAutoCaption(srv, vid, `{}`, adminTok)
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("disabled request = %d, want 503; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("boot-disabled request = %d, want 503; body=%s", rec.Code, rec.Body.String())
 	}
 	var env ErrorResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &env)

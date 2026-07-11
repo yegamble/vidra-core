@@ -375,3 +375,41 @@ func TestListOwn(t *testing.T) {
 		t.Errorf("got %d channels, want 2", len(chans))
 	}
 }
+
+// TestCreateChannelMaxPerUser covers the max_channels_per_user runtime cap
+// (config-parity W8): at-cap creation is refused with ErrMaxReached, 0 =
+// unlimited, the provider is re-read per Create (a runtime flip applies
+// without reconstruction), and the cap is per-OWNER — other users are
+// unaffected.
+func TestCreateChannelMaxPerUser(t *testing.T) {
+	ctx := context.Background()
+	owner, other := uuid.New(), uuid.New()
+	max := int64(2)
+	svc := NewService(newFakeRepo(), WithMaxPerUserFunc(func() int64 { return max }))
+
+	if _, err := svc.Create(ctx, owner, CreateInput{Handle: "one", DisplayName: "One"}); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := svc.Create(ctx, owner, CreateInput{Handle: "two", DisplayName: "Two"}); err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+	if _, err := svc.Create(ctx, owner, CreateInput{Handle: "three", DisplayName: "Three"}); !errors.Is(err, ErrMaxReached) {
+		t.Fatalf("at-cap create err = %v, want ErrMaxReached", err)
+	}
+	// Per-owner: another user is untouched by owner's count.
+	if _, err := svc.Create(ctx, other, CreateInput{Handle: "elsewhere", DisplayName: "E"}); err != nil {
+		t.Fatalf("other user create: %v", err)
+	}
+	// 0 = unlimited (runtime flip, same service instance).
+	max = 0
+	if _, err := svc.Create(ctx, owner, CreateInput{Handle: "three", DisplayName: "Three"}); err != nil {
+		t.Fatalf("unlimited create: %v", err)
+	}
+	// No provider wired at all → unlimited (shipped behaviour preserved).
+	unwired := NewService(newFakeRepo())
+	for i, h := range []string{"a", "b", "c", "d"} {
+		if _, err := unwired.Create(ctx, owner, CreateInput{Handle: h, DisplayName: h}); err != nil {
+			t.Fatalf("unwired create %d: %v", i, err)
+		}
+	}
+}

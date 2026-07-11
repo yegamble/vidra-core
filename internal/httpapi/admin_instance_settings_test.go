@@ -74,6 +74,10 @@ func settingsDefaultsFromConfig(cfg *config.Config) instancesettings.Defaults {
 		UploadMaxSizeBytes:             uploadMaxSizeBytes(cfg),
 		UploadMaxActiveSessionsPerUser: int64(cfg.UploadMaxActiveSessionsPerUser),
 		ImportMaxHeight:                int64(cfg.YtdlpMaxHeight),
+
+		ChannelSyncEnabled:    cfg.ChannelSyncEnabled,
+		ChannelSyncMaxPerUser: int64(cfg.ChannelSyncMaxPerUser),
+		TranscriptionEnabled:  cfg.WhisperEnabled,
 	}
 }
 
@@ -152,10 +156,11 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 
 	// Default state: instance_name is the config value and nothing is overridden.
 	// 13 feature/base keys + 21 platform-information keys + 4 operational limits
-	// + 19 core-config-surface keys (config-parity W1).
+	// + 19 core-config-surface keys (config-parity W1) + 10 shipped-feature
+	// toggles (config-parity W8).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 57 {
-		t.Fatalf("settings count = %d, want 57", len(got.Settings))
+	if len(got.Settings) != 67 {
+		t.Fatalf("settings count = %d, want 67", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {
@@ -529,5 +534,110 @@ func TestRegistrationOverlayGate(t *testing.T) {
 	setToggle(t, srv, adminTok, instancesettings.KeyRegistrationEnabled, true)
 	if rec := postTo(srv, "/api/v1/auth/register", `{"username":"cid","email":"cid@example.test","password":"supersecret"}`); rec.Code != http.StatusCreated {
 		t.Errorf("register after re-enable = %d; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ---- shipped-feature toggle batch gates (config-parity W8) -----------------
+
+// TestImportHTTPToggleGate: import_http_enabled governs the yt-dlp platform
+// path SPECIFICALLY — setting off → an explicit resolver=ytdlp is 403
+// feature_disabled (before any enqueue) while direct imports keep working
+// under the imports_enabled master; setting on with no extractor wired keeps
+// the boot-capability 503.
+func TestImportHTTPToggleGate(t *testing.T) {
+	srv := videoServer(t) // no yt-dlp extractor wired in this harness
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, adminTok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	// Setting ON (default) but extractor unwired: boot 503 preserved.
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
+		`{"url":"https://platform.example/watch?v=1","resolver":"ytdlp"}`, adminTok)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unwired ytdlp = %d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Setting OFF: 403 feature_disabled, the uniform W8 idiom.
+	setToggle(t, srv, adminTok, instancesettings.KeyImportHTTPEnabled, false)
+	rec = sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
+		`{"url":"https://platform.example/watch?v=1","resolver":"ytdlp"}`, adminTok)
+	if rec.Code != http.StatusForbidden || errorCode(t, rec) != "feature_disabled" {
+		t.Errorf("gated ytdlp = %d code=%q, want 403 feature_disabled", rec.Code, errorCode(t, rec))
+	}
+	// The master imports switch still admits direct/auto URL imports.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/import",
+		`{"url":"https://example.com/v.mp4"}`, adminTok); rec.Code != http.StatusAccepted {
+		t.Errorf("direct import with import_http off = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMaxChannelsPerUserGate: max_channels_per_user counts-and-refuses at
+// channel creation (422), 0 restores unlimited, and other users' counts are
+// independent.
+func TestMaxChannelsPerUserGate(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada") // ada now has 1 channel
+
+	setInt(t, srv, adminTok, instancesettings.KeyMaxChannelsPerUser, 2)
+	if rec := postJSONAuth(srv, "/api/v1/channels", `{"handle":"second","display_name":"Second"}`, adminTok); rec.Code != http.StatusCreated {
+		t.Fatalf("second channel = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	rec := postJSONAuth(srv, "/api/v1/channels", `{"handle":"third","display_name":"Third"}`, adminTok)
+	if rec.Code != http.StatusUnprocessableEntity || errorCode(t, rec) != "unprocessable_entity" {
+		t.Errorf("at-cap channel = %d code=%q, want 422 unprocessable_entity", rec.Code, errorCode(t, rec))
+	}
+	// A different user starts at zero and may still create.
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	if rec := postJSONAuth(srv, "/api/v1/channels", `{"handle":"bobs","display_name":"Bobs"}`, bobTok); rec.Code != http.StatusCreated {
+		t.Errorf("other user channel = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	// 0 = unlimited again.
+	setInt(t, srv, adminTok, instancesettings.KeyMaxChannelsPerUser, 0)
+	if rec := postJSONAuth(srv, "/api/v1/channels", `{"handle":"third","display_name":"Third"}`, adminTok); rec.Code != http.StatusCreated {
+		t.Errorf("unlimited channel = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestInstanceFeaturesW8Flags: GET /instance features carries the W8 flags,
+// tracking the settings (and reporting false where this harness lacks the boot
+// capability — no yt-dlp, no Whisper, no channel-sync service).
+func TestInstanceFeaturesW8Flags(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	features := func() map[string]bool {
+		t.Helper()
+		rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/instance", "", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /instance = %d", rec.Code)
+		}
+		var doc struct {
+			Features map[string]bool `json:"features"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return doc.Features
+	}
+
+	got := features()
+	for flag, want := range map[string]bool{
+		"import_http":   false, // setting on, but no yt-dlp extractor wired
+		"channel_sync":  false, // no channelsync service in this harness
+		"storyboards":   true,
+		"transcription": false, // WhisperEnabled=false
+		"user_import":   true,
+		"user_export":   true,
+	} {
+		if got[flag] != want {
+			t.Errorf("features.%s = %v, want %v", flag, got[flag], want)
+		}
+	}
+
+	// Flags follow the runtime settings.
+	setToggle(t, srv, adminTok, instancesettings.KeyStoryboardsEnabled, false)
+	setToggle(t, srv, adminTok, instancesettings.KeyUserExportEnabled, false)
+	got = features()
+	if got["storyboards"] || got["user_export"] {
+		t.Errorf("flags after toggles = storyboards:%v user_export:%v, want false/false", got["storyboards"], got["user_export"])
 	}
 }

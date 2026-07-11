@@ -23,6 +23,9 @@ var (
 	ErrNotFound = errors.New("channel: not found")
 	// ErrForbidden means the caller does not own the channel.
 	ErrForbidden = errors.New("channel: not owner")
+	// ErrMaxReached means the caller is at the per-user channel limit
+	// (max_channels_per_user, config-parity W8; 0 = unlimited).
+	ErrMaxReached = errors.New("channel: per-user limit reached")
 )
 
 // Repository is the data access the channel service needs. *sqlcgen.Queries
@@ -43,11 +46,31 @@ type Repository interface {
 // Service holds the channel application logic.
 type Service struct {
 	repo Repository
+	// maxPerUserFn, when set, is the runtime per-user channel cap
+	// (max_channels_per_user, config-parity W8), resolved per Create.
+	// <= 0 = unlimited (the default, matching the shipped behaviour).
+	maxPerUserFn func() int64
+}
+
+// Option customises the Service.
+type Option func(*Service)
+
+// WithMaxPerUserFunc wires the dynamic per-user channel cap
+// (max_channels_per_user, config-parity W8): f is resolved per Create so an
+// admin can retune the limit without a restart. <= 0 = unlimited. Existing
+// channels above a newly lowered cap are untouched — the cap only refuses NEW
+// creations.
+func WithMaxPerUserFunc(f func() int64) Option {
+	return func(s *Service) { s.maxPerUserFn = f }
 }
 
 // NewService builds the channel service.
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo Repository, opts ...Option) *Service {
+	s := &Service{repo: repo}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // CreateInput is validated, normalized channel-creation data.
@@ -57,9 +80,21 @@ type CreateInput struct {
 	Description string
 }
 
-// Create makes a new channel owned by ownerID. Handle uniqueness is enforced by
-// the database; a violation maps to ErrConflict.
+// Create makes a new channel owned by ownerID. The per-user cap (when one is
+// wired; 0 = unlimited) is counted-and-refused first — ErrMaxReached. Handle
+// uniqueness is enforced by the database; a violation maps to ErrConflict.
 func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, in CreateInput) (sqlcgen.Channel, error) {
+	if s.maxPerUserFn != nil {
+		if max := s.maxPerUserFn(); max > 0 {
+			existing, err := s.repo.ListChannelsByOwner(ctx, ownerID)
+			if err != nil {
+				return sqlcgen.Channel{}, err
+			}
+			if int64(len(existing)) >= max {
+				return sqlcgen.Channel{}, ErrMaxReached
+			}
+		}
+	}
 	ch, err := s.repo.CreateChannel(ctx, sqlcgen.CreateChannelParams{
 		OwnerID:     ownerID,
 		Handle:      strings.TrimSpace(in.Handle),

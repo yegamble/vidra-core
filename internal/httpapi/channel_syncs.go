@@ -77,13 +77,18 @@ type channelSyncListResponse struct {
 }
 
 // handleCreateChannelSync binds a local channel to an external channel URL for
-// auto-sync (owner only). 503 when the feature is disabled; 422 for a bad/private
-// URL or when the caller is at the per-user cap; 404 when the channel is unknown
-// or not owned; 409 when an identical sync already exists.
+// auto-sync (owner only). 403 feature_disabled when the runtime admin setting
+// turns the feature off (W8); 503 when the deployment lacks the yt-dlp import
+// resolver; 422 for a bad/private URL or when the caller is at the per-user
+// cap; 404 when the channel is unknown or not owned; 409 when an identical
+// sync already exists.
 func (s *Server) handleCreateChannelSync(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	if !s.channelSyncEnabled() {
+		return &FeatureDisabledError{Feature: "channel_sync"}
 	}
 	var in createChannelSyncRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -131,12 +136,17 @@ func (s *Server) handleDeleteChannelSync(c echo.Context) error {
 }
 
 // handleSyncChannelNow schedules an owned sync to run on the next worker tick.
-// 503 when disabled; 404 when unknown or not owned; 429 (with Retry-After) when
-// the server-side cooldown since the last completed run has not yet elapsed.
+// 403 feature_disabled when the runtime admin setting is off (W8); 503 when the
+// deployment lacks the yt-dlp import resolver; 404 when unknown or not owned;
+// 429 (with Retry-After) when the server-side cooldown since the last completed
+// run has not yet elapsed.
 func (s *Server) handleSyncChannelNow(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	if !s.channelSyncEnabled() {
+		return &FeatureDisabledError{Feature: "channel_sync"}
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

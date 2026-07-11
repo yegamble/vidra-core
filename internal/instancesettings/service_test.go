@@ -61,6 +61,116 @@ func testDefaults() Defaults {
 		UploadMaxSizeBytes:             1 << 21, // 2 MiB
 		UploadMaxActiveSessionsPerUser: 5,
 		ImportMaxHeight:                1080,
+
+		ChannelSyncEnabled:    true,
+		ChannelSyncMaxPerUser: 5,
+		TranscriptionEnabled:  false,
+	}
+}
+
+// TestW8ToggleBatchRegistry covers the shipped-feature toggle batch
+// (config-parity W8): every new key's kind, default resolution, admin-IA
+// placement, and validator boundaries.
+func TestW8ToggleBatchRegistry(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	snap := map[string]Effective{}
+	for _, e := range svc.Snapshot() {
+		snap[e.Key] = e
+	}
+
+	cases := []struct {
+		key     string
+		kind    Kind
+		def     any // bool or int64, matching kind
+		page    string
+		section string
+	}{
+		{KeyImportHTTPEnabled, KindBool, true, PageVOD, "imports"},
+		{KeyChannelSyncEnabled, KindBool, true, PageVOD, "imports"}, // testDefaults: ChannelSyncEnabled=true
+		{KeyChannelSyncMaxPerUser, KindInt, int64(5), PageVOD, "imports"},
+		{KeyStoryboardsEnabled, KindBool, true, PageVOD, "storyboards"},
+		{KeyTranscriptionEnabled, KindBool, false, PageVOD, "transcription"}, // TranscriptionEnabled=false
+		{KeyUserImportEnabled, KindBool, true, PageAdvanced, "user_data"},
+		{KeyUserExportEnabled, KindBool, true, PageAdvanced, "user_data"},
+		{KeyUserExportExpirationHours, KindInt, int64(DefaultUserExportExpirationHours), PageAdvanced, "user_data"},
+		{KeyUserExportMaxQuotaBytes, KindInt, int64(0), PageAdvanced, "user_data"},
+		{KeyMaxChannelsPerUser, KindInt, int64(0), PageGeneral, "channels"},
+	}
+	for _, tc := range cases {
+		e, ok := snap[tc.key]
+		if !ok {
+			t.Errorf("%s missing from snapshot", tc.key)
+			continue
+		}
+		if e.Kind != tc.kind {
+			t.Errorf("%s kind = %q, want %q", tc.key, e.Kind, tc.kind)
+		}
+		if !reflect.DeepEqual(e.Default, tc.def) || !reflect.DeepEqual(e.Value, tc.def) {
+			t.Errorf("%s default/value = %v/%v, want %v", tc.key, e.Default, e.Value, tc.def)
+		}
+		if e.Overridden {
+			t.Errorf("%s overridden = true, want false", tc.key)
+		}
+		if e.Page != tc.page || e.Section != tc.section {
+			t.Errorf("%s placement = %s/%s, want %s/%s", tc.key, e.Page, e.Section, tc.page, tc.section)
+		}
+	}
+
+	// Validator boundaries: each rejected before anything is written.
+	by := uuid.New()
+	bad := map[string]map[string]Update{
+		"bool not boolean":            {KeyImportHTTPEnabled: {Value: "yes"}},
+		"sync cap negative":           {KeyChannelSyncMaxPerUser: {Value: "-1"}},
+		"sync cap over max":           {KeyChannelSyncMaxPerUser: {Value: "10001"}},
+		"export ttl negative":         {KeyUserExportExpirationHours: {Value: "-1"}},
+		"export ttl over a year":      {KeyUserExportExpirationHours: {Value: "8761"}},
+		"export quota negative":       {KeyUserExportMaxQuotaBytes: {Value: "-5"}},
+		"channel cap negative":        {KeyMaxChannelsPerUser: {Value: "-1"}},
+		"channel cap over max":        {KeyMaxChannelsPerUser: {Value: "10001"}},
+		"transcription not a boolean": {KeyTranscriptionEnabled: {Value: "1"}},
+	}
+	for name, updates := range bad {
+		var verr *ValidationError
+		if err := svc.Apply(ctx, updates, by); !errors.As(err, &verr) {
+			t.Errorf("%s: Apply err = %v, want ValidationError", name, err)
+		}
+	}
+
+	// Boundary accepts: 0 sentinels and in-range values round-trip.
+	if err := svc.Apply(ctx, map[string]Update{
+		KeyChannelSyncMaxPerUser:     {Value: "0"}, // unlimited
+		KeyUserExportExpirationHours: {Value: "0"}, // never expires
+		KeyUserExportMaxQuotaBytes:   {Value: "0"}, // no cap
+		KeyMaxChannelsPerUser:        {Value: "3"},
+		KeyImportHTTPEnabled:         {Value: "false"},
+		KeyStoryboardsEnabled:        {Value: "false"},
+	}, by); err != nil {
+		t.Fatalf("apply boundary values: %v", err)
+	}
+	if got := svc.Int(KeyChannelSyncMaxPerUser); got != 0 {
+		t.Errorf("sync cap override = %d, want 0", got)
+	}
+	if got := svc.Int(KeyMaxChannelsPerUser); got != 3 {
+		t.Errorf("channel cap override = %d, want 3", got)
+	}
+	if svc.Bool(KeyImportHTTPEnabled) || svc.Bool(KeyStoryboardsEnabled) {
+		t.Error("bool overrides did not apply")
+	}
+
+	// null-PATCH (Delete) clears back to the defaults.
+	if err := svc.Apply(ctx, map[string]Update{
+		KeyImportHTTPEnabled:  {Delete: true},
+		KeyStoryboardsEnabled: {Delete: true},
+	}, by); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if !svc.Bool(KeyImportHTTPEnabled) || !svc.Bool(KeyStoryboardsEnabled) {
+		t.Error("delete did not restore defaults")
 	}
 }
 

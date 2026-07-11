@@ -558,3 +558,83 @@ func TestDrainDueMissingListerFailsSafely(t *testing.T) {
 		t.Fatalf("failed = %+v, want the safe unavailable message", repo.failed)
 	}
 }
+
+// ---- W8 runtime seams (config-parity) --------------------------------------
+
+// TestEnabledFunc covers the channel_sync_enabled runtime overlay: the provider
+// supersedes the static flag, is re-read per call (Create / SyncNow / DrainDue
+// all follow a flip without reconstruction), and the worker stays a no-op while
+// off.
+func TestEnabledFunc(t *testing.T) {
+	owner := uuid.New()
+	chID := uuid.New()
+	repo := newFakeRepo()
+	repo.channels[chID] = sqlcgen.Channel{ID: chID, OwnerID: owner}
+
+	enabled := false
+	svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, &fakeLister{},
+		WithEnabledFunc(func() bool { return enabled })) // supersedes WithEnabled(true)
+
+	if svc.Enabled() {
+		t.Fatal("Enabled() = true while the provider says off")
+	}
+	if _, err := svc.Create(context.Background(), owner, chID, "https://youtube.com/@chan"); !errors.Is(err, ErrDisabled) {
+		t.Fatalf("gated-off Create err = %v, want ErrDisabled", err)
+	}
+	if n, err := svc.DrainDue(context.Background(), 10); err != nil || n != 0 {
+		t.Fatalf("gated-off DrainDue = (%d, %v), want no-op", n, err)
+	}
+
+	enabled = true // runtime flip — no reconstruction
+	if !svc.Enabled() {
+		t.Fatal("Enabled() = false after the provider flipped on")
+	}
+	sync, err := svc.Create(context.Background(), owner, chID, "https://youtube.com/@chan")
+	if err != nil {
+		t.Fatalf("gated-on Create: %v", err)
+	}
+
+	enabled = false // and off again: SyncNow refuses, pickup pauses
+	if err := svc.SyncNow(context.Background(), owner, sync.ID); !errors.Is(err, ErrDisabled) {
+		t.Fatalf("gated-off SyncNow err = %v, want ErrDisabled", err)
+	}
+	if n, _ := svc.DrainDue(context.Background(), 10); n != 0 {
+		t.Fatalf("gated-off DrainDue picked up %d syncs, want 0", n)
+	}
+}
+
+// TestMaxPerUserFunc covers the channel_sync_max_per_user runtime overlay:
+// the provider supersedes the static cap, at-cap creation is refused, and
+// 0 = unlimited per the vidra convention.
+func TestMaxPerUserFunc(t *testing.T) {
+	owner := uuid.New()
+	newRepoWith := func(chans ...uuid.UUID) *fakeRepo {
+		r := newFakeRepo()
+		for _, id := range chans {
+			r.channels[id] = sqlcgen.Channel{ID: id, OwnerID: owner}
+		}
+		return r
+	}
+
+	t.Run("at cap → ErrMaxReached; below cap ok", func(t *testing.T) {
+		ch1, ch2, ch3 := uuid.New(), uuid.New(), uuid.New()
+		repo := newRepoWith(ch1, ch2, ch3)
+		cap := 2
+		svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, &fakeLister{},
+			WithMaxPerUser(99), // superseded by the func below
+			WithMaxPerUserFunc(func() int { return cap }))
+		if _, err := svc.Create(context.Background(), owner, ch1, "https://youtube.com/@a"); err != nil {
+			t.Fatalf("first create: %v", err)
+		}
+		if _, err := svc.Create(context.Background(), owner, ch2, "https://youtube.com/@b"); err != nil {
+			t.Fatalf("second create: %v", err)
+		}
+		if _, err := svc.Create(context.Background(), owner, ch3, "https://youtube.com/@c"); !errors.Is(err, ErrMaxReached) {
+			t.Fatalf("at-cap create err = %v, want ErrMaxReached", err)
+		}
+		cap = 0 // 0 = unlimited: the same call now passes
+		if _, err := svc.Create(context.Background(), owner, ch3, "https://youtube.com/@c"); err != nil {
+			t.Fatalf("unlimited create: %v", err)
+		}
+	})
+}

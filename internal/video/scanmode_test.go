@@ -176,3 +176,41 @@ func TestProcessStoryboardFailureStillPublishes(t *testing.T) {
 		t.Error("storyboard stored despite generator error")
 	}
 }
+
+// TestProcessStoryboardGate covers the storyboards_enabled runtime gate
+// (config-parity W8): gate off → publish proceeds with NO storyboard; the gate
+// is re-read per Process so an admin flip applies without reconstruction.
+func TestProcessStoryboardGate(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	blobs, _ := storage.NewLocal(t.TempDir())
+	sprite := []byte("\xff\xd8\xff\xe0sprite")
+	vtt := []byte("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nstoryboard.jpg#xywh=0,0,160,90\n")
+	enabled := false
+	svc := NewService(repo, blobs,
+		WithStoryboarder(fakeStoryboarder{sprite: sprite, vtt: vtt}),
+		WithStoryboardGate(func() bool { return enabled }))
+	ctx := context.Background()
+
+	// Gate OFF: publishes fine, generates nothing.
+	v1, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "off", Privacy: "public"})
+	got, err := svc.Process(ctx, v1.ID, "web-videos/a.mp4")
+	if err != nil {
+		t.Fatalf("Process (gate off): %v", err)
+	}
+	if got.State != "published" {
+		t.Fatalf("state = %q, want published", got.State)
+	}
+	if svc.HasStoryboard(ctx, v1.ID) {
+		t.Error("storyboard generated while the gate is off")
+	}
+
+	// Gate ON (runtime flip): the next publish generates one.
+	enabled = true
+	v2, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "on", Privacy: "public"})
+	if _, err := svc.Process(ctx, v2.ID, "web-videos/b.mp4"); err != nil {
+		t.Fatalf("Process (gate on): %v", err)
+	}
+	if !svc.HasStoryboard(ctx, v2.ID) {
+		t.Error("storyboard missing with the gate on")
+	}
+}
