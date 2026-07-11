@@ -108,8 +108,10 @@ type Service struct {
 	lister   Lister
 
 	enabled      bool
+	enabledFn    func() bool // when set, supersedes enabled (runtime overlay), resolved per call
 	allowPrivate bool
 	maxPerUser   int
+	maxPerUserFn func() int // when set, supersedes maxPerUser (runtime overlay), resolved per Create
 	batch        int
 	interval     time.Duration
 	cooldown     time.Duration
@@ -124,6 +126,15 @@ type Option func(*Service)
 // the worker is a no-op.
 func WithEnabled(enabled bool) Option { return func(s *Service) { s.enabled = enabled } }
 
+// WithEnabledFunc makes the feature gate dynamic (channel_sync_enabled,
+// config-parity W8): f is resolved per call — sync-create, sync-now, and every
+// worker tick's DrainDue — so an admin can pause/resume channel auto-sync
+// without a restart (the worker stays constructed and simply picks nothing up
+// while off). When set it supersedes WithEnabled; wire f to fold in the boot
+// capability (the yt-dlp resolver) so a runtime toggle can never enable a sync
+// path the deployment cannot run.
+func WithEnabledFunc(f func() bool) Option { return func(s *Service) { s.enabledFn = f } }
+
 // WithAllowPrivateURLs relaxes the SSRF guard's private/loopback block for the
 // external channel URL (dev/test only, from HTTP_IMPORT_ALLOW_PRIVATE_URLS).
 func WithAllowPrivateURLs(allow bool) Option { return func(s *Service) { s.allowPrivate = allow } }
@@ -131,6 +142,11 @@ func WithAllowPrivateURLs(allow bool) Option { return func(s *Service) { s.allow
 // WithMaxPerUser caps how many syncs one user may hold (CHANNEL_SYNC_MAX_PER_USER;
 // <= 0 disables the cap).
 func WithMaxPerUser(n int) Option { return func(s *Service) { s.maxPerUser = n } }
+
+// WithMaxPerUserFunc makes the per-user cap dynamic (channel_sync_max_per_user,
+// config-parity W8): f is resolved per Create so an admin can retune the cap at
+// runtime. When set it supersedes WithMaxPerUser. <= 0 disables the cap.
+func WithMaxPerUserFunc(f func() int) Option { return func(s *Service) { s.maxPerUserFn = f } }
 
 // WithBatch caps how many playlist entries one sync pass imports
 // (CHANNEL_SYNC_BATCH).
@@ -195,9 +211,25 @@ func NewService(repo Repository, drafter Drafter, enqueuer Enqueuer, opts ...Opt
 	return s
 }
 
-// Enabled reports whether channel auto-sync is on (CHANNEL_SYNC_ENABLED and the
-// yt-dlp import resolver). The handlers 503 up front when it is off.
-func (s *Service) Enabled() bool { return s.enabled }
+// Enabled reports whether channel auto-sync is EFFECTIVELY on: the runtime
+// provider when wired (which folds in the boot capability), else the static
+// boot flag (CHANNEL_SYNC_ENABLED and the yt-dlp import resolver). The
+// handlers refuse up front when it is off.
+func (s *Service) Enabled() bool {
+	if s.enabledFn != nil {
+		return s.enabledFn()
+	}
+	return s.enabled
+}
+
+// effectiveMaxPerUser resolves the current per-user sync cap (<= 0 = no cap):
+// the live overlay value when a provider is wired, else the static value.
+func (s *Service) effectiveMaxPerUser() int {
+	if s.maxPerUserFn != nil {
+		return s.maxPerUserFn()
+	}
+	return s.maxPerUser
+}
 
 // Interval is the configured sync cadence (used by the worker ticker).
 func (s *Service) Interval() time.Duration { return s.interval }
@@ -214,7 +246,7 @@ func (s *Service) guard() urlsafety.Guard { return urlsafety.Guard{AllowPrivate:
 // Errors: ErrDisabled, ErrInvalidURL, ErrChannelNotFound, ErrForbidden,
 // ErrMaxReached, ErrConflict.
 func (s *Service) Create(ctx context.Context, userID, channelID uuid.UUID, externalURL string) (sqlcgen.ChannelSync, error) {
-	if !s.enabled {
+	if !s.Enabled() {
 		return sqlcgen.ChannelSync{}, ErrDisabled
 	}
 	target, err := s.guard().ValidateURL(strings.TrimSpace(externalURL))
@@ -228,12 +260,12 @@ func (s *Service) Create(ctx context.Context, userID, channelID uuid.UUID, exter
 	if ch.OwnerID != userID {
 		return sqlcgen.ChannelSync{}, ErrForbidden
 	}
-	if s.maxPerUser > 0 {
+	if max := s.effectiveMaxPerUser(); max > 0 {
 		count, err := s.repo.CountChannelSyncsByUser(ctx, userID)
 		if err != nil {
 			return sqlcgen.ChannelSync{}, err
 		}
-		if int(count) >= s.maxPerUser {
+		if int(count) >= max {
 			return sqlcgen.ChannelSync{}, ErrMaxReached
 		}
 	}
@@ -271,7 +303,7 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 // manual triggers: if the last run completed less than s.cooldown ago the request
 // is rejected with ErrCooldown (429) rather than forcing another external listing.
 func (s *Service) SyncNow(ctx context.Context, userID, id uuid.UUID) error {
-	if !s.enabled {
+	if !s.Enabled() {
 		return ErrDisabled
 	}
 	sync, err := s.owned(ctx, userID, id)
@@ -303,7 +335,7 @@ func (s *Service) owned(ctx context.Context, userID, id uuid.UUID) (sqlcgen.Chan
 // claim-query error is returned. Returns the number of syncs that completed
 // successfully. Intended to be called on a ticker by a single worker.
 func (s *Service) DrainDue(ctx context.Context, limit int) (int, error) {
-	if !s.enabled {
+	if !s.Enabled() {
 		return 0, nil
 	}
 	rows, err := s.repo.ClaimDueChannelSyncs(ctx, int32(limit))

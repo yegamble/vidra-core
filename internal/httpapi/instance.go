@@ -30,6 +30,17 @@ type instanceFeatures struct {
 	Live      bool `json:"live"`
 	Comments  bool `json:"comments"`
 	Downloads bool `json:"downloads"`
+
+	// Shipped-feature toggle batch (config-parity W8). Every flag is the
+	// EFFECTIVE availability: the runtime admin setting AND (where one exists)
+	// the boot capability — import_http and transcription report false when
+	// yt-dlp/Whisper is not wired regardless of the setting.
+	ImportHTTP    bool `json:"import_http"`
+	ChannelSync   bool `json:"channel_sync"`
+	Storyboards   bool `json:"storyboards"`
+	Transcription bool `json:"transcription"`
+	UserImport    bool `json:"user_import"`
+	UserExport    bool `json:"user_export"`
 }
 
 // instanceSocialLinks is the operator's social/link row (empty strings when
@@ -235,6 +246,14 @@ func (s *Server) instanceDocument() instanceResponse {
 			Live:      s.liveEnabled(),
 			Comments:  s.commentsEnabled(),
 			Downloads: s.downloadsEnabled(),
+			// W8 flags: setting AND boot capability (service Enabled() folds
+			// the runtime provider in when cmd/api wires one).
+			ImportHTTP:    s.importsEnabled() && s.importHTTPEnabled() && s.importsvc != nil && s.importsvc.YtdlpEnabled(),
+			ChannelSync:   s.channelSyncEnabled() && s.channelsyncsvc != nil && s.channelsyncsvc.Enabled(),
+			Storyboards:   s.storyboardsEnabled(),
+			Transcription: s.transcriptionEnabled() && s.captionjobsvc != nil && s.captionjobsvc.Enabled(),
+			UserImport:    s.userImportEnabled(),
+			UserExport:    s.userExportEnabled(),
 		},
 		Branding:      s.instanceBrandingBlock(),
 		Defaults:      s.instanceDefaultsBlock(),

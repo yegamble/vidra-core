@@ -255,6 +255,7 @@ type Service struct {
 	prober               Prober
 	thumbnailer          Thumbnailer
 	storyboarder         Storyboarder
+	storyboardGate       func() bool
 	scanner              Scanner
 	scanMode             ScanMode
 	auditor              Auditor
@@ -310,6 +311,16 @@ func WithScanMode(mode string) Option {
 // videos publish without a seek-preview storyboard.
 func WithStoryboarder(sb Storyboarder) Option {
 	return func(s *Service) { s.storyboarder = sb }
+}
+
+// WithStoryboardGate wires a dynamic predicate consulted at Process time for
+// storyboard generation (storyboards_enabled, config-parity W8): when it
+// returns false the publish proceeds without producing a sprite sheet, so an
+// admin can turn storyboards off without a restart. Previously stored
+// storyboards keep serving either way (the gate covers generation only). A nil
+// decider (the default) leaves generation on whenever a Storyboarder is wired.
+func WithStoryboardGate(decide func() bool) Option {
+	return func(s *Service) { s.storyboardGate = decide }
 }
 
 // WithViewDeduper wires per-viewer view de-duplication. Without it, every
@@ -609,8 +620,10 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		// Thumbnail generation is best-effort: a failure must not block publish.
 		s.generateThumbnail(ctx, videoID, originalKey, durationHint)
 	}
-	if state == "published" && s.storyboarder != nil {
+	if state == "published" && s.storyboarder != nil && (s.storyboardGate == nil || s.storyboardGate()) {
 		// Storyboard generation is best-effort: a failure must not block publish.
+		// The gate is the runtime storyboards_enabled toggle (config-parity W8);
+		// already stored storyboards keep serving when it is off.
 		s.generateStoryboard(ctx, videoID, originalKey, durationHint)
 	}
 	if state == "published" {

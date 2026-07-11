@@ -85,6 +85,57 @@ func (s *Server) downloadsEnabled() bool {
 	return s.settingBool(instancesettings.KeyDownloadsEnabled, true)
 }
 
+// --- shipped-feature toggle batch (config-parity W8) ---
+//
+// Each helper is the RUNTIME admin setting for one already-shipped feature.
+// The gate idiom is uniform: setting off → the affected endpoint answers 403
+// feature_disabled (the uploads_enabled shape) and the matching GET /instance
+// features flag reports false so clients hide the affordance. A missing BOOT
+// capability (yt-dlp not wired, Whisper not configured) keeps its existing
+// 503 — a runtime toggle can never conjure a dependency the deployment lacks.
+
+// importHTTPEnabled is the yt-dlp platform-URL import toggle
+// (import_http_enabled). Defaults ON: with no override the path is governed by
+// the boot capability alone. imports_enabled stays the master switch above it.
+func (s *Server) importHTTPEnabled() bool {
+	return s.settingBool(instancesettings.KeyImportHTTPEnabled, true)
+}
+
+// channelSyncEnabled is the channel auto-sync runtime gate: the
+// channel_sync_enabled setting AND the import_http_enabled setting (the sync
+// path IS a yt-dlp import path, so turning platform imports off pauses syncs
+// too). Boot capability (the yt-dlp resolver) is enforced separately by the
+// channelsync service (503).
+func (s *Server) channelSyncEnabled() bool {
+	return s.settingBool(instancesettings.KeyChannelSyncEnabled, s.cfg.ChannelSyncEnabled) &&
+		s.importHTTPEnabled()
+}
+
+// storyboardsEnabled is the storyboard-generation toggle (storyboards_enabled;
+// no env backing, default on). Generation additionally requires ffmpeg at the
+// media seam; stored storyboards keep serving regardless.
+func (s *Server) storyboardsEnabled() bool {
+	return s.settingBool(instancesettings.KeyStoryboardsEnabled, true)
+}
+
+// transcriptionEnabled is the auto-caption runtime setting
+// (transcription_enabled). The EFFECTIVE availability is this AND the Whisper
+// boot capability — the captionjob service folds both in (503 when only the
+// boot half is missing).
+func (s *Server) transcriptionEnabled() bool {
+	return s.settingBool(instancesettings.KeyTranscriptionEnabled, s.cfg.WhisperEnabled)
+}
+
+// userImportEnabled / userExportEnabled gate the account data-portability
+// surfaces (user_import_enabled / user_export_enabled; default on).
+func (s *Server) userImportEnabled() bool {
+	return s.settingBool(instancesettings.KeyUserImportEnabled, true)
+}
+
+func (s *Server) userExportEnabled() bool {
+	return s.settingBool(instancesettings.KeyUserExportEnabled, true)
+}
+
 // --- admin GET/PATCH /admin/instance-settings ---
 
 // instanceSettingView is one setting's effective state in the admin response:

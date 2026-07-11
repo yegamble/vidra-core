@@ -290,3 +290,71 @@ func assertStageOrder(t *testing.T, got []string, want ...string) {
 		t.Errorf("stage log %v does not contain the ordered stages %v", got, want)
 	}
 }
+
+// TestYtdlpGate covers the import_http_enabled runtime gate (config-parity W8)
+// over a WIRED extractor: gate off → the resolver is effectively disabled
+// (explicit enqueue refused, auto never falls back, a queued job fails safely);
+// gate on → behaviour is identical to no gate at all. The gate can only narrow:
+// without an extractor it changes nothing.
+func TestYtdlpGate(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("gate off disables a wired extractor", func(t *testing.T) {
+		repo, pipe := newFakeRepo(), newFakePipeline()
+		ext := &stubExtractor{body: []byte("bytes")}
+		svc := NewService(repo, pipe, 1<<20,
+			WithHTTPClient(&http.Client{}),
+			WithYtdlp(ext, t.TempDir()),
+			WithYtdlpGate(func() bool { return false }))
+		if svc.YtdlpEnabled() {
+			t.Error("YtdlpEnabled() = true with the gate off")
+		}
+		vid := seedVideo(pipe, uuid.New())
+		if _, err := svc.Enqueue(ctx, vid, "https://x.example/a", ResolverYtdlp); !errors.Is(err, ErrResolverDisabled) {
+			t.Errorf("explicit ytdlp enqueue err = %v, want ErrResolverDisabled", err)
+		}
+		// resolver=auto never falls back to the extractor while gated off: the
+		// direct attempt runs (and fails safely on a non-container body).
+		origin := originServer(t)
+		if _, err := svc.Enqueue(ctx, vid, loopbackHost(origin.URL)+"/page", ResolverAuto); err != nil {
+			t.Fatalf("auto enqueue: %v", err)
+		}
+		if _, err := svc.DrainJobs(ctx, 5); err != nil {
+			t.Fatalf("drain: %v", err)
+		}
+		if j := repo.latest(vid); j.Resolver == ResolverYtdlp || ext.dlCalls != 0 {
+			t.Errorf("auto routed to ytdlp while gated off (resolver=%q dlCalls=%d)", j.Resolver, ext.dlCalls)
+		}
+	})
+
+	t.Run("gate flips at runtime per call", func(t *testing.T) {
+		repo, pipe := newFakeRepo(), newFakePipeline()
+		enabled := false
+		svc := NewService(repo, pipe, 1<<20,
+			WithYtdlp(&stubExtractor{body: []byte("bytes")}, t.TempDir()),
+			WithYtdlpGate(func() bool { return enabled }))
+		vid := seedVideo(pipe, uuid.New())
+		if _, err := svc.Enqueue(ctx, vid, "https://x.example/a", ResolverYtdlp); !errors.Is(err, ErrResolverDisabled) {
+			t.Fatalf("gated-off enqueue err = %v, want ErrResolverDisabled", err)
+		}
+		enabled = true // admin re-enables — no restart, next call sees it
+		if !svc.YtdlpEnabled() {
+			t.Error("YtdlpEnabled() = false after the gate re-opened")
+		}
+		if _, err := svc.Enqueue(ctx, vid, "https://x.example/a", ResolverYtdlp); err != nil {
+			t.Errorf("gated-on enqueue err = %v, want nil", err)
+		}
+	})
+
+	t.Run("gate on cannot enable an unwired extractor", func(t *testing.T) {
+		repo, pipe := newFakeRepo(), newFakePipeline()
+		svc := NewService(repo, pipe, 1<<20, WithYtdlpGate(func() bool { return true })) // no WithYtdlp
+		if svc.YtdlpEnabled() {
+			t.Error("YtdlpEnabled() = true without an extractor")
+		}
+		vid := seedVideo(pipe, uuid.New())
+		if _, err := svc.Enqueue(ctx, vid, "https://x.example/a", ResolverYtdlp); !errors.Is(err, ErrResolverDisabled) {
+			t.Errorf("unwired enqueue err = %v, want ErrResolverDisabled", err)
+		}
+	})
+}

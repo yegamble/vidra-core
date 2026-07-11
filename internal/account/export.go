@@ -33,9 +33,23 @@ const (
 	// exportMaxLastErrorLen bounds the stored last_error string.
 	exportMaxLastErrorLen = 500
 	// ExportTTL is how long a finished archive stays downloadable before the
-	// sweeper collects it.
+	// sweeper collects it. The static default; WithExportTTLFunc overlays it at
+	// runtime (user_export_expiration_hours, config-parity W8).
 	ExportTTL = 7 * 24 * time.Hour
 )
+
+// effectiveExportTTL resolves the current archive retention: the live overlay
+// value when a provider is wired (0 = never expires), else the static ExportTTL.
+// A negative provider value is treated as the static default (defensive; the
+// settings validator never emits one).
+func (s *Service) effectiveExportTTL() time.Duration {
+	if s.exportTTLFn != nil {
+		if d := s.exportTTLFn(); d >= 0 {
+			return d
+		}
+	}
+	return ExportTTL
+}
 
 // Export job states persisted on account_exports.
 const (
@@ -115,7 +129,8 @@ func (s *Service) OpenExport(ctx context.Context, userID uuid.UUID) (io.ReadClos
 
 // DrainExports claims up to limit due export jobs and runs each: the user's
 // archive is assembled, written to blob storage, and the job marked done with
-// a 7-day expiry — or rescheduled with exponential backoff / dead-lettered
+// the configured expiry (default 7 days; 0 = never expires) — or rescheduled
+// with exponential backoff / dead-lettered
 // after exportMaxAttempts. Returns the number completed. Only the claim-query
 // error is returned — per-job failures are persisted in the queue. Intended to
 // be called on a ticker by a single worker.
@@ -156,10 +171,16 @@ func (s *Service) runExport(ctx context.Context, row sqlcgen.ClaimDueAccountExpo
 	if _, err := s.blobs.Put(ctx, key, bytes.NewReader(data)); err != nil {
 		return fmt.Errorf("account: store archive: %w", err)
 	}
+	// Retention is resolved at completion time (runtime overlay); a TTL of 0
+	// stamps no expiry — the archive stays downloadable until replaced.
+	var expiresAt pgtype.Timestamptz
+	if ttl := s.effectiveExportTTL(); ttl > 0 {
+		expiresAt = pgTimestamptz(s.now().UTC().Add(ttl))
+	}
 	return s.repo.CompleteAccountExport(ctx, sqlcgen.CompleteAccountExportParams{
 		ID:         row.ID,
 		StorageKey: key,
-		ExpiresAt:  pgTimestamptz(s.now().UTC().Add(ExportTTL)),
+		ExpiresAt:  expiresAt,
 	})
 }
 
@@ -193,8 +214,9 @@ func exportBackoff(attempts int) time.Duration {
 	return d
 }
 
-// SweepExpiredExports deletes up to limit finished archives past their 7-day
-// expiry: the blob first (best-effort), then the row. Returns the number of
+// SweepExpiredExports deletes up to limit finished archives past their stamped
+// expiry (rows with no expiry are never collected): the blob first
+// (best-effort), then the row. Returns the number of
 // rows removed. Intended to run on the same worker ticker as DrainExports.
 func (s *Service) SweepExpiredExports(ctx context.Context, limit int) (int, error) {
 	rows, err := s.repo.ListExpiredAccountExports(ctx, int32(limit))

@@ -1182,7 +1182,10 @@ paths:
     post:
       operationId: createChannel
       summary: Create a channel
-      description: Creates a channel owned by the authenticated user.
+      description: >-
+        Creates a channel owned by the authenticated user. 422 when the caller
+        is at the operator's per-user channel limit (max_channels_per_user,
+        config-parity W8; 0 = unlimited).
       tags: [channels]
       security:
         - bearerAuth: []
@@ -1212,7 +1215,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: Validation failed.
+          description: >-
+            Validation failed, or the caller is at the per-user channel limit.
           content:
             application/json:
               schema:
@@ -1708,7 +1712,12 @@ paths:
         its original file's download URL instead. One export may be active per
         user (409 while one is pending/running); requesting again after
         completion replaces the previous archive. The finished archive stays
-        downloadable for 7 days, then a sweeper deletes it.
+        downloadable for the operator-configured retention
+        (user_export_expiration_hours, default 168h; 0 = never expires), then a
+        sweeper deletes it. 403 feature_disabled when the operator has turned
+        exports off (user_export_enabled), and 403 when the caller's stored
+        media exceeds the operator's export cap (user_export_max_quota_bytes;
+        0 = no cap).
       tags: [auth]
       security:
         - bearerAuth: []
@@ -1721,6 +1730,15 @@ paths:
                 $ref: "#/components/schemas/AccountExportStatus"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Account exports are disabled on this instance (stable code
+            feature_disabled), or the caller's stored media exceeds the
+            operator's export cap (stable code forbidden).
           content:
             application/json:
               schema:
@@ -1819,7 +1837,8 @@ paths:
         skipped_sections. The import is additive: it never deletes existing
         data, follows are idempotent, and re-importing creates duplicate
         playlists. The request body is bounded by the instance's HTTP body
-        limit (default 8 MB).
+        limit (default 8 MB). 403 feature_disabled when the operator has turned
+        archive imports off (user_import_enabled).
       tags: [auth]
       security:
         - bearerAuth: []
@@ -1838,6 +1857,14 @@ paths:
                 $ref: "#/components/schemas/AccountImportSummary"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Account archive imports are disabled on this instance. Stable code
+            feature_disabled.
           content:
             application/json:
               schema:
@@ -4447,7 +4474,11 @@ paths:
         The optional `resolver` selects the fetch mechanism (auto|direct|ytdlp).
         The yt-dlp platform extractor is sandboxed and OFF by default
         (YTDLP_IMPORT_ENABLED): an explicit resolver=ytdlp is refused with 503
-        when it is disabled; auto simply never falls back to it.
+        when the deployment has not wired it; auto simply never falls back to
+        it. When the extractor IS wired but the admin has turned the platform
+        path off at runtime (import_http_enabled, config-parity W8), an
+        explicit resolver=ytdlp is 403 with the stable code feature_disabled
+        instead, and auto never falls back to yt-dlp while it is off.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -4473,6 +4504,16 @@ paths:
                 $ref: "#/components/schemas/ImportJobResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            URL imports are disabled on this instance (imports_enabled off), or
+            resolver=ytdlp was requested while the platform import path is
+            turned off at runtime (import_http_enabled). Stable code
+            feature_disabled.
           content:
             application/json:
               schema:
@@ -4552,11 +4593,14 @@ paths:
         auto-publishes mirrored content.
 
 
-        OFF by default: the feature runs only when CHANNEL_SYNC_ENABLED and the
-        yt-dlp import resolver (YTDLP_IMPORT_ENABLED) are both on — otherwise
-        this endpoint returns 503. The external URL is SSRF-validated (http/https
-        only, no literal non-public address). At most CHANNEL_SYNC_MAX_PER_USER
-        syncs per user.
+        OFF by default: when the runtime admin settings (channel_sync_enabled,
+        or the import_http_enabled platform-import path it rides on;
+        config-parity W8) turn the feature off this endpoint returns 403 with
+        the stable code feature_disabled; when the deployment lacks the yt-dlp
+        import resolver (YTDLP_IMPORT_ENABLED) it returns 503. The external URL
+        is SSRF-validated (http/https only, no literal non-public address). At
+        most channel_sync_max_per_user syncs per user (default
+        CHANNEL_SYNC_MAX_PER_USER; 0 = unlimited).
       tags: [channels]
       security:
         - bearerAuth: []
@@ -4575,6 +4619,14 @@ paths:
                 $ref: "#/components/schemas/ChannelSyncResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Channel auto-sync is turned off at runtime (channel_sync_enabled or
+            import_http_enabled). Stable code feature_disabled.
           content:
             application/json:
               schema:
@@ -4601,8 +4653,9 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: >-
-            Channel auto-sync is disabled on this instance (CHANNEL_SYNC_ENABLED
-            or YTDLP_IMPORT_ENABLED is off). Stable code service_unavailable.
+            The deployment lacks the yt-dlp import resolver
+            (YTDLP_IMPORT_ENABLED off), so channel auto-sync cannot run. Stable
+            code service_unavailable.
           content:
             application/json:
               schema:
@@ -4670,8 +4723,10 @@ paths:
         Schedules an owned sync to run on the next worker tick (a manual refresh
         between cadence runs). A server-side cooldown (CHANNEL_SYNC_COOLDOWN,
         measured from the last completed run) throttles repeat triggers: a request
-        inside the window is rejected 429 with a Retry-After header. 503 when the
-        feature is disabled; 404 when the sync is unknown or not owned.
+        inside the window is rejected 429 with a Retry-After header. 403
+        feature_disabled when the runtime admin settings turn the feature off;
+        503 when the deployment lacks the yt-dlp resolver; 404 when the sync is
+        unknown or not owned.
       tags: [channels]
       security:
         - bearerAuth: []
@@ -4687,6 +4742,14 @@ paths:
           description: The sync was scheduled to run on the next tick.
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Channel auto-sync is turned off at runtime (channel_sync_enabled or
+            import_http_enabled). Stable code feature_disabled.
           content:
             application/json:
               schema:
@@ -4707,8 +4770,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: >-
-            Channel auto-sync is disabled on this instance. Stable code
-            service_unavailable.
+            The deployment lacks the yt-dlp import resolver, so channel
+            auto-sync cannot run. Stable code service_unavailable.
           content:
             application/json:
               schema:
@@ -4727,8 +4790,10 @@ paths:
         `language` is optional (defaults to WHISPER_DEFAULT_LANGUAGE); it is both
         the caption's language tag and the transcription hint. Ownership is
         checked before any job is created, so a non-owner or unknown video is
-        404. Auto-captioning disabled on this server → 503; a malformed language
-        tag → 422; a job already pending/running for the video → 409. Poll GET
+        404. Auto-captioning turned off at runtime (transcription_enabled,
+        config-parity W8) → 403 feature_disabled; the Whisper boot capability
+        missing (no WHISPER_ENDPOINT) → 503; a malformed language tag → 422; a
+        job already pending/running for the video → 409. Poll GET
         /api/v1/videos/{id}/captions/auto for progress.
       tags: [captions]
       security:
@@ -4759,6 +4824,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Auto-captioning is turned off at runtime (transcription_enabled).
+            Stable code feature_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such video, or not owned by the caller.
           content:
@@ -4778,7 +4851,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: Auto-captioning is not enabled on this server.
+          description: >-
+            The Whisper boot capability is not configured on this deployment
+            (WHISPER_ENDPOINT), so auto-captioning cannot run.
           content:
             application/json:
               schema:
@@ -9664,7 +9739,13 @@ paths:
         (registration_enabled, registration_require_approval,
         quarantine_new_uploads, uploads_enabled, imports_enabled, live_enabled,
         comments_enabled, downloads_enabled, contact_form_enabled,
-        instance_is_sensitive), a string
+        instance_is_sensitive, and the config-parity W8 feature toggles
+        import_http_enabled, channel_sync_enabled, storyboards_enabled,
+        transcription_enabled, user_import_enabled, user_export_enabled), an
+        integer for the int-kind limits (including the W8 keys
+        channel_sync_max_per_user, user_export_expiration_hours,
+        user_export_max_quota_bytes, max_channels_per_user — 0 always means
+        unlimited/never), a string
         for the text/markdown/link keys and enum keys such as
         sensitive_content_policy, and an array of strings for list keys
         (instance_categories, moderator_languages). A null value
@@ -10907,11 +10988,26 @@ components:
           description: Operator contact email; may be empty.
         features:
           type: object
-          required: [uploads, imports, live, comments, downloads]
+          required:
+            - uploads
+            - imports
+            - live
+            - comments
+            - downloads
+            - import_http
+            - channel_sync
+            - storyboards
+            - transcription
+            - user_import
+            - user_export
           description: >-
             Effective feature toggles (the DB-backed instance-settings overlay
             over static config). The frontend disables the matching affordances
-            in lock-step with the backend's enforcement.
+            in lock-step with the backend's enforcement. The config-parity W8
+            flags (import_http, channel_sync, storyboards, transcription,
+            user_import, user_export) report EFFECTIVE availability — the
+            runtime admin setting AND, where one exists, the deployment's boot
+            capability (yt-dlp resolver, Whisper endpoint).
           properties:
             uploads:
               type: boolean
@@ -10930,6 +11026,34 @@ components:
               description: >-
                 Whether regular users may download video media. Moderators and
                 admins retain download access when this operator toggle is off.
+            import_http:
+              type: boolean
+              description: >-
+                Whether the yt-dlp platform-URL import path is available
+                (imports on, import_http_enabled on, and the yt-dlp resolver
+                wired on this deployment).
+            channel_sync:
+              type: boolean
+              description: >-
+                Whether channel auto-sync is available (channel_sync_enabled
+                on, the platform import path on, and the yt-dlp resolver wired).
+            storyboards:
+              type: boolean
+              description: >-
+                Whether seek-preview storyboard generation is enabled
+                (storyboards_enabled). Already-stored storyboards keep serving
+                when this is off.
+            transcription:
+              type: boolean
+              description: >-
+                Whether Whisper auto-captioning is available
+                (transcription_enabled on AND a Whisper endpoint configured).
+            user_import:
+              type: boolean
+              description: Whether POST /api/v1/me/import accepts account archives.
+            user_export:
+              type: boolean
+              description: Whether POST /api/v1/me/export accepts export requests.
         branding:
           type: object
           description: >-

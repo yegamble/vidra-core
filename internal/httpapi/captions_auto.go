@@ -54,10 +54,11 @@ func newCaptionJobResponse(row sqlcgen.CaptionJob) captionJobResponse {
 // handleRequestAutoCaption enqueues an auto-caption (Whisper) job for a video
 // (owner only) and returns 202 with the queued job. Ownership is checked before
 // any enqueue so a non-owner or unknown video is 404 and nothing runs on their
-// behalf. When auto-captioning is disabled it is 503; a bad language tag is 422;
-// while a job is already in flight for the video it is 409. The audio-extraction,
-// transcription, and caption upsert run in the background worker; watch progress
-// via GET /videos/:id/captions/auto.
+// behalf. When the admin runtime setting turns auto-captioning off it is 403
+// feature_disabled (W8); when only the Whisper boot capability is missing it is
+// 503; a bad language tag is 422; while a job is already in flight for the
+// video it is 409. The audio-extraction, transcription, and caption upsert run
+// in the background worker; watch progress via GET /videos/:id/captions/auto.
 func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
@@ -67,8 +68,13 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	// Feature gate first: a disabled instance answers 503 without disclosing
-	// whether the video exists.
+	// Feature gates first, without disclosing whether the video exists: the
+	// runtime admin setting answers 403 feature_disabled; a deployment whose
+	// Whisper boot capability is absent (setting on, endpoint unconfigured)
+	// keeps the 503.
+	if !s.transcriptionEnabled() {
+		return &FeatureDisabledError{Feature: "transcription"}
+	}
 	if !s.captionjobsvc.Enabled() {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "auto-captioning is not enabled on this server")
 	}

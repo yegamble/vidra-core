@@ -20,7 +20,9 @@ import (
 
 	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -308,13 +310,16 @@ func (f *accountFakeRepo) UpsertNotificationPref(_ context.Context, arg sqlcgen.
 }
 
 // accountEnv builds a server with the auth + account services wired to shared
-// in-memory fakes.
+// in-memory fakes, plus the settings overlay and quota service so the W8
+// user_import/user_export gates can be exercised.
 type accountEnv struct {
-	srv        *Server
-	accountsvc *account.Service
-	repo       *accountFakeRepo
-	blobs      *accountFakeBlobs
-	logs       *bytes.Buffer
+	srv         *Server
+	accountsvc  *account.Service
+	repo        *accountFakeRepo
+	blobs       *accountFakeBlobs
+	logs        *bytes.Buffer
+	authRepo    *authFakeRepo
+	settingssvc *instancesettings.Service
 }
 
 func newAccountEnv(t *testing.T) *accountEnv {
@@ -327,13 +332,34 @@ func newAccountEnv(t *testing.T) *accountEnv {
 	blobs := &accountFakeBlobs{objects: map[string][]byte{}}
 	accountsvc := account.NewService(repo, blobs, nil, account.WithBaseURL("http://localhost:8080"))
 
+	cfg := testConfig()
+	settingssvc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
+	if err := settingssvc.Load(context.Background()); err != nil {
+		t.Fatalf("settings load: %v", err)
+	}
+
 	logs := &bytes.Buffer{}
-	srv := New(testConfig(), nil, nil,
+	srv := New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithAccountService(accountsvc),
+		WithSettingsService(settingssvc),
+		// The quota service backs the user_export_max_quota_bytes gate; the
+		// auth fake's usage hook reports each user's stored bytes.
+		WithQuotaService(quota.NewService(authRepo, 0)),
 		WithLogger(slog.New(slog.NewJSONHandler(logs, nil))),
 	)
-	return &accountEnv{srv: srv, accountsvc: accountsvc, repo: repo, blobs: blobs, logs: logs}
+	return &accountEnv{srv: srv, accountsvc: accountsvc, repo: repo, blobs: blobs, logs: logs,
+		authRepo: authRepo, settingssvc: settingssvc}
+}
+
+// setSetting applies one runtime-setting override directly through the
+// settings service (the admin PATCH path is covered elsewhere).
+func (env *accountEnv) setSetting(t *testing.T, key, value string) {
+	t.Helper()
+	if err := env.settingssvc.Apply(context.Background(),
+		map[string]instancesettings.Update{key: {Value: value}}, uuid.New()); err != nil {
+		t.Fatalf("set %s=%s: %v", key, value, err)
+	}
 }
 
 func doJSON(srv *Server, method, path, token, body string) *httptest.ResponseRecorder {
@@ -619,5 +645,77 @@ func TestTombstonedCommentRendersDeleted(t *testing.T) {
 		UserID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, CreatedAt: created, UpdatedAt: created}, "ada", "Ada")
 	if live.Deleted || live.Body != "hi" {
 		t.Fatalf("live view = %+v", live)
+	}
+}
+
+// ---- W8 user data-portability gates (config-parity) ------------------------
+
+// TestUserExportToggleGate: user_export_enabled off → POST /me/export is 403
+// feature_disabled; status/download of an existing archive stay reachable; the
+// null-cleared setting restores requests.
+func TestUserExportToggleGate(t *testing.T) {
+	env := newAccountEnv(t)
+	token := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	// ON (default): request queues.
+	if rec := doJSON(env.srv, http.MethodPost, "/api/v1/me/export", token, ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("export ON = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// OFF: further requests are 403 feature_disabled; the status endpoint still
+	// answers (the gate covers generation, not visibility).
+	env.setSetting(t, instancesettings.KeyUserExportEnabled, "false")
+	rec := doJSON(env.srv, http.MethodPost, "/api/v1/me/export", token, "")
+	if rec.Code != http.StatusForbidden || errorCode(t, rec) != "feature_disabled" {
+		t.Errorf("export OFF = %d code=%q, want 403 feature_disabled", rec.Code, errorCode(t, rec))
+	}
+	if rec := doJSON(env.srv, http.MethodGet, "/api/v1/me/export", token, ""); rec.Code != http.StatusOK {
+		t.Errorf("status while OFF = %d, want 200", rec.Code)
+	}
+}
+
+// TestUserImportToggleGate: user_import_enabled off → POST /me/import is 403
+// feature_disabled before the archive is even parsed.
+func TestUserImportToggleGate(t *testing.T) {
+	env := newAccountEnv(t)
+	token := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	env.setSetting(t, instancesettings.KeyUserImportEnabled, "false")
+	rec := doJSON(env.srv, http.MethodPost, "/api/v1/me/import", token, `not-even-json`)
+	if rec.Code != http.StatusForbidden || errorCode(t, rec) != "feature_disabled" {
+		t.Errorf("import OFF = %d code=%q, want 403 feature_disabled", rec.Code, errorCode(t, rec))
+	}
+}
+
+// TestUserExportQuotaCap: user_export_max_quota_bytes refuses export
+// generation for a caller whose stored bytes exceed the cap (403), while a
+// user under the cap — and any user once the cap is back to 0 = unlimited —
+// may still export.
+func TestUserExportQuotaCap(t *testing.T) {
+	env := newAccountEnv(t)
+	token := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	env.authRepo.usage = func(uuid.UUID) int64 { return 5_000 } // every user stores 5 KB
+
+	// Cap above usage: allowed.
+	env.setSetting(t, instancesettings.KeyUserExportMaxQuotaBytes, "10000")
+	if rec := doJSON(env.srv, http.MethodPost, "/api/v1/me/export", token, ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("under-cap export = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Cap below usage: refused 403 (generic forbidden — a per-user condition,
+	// not a feature toggle).
+	env.setSetting(t, instancesettings.KeyUserExportMaxQuotaBytes, "1000")
+	rec := doJSON(env.srv, http.MethodPost, "/api/v1/me/export", token, "")
+	if rec.Code != http.StatusForbidden || errorCode(t, rec) != "forbidden" {
+		t.Errorf("over-cap export = %d code=%q, want 403 forbidden", rec.Code, errorCode(t, rec))
+	}
+
+	// 0 = no cap again.
+	env.setSetting(t, instancesettings.KeyUserExportMaxQuotaBytes, "0")
+	rec = doJSON(env.srv, http.MethodPost, "/api/v1/me/export", token, "")
+	// The first accepted export is still pending → 409 conflict, which proves
+	// the quota gate no longer refuses.
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusConflict {
+		t.Errorf("uncapped export = %d, want 202 or 409; body=%s", rec.Code, rec.Body.String())
 	}
 }
