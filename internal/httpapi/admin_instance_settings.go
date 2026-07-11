@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/gommon/bytes"
 
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -32,6 +33,26 @@ func (s *Server) settingString(key, configDefault string) string {
 		return s.settingssvc.String(key)
 	}
 	return configDefault
+}
+
+func (s *Server) settingInt(key string, configDefault int64) int64 {
+	if s.settingssvc != nil {
+		return s.settingssvc.Int(key)
+	}
+	return configDefault
+}
+
+// uploadMaxSizeBytes is the effective single-upload byte cap (0 = no cap): the
+// DB overlay when wired, else the boot-validated UPLOAD_MAX_SIZE parsed to bytes.
+func (s *Server) uploadMaxSizeBytes() int64 {
+	def, _ := bytes.Parse(s.cfg.UploadMaxSize) // boot-validated (config.go), so err is unreachable
+	return s.settingInt(instancesettings.KeyUploadMaxSizeBytes, def)
+}
+
+// uploadMaxActiveSessions is the effective per-user active-session cap
+// (0 = unlimited): the DB overlay when wired, else UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER.
+func (s *Server) uploadMaxActiveSessions() int {
+	return int(s.settingInt(instancesettings.KeyUploadMaxActiveSessionsPerUser, int64(s.cfg.UploadMaxActiveSessionsPerUser)))
 }
 
 func (s *Server) registrationEnabled() bool {
@@ -145,6 +166,16 @@ func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 				continue
 			}
 			updates[key] = instancesettings.Update{Value: instancesettings.FormatBool(b)}
+		case instancesettings.KindInt:
+			// Unmarshalling into int64 already rejects JSON strings, floats, and
+			// out-of-range magnitudes — the field-type check the API needs. Range
+			// and sentinel rules stay in the settings service, like every kind.
+			var n int64
+			if err := json.Unmarshal(rawVal, &n); err != nil {
+				fields = append(fields, FieldError{Field: key, Message: "must be an integer"})
+				continue
+			}
+			updates[key] = instancesettings.Update{Value: instancesettings.FormatInt(n)}
 		case instancesettings.KindString, instancesettings.KindEnum:
 			// Enum values are JSON strings too; the settings service validates
 			// them against the option set (like every other content rule).

@@ -56,6 +56,114 @@ func testDefaults() Defaults {
 		ImportsEnabled:              true,
 		LiveEnabled:                 true,
 		CommentsEnabled:             true,
+
+		DefaultUserQuotaBytes:          1_000_000,
+		UploadMaxSizeBytes:             1 << 21, // 2 MiB
+		UploadMaxActiveSessionsPerUser: 5,
+		ImportMaxHeight:                1080,
+	}
+}
+
+// TestIntSettings covers the KindInt operational-limit settings: default
+// resolution, override round-trip, reset, Snapshot shape, validation bounds, and
+// the defensive fallback when a stored value is not a parseable integer.
+func TestIntSettings(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(repo, testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	by := uuid.New()
+
+	// Default resolution (no override) returns the config default.
+	if got := svc.Int(KeyUploadMaxActiveSessionsPerUser); got != 5 {
+		t.Fatalf("default sessions = %d, want 5", got)
+	}
+	if got := svc.Int(KeyDefaultUserQuotaBytes); got != 1_000_000 {
+		t.Fatalf("default quota = %d, want 1000000", got)
+	}
+
+	// Override round-trip (incl. the 0 = unlimited/no-cap sentinel).
+	if err := svc.Apply(ctx, map[string]Update{
+		KeyUploadMaxActiveSessionsPerUser: {Value: "2"},
+		KeyDefaultUserQuotaBytes:          {Value: "0"},
+	}, by); err != nil {
+		t.Fatalf("apply overrides: %v", err)
+	}
+	if got := svc.Int(KeyUploadMaxActiveSessionsPerUser); got != 2 {
+		t.Fatalf("override sessions = %d, want 2", got)
+	}
+	if got := svc.Int(KeyDefaultUserQuotaBytes); got != 0 {
+		t.Fatalf("override quota = %d, want 0", got)
+	}
+
+	// Reset via Delete falls back to the default.
+	if err := svc.Apply(ctx, map[string]Update{KeyUploadMaxActiveSessionsPerUser: {Delete: true}}, by); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if got := svc.Int(KeyUploadMaxActiveSessionsPerUser); got != 5 {
+		t.Fatalf("reset sessions = %d, want default 5", got)
+	}
+
+	// Snapshot emits Kind:"int" with int64 Value/Default (round-trips as a JSON number).
+	var found bool
+	for _, e := range svc.Snapshot() {
+		if e.Key != KeyImportMaxHeight {
+			continue
+		}
+		found = true
+		if e.Kind != KindInt {
+			t.Errorf("import_max_height kind = %q, want int", e.Kind)
+		}
+		if v, ok := e.Value.(int64); !ok || v != 1080 {
+			t.Errorf("import_max_height value = %v (%T), want int64 1080", e.Value, e.Value)
+		}
+		if d, ok := e.Default.(int64); !ok || d != 1080 {
+			t.Errorf("import_max_height default = %v (%T), want int64 1080", e.Default, e.Default)
+		}
+	}
+	if !found {
+		t.Fatal("import_max_height missing from snapshot")
+	}
+
+	// Validation bounds — Apply rejects each before writing anything.
+	bad := map[string]map[string]Update{
+		"negative quota":     {KeyDefaultUserQuotaBytes: {Value: "-1"}},
+		"upload below floor": {KeyUploadMaxSizeBytes: {Value: "1024"}}, // non-zero, < 1 MiB
+		"sessions over max":  {KeyUploadMaxActiveSessionsPerUser: {Value: "10001"}},
+		"height below min":   {KeyImportMaxHeight: {Value: "143"}},
+		"height above max":   {KeyImportMaxHeight: {Value: "4321"}},
+		"non-integer":        {KeyUploadMaxSizeBytes: {Value: "big"}},
+		"over max safe int":  {KeyDefaultUserQuotaBytes: {Value: "9007199254740992"}}, // 2^53
+	}
+	for name, updates := range bad {
+		err := svc.Apply(ctx, updates, by)
+		if err == nil {
+			t.Errorf("%s: expected validation error, got nil", name)
+			continue
+		}
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Errorf("%s: error = %v, want *ValidationError", name, err)
+		}
+	}
+	// Zero is accepted for the sentinel-bearing limits.
+	if err := svc.Apply(ctx, map[string]Update{
+		KeyUploadMaxSizeBytes: {Value: "0"}, KeyImportMaxHeight: {Value: "0"},
+	}, by); err != nil {
+		t.Fatalf("zero sentinel rejected: %v", err)
+	}
+
+	// Defensive fallback: a stored value that is not a valid integer (only
+	// reachable via a manual DB edit — Apply validates every write) resolves to
+	// the default rather than 0.
+	repo.rows[KeyDefaultUserQuotaBytes] = sqlcgen.InstanceSetting{Key: KeyDefaultUserQuotaBytes, Value: "not-a-number"}
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := svc.Int(KeyDefaultUserQuotaBytes); got != 1_000_000 {
+		t.Fatalf("unparseable override quota = %d, want default 1000000", got)
 	}
 }
 

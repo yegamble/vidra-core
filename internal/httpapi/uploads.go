@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/gommon/bytes"
 
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/upload"
@@ -172,8 +171,9 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 	if _, ok := video.AcceptedVideoExt(in.Filename); !ok {
 		return echo.NewHTTPError(http.StatusUnsupportedMediaType, "unsupported media type")
 	}
-	// Size vs UPLOAD_MAX_SIZE up front (413).
-	if maxBytes, _ := bytes.Parse(s.cfg.UploadMaxSize); maxBytes > 0 && in.Size > maxBytes {
+	// Size vs the effective upload cap up front (413). The cap is the DB overlay
+	// (default_… from UPLOAD_MAX_SIZE) so an admin can retune it without a restart.
+	if maxBytes := s.uploadMaxSizeBytes(); maxBytes > 0 && in.Size > maxBytes {
 		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "the file is too large")
 	}
 	// Quota up front (422 quota_exceeded).
@@ -190,7 +190,7 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 		// Batch guard (UPLOAD-10): the caller holds the max concurrent active
 		// sessions → 429 too_many_active_uploads so the client queues on it.
 		if errors.Is(err, upload.ErrTooManyActiveSessions) {
-			return &TooManyActiveUploadsError{Max: s.cfg.UploadMaxActiveSessionsPerUser}
+			return &TooManyActiveUploadsError{Max: s.uploadMaxActiveSessions()}
 		}
 		return err
 	}

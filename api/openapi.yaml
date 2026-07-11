@@ -13707,9 +13707,9 @@ components:
       description: >-
         One runtime-mutable instance setting's effective state: its type, the
         effective value (a string for text/enum keys, a boolean for toggle
-        keys, an array of strings for list keys), the default, and whether the
-        database currently overrides it. Enum-typed settings also list their
-        allowed options.
+        keys, an integer for limit keys, an array of strings for list keys),
+        the default, and whether the database currently overrides it. Enum-typed
+        settings also list their allowed options.
       required: [key, type, value, default, overridden]
       properties:
         key:
@@ -13718,20 +13718,24 @@ components:
           example: uploads_enabled
         type:
           type: string
-          enum: [string, bool, enum, list]
+          enum: [string, bool, enum, list, int]
         value:
-          description: The effective value (string, boolean, or string array per type).
+          description: The effective value (string, boolean, integer, or string array per type).
           oneOf:
             - type: string
             - type: boolean
+            - type: integer
+              format: int64
             - type: array
               items:
                 type: string
         default:
-          description: The default (string, boolean, or string array per type).
+          description: The default (string, boolean, integer, or string array per type).
           oneOf:
             - type: string
             - type: boolean
+            - type: integer
+              format: int64
             - type: array
               items:
                 type: string
@@ -13999,17 +14003,21 @@ components:
       type: object
       description: >-
         A flat object of setting key → new value. Toggle keys take a boolean;
-        text/markdown/link and enum keys take a string; list keys take an array
+        text/markdown/link and enum keys take a string; limit keys (quota, upload
+        size/sessions, import resolution) take an integer; list keys take an array
         of strings. A null value clears the override (reset to the config default).
-        Only the keys present are changed. At least one key is required.
+        Only the keys present are changed. At least one key is required. Limit
+        changes take effect on the next request/job (no restart).
       additionalProperties:
         description: >-
           The new value: a string for text/markdown/link/enum keys, a boolean for
-          toggle keys, an array of strings for list keys, or null to clear the
-          override (reset to the config default).
+          toggle keys, an integer for limit keys, an array of strings for list
+          keys, or null to clear the override (reset to the config default).
         oneOf:
           - type: string
           - type: boolean
+          - type: integer
+            format: int64
           - type: array
             items:
               type: string
@@ -14019,6 +14027,7 @@ components:
         uploads_enabled: false
         sensitive_content_policy: blur
         instance_categories: ["1", "7"]
+        upload_max_size_bytes: 2147483648
         terms_url: null
     UpdateUserRequest:
       type: object

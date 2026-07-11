@@ -64,6 +64,39 @@ func seed(override *int64, used int64) (*fakeRepo, uuid.UUID) {
 	}, id
 }
 
+// TestDefaultBytesFuncOverlay proves WithDefaultBytesFunc supersedes the
+// constructor default and is resolved live per Status (the instance-settings
+// overlay), while a per-user override still wins over it.
+func TestDefaultBytesFuncOverlay(t *testing.T) {
+	ctx := context.Background()
+	repo, id := seed(nil, 10) // no per-user override → the instance default applies
+
+	current := int64(100)
+	svc := NewService(repo, 999, WithDefaultBytesFunc(func() int64 { return current }))
+
+	// The func supersedes the constructor's 999.
+	if st, _ := svc.Status(ctx, id); st.QuotaBytes == nil || *st.QuotaBytes != 100 {
+		t.Fatalf("Status.QuotaBytes = %v, want 100 (from the func, not 999)", st.QuotaBytes)
+	}
+	// It is resolved live: a later value takes effect with no reconstruction.
+	current = 50
+	if st, _ := svc.Status(ctx, id); st.QuotaBytes == nil || *st.QuotaBytes != 50 {
+		t.Fatalf("Status.QuotaBytes after change = %v, want 50", st.QuotaBytes)
+	}
+	// 0 from the func means unlimited.
+	current = 0
+	if st, _ := svc.Status(ctx, id); st.QuotaBytes != nil {
+		t.Errorf("func 0 should be unlimited, got %d", *st.QuotaBytes)
+	}
+
+	// A per-user override still wins over the instance-default func.
+	repoOv, idOv := seed(i64(70), 10)
+	svcOv := NewService(repoOv, 999, WithDefaultBytesFunc(func() int64 { return 500 }))
+	if st, _ := svcOv.Status(ctx, idOv); st.QuotaBytes == nil || *st.QuotaBytes != 70 {
+		t.Fatalf("per-user override Status.QuotaBytes = %v, want 70", st.QuotaBytes)
+	}
+}
+
 func TestStatusAndRemaining(t *testing.T) {
 	ctx := context.Background()
 

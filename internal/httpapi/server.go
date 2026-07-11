@@ -920,7 +920,7 @@ func (s *Server) routes() {
 		api.GET("/channels/:handle/stats", s.handleGetChannelStats, s.requireAuth)
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
-		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, middleware.BodyLimit(s.cfg.UploadMaxSize))
+		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, s.dynamicBodyLimit())
 
 		// Resumable/chunked upload (P6.1): open a session, PUT fixed-size chunks
 		// (each bounded by the upload service, hence exempt from the JSON body

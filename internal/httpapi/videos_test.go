@@ -872,7 +872,18 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	}
 	authRepo.statComments = func() int64 { return int64(len(cmRepo.comments)) }
 	videosvc := video.NewService(repo, blobs, opts...)
-	quotasvc := quota.NewService(authRepo, cfg.InstanceDefaultQuotaBytes)
+	// DB-backed instance-settings overlay: an in-memory fake repo, seeded with the
+	// config defaults. With no overrides the effective values equal the config, so
+	// wiring it is behaviour-preserving for existing tests; the P10 tests flip
+	// settings through PATCH /admin/instance-settings. Built FIRST so the
+	// quota/upload/import services can resolve their runtime-overridable limits
+	// from it (the operational-limits config-parity slice).
+	settingssvc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
+	if err := settingssvc.Load(context.Background()); err != nil {
+		t.Fatalf("settings load: %v", err)
+	}
+	quotasvc := quota.NewService(authRepo, cfg.InstanceDefaultQuotaBytes,
+		quota.WithDefaultBytesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyDefaultUserQuotaBytes) }))
 	importMaxBytes, _ := gommonbytes.Parse(cfg.UploadMaxSize)
 	// The import service uses a plain client so unit tests reach the loopback
 	// httptest origin (the production SSRF guard, tested in the videoimport
@@ -882,23 +893,17 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		videoimport.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
 		videoimport.WithQuota(quotasvc),
 		videoimport.WithHTTPClient(&http.Client{}),
+		videoimport.WithMaxBytesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyUploadMaxSizeBytes) }),
 	)
 	uploadsvc := upload.NewService(uploadRepo, blobs, upload.WithChunkSize(16),
-		upload.WithMaxActiveSessions(cfg.UploadMaxActiveSessionsPerUser))
+		upload.WithMaxActiveSessions(cfg.UploadMaxActiveSessionsPerUser),
+		upload.WithMaxActiveSessionsFunc(func() int { return int(settingssvc.Int(instancesettings.KeyUploadMaxActiveSessionsPerUser)) }))
 	// Auto-caption (Whisper) service: enabled follows cfg.WhisperEnabled so the
 	// request endpoint returns 202 (enabled) or 503 (disabled). The transcriber is
 	// nil — handler tests exercise only enqueue/status, never the worker; the
 	// videosvc satisfies captionjob.VideoStore.
 	captionjobsvc := captionjob.NewService(newCaptionJobFakeRepo(), videosvc, nil,
 		captionjob.WithEnabled(cfg.WhisperEnabled))
-	// DB-backed instance-settings overlay: an in-memory fake repo, seeded with
-	// the config defaults. With no overrides the effective values equal the
-	// config, so wiring it is behaviour-preserving for existing tests; the
-	// P10 tests flip settings through PATCH /admin/instance-settings.
-	settingssvc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
-	if err := settingssvc.Load(context.Background()); err != nil {
-		t.Fatalf("settings load: %v", err)
-	}
 	serverOpts := []Option{
 		WithSettingsService(settingssvc),
 		WithAuthService(authsvc, 15*time.Minute),
