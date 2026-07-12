@@ -11,12 +11,14 @@ import (
 )
 
 func newInboxRepo() fakeRepo {
+	films := sqlcgen.Channel{ID: uuid.New(), Handle: "films", DisplayName: "Films"}
 	return fakeRepo{
-		channels: map[string]sqlcgen.Channel{
-			"films": {ID: uuid.New(), Handle: "films", DisplayName: "Films"},
-		},
+		channels:      map[string]sqlcgen.Channel{"films": films},
+		channelsByID:  map[uuid.UUID]sqlcgen.Channel{films.ID: films},
 		processed:     map[string]bool{},
-		remoteFollows: map[string]sqlcgen.InsertRemoteFollowParams{},
+		remoteFollows: map[string]*fakeRemoteFollow{},
+		followBacks:   map[string]*fakeFollowBack{},
+		rcFollows:     map[uuid.UUID]*sqlcgen.RemoteChannelFollow{},
 	}
 }
 
@@ -64,7 +66,7 @@ func TestHandleInboxUndoFollowRemoves(t *testing.T) {
 	repo := newInboxRepo()
 	// Seed an existing remote follow (as if a prior Follow was recorded).
 	cid := repo.channels["films"].ID
-	repo.remoteFollows[cid.String()+"|"+remoteBob] = sqlcgen.InsertRemoteFollowParams{ChannelID: cid, RemoteActorUrl: remoteBob}
+	repo.remoteFollows[cid.String()+"|"+remoteBob] = &fakeRemoteFollow{ID: uuid.New(), ChannelID: cid, RemoteActorUrl: remoteBob, State: "accepted"}
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
 
 	undo := `{"id":"https://remote.example/act/undo/1","type":"Undo","actor":"` + remoteBob +
@@ -80,7 +82,7 @@ func TestHandleInboxUndoFollowRemoves(t *testing.T) {
 func TestHandleInboxUndoNonFollowIgnored(t *testing.T) {
 	repo := newInboxRepo()
 	cid := repo.channels["films"].ID
-	repo.remoteFollows[cid.String()+"|"+remoteBob] = sqlcgen.InsertRemoteFollowParams{ChannelID: cid, RemoteActorUrl: remoteBob}
+	repo.remoteFollows[cid.String()+"|"+remoteBob] = &fakeRemoteFollow{ID: uuid.New(), ChannelID: cid, RemoteActorUrl: remoteBob, State: "accepted"}
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
 	// Undo of a Like → accepted and ignored; the follow stays.
 	undo := `{"id":"https://remote.example/act/undo/2","type":"Undo","actor":"` + remoteBob +

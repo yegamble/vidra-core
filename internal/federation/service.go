@@ -7,6 +7,7 @@ package federation
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -59,6 +60,15 @@ type Repository interface {
 	// Instance-level moderation (remote-content §8): the inbox drops activities
 	// from blocked domains and the drain cancels deliveries to them.
 	IsInstanceBlocked(ctx context.Context, domain string) (bool, error)
+	// Federation policy gates (config-parity W12): the pending channel-follower
+	// approval queue and the auto-follow-back edges (migration 0087).
+	InsertRemoteFollowPending(ctx context.Context, arg sqlcgen.InsertRemoteFollowPendingParams) error
+	ListPendingRemoteFollows(ctx context.Context, arg sqlcgen.ListPendingRemoteFollowsParams) ([]sqlcgen.ListPendingRemoteFollowsRow, error)
+	AcceptPendingRemoteFollowByID(ctx context.Context, id uuid.UUID) (sqlcgen.AcceptPendingRemoteFollowByIDRow, error)
+	DeletePendingRemoteFollowByID(ctx context.Context, id uuid.UUID) (sqlcgen.DeletePendingRemoteFollowByIDRow, error)
+	InsertChannelFollowBackIfAbsent(ctx context.Context, arg sqlcgen.InsertChannelFollowBackIfAbsentParams) (int64, error)
+	AcceptChannelFollowBackByActivity(ctx context.Context, arg sqlcgen.AcceptChannelFollowBackByActivityParams) (int64, error)
+	DeleteChannelFollowBackByActivity(ctx context.Context, arg sqlcgen.DeleteChannelFollowBackByActivityParams) (int64, error)
 	// Outbound remote-channel follows (remote-content §3): a local user follows
 	// a remote channel; the accepted edges also gate remote-video ingestion.
 	GetUserActorByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetUserActorByIDRow, error)
@@ -69,6 +79,7 @@ type Repository interface {
 	AcceptRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.AcceptRemoteChannelFollowByActivityParams) (int64, error)
 	DeleteRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.DeleteRemoteChannelFollowByActivityParams) (int64, error)
 	HasAcceptedRemoteChannelFollow(ctx context.Context, remoteActorURL string) (bool, error)
+	HasRemoteChannelFollow(ctx context.Context, remoteActorURL string) (bool, error)
 	// Federated comments (remote-content §6): inbound Create/Update{Note}
 	// storage + the comment reads outbound fan-out needs.
 	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
@@ -134,6 +145,20 @@ type Service struct {
 	// fetchClient, when set, overrides the SSRF-guarded client used for remote
 	// fetches (tests inject one; production leaves it nil to build the guard).
 	fetchClient *http.Client
+
+	// Federation policy gates (config-parity W12): provider funcs over the
+	// instance-settings overlay, read per inbound activity so an admin change
+	// applies without a restart. All gate the ActivityPub inbox ONLY (ATProto
+	// is outbound cross-posting, no inbound path). Nil funcs keep the shipped
+	// defaults: comments ingested, channel follows auto-accepted, no approval
+	// queue, no follow-back.
+	acceptRemoteComments  func() bool
+	allowChannelFollowers func() bool
+	followerApproval      func() bool
+	autoFollowBack        func() bool
+	// logger, when set, records dropped/refused inbound activities (the
+	// federation_accept_remote_comments drop path). Nil = silent.
+	logger *slog.Logger
 }
 
 // Option configures a Service.
@@ -167,6 +192,66 @@ func WithMediaStorage(b storage.Backend) Option { return func(s *Service) { s.me
 // federated comments (remote-content §6). When unset, remote comments are
 // stored unflagged.
 func WithCommentFlagger(f CommentFlagger) Option { return func(s *Service) { s.flagger = f } }
+
+// WithAcceptRemoteCommentsFunc wires the federation_accept_remote_comments
+// gate (config-parity W12): when it reports false, inbound Create/Update{Note}
+// activities are dropped (after the blocked-domain check). Not retroactive —
+// existing comments are untouched. AP inbox only.
+func WithAcceptRemoteCommentsFunc(f func() bool) Option {
+	return func(s *Service) { s.acceptRemoteComments = f }
+}
+
+// WithAllowChannelFollowersFunc wires the federation_allow_channel_followers
+// gate (config-parity W12): when it reports false, an inbound channel Follow
+// is answered with a Reject instead of the auto-Accept. Existing followers are
+// untouched. AP inbox only.
+func WithAllowChannelFollowersFunc(f func() bool) Option {
+	return func(s *Service) { s.allowChannelFollowers = f }
+}
+
+// WithFollowerApprovalFunc wires the federation_follower_approval gate
+// (config-parity W12): when it reports true, a new inbound channel Follow is
+// recorded PENDING (no Accept sent) and waits in the admin follower-requests
+// queue. Applies to CHANNEL followers — a documented vidra deviation from
+// PeerTube's instance-follower approval, since vidra has no instance actor.
+func WithFollowerApprovalFunc(f func() bool) Option {
+	return func(s *Service) { s.followerApproval = f }
+}
+
+// WithAutoFollowBackFunc wires the federation_auto_follow_back gate
+// (config-parity W12): when it reports true, an ACCEPTED inbound channel
+// Follow triggers an outbound follow-back of the follower, signed by the
+// FOLLOWED CHANNEL's actor (vidra has no instance-level AP actor — the
+// followed channel is the only local actor with a relationship to the
+// follower). Respects the domain blocklist and never duplicates an existing
+// follow/follow-back edge.
+func WithAutoFollowBackFunc(f func() bool) Option {
+	return func(s *Service) { s.autoFollowBack = f }
+}
+
+// WithLogger wires the structured logger used for inbound-policy drop/refuse
+// events (never bodies or tokens). Nil = silent.
+func WithLogger(l *slog.Logger) Option { return func(s *Service) { s.logger = l } }
+
+// acceptRemoteCommentsEnabled resolves the comment-ingestion gate (default true).
+func (s *Service) acceptRemoteCommentsEnabled() bool {
+	return s.acceptRemoteComments == nil || s.acceptRemoteComments()
+}
+
+// channelFollowersAllowed resolves the channel-follower gate (default true).
+func (s *Service) channelFollowersAllowed() bool {
+	return s.allowChannelFollowers == nil || s.allowChannelFollowers()
+}
+
+// followerApprovalRequired resolves the follower-approval gate (default false).
+func (s *Service) followerApprovalRequired() bool {
+	return s.followerApproval != nil && s.followerApproval()
+}
+
+// autoFollowBackEnabled resolves the auto-follow-back gate (default false).
+func (s *Service) autoFollowBackEnabled() bool {
+	return s.autoFollowBack != nil && s.autoFollowBack()
+}
 
 // NewService builds a federation Service over the given repository.
 func NewService(repo Repository, opts ...Option) *Service {

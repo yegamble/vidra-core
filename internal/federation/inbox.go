@@ -68,11 +68,26 @@ func (s *Service) dispatchActivity(ctx context.Context, act inboxActivity, signe
 		return s.handleUndo(ctx, act, signerActorURL)
 	case "Create":
 		if objectType(act.Object) == "Note" {
+			// federation_accept_remote_comments (config-parity W12): when the
+			// gate is off, inbound remote comments are dropped — accepted and
+			// marked processed, never stored. Runs AFTER the blocked-domain
+			// check (HandleInbox). Not retroactive: existing comments stay.
+			if !s.acceptRemoteCommentsEnabled() {
+				s.logDroppedRemoteComment(act.Type, act.ID, signerActorURL)
+				return nil
+			}
 			return s.handleCreateNote(ctx, act, signerActorURL)
 		}
 		return s.handleCreateVideo(ctx, act, signerActorURL)
 	case "Update":
 		if objectType(act.Object) == "Note" {
+			// The comment gate also covers edits (an Update{Note} is comment
+			// ingestion); Delete{Note} stays ungated — removals are always
+			// honoured.
+			if !s.acceptRemoteCommentsEnabled() {
+				s.logDroppedRemoteComment(act.Type, act.ID, signerActorURL)
+				return nil
+			}
 			return s.handleUpdateNote(ctx, act, signerActorURL)
 		}
 		// Update{Video} upserts under the same authority + follow-edge gate as
@@ -124,7 +139,11 @@ func (s *Service) handleUndo(ctx context.Context, act inboxActivity, signerActor
 	})
 }
 
-// handleFollow records a remote actor following one of our local channels.
+// handleFollow records a remote actor following one of our local channels,
+// subject to the W12 policy gates: followers disallowed → Reject; approval
+// required → the follow waits PENDING in the admin queue (no Accept yet);
+// otherwise the shipped auto-accept, optionally followed by an auto
+// follow-back.
 func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerActorURL string) error {
 	// The signer must be the Follow's actor — no following on another's behalf.
 	if act.Actor != signerActorURL {
@@ -141,6 +160,21 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 		}
 		return err
 	}
+	// federation_allow_channel_followers off: answer with a Reject and record
+	// nothing. Existing followers are untouched (the gate is not retroactive).
+	if !s.channelFollowersAllowed() {
+		return s.enqueueRejectFollow(ctx, ch.ID, handle, signerActorURL, act.ID)
+	}
+	// federation_follower_approval on: the follow waits in the admin queue.
+	// The Accept is delivered on approval; a Reject on rejection. An existing
+	// row (accepted or already pending) stays as-is.
+	if s.followerApprovalRequired() {
+		return s.repo.InsertRemoteFollowPending(ctx, sqlcgen.InsertRemoteFollowPendingParams{
+			ChannelID:         ch.ID,
+			RemoteActorUrl:    signerActorURL,
+			FollowActivityUrl: act.ID,
+		})
+	}
 	if err := s.repo.InsertRemoteFollow(ctx, sqlcgen.InsertRemoteFollowParams{
 		ChannelID:         ch.ID,
 		RemoteActorUrl:    signerActorURL,
@@ -148,7 +182,10 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	}); err != nil {
 		return err
 	}
-	return s.enqueueAcceptFollow(ctx, ch.ID, handle, signerActorURL, act.ID)
+	if err := s.enqueueAcceptFollow(ctx, ch.ID, handle, signerActorURL, act.ID); err != nil {
+		return err
+	}
+	return s.maybeAutoFollowBack(ctx, ch.ID, handle, signerActorURL)
 }
 
 // enqueueAcceptFollow queues an Accept back to the follower's inbox (a durable,

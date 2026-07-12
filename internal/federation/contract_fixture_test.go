@@ -77,7 +77,8 @@ func newContractRepo() fakeRepo {
 		chanKeys:        map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
 		remoteActors:    map[string]sqlcgen.RemoteActor{},
 		processed:       map[string]bool{},
-		remoteFollows:   map[string]sqlcgen.InsertRemoteFollowParams{},
+		remoteFollows:   map[string]*fakeRemoteFollow{},
+		followBacks:     map[string]*fakeFollowBack{},
 		deliveries:      map[uuid.UUID]*fakeDelivery{},
 		videosByID:      map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
 		followerInboxes: map[uuid.UUID][]string{},
@@ -201,8 +202,9 @@ func TestContractFixturesDispatch(t *testing.T) {
 			fixture: "inbound/mastodon_undo_follow.json",
 			signer:  ctMastoUser,
 			seed: func(r fakeRepo) {
-				r.remoteFollows[ctChannelID.String()+"|"+ctMastoUser] = sqlcgen.InsertRemoteFollowParams{
-					ChannelID: ctChannelID, RemoteActorUrl: ctMastoUser, FollowActivityUrl: ctMastoFollow,
+				r.remoteFollows[ctChannelID.String()+"|"+ctMastoUser] = &fakeRemoteFollow{
+					ID: uuid.New(), ChannelID: ctChannelID, RemoteActorUrl: ctMastoUser,
+					FollowActivityUrl: ctMastoFollow, State: "accepted",
 				}
 			},
 			check: func(t *testing.T, r fakeRepo) {

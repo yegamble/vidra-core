@@ -192,6 +192,33 @@ func (fakeFedRepo) DeleteRemoteChannelFollowByActivity(context.Context, sqlcgen.
 func (fakeFedRepo) HasAcceptedRemoteChannelFollow(context.Context, string) (bool, error) {
 	return false, nil
 }
+func (fakeFedRepo) HasRemoteChannelFollow(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+// W12 follower-approval queue + follow-back stubs: the handler suite for the
+// admin queue lives in admin_federation_test.go, whose fake overrides these.
+func (fakeFedRepo) InsertRemoteFollowPending(context.Context, sqlcgen.InsertRemoteFollowPendingParams) error {
+	return nil
+}
+func (fakeFedRepo) ListPendingRemoteFollows(context.Context, sqlcgen.ListPendingRemoteFollowsParams) ([]sqlcgen.ListPendingRemoteFollowsRow, error) {
+	return nil, nil
+}
+func (fakeFedRepo) AcceptPendingRemoteFollowByID(context.Context, uuid.UUID) (sqlcgen.AcceptPendingRemoteFollowByIDRow, error) {
+	return sqlcgen.AcceptPendingRemoteFollowByIDRow{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) DeletePendingRemoteFollowByID(context.Context, uuid.UUID) (sqlcgen.DeletePendingRemoteFollowByIDRow, error) {
+	return sqlcgen.DeletePendingRemoteFollowByIDRow{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) InsertChannelFollowBackIfAbsent(context.Context, sqlcgen.InsertChannelFollowBackIfAbsentParams) (int64, error) {
+	return 0, nil
+}
+func (fakeFedRepo) AcceptChannelFollowBackByActivity(context.Context, sqlcgen.AcceptChannelFollowBackByActivityParams) (int64, error) {
+	return 0, nil
+}
+func (fakeFedRepo) DeleteChannelFollowBackByActivity(context.Context, sqlcgen.DeleteChannelFollowBackByActivityParams) (int64, error) {
+	return 0, nil
+}
 
 // Federated-comment + inbound-delete stubs (remote-content §6-7): the handler
 // suite doesn't exercise Note ingestion (see internal/federation's own tests).

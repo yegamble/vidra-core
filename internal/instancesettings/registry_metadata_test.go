@@ -60,6 +60,12 @@ func TestRegistryPageSectionMetadata(t *testing.T) {
 		KeyLiveMaxInstanceLives:  {PageLive, "limits"},
 		KeyLiveMaxUserLives:      {PageLive, "limits"},
 		KeyLiveMaxDurationSecs:   {PageLive, "limits"},
+		// Federation policy gates (config-parity W12) — the Federation page's
+		// first resident keys.
+		KeyFederationAcceptRemoteComments:  {PageFederation, "comments"},
+		KeyFederationAllowChannelFollowers: {PageFederation, "followers"},
+		KeyFederationFollowerApproval:      {PageFederation, "followers"},
+		KeyFederationAutoFollowBack:        {PageFederation, "followers"},
 	}
 	for key, want := range placements {
 		e := snapshotByKey(t, svc, key)
@@ -118,6 +124,43 @@ func TestCoreConfigSurfaceDefaults(t *testing.T) {
 	}
 	if svc.Bool(KeyHeaderHideInstanceName) {
 		t.Error("header_hide_instance_name default = true, want false")
+	}
+}
+
+// TestFederationGateDefaults proves the W12 keys default to the shipped
+// behaviour: comments ingested and channel follows auto-accepted (true), no
+// approval queue and no follow-back (false).
+func TestFederationGateDefaults(t *testing.T) {
+	svc := NewService(newFakeRepo(), testDefaults())
+	_ = svc.Load(context.Background())
+
+	if !svc.Bool(KeyFederationAcceptRemoteComments) {
+		t.Error("federation_accept_remote_comments default = false, want true")
+	}
+	if !svc.Bool(KeyFederationAllowChannelFollowers) {
+		t.Error("federation_allow_channel_followers default = false, want true")
+	}
+	if svc.Bool(KeyFederationFollowerApproval) {
+		t.Error("federation_follower_approval default = true, want false")
+	}
+	if svc.Bool(KeyFederationAutoFollowBack) {
+		t.Error("federation_auto_follow_back default = true, want false")
+	}
+
+	// Overrides validate as bools and apply.
+	err := svc.Apply(context.Background(), map[string]Update{
+		KeyFederationAcceptRemoteComments: {Value: "false"},
+		KeyFederationFollowerApproval:     {Value: "true"},
+	}, uuid.New())
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if svc.Bool(KeyFederationAcceptRemoteComments) || !svc.Bool(KeyFederationFollowerApproval) {
+		t.Error("overrides did not apply")
+	}
+	var ve *ValidationError
+	if err := svc.Apply(context.Background(), map[string]Update{KeyFederationAutoFollowBack: {Value: "yes"}}, uuid.New()); !errors.As(err, &ve) {
+		t.Errorf("non-boolean value: err = %v, want *ValidationError", err)
 	}
 }
 

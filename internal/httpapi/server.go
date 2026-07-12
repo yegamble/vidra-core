@@ -1143,6 +1143,13 @@ func (s *Server) routes() {
 		api.POST("/me/remote-follows", s.handleCreateRemoteFollow, s.requireAuth)
 		api.GET("/me/remote-follows", s.handleListRemoteFollows, s.requireAuth)
 		api.DELETE("/me/remote-follows/:id", s.handleDeleteRemoteFollow, s.requireAuth)
+		// Federation follower-approval queue (config-parity W12,
+		// federation_follower_approval): pending inbound channel Follows await
+		// an admin decision; approve delivers the Accept, reject a Reject.
+		// Modeled on /admin/registration-requests. ActivityPub inbox only.
+		api.GET("/admin/federation/follower-requests", s.handleListFederationFollowerRequests, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/federation/follower-requests/:id/approve", s.handleApproveFederationFollowerRequest, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/federation/follower-requests/:id/reject", s.handleRejectFederationFollowerRequest, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// ATProto / Bluesky link (P10.2 extension): the caller links/inspects/unlinks

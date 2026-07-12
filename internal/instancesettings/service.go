@@ -165,6 +165,19 @@ const (
 	KeyLiveMaxInstanceLives  = "live_max_instance_lives"  // simultaneous live sessions across the instance; 0 = unlimited
 	KeyLiveMaxUserLives      = "live_max_user_lives"      // simultaneous live sessions per user; 0 = unlimited
 	KeyLiveMaxDurationSecs   = "live_max_duration_secs"   // watchdog force-closes sessions over this; 0 = no limit
+
+	// Federation policy gates (config-parity W12). PROTOCOL LABELING: every one
+	// of these keys governs the ActivityPub INBOX (federation.HandleInbox) —
+	// vidra's only inbound federation surface. The ATProto integration
+	// (ATPROTO_ENABLED) is OUTBOUND cross-posting only and has no inbound path,
+	// so these keys are explicitly out of scope for it. None are retroactive:
+	// flipping a gate never touches already-ingested comments or existing
+	// followers. Defaults preserve the shipped behaviour (comments ingested,
+	// channel follows auto-accepted, no approval queue, no follow-back).
+	KeyFederationAcceptRemoteComments  = "federation_accept_remote_comments"  // off = inbound Create/Update{Note} dropped after the blocked-domain check
+	KeyFederationAllowChannelFollowers = "federation_allow_channel_followers" // off = inbound channel Follows answered with a Reject
+	KeyFederationFollowerApproval      = "federation_follower_approval"       // on = new channel Follows wait PENDING in the admin queue (Accept sent on approval)
+	KeyFederationAutoFollowBack        = "federation_auto_follow_back"        // on = an accepted channel Follow triggers a follow-back FROM THAT CHANNEL'S ACTOR (vidra has no instance actor)
 )
 
 // Kind is a setting's value type, reported to clients and used to validate the
@@ -575,6 +588,19 @@ var specs = []spec{
 	{key: KeyLiveMaxDurationSecs, kind: KindInt,
 		defInt: func(Defaults) int64 { return 0 }, validate: intZeroOrRange(60, 2592000),
 		page: PageLive, section: "limits"},
+
+	// Federation policy gates (config-parity W12). None have env backing: the
+	// runtime settings are the operator controls, defaults keep the shipped
+	// behaviour. All gate the ActivityPub inbox only (ATProto is outbound-only;
+	// see the key-constant comments).
+	{key: KeyFederationAcceptRemoteComments, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageFederation, section: "comments"},
+	{key: KeyFederationAllowChannelFollowers, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageFederation, section: "followers"},
+	{key: KeyFederationFollowerApproval, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageFederation, section: "followers"},
+	{key: KeyFederationAutoFollowBack, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageFederation, section: "followers"},
 }
 
 var specByKey = func() map[string]spec {

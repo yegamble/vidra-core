@@ -44,6 +44,16 @@ type Config struct {
 type SMTP struct {
 	cfg       Config
 	tlsConfig *tls.Config
+
+	// Email customization seam (config-parity W6): provider funcs over the
+	// instance-settings overlay, read per send so an admin change applies
+	// without a restart. Applied at the single send() seam every message
+	// funnels through. Nil funcs (or empty values) are no-ops — and when
+	// MAIL_ENABLED is off no SMTP mailer exists at all, so the settings are
+	// trivially inert.
+	subjectPrefix func() string // email_subject_prefix; {instance_name} substituted
+	bodySignature func() string // email_body_signature; appended after a blank line
+	instanceName  func() string // EFFECTIVE instance name for the substitution (else cfg.InstanceName)
 }
 
 // Option customises the SMTP mailer.
@@ -58,6 +68,27 @@ func WithTLSConfig(c *tls.Config) Option {
 			s.tlsConfig = c
 		}
 	}
+}
+
+// WithSubjectPrefixFunc wires the email_subject_prefix provider (config-parity
+// W6): a non-empty value is prepended to every outgoing subject, with
+// {instance_name} substituted from the effective instance name.
+func WithSubjectPrefixFunc(f func() string) Option {
+	return func(s *SMTP) { s.subjectPrefix = f }
+}
+
+// WithBodySignatureFunc wires the email_body_signature provider (config-parity
+// W6): a non-empty value is appended to every outgoing plaintext body after a
+// blank line.
+func WithBodySignatureFunc(f func() string) Option {
+	return func(s *SMTP) { s.bodySignature = f }
+}
+
+// WithInstanceNameFunc wires the EFFECTIVE instance-name provider (the
+// DB-overlaid instance_name) used for the {instance_name} substitution. When
+// unset, the boot-time Config.InstanceName is used.
+func WithInstanceNameFunc(f func() string) Option {
+	return func(s *SMTP) { s.instanceName = f }
 }
 
 // NewSMTP builds the SMTP mailer.
@@ -126,6 +157,11 @@ func (s *SMTP) send(ctx context.Context, to, replyTo, subject, body string) erro
 	if strings.ContainsAny(to, "\r\n") || strings.TrimSpace(to) == "" {
 		return fmt.Errorf("mail: invalid recipient address")
 	}
+	// Email customization (config-parity W6), applied at this single seam so
+	// every sender path gets it. Header injection is impossible downstream:
+	// message() sanitizes the subject and the signature is body text.
+	subject = s.decorateSubject(subject)
+	body = s.decorateBody(body)
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -211,4 +247,44 @@ func message(from, to, replyTo, subject, body string) []byte {
 // sanitizeHeader strips CR/LF so a header value can never break the envelope.
 func sanitizeHeader(v string) string {
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+}
+
+// effectiveInstanceName is the name substituted for {instance_name}: the
+// runtime provider (DB-overlaid instance_name) when wired, else the boot-time
+// config value.
+func (s *SMTP) effectiveInstanceName() string {
+	if s.instanceName != nil {
+		if name := strings.TrimSpace(s.instanceName()); name != "" {
+			return name
+		}
+	}
+	return s.cfg.InstanceName
+}
+
+// decorateSubject prepends the email_subject_prefix (config-parity W6) with
+// {instance_name} substituted. Empty/whitespace prefix (or no provider) is a
+// no-op.
+func (s *SMTP) decorateSubject(subject string) string {
+	if s.subjectPrefix == nil {
+		return subject
+	}
+	prefix := strings.TrimSpace(s.subjectPrefix())
+	if prefix == "" {
+		return subject
+	}
+	prefix = strings.ReplaceAll(prefix, "{instance_name}", s.effectiveInstanceName())
+	return prefix + " " + subject
+}
+
+// decorateBody appends the email_body_signature (config-parity W6) after a
+// blank line. Empty/whitespace signature (or no provider) is a no-op.
+func (s *SMTP) decorateBody(body string) string {
+	if s.bodySignature == nil {
+		return body
+	}
+	sig := strings.TrimSpace(s.bodySignature())
+	if sig == "" {
+		return body
+	}
+	return strings.TrimRight(body, "\n") + "\n\n" + sig + "\n"
 }

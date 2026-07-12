@@ -46,6 +46,13 @@ type instanceFeatures struct {
 	// capability (ffmpeg/ffprobe wired). Already-produced playlists keep
 	// serving when this is false.
 	Transcoding bool `json:"transcoding"`
+	// Mail reports whether this deployment has an outbound mail path (an SMTP
+	// relay, or the dev capture seam) — a boot capability, not a runtime
+	// setting. The admin UI uses it to render mail-dependent settings
+	// (email_subject_prefix, email_body_signature, contact_form_enabled)
+	// disabled-with-explanation instead of silently ineffective (config-parity
+	// W6/W12 email seam).
+	Mail bool `json:"mail"`
 }
 
 // instanceSocialLinks is the operator's social/link row (empty strings when
@@ -275,6 +282,10 @@ func (s *Server) instanceDocument() instanceResponse {
 			UserImport:    s.userImportEnabled(),
 			UserExport:    s.userExportEnabled(),
 			Transcoding:   s.transcodingEnabled() && s.transcodesvc != nil && s.transcodesvc.Capable(),
+			// The contact mailer is wired whenever ANY outbound mail path
+			// exists (SMTP or the dev capture seam) — the deployment's
+			// mail-capability signal.
+			Mail: s.contactMailer != nil,
 		},
 		Branding:      s.instanceBrandingBlock(),
 		Defaults:      s.instanceDefaultsBlock(),
