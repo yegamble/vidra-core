@@ -180,6 +180,27 @@ func (s *Service) buildAcceptFollow(channelHandle, followerActorURL, followActiv
 	return json.Marshal(accept)
 }
 
+// buildRejectFollow renders the Reject activity for a channel refusing a
+// Follow (federation_allow_channel_followers off, or an admin rejection from
+// the follower-approval queue — config-parity W12). Same embedded-Follow shape
+// as the Accept, per the AP convention PeerTube/Mastodon follow.
+func (s *Service) buildRejectFollow(channelHandle, followerActorURL, followActivityURL string) ([]byte, error) {
+	channelActor := s.baseURL + "/video-channels/" + channelHandle
+	reject := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       channelActor + "/activities/reject/" + uuid.NewString(),
+		"type":     "Reject",
+		"actor":    channelActor,
+		"object": map[string]any{
+			"id":     followActivityURL,
+			"type":   "Follow",
+			"actor":  followerActorURL,
+			"object": channelActor,
+		},
+	}
+	return json.Marshal(reject)
+}
+
 // channelActorSigner builds an HTTP-signature signer for a local channel, minting
 // its keypair if needed and unlocking the private key.
 func (s *Service) channelActorSigner(ctx context.Context, channelID uuid.UUID, channelHandle string) (httpsig.Signer, error) {

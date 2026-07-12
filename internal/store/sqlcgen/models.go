@@ -132,6 +132,14 @@ type ChannelFollow struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+type ChannelFollowBack struct {
+	ChannelID         uuid.UUID `json:"channel_id"`
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	FollowActivityUrl string    `json:"follow_activity_url"`
+	State             string    `json:"state"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
 type ChannelImage struct {
 	ChannelID   uuid.UUID `json:"channel_id"`
 	Kind        string    `json:"kind"`
@@ -604,6 +612,7 @@ type RemoteFollow struct {
 	State             string    `json:"state"`
 	FollowActivityUrl string    `json:"follow_activity_url"`
 	CreatedAt         time.Time `json:"created_at"`
+	ID                uuid.UUID `json:"id"`
 }
 
 type RemoteVideo struct {

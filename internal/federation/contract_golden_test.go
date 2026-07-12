@@ -201,6 +201,49 @@ func TestContractGoldenAcceptFollow(t *testing.T) {
 	assertGolden(t, "accept_follow.json", takeSingleDelivery(t, repo))
 }
 
+func TestContractGoldenRejectFollow(t *testing.T) {
+	// federation_allow_channel_followers off (config-parity W12): the same
+	// real-shaped Mastodon Follow gets a Reject instead of the auto-Accept.
+	// The admin queue's reject path mints the identical document (see
+	// TestRejectFollowerRequestDeliversReject).
+	repo := newGoldenRepo()
+	cacheContractActor(repo, ctMastoUser, "Person", "kaisa", "mastodon.example")
+	svc := NewService(repo, WithBaseURL(contractBase), WithAllowChannelFollowersFunc(gateOff))
+
+	if err := svc.HandleInbox(context.Background(), ctMastoUser, readFixture(t, "inbound/mastodon_follow.json")); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	assertGolden(t, "reject_follow.json", takeSingleDelivery(t, repo))
+}
+
+func TestContractGoldenFollowBack(t *testing.T) {
+	// federation_auto_follow_back on (config-parity W12): an accepted channel
+	// Follow queues an Accept plus a follow-back Follow signed by the FOLLOWED
+	// CHANNEL's actor (vidra has no instance-level AP actor).
+	repo := newGoldenRepo()
+	cacheContractActor(repo, ctMastoUser, "Person", "kaisa", "mastodon.example")
+	svc := NewService(repo, WithBaseURL(contractBase), WithAutoFollowBackFunc(gateOn))
+
+	if err := svc.HandleInbox(context.Background(), ctMastoUser, readFixture(t, "inbound/mastodon_follow.json")); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	var followBack []byte
+	for id, d := range repo.deliveries {
+		var doc map[string]any
+		if err := json.Unmarshal(d.row.Payload, &doc); err != nil {
+			t.Fatalf("delivery payload: %v", err)
+		}
+		if doc["type"] == "Follow" {
+			followBack = d.row.Payload
+		}
+		delete(repo.deliveries, id)
+	}
+	if followBack == nil {
+		t.Fatal("no follow-back Follow was queued")
+	}
+	assertGolden(t, "follow_back.json", followBack)
+}
+
 func TestContractGoldenFollowAndUndo(t *testing.T) {
 	ctx := context.Background()
 	repo := newGoldenRepo()

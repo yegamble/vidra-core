@@ -52,10 +52,26 @@ WHERE follow_activity_url = $1 AND remote_actor_url = $2;
 DELETE FROM remote_channel_follows
 WHERE follow_activity_url = $1 AND remote_actor_url = $2;
 
--- name: HasAcceptedRemoteChannelFollow :one
--- The remote-video ingestion gate (§2 anti-spam): does ANY local user have an
--- accepted follow edge to this remote actor?
+-- name: HasRemoteChannelFollow :one
+-- Any outbound follow edge (pending OR accepted) from a local user to this
+-- remote actor. The auto-follow-back loop guard (config-parity W12): when a
+-- local user already asked to follow the actor, the instance never adds a
+-- redundant channel follow-back.
 SELECT EXISTS (
     SELECT 1 FROM remote_channel_follows
-    WHERE remote_actor_url = $1 AND state = 'accepted'
+    WHERE remote_actor_url = $1
+);
+
+-- name: HasAcceptedRemoteChannelFollow :one
+-- The remote-video ingestion gate (§2 anti-spam): does ANY local user have an
+-- accepted follow edge to this remote actor? An accepted channel follow-back
+-- (config-parity W12 federation_auto_follow_back) counts too — the instance
+-- asked for that actor's content by following back, so the "we only ingest
+-- what we asked for" invariant holds.
+SELECT EXISTS (
+    SELECT 1 FROM remote_channel_follows f
+    WHERE f.remote_actor_url = $1 AND f.state = 'accepted'
+    UNION ALL
+    SELECT 1 FROM channel_follow_backs fb
+    WHERE fb.remote_actor_url = $1 AND fb.state = 'accepted'
 );

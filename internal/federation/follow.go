@@ -315,7 +315,16 @@ func (s *Service) handleAccept(ctx context.Context, act inboxActivity, signerAct
 	if !ok {
 		return nil
 	}
-	_, err := s.repo.AcceptRemoteChannelFollowByActivity(ctx, sqlcgen.AcceptRemoteChannelFollowByActivityParams{
+	if _, err := s.repo.AcceptRemoteChannelFollowByActivity(ctx, sqlcgen.AcceptRemoteChannelFollowByActivityParams{
+		FollowActivityUrl: followURL,
+		RemoteActorUrl:    signerActorURL,
+	}); err != nil {
+		return err
+	}
+	// The Accept may also answer one of our channel follow-backs
+	// (federation_auto_follow_back, config-parity W12): same signer-is-the-
+	// followed-actor predicate, disjoint activity-id namespaces.
+	_, err := s.repo.AcceptChannelFollowBackByActivity(ctx, sqlcgen.AcceptChannelFollowBackByActivityParams{
 		FollowActivityUrl: followURL,
 		RemoteActorUrl:    signerActorURL,
 	})
@@ -329,7 +338,16 @@ func (s *Service) handleReject(ctx context.Context, act inboxActivity, signerAct
 	if !ok {
 		return nil
 	}
-	_, err := s.repo.DeleteRemoteChannelFollowByActivity(ctx, sqlcgen.DeleteRemoteChannelFollowByActivityParams{
+	if _, err := s.repo.DeleteRemoteChannelFollowByActivity(ctx, sqlcgen.DeleteRemoteChannelFollowByActivityParams{
+		FollowActivityUrl: followURL,
+		RemoteActorUrl:    signerActorURL,
+	}); err != nil {
+		return err
+	}
+	// A Reject may also answer one of our channel follow-backs (W12): the
+	// refused follow-back row goes away. (A later re-follow by that actor may
+	// mint a fresh follow-back — the insert-if-absent guard has been cleared.)
+	_, err := s.repo.DeleteChannelFollowBackByActivity(ctx, sqlcgen.DeleteChannelFollowBackByActivityParams{
 		FollowActivityUrl: followURL,
 		RemoteActorUrl:    signerActorURL,
 	})

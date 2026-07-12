@@ -41,6 +41,28 @@ func TestInstanceEndpoint(t *testing.T) {
 		!body.Features.Comments || !body.Features.Downloads {
 		t.Errorf("features = %+v, want all enabled by default", body.Features)
 	}
+	// No mail path is wired here → features.mail reports false so the admin
+	// UI can render mail-dependent settings disabled-with-explanation
+	// (config-parity W6/W12 email seam).
+	if body.Features.Mail {
+		t.Error("features.mail = true, want false without an outbound mail path")
+	}
+}
+
+func TestInstanceFeaturesMailSignal(t *testing.T) {
+	srv := New(testConfig(), nil, nil, WithContactMailer(auth.NewCaptureMailer()))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body instanceResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !body.Features.Mail {
+		t.Error("features.mail = false, want true when an outbound mail path is wired")
+	}
 }
 
 func TestInstanceAboutMetadata(t *testing.T) {

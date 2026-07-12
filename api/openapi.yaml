@@ -9755,8 +9755,25 @@ paths:
         transcription_enabled, user_import_enabled, user_export_enabled, and
         the config-parity W10 VOD knobs transcoding_enabled,
         transcoding_original_resolution, upload_additional_extensions_enabled,
-        and the config-parity W11 live knobs live_allow_replay and
-        live_default_save_replay), an integer for the int-kind limits
+        the config-parity W11 live knobs live_allow_replay and
+        live_default_save_replay, and the config-parity W12 federation policy
+        gates federation_accept_remote_comments (default true; off drops
+        inbound remote comments at the ActivityPub inbox after the
+        blocked-domain check — never retroactively),
+        federation_allow_channel_followers (default true; off answers inbound
+        channel Follows with a Reject, existing followers untouched),
+        federation_follower_approval (default false; on holds new channel
+        Follows PENDING in GET /api/v1/admin/federation/follower-requests — a
+        vidra deviation applying PeerTube's instance-follower approval to
+        CHANNEL followers, since vidra has no instance-level AP actor), and
+        federation_auto_follow_back (default false; on follows an accepted
+        follower back FROM THE FOLLOWED CHANNEL'S ACTOR, respecting the domain
+        blocklist and never duplicating an existing follow/follow-back edge —
+        note the content of followed-back actors then federates in, so
+        moderation becomes reactive, as in PeerTube). Every federation_* key
+        governs the ActivityPub inbox ONLY: the ATProto integration is
+        outbound cross-posting with no inbound path, so these gates are
+        explicitly out of scope for it), an integer for the int-kind limits
         (including the W8 keys channel_sync_max_per_user,
         user_export_expiration_hours, user_export_max_quota_bytes,
         max_channels_per_user — 0 always means unlimited/never — the W10 keys
@@ -10641,6 +10658,139 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/follower-requests:
+    get:
+      operationId: listFederationFollowerRequests
+      summary: List the federation follower-approval queue
+      description: >-
+        Returns pending inbound ActivityPub channel Follows awaiting an admin
+        decision, newest first, while federation_follower_approval is on
+        (config-parity W12). Modeled on the registration-requests queue.
+        Restricted to admins. Paginated via limit (1–100, default 20) and
+        offset. A vidra deviation from PeerTube recorded in the parity ledger:
+        approval applies to CHANNEL followers because vidra has no
+        instance-level AP actor. Governs the ActivityPub inbox only — the
+        ATProto integration is outbound cross-posting with no inbound path.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of pending follower requests (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FederationFollowerRequestListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/follower-requests/{id}/approve:
+    post:
+      operationId: approveFederationFollowerRequest
+      summary: Approve a pending channel follower
+      description: >-
+        Approves one pending inbound channel Follow: the follow flips to
+        accepted and the Accept activity is queued to the follower's inbox
+        (the delivery the remote has been waiting on). When
+        federation_auto_follow_back is on, an instance-initiated follow-back of
+        the follower is queued too — signed by the FOLLOWED CHANNEL's actor,
+        since vidra has no instance-level AP actor. Admin only; audited
+        (admin.federation.follower_approve, safe row id only). An
+        unknown/already-resolved id is 404. ActivityPub only.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The follower was approved and the Accept queued.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such pending follower request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/follower-requests/{id}/reject:
+    post:
+      operationId: rejectFederationFollowerRequest
+      summary: Reject a pending channel follower
+      description: >-
+        Rejects one pending inbound channel Follow: the pending follow is
+        removed and a Reject activity is queued to the follower's inbox. Admin
+        only; audited (admin.federation.follower_reject, safe row id only). An
+        unknown/already-resolved id is 404. ActivityPub only.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The follower was rejected and the Reject queued.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such pending follower request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/users:
     get:
       operationId: listUsers
@@ -11024,6 +11174,7 @@ components:
             - user_import
             - user_export
             - transcoding
+            - mail
           description: >-
             Effective feature toggles (the DB-backed instance-settings overlay
             over static config). The frontend disables the matching affordances
@@ -11032,7 +11183,8 @@ components:
             user_import, user_export) and the W10 transcoding flag report
             EFFECTIVE availability — the runtime admin setting AND, where one
             exists, the deployment's boot capability (yt-dlp resolver, Whisper
-            endpoint, ffmpeg/ffprobe).
+            endpoint, ffmpeg/ffprobe). The mail flag is pure boot capability
+            (an outbound mail path exists).
           properties:
             uploads:
               type: boolean
@@ -11087,6 +11239,16 @@ components:
                 config-parity W10). Already-produced playlists keep serving
                 when this is false; new uploads stay playable via the retained
                 original.
+            mail:
+              type: boolean
+              description: >-
+                Whether this deployment has an outbound mail path (an SMTP
+                relay via MAIL_ENABLED, or the dev capture seam) — a boot
+                capability, not a runtime setting. The admin UI renders the
+                mail-dependent settings (email_subject_prefix,
+                email_body_signature, contact_form_enabled)
+                disabled-with-explanation when false, since they are inert
+                without a mailer (config-parity W6 email seam).
         branding:
           type: object
           description: >-
@@ -15707,6 +15869,51 @@ components:
           type: string
           maxLength: 2000
           description: Optional internal moderator note (not shown to the applicant).
+    FederationFollowerRequest:
+      type: object
+      required: [id, channel_id, channel_handle, actor_url, created_at]
+      description: >-
+        One pending inbound ActivityPub channel Follow awaiting an admin
+        decision (federation_follower_approval, config-parity W12).
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        channel_handle:
+          type: string
+          description: Handle of the local channel being followed.
+        actor_url:
+          type: string
+          description: The remote follower's ActivityPub actor URL.
+        handle:
+          type: string
+          description: >-
+            The follower's cached fediverse identity
+            (preferred_username@domain); omitted when the remote-actor cache
+            row is gone.
+        domain:
+          type: string
+          description: The follower's home domain; omitted when uncached.
+        created_at:
+          type: string
+          format: date-time
+    FederationFollowerRequestListResponse:
+      type: object
+      required: [requests, limit, offset]
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/FederationFollowerRequest"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
     LoginRequest:
       type: object
       required: [email, password]

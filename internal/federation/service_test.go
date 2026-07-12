@@ -27,7 +27,8 @@ type fakeRepo struct {
 	chanKeys        map[uuid.UUID]sqlcgen.GetChannelActorKeyRow
 	remoteActors    map[string]sqlcgen.RemoteActor
 	processed       map[string]bool
-	remoteFollows   map[string]sqlcgen.InsertRemoteFollowParams
+	remoteFollows   map[string]*fakeRemoteFollow // keyed channelID|actorURL
+	followBacks     map[string]*fakeFollowBack   // keyed channelID|actorURL (W12)
 	deliveries      map[uuid.UUID]*fakeDelivery
 	videosByID      map[uuid.UUID]sqlcgen.GetVideoByIDRow
 	channelsByID    map[uuid.UUID]sqlcgen.Channel
@@ -48,6 +49,25 @@ type fakeRemoteVideo struct {
 	id           uuid.UUID
 	params       sqlcgen.UpsertRemoteVideoParams
 	thumbnailKey *string
+}
+
+// fakeRemoteFollow is an in-memory remote_follows row (migration 0037 + the
+// 0087 surrogate id/state used by the W12 follower-approval queue).
+type fakeRemoteFollow struct {
+	ID                uuid.UUID
+	ChannelID         uuid.UUID
+	RemoteActorUrl    string
+	FollowActivityUrl string
+	State             string // accepted | pending
+	CreatedAt         time.Time
+}
+
+// fakeFollowBack is an in-memory channel_follow_backs row (migration 0087).
+type fakeFollowBack struct {
+	ChannelID         uuid.UUID
+	RemoteActorUrl    string
+	FollowActivityUrl string
+	State             string // pending | accepted
 }
 
 // fakeDelivery is an in-memory federation_deliveries row.
@@ -137,13 +157,119 @@ func (f fakeRepo) MarkActivityProcessed(_ context.Context, id string) error {
 }
 
 func (f fakeRepo) InsertRemoteFollow(_ context.Context, arg sqlcgen.InsertRemoteFollowParams) error {
-	f.remoteFollows[arg.ChannelID.String()+"|"+arg.RemoteActorUrl] = arg
+	key := arg.ChannelID.String() + "|" + arg.RemoteActorUrl
+	if row, ok := f.remoteFollows[key]; ok {
+		row.State = "accepted"
+		row.FollowActivityUrl = arg.FollowActivityUrl
+		return nil
+	}
+	f.remoteFollows[key] = &fakeRemoteFollow{
+		ID: uuid.New(), ChannelID: arg.ChannelID, RemoteActorUrl: arg.RemoteActorUrl,
+		FollowActivityUrl: arg.FollowActivityUrl, State: "accepted", CreatedAt: time.Now(),
+	}
 	return nil
 }
 
 func (f fakeRepo) DeleteRemoteFollow(_ context.Context, arg sqlcgen.DeleteRemoteFollowParams) error {
 	delete(f.remoteFollows, arg.ChannelID.String()+"|"+arg.RemoteActorUrl)
 	return nil
+}
+
+// --- W12 follower-approval queue + follow-backs (migration 0087) ------------
+
+func (f fakeRepo) InsertRemoteFollowPending(_ context.Context, arg sqlcgen.InsertRemoteFollowPendingParams) error {
+	key := arg.ChannelID.String() + "|" + arg.RemoteActorUrl
+	if _, ok := f.remoteFollows[key]; ok {
+		return nil // ON CONFLICT DO NOTHING — existing state untouched
+	}
+	f.remoteFollows[key] = &fakeRemoteFollow{
+		ID: uuid.New(), ChannelID: arg.ChannelID, RemoteActorUrl: arg.RemoteActorUrl,
+		FollowActivityUrl: arg.FollowActivityUrl, State: "pending", CreatedAt: time.Now(),
+	}
+	return nil
+}
+
+func (f fakeRepo) ListPendingRemoteFollows(_ context.Context, arg sqlcgen.ListPendingRemoteFollowsParams) ([]sqlcgen.ListPendingRemoteFollowsRow, error) {
+	var out []sqlcgen.ListPendingRemoteFollowsRow
+	for _, row := range f.remoteFollows {
+		if row.State != "pending" {
+			continue
+		}
+		ch := f.channelsByID[row.ChannelID]
+		ra := f.remoteActors[row.RemoteActorUrl]
+		out = append(out, sqlcgen.ListPendingRemoteFollowsRow{
+			ID: row.ID, ChannelID: row.ChannelID, RemoteActorUrl: row.RemoteActorUrl,
+			FollowActivityUrl: row.FollowActivityUrl, CreatedAt: row.CreatedAt,
+			ChannelHandle: ch.Handle, PreferredUsername: ra.PreferredUsername, Domain: ra.Domain,
+		})
+	}
+	return out, nil
+}
+
+func (f fakeRepo) AcceptPendingRemoteFollowByID(_ context.Context, id uuid.UUID) (sqlcgen.AcceptPendingRemoteFollowByIDRow, error) {
+	for _, row := range f.remoteFollows {
+		if row.ID == id && row.State == "pending" {
+			row.State = "accepted"
+			return sqlcgen.AcceptPendingRemoteFollowByIDRow{
+				ChannelID: row.ChannelID, RemoteActorUrl: row.RemoteActorUrl, FollowActivityUrl: row.FollowActivityUrl,
+			}, nil
+		}
+	}
+	return sqlcgen.AcceptPendingRemoteFollowByIDRow{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) DeletePendingRemoteFollowByID(_ context.Context, id uuid.UUID) (sqlcgen.DeletePendingRemoteFollowByIDRow, error) {
+	for key, row := range f.remoteFollows {
+		if row.ID == id && row.State == "pending" {
+			delete(f.remoteFollows, key)
+			return sqlcgen.DeletePendingRemoteFollowByIDRow{
+				ChannelID: row.ChannelID, RemoteActorUrl: row.RemoteActorUrl, FollowActivityUrl: row.FollowActivityUrl,
+			}, nil
+		}
+	}
+	return sqlcgen.DeletePendingRemoteFollowByIDRow{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) InsertChannelFollowBackIfAbsent(_ context.Context, arg sqlcgen.InsertChannelFollowBackIfAbsentParams) (int64, error) {
+	for _, fb := range f.followBacks {
+		if fb.RemoteActorUrl == arg.RemoteActorUrl {
+			return 0, nil // at most one follow-back per actor, instance-wide
+		}
+	}
+	f.followBacks[arg.ChannelID.String()+"|"+arg.RemoteActorUrl] = &fakeFollowBack{
+		ChannelID: arg.ChannelID, RemoteActorUrl: arg.RemoteActorUrl,
+		FollowActivityUrl: arg.FollowActivityUrl, State: "pending",
+	}
+	return 1, nil
+}
+
+func (f fakeRepo) AcceptChannelFollowBackByActivity(_ context.Context, arg sqlcgen.AcceptChannelFollowBackByActivityParams) (int64, error) {
+	for _, fb := range f.followBacks {
+		if fb.FollowActivityUrl == arg.FollowActivityUrl && fb.RemoteActorUrl == arg.RemoteActorUrl {
+			fb.State = "accepted"
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func (f fakeRepo) DeleteChannelFollowBackByActivity(_ context.Context, arg sqlcgen.DeleteChannelFollowBackByActivityParams) (int64, error) {
+	for key, fb := range f.followBacks {
+		if fb.FollowActivityUrl == arg.FollowActivityUrl && fb.RemoteActorUrl == arg.RemoteActorUrl {
+			delete(f.followBacks, key)
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func (f fakeRepo) HasRemoteChannelFollow(_ context.Context, remoteActorURL string) (bool, error) {
+	for _, row := range f.rcFollows {
+		if row.RemoteActorUrl == remoteActorURL {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (f fakeRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
@@ -351,6 +477,13 @@ func (f fakeRepo) DeleteRemoteChannelFollowByActivity(_ context.Context, arg sql
 func (f fakeRepo) HasAcceptedRemoteChannelFollow(_ context.Context, remoteActorURL string) (bool, error) {
 	for _, row := range f.rcFollows {
 		if row.RemoteActorUrl == remoteActorURL && row.State == "accepted" {
+			return true, nil
+		}
+	}
+	// Mirrors the SQL: an accepted channel follow-back (W12) is an ingestion
+	// edge too — the instance asked for that content by following back.
+	for _, fb := range f.followBacks {
+		if fb.RemoteActorUrl == remoteActorURL && fb.State == "accepted" {
 			return true, nil
 		}
 	}

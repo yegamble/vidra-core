@@ -242,7 +242,22 @@ func run() error {
 			Password:     cfg.SMTPPassword,
 			From:         cfg.SMTPFrom,
 			InstanceName: cfg.InstanceName,
-		})
+		},
+			// Email customization (config-parity W6): the subject prefix (with
+			// {instance_name} substituted from the EFFECTIVE instance name) and
+			// body signature ride the single Send seam, resolved per send from
+			// the settings overlay. Empty values are no-ops; with MAIL_ENABLED
+			// off this mailer never exists, so the settings are inert.
+			mail.WithSubjectPrefixFunc(func() string {
+				return settingssvc.String(instancesettings.KeyEmailSubjectPrefix)
+			}),
+			mail.WithBodySignatureFunc(func() string {
+				return settingssvc.String(instancesettings.KeyEmailBodySignature)
+			}),
+			mail.WithInstanceNameFunc(func() string {
+				return settingssvc.String(instancesettings.KeyInstanceName)
+			}),
+		)
 		authOpts = append(authOpts, auth.WithMailer(smtpMailer))
 		logger.Info("smtp mailer enabled",
 			"host", cfg.SMTPHost,
@@ -913,6 +928,24 @@ func run() error {
 		// Inbound federated comments run the same watched-words flagging as
 		// local ones (remote-content §6).
 		federation.WithCommentFlagger(watchwordsvc),
+		// Federation policy gates (config-parity W12): runtime provider funcs
+		// over the settings overlay, read per inbound activity so an admin
+		// change applies without a restart. All gate the ActivityPub inbox
+		// ONLY — the ATProto integration is outbound cross-posting with no
+		// inbound path.
+		federation.WithAcceptRemoteCommentsFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyFederationAcceptRemoteComments)
+		}),
+		federation.WithAllowChannelFollowersFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyFederationAllowChannelFollowers)
+		}),
+		federation.WithFollowerApprovalFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyFederationFollowerApproval)
+		}),
+		federation.WithAutoFollowBackFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyFederationAutoFollowBack)
+		}),
+		federation.WithLogger(logger),
 	}
 	if cfg.FederationKeyKEK != "" {
 		cipher, err := secretbox.NewCipherFromBase64(cfg.FederationKeyKEK)

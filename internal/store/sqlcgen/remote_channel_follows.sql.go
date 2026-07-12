@@ -121,15 +121,39 @@ func (q *Queries) GetRemoteChannelFollowByID(ctx context.Context, arg GetRemoteC
 
 const hasAcceptedRemoteChannelFollow = `-- name: HasAcceptedRemoteChannelFollow :one
 SELECT EXISTS (
-    SELECT 1 FROM remote_channel_follows
-    WHERE remote_actor_url = $1 AND state = 'accepted'
+    SELECT 1 FROM remote_channel_follows f
+    WHERE f.remote_actor_url = $1 AND f.state = 'accepted'
+    UNION ALL
+    SELECT 1 FROM channel_follow_backs fb
+    WHERE fb.remote_actor_url = $1 AND fb.state = 'accepted'
 )
 `
 
 // The remote-video ingestion gate (§2 anti-spam): does ANY local user have an
-// accepted follow edge to this remote actor?
+// accepted follow edge to this remote actor? An accepted channel follow-back
+// (config-parity W12 federation_auto_follow_back) counts too — the instance
+// asked for that actor's content by following back, so the "we only ingest
+// what we asked for" invariant holds.
 func (q *Queries) HasAcceptedRemoteChannelFollow(ctx context.Context, remoteActorUrl string) (bool, error) {
 	row := q.db.QueryRow(ctx, hasAcceptedRemoteChannelFollow, remoteActorUrl)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const hasRemoteChannelFollow = `-- name: HasRemoteChannelFollow :one
+SELECT EXISTS (
+    SELECT 1 FROM remote_channel_follows
+    WHERE remote_actor_url = $1
+)
+`
+
+// Any outbound follow edge (pending OR accepted) from a local user to this
+// remote actor. The auto-follow-back loop guard (config-parity W12): when a
+// local user already asked to follow the actor, the instance never adds a
+// redundant channel follow-back.
+func (q *Queries) HasRemoteChannelFollow(ctx context.Context, remoteActorUrl string) (bool, error) {
+	row := q.db.QueryRow(ctx, hasRemoteChannelFollow, remoteActorUrl)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

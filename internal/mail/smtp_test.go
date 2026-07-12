@@ -367,3 +367,143 @@ func TestUnreachableRelayHonoursContext(t *testing.T) {
 		t.Errorf("send took %v, want it bounded by the 250ms context", time.Since(start))
 	}
 }
+
+// --- email customization seam (config-parity W6) -----------------------------
+
+// TestDecorateSubjectAndBody covers the pure decoration seam: prefix
+// prepending with {instance_name} substitution, signature appending after a
+// blank line, and every no-op case (no provider, empty value, whitespace).
+func TestDecorateSubjectAndBody(t *testing.T) {
+	str := func(v string) func() string { return func() string { return v } }
+	cases := []struct {
+		name        string
+		opts        []Option
+		subject     string
+		body        string
+		wantSubject string
+		wantBody    string
+	}{
+		{
+			name:        "no providers is a no-op",
+			subject:     "Reset your password",
+			body:        "Hi,\n\nBody.\n",
+			wantSubject: "Reset your password",
+			wantBody:    "Hi,\n\nBody.\n",
+		},
+		{
+			name:        "empty prefix and signature are no-ops",
+			opts:        []Option{WithSubjectPrefixFunc(str("")), WithBodySignatureFunc(str(""))},
+			subject:     "Reset your password",
+			body:        "Body.\n",
+			wantSubject: "Reset your password",
+			wantBody:    "Body.\n",
+		},
+		{
+			name:        "whitespace-only prefix and signature are no-ops",
+			opts:        []Option{WithSubjectPrefixFunc(str("   ")), WithBodySignatureFunc(str(" \n\t"))},
+			subject:     "Reset your password",
+			body:        "Body.\n",
+			wantSubject: "Reset your password",
+			wantBody:    "Body.\n",
+		},
+		{
+			name:        "prefix prepends with a space",
+			opts:        []Option{WithSubjectPrefixFunc(str("[Vidra]"))},
+			subject:     "Reset your password",
+			body:        "Body.\n",
+			wantSubject: "[Vidra] Reset your password",
+			wantBody:    "Body.\n",
+		},
+		{
+			name:        "prefix substitutes {instance_name} from the boot config",
+			opts:        []Option{WithSubjectPrefixFunc(str("[{instance_name}]"))},
+			subject:     "Reset your password",
+			body:        "Body.\n",
+			wantSubject: "[Vidra Test] Reset your password",
+			wantBody:    "Body.\n",
+		},
+		{
+			name: "prefix substitutes the EFFECTIVE instance name when provided",
+			opts: []Option{
+				WithSubjectPrefixFunc(str("[{instance_name}]")),
+				WithInstanceNameFunc(str("ExampleTube")),
+			},
+			subject:     "Reset your password",
+			body:        "Body.\n",
+			wantSubject: "[ExampleTube] Reset your password",
+			wantBody:    "Body.\n",
+		},
+		{
+			name: "blank effective name falls back to the boot config",
+			opts: []Option{
+				WithSubjectPrefixFunc(str("[{instance_name}]")),
+				WithInstanceNameFunc(str("  ")),
+			},
+			subject:     "Reset your password",
+			body:        "Body.\n",
+			wantSubject: "[Vidra Test] Reset your password",
+			wantBody:    "Body.\n",
+		},
+		{
+			name:        "signature appends after exactly one blank line",
+			opts:        []Option{WithBodySignatureFunc(str("— the ops team"))},
+			subject:     "s",
+			body:        "Hi,\n\nBody.\n",
+			wantSubject: "s",
+			wantBody:    "Hi,\n\nBody.\n\n— the ops team\n",
+		},
+		{
+			name:        "signature on a body without trailing newline",
+			opts:        []Option{WithBodySignatureFunc(str("bye"))},
+			subject:     "s",
+			body:        "Body.",
+			wantSubject: "s",
+			wantBody:    "Body.\n\nbye\n",
+		},
+		{
+			name: "prefix and signature together",
+			opts: []Option{
+				WithSubjectPrefixFunc(str("[{instance_name}]")),
+				WithBodySignatureFunc(str("Run by admins.")),
+			},
+			subject:     "Confirm your email",
+			body:        "Hello.\n",
+			wantSubject: "[Vidra Test] Confirm your email",
+			wantBody:    "Hello.\n\nRun by admins.\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewSMTP(Config{Host: "smtp.example.test", Port: 587, From: "no-reply@vidra.test", InstanceName: "Vidra Test"}, tc.opts...)
+			if got := m.decorateSubject(tc.subject); got != tc.wantSubject {
+				t.Errorf("decorateSubject = %q, want %q", got, tc.wantSubject)
+			}
+			if got := m.decorateBody(tc.body); got != tc.wantBody {
+				t.Errorf("decorateBody = %q, want %q", got, tc.wantBody)
+			}
+		})
+	}
+}
+
+// TestCustomizationAppliedAtSendSeam proves the decoration rides the single
+// send() seam end to end — every sender path (here the password reset) gets
+// the prefixed subject and appended signature, and a prefix can never inject
+// headers (sanitizeHeader strips CR/LF downstream).
+func TestCustomizationAppliedAtSendSeam(t *testing.T) {
+	f := newFakeSMTP(t, nil, false)
+	m := newMailer(t, f, "", "",
+		WithSubjectPrefixFunc(func() string { return "[{instance_name}]" }),
+		WithBodySignatureFunc(func() string { return "Questions? support@vidra.test" }),
+		WithInstanceNameFunc(func() string { return "ExampleTube" }),
+	)
+	if err := m.SendPasswordReset(context.Background(), "ada@example.test", "tok-123"); err != nil {
+		t.Fatalf("SendPasswordReset: %v", err)
+	}
+	_, _, data, _, _ := f.snapshot(t)
+	if !strings.Contains(data, "Subject: [ExampleTube] Reset your password on Vidra Test") {
+		t.Errorf("subject not prefixed with the substituted instance name; data:\n%s", data)
+	}
+	if !strings.Contains(data, "Questions? support@vidra.test") {
+		t.Error("body signature missing from the delivered message")
+	}
+}

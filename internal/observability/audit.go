@@ -98,6 +98,12 @@ const (
 	// never the source DSN, credentials, or any imported PII/secret.
 	ActionPeerTubeImportStart  = "admin.peertube_import.start"
 	ActionPeerTubeImportFinish = "admin.peertube_import.finish"
+	// Federation follower-approval queue decisions (config-parity W12,
+	// federation_follower_approval): an admin approving/rejecting a pending
+	// inbound channel Follow. Reason carries the safe follow row id only —
+	// never the activity payload.
+	ActionFederationFollowerApprove = "admin.federation.follower_approve"
+	ActionFederationFollowerReject  = "admin.federation.follower_reject"
 )
 
 // sensitiveKeys is the canonical denylist of structured-log field names that
