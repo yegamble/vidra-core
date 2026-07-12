@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -178,14 +177,10 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 	if maxBytes := s.uploadMaxSizeBytes(); maxBytes > 0 && in.Size > maxBytes {
 		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "the file is too large")
 	}
-	// Quota up front (422 quota_exceeded).
-	if s.quotasvc != nil {
-		if qerr := s.quotasvc.CheckFits(ctx, userID, in.Size); qerr != nil {
-			if errors.Is(qerr, quota.ErrExceeded) {
-				return &QuotaExceededError{}
-			}
-			return qerr
-		}
+	// Quotas up front: total (422 quota_exceeded) then the rolling daily
+	// window (422 daily_quota_exceeded, config-parity W7).
+	if qerr := s.checkUploadQuotas(ctx, userID, in.Size); qerr != nil {
+		return qerr
 	}
 	sess, err := s.uploadsvc.CreateSession(ctx, id, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint))
 	if err != nil {
@@ -272,15 +267,11 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 	}
 	defer func() { _ = reader.Close() }()
 
-	// Re-check the quota against the assembled size before storing (the session
-	// may have sat while other uploads consumed headroom).
-	if s.quotasvc != nil {
-		if qerr := s.quotasvc.CheckFits(ctx, userID, sess.TotalSize); qerr != nil {
-			if errors.Is(qerr, quota.ErrExceeded) {
-				return &QuotaExceededError{}
-			}
-			return qerr
-		}
+	// Re-check the quotas (total + rolling daily) against the assembled size
+	// before storing (the session may have sat while other uploads consumed
+	// headroom).
+	if qerr := s.checkUploadQuotas(ctx, userID, sess.TotalSize); qerr != nil {
+		return qerr
 	}
 	_, file, err := s.videosvc.AttachOriginal(ctx, userID, sess.VideoID, video.UploadInput{
 		Filename: sess.Filename,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -38,10 +39,22 @@ func TestEffectiveResolution(t *testing.T) {
 	}
 }
 
+// usageEvent is one recorded daily-ledger row (fakeRepo).
+type usageEvent struct {
+	userID    uuid.UUID
+	bytes     int64
+	createdAt time.Time
+}
+
 // fakeRepo is an in-memory quota.Repository.
 type fakeRepo struct {
-	users map[uuid.UUID]sqlcgen.User
-	used  map[uuid.UUID]int64
+	users  map[uuid.UUID]sqlcgen.User
+	used   map[uuid.UUID]int64
+	events []usageEvent
+	// eventClock stamps recorded events (RecordUploadUsageEvent has no
+	// timestamp parameter — the DB defaults created_at — so the fake needs its
+	// own stamp source).
+	eventClock func() time.Time
 }
 
 func (f *fakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.User, error) {
@@ -54,6 +67,39 @@ func (f *fakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.User, e
 
 func (f *fakeRepo) SumUserStorageUsage(_ context.Context, ownerID uuid.UUID) (int64, error) {
 	return f.used[ownerID], nil
+}
+
+func (f *fakeRepo) RecordUploadUsageEvent(_ context.Context, arg sqlcgen.RecordUploadUsageEventParams) error {
+	now := time.Now()
+	if f.eventClock != nil {
+		now = f.eventClock()
+	}
+	f.events = append(f.events, usageEvent{userID: arg.UserID, bytes: arg.Bytes, createdAt: now})
+	return nil
+}
+
+func (f *fakeRepo) SumUploadUsageSince(_ context.Context, arg sqlcgen.SumUploadUsageSinceParams) (int64, error) {
+	var sum int64
+	for _, e := range f.events {
+		if e.userID == arg.UserID && e.createdAt.After(arg.CreatedAt) {
+			sum += e.bytes
+		}
+	}
+	return sum, nil
+}
+
+func (f *fakeRepo) PruneUploadUsageEvents(_ context.Context, arg sqlcgen.PruneUploadUsageEventsParams) (int64, error) {
+	kept := f.events[:0]
+	var n int64
+	for _, e := range f.events {
+		if e.userID == arg.UserID && e.createdAt.Before(arg.CreatedAt) {
+			n++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	f.events = kept
+	return n, nil
 }
 
 func seed(override *int64, used int64) (*fakeRepo, uuid.UUID) {
@@ -134,6 +180,113 @@ func TestStatusAndRemaining(t *testing.T) {
 	// Unknown user surfaces the repo error.
 	if _, err := svc.Status(ctx, uuid.New()); err == nil {
 		t.Errorf("Status(unknown) = nil error, want error")
+	}
+}
+
+// TestDailyRollingWindow drives the rolling-24h math with a fake clock: only
+// events inside the trailing window count, the boundary is exact, and 0 means
+// unlimited (ledger not consulted).
+func TestDailyRollingWindow(t *testing.T) {
+	ctx := context.Background()
+	repo, id := seed(nil, 0)
+
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	repo.eventClock = clock
+
+	daily := int64(100)
+	svc := NewService(repo, 0,
+		WithDailyBytesFunc(func() int64 { return daily }),
+		WithClock(clock))
+
+	// Record 40 bytes now-25h (outside), 30 bytes now-23h (inside), 20 now.
+	now = now.Add(-25 * time.Hour)
+	if err := svc.RecordUpload(ctx, id, 40); err != nil {
+		t.Fatalf("RecordUpload: %v", err)
+	}
+	now = now.Add(2 * time.Hour) // now-23h
+	if err := svc.RecordUpload(ctx, id, 30); err != nil {
+		t.Fatalf("RecordUpload: %v", err)
+	}
+	now = now.Add(23 * time.Hour) // back to the original "now"
+	if err := svc.RecordUpload(ctx, id, 20); err != nil {
+		t.Fatalf("RecordUpload: %v", err)
+	}
+
+	st, err := svc.Daily(ctx, id)
+	if err != nil || st.QuotaBytes == nil || *st.QuotaBytes != 100 || st.UsedBytes != 50 {
+		t.Fatalf("Daily = (%+v, %v), want used=50 quota=100 (25h-old event ignored)", st, err)
+	}
+
+	// Boundary: exactly-remaining fits, one more byte does not.
+	if err := svc.CheckDailyFits(ctx, id, 50); err != nil {
+		t.Errorf("exactly-at-limit CheckDailyFits = %v, want nil", err)
+	}
+	if err := svc.CheckDailyFits(ctx, id, 51); !errors.Is(err, ErrDailyExceeded) {
+		t.Errorf("over-limit CheckDailyFits = %v, want ErrDailyExceeded", err)
+	}
+
+	// The window ROLLS: 2h later the 23h-old event ages out too.
+	now = now.Add(2 * time.Hour)
+	if st, _ := svc.Daily(ctx, id); st.UsedBytes != 20 {
+		t.Errorf("Daily.UsedBytes after 2h = %d, want 20 (30-byte event aged out)", st.UsedBytes)
+	}
+
+	// 0 = unlimited: the cap disappears and nothing is enforced.
+	daily = 0
+	if st, _ := svc.Daily(ctx, id); st.QuotaBytes != nil || st.UsedBytes != 0 {
+		t.Errorf("unlimited Daily = %+v, want zero-value status", st)
+	}
+	if err := svc.CheckDailyFits(ctx, id, 1<<40); err != nil {
+		t.Errorf("unlimited CheckDailyFits = %v, want nil", err)
+	}
+}
+
+// TestDailyUnlimitedWithoutProvider proves the plain constructor (no daily
+// provider) enforces nothing and never queries the ledger.
+func TestDailyUnlimitedWithoutProvider(t *testing.T) {
+	ctx := context.Background()
+	repo, id := seed(nil, 0)
+	svc := NewService(repo, 0)
+	if err := svc.RecordUpload(ctx, id, 10); err != nil {
+		t.Fatalf("RecordUpload: %v", err)
+	}
+	if st, err := svc.Daily(ctx, id); err != nil || st.QuotaBytes != nil || st.UsedBytes != 0 {
+		t.Fatalf("Daily without provider = (%+v, %v), want zero-value", st, err)
+	}
+	if err := svc.CheckDailyFits(ctx, id, 1<<40); err != nil {
+		t.Fatalf("CheckDailyFits without provider = %v, want nil", err)
+	}
+}
+
+// TestRecordUploadPrunesOldEvents proves record-time pruning keeps the ledger
+// bounded (retention = 2x window) and ignores non-positive sizes.
+func TestRecordUploadPrunesOldEvents(t *testing.T) {
+	ctx := context.Background()
+	repo, id := seed(nil, 0)
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	repo.eventClock = clock
+	svc := NewService(repo, 0, WithClock(clock),
+		WithDailyBytesFunc(func() int64 { return 100 }))
+
+	if err := svc.RecordUpload(ctx, id, 10); err != nil {
+		t.Fatalf("RecordUpload: %v", err)
+	}
+	// 3 days later a new record prunes the stale event (older than 48h).
+	now = now.Add(72 * time.Hour)
+	if err := svc.RecordUpload(ctx, id, 20); err != nil {
+		t.Fatalf("RecordUpload: %v", err)
+	}
+	if len(repo.events) != 1 || repo.events[0].bytes != 20 {
+		t.Fatalf("ledger after prune = %+v, want only the fresh 20-byte event", repo.events)
+	}
+	// Zero/negative bytes are ignored (no event row).
+	if err := svc.RecordUpload(ctx, id, 0); err != nil {
+		t.Fatalf("RecordUpload(0): %v", err)
+	}
+	if len(repo.events) != 1 {
+		t.Fatalf("zero-byte record appended an event")
 	}
 }
 

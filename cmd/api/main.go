@@ -315,6 +315,20 @@ func run() error {
 		logger.Warn("MFA_KEY_KEK unset — TOTP secrets are stored UNENCRYPTED; set a KEK outside dev (MFA_KEY_KEK, or share FEDERATION_KEY_KEK)")
 	}
 	authOpts = append(authOpts, auth.WithMFA(db.Queries(), mfaCipher, cfg.TOTPIssuer))
+	// Sign-up & new users (config-parity W7): seed the per-user watch-history
+	// preference from the live setting, and wire the EFFECTIVE registration
+	// email-verification gate — the runtime toggle AND an outbound mail path
+	// (dev capture or SMTP; a runtime toggle can never conjure a mailer the
+	// deployment lacks).
+	mailWired := smtpMailer != nil || captureMailer != nil
+	authOpts = append(authOpts,
+		auth.WithNewUserHistoryEnabledFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyNewUserHistoryEnabled)
+		}),
+		auth.WithEmailVerificationGateFunc(func() bool {
+			return mailWired && settingssvc.Bool(instancesettings.KeyRegistrationRequireEmailVerification)
+		}),
+	)
 	authsvc := auth.NewService(db.Queries(), issuer, cfg.JWTRefreshTTL, authOpts...)
 	opts = append(opts, httpapi.WithAuthService(authsvc, cfg.JWTAccessTTL))
 	if captureMailer != nil {
@@ -441,10 +455,35 @@ func run() error {
 		logger.Info("ipfs private mirror enabled", "cluster", cfg.IPFSPrivateClusterAPIURL != "")
 	}
 
+	// Per-user storage quotas: usage is aggregated live from video_files;
+	// uploads/imports that would exceed the effective quota get 422.
+	// Constructed BEFORE the video service so AttachOriginal can feed the
+	// rolling daily-upload ledger (config-parity W7). The daily quota reads
+	// default_user_daily_quota_bytes live (0 = unlimited).
+	quotasvc := quota.NewService(db.Queries(), cfg.InstanceDefaultQuotaBytes,
+		quota.WithDefaultBytesFunc(func() int64 {
+			return settingssvc.Int(instancesettings.KeyDefaultUserQuotaBytes)
+		}),
+		quota.WithDailyBytesFunc(func() int64 {
+			return settingssvc.Int(instancesettings.KeyDefaultUserDailyQuotaBytes)
+		}))
+	opts = append(opts, httpapi.WithQuotaService(quotasvc))
+	if cfg.InstanceDefaultQuotaBytes > 0 {
+		logger.Info("default per-user storage quota enabled", "bytes", cfg.InstanceDefaultQuotaBytes)
+	}
+
 	// Wire the FFprobe media prober when ffprobe is on PATH; otherwise uploads
 	// finalise by publishing the original unprobed (no metadata) so a host
 	// without ffmpeg still works.
 	var vopts []video.Option
+	// Daily-upload accounting (W7): every stored original is recorded against
+	// its owner's rolling 24h window at the AttachOriginal choke point.
+	vopts = append(vopts, video.WithUploadUsageRecorder(func(ctx context.Context, ownerID uuid.UUID, bytes int64) error {
+		if err := quotasvc.RecordUpload(ctx, ownerID, bytes); err != nil {
+			logger.Warn("daily upload usage record failed", "user_id", ownerID, "error", err)
+		}
+		return nil
+	}))
 	if probe, ok := media.DetectFFProbe(blobs); ok {
 		vopts = append(vopts, video.WithProber(probe))
 		logger.Info("media probe enabled (ffprobe found)")
@@ -767,17 +806,6 @@ func run() error {
 		return err
 	}
 	opts = append(opts, httpapi.WithProfileImageService(imagesvc))
-
-	// Per-user storage quotas: usage is aggregated live from video_files;
-	// uploads/imports that would exceed the effective quota get 422.
-	quotasvc := quota.NewService(db.Queries(), cfg.InstanceDefaultQuotaBytes,
-		quota.WithDefaultBytesFunc(func() int64 {
-			return settingssvc.Int(instancesettings.KeyDefaultUserQuotaBytes)
-		}))
-	opts = append(opts, httpapi.WithQuotaService(quotasvc))
-	if cfg.InstanceDefaultQuotaBytes > 0 {
-		logger.Info("default per-user storage quota enabled", "bytes", cfg.InstanceDefaultQuotaBytes)
-	}
 
 	// Resumable/chunked upload sessions (P6.1). Chunk bytes go to the same blob
 	// backend at uploads/<session>/<n>; completion assembles them through the

@@ -21,38 +21,44 @@ WITH req AS (
     WHERE registration_requests.id = $1 AND registration_requests.status = 'pending'
 ),
 ins AS (
-    INSERT INTO users (username, email, password_hash, role)
-    SELECT req.username, req.email, req.password_hash, 'user' FROM req
-    RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
+    INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
+    SELECT req.username, req.email, req.password_hash, 'user',
+           $2::bool, $3::bool
+    FROM req
+    RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, pending_email_verification
 ),
 upd AS (
     UPDATE registration_requests
-    SET status = 'approved', reviewed_by = $2, reviewed_at = now(), updated_at = now()
+    SET status = 'approved', reviewed_by = $4, reviewed_at = now(), updated_at = now()
     WHERE registration_requests.id = (SELECT req.id FROM req)
     RETURNING registration_requests.id
 )
 SELECT ins.id, ins.username, ins.email, ins.password_hash, ins.role, ins.email_verified,
-       ins.is_active, ins.created_at, ins.updated_at, ins.display_name, ins.bio
+       ins.is_active, ins.created_at, ins.updated_at, ins.display_name, ins.bio,
+       ins.pending_email_verification
 FROM ins
 `
 
 type ApproveRegistrationRequestParams struct {
-	ID         uuid.UUID   `json:"id"`
-	ReviewedBy pgtype.UUID `json:"reviewed_by"`
+	ID                       uuid.UUID   `json:"id"`
+	PendingEmailVerification bool        `json:"pending_email_verification"`
+	HistoryEnabled           bool        `json:"history_enabled"`
+	ReviewedBy               pgtype.UUID `json:"reviewed_by"`
 }
 
 type ApproveRegistrationRequestRow struct {
-	ID            uuid.UUID `json:"id"`
-	Username      string    `json:"username"`
-	Email         string    `json:"email"`
-	PasswordHash  string    `json:"password_hash"`
-	Role          string    `json:"role"`
-	EmailVerified bool      `json:"email_verified"`
-	IsActive      bool      `json:"is_active"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	DisplayName   string    `json:"display_name"`
-	Bio           string    `json:"bio"`
+	ID                       uuid.UUID `json:"id"`
+	Username                 string    `json:"username"`
+	Email                    string    `json:"email"`
+	PasswordHash             string    `json:"password_hash"`
+	Role                     string    `json:"role"`
+	EmailVerified            bool      `json:"email_verified"`
+	IsActive                 bool      `json:"is_active"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
+	DisplayName              string    `json:"display_name"`
+	Bio                      string    `json:"bio"`
+	PendingEmailVerification bool      `json:"pending_email_verification"`
 }
 
 // Atomically approve a PENDING request: create the user account from the stored
@@ -63,7 +69,12 @@ type ApproveRegistrationRequestRow struct {
 // now taken, the users insert raises a unique violation and the whole statement
 // rolls back, leaving the request pending.
 func (q *Queries) ApproveRegistrationRequest(ctx context.Context, arg ApproveRegistrationRequestParams) (ApproveRegistrationRequestRow, error) {
-	row := q.db.QueryRow(ctx, approveRegistrationRequest, arg.ID, arg.ReviewedBy)
+	row := q.db.QueryRow(ctx, approveRegistrationRequest,
+		arg.ID,
+		arg.PendingEmailVerification,
+		arg.HistoryEnabled,
+		arg.ReviewedBy,
+	)
 	var i ApproveRegistrationRequestRow
 	err := row.Scan(
 		&i.ID,
@@ -77,6 +88,7 @@ func (q *Queries) ApproveRegistrationRequest(ctx context.Context, arg ApproveReg
 		&i.UpdatedAt,
 		&i.DisplayName,
 		&i.Bio,
+		&i.PendingEmailVerification,
 	)
 	return i, err
 }

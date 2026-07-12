@@ -190,6 +190,27 @@ const (
 	// SSRF/abuse surface.
 	KeySearchRemoteURIUsers     = "search_remote_uri_users"
 	KeySearchRemoteURIAnonymous = "search_remote_uri_anonymous"
+
+	// Sign-up & new-user keys (config-parity W7).
+	//
+	// registration_require_email_verification holds new registrations behind a
+	// verification link; EFFECTIVE only while an outbound mail path exists
+	// (features.mail — a runtime toggle can never conjure a missing mailer).
+	// Accounts created while the gate is off are never retroactively locked
+	// (the pending flag is stamped at creation — the grandfather clause).
+	// registration_user_limit refuses signups once the instance holds that
+	// many accounts (0 = unlimited; the count is approximate under concurrent
+	// signups by design). registration_minimum_age (0 = disabled) requires the
+	// PeerTube-style signup ATTESTATION checkbox — no birthdate is collected.
+	// default_user_daily_quota_bytes caps bytes uploaded per ROLLING 24h
+	// window (0 = unlimited; internal/quota keeps the ledger).
+	// new_user_history_enabled seeds the per-user watch-history preference at
+	// account creation (existing accounts are untouched).
+	KeyRegistrationRequireEmailVerification = "registration_require_email_verification"
+	KeyRegistrationUserLimit                = "registration_user_limit"
+	KeyRegistrationMinimumAge               = "registration_minimum_age"
+	KeyDefaultUserDailyQuotaBytes           = "default_user_daily_quota_bytes"
+	KeyNewUserHistoryEnabled                = "new_user_history_enabled"
 )
 
 // Kind is a setting's value type, reported to clients and used to validate the
@@ -621,6 +642,26 @@ var specs = []spec{
 		page: PageFederation, section: "search"},
 	{key: KeySearchRemoteURIAnonymous, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageFederation, section: "search"},
+
+	// Sign-up & new users (config-parity W7). None have env backing: the
+	// runtime settings are the operator controls, defaults keep the shipped
+	// behaviour (no verification hold, no user limit, no age attestation, no
+	// daily quota, history on for new accounts).
+	{key: KeyRegistrationRequireEmailVerification, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageGeneral, section: "signup"},
+	{key: KeyRegistrationUserLimit, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: intMin(0),
+		page: PageGeneral, section: "signup"},
+	// 0 = disabled; otherwise a plausible human age (PT's own default is 16).
+	{key: KeyRegistrationMinimumAge, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: intZeroOrRange(1, 150),
+		page: PageGeneral, section: "signup"},
+	{key: KeyNewUserHistoryEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageGeneral, section: "signup"},
+	// The daily quota lives with the other storage limits on the VOD page.
+	{key: KeyDefaultUserDailyQuotaBytes, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: intMin(0),
+		page: PageVOD, section: "uploads"},
 }
 
 var specByKey = func() map[string]spec {

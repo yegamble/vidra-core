@@ -28,6 +28,11 @@ var (
 	// ErrInvalidPassword means a password confirmation (e.g. for a sensitive
 	// self-service action) did not match the account's password.
 	ErrInvalidPassword = errors.New("auth: incorrect password")
+	// ErrEmailVerificationRequired means the account was created while the
+	// registration email-verification gate was active and its email is still
+	// unverified — the session is withheld until the verification link is
+	// followed (config-parity W7).
+	ErrEmailVerificationRequired = errors.New("auth: email verification required")
 )
 
 // Repository is the data access the auth service needs. *sqlcgen.Queries
@@ -81,6 +86,20 @@ type Service struct {
 	mailer     Mailer
 	now        func() time.Time // injectable clock for tests
 
+	// newUserHistoryFn resolves the new_user_history_enabled instance setting
+	// (config-parity W7): the watch-history preference seeded onto accounts at
+	// creation. nil = seed true (the shipped behaviour).
+	newUserHistoryFn func() bool
+	// verificationGateFn reports whether the registration email-verification
+	// gate is EFFECTIVE right now (registration_require_email_verification AND
+	// an outbound mail path exists). nil = gate off. Consulted at registration
+	// (hold the session, mark the account pending) and at login (refuse a
+	// still-pending account). The check is against the CURRENT setting, so
+	// turning the gate off releases held accounts; accounts created while it
+	// was off are never retroactively locked (their pending flag is false —
+	// the grandfather clause).
+	verificationGateFn func() bool
+
 	// TOTP MFA collaborators (WithMFA). mfaRepo nil = feature not wired: the
 	// MFA endpoints answer ErrMFAUnavailable and login is unchanged.
 	mfaRepo       MFARepository
@@ -130,6 +149,42 @@ func WithResetTTL(d time.Duration) Option {
 			s.resetTTL = d
 		}
 	}
+}
+
+// WithNewUserHistoryEnabledFunc wires the live new_user_history_enabled
+// instance setting: f is consulted at account creation to seed the per-user
+// watch-history preference. nil is ignored (seed true).
+func WithNewUserHistoryEnabledFunc(f func() bool) Option {
+	return func(s *Service) {
+		if f != nil {
+			s.newUserHistoryFn = f
+		}
+	}
+}
+
+// WithEmailVerificationGateFunc wires the EFFECTIVE registration
+// email-verification gate (registration_require_email_verification AND mail
+// wired — cmd/api folds both in). nil is ignored (gate off).
+func WithEmailVerificationGateFunc(f func() bool) Option {
+	return func(s *Service) {
+		if f != nil {
+			s.verificationGateFn = f
+		}
+	}
+}
+
+// newUserHistoryEnabled resolves the history-preference seed for a new account.
+func (s *Service) newUserHistoryEnabled() bool {
+	if s.newUserHistoryFn != nil {
+		return s.newUserHistoryFn()
+	}
+	return true
+}
+
+// EmailVerificationGateActive reports whether the registration
+// email-verification gate is effective right now.
+func (s *Service) EmailVerificationGateActive() bool {
+	return s.verificationGateFn != nil && s.verificationGateFn()
 }
 
 // Tokens is the access + refresh pair returned by register/login/refresh.
@@ -194,6 +249,9 @@ func (s *Service) Register(ctx context.Context, in RegisterInput, userAgent stri
 		Email:        strings.TrimSpace(in.Email),
 		PasswordHash: hash,
 		Role:         role,
+		// Seed the per-user watch-history preference from the instance setting
+		// (new_user_history_enabled, config-parity W7).
+		HistoryEnabled: s.newUserHistoryEnabled(),
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -207,6 +265,55 @@ func (s *Service) Register(ctx context.Context, in RegisterInput, userAgent stri
 		return sqlcgen.User{}, Tokens{}, err
 	}
 	return user, tokens, nil
+}
+
+// RegisterPendingVerification creates an account HELD behind the registration
+// email-verification gate (config-parity W7): the account exists with
+// pending_email_verification set, no session is issued, and a verification
+// message is sent. Login is refused (ErrEmailVerificationRequired) until the
+// link is followed. The caller decides when to use this instead of Register
+// (the gate is effective). The bootstrap rule still applies: the very first
+// account is the admin (and still held — the gate is only reachable when a
+// mail path exists, so the operator gets the message).
+func (s *Service) RegisterPendingVerification(ctx context.Context, in RegisterInput) (sqlcgen.User, error) {
+	hash, err := HashPassword(in.Password)
+	if err != nil {
+		return sqlcgen.User{}, err
+	}
+
+	role := "user"
+	if n, err := s.repo.CountUsers(ctx); err == nil && n == 0 {
+		role = "admin"
+	}
+
+	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username:                 strings.TrimSpace(in.Username),
+		Email:                    strings.TrimSpace(in.Email),
+		PasswordHash:             hash,
+		Role:                     role,
+		PendingEmailVerification: true,
+		HistoryEnabled:           s.newUserHistoryEnabled(),
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			return sqlcgen.User{}, ErrConflict
+		}
+		return sqlcgen.User{}, err
+	}
+	// The verification send is returned ALONGSIDE the created user: a mailer
+	// hiccup must not orphan the signup (a retry would 409 on the existing
+	// account), so the HTTP layer logs the failure and still answers 202. The
+	// operator recovery path is the admin email_verified override.
+	if err := s.RequestEmailVerification(ctx, user.ID); err != nil {
+		return user, err
+	}
+	return user, nil
+}
+
+// CountUsers reports the total number of accounts (the registration_user_limit
+// gate's denominator; approximate under concurrent signups by design).
+func (s *Service) CountUsers(ctx context.Context) (int64, error) {
+	return s.repo.CountUsers(ctx)
 }
 
 // LoginResult is the outcome of a successful credential verification: either a
@@ -237,6 +344,14 @@ func (s *Service) Login(ctx context.Context, in LoginInput, userAgent string) (L
 	}
 	if !user.IsActive {
 		return LoginResult{}, ErrAccountDisabled
+	}
+	// Email-verification hold (config-parity W7): an account created while the
+	// registration verification gate was active stays sessionless until its
+	// email is verified. Checked against the CURRENT effective gate, so
+	// disabling the setting releases held accounts; pre-gate accounts carry
+	// pending=false and are never retroactively locked (grandfather clause).
+	if user.PendingEmailVerification && !user.EmailVerified && s.EmailVerificationGateActive() {
+		return LoginResult{}, ErrEmailVerificationRequired
 	}
 
 	// MFA gate: credentials alone do not make a session on an MFA-enabled
@@ -337,6 +452,9 @@ type ProfileInput struct {
 	// §16): when true, the account's channels/videos are excluded from public
 	// discovery surfaces while direct URLs keep serving.
 	Unlisted *bool
+	// HistoryEnabled toggles the per-user watch-history preference (config-
+	// parity W7): while false, watch-progress/history writes are skipped.
+	HistoryEnabled *bool
 }
 
 // UpdateProfile updates the authenticated account's presentation fields
@@ -344,10 +462,11 @@ type ProfileInput struct {
 // intentionally not changed here — those need their own re-verification flow.
 func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in ProfileInput) (sqlcgen.User, error) {
 	user, err := s.repo.UpdateUserProfile(ctx, sqlcgen.UpdateUserProfileParams{
-		ID:          id,
-		DisplayName: trimPtr(in.DisplayName),
-		Bio:         trimPtr(in.Bio),
-		Unlisted:    in.Unlisted,
+		ID:             id,
+		DisplayName:    trimPtr(in.DisplayName),
+		Bio:            trimPtr(in.Bio),
+		Unlisted:       in.Unlisted,
+		HistoryEnabled: in.HistoryEnabled,
 	})
 	if err != nil {
 		return sqlcgen.User{}, ErrAccountNotFound

@@ -84,6 +84,8 @@ func (f *fakeRepo) ApproveRegistrationRequest(ctx context.Context, a sqlcgen.App
 		if r.id == a.ID && r.status == "pending" {
 			u, err := f.CreateUser(ctx, sqlcgen.CreateUserParams{
 				Username: r.username, Email: r.email, PasswordHash: r.passwordHash, Role: "user",
+				PendingEmailVerification: a.PendingEmailVerification,
+				HistoryEnabled:           a.HistoryEnabled,
 			})
 			if err != nil {
 				return sqlcgen.ApproveRegistrationRequestRow{}, err // e.g. 23505 conflict
@@ -94,6 +96,7 @@ func (f *fakeRepo) ApproveRegistrationRequest(ctx context.Context, a sqlcgen.App
 				ID: u.ID, Username: u.Username, Email: u.Email, PasswordHash: u.PasswordHash,
 				Role: u.Role, EmailVerified: u.EmailVerified, IsActive: u.IsActive,
 				CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt, DisplayName: u.DisplayName, Bio: u.Bio,
+				PendingEmailVerification: u.PendingEmailVerification,
 			}, nil
 		}
 	}
@@ -259,6 +262,9 @@ func (f *fakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUserProf
 			if a.Bio != nil {
 				u.Bio = *a.Bio
 			}
+			if a.HistoryEnabled != nil {
+				u.HistoryEnabled = *a.HistoryEnabled
+			}
 			u.UpdatedAt = time.Now()
 			f.byEmail[k] = u
 			return u, nil
@@ -285,6 +291,9 @@ func (f *fakeRepo) CreateUser(_ context.Context, arg sqlcgen.CreateUserParams) (
 		IsActive:     true,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
+
+		PendingEmailVerification: arg.PendingEmailVerification,
+		HistoryEnabled:           arg.HistoryEnabled,
 	}
 	f.byEmail[email] = u
 	f.names[lower(arg.Username)] = true

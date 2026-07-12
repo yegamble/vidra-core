@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -170,12 +171,28 @@ type instanceSearchConfig struct {
 // app shell reads on load: instance name/description, software, whether signup
 // is open, and operator-provided legal/contact links (empty when unset).
 type instanceResponse struct {
-	Name                         string           `json:"name"`
-	Description                  string           `json:"description"`
-	ShortDescription             string           `json:"short_description"`
-	Software                     instanceSoftware `json:"software"`
-	RegistrationEnabled          bool             `json:"registration_enabled"`
-	RegistrationRequiresApproval bool             `json:"registration_requires_approval"`
+	Name             string           `json:"name"`
+	Description      string           `json:"description"`
+	ShortDescription string           `json:"short_description"`
+	Software         instanceSoftware `json:"software"`
+	// RegistrationEnabled is the EFFECTIVE signup availability (config-parity
+	// W7): the runtime toggle AND registration_user_limit headroom — it reads
+	// false while the instance is at its user limit.
+	RegistrationEnabled          bool `json:"registration_enabled"`
+	RegistrationRequiresApproval bool `json:"registration_requires_approval"`
+	// RegistrationDisabledReason is "" while registration is effectively
+	// enabled (or plainly toggled off); "user_limit_reached" when the toggle
+	// is on but registration_user_limit is exhausted, so the signup page can
+	// explain the closure honestly (additive, W7).
+	RegistrationDisabledReason string `json:"registration_disabled_reason"`
+	// RegistrationRequiresEmailVerification is the EFFECTIVE verification gate
+	// (the setting AND features.mail): new signups answer 202 and stay
+	// sessionless until the emailed link is followed (W7).
+	RegistrationRequiresEmailVerification bool `json:"registration_requires_email_verification"`
+	// RegistrationMinimumAge is the signup age-attestation threshold: 0 = off,
+	// otherwise registration requires the "I am at least N years old"
+	// attestation flag (PeerTube parity — no birthdate is collected; W7).
+	RegistrationMinimumAge int64 `json:"registration_minimum_age"`
 	// OAuthProviders lists the configured OIDC login provider names so the
 	// frontend can render "continue with …" buttons pointing at
 	// GET /api/v1/auth/oauth/{provider}. Empty array when OAuth is off.
@@ -234,9 +251,11 @@ type instanceResponse struct {
 // serialized document plus Cache-Control: s-maxage=60, so a fronting cache can
 // absorb the hot app-shell reads while settings changes still show within a
 // minute. Everything the document reads comes from in-memory caches (settings
-// overlay, document hashes, branding image metadata) — no DB round trip.
+// overlay, document hashes, branding image metadata, the TTL-cached account
+// count behind the registration user limit) — no DB round trip while
+// registration_user_limit is unset, at most one every userCountTTL otherwise.
 func (s *Server) handleInstance(c echo.Context) error {
-	body, err := json.Marshal(s.instanceDocument())
+	body, err := json.Marshal(s.instanceDocument(c.Request().Context()))
 	if err != nil {
 		return err
 	}
@@ -252,26 +271,37 @@ func (s *Server) handleInstance(c echo.Context) error {
 }
 
 // instanceDocument assembles the full public instance document.
-func (s *Server) instanceDocument() instanceResponse {
+func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
+	// Effective registration state (config-parity W7): the runtime toggle,
+	// then the user-limit headroom with an explicit machine-readable reason.
+	regEnabled := s.registrationEnabled()
+	regReason := ""
+	if regEnabled && s.registrationAtUserLimit(ctx) {
+		regEnabled = false
+		regReason = "user_limit_reached"
+	}
 	return instanceResponse{
-		Name:                         s.settingString(instancesettings.KeyInstanceName, s.cfg.InstanceName),
-		Description:                  s.settingString(instancesettings.KeyInstanceDescription, s.cfg.InstanceDescription),
-		ShortDescription:             s.settingString(instancesettings.KeyInstanceShortDescription, ""),
-		Software:                     instanceSoftware{Name: "vidra", Version: version.Version},
-		RegistrationEnabled:          s.registrationEnabled(),
-		RegistrationRequiresApproval: s.registrationRequiresApproval(),
-		OAuthProviders:               s.cfg.OAuthProviderNames(),
-		FederationEnabled:            s.cfg.FederationEnabled,
-		TermsURL:                     s.settingString(instancesettings.KeyTermsURL, s.cfg.InstanceTermsURL),
-		PrivacyURL:                   s.settingString(instancesettings.KeyPrivacyURL, s.cfg.InstancePrivacyURL),
-		ContactEmail:                 s.effectiveContactEmail(),
-		DefaultLanguage:              s.settingString(instancesettings.KeyDefaultLanguage, instancesettings.DefaultDefaultLanguage),
-		Categories:                   s.settingStrings(instancesettings.KeyInstanceCategories),
-		ModeratorLanguages:           s.settingStrings(instancesettings.KeyModeratorLanguages),
-		ServerCountry:                s.settingString(instancesettings.KeyServerCountry, ""),
-		IsSensitive:                  s.settingBool(instancesettings.KeyInstanceIsSensitive, false),
-		SensitiveContentPolicy:       s.sensitiveContentPolicy(),
-		ContactFormEnabled:           s.contactFormAvailable(),
+		Name:                                  s.settingString(instancesettings.KeyInstanceName, s.cfg.InstanceName),
+		Description:                           s.settingString(instancesettings.KeyInstanceDescription, s.cfg.InstanceDescription),
+		ShortDescription:                      s.settingString(instancesettings.KeyInstanceShortDescription, ""),
+		Software:                              instanceSoftware{Name: "vidra", Version: version.Version},
+		RegistrationEnabled:                   regEnabled,
+		RegistrationRequiresApproval:          s.registrationRequiresApproval(),
+		RegistrationDisabledReason:            regReason,
+		RegistrationRequiresEmailVerification: s.registrationRequiresEmailVerification(),
+		RegistrationMinimumAge:                s.registrationMinimumAge(),
+		OAuthProviders:                        s.cfg.OAuthProviderNames(),
+		FederationEnabled:                     s.cfg.FederationEnabled,
+		TermsURL:                              s.settingString(instancesettings.KeyTermsURL, s.cfg.InstanceTermsURL),
+		PrivacyURL:                            s.settingString(instancesettings.KeyPrivacyURL, s.cfg.InstancePrivacyURL),
+		ContactEmail:                          s.effectiveContactEmail(),
+		DefaultLanguage:                       s.settingString(instancesettings.KeyDefaultLanguage, instancesettings.DefaultDefaultLanguage),
+		Categories:                            s.settingStrings(instancesettings.KeyInstanceCategories),
+		ModeratorLanguages:                    s.settingStrings(instancesettings.KeyModeratorLanguages),
+		ServerCountry:                         s.settingString(instancesettings.KeyServerCountry, ""),
+		IsSensitive:                           s.settingBool(instancesettings.KeyInstanceIsSensitive, false),
+		SensitiveContentPolicy:                s.sensitiveContentPolicy(),
+		ContactFormEnabled:                    s.contactFormAvailable(),
 		SocialLinks: instanceSocialLinks{
 			Website:  s.settingString(instancesettings.KeyWebsiteLink, ""),
 			Mastodon: s.settingString(instancesettings.KeyMastodonLink, ""),

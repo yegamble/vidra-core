@@ -24,7 +24,7 @@ SET role       = COALESCE($1, role),
                                ELSE storage_quota_bytes END,
     updated_at = now()
 WHERE id = $7
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
 `
 
 type AdminUpdateUserParams struct {
@@ -69,6 +69,8 @@ func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams
 		&i.Unlisted,
 		&i.BypassQuarantine,
 		&i.DeletedAt,
+		&i.PendingEmailVerification,
+		&i.HistoryEnabled,
 	)
 	return i, err
 }
@@ -120,24 +122,32 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (username, email, password_hash, role)
-VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at
+INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
 `
 
 type CreateUserParams struct {
-	Username     string `json:"username"`
-	Email        string `json:"email"`
-	PasswordHash string `json:"password_hash"`
-	Role         string `json:"role"`
+	Username                 string `json:"username"`
+	Email                    string `json:"email"`
+	PasswordHash             string `json:"password_hash"`
+	Role                     string `json:"role"`
+	PendingEmailVerification bool   `json:"pending_email_verification"`
+	HistoryEnabled           bool   `json:"history_enabled"`
 }
 
+// pending_email_verification is TRUE only when the account is created while
+// the registration email-verification gate is active (W7 — the grandfather
+// clause lives in this flag, never in a retroactive check); history_enabled
+// is seeded from the new_user_history_enabled instance setting.
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, createUser,
 		arg.Username,
 		arg.Email,
 		arg.PasswordHash,
 		arg.Role,
+		arg.PendingEmailVerification,
+		arg.HistoryEnabled,
 	)
 	var i User
 	err := row.Scan(
@@ -156,6 +166,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Unlisted,
 		&i.BypassQuarantine,
 		&i.DeletedAt,
+		&i.PendingEmailVerification,
+		&i.HistoryEnabled,
 	)
 	return i, err
 }
@@ -231,7 +243,7 @@ func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (Get
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -255,12 +267,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.Unlisted,
 		&i.BypassQuarantine,
 		&i.DeletedAt,
+		&i.PendingEmailVerification,
+		&i.HistoryEnabled,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
 FROM users
 WHERE id = $1
 `
@@ -284,12 +298,14 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.Unlisted,
 		&i.BypassQuarantine,
 		&i.DeletedAt,
+		&i.PendingEmailVerification,
+		&i.HistoryEnabled,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
 FROM users
 WHERE lower(username) = lower($1) AND is_active = true
 `
@@ -317,6 +333,8 @@ func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, er
 		&i.Unlisted,
 		&i.BypassQuarantine,
 		&i.DeletedAt,
+		&i.PendingEmailVerification,
+		&i.HistoryEnabled,
 	)
 	return i, err
 }
@@ -324,7 +342,7 @@ func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, er
 const listUsers = `-- name: ListUsers :many
 SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.is_active,
        u.created_at, u.updated_at, u.display_name, u.bio, u.storage_quota_bytes, u.unlisted,
-       u.bypass_quarantine, u.deleted_at,
+       u.bypass_quarantine, u.deleted_at, u.pending_email_verification, u.history_enabled,
        (SELECT COALESCE(SUM(vf.size_bytes), 0)::bigint
           FROM video_files vf
           JOIN videos v ON v.id = vf.video_id
@@ -345,22 +363,24 @@ type ListUsersParams struct {
 }
 
 type ListUsersRow struct {
-	ID                uuid.UUID          `json:"id"`
-	Username          string             `json:"username"`
-	Email             string             `json:"email"`
-	PasswordHash      string             `json:"password_hash"`
-	Role              string             `json:"role"`
-	EmailVerified     bool               `json:"email_verified"`
-	IsActive          bool               `json:"is_active"`
-	CreatedAt         time.Time          `json:"created_at"`
-	UpdatedAt         time.Time          `json:"updated_at"`
-	DisplayName       string             `json:"display_name"`
-	Bio               string             `json:"bio"`
-	StorageQuotaBytes *int64             `json:"storage_quota_bytes"`
-	Unlisted          bool               `json:"unlisted"`
-	BypassQuarantine  bool               `json:"bypass_quarantine"`
-	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
-	StorageUsedBytes  int64              `json:"storage_used_bytes"`
+	ID                       uuid.UUID          `json:"id"`
+	Username                 string             `json:"username"`
+	Email                    string             `json:"email"`
+	PasswordHash             string             `json:"password_hash"`
+	Role                     string             `json:"role"`
+	EmailVerified            bool               `json:"email_verified"`
+	IsActive                 bool               `json:"is_active"`
+	CreatedAt                time.Time          `json:"created_at"`
+	UpdatedAt                time.Time          `json:"updated_at"`
+	DisplayName              string             `json:"display_name"`
+	Bio                      string             `json:"bio"`
+	StorageQuotaBytes        *int64             `json:"storage_quota_bytes"`
+	Unlisted                 bool               `json:"unlisted"`
+	BypassQuarantine         bool               `json:"bypass_quarantine"`
+	DeletedAt                pgtype.Timestamptz `json:"deleted_at"`
+	PendingEmailVerification bool               `json:"pending_email_verification"`
+	HistoryEnabled           bool               `json:"history_enabled"`
+	StorageUsedBytes         int64              `json:"storage_used_bytes"`
 }
 
 // Admin user list: newest first, optionally filtered by a username/email
@@ -392,6 +412,8 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 			&i.Unlisted,
 			&i.BypassQuarantine,
 			&i.DeletedAt,
+			&i.PendingEmailVerification,
+			&i.HistoryEnabled,
 			&i.StorageUsedBytes,
 		); err != nil {
 			return nil, err
@@ -409,16 +431,18 @@ UPDATE users
 SET display_name = COALESCE($1, display_name),
     bio          = COALESCE($2, bio),
     unlisted     = COALESCE($3, unlisted),
+    history_enabled = COALESCE($4, history_enabled),
     updated_at   = now()
-WHERE id = $4
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at
+WHERE id = $5
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
 `
 
 type UpdateUserProfileParams struct {
-	DisplayName *string   `json:"display_name"`
-	Bio         *string   `json:"bio"`
-	Unlisted    *bool     `json:"unlisted"`
-	ID          uuid.UUID `json:"id"`
+	DisplayName    *string   `json:"display_name"`
+	Bio            *string   `json:"bio"`
+	Unlisted       *bool     `json:"unlisted"`
+	HistoryEnabled *bool     `json:"history_enabled"`
+	ID             uuid.UUID `json:"id"`
 }
 
 func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (User, error) {
@@ -426,6 +450,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		arg.DisplayName,
 		arg.Bio,
 		arg.Unlisted,
+		arg.HistoryEnabled,
 		arg.ID,
 	)
 	var i User
@@ -445,6 +470,8 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.Unlisted,
 		&i.BypassQuarantine,
 		&i.DeletedAt,
+		&i.PendingEmailVerification,
+		&i.HistoryEnabled,
 	)
 	return i, err
 }

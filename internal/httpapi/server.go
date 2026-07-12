@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -143,6 +144,16 @@ type Server struct {
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
 	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
 	devMailCapture *auth.CaptureMailer
+
+	// userCount caches the total-account count for the registration_user_limit
+	// gate and the /instance effective registration_enabled flag (config-parity
+	// W7). The count is only consulted while a limit is set (default 0 keeps the
+	// hot paths DB-free) and is refreshed at most every userCountTTL —
+	// approximate under concurrent signups by design (race-tolerant per spec).
+	// A successful signup invalidates it so the limit engages promptly.
+	userCountMu      sync.Mutex
+	userCount        int64
+	userCountFetched time.Time
 }
 
 // uploadRoutePath is the Echo route template for the original-file upload. It is

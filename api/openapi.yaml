@@ -330,7 +330,18 @@ paths:
         account created on a fresh instance is granted the admin role. Rate
         limited; subject to the standard request guards. When the instance
         requires registration approval, no account is created: a pending
-        registration request is filed and 202 is returned with no token.
+        registration request is filed and 202 is returned with no token. When
+        the instance requires email verification
+        (registration_require_email_verification, effective only while the
+        deployment has an outbound mail path — see features.mail), the account
+        is created HELD: 202 `{"status":"verification_pending"}`, no token,
+        and login stays 403 until the emailed link is confirmed. Both gates
+        compose: approval first, then the approved account is held for
+        verification. While registration_minimum_age is active the request
+        must carry `age_attestation: true`. While registration_user_limit is
+        reached signup answers 403 (GET /api/v1/instance reports
+        registration_enabled=false with registration_disabled_reason
+        `user_limit_reached`).
         With `cookie_mode: true` (or an existing `vidra_refresh` cookie) the
         refresh token is delivered as an httpOnly `vidra_refresh` cookie
         (Path=/api/v1/auth, SameSite=Lax, Secure on https instances) instead of
@@ -351,8 +362,10 @@ paths:
                 $ref: "#/components/schemas/AuthResponse"
         "202":
           description: >-
-            Registration requires approval; a pending request was filed. No
-            account or token is created until an admin approves it.
+            Registration requires approval (a pending request was filed; no
+            account exists yet) or email verification (the account exists but
+            is held sessionless until the emailed link is confirmed) — the
+            body's `status` says which.
           content:
             application/json:
               schema:
@@ -364,13 +377,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Registration is disabled on this instance.
+          description: >-
+            Registration is disabled on this instance, or the
+            registration_user_limit is reached.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: Validation failed.
+          description: >-
+            Validation failed (including a missing `age_attestation` while
+            registration_minimum_age is active).
           content:
             application/json:
               schema:
@@ -420,7 +437,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Account is disabled.
+          description: >-
+            Account is disabled — or, with the stable code
+            `email_verification_required`, the account was created behind the
+            registration email-verification gate and its email is still
+            unverified (confirm the emailed link, then retry).
           content:
             application/json:
               schema:
@@ -1893,7 +1914,10 @@ paths:
         one, else the instance default (INSTANCE_DEFAULT_QUOTA_BYTES).
         quota_bytes is null when the caller is unlimited. Uploads and URL
         imports that would exceed the quota are rejected with 422
-        quota_exceeded.
+        quota_exceeded. The daily_* pair reports the rolling-24h upload window
+        (default_user_daily_quota_bytes): daily_quota_bytes is null while no
+        daily quota is configured; exceeding it answers 422
+        daily_quota_exceeded.
       tags: [auth]
       security:
         - bearerAuth: []
@@ -4061,7 +4085,9 @@ paths:
         existence is not leaked. The file extension must be an accepted video
         container (otherwise 415); the body must be within UPLOAD_MAX_SIZE
         (otherwise 413); when a storage quota applies to the caller, a file
-        that would not fit is rejected before storing (422 quota_exceeded).
+        that would not fit is rejected before storing (422 quota_exceeded; a
+        size beyond the rolling-24h daily upload quota is 422
+        daily_quota_exceeded).
         Real transcoding into multiple renditions happens in a later stage;
         for now the original is the playable source.
       tags: [videos]
@@ -4128,7 +4154,8 @@ paths:
         "422":
           description: >-
             Storing the file would exceed the caller's storage quota (code
-            quota_exceeded).
+            quota_exceeded; or the rolling-24h daily upload quota, code
+            daily_quota_exceeded).
           content:
             application/json:
               schema:
@@ -4182,7 +4209,8 @@ paths:
         only). The declared size, filename extension, and the caller's storage
         quota are validated UP FRONT: a non-video extension is 415, a size beyond
         UPLOAD_MAX_SIZE is 413, and a size that would exceed the caller's quota is
-        422 (code quota_exceeded). Returns the upload id, the fixed chunk size to
+        422 (code quota_exceeded; the rolling-24h daily upload quota answers
+        code daily_quota_exceeded). Returns the upload id, the fixed chunk size to
         send (every chunk but the last must be exactly this many bytes), the total
         number of chunks, and the 24h session expiry. Upload each chunk with PUT
         /api/v1/uploads/{upload_id}/chunks/{n}, then POST
@@ -4248,7 +4276,8 @@ paths:
         "422":
           description: >-
             The body is invalid (size must be > 0, filename required) or the file
-            would exceed the caller's storage quota (code quota_exceeded).
+            would exceed the caller's storage quota (code quota_exceeded) or
+            the rolling-24h daily upload quota (code daily_quota_exceeded).
           content:
             application/json:
               schema:
@@ -4460,7 +4489,8 @@ paths:
         "422":
           description: >-
             One or more chunks are missing or the wrong size, or completing would
-            exceed the caller's storage quota (code quota_exceeded).
+            exceed the caller's storage quota (code quota_exceeded) or the
+            rolling-24h daily upload quota (code daily_quota_exceeded).
           content:
             application/json:
               schema:
@@ -9793,7 +9823,14 @@ paths:
         and search_remote_uri_anonymous (default false) let logged-in /
         anonymous callers resolve URL- and handle-shaped search queries to
         remote content through the SSRF-guarded federation fetcher — both
-        effective only while federation is enabled), an integer for the int-kind limits
+        effective only while federation is enabled — and the config-parity W7
+        sign-up keys registration_require_email_verification (default false;
+        effective only while the deployment has an outbound mail path, see
+        features.mail; holds NEW registrations sessionless until the emailed
+        link is confirmed — accounts created while the gate was off are never
+        retroactively locked) and new_user_history_enabled (default true;
+        seeds the per-user watch-history preference at account creation
+        only)), an integer for the int-kind limits
         (including the W8 keys channel_sync_max_per_user,
         user_export_expiration_hours, user_export_max_quota_bytes,
         max_channels_per_user — 0 always means unlimited/never — the W10 keys
@@ -9803,7 +9840,15 @@ paths:
         without a restart), and the W11 live limits live_max_instance_lives /
         live_max_user_lives (0..10000, 0 = unlimited, enforced at the RTMP
         publish callback) and live_max_duration_secs (0 = no limit, else
-        60..2592000, enforced by the duration watchdog)), a string
+        60..2592000, enforced by the duration watchdog), and the W7 sign-up
+        limits registration_user_limit (0 = unlimited; signup refuses and
+        GET /api/v1/instance reports registration_enabled=false with reason
+        user_limit_reached once the account count reaches it — the count is
+        approximate under concurrent signups), registration_minimum_age
+        (0 = off, else 1..150; signup then requires the age_attestation flag —
+        no birthdate is collected), and default_user_daily_quota_bytes
+        (0 = unlimited; a ROLLING trailing-24h upload window enforced at the
+        upload gates with 422 daily_quota_exceeded)), a string
         for the text/markdown/link keys and enum keys such as
         sensitive_content_policy, and an array of strings for list keys
         (instance_categories, moderator_languages, and transcoding_resolutions
@@ -11067,7 +11112,9 @@ components:
     InstanceResponse:
       type: object
       required: [name, description, short_description, software, registration_enabled,
-                 registration_requires_approval, oauth_providers, federation_enabled,
+                 registration_requires_approval, registration_disabled_reason,
+                 registration_requires_email_verification, registration_minimum_age,
+                 oauth_providers, federation_enabled,
                  terms_url, privacy_url, contact_email, default_language, categories,
                  moderator_languages, server_country, is_sensitive,
                  sensitive_content_policy, contact_form_enabled, social_links, features,
@@ -11150,13 +11197,40 @@ components:
               example: 0.1.0
         registration_enabled:
           type: boolean
-          description: Whether public account signup is currently accepted.
+          description: >-
+            Whether public account signup is currently accepted — the
+            EFFECTIVE value: the runtime toggle AND registration_user_limit
+            headroom (false while the instance is at its user limit; see
+            registration_disabled_reason).
         registration_requires_approval:
           type: boolean
           description: >-
             Whether signup files a pending request for admin approval instead of
             creating an account immediately (only relevant when registration is
             enabled).
+        registration_disabled_reason:
+          type: string
+          enum: ["", user_limit_reached]
+          description: >-
+            "" while registration is effectively enabled (or plainly toggled
+            off); "user_limit_reached" when the runtime toggle is on but the
+            registration_user_limit is exhausted — so the signup page can
+            explain the closure honestly.
+        registration_requires_email_verification:
+          type: boolean
+          description: >-
+            EFFECTIVE registration email-verification gate: the
+            registration_require_email_verification setting AND an outbound
+            mail path on the deployment (features.mail). When true, signup
+            answers 202 {"status":"verification_pending"} and login stays 403
+            email_verification_required until the emailed link is confirmed.
+        registration_minimum_age:
+          type: integer
+          format: int64
+          description: >-
+            Signup age-attestation threshold: 0 = off; otherwise registration
+            requires `age_attestation: true` ("I am at least N years old" —
+            PeerTube parity, no birthdate is collected).
         oauth_providers:
           type: array
           items:
@@ -11583,7 +11657,7 @@ components:
               type: string
     User:
       type: object
-      required: [id, username, email, role, email_verified, display_name, bio, created_at]
+      required: [id, username, email, role, email_verified, display_name, bio, history_enabled, created_at]
       properties:
         id:
           type: string
@@ -11612,6 +11686,14 @@ components:
             Account-level discovery opt-out. When true, the account's channels
             and videos are excluded from public discovery surfaces (video feed,
             search) while direct channel/video URLs keep serving. Default false.
+        history_enabled:
+          type: boolean
+          description: >-
+            Per-user watch-history preference. While false, watch-progress and
+            history writes are skipped (PUT /videos/{id}/watch-progress is a
+            no-op 204). Seeded at account creation from the
+            new_user_history_enabled instance setting; existing entries are
+            kept (clear them via DELETE /me/history).
         created_at:
           type: string
           format: date-time
@@ -11663,6 +11745,11 @@ components:
           type: boolean
           description: >-
             Toggle the account-level discovery opt-out (see User.unlisted).
+        history_enabled:
+          type: boolean
+          description: >-
+            Toggle the per-user watch-history preference (see
+            User.history_enabled).
     Channel:
       type: object
       required: [id, owner_id, handle, display_name, description, follower_count, created_at]
@@ -13716,7 +13803,7 @@ components:
         The caller's storage picture: bytes currently stored and the effective
         quota (per-user override, else the instance default). quota_bytes is
         null when the caller is unlimited.
-      required: [used_bytes, quota_bytes]
+      required: [used_bytes, quota_bytes, daily_used_bytes, daily_quota_bytes]
       properties:
         used_bytes:
           type: integer
@@ -13728,6 +13815,20 @@ components:
           type: [integer, "null"]
           format: int64
           description: Effective storage quota in bytes; null = unlimited.
+        daily_used_bytes:
+          type: integer
+          format: int64
+          description: >-
+            Bytes of originals the caller stored in the trailing 24h (ROLLING
+            window, config default_user_daily_quota_bytes). 0 while no daily
+            quota is configured (the ledger is not consulted).
+        daily_quota_bytes:
+          type: [integer, "null"]
+          format: int64
+          description: >-
+            The instance's rolling-24h daily upload quota in bytes; null =
+            unlimited/not configured. Exceeding it answers 422
+            `daily_quota_exceeded` on the upload gates.
     DeleteAccountRequest:
       type: object
       description: >-
@@ -15894,6 +15995,14 @@ components:
           description: >-
             Optional message to moderators, used only when the instance requires
             registration approval; ignored otherwise.
+        age_attestation:
+          type: boolean
+          description: >-
+            PeerTube-style minimum-age attestation ("I am at least N years
+            old"). Required (true) while the instance's
+            registration_minimum_age setting is active (GET /api/v1/instance
+            reports the threshold); no birthdate is collected. Missing/false
+            while active is a 422 field error on `age_attestation`.
         cookie_mode:
           type: boolean
           default: false
@@ -15908,8 +16017,14 @@ components:
       properties:
         status:
           type: string
-          enum: [pending]
-          description: The signup is queued for admin approval; no account exists yet.
+          enum: [pending, verification_pending]
+          description: >-
+            `pending`: the signup is queued for admin approval; no account
+            exists yet. `verification_pending`: the account was created HELD
+            behind the email-verification gate
+            (registration_require_email_verification) — no session is issued
+            and login answers 403 `email_verification_required` until the
+            emailed link is confirmed at POST /api/v1/auth/verify-email/confirm.
     RegistrationRequest:
       type: object
       required: [id, username, email, status, created_at]
