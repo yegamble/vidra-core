@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/gommon/bytes"
@@ -61,6 +63,63 @@ func (s *Server) registrationEnabled() bool {
 
 func (s *Server) registrationRequiresApproval() bool {
 	return s.settingBool(instancesettings.KeyRegistrationRequireApproval, s.cfg.RegistrationRequireApproval)
+}
+
+// --- sign-up & new users (config-parity W7) ---
+
+// registrationRequiresEmailVerification is the EFFECTIVE verification gate:
+// the runtime setting AND an outbound mail path on this deployment (the gate
+// can never hold accounts behind a message nobody can send). Exposed on
+// GET /instance so the signup UI can explain the pending state.
+func (s *Server) registrationRequiresEmailVerification() bool {
+	return s.contactMailer != nil &&
+		s.settingBool(instancesettings.KeyRegistrationRequireEmailVerification, false)
+}
+
+// registrationMinimumAge is the signup age-attestation threshold (0 = off).
+func (s *Server) registrationMinimumAge() int64 {
+	return s.settingInt(instancesettings.KeyRegistrationMinimumAge, 0)
+}
+
+// registrationUserLimit is the total-account cap (0 = unlimited).
+func (s *Server) registrationUserLimit() int64 {
+	return s.settingInt(instancesettings.KeyRegistrationUserLimit, 0)
+}
+
+// userCountTTL bounds how stale the cached account count may be. Short enough
+// that the limit engages within seconds of being crossed, long enough to keep
+// the hot /instance path DB-free.
+const userCountTTL = 15 * time.Second
+
+// registrationAtUserLimit reports whether the instance has reached
+// registration_user_limit. false while no limit is set (no DB round trip) or
+// no auth service is wired. The cached count makes this approximate under
+// concurrent signups — documented race tolerance, mirroring the quota gates.
+func (s *Server) registrationAtUserLimit(ctx context.Context) bool {
+	limit := s.registrationUserLimit()
+	if limit <= 0 || s.authsvc == nil {
+		return false
+	}
+	s.userCountMu.Lock()
+	defer s.userCountMu.Unlock()
+	if time.Since(s.userCountFetched) > userCountTTL {
+		n, err := s.authsvc.CountUsers(ctx)
+		if err != nil {
+			// Fail open: a transient count error must not close signups.
+			return false
+		}
+		s.userCount = n
+		s.userCountFetched = time.Now()
+	}
+	return s.userCount >= limit
+}
+
+// invalidateUserCount drops the cached account count (called after a
+// successful signup so the limit engages promptly).
+func (s *Server) invalidateUserCount() {
+	s.userCountMu.Lock()
+	s.userCountFetched = time.Time{}
+	s.userCountMu.Unlock()
 }
 
 func (s *Server) uploadsEnabled() bool {

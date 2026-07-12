@@ -43,6 +43,13 @@ func (s *Server) handleRecordWatchProgress(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	// Per-user history preference (config-parity W7): while history_enabled is
+	// off, nothing is written — no resume position, no history entry (matching
+	// PeerTube's "do not record history"). Still 204: the client fires this
+	// beacon-style and the off state is not an error.
+	if u, err := s.authsvc.UserByID(c.Request().Context(), userID); err == nil && !u.HistoryEnabled {
+		return c.NoContent(http.StatusNoContent)
+	}
 	if err := s.videosvc.RecordProgress(c.Request().Context(), videoID, userID, in.PositionSeconds); err != nil {
 		return err
 	}

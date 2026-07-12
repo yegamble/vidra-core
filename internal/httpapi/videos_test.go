@@ -800,7 +800,28 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	chRepo := newChannelFakeRepo()
 	authRepo := newAuthFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
-	authsvc := auth.NewService(authRepo, issuer, 720*time.Hour)
+	// The auth service reads the sign-up & new-user settings (config-parity W7)
+	// through late-bound refs: the settings service is constructed further down
+	// (it needs the config defaults mapping), so the funcs tolerate nil until
+	// then. The verification-gate fn mirrors ONLY the runtime setting — in
+	// production cmd/api folds the mail capability in; here the HTTP layer's
+	// registrationRequiresEmailVerification (contactMailer != nil) is the mail
+	// gate, and pending accounts can only be minted through it. The capture
+	// mailer records verification tokens so tests can complete the round trip.
+	var settingsRef *instancesettings.Service
+	captureMailer := auth.NewCaptureMailer()
+	authsvc := auth.NewService(authRepo, issuer, 720*time.Hour,
+		auth.WithMailer(captureMailer),
+		auth.WithNewUserHistoryEnabledFunc(func() bool {
+			if settingsRef == nil {
+				return true
+			}
+			return settingsRef.Bool(instancesettings.KeyNewUserHistoryEnabled)
+		}),
+		auth.WithEmailVerificationGateFunc(func() bool {
+			return settingsRef != nil && settingsRef.Bool(instancesettings.KeyRegistrationRequireEmailVerification)
+		}),
+	)
 	blobs, err := storage.NewLocal(t.TempDir())
 	if err != nil {
 		t.Fatalf("storage.NewLocal: %v", err)
@@ -872,6 +893,17 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	}
 	authRepo.statComments = func() int64 { return int64(len(cmRepo.comments)) }
 	liveRepo := newLiveFakeRepo(chRepo)
+	// Daily-upload accounting (config-parity W7): the recorder feeds the quota
+	// service's rolling ledger from AttachOriginal, late-bound because the
+	// quota service is constructed after the video service (as in cmd/api,
+	// where construction order is inverted instead).
+	var quotaRef *quota.Service
+	opts = append(opts, video.WithUploadUsageRecorder(func(ctx context.Context, ownerID uuid.UUID, bytes int64) error {
+		if quotaRef != nil {
+			_ = quotaRef.RecordUpload(ctx, ownerID, bytes)
+		}
+		return nil
+	}))
 	videosvc := video.NewService(repo, blobs, opts...)
 	// DB-backed instance-settings overlay: an in-memory fake repo, seeded with the
 	// config defaults. With no overrides the effective values equal the config, so
@@ -883,8 +915,11 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	if err := settingssvc.Load(context.Background()); err != nil {
 		t.Fatalf("settings load: %v", err)
 	}
+	settingsRef = settingssvc
 	quotasvc := quota.NewService(authRepo, cfg.InstanceDefaultQuotaBytes,
-		quota.WithDefaultBytesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyDefaultUserQuotaBytes) }))
+		quota.WithDefaultBytesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyDefaultUserQuotaBytes) }),
+		quota.WithDailyBytesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyDefaultUserDailyQuotaBytes) }))
+	quotaRef = quotasvc
 	importMaxBytes, _ := gommonbytes.Parse(cfg.UploadMaxSize)
 	// The import service uses a plain client so unit tests reach the loopback
 	// httptest origin (the production SSRF guard, tested in the videoimport
@@ -948,8 +983,13 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	serverOpts = append(serverOpts, httpOpts...)
 	srv := New(cfg, nil, nil, serverOpts...)
 	liveFakeRepoBySrv[srv] = liveRepo
+	captureMailerBySrv[srv] = captureMailer
 	return srv, blobs, tcRepo, notifRepo, repo
 }
+
+// captureMailerBySrv lets a test reach the capture mailer behind a harness
+// server (e.g. to read the verification token minted by a gated signup, W7).
+var captureMailerBySrv = map[*Server]*auth.CaptureMailer{}
 
 // fakeProber lets handler tests drive the publish/fail outcome and metadata of
 // an upload.

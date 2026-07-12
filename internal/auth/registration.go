@@ -103,10 +103,21 @@ func (s *Service) ListRegistrationRequests(ctx context.Context, pendingOnly bool
 // stored hash and marking the request approved atomically. An unknown/already
 // resolved id → ErrRegistrationRequestNotFound; a username/email now taken →
 // ErrConflict. Returns the created user.
+//
+// COMPOSITION with the email-verification gate (config-parity W7): approval
+// runs first (the codebase's natural order — no account exists until the admin
+// approves), then, when the gate is effective at approval time, the created
+// account is additionally held pending email verification and the verification
+// message is sent. A send failure never fails the approval (same posture as
+// RegisterPendingVerification): the account exists held, and the operator
+// recovery path is the admin email_verified override.
 func (s *Service) ApproveRegistration(ctx context.Context, adminID, requestID uuid.UUID) (sqlcgen.User, error) {
+	gateActive := s.EmailVerificationGateActive()
 	row, err := s.repo.ApproveRegistrationRequest(ctx, sqlcgen.ApproveRegistrationRequestParams{
-		ID:         requestID,
-		ReviewedBy: pgtype.UUID{Bytes: adminID, Valid: true},
+		ID:                       requestID,
+		ReviewedBy:               pgtype.UUID{Bytes: adminID, Valid: true},
+		PendingEmailVerification: gateActive,
+		HistoryEnabled:           s.newUserHistoryEnabled(),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -117,11 +128,17 @@ func (s *Service) ApproveRegistration(ctx context.Context, adminID, requestID uu
 		}
 		return sqlcgen.User{}, err
 	}
-	return sqlcgen.User{
+	user := sqlcgen.User{
 		ID: row.ID, Username: row.Username, Email: row.Email, PasswordHash: row.PasswordHash,
 		Role: row.Role, EmailVerified: row.EmailVerified, IsActive: row.IsActive,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DisplayName: row.DisplayName, Bio: row.Bio,
-	}, nil
+		PendingEmailVerification: row.PendingEmailVerification,
+	}
+	if gateActive {
+		// Best-effort verification send (see the composition note above).
+		_ = s.RequestEmailVerification(ctx, user.ID)
+	}
+	return user, nil
 }
 
 // RejectRegistration rejects a pending request with a moderator note. An

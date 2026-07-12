@@ -397,6 +397,10 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 		// until the user sets one via the password-reset flow.
 		PasswordHash: "",
 		Role:         role,
+		// OAuth accounts are never held pending email verification: the IdP
+		// attests the identity (claims.email_verified is honored below), so the
+		// W7 registration gate deliberately does not apply here.
+		HistoryEnabled: s.auth.newUserHistoryEnabled(),
 	})
 	if err != nil {
 		if isUniqueViolation(err) {

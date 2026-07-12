@@ -45,6 +45,8 @@ type authFakeRepo struct {
 	// Nil (pure-auth harnesses) means 0; videoServerEnv wires it to sum the
 	// video fake repo's files, mirroring the real aggregate query.
 	usage func(uuid.UUID) int64
+	// uploadUsage mirrors the upload_usage_events daily ledger (W7).
+	uploadUsage []uploadUsageEvent
 	// Instance-wide aggregate stubs let authFakeRepo satisfy admin.Repository's
 	// overview reads (Stats). Nil means 0; videoServerFullWith wires the
 	// video/comment ones to the real fakes so the admin-stats handler reflects
@@ -212,6 +214,8 @@ func (f *authFakeRepo) CreateUser(_ context.Context, a sqlcgen.CreateUserParams)
 	u := sqlcgen.User{
 		ID: uuid.New(), Username: a.Username, Email: a.Email,
 		PasswordHash: a.PasswordHash, Role: a.Role, IsActive: true, CreatedAt: time.Now(),
+		PendingEmailVerification: a.PendingEmailVerification,
+		HistoryEnabled:           a.HistoryEnabled,
 	}
 	f.users[key] = u
 	return u, nil
@@ -271,6 +275,8 @@ func (f *authFakeRepo) ApproveRegistrationRequest(ctx context.Context, a sqlcgen
 		if r.id == a.ID && r.status == "pending" {
 			u, err := f.CreateUser(ctx, sqlcgen.CreateUserParams{
 				Username: r.username, Email: r.email, PasswordHash: r.passwordHash, Role: "user",
+				PendingEmailVerification: a.PendingEmailVerification,
+				HistoryEnabled:           a.HistoryEnabled,
 			})
 			if err != nil {
 				return sqlcgen.ApproveRegistrationRequestRow{}, err
@@ -281,6 +287,7 @@ func (f *authFakeRepo) ApproveRegistrationRequest(ctx context.Context, a sqlcgen
 				ID: u.ID, Username: u.Username, Email: u.Email, PasswordHash: u.PasswordHash,
 				Role: u.Role, EmailVerified: u.EmailVerified, IsActive: u.IsActive,
 				CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt, DisplayName: u.DisplayName, Bio: u.Bio,
+				PendingEmailVerification: u.PendingEmailVerification,
 			}, nil
 		}
 	}
@@ -311,6 +318,9 @@ func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUser
 			if a.Unlisted != nil {
 				u.Unlisted = *a.Unlisted
 			}
+			if a.HistoryEnabled != nil {
+				u.HistoryEnabled = *a.HistoryEnabled
+			}
 			u.UpdatedAt = time.Now()
 			f.users[k] = u
 			return u, nil
@@ -326,6 +336,44 @@ func (f *authFakeRepo) SumUserStorageUsage(_ context.Context, ownerID uuid.UUID)
 		return 0, nil
 	}
 	return f.usage(ownerID), nil
+}
+
+// uploadUsageEvent is one recorded daily-ledger row (config-parity W7).
+type uploadUsageEvent struct {
+	userID    uuid.UUID
+	bytes     int64
+	createdAt time.Time
+}
+
+// The upload-usage ledger methods let authFakeRepo keep satisfying
+// quota.Repository (rolling daily quota, config-parity W7).
+func (f *authFakeRepo) RecordUploadUsageEvent(_ context.Context, a sqlcgen.RecordUploadUsageEventParams) error {
+	f.uploadUsage = append(f.uploadUsage, uploadUsageEvent{userID: a.UserID, bytes: a.Bytes, createdAt: time.Now()})
+	return nil
+}
+
+func (f *authFakeRepo) SumUploadUsageSince(_ context.Context, a sqlcgen.SumUploadUsageSinceParams) (int64, error) {
+	var sum int64
+	for _, e := range f.uploadUsage {
+		if e.userID == a.UserID && e.createdAt.After(a.CreatedAt) {
+			sum += e.bytes
+		}
+	}
+	return sum, nil
+}
+
+func (f *authFakeRepo) PruneUploadUsageEvents(_ context.Context, a sqlcgen.PruneUploadUsageEventsParams) (int64, error) {
+	kept := f.uploadUsage[:0]
+	var n int64
+	for _, e := range f.uploadUsage {
+		if e.userID == a.UserID && e.createdAt.Before(a.CreatedAt) {
+			n++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	f.uploadUsage = kept
+	return n, nil
 }
 
 // The instance-wide overview reads (admin.Repository.Stats). Each delegates to a

@@ -17,7 +17,6 @@ import (
 
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
-	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -912,13 +911,8 @@ func (s *Server) handleUploadVideoFile(c echo.Context) error {
 	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if s.quotasvc != nil {
-		if qerr := s.quotasvc.CheckFits(ctx, userID, fh.Size); qerr != nil {
-			if errors.Is(qerr, quota.ErrExceeded) {
-				return &QuotaExceededError{}
-			}
-			return qerr
-		}
+	if qerr := s.checkUploadQuotas(ctx, userID, fh.Size); qerr != nil {
+		return qerr
 	}
 	_, file, err := s.videosvc.AttachOriginal(ctx, userID, id, video.UploadInput{
 		Filename:    fh.Filename,

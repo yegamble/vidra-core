@@ -51,6 +51,8 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var he *echo.HTTPError
 	var ve *ValidationError
 	var qe *QuotaExceededError
+	var dqe *DailyQuotaExceededError
+	var evr *EmailVerificationRequiredError
 	var fd *FeatureDisabledError
 	var id *IPFSDisabledError
 	var pr *PasswordRequiredError
@@ -74,6 +76,14 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusUnprocessableEntity
 		message = "storing this file would exceed your storage quota"
 		code = "quota_exceeded"
+	case errors.As(err, &dqe):
+		status = http.StatusUnprocessableEntity
+		message = "storing this file would exceed your daily upload quota; try again later"
+		code = "daily_quota_exceeded"
+	case errors.As(err, &evr):
+		status = http.StatusForbidden
+		message = "verify your email address to sign in; check your inbox for the verification link"
+		code = "email_verification_required"
 	case errors.As(err, &fd):
 		status = http.StatusForbidden
 		message = "this feature is disabled on this instance"
@@ -153,6 +163,25 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 type QuotaExceededError struct{}
 
 func (e *QuotaExceededError) Error() string { return "storage quota exceeded" }
+
+// DailyQuotaExceededError renders as 422 with the stable code
+// "daily_quota_exceeded": storing the incoming file would push the caller past
+// the instance's rolling-24h daily upload quota
+// (default_user_daily_quota_bytes, config-parity W7). Distinct from
+// quota_exceeded so the studio can tell "free up space" apart from "try again
+// later". Never raised while no daily quota is configured.
+type DailyQuotaExceededError struct{}
+
+func (e *DailyQuotaExceededError) Error() string { return "daily upload quota exceeded" }
+
+// EmailVerificationRequiredError renders as 403 with the stable code
+// "email_verification_required": the credentials are valid, but the account
+// was created while the registration email-verification gate was active and
+// its email is still unverified (config-parity W7) — the session is withheld
+// until the verification link is followed.
+type EmailVerificationRequiredError struct{}
+
+func (e *EmailVerificationRequiredError) Error() string { return "email verification required" }
 
 // FeatureDisabledError renders as 403 with the stable code "feature_disabled":
 // the instance operator has turned off this feature via the admin

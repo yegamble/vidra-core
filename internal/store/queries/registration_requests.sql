@@ -34,9 +34,11 @@ WITH req AS (
     WHERE registration_requests.id = sqlc.arg('id') AND registration_requests.status = 'pending'
 ),
 ins AS (
-    INSERT INTO users (username, email, password_hash, role)
-    SELECT req.username, req.email, req.password_hash, 'user' FROM req
-    RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio
+    INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
+    SELECT req.username, req.email, req.password_hash, 'user',
+           sqlc.arg('pending_email_verification')::bool, sqlc.arg('history_enabled')::bool
+    FROM req
+    RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, pending_email_verification
 ),
 upd AS (
     UPDATE registration_requests
@@ -45,7 +47,8 @@ upd AS (
     RETURNING registration_requests.id
 )
 SELECT ins.id, ins.username, ins.email, ins.password_hash, ins.role, ins.email_verified,
-       ins.is_active, ins.created_at, ins.updated_at, ins.display_name, ins.bio
+       ins.is_active, ins.created_at, ins.updated_at, ins.display_name, ins.bio,
+       ins.pending_email_verification
 FROM ins;
 
 -- name: RejectRegistrationRequest :execrows

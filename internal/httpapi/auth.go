@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -85,6 +86,10 @@ type registerRequest struct {
 	// Note is an optional message to moderators, used only when the instance
 	// requires registration approval; ignored otherwise.
 	Note string `json:"note,omitempty"`
+	// AgeAttestation is the PeerTube-style minimum-age checkbox (config-parity
+	// W7): "I am at least N years old". Required (true) while
+	// registration_minimum_age is active; no birthdate is collected.
+	AgeAttestation bool `json:"age_attestation,omitempty"`
 	// CookieMode opts the new session into cookie mode: the refresh token is
 	// set as an httpOnly vidra_refresh cookie and omitted from the body.
 	CookieMode bool `json:"cookie_mode,omitempty"`
@@ -165,8 +170,11 @@ type userView struct {
 	// Unlisted is the account-level discovery opt-out (§16): when true the
 	// account's channels/videos are hidden from public feed/search surfaces
 	// while direct URLs keep working.
-	Unlisted  bool      `json:"unlisted"`
-	CreatedAt time.Time `json:"created_at"`
+	Unlisted bool `json:"unlisted"`
+	// HistoryEnabled is the per-user watch-history preference (config-parity
+	// W7): while false, watch-progress/history writes are skipped.
+	HistoryEnabled bool      `json:"history_enabled"`
+	CreatedAt      time.Time `json:"created_at"`
 	// HasAvatar/HasBanner are set on GET/PATCH /auth/me (omitted elsewhere);
 	// when true the image is served at GET /users/{id}/avatar | /banner.
 	HasAvatar *bool `json:"has_avatar,omitempty"`
@@ -175,15 +183,16 @@ type userView struct {
 
 func newUserView(u sqlcgen.User) userView {
 	return userView{
-		ID:            u.ID.String(),
-		Username:      u.Username,
-		Email:         u.Email,
-		Role:          u.Role,
-		EmailVerified: u.EmailVerified,
-		DisplayName:   u.DisplayName,
-		Bio:           u.Bio,
-		Unlisted:      u.Unlisted,
-		CreatedAt:     u.CreatedAt,
+		ID:             u.ID.String(),
+		Username:       u.Username,
+		Email:          u.Email,
+		Role:           u.Role,
+		EmailVerified:  u.EmailVerified,
+		DisplayName:    u.DisplayName,
+		Bio:            u.Bio,
+		Unlisted:       u.Unlisted,
+		HistoryEnabled: u.HistoryEnabled,
+		CreatedAt:      u.CreatedAt,
 	}
 }
 
@@ -215,19 +224,39 @@ func (s *Server) authResponse(status int, c echo.Context, user sqlcgen.User, tok
 	return c.JSON(status, resp)
 }
 
-// handleRegister creates an account and returns it with an access + refresh token.
+// handleRegister creates an account and returns it with an access + refresh
+// token. Config-parity W7 gates run in order: registration open → user limit
+// → age attestation → approval queue → email-verification hold → plain signup.
 func (s *Server) handleRegister(c echo.Context) error {
 	if !s.registrationEnabled() {
 		return echo.NewHTTPError(http.StatusForbidden, "registration is disabled on this instance")
+	}
+	// registration_user_limit: count-and-refuse (approximate under concurrent
+	// signups by design). /instance reports effective registration_enabled
+	// false + registration_disabled_reason while at the limit.
+	if s.registrationAtUserLimit(c.Request().Context()) {
+		return echo.NewHTTPError(http.StatusForbidden, "registration is closed: this instance has reached its user limit")
 	}
 	var in registerRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	// registration_minimum_age: the signup must carry the attestation flag
+	// while the setting is active (PeerTube parity — an attestation checkbox,
+	// never a birthdate). Contextual, so validated here rather than in
+	// registerRequest.Validate.
+	if minAge := s.registrationMinimumAge(); minAge > 0 && !in.AgeAttestation {
+		return &ValidationError{Fields: []FieldError{{
+			Field:   "age_attestation",
+			Message: fmt.Sprintf("you must confirm you are at least %d years old", minAge),
+		}}}
+	}
 	regInput := auth.RegisterInput{Username: in.Username, Email: in.Email, Password: in.Password}
 
 	// When the instance requires approval, signup files a pending request instead
-	// of creating an account + session. The response reveals no token.
+	// of creating an account + session. The response reveals no token. The
+	// email-verification gate composes AFTER approval (approve → hold until
+	// verified), applied in ApproveRegistration.
 	if s.registrationRequiresApproval() {
 		if _, err := s.authsvc.RequestRegistration(c.Request().Context(), regInput, in.Note); err != nil {
 			if errors.Is(err, auth.ErrConflict) {
@@ -239,6 +268,28 @@ func (s *Server) handleRegister(c echo.Context) error {
 		return c.JSON(http.StatusAccepted, map[string]string{"status": "pending"})
 	}
 
+	// Email-verification hold (registration_require_email_verification AND a
+	// mail path): the account is created pending, no session is issued, and the
+	// verification message is sent. 202 mirrors the approval flow's shape.
+	if s.registrationRequiresEmailVerification() {
+		user, err := s.authsvc.RegisterPendingVerification(c.Request().Context(), regInput)
+		if err != nil {
+			if errors.Is(err, auth.ErrConflict) {
+				return echo.NewHTTPError(http.StatusConflict, "username or email already taken")
+			}
+			if user.ID == uuid.Nil {
+				return err
+			}
+			// The account exists held but the verification send failed: still
+			// 202 (a retry would 409 on the created account); the operator
+			// recovery path is the admin email_verified override.
+			s.logger.Warn("registration verification mail failed", "user_id", user.ID, "error", err)
+		}
+		s.invalidateUserCount()
+		s.audit(c, observability.ActionRegister, observability.ResultSuccess, user.ID.String(), "pending_email_verification")
+		return c.JSON(http.StatusAccepted, map[string]string{"status": "verification_pending"})
+	}
+
 	user, tokens, err := s.authsvc.Register(c.Request().Context(), regInput, c.Request().UserAgent())
 	if err != nil {
 		if errors.Is(err, auth.ErrConflict) {
@@ -246,6 +297,7 @@ func (s *Server) handleRegister(c echo.Context) error {
 		}
 		return err
 	}
+	s.invalidateUserCount()
 	s.audit(c, observability.ActionRegister, observability.ResultSuccess, user.ID.String(), "")
 	cookieMode := in.CookieMode || refreshCookieToken(c) != ""
 	return s.authResponse(http.StatusCreated, c, user, tokens, cookieMode)
@@ -279,12 +331,14 @@ type updateProfileRequest struct {
 	Bio         *string `json:"bio"`
 	// Unlisted toggles the §16 discovery opt-out.
 	Unlisted *bool `json:"unlisted"`
+	// HistoryEnabled toggles the per-user watch-history preference (W7).
+	HistoryEnabled *bool `json:"history_enabled"`
 }
 
 func (r updateProfileRequest) Validate() []FieldError {
 	var fes []FieldError
-	if r.DisplayName == nil && r.Bio == nil && r.Unlisted == nil {
-		return []FieldError{{Field: "display_name", Message: "at least one of display_name, bio, unlisted is required"}}
+	if r.DisplayName == nil && r.Bio == nil && r.Unlisted == nil && r.HistoryEnabled == nil {
+		return []FieldError{{Field: "display_name", Message: "at least one of display_name, bio, unlisted, history_enabled is required"}}
 	}
 	if r.DisplayName != nil && len(strings.TrimSpace(*r.DisplayName)) > 50 {
 		fes = append(fes, FieldError{Field: "display_name", Message: "must be at most 50 characters"})
@@ -306,9 +360,10 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 		return err
 	}
 	user, err := s.authsvc.UpdateProfile(c.Request().Context(), userID, auth.ProfileInput{
-		DisplayName: in.DisplayName,
-		Bio:         in.Bio,
-		Unlisted:    in.Unlisted,
+		DisplayName:    in.DisplayName,
+		Bio:            in.Bio,
+		Unlisted:       in.Unlisted,
+		HistoryEnabled: in.HistoryEnabled,
 	})
 	if err != nil {
 		if errors.Is(err, auth.ErrAccountNotFound) {
@@ -366,6 +421,12 @@ func (s *Server) handleLogin(c echo.Context) error {
 			// Login returns an empty user on this path, so no actor_id is available.
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "account_disabled")
 			return echo.NewHTTPError(http.StatusForbidden, "account is disabled")
+		case errors.Is(err, auth.ErrEmailVerificationRequired):
+			// W7 verification hold: valid credentials, but the account stays
+			// sessionless until its email is verified. A typed code so the
+			// login form can show "check your email" instead of a dead end.
+			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "email_verification_required")
+			return &EmailVerificationRequiredError{}
 		}
 		return err
 	}

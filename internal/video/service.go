@@ -278,6 +278,10 @@ type Service struct {
 	onTranscode          func(context.Context, uuid.UUID, string)
 	onUpdate             []func(context.Context, uuid.UUID)
 	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
+	// uploadUsageRecorder appends a rolling daily-upload-quota ledger event
+	// (config-parity W7) after AttachOriginal stores an original. Best-effort;
+	// nil = no daily accounting.
+	uploadUsageRecorder func(ctx context.Context, ownerID uuid.UUID, bytes int64) error
 }
 
 // Option customises the Service.
@@ -349,6 +353,17 @@ func WithAdditionalExtGate(decide func() bool) Option {
 // recorded view counts.
 func WithViewDeduper(d ViewDeduper) Option {
 	return func(s *Service) { s.viewDeduper = d }
+}
+
+// WithUploadUsageRecorder wires the rolling daily-upload-quota ledger
+// (config-parity W7, default_user_daily_quota_bytes): fn is called after
+// AttachOriginal stores an original, with the owner and the stored byte size.
+// AttachOriginal is the single choke point every original passes through
+// (direct upload, chunked upload, URL import, live replay), so the rolling
+// window sees them all. Best-effort — a recording failure never fails the
+// upload (the daily gate is race-tolerant by spec).
+func WithUploadUsageRecorder(fn func(ctx context.Context, ownerID uuid.UUID, bytes int64) error) Option {
+	return func(s *Service) { s.uploadUsageRecorder = fn }
 }
 
 // WithQuarantineNewUploads turns on the upload quarantine gate
@@ -567,6 +582,11 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	updated, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "processing"})
 	if err != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	// Daily-quota ledger (config-parity W7): record the stored bytes against
+	// the owner's rolling 24h window. Best-effort by design.
+	if s.uploadUsageRecorder != nil {
+		_ = s.uploadUsageRecorder(ctx, ownerID, size)
 	}
 	return updated, file, nil
 }
