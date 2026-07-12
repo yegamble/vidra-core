@@ -81,6 +81,15 @@ type Server struct {
 	// cmd/api via WithContactRateLimiter). Nil (e.g. unit tests) mounts the
 	// route unthrottled beyond the general limiter.
 	contactLimit *ratelimit.Limiter
+	// searchResolveLimit throttles remote-URI search resolution (config-parity
+	// W13): the outbound WebFinger/object fetches triggered by URI/handle-
+	// shaped search queries, budgeted PER CALLER (user id, else client IP).
+	// Derived in New(): the wired limiter (WithSearchResolveRateLimiter,
+	// Redis-backed in cmd/api for multi-node correctness) when present, else a
+	// built-in in-memory default so resolution is never unthrottled. An
+	// exhausted budget degrades that search to local-only — it never fails the
+	// request. Always non-nil after New().
+	searchResolveLimit *ratelimit.Limiter
 	// contactMailer delivers contact-form messages to the operator (spec
 	// instance-platform-info). Nil when the deployment has no outbound mail
 	// path — the contact form then reports unavailable (409 / effective
@@ -210,6 +219,15 @@ func WithAttachmentRateLimiter(l *ratelimit.Limiter) Option {
 // nil/unset, the route falls back to the general limiter only.
 func WithContactRateLimiter(l *ratelimit.Limiter) Option {
 	return func(s *Server) { s.contactLimit = l }
+}
+
+// WithSearchResolveRateLimiter overrides the per-caller budget applied to
+// remote-URI search resolution (config-parity W13). cmd/api wires a
+// Redis-backed limiter when rate limiting is enabled (multi-node correctness);
+// when nil/unset, New() installs an in-memory default so the outbound-fetch
+// surface is never unthrottled.
+func WithSearchResolveRateLimiter(l *ratelimit.Limiter) Option {
+	return func(s *Server) { s.searchResolveLimit = l }
 }
 
 // WithContactMailer wires the outbound mail path the public contact form
@@ -551,6 +569,12 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 		s.unlockLimit = s.authLimit
 	} else {
 		s.unlockLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultUnlockRateLimit, defaultUnlockRateWindow)
+	}
+	// Remote-URI search resolution (config-parity W13) triggers outbound
+	// fetches, so it always carries a per-caller budget: the wired limiter
+	// (Redis-backed in cmd/api) when present, else an in-memory default.
+	if s.searchResolveLimit == nil {
+		s.searchResolveLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultSearchResolveRateLimit, defaultSearchResolveRateWindow)
 	}
 	e.HTTPErrorHandler = s.httpErrorHandler
 

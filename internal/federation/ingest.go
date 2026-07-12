@@ -70,7 +70,8 @@ func (s *Service) handleCreateVideo(ctx context.Context, act inboxActivity, sign
 	if !ok {
 		return nil // nobody here follows this actor → accept-and-ignore
 	}
-	return s.storeRemoteVideo(ctx, signerActorURL, obj)
+	_, err = s.storeRemoteVideo(ctx, signerActorURL, obj)
+	return err
 }
 
 // handleAnnounce ingests an inbound Announce{Video|url} (remote-content §2): a
@@ -122,7 +123,8 @@ func (s *Service) handleAnnounce(ctx context.Context, act inboxActivity, signerA
 			return nil // unresolvable attribution → accept-and-ignore
 		}
 	}
-	return s.storeRemoteVideo(ctx, owner, obj)
+	_, err = s.storeRemoteVideo(ctx, owner, obj)
+	return err
 }
 
 // hasAcceptedFollowEdge consults the ingestion gate (remote-content §2): by
@@ -136,8 +138,10 @@ func (s *Service) hasAcceptedFollowEdge(ctx context.Context, remoteActorURL stri
 }
 
 // storeRemoteVideo bounds the object's fields, upserts it by object_url
-// (idempotent), and best-effort caches its thumbnail.
-func (s *Service) storeRemoteVideo(ctx context.Context, ownerActorURL string, obj apVideoObject) error {
+// (idempotent), and best-effort caches its thumbnail. It returns the stored
+// row so search-initiated resolution (config-parity W13) can surface the video
+// by id; the inbox callers ignore it.
+func (s *Service) storeRemoteVideo(ctx context.Context, ownerActorURL string, obj apVideoObject) (sqlcgen.UpsertRemoteVideoRow, error) {
 	watchURL, streamURL := videoLinks(obj.URL)
 	if watchURL == "" {
 		watchURL = obj.ID
@@ -157,14 +161,14 @@ func (s *Service) storeRemoteVideo(ctx context.Context, ownerActorURL string, ob
 		StreamUrl:       streamURL,
 	})
 	if err != nil {
-		return err
+		return sqlcgen.UpsertRemoteVideoRow{}, err
 	}
 	// Best-effort poster cache (§5): failure must never fail ingestion, and an
 	// already-cached thumbnail is kept.
 	if row.ThumbnailKey == nil {
 		s.cacheRemoteThumbnail(ctx, row.ID, iconURL(obj.Icon))
 	}
-	return nil
+	return row, nil
 }
 
 // fetchVideoObject GETs and parses an announced object document through the

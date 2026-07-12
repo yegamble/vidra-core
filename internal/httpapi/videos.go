@@ -552,12 +552,17 @@ func (s *Server) handleListSubscriptionVideos(c echo.Context) error {
 // maxSearchQueryLen bounds the search term to keep queries cheap.
 const maxSearchQueryLen = 100
 
-// videoSearchResponse is the paginated result of a public title search.
+// videoSearchResponse is the paginated result of a public title search. Remote
+// carries the typed remote-URI search hits (config-parity W13) resolved from a
+// URI/handle-shaped query — present only on the first page (offset 0), when
+// the caller's auth-state gate allows resolution AND something resolved;
+// omitted otherwise (unresolvable/timeout degrades silently to local-only).
 type videoSearchResponse struct {
-	Query  string      `json:"query"`
-	Videos []videoView `json:"videos"`
-	Limit  int         `json:"limit"`
-	Offset int         `json:"offset"`
+	Query  string                   `json:"query"`
+	Videos []videoView              `json:"videos"`
+	Remote []remoteSearchResultView `json:"remote,omitempty"`
+	Limit  int                      `json:"limit"`
+	Offset int                      `json:"offset"`
 }
 
 // handleSearchVideos searches public video titles. No auth required. Requires a
@@ -601,6 +606,14 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 		return &ValidationError{Fields: fes}
 	}
 	viewerID, _, authed := principalFromContext(c)
+	// Remote-URI search (config-parity W13): a URI/handle-shaped first-page
+	// query kicks off remote resolution CONCURRENTLY with the local search,
+	// under its own strict deadline (see search_remote.go). Later pages never
+	// re-resolve (the remote hit rode page one).
+	var remoteCh <-chan []remoteSearchResultView
+	if offset == 0 {
+		remoteCh = s.startRemoteSearch(c, q)
+	}
 	items, err := s.videosvc.SearchPublic(c.Request().Context(), q, filter, viewerID, authed, int32(limit), int32(offset))
 	if err != nil {
 		return err
@@ -610,7 +623,11 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
-	return c.JSON(http.StatusOK, videoSearchResponse{Query: q, Videos: views, Limit: limit, Offset: offset})
+	resp := videoSearchResponse{Query: q, Videos: views, Limit: limit, Offset: offset}
+	if remoteCh != nil {
+		resp.Remote = <-remoteCh // always delivers within the resolve deadline
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 // queryInt reads an integer query param, returning def when absent or malformed.

@@ -29,6 +29,24 @@ type remoteVideoView struct {
 	HasThumbnail    bool       `json:"has_thumbnail"`
 }
 
+// newRemoteVideoView shapes one remote-video read model as its public view
+// (shared by GET /remote-videos/{id} and the remote-URI search results).
+func newRemoteVideoView(rv remotevideo.RemoteVideo) remoteVideoView {
+	return remoteVideoView{
+		ID:              rv.ID.String(),
+		Remote:          true,
+		Domain:          rv.Domain,
+		Title:           rv.Title,
+		Description:     rv.Description,
+		ObjectURL:       rv.ObjectURL,
+		WatchURL:        rv.WatchURL,
+		StreamURL:       rv.StreamURL,
+		DurationSeconds: rv.DurationSeconds,
+		PublishedAt:     rv.PublishedAt,
+		HasThumbnail:    rv.HasThumbnail,
+	}
+}
+
 // handleGetRemoteVideo returns one ingested remote video's stored metadata.
 // Public. Unknown id — or a video hidden because its origin instance is
 // admin-blocked — is 404.
@@ -44,19 +62,7 @@ func (s *Server) handleGetRemoteVideo(c echo.Context) error {
 		}
 		return err
 	}
-	return c.JSON(http.StatusOK, remoteVideoView{
-		ID:              rv.ID.String(),
-		Remote:          true,
-		Domain:          rv.Domain,
-		Title:           rv.Title,
-		Description:     rv.Description,
-		ObjectURL:       rv.ObjectURL,
-		WatchURL:        rv.WatchURL,
-		StreamURL:       rv.StreamURL,
-		DurationSeconds: rv.DurationSeconds,
-		PublishedAt:     rv.PublishedAt,
-		HasThumbnail:    rv.HasThumbnail,
-	})
+	return c.JSON(http.StatusOK, newRemoteVideoView(rv))
 }
 
 // handleGetRemoteVideoThumbnail streams the locally cached poster of a remote
