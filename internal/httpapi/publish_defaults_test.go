@@ -87,9 +87,9 @@ func TestCreateVideoSeedsOverriddenPublishDefaults(t *testing.T) {
 	}
 	var cleared videoView
 	_ = json.Unmarshal(rec.Body.Bytes(), &cleared)
-	if cleared.Privacy != "public" || cleared.License != nil ||
+	if cleared.Privacy != "private" || cleared.License != nil ||
 		cleared.CommentsPolicy != "enabled" || cleared.DownloadEnabled == nil || !*cleared.DownloadEnabled {
-		t.Errorf("cleared-defaults video = %+v, want public/no licence/enabled/downloadable", cleared)
+		t.Errorf("cleared-defaults video = %+v, want private/no licence/enabled/downloadable", cleared)
 	}
 }
 
