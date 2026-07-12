@@ -684,3 +684,91 @@ func TestW10TranscodingKnobsRegistry(t *testing.T) {
 		t.Errorf("ParseRungHeights = %v, want [1080 720]", got)
 	}
 }
+
+// TestW11LiveKnobsRegistry covers the live streaming enforcement knobs
+// (config-parity W11): kinds, hardcoded defaults (replay allowed, save-replay
+// default off, every limit 0 = unlimited/no limit), admin-IA placement on the
+// live page, validator boundaries, and the null-PATCH reset convention. The
+// deferred live-transcoding cluster must NOT be registered (architecture
+// note 7 — no dormant keys).
+func TestW11LiveKnobsRegistry(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Defaults + kinds + placement.
+	if !svc.Bool(KeyLiveAllowReplay) {
+		t.Error("live_allow_replay default = false, want true (the shipped behaviour)")
+	}
+	if svc.Bool(KeyLiveDefaultSaveReplay) {
+		t.Error("live_default_save_replay default = true, want false")
+	}
+	for _, key := range []string{KeyLiveMaxInstanceLives, KeyLiveMaxUserLives, KeyLiveMaxDurationSecs} {
+		if got := svc.Int(key); got != 0 {
+			t.Errorf("%s default = %d, want 0 (unlimited/no limit)", key, got)
+		}
+	}
+	for key, sect := range map[string]string{
+		KeyLiveAllowReplay:       "replay",
+		KeyLiveDefaultSaveReplay: "replay",
+	} {
+		if e := snapshotByKey(t, svc, key); e.Kind != KindBool || e.Page != PageLive || e.Section != sect {
+			t.Errorf("%s = kind %s at %s/%s, want bool at live/%s", key, e.Kind, e.Page, e.Section, sect)
+		}
+	}
+	for _, key := range []string{KeyLiveMaxInstanceLives, KeyLiveMaxUserLives, KeyLiveMaxDurationSecs} {
+		if e := snapshotByKey(t, svc, key); e.Kind != KindInt || e.Page != PageLive || e.Section != "limits" {
+			t.Errorf("%s = kind %s at %s/%s, want int at live/limits", key, e.Kind, e.Page, e.Section)
+		}
+	}
+
+	// Validator boundaries.
+	admin := uuid.New()
+	for _, tc := range []struct{ key, val string }{
+		{KeyLiveAllowReplay, "false"},
+		{KeyLiveDefaultSaveReplay, "true"},
+		{KeyLiveMaxInstanceLives, "0"},
+		{KeyLiveMaxInstanceLives, "10000"},
+		{KeyLiveMaxUserLives, "1"},
+		{KeyLiveMaxDurationSecs, "0"},       // no limit
+		{KeyLiveMaxDurationSecs, "60"},      // floor
+		{KeyLiveMaxDurationSecs, "2592000"}, // 30-day ceiling
+	} {
+		if err := svc.Apply(ctx, map[string]Update{tc.key: {Value: tc.val}}, admin); err != nil {
+			t.Errorf("Apply(%s=%s) = %v, want ok", tc.key, tc.val, err)
+		}
+	}
+	for _, tc := range []struct{ key, val string }{
+		{KeyLiveMaxInstanceLives, "-1"}, // 0 = unlimited, never PT's -1
+		{KeyLiveMaxInstanceLives, "10001"},
+		{KeyLiveMaxUserLives, "-1"},
+		{KeyLiveMaxDurationSecs, "59"}, // sub-minute limits are watchdog noise
+		{KeyLiveMaxDurationSecs, "2592001"},
+		{KeyLiveMaxDurationSecs, "-1"},
+		{KeyLiveAllowReplay, "yes"},
+	} {
+		err := svc.Apply(ctx, map[string]Update{tc.key: {Value: tc.val}}, admin)
+		var ve *ValidationError
+		if !errors.As(err, &ve) || ve.Key != tc.key {
+			t.Errorf("Apply(%s=%s) = %v, want ValidationError on the key", tc.key, tc.val, err)
+		}
+	}
+
+	// null-PATCH-clears-override: allow_replay returns to its true default.
+	if err := svc.Apply(ctx, map[string]Update{KeyLiveAllowReplay: {Delete: true}}, admin); err != nil {
+		t.Fatalf("Apply(delete live_allow_replay): %v", err)
+	}
+	if !svc.Bool(KeyLiveAllowReplay) {
+		t.Error("after delete, live_allow_replay = false, want the true default")
+	}
+
+	// Architecture note 7: the deferred live-transcoding cluster stays
+	// unregistered — no dormant keys without apply points.
+	for _, key := range []string{"live_transcoding_enabled", "live_transcoding_resolutions", "live_dvr_max_window_mins", "live_latency_mode"} {
+		if _, known := KindOf(key); known {
+			t.Errorf("deferred key %q is registered; architecture note 7 forbids dormant live-transcoding keys", key)
+		}
+	}
+}

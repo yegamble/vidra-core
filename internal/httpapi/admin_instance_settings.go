@@ -136,6 +136,24 @@ func (s *Server) userExportEnabled() bool {
 	return s.settingBool(instancesettings.KeyUserExportEnabled, true)
 }
 
+// --- live streaming enforcement knobs (config-parity W11) ---
+
+// liveAllowReplay is the instance-level replay master gate (live_allow_replay;
+// no env backing, default on). Enforcement lives in live.Service.RunReplay via
+// the same setting; this accessor feeds the /instance live block and the
+// create-default logic so clients stay in lock-step.
+func (s *Server) liveAllowReplay() bool {
+	return s.settingBool(instancesettings.KeyLiveAllowReplay, true)
+}
+
+// liveDefaultSaveReplay seeds a new live stream's replay flag when the client
+// omits it (live_default_save_replay, default off). It is ANDed with
+// liveAllowReplay — a disabled replay feature must not seed dormant opt-ins
+// (PT parity: the default has no effect while allow_replay is off).
+func (s *Server) liveDefaultSaveReplay() bool {
+	return s.settingBool(instancesettings.KeyLiveDefaultSaveReplay, false) && s.liveAllowReplay()
+}
+
 // --- VOD transcoding runtime knobs (config-parity W10) ---
 
 // transcodingEnabled is the runtime master toggle over the HLS transcoding

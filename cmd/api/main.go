@@ -697,12 +697,34 @@ func run() error {
 	// streams — republishes a finished session's recording as a normal VOD
 	// through the shared video pipeline (best-effort, audited). Without the root,
 	// replay stays dormant and live HLS serving 404s.
-	liveOpts := []live.Option{live.WithLogger(logger)}
+	liveOpts := []live.Option{
+		live.WithLogger(logger),
+		// Live enforcement knobs (config-parity W11) read the DB-backed overlay
+		// at enforcement time (provider-func seams), so an admin change applies
+		// without a restart: the instance replay master gate, the simultaneous-
+		// live caps enforced at the RTMP publish callback, and the max-duration
+		// limit the watchdog sweeps against.
+		live.WithAllowReplayFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyLiveAllowReplay)
+		}),
+		live.WithMaxInstanceLivesFunc(func() int64 {
+			return settingssvc.Int(instancesettings.KeyLiveMaxInstanceLives)
+		}),
+		live.WithMaxUserLivesFunc(func() int64 {
+			return settingssvc.Int(instancesettings.KeyLiveMaxUserLives)
+		}),
+		live.WithMaxDurationSecsFunc(func() int64 {
+			return settingssvc.Int(instancesettings.KeyLiveMaxDurationSecs)
+		}),
+		// The auditor is wired unconditionally: replay outcomes only fire with a
+		// recording store, but the duration watchdog audits force-closes on
+		// every deployment.
+		live.WithAuditor(auditsvc),
+	}
 	if cfg.LiveHLSRoot != "" {
 		liveOpts = append(liveOpts,
 			live.WithReplayPipeline(videosvc),
 			live.WithRecordingStore(live.NewDirRecordingStore(cfg.LiveHLSRoot)),
-			live.WithAuditor(auditsvc),
 		)
 		logger.Info("live HLS serving + replay-to-VOD enabled", "hls_root", cfg.LiveHLSRoot)
 	}
@@ -1025,6 +1047,17 @@ func run() error {
 		defer workerCancel()
 		go runCaptionJobWorker(workerCtx, logger, captionjobsvc)
 		logger.Info("auto-caption worker started")
+	}
+
+	// Live max-duration watchdog (config-parity W11): force-close live sessions
+	// that exceed live_max_duration_secs. Always on — the scan is a cheap lookup
+	// over the handful of state='live' rows and an immediate no-op while the
+	// limit is 0/unset, so the knob applies without a restart.
+	{
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runLiveDurationWatchdog(workerCtx, logger, livesvc)
+		logger.Info("live duration watchdog started")
 	}
 
 	// Sweep expired/cancelled resumable-upload sessions (the failed-upload
@@ -1350,6 +1383,33 @@ func runE2EESweepWorker(ctx context.Context, logger *slog.Logger, svc *e2ee.Serv
 				logger.Warn("e2ee expiry sweep failed", "error", err)
 			} else if n > 0 {
 				logger.Info("e2ee expiry sweep removed expired messages", "count", n)
+			}
+		}
+	}
+}
+
+// runLiveDurationWatchdog force-closes live sessions that exceed the effective
+// live_max_duration_secs on a ticker until ctx is canceled (mirrors
+// runE2EESweepWorker; config-parity W11). The limit is read per sweep through
+// the service's provider seam, so admin changes apply without a restart; a
+// 0/unset limit makes each sweep a free no-op. Note the enforcement reality
+// documented on SweepOverdueLive: with no nginx-rtmp control endpoint in the
+// deployed media config this is a server-side close (HLS serving + listings
+// stop immediately); the publisher's ingest socket lingers until it disconnects,
+// which then drives the normal stop/replay path.
+func runLiveDurationWatchdog(ctx context.Context, logger *slog.Logger, svc *live.Service) {
+	const interval = 30 * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := svc.SweepOverdueLive(ctx); err != nil {
+				logger.Warn("live duration watchdog sweep failed", "error", err)
+			} else if n > 0 {
+				logger.Info("live duration watchdog force-closed over-limit sessions", "count", n)
 			}
 		}
 	}

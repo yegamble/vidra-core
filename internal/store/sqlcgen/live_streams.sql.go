@@ -13,6 +13,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countLiveStreamsLive = `-- name: CountLiveStreamsLive :one
+SELECT count(*) FROM live_streams WHERE state = 'live'
+`
+
+// How many sessions are currently live across the instance (the
+// live_max_instance_lives publish-callback cap, config-parity W11).
+func (q *Queries) CountLiveStreamsLive(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveStreamsLive)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countLiveStreamsLiveByOwner = `-- name: CountLiveStreamsLiveByOwner :one
+SELECT count(*)
+FROM live_streams ls
+JOIN channels ch ON ch.id = ls.channel_id
+WHERE ls.state = 'live' AND ch.owner_id = $1
+`
+
+// How many sessions the given user currently has live across all their
+// channels (the live_max_user_lives publish-callback cap, config-parity W11).
+func (q *Queries) CountLiveStreamsLiveByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveStreamsLiveByOwner, ownerID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createLiveStream = `-- name: CreateLiveStream :one
 INSERT INTO live_streams (channel_id, title, description, privacy, permanent, replay_enabled, stream_key_hash)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -135,9 +164,10 @@ func (q *Queries) GetLiveStreamByID(ctx context.Context, id uuid.UUID) (GetLiveS
 }
 
 const getLiveStreamByKeyHash = `-- name: GetLiveStreamByKeyHash :one
-SELECT id, channel_id, permanent, state
-FROM live_streams
-WHERE stream_key_hash = $1
+SELECT ls.id, ls.channel_id, ls.permanent, ls.state, ch.owner_id
+FROM live_streams ls
+JOIN channels ch ON ch.id = ls.channel_id
+WHERE ls.stream_key_hash = $1
 `
 
 type GetLiveStreamByKeyHashRow struct {
@@ -145,11 +175,13 @@ type GetLiveStreamByKeyHashRow struct {
 	ChannelID uuid.UUID `json:"channel_id"`
 	Permanent bool      `json:"permanent"`
 	State     string    `json:"state"`
+	OwnerID   uuid.UUID `json:"owner_id"`
 }
 
 // Look up a stream by its key hash — the RTMP ingest boundary authenticates a
-// publisher by hashing the presented stream key. Returns id, channel, permanent
-// (so stop can decide ended vs offline), and current state.
+// publisher by hashing the presented stream key. Returns id, channel + owner
+// (the per-user simultaneous-lives cap counts by owner, config-parity W11),
+// permanent (so stop can decide ended vs offline), and current state.
 func (q *Queries) GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash string) (GetLiveStreamByKeyHashRow, error) {
 	row := q.db.QueryRow(ctx, getLiveStreamByKeyHash, streamKeyHash)
 	var i GetLiveStreamByKeyHashRow
@@ -158,6 +190,7 @@ func (q *Queries) GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash stri
 		&i.ChannelID,
 		&i.Permanent,
 		&i.State,
+		&i.OwnerID,
 	)
 	return i, err
 }
@@ -260,6 +293,44 @@ func (q *Queries) ListLiveStreamsByChannel(ctx context.Context, channelID uuid.U
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOverdueLiveStreams = `-- name: ListOverdueLiveStreams :many
+SELECT id, permanent, started_at
+FROM live_streams
+WHERE state = 'live' AND started_at IS NOT NULL AND started_at < $1
+ORDER BY started_at, id
+`
+
+type ListOverdueLiveStreamsRow struct {
+	ID        uuid.UUID          `json:"id"`
+	Permanent bool               `json:"permanent"`
+	StartedAt pgtype.Timestamptz `json:"started_at"`
+}
+
+// Currently-live sessions that started before the cutoff — the
+// live_max_duration_secs watchdog force-closes these (config-parity W11).
+// started_at IS NOT NULL guards streams that went live before started_at
+// tracking existed (migration 0076): with no session start there is nothing
+// truthful to measure, so they are never force-closed.
+func (q *Queries) ListOverdueLiveStreams(ctx context.Context, startedAt pgtype.Timestamptz) ([]ListOverdueLiveStreamsRow, error) {
+	rows, err := q.db.Query(ctx, listOverdueLiveStreams, startedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOverdueLiveStreamsRow
+	for rows.Next() {
+		var i ListOverdueLiveStreamsRow
+		if err := rows.Scan(&i.ID, &i.Permanent, &i.StartedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

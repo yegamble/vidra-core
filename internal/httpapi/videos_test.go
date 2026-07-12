@@ -871,6 +871,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		return sum
 	}
 	authRepo.statComments = func() int64 { return int64(len(cmRepo.comments)) }
+	liveRepo := newLiveFakeRepo(chRepo)
 	videosvc := video.NewService(repo, blobs, opts...)
 	// DB-backed instance-settings overlay: an in-memory fake repo, seeded with the
 	// config defaults. With no overrides the effective values equal the config, so
@@ -926,7 +927,14 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		WithMessagingService(messaging.NewService(msgRepo, messaging.WithBlocker(blocksvc),
 			messaging.WithAttachments(blobs, nil, 0))),
 		WithE2EEService(e2ee.NewService(newE2EEFakeRepo(authRepo, msgRepo), e2ee.WithBlocker(blocksvc))),
-		WithLiveService(live.NewService(newLiveFakeRepo(chRepo))),
+		// Live enforcement knobs follow the overlay (config-parity W11),
+		// mirroring cmd/api's wiring: replay gate, simultaneous-live caps at
+		// the ingest hooks, and the duration-watchdog limit.
+		WithLiveService(live.NewService(liveRepo,
+			live.WithAllowReplayFunc(func() bool { return settingssvc.Bool(instancesettings.KeyLiveAllowReplay) }),
+			live.WithMaxInstanceLivesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyLiveMaxInstanceLives) }),
+			live.WithMaxUserLivesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyLiveMaxUserLives) }),
+			live.WithMaxDurationSecsFunc(func() int64 { return settingssvc.Int(instancesettings.KeyLiveMaxDurationSecs) }))),
 		WithQuotaService(quotasvc),
 		WithTranscodeService(transcode.NewService(tcRepo, nil)),
 		WithUploadService(uploadsvc),
@@ -939,6 +947,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	// affect route middleware (e.g. WithAuthRateLimiter) take effect.
 	serverOpts = append(serverOpts, httpOpts...)
 	srv := New(cfg, nil, nil, serverOpts...)
+	liveFakeRepoBySrv[srv] = liveRepo
 	return srv, blobs, tcRepo, notifRepo, repo
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -56,15 +57,54 @@ func TestLiveStreamQueriesPersist(t *testing.T) {
 		t.Fatalf("created = %+v, want offline + replay off", created)
 	}
 
-	// Key-hash lookup resolves the id (the ingest boundary path).
+	// Key-hash lookup resolves the id (the ingest boundary path) and, since
+	// W11, the owning user (the per-user simultaneous-lives cap).
 	byHash, err := q.GetLiveStreamByKeyHash(ctx, "hash-"+suffix)
 	if err != nil || byHash.ID != created.ID {
 		t.Fatalf("GetLiveStreamByKeyHash = (%+v, %v), want the created stream", byHash, err)
+	}
+	if byHash.OwnerID != userID {
+		t.Fatalf("GetLiveStreamByKeyHash owner = %s, want the seed user %s", byHash.OwnerID, userID)
+	}
+
+	// Nothing of this user's is live yet (the W11 cap-count queries).
+	if n, err := q.CountLiveStreamsLiveByOwner(ctx, userID); err != nil || n != 0 {
+		t.Fatalf("CountLiveStreamsLiveByOwner (offline) = (%d, %v), want (0, nil)", n, err)
 	}
 
 	// State flip (ingest start).
 	if err := q.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: created.ID, State: "live"}); err != nil {
 		t.Fatalf("SetLiveStreamState: %v", err)
+	}
+
+	// The cap counts see the live session: exactly one for this owner, at
+	// least one instance-wide (the DB is shared with other suites).
+	if n, err := q.CountLiveStreamsLiveByOwner(ctx, userID); err != nil || n != 1 {
+		t.Fatalf("CountLiveStreamsLiveByOwner (live) = (%d, %v), want (1, nil)", n, err)
+	}
+	if n, err := q.CountLiveStreamsLive(ctx); err != nil || n < 1 {
+		t.Fatalf("CountLiveStreamsLive = (%d, %v), want >= 1", n, err)
+	}
+
+	// The duration-watchdog scan: a future cutoff sees the session as overdue,
+	// a past cutoff does not (started_at was stamped by the state flip).
+	overdueAt := func(cutoff time.Time) bool {
+		rows, lerr := q.ListOverdueLiveStreams(ctx, pgtype.Timestamptz{Time: cutoff, Valid: true})
+		if lerr != nil {
+			t.Fatalf("ListOverdueLiveStreams: %v", lerr)
+		}
+		for _, r := range rows {
+			if r.ID == created.ID {
+				return true
+			}
+		}
+		return false
+	}
+	if !overdueAt(time.Now().Add(time.Hour)) {
+		t.Error("session missing from ListOverdueLiveStreams with a future cutoff")
+	}
+	if overdueAt(time.Now().Add(-time.Hour)) {
+		t.Error("session wrongly overdue with a cutoff before its started_at")
 	}
 
 	// Edit: replay on + metadata, state untouched.

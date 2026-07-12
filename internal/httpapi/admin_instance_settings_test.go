@@ -164,10 +164,10 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// 13 feature/base keys + 21 platform-information keys + 4 operational limits
 	// + 19 core-config-surface keys (config-parity W1) + 10 shipped-feature
 	// toggles (config-parity W8) + 8 VOD transcoding/worker-pool knobs
-	// (config-parity W10).
+	// (config-parity W10) + 5 live enforcement knobs (config-parity W11).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 75 {
-		t.Fatalf("settings count = %d, want 75", len(got.Settings))
+	if len(got.Settings) != 80 {
+		t.Fatalf("settings count = %d, want 80", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

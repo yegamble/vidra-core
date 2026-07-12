@@ -80,6 +80,10 @@ const (
 	// session as a VOD on ingest-stop (P12). Reason carries safe ids/outcome
 	// only — never the stream key.
 	ActionLiveReplay = "content.live.replay"
+	// ActionLiveForceClose records the live_max_duration_secs watchdog
+	// force-closing an over-limit live session (config-parity W11). Reason
+	// carries the safe stream id only — never the stream key.
+	ActionLiveForceClose = "content.live.force_close"
 	// ActionUploadMalwareRejected records that the malware scanner (ClamAV,
 	// UPLOAD-13) kept an uploaded original out of the published state — an
 	// infection, or an unscannable file under a non-publishing policy. Reason

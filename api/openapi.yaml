@@ -8447,7 +8447,10 @@ paths:
         is a 302 redirect whose last path segment is the stream ID, renaming the
         RTMP session so HLS segments and the recording are keyed by the ID and the
         raw key never lands on disk. Returns 404 when LIVE_INGEST_SECRET is not
-        configured (disabled), 401 on a bad secret, and 404 when no stream matches.
+        configured (disabled), 401 on a bad secret, 404 when no stream matches,
+        and 403 when a simultaneous-live cap (live_max_instance_lives /
+        live_max_user_lives, config-parity W11) refuses the publish — any
+        non-2xx/3xx answer makes nginx-rtmp deny the session.
       tags: [live]
       parameters:
         - name: X-Ingest-Secret
@@ -8487,6 +8490,14 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Invalid ingest secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            A simultaneous-live cap refused the publish (live_max_instance_lives
+            or live_max_user_lives reached). nginx-rtmp denies the session.
           content:
             application/json:
               schema:
@@ -9743,14 +9754,19 @@ paths:
         import_http_enabled, channel_sync_enabled, storyboards_enabled,
         transcription_enabled, user_import_enabled, user_export_enabled, and
         the config-parity W10 VOD knobs transcoding_enabled,
-        transcoding_original_resolution, upload_additional_extensions_enabled),
-        an integer for the int-kind limits (including the W8 keys
-        channel_sync_max_per_user, user_export_expiration_hours,
-        user_export_max_quota_bytes, max_channels_per_user — 0 always means
-        unlimited/never — and the W10 keys transcoding_max_fps (0 = no cap,
-        else 24..240), transcoding_threads (0 = ffmpeg default, else 1..64),
-        and transcoding_concurrency / import_jobs_concurrency (1..16, read per
-        worker tick so changes apply without a restart)), a string
+        transcoding_original_resolution, upload_additional_extensions_enabled,
+        and the config-parity W11 live knobs live_allow_replay and
+        live_default_save_replay), an integer for the int-kind limits
+        (including the W8 keys channel_sync_max_per_user,
+        user_export_expiration_hours, user_export_max_quota_bytes,
+        max_channels_per_user — 0 always means unlimited/never — the W10 keys
+        transcoding_max_fps (0 = no cap, else 24..240), transcoding_threads
+        (0 = ffmpeg default, else 1..64), and transcoding_concurrency /
+        import_jobs_concurrency (1..16, read per worker tick so changes apply
+        without a restart), and the W11 live limits live_max_instance_lives /
+        live_max_user_lives (0..10000, 0 = unlimited, enforced at the RTMP
+        publish callback) and live_max_duration_secs (0 = no limit, else
+        60..2592000, enforced by the duration watchdog)), a string
         for the text/markdown/link keys and enum keys such as
         sensitive_content_policy, and an array of strings for list keys
         (instance_categories, moderator_languages, and transcoding_resolutions
@@ -10885,7 +10901,7 @@ components:
                  terms_url, privacy_url, contact_email, default_language, categories,
                  moderator_languages, server_country, is_sensitive,
                  sensitive_content_policy, contact_form_enabled, social_links, features,
-                 branding, defaults, broadcast, customization, social, homepage]
+                 branding, defaults, broadcast, customization, social, homepage, live]
       properties:
         name:
           type: string
@@ -11203,6 +11219,46 @@ components:
             hash:
               type: string
               description: sha256 of the homepage document; "" when unset.
+        live:
+          type: object
+          description: >-
+            Effective live-streaming policy (config-parity W11) so the
+            live-create UI can hide the replay toggle, seed its default, and
+            explain the caps. features.live stays the master availability
+            flag; every limit here uses 0 = unlimited / no limit.
+          required: [allow_replay, default_save_replay, max_instance_lives,
+                     max_user_lives, max_duration_secs]
+          properties:
+            allow_replay:
+              type: boolean
+              description: >-
+                Instance master gate for replay-to-VOD: when false, no replay
+                is produced regardless of a stream's replay_enabled flag.
+            default_save_replay:
+              type: boolean
+              description: >-
+                EFFECTIVE default seeded into a new live stream's
+                replay_enabled when the client omits it (the
+                live_default_save_replay setting AND allow_replay).
+            max_instance_lives:
+              type: integer
+              format: int64
+              description: >-
+                Max simultaneous live sessions across the instance, enforced
+                at the RTMP publish callback (403 deny). 0 = unlimited.
+            max_user_lives:
+              type: integer
+              format: int64
+              description: >-
+                Max simultaneous live sessions per user (across all their
+                channels), enforced at the same callback. 0 = unlimited.
+            max_duration_secs:
+              type: integer
+              format: int64
+              description: >-
+                Max live-session duration; a watchdog force-closes over-limit
+                sessions (permanent streams return to offline, one-shots end).
+                0 = no limit.
     InstanceAssetRef:
       type: object
       description: >-
@@ -13769,8 +13825,13 @@ components:
           default: false
         replay_enabled:
           type: boolean
-          default: false
-          description: Record sessions and republish them as VODs (see LiveStream.replay_enabled).
+          description: >-
+            Record sessions and republish them as VODs (see
+            LiveStream.replay_enabled). When OMITTED, the instance default
+            (live_default_save_replay, exposed as the /instance live block's
+            default_save_replay) is seeded; an explicit value always wins.
+            While the instance disallows replay (live.allow_replay=false) the
+            seed is always false and any stored flag produces no replay.
     UpdateLiveStreamRequest:
       type: object
       required: [title]

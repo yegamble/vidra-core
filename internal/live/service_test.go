@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -88,10 +89,43 @@ func (f *fakeRepo) GetLiveStreamByKeyHash(_ context.Context, h string) (sqlcgen.
 	for id, hash := range f.hashes {
 		if hash == h {
 			r := f.rows[id]
-			return sqlcgen.GetLiveStreamByKeyHashRow{ID: id, ChannelID: r.ChannelID, Permanent: r.Permanent, State: r.State}, nil
+			return sqlcgen.GetLiveStreamByKeyHashRow{ID: id, ChannelID: r.ChannelID, Permanent: r.Permanent, State: r.State, OwnerID: r.OwnerID}, nil
 		}
 	}
 	return sqlcgen.GetLiveStreamByKeyHashRow{}, errors.New("not found")
+}
+
+func (f *fakeRepo) CountLiveStreamsLive(_ context.Context) (int64, error) {
+	var n int64
+	for _, r := range f.rows {
+		if r.State == "live" {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *fakeRepo) CountLiveStreamsLiveByOwner(_ context.Context, ownerID uuid.UUID) (int64, error) {
+	var n int64
+	for _, r := range f.rows {
+		if r.State == "live" && r.OwnerID == ownerID {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// ListOverdueLiveStreams mirrors the SQL: live sessions whose non-NULL
+// started_at is strictly before the cutoff.
+func (f *fakeRepo) ListOverdueLiveStreams(_ context.Context, cutoff pgtype.Timestamptz) ([]sqlcgen.ListOverdueLiveStreamsRow, error) {
+	var out []sqlcgen.ListOverdueLiveStreamsRow
+	for _, r := range f.rows {
+		if r.State == "live" && r.StartedAt.Valid && r.StartedAt.Time.Before(cutoff.Time) {
+			out = append(out, sqlcgen.ListOverdueLiveStreamsRow{ID: r.ID, Permanent: r.Permanent, StartedAt: r.StartedAt})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.Time.Before(out[j].StartedAt.Time) })
+	return out, nil
 }
 
 func (f *fakeRepo) SetLiveStreamState(_ context.Context, a sqlcgen.SetLiveStreamStateParams) error {
@@ -331,6 +365,173 @@ func TestRegenerateKey(t *testing.T) {
 	}
 	if got := repo.hashes[s.ID]; got != hashOf(key2) {
 		t.Errorf("stored hash = %q, want sha256(new key) %q", got, hashOf(key2))
+	}
+}
+
+// setOwner rewrites a stream row's owner so per-user cap tests can model
+// streams belonging to different users inside one fake repo (whose default
+// stamps every row with the same owner).
+func (f *fakeRepo) setOwner(id, owner uuid.UUID) {
+	r := f.rows[id]
+	r.OwnerID = owner
+	f.rows[id] = r
+}
+
+// TestStartByIdentityInstanceLiveCap proves the live_max_instance_lives cap at
+// the publish boundary (config-parity W11): at cap the publish is refused with
+// ErrInstanceLiveLimit; 0 means unlimited; an already-live session's re-assert
+// (the post-rename re-invocation) is never re-counted or rejected; and freeing
+// a slot admits the next publish.
+func TestStartByIdentityInstanceLiveCap(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo(uuid.New())
+	limit := int64(0)
+	svc := NewService(repo, WithMaxInstanceLivesFunc(func() int64 { return limit }))
+
+	a, aKey, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "A"})
+	_, bKey, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "B"})
+	c, cKey, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "C", Permanent: true})
+
+	// 0 = unlimited: both go live.
+	if _, _, err := svc.StartByIdentity(ctx, aKey); err != nil {
+		t.Fatalf("start A (unlimited): %v", err)
+	}
+	if _, _, err := svc.StartByIdentity(ctx, bKey); err != nil {
+		t.Fatalf("start B (unlimited): %v", err)
+	}
+
+	// Cap of 2 with 2 already live: C is refused.
+	limit = 2
+	if _, _, err := svc.StartByIdentity(ctx, cKey); !errors.Is(err, ErrInstanceLiveLimit) {
+		t.Fatalf("start C at cap = %v, want ErrInstanceLiveLimit", err)
+	}
+	// A re-assert of the already-live A (post-rename re-invocation) is allowed
+	// and not double-counted.
+	if _, needsRename, err := svc.StartByIdentity(ctx, a.ID.String()); err != nil || needsRename {
+		t.Fatalf("re-assert live A = (rename=%v, %v), want (false, nil)", needsRename, err)
+	}
+	// Ending A frees a slot: C is admitted.
+	if _, err := svc.StopByIdentity(ctx, a.ID.String()); err != nil {
+		t.Fatalf("stop A: %v", err)
+	}
+	if _, _, err := svc.StartByIdentity(ctx, cKey); err != nil {
+		t.Fatalf("start C after slot freed: %v", err)
+	}
+	if got := repo.rows[c.ID].State; got != StateLive {
+		t.Errorf("C state = %q, want live", got)
+	}
+}
+
+// TestStartByIdentityUserLiveCap proves the per-user live_max_user_lives cap:
+// a user at their cap is refused (ErrUserLiveLimit) while another user still
+// publishes freely.
+func TestStartByIdentityUserLiveCap(t *testing.T) {
+	ctx := context.Background()
+	ada, bob := uuid.New(), uuid.New()
+	repo := newFakeRepo(ada)
+	svc := NewService(repo, WithMaxUserLivesFunc(func() int64 { return 1 }))
+
+	_, ada1Key, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Ada 1"})
+	ada2, ada2Key, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Ada 2"})
+	bobSt, bobKey, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Bob"})
+	repo.setOwner(bobSt.ID, bob)
+
+	if _, _, err := svc.StartByIdentity(ctx, ada1Key); err != nil {
+		t.Fatalf("start Ada 1: %v", err)
+	}
+	// Ada's second simultaneous live is refused.
+	if _, _, err := svc.StartByIdentity(ctx, ada2Key); !errors.Is(err, ErrUserLiveLimit) {
+		t.Fatalf("start Ada 2 = %v, want ErrUserLiveLimit", err)
+	}
+	if got := repo.rows[ada2.ID].State; got != "offline" {
+		t.Errorf("refused stream state = %q, want offline (never flipped)", got)
+	}
+	// Bob is under HIS cap: allowed.
+	if _, _, err := svc.StartByIdentity(ctx, bobKey); err != nil {
+		t.Fatalf("start Bob: %v", err)
+	}
+}
+
+// TestSweepOverdueLive proves the live_max_duration_secs watchdog: over-limit
+// sessions are force-closed (one-shot → ended, permanent → offline, exactly
+// like an ingest-stop), under-limit sessions and pre-0076 sessions without a
+// started_at are untouched, 0 disables the sweep, and each force-close is
+// audited. The clock is injected so the test controls "now".
+func TestSweepOverdueLive(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo(uuid.New())
+	auditor := &fakeAuditor{}
+	maxSecs := int64(0)
+	now := time.Now()
+	svc := NewService(repo,
+		WithMaxDurationSecsFunc(func() int64 { return maxSecs }),
+		WithNowFunc(func() time.Time { return now }),
+		WithAuditor(auditor),
+	)
+
+	oneShot, k1, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "One-shot"})
+	perm, k2, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Permanent", Permanent: true})
+	fresh, k3, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Fresh"})
+	legacy, k4, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Legacy"})
+	for _, k := range []string{k1, k2, k3, k4} {
+		if _, err := svc.StartIngest(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Backdate one-shot + permanent past the limit; leave fresh recent; strip
+	// legacy's started_at (a session live since before migration 0076).
+	backdate := func(id uuid.UUID, ago time.Duration) {
+		r := repo.rows[id]
+		r.StartedAt = pgtype.Timestamptz{Time: now.Add(-ago), Valid: true}
+		repo.rows[id] = r
+	}
+	backdate(oneShot.ID, 2*time.Hour)
+	backdate(perm.ID, 3*time.Hour)
+	backdate(fresh.ID, time.Minute)
+	{
+		r := repo.rows[legacy.ID]
+		r.StartedAt = pgtype.Timestamptz{}
+		repo.rows[legacy.ID] = r
+	}
+
+	// Limit 0: the sweep is a no-op.
+	if n, err := svc.SweepOverdueLive(ctx); err != nil || n != 0 {
+		t.Fatalf("sweep with no limit = (%d, %v), want (0, nil)", n, err)
+	}
+
+	// One hour limit: exactly the two backdated sessions close.
+	maxSecs = 3600
+	n, err := svc.SweepOverdueLive(ctx)
+	if err != nil {
+		t.Fatalf("SweepOverdueLive: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("closed %d sessions, want 2", n)
+	}
+	if got := repo.rows[oneShot.ID].State; got != StateEnded {
+		t.Errorf("one-shot state = %q, want ended", got)
+	}
+	if got := repo.rows[perm.ID].State; got != StateOffline {
+		t.Errorf("permanent state = %q, want offline (reusable)", got)
+	}
+	if got := repo.rows[fresh.ID].State; got != StateLive {
+		t.Errorf("fresh state = %q, want still live", got)
+	}
+	if got := repo.rows[legacy.ID].State; got != StateLive {
+		t.Errorf("legacy (no started_at) state = %q, want still live (nothing truthful to measure)", got)
+	}
+	if len(auditor.events) != 2 {
+		t.Fatalf("audit events = %d, want 2 force-closes", len(auditor.events))
+	}
+	for _, ev := range auditor.events {
+		if ev.Action != observability.ActionLiveForceClose || ev.Result != observability.ResultSuccess || ev.Actor.Kind != "system" {
+			t.Errorf("audit event = %+v, want a system content.live.force_close success", ev)
+		}
+	}
+
+	// A second sweep finds nothing (closed sessions cleared started_at/state).
+	if n, err := svc.SweepOverdueLive(ctx); err != nil || n != 0 {
+		t.Errorf("second sweep = (%d, %v), want (0, nil)", n, err)
 	}
 }
 
