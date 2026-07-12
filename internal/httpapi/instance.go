@@ -47,6 +47,16 @@ type instanceFeatures struct {
 	// capability (ffmpeg/ffprobe wired). Already-produced playlists keep
 	// serving when this is false.
 	Transcoding bool `json:"transcoding"`
+	// VideoReplace reports the EFFECTIVE video-file-replacement availability
+	// (config-parity W14): video_replace_enabled AND uploads — the UI hides
+	// the studio "Replace video file" affordance in lock-step with the 403
+	// feature_disabled gate on the replace endpoints.
+	VideoReplace bool `json:"video_replace"`
+	// UploadAdditionalExtensions reports whether the extended upload container
+	// set (.mkv/.mov/.avi/…) is currently accepted
+	// (upload_additional_extensions_enabled, W10) so the studio can narrow its
+	// file-picker accept list in lock-step with the server's extension gate.
+	UploadAdditionalExtensions bool `json:"upload_additional_extensions"`
 	// Mail reports whether this deployment has an outbound mail path (an SMTP
 	// relay, or the dev capture seam) — a boot capability, not a runtime
 	// setting. The admin UI uses it to render mail-dependent settings
@@ -316,13 +326,15 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 			Downloads: s.downloadsEnabled(),
 			// W8 flags: setting AND boot capability (service Enabled() folds
 			// the runtime provider in when cmd/api wires one).
-			ImportHTTP:    s.importsEnabled() && s.importHTTPEnabled() && s.importsvc != nil && s.importsvc.YtdlpEnabled(),
-			ChannelSync:   s.channelSyncEnabled() && s.channelsyncsvc != nil && s.channelsyncsvc.Enabled(),
-			Storyboards:   s.storyboardsEnabled(),
-			Transcription: s.transcriptionEnabled() && s.captionjobsvc != nil && s.captionjobsvc.Enabled(),
-			UserImport:    s.userImportEnabled(),
-			UserExport:    s.userExportEnabled(),
-			Transcoding:   s.transcodingEnabled() && s.transcodesvc != nil && s.transcodesvc.Capable(),
+			ImportHTTP:                 s.importsEnabled() && s.importHTTPEnabled() && s.importsvc != nil && s.importsvc.YtdlpEnabled(),
+			ChannelSync:                s.channelSyncEnabled() && s.channelsyncsvc != nil && s.channelsyncsvc.Enabled(),
+			Storyboards:                s.storyboardsEnabled(),
+			Transcription:              s.transcriptionEnabled() && s.captionjobsvc != nil && s.captionjobsvc.Enabled(),
+			UserImport:                 s.userImportEnabled(),
+			UserExport:                 s.userExportEnabled(),
+			Transcoding:                s.transcodingEnabled() && s.transcodesvc != nil && s.transcodesvc.Capable(),
+			VideoReplace:               s.videoReplaceAvailable(),
+			UploadAdditionalExtensions: s.uploadAdditionalExtensionsEnabled(),
 			// The contact mailer is wired whenever ANY outbound mail path
 			// exists (SMTP or the dev capture seam) — the deployment's
 			// mail-capability signal.

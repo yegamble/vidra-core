@@ -1445,7 +1445,15 @@ func (s *Server) handleListBlockedVideos(c echo.Context) error {
 // sees 404 (not 403) so a private video's existence is not leaked; an owned but
 // missing video is also 404.
 func videoError(err error) error {
+	var rre *video.ReplaceRejectedError
+	if errors.As(err, &rre) {
+		// A refused replacement source (malware scan / probe, W14): the video
+		// and its current source are untouched; the reason is client-safe.
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, rre.Reason)
+	}
 	switch {
+	case errors.Is(err, video.ErrReplaceConflict):
+		return &ReplaceConflictError{}
 	case errors.Is(err, video.ErrNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	case errors.Is(err, video.ErrForbidden):

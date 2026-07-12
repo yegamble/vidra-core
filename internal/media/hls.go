@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -360,6 +362,85 @@ func HLSKeyPrefix(videoID uuid.UUID) string {
 	return "streaming-playlists/" + videoID.String()
 }
 
+// --- source versions & HLS generations (video file replacement, W14) --------
+//
+// SEMANTICS (the source-version model, documented here once): the VIDEO is the
+// stable identity — its id, URLs and metadata never change across a source
+// replacement. What versions is the SOURCE BLOB and the HLS tree derived from
+// it:
+//
+//   - source version 0 is the original upload at the legacy key
+//     web-videos/<id><ext>; replacement N stores web-videos/<id>.rN<ext>.
+//   - the transcoder derives its output prefix from the SOURCE key: version 0
+//     keeps the legacy streaming-playlists/<id>/ layout, version N writes a
+//     fresh GENERATION directory streaming-playlists/<id>/rN/.
+//
+// Because playback resolves every HLS key through the DB-recorded master key
+// (streaming_playlists.master_key) and rendition prefixes, writing a new
+// generation never disturbs the tree players are streaming; the atomic
+// promotion is transcode.storeResult swapping those DB rows to the new
+// generation. mediagc then collects the superseded generation and the old
+// source blob (both unreferenced). Keys stay opaque to the DB — this scheme is
+// parsed only here and in mediagc.
+
+// hlsGenerationDirRE matches a generation directory name ("r3").
+var hlsGenerationDirRE = regexp.MustCompile(`^r[1-9][0-9]*$`)
+
+// sourceVersionSuffixRE matches the version tag in a source key's basename
+// (the ".r3" in "web-videos/<id>.r3.mp4").
+var sourceVersionSuffixRE = regexp.MustCompile(`\.r([1-9][0-9]*)\.[A-Za-z0-9]+$`)
+
+// OriginalVideoKey is the storage key for source version n of a video's
+// original file: the legacy web-videos/<id><ext> for version 0 (every pre-W14
+// upload), web-videos/<id>.rN<ext> for replacement N. ext includes the dot.
+func OriginalVideoKey(videoID uuid.UUID, version int, ext string) string {
+	if version <= 0 {
+		return "web-videos/" + videoID.String() + ext
+	}
+	return "web-videos/" + videoID.String() + "." + HLSGenerationName(version) + ext
+}
+
+// OriginalKeyVersion parses the source version out of an original-file storage
+// key (0 for the legacy unversioned layout or anything unparseable).
+func OriginalKeyVersion(key string) int {
+	m := sourceVersionSuffixRE.FindStringSubmatch(path.Base(key))
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// HLSGenerationName is the generation directory name for source version n
+// ("r3"); "" for version 0 (the legacy in-place layout).
+func HLSGenerationName(version int) string {
+	if version <= 0 {
+		return ""
+	}
+	return "r" + strconv.Itoa(version)
+}
+
+// IsHLSGenerationName reports whether an HLS path segment names a replacement
+// generation directory (mediagc uses it to tell generation trees apart from
+// legacy rendition dirs like "720p").
+func IsHLSGenerationName(segment string) bool {
+	return hlsGenerationDirRE.MatchString(segment)
+}
+
+// HLSPrefixForSource is the storage-key directory a transcode of the given
+// source writes into: the legacy per-video prefix for a version-0 source, a
+// fresh generation directory (streaming-playlists/<id>/rN) for replacement N —
+// so a re-transcode never overwrites the tree players are currently streaming.
+func HLSPrefixForSource(videoID uuid.UUID, sourceKey string) string {
+	if gen := HLSGenerationName(OriginalKeyVersion(sourceKey)); gen != "" {
+		return HLSKeyPrefix(videoID) + "/" + gen
+	}
+	return HLSKeyPrefix(videoID)
+}
+
 // HLSDownloadKey returns the stable object key for a rendition's progressive
 // download asset. includeAudio selects the muxed asset; false selects video
 // only. renditionKeyPrefix is the HLSRendition.KeyPrefix value.
@@ -484,7 +565,11 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 		return HLSResult{}, err
 	}
 
-	prefix := HLSKeyPrefix(videoID)
+	// The output prefix is derived from the SOURCE key (W14): a replacement
+	// source writes a fresh generation directory so the tree players are
+	// currently streaming is never disturbed; promotion is the DB-row swap in
+	// transcode.storeResult.
+	prefix := HLSPrefixForSource(videoID, sourceKey)
 	// A replacement source may be silent even when the previous generation had
 	// audio. storeTree only overwrites files present in the new tree, so remove
 	// the old optional derivative before storing a generation that omits it.
@@ -511,7 +596,7 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 		// failure must not fail the H.264 HLS transcode (VP9 is an extra codec
 		// option, not the primary deliverable).
 		top := rungs[0]
-		if key, size, verr := t.encodeVP9(ctx, videoID, src, top); verr == nil {
+		if key, size, verr := t.encodeVP9(ctx, videoID, prefix, src, top); verr == nil {
 			res.WebMKey = key
 			res.WebMBytes = size
 			res.WebMHeight = top.Height

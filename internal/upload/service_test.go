@@ -31,12 +31,23 @@ func (r *fakeRepo) CreateUploadSession(_ context.Context, arg sqlcgen.CreateUplo
 	s := sqlcgen.UploadSession{
 		ID: uuid.New(), VideoID: arg.VideoID, UserID: arg.UserID, Filename: arg.Filename,
 		TotalSize: arg.TotalSize, ChunkSize: arg.ChunkSize, State: "active", ExpiresAt: arg.ExpiresAt,
-		FileFingerprint: arg.FileFingerprint,
+		FileFingerprint: arg.FileFingerprint, Purpose: arg.Purpose,
 		// Monotonic create timestamps so ListActive's newest-first order is stable.
 		CreatedAt: time.Unix(0, r.createSeq),
 	}
 	r.sessions[s.ID] = s
 	return s, nil
+}
+
+// HasActiveReplaceSessionForVideo mirrors the SQL: an active, unexpired
+// replace-purpose session for the video (W14's one-replacement-in-flight gate).
+func (r *fakeRepo) HasActiveReplaceSessionForVideo(_ context.Context, videoID uuid.UUID) (bool, error) {
+	for _, s := range r.sessions {
+		if s.VideoID == videoID && s.Purpose == PurposeReplace && s.State == "active" && s.ExpiresAt.After(time.Now()) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // CountActiveUploadSessionsForUser mirrors the SQL: the caller's active,
@@ -152,7 +163,7 @@ func TestChunkRoundTripOutOfOrderAndResume(t *testing.T) {
 	c := map[int][]byte{0: []byte("AAAA"), 1: []byte("BBBB"), 2: []byte("CC")} // 4+4+2 = 10
 	want := []byte("AAAABBBBCC")
 
-	sess, err := svc.CreateSession(ctx, video, user, "clip.mp4", int64(len(want)), "")
+	sess, err := svc.CreateSession(ctx, video, user, "clip.mp4", int64(len(want)), "", PurposeUpload)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -202,7 +213,7 @@ func TestChunkSizeValidation(t *testing.T) {
 	ctx := context.Background()
 	svc, _, _ := newTestService(t, 4)
 	user, video := uuid.New(), uuid.New()
-	sess, _ := svc.CreateSession(ctx, video, user, "clip.mp4", 10, "") // chunks 4/4/2
+	sess, _ := svc.CreateSession(ctx, video, user, "clip.mp4", 10, "", PurposeUpload) // chunks 4/4/2
 
 	if _, err := svc.PutChunk(ctx, sess.ID, user, 0, bytes.NewReader([]byte("AA"))); !errors.Is(err, ErrChunkSize) {
 		t.Errorf("short chunk err = %v, want ErrChunkSize", err)
@@ -227,7 +238,7 @@ func TestOwnershipIsolation(t *testing.T) {
 	ctx := context.Background()
 	svc, _, _ := newTestService(t, 4)
 	owner, other, video := uuid.New(), uuid.New(), uuid.New()
-	sess, _ := svc.CreateSession(ctx, video, owner, "clip.mp4", 4, "")
+	sess, _ := svc.CreateSession(ctx, video, owner, "clip.mp4", 4, "", PurposeUpload)
 
 	if _, err := svc.StatusFor(ctx, sess.ID, other); !errors.Is(err, ErrNotFound) {
 		t.Errorf("non-owner status err = %v, want ErrNotFound", err)
@@ -248,7 +259,7 @@ func TestCancelAndSweep(t *testing.T) {
 	user, video := uuid.New(), uuid.New()
 
 	// A cancelled session.
-	cancelled, _ := svc.CreateSession(ctx, video, user, "clip.mp4", 8, "")
+	cancelled, _ := svc.CreateSession(ctx, video, user, "clip.mp4", 8, "", PurposeUpload)
 	putAll(t, svc, cancelled.ID, user, map[int][]byte{0: []byte("AAAA")}, []int{0})
 	if err := svc.Cancel(ctx, cancelled.ID, user); err != nil {
 		t.Fatalf("cancel: %v", err)
@@ -265,7 +276,7 @@ func TestCancelAndSweep(t *testing.T) {
 	}
 
 	// An expired (but never cancelled) session: force expiry into the past.
-	expired, _ := svc.CreateSession(ctx, video, user, "clip.mp4", 4, "")
+	expired, _ := svc.CreateSession(ctx, video, user, "clip.mp4", 4, "", PurposeUpload)
 	s := repo.sessions[expired.ID]
 	s.ExpiresAt = time.Now().Add(-time.Hour)
 	repo.sessions[expired.ID] = s
@@ -292,7 +303,7 @@ func TestExpiryComputedFromClock(t *testing.T) {
 	repo := newFakeRepo()
 	blobs, _ := storage.NewLocal(t.TempDir())
 	svc := NewService(repo, blobs, WithClock(func() time.Time { return fixed }))
-	sess, err := svc.CreateSession(context.Background(), uuid.New(), uuid.New(), "clip.mp4", 4, "")
+	sess, err := svc.CreateSession(context.Background(), uuid.New(), uuid.New(), "clip.mp4", 4, "", PurposeUpload)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -310,7 +321,7 @@ func TestFingerprintPersistedOnCreate(t *testing.T) {
 	svc, repo, _ := newTestService(t, 4)
 	user, video := uuid.New(), uuid.New()
 	const fp = "sha256:deadbeef"
-	sess, err := svc.CreateSession(context.Background(), video, user, "clip.mp4", 8, fp)
+	sess, err := svc.CreateSession(context.Background(), video, user, "clip.mp4", 8, fp, PurposeUpload)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -337,22 +348,22 @@ func TestMaxActiveSessionsGuard(t *testing.T) {
 	user, other, video := uuid.New(), uuid.New(), uuid.New()
 
 	// Two sessions fit under the cap of 2.
-	s1, err := svc.CreateSession(ctx, video, user, "a.mp4", 4, "")
+	s1, err := svc.CreateSession(ctx, video, user, "a.mp4", 4, "", PurposeUpload)
 	if err != nil {
 		t.Fatalf("create 1: %v", err)
 	}
-	s2, err := svc.CreateSession(ctx, video, user, "b.mp4", 4, "")
+	s2, err := svc.CreateSession(ctx, video, user, "b.mp4", 4, "", PurposeUpload)
 	if err != nil {
 		t.Fatalf("create 2: %v", err)
 	}
 
 	// The third is refused with the guard sentinel.
-	if _, err := svc.CreateSession(ctx, video, user, "c.mp4", 4, ""); !errors.Is(err, ErrTooManyActiveSessions) {
+	if _, err := svc.CreateSession(ctx, video, user, "c.mp4", 4, "", PurposeUpload); !errors.Is(err, ErrTooManyActiveSessions) {
 		t.Fatalf("create 3 err = %v, want ErrTooManyActiveSessions", err)
 	}
 
 	// A DIFFERENT user is unaffected by this user's count (per-user budget).
-	if _, err := svc.CreateSession(ctx, video, other, "d.mp4", 4, ""); err != nil {
+	if _, err := svc.CreateSession(ctx, video, other, "d.mp4", 4, "", PurposeUpload); err != nil {
 		t.Fatalf("other-user create: %v", err)
 	}
 
@@ -360,12 +371,12 @@ func TestMaxActiveSessionsGuard(t *testing.T) {
 	if err := svc.Cancel(ctx, s1.ID, user); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
-	if _, err := svc.CreateSession(ctx, video, user, "e.mp4", 4, ""); err != nil {
+	if _, err := svc.CreateSession(ctx, video, user, "e.mp4", 4, "", PurposeUpload); err != nil {
 		t.Fatalf("create after cancel: %v", err)
 	}
 
 	// Back at the cap (s2 + the post-cancel session) → refused again.
-	if _, err := svc.CreateSession(ctx, video, user, "f.mp4", 4, ""); !errors.Is(err, ErrTooManyActiveSessions) {
+	if _, err := svc.CreateSession(ctx, video, user, "f.mp4", 4, "", PurposeUpload); !errors.Is(err, ErrTooManyActiveSessions) {
 		t.Fatalf("create at cap err = %v, want ErrTooManyActiveSessions", err)
 	}
 
@@ -379,7 +390,7 @@ func TestMaxActiveSessionsGuard(t *testing.T) {
 	if err := svc.MarkCompleted(ctx, s2.ID); err != nil {
 		t.Fatalf("mark completed: %v", err)
 	}
-	if _, err := svc.CreateSession(ctx, video, user, "g.mp4", 4, ""); err != nil {
+	if _, err := svc.CreateSession(ctx, video, user, "g.mp4", 4, "", PurposeUpload); err != nil {
 		t.Fatalf("create after complete: %v", err)
 	}
 }
@@ -396,7 +407,7 @@ func TestMaxActiveSessionsDisabled(t *testing.T) {
 	svc := NewService(repo, blobs, WithChunkSize(4), WithMaxActiveSessions(0))
 	user, video := uuid.New(), uuid.New()
 	for i := 0; i < 12; i++ {
-		if _, err := svc.CreateSession(ctx, video, user, "clip.mp4", 4, ""); err != nil {
+		if _, err := svc.CreateSession(ctx, video, user, "clip.mp4", 4, "", PurposeUpload); err != nil {
 			t.Fatalf("create %d with guard disabled: %v", i, err)
 		}
 	}
@@ -411,18 +422,18 @@ func TestActiveSessionsForUser(t *testing.T) {
 	owner, other, video := uuid.New(), uuid.New(), uuid.New()
 
 	// Two active sessions for the owner, one with a fingerprint and one chunk in.
-	fpSess, _ := svc.CreateSession(ctx, video, owner, "a.mp4", 10, "fp-A") // 3 chunks
+	fpSess, _ := svc.CreateSession(ctx, video, owner, "a.mp4", 10, "fp-A", PurposeUpload) // 3 chunks
 	putAll(t, svc, fpSess.ID, owner, map[int][]byte{0: []byte("AAAA")}, []int{0})
-	plainSess, _ := svc.CreateSession(ctx, video, owner, "b.mp4", 4, "") // no fingerprint
+	plainSess, _ := svc.CreateSession(ctx, video, owner, "b.mp4", 4, "", PurposeUpload) // no fingerprint
 
 	// Noise that must never appear: another user's session, a completed one, a
 	// cancelled one, and an expired one.
-	svc.CreateSession(ctx, video, other, "c.mp4", 4, "fp-A")
-	completed, _ := svc.CreateSession(ctx, video, owner, "d.mp4", 4, "fp-done")
+	svc.CreateSession(ctx, video, other, "c.mp4", 4, "fp-A", PurposeUpload)
+	completed, _ := svc.CreateSession(ctx, video, owner, "d.mp4", 4, "fp-done", PurposeUpload)
 	_ = svc.MarkCompleted(ctx, completed.ID)
-	cancelled, _ := svc.CreateSession(ctx, video, owner, "e.mp4", 4, "fp-cancel")
+	cancelled, _ := svc.CreateSession(ctx, video, owner, "e.mp4", 4, "fp-cancel", PurposeUpload)
 	_ = svc.Cancel(ctx, cancelled.ID, owner)
-	expired, _ := svc.CreateSession(ctx, video, owner, "f.mp4", 4, "fp-exp")
+	expired, _ := svc.CreateSession(ctx, video, owner, "f.mp4", 4, "fp-exp", PurposeUpload)
 	es := repo.sessions[expired.ID]
 	es.ExpiresAt = time.Now().Add(-time.Hour)
 	repo.sessions[expired.ID] = es

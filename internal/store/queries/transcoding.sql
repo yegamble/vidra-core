@@ -22,6 +22,23 @@ WHERE id IN (
 )
 RETURNING id, video_id, source_key, attempts;
 
+-- name: HasLiveTranscodeJob :one
+-- Whether a pending/running transcode job exists for the video. The video-file
+-- replacement flow (config-parity W14) answers 409 replace_conflict while one
+-- does: enqueueing is idempotent per live job, so a replacement accepted now
+-- would silently never be transcoded.
+SELECT EXISTS (
+    SELECT 1 FROM transcode_jobs
+    WHERE video_id = $1 AND state IN ('pending', 'running')
+);
+
+-- name: DeleteStreamingPlaylist :exec
+-- Drops a video's playlist row (with DeleteVideoRenditions) when a replacement
+-- lands while transcoding is unavailable (config-parity W14): the old HLS tree
+-- must stop serving superseded content; playback falls back to the progressive
+-- original until a future transcode re-promotes a ladder.
+DELETE FROM streaming_playlists WHERE video_id = $1;
+
 -- name: CompleteTranscodeJob :exec
 UPDATE transcode_jobs
 SET state = 'done', updated_at = now()

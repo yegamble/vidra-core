@@ -120,6 +120,24 @@ func (f *fakeRepo) FailTranscodeJob(_ context.Context, a sqlcgen.FailTranscodeJo
 	return nil
 }
 
+func (f *fakeRepo) HasLiveTranscodeJob(_ context.Context, videoID uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, j := range f.jobs {
+		if j.VideoID == videoID && (j.State == "pending" || j.State == "running") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeRepo) DeleteStreamingPlaylist(_ context.Context, videoID uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.playlists, videoID)
+	return nil
+}
+
 func (f *fakeRepo) UpsertStreamingPlaylist(_ context.Context, a sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -597,4 +615,96 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	t.Fatal("condition not reached in time")
+}
+
+// TestReplaceGenerationPromotionIsAtomic (W14): while a replacement's
+// re-transcode job is pending/running, the playlist and renditions keep
+// pointing at the OLD generation; only a successful storeResult swaps them to
+// the new one, and a failed job leaves the pipeline's usual dead-letter
+// behaviour. HasLiveJob reports the in-flight window the replace endpoints
+// gate on.
+func TestReplaceGenerationPromotionIsAtomic(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	oldPrefix := "streaming-playlists/" + videoID.String()
+	newPrefix := oldPrefix + "/r1"
+
+	// Seed the promoted OLD generation (the tree players are streaming).
+	if _, err := repo.UpsertStreamingPlaylist(context.Background(), sqlcgen.UpsertStreamingPlaylistParams{
+		VideoID: videoID, MasterKey: oldPrefix + "/master.m3u8", State: PlaylistReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateVideoRendition(context.Background(), sqlcgen.CreateVideoRenditionParams{
+		VideoID: videoID, Height: 480, Width: 854, KeyPrefix: oldPrefix + "/480p",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tc := &fakeTranscoder{res: media.HLSResult{
+		MasterKey: newPrefix + "/master.m3u8",
+		Renditions: []media.HLSRendition{
+			{Height: 720, Width: 1280, KeyPrefix: newPrefix + "/720p"},
+		},
+	}}
+	svc := NewService(repo, tc)
+
+	if svc.HasLiveJob(context.Background(), videoID) {
+		t.Fatal("HasLiveJob before enqueue = true, want false")
+	}
+	if err := svc.Enqueue(context.Background(), videoID, "web-videos/"+videoID.String()+".r1.mp4"); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if !svc.HasLiveJob(context.Background(), videoID) {
+		t.Fatal("HasLiveJob with a pending job = false, want true")
+	}
+	// Mid-flight: the OLD generation still serves.
+	if sp, ok := svc.Playlist(context.Background(), videoID); !ok || sp.MasterKey != oldPrefix+"/master.m3u8" {
+		t.Errorf("mid-flight playlist = %+v, want the old master", sp)
+	}
+
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
+	}
+	// Promotion: playlist + renditions now point at the new generation only.
+	sp, ok := svc.Playlist(context.Background(), videoID)
+	if !ok || sp.State != PlaylistReady || sp.MasterKey != newPrefix+"/master.m3u8" {
+		t.Errorf("post-promotion playlist = (%+v, %v), want the new master", sp, ok)
+	}
+	rends := svc.Renditions(context.Background(), videoID)
+	if len(rends) != 1 || rends[0].KeyPrefix != newPrefix+"/720p" {
+		t.Errorf("post-promotion renditions = %+v, want only the new generation's", rends)
+	}
+	if svc.HasLiveJob(context.Background(), videoID) {
+		t.Error("HasLiveJob after completion = true, want false")
+	}
+}
+
+// TestInvalidateDropsPlaylistAndRenditions (W14): a replacement landing while
+// transcoding is unavailable must stop the stale HLS tree from serving.
+func TestInvalidateDropsPlaylistAndRenditions(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	prefix := "streaming-playlists/" + videoID.String()
+	if _, err := repo.UpsertStreamingPlaylist(context.Background(), sqlcgen.UpsertStreamingPlaylistParams{
+		VideoID: videoID, MasterKey: prefix + "/master.m3u8", State: PlaylistReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateVideoRendition(context.Background(), sqlcgen.CreateVideoRenditionParams{
+		VideoID: videoID, Height: 360, Width: 640, KeyPrefix: prefix + "/360p",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(repo, nil)
+	if err := svc.Invalidate(context.Background(), videoID); err != nil {
+		t.Fatalf("Invalidate: %v", err)
+	}
+	if _, ok := svc.Playlist(context.Background(), videoID); ok {
+		t.Error("playlist still present after Invalidate")
+	}
+	if rends := svc.Renditions(context.Background(), videoID); len(rends) != 0 {
+		t.Errorf("renditions after Invalidate = %+v, want none", rends)
+	}
 }

@@ -182,7 +182,7 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 	if qerr := s.checkUploadQuotas(ctx, userID, in.Size); qerr != nil {
 		return qerr
 	}
-	sess, err := s.uploadsvc.CreateSession(ctx, id, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint))
+	sess, err := s.uploadsvc.CreateSession(ctx, id, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint), upload.PurposeUpload)
 	if err != nil {
 		// Batch guard (UPLOAD-10): the caller holds the max concurrent active
 		// sessions → 429 too_many_active_uploads so the client queues on it.
@@ -266,6 +266,12 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 		return uploadError(err)
 	}
 	defer func() { _ = reader.Close() }()
+
+	// A replace-purpose session (config-parity W14) finalises through the
+	// source-replacement flow instead of the attach-and-publish pipeline.
+	if sess.Purpose == upload.PurposeReplace {
+		return s.completeReplaceSession(c, sess, reader)
+	}
 
 	// Re-check the quotas (total + rolling daily) against the assembled size
 	// before storing (the session may have sat while other uploads consumed

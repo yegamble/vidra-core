@@ -28,6 +28,7 @@ type Repository interface {
 	ListAllVideoFileKeys(ctx context.Context) ([]string, error)
 	ListAllCaptionKeys(ctx context.Context) ([]string, error)
 	ListAllVideoIDs(ctx context.Context) ([]uuid.UUID, error)
+	ListStreamingPlaylistRefs(ctx context.Context) ([]sqlcgen.ListStreamingPlaylistRefsRow, error)
 	ListPlaylistThumbnailRefs(ctx context.Context) ([]sqlcgen.ListPlaylistThumbnailRefsRow, error)
 }
 
@@ -66,7 +67,12 @@ var sweptPrefixes = []string{
 
 // hlsPrefix is the id-partitioned tree collected at the video-id level: its
 // segments/variant playlists are not individually recorded in the database, so
-// the whole tree is orphan only when its video no longer exists.
+// the whole tree is orphan only when its video no longer exists — except for
+// replacement GENERATION directories (streaming-playlists/<id>/rN/, config-
+// parity W14), which are collected at the generation level: only the video's
+// LIVE generations (the promoted one per the playlist master key, plus the
+// current source's target generation while a re-transcode is in flight) are
+// kept. See hlsGenerations.
 const hlsPrefix = "streaming-playlists"
 
 // Sweep lists every object under the known prefixes and computes the orphan set
@@ -79,7 +85,7 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 		return Result{}, ErrListingUnsupported
 	}
 
-	referenced, liveVideoIDs, err := s.referenceSet(ctx)
+	refs, err := s.referenceSet(ctx)
 	if err != nil {
 		return Result{}, err
 	}
@@ -92,7 +98,7 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 		}
 		for _, key := range keys {
 			res.Scanned++
-			if s.isReferenced(key, prefix, referenced, liveVideoIDs) {
+			if s.isReferenced(key, prefix, refs) {
 				continue
 			}
 			res.Orphans = append(res.Orphans, key)
@@ -110,56 +116,144 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 	return res, nil
 }
 
-// isReferenced reports whether a listed object key is live. For the HLS tree the
-// unit is the video id (second path segment); every other prefix is an exact-key
+// refSet is everything the sweep matches listed keys against: exact DB-recorded
+// keys, the live video ids, and the per-video HLS generation picture (W14).
+type refSet struct {
+	referenced   map[string]bool
+	liveVideoIDs map[string]bool
+	// hasPlaylist marks video ids with a streaming_playlists row whose
+	// master_key is non-empty AND parseable under the video's own HLS prefix;
+	// promotedGen is that master's generation dir ("" = the legacy in-place
+	// layout).
+	hasPlaylist map[string]bool
+	promotedGen map[string]string
+	// targetGen is the generation the video's CURRENT source would transcode
+	// into (from the original file key's version), kept so an in-flight
+	// replacement's half-written tree is never swept. Only set for videos with
+	// a stored original.
+	targetGen map[string]string
+}
+
+// isReferenced reports whether a listed object key is live. For the HLS tree
+// the unit is the video id (second path segment) with generation-level
+// collection for replacement trees (W14); every other prefix is an exact-key
 // match against the referenced set.
-func (s *Service) isReferenced(key, prefix string, referenced, liveVideoIDs map[string]bool) bool {
+func (s *Service) isReferenced(key, prefix string, refs refSet) bool {
 	if prefix == hlsPrefix {
-		// key = streaming-playlists/<video_id>/...
+		// key = streaming-playlists/<video_id>/[rN/]...
 		parts := strings.Split(key, "/")
 		if len(parts) < 2 {
 			return false
 		}
-		return liveVideoIDs[parts[1]]
+		vid := parts[1]
+		if !refs.liveVideoIDs[vid] {
+			return false
+		}
+		// Without an attributable promoted generation (no playlist yet — the
+		// first transcode may be mid-write — or a failed/unparseable master),
+		// keep the whole tree: never risk sweeping files we cannot attribute.
+		if !refs.hasPlaylist[vid] {
+			return true
+		}
+		gen := ""
+		if len(parts) > 2 && media.IsHLSGenerationName(parts[2]) {
+			gen = parts[2]
+		}
+		if gen == refs.promotedGen[vid] {
+			return true
+		}
+		// The current source's target generation: an in-flight (or not yet
+		// promoted) re-transcode writes here.
+		target, ok := refs.targetGen[vid]
+		return ok && gen == target
 	}
-	return referenced[key]
+	return refs.referenced[key]
 }
 
-// referenceSet gathers the exact object keys the database references plus the
-// set of live video ids (for the HLS tree).
-func (s *Service) referenceSet(ctx context.Context) (referenced, liveVideoIDs map[string]bool, err error) {
-	referenced = map[string]bool{}
-	liveVideoIDs = map[string]bool{}
+// referenceSet gathers the exact object keys the database references, the set
+// of live video ids, and the per-video HLS generation picture (for the HLS
+// tree).
+func (s *Service) referenceSet(ctx context.Context) (refSet, error) {
+	refs := refSet{
+		referenced:   map[string]bool{},
+		liveVideoIDs: map[string]bool{},
+		hasPlaylist:  map[string]bool{},
+		promotedGen:  map[string]string{},
+		targetGen:    map[string]string{},
+	}
 
 	fileKeys, err := s.repo.ListAllVideoFileKeys(ctx)
 	if err != nil {
-		return nil, nil, err
+		return refSet{}, err
 	}
 	for _, k := range fileKeys {
-		referenced[k] = true
+		refs.referenced[k] = true
+		// An original's key names the video's CURRENT source version — the
+		// target generation of any in-flight re-transcode (W14).
+		if vid, ok := videoIDOfOriginalKey(k); ok {
+			refs.targetGen[vid] = media.HLSGenerationName(media.OriginalKeyVersion(k))
+		}
 	}
 	capKeys, err := s.repo.ListAllCaptionKeys(ctx)
 	if err != nil {
-		return nil, nil, err
+		return refSet{}, err
 	}
 	for _, k := range capKeys {
-		referenced[k] = true
+		refs.referenced[k] = true
 	}
 	plRefs, err := s.repo.ListPlaylistThumbnailRefs(ctx)
 	if err != nil {
-		return nil, nil, err
+		return refSet{}, err
 	}
 	for _, r := range plRefs {
 		if r.ThumbnailExt != nil && *r.ThumbnailExt != "" {
-			referenced[media.PlaylistThumbnailKey(r.ID, *r.ThumbnailExt)] = true
+			refs.referenced[media.PlaylistThumbnailKey(r.ID, *r.ThumbnailExt)] = true
 		}
+	}
+	spRefs, err := s.repo.ListStreamingPlaylistRefs(ctx)
+	if err != nil {
+		return refSet{}, err
+	}
+	for _, r := range spRefs {
+		vid := r.VideoID.String()
+		own := media.HLSKeyPrefix(r.VideoID) + "/"
+		rest, isOwn := strings.CutPrefix(r.MasterKey, own)
+		if !isOwn || rest == "" {
+			// No master ('' after a dead-lettered transcode) or a foreign
+			// layout (e.g. a PeerTube-import tree): no attributable
+			// generation — the whole tree is kept via !hasPlaylist above.
+			continue
+		}
+		refs.hasPlaylist[vid] = true
+		gen := ""
+		if seg, _, found := strings.Cut(rest, "/"); found && media.IsHLSGenerationName(seg) {
+			gen = seg
+		}
+		refs.promotedGen[vid] = gen
 	}
 	ids, err := s.repo.ListAllVideoIDs(ctx)
 	if err != nil {
-		return nil, nil, err
+		return refSet{}, err
 	}
 	for _, id := range ids {
-		liveVideoIDs[id.String()] = true
+		refs.liveVideoIDs[id.String()] = true
 	}
-	return referenced, liveVideoIDs, nil
+	return refs, nil
+}
+
+// videoIDOfOriginalKey extracts the video id from an original-file storage key
+// (web-videos/<id>[.rN]<ext>), reporting false for any other key shape.
+func videoIDOfOriginalKey(key string) (string, bool) {
+	rest, ok := strings.CutPrefix(key, "web-videos/")
+	if !ok || strings.Contains(rest, "/") {
+		return "", false
+	}
+	base, _, found := strings.Cut(rest, ".")
+	if !found {
+		return "", false
+	}
+	if _, err := uuid.Parse(base); err != nil {
+		return "", false
+	}
+	return base, true
 }

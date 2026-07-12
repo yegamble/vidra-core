@@ -4186,6 +4186,118 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/replace:
+    post:
+      operationId: replaceVideoFile
+      summary: Replace a published video's source file (direct multipart)
+      description: >-
+        Uploads a NEW source for an ALREADY PUBLISHED video (config-parity
+        W14; owner, or a moderator/admin managing any local video) as a
+        multipart form with a single "file" part. The video's id, URLs and
+        metadata (title, policies, thumbnails, captions) are unchanged; the
+        new source is malware-scanned and probed BEFORE anything is swapped
+        (a rejected file leaves the video fully intact, 422), then the
+        original-file record flips to the new version and a re-transcode is
+        enqueued through the regular pipeline. Playback keeps working
+        mid-swap: the previous HLS renditions keep serving until the new
+        generation is promoted atomically on transcode completion (media GC
+        collects the superseded files); progressive playback and downloads
+        serve the new source immediately. The rolling daily upload quota and
+        the storage quota are checked and recorded against the video's OWNER.
+        Gated by the video_replace_enabled admin setting (403
+        feature_disabled while off, default off). A video that is not
+        published, still transcoding, or already being replaced answers 409
+        replace_conflict. For large files prefer the resumable shape:
+        POST /api/v1/videos/{id}/replace-session.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The replacement media file.
+      responses:
+        "200":
+          description: >-
+            The source was replaced; the video stays published. The previous
+            renditions keep serving until the re-transcode promotes the new
+            generation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadVideoFileResponse"
+        "400":
+          description: The multipart "file" field is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Video file replacement is disabled on this instance (code
+            feature_disabled; video_replace_enabled off, or uploads off).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or the caller may not manage it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The video cannot be replaced right now (code replace_conflict) —
+            it is not published, a transcode of its current source is still
+            pending/running, or another replacement is already in flight.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: The uploaded file exceeds the instance upload size cap.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: The file extension is not an accepted video container.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Storing the file would exceed the owner's storage quota (code
+            quota_exceeded) or the rolling-24h daily upload quota (code
+            daily_quota_exceeded), or the replacement source was rejected by
+            the malware scan / media probe (the video is untouched).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/uploads:
     get:
       operationId: listMyUploads
@@ -4313,6 +4425,104 @@ paths:
             The caller already holds UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER active
             upload sessions (code too_many_active_uploads). Queue and retry after
             an in-flight session completes or is cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/replace-session:
+    post:
+      operationId: createReplaceSession
+      summary: Open a resumable (chunked) session that replaces a video's source
+      description: >-
+        Opens a chunked/resumable upload session whose completion REPLACES the
+        source of an ALREADY PUBLISHED video (config-parity W14; owner, or a
+        moderator/admin). Identical protocol to the plain upload session —
+        upload chunks with PUT /api/v1/uploads/{upload_id}/chunks/{n}, then
+        POST /api/v1/uploads/{upload_id}/complete (which finalises through the
+        replacement flow instead of the publish pipeline and answers 200 with
+        the still-published video + new source file); GET/DELETE on the
+        session work unchanged. The declared size, filename extension, and the
+        video OWNER's storage + rolling-daily quotas are validated up front,
+        and re-checked at completion. Gated by the video_replace_enabled admin
+        setting (403 feature_disabled while off, default off); a video that is
+        not published, still transcoding, or already being replaced answers
+        409 replace_conflict. The batch guard (429 too_many_active_uploads)
+        applies as for plain sessions.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUploadSessionRequest"
+      responses:
+        "201":
+          description: The resumable replacement session was opened.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSessionResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Video file replacement is disabled on this instance (code
+            feature_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such video, or the caller may not manage it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The video cannot be replaced right now (code replace_conflict).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: The declared size exceeds the instance upload size cap.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: The filename extension is not an accepted video container.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The body is invalid, or the file would exceed the owner's storage
+            quota (code quota_exceeded) or rolling-24h daily quota (code
+            daily_quota_exceeded).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: >-
+            The caller already holds the maximum number of active upload
+            sessions (code too_many_active_uploads).
           content:
             application/json:
               schema:
@@ -11307,6 +11517,8 @@ components:
             - user_import
             - user_export
             - transcoding
+            - video_replace
+            - upload_additional_extensions
             - mail
           description: >-
             Effective feature toggles (the DB-backed instance-settings overlay
@@ -11372,6 +11584,21 @@ components:
                 config-parity W10). Already-produced playlists keep serving
                 when this is false; new uploads stay playable via the retained
                 original.
+            video_replace:
+              type: boolean
+              description: >-
+                Whether video file replacement is effectively available
+                (video_replace_enabled on AND uploads on, config-parity W14).
+                The studio hides the "Replace video file" affordance in
+                lock-step with the 403 feature_disabled gate on
+                POST /videos/{id}/replace and /videos/{id}/replace-session.
+            upload_additional_extensions:
+              type: boolean
+              description: >-
+                Whether the extended upload container set (.m4v/.mov/.mkv/…)
+                is currently accepted (upload_additional_extensions_enabled,
+                config-parity W10) so the studio can narrow its file-picker
+                accept list in lock-step with the server's extension gate.
             mail:
               type: boolean
               description: >-

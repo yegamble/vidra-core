@@ -154,6 +154,12 @@ const (
 	// included the extended set (documented deviation from PT's off default).
 	KeyUploadAdditionalExtensionsEnabled = "upload_additional_extensions_enabled"
 
+	// Video file replacement (config-parity W14, PT video_file.update.enabled):
+	// lets a video's owner upload a new source for an already-published video —
+	// same URLs/id/metadata, re-transcoded through the pipeline. Default OFF: a
+	// NEW capability, not shipped behaviour (matching PeerTube's off default).
+	KeyVideoReplaceEnabled = "video_replace_enabled"
+
 	// Live streaming enforcement knobs (config-parity W11). Every key has a
 	// real enforcement point today: the replay pipeline gate, the live-create
 	// default seed, the secret-handled nginx-rtmp publish-callback caps, and
@@ -607,6 +613,10 @@ var specs = []spec{
 	// Default ON: the shipped allow-list already included the extended
 	// container set (documented deviation from PeerTube's off default).
 	{key: KeyUploadAdditionalExtensionsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "uploads"},
+	// Default OFF: replacement is a NEW capability (W14), not shipped
+	// behaviour (PT parity: video_file.update.enabled defaults off too).
+	{key: KeyVideoReplaceEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageVOD, section: "uploads"},
 
 	// Live streaming enforcement knobs (config-parity W11). None have env

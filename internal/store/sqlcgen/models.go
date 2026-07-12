@@ -713,6 +713,7 @@ type UploadSession struct {
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 	FileFingerprint string    `json:"file_fingerprint"`
+	Purpose         string    `json:"purpose"`
 }
 
 type UploadUsageEvent struct {

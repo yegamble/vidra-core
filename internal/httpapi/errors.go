@@ -58,7 +58,15 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var pr *PasswordRequiredError
 	var tma *TooManyActiveUploadsError
 	var cfd *ContactFormDisabledError
+	var rc *ReplaceConflictError
 	switch {
+	case errors.As(err, &rc):
+		status = http.StatusConflict
+		message = rc.Reason
+		if message == "" {
+			message = "the video's file cannot be replaced right now"
+		}
+		code = "replace_conflict"
 	case errors.As(err, &cfd):
 		status = http.StatusConflict
 		message = "the contact form is not available on this instance"
@@ -213,6 +221,15 @@ func (e *TooManyActiveUploadsError) Error() string {
 type PasswordRequiredError struct{}
 
 func (e *PasswordRequiredError) Error() string { return "password required" }
+
+// ReplaceConflictError renders as 409 with the stable code "replace_conflict"
+// (video file replacement, config-parity W14): the target video is not in a
+// replaceable state — not published, a transcode of its current source is
+// still pending/running, or another replacement is already in flight. Reason
+// is a client-safe explanation shown to the caller.
+type ReplaceConflictError struct{ Reason string }
+
+func (e *ReplaceConflictError) Error() string { return "replace conflict: " + e.Reason }
 
 // ContactFormDisabledError renders as 409 with the stable code
 // "contact_form_disabled": POST /instance/contact was called while the form's

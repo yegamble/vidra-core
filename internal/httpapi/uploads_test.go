@@ -46,11 +46,21 @@ func (r *uploadFakeRepo) CreateUploadSession(_ context.Context, arg sqlcgen.Crea
 		State:           "active",
 		ExpiresAt:       arg.ExpiresAt,
 		FileFingerprint: arg.FileFingerprint,
+		Purpose:         arg.Purpose,
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
 	}
 	r.sessions[s.ID] = s
 	return s, nil
+}
+
+func (r *uploadFakeRepo) HasActiveReplaceSessionForVideo(_ context.Context, videoID uuid.UUID) (bool, error) {
+	for _, s := range r.sessions {
+		if s.VideoID == videoID && s.Purpose == "replace" && s.State == "active" && s.ExpiresAt.After(time.Now()) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *uploadFakeRepo) GetUploadSession(_ context.Context, id uuid.UUID) (sqlcgen.UploadSession, error) {
