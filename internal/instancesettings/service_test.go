@@ -65,6 +65,8 @@ func testDefaults() Defaults {
 		ChannelSyncEnabled:    true,
 		ChannelSyncMaxPerUser: 5,
 		TranscriptionEnabled:  false,
+
+		TranscodingEnabled: true,
 	}
 }
 
@@ -546,4 +548,139 @@ func snapshotByKey(t *testing.T, svc *Service, key string) Effective {
 	}
 	t.Fatalf("snapshot missing key %q", key)
 	return Effective{}
+}
+
+// TestW10TranscodingKnobsRegistry covers the VOD transcoding runtime knobs &
+// worker pools batch (config-parity W10): every key's kind, default
+// resolution (transcoding_enabled from config, the ladder from the shipped
+// media default, everything else hardcoded), admin-IA placement, and
+// validator boundaries.
+func TestW10TranscodingKnobsRegistry(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Defaults + kinds + placement.
+	boolKeys := []struct {
+		key  string
+		def  bool
+		page string
+		sect string
+	}{
+		{KeyTranscodingEnabled, true, PageVOD, "transcoding"}, // testDefaults: TranscodingEnabled=true
+		{KeyTranscodingOriginalResolution, false, PageVOD, "transcoding"},
+		{KeyUploadAdditionalExtensionsEnabled, true, PageVOD, "uploads"}, // deviation: default ON (shipped allow-list already extended)
+	}
+	for _, tc := range boolKeys {
+		if got := svc.Bool(tc.key); got != tc.def {
+			t.Errorf("%s default = %v, want %v", tc.key, got, tc.def)
+		}
+		e := snapshotByKey(t, svc, tc.key)
+		if e.Kind != KindBool || e.Page != tc.page || e.Section != tc.sect {
+			t.Errorf("%s = kind %s at %s/%s, want bool at %s/%s", tc.key, e.Kind, e.Page, e.Section, tc.page, tc.sect)
+		}
+	}
+	intKeys := []struct {
+		key  string
+		def  int64
+		sect string
+	}{
+		{KeyTranscodingMaxFPS, 0, "transcoding"},
+		{KeyTranscodingThreads, 0, "transcoding"},
+		{KeyTranscodingConcurrency, 1, "transcoding"},
+		{KeyImportJobsConcurrency, 1, "imports"},
+	}
+	for _, tc := range intKeys {
+		if got := svc.Int(tc.key); got != tc.def {
+			t.Errorf("%s default = %d, want %d", tc.key, got, tc.def)
+		}
+		e := snapshotByKey(t, svc, tc.key)
+		if e.Kind != KindInt || e.Page != PageVOD || e.Section != tc.sect {
+			t.Errorf("%s = kind %s at %s/%s, want int at vod/%s", tc.key, e.Kind, e.Page, e.Section, tc.sect)
+		}
+	}
+
+	// The ladder default mirrors the shipped hardcoded ladder exactly.
+	if got := svc.Strings(KeyTranscodingResolutions); FormatList(got) != `["1080","720","480","360"]` {
+		t.Errorf("transcoding_resolutions default = %v, want the shipped 1080/720/480/360 ladder", got)
+	}
+	if e := snapshotByKey(t, svc, KeyTranscodingResolutions); e.Kind != KindList || e.Page != PageVOD || e.Section != "transcoding" {
+		t.Errorf("transcoding_resolutions = kind %s at %s/%s, want list at vod/transcoding", e.Kind, e.Page, e.Section)
+	}
+
+	// The transcoding_enabled default follows config (Defaults.TranscodingEnabled).
+	off := NewService(newFakeRepo(), Defaults{TranscodingEnabled: false})
+	_ = off.Load(ctx)
+	if off.Bool(KeyTranscodingEnabled) {
+		t.Error("transcoding_enabled must default to the config value (false)")
+	}
+
+	// Validator boundaries (table-driven).
+	admin := uuid.New()
+	valid := map[string]string{
+		KeyTranscodingEnabled:                "true",
+		KeyTranscodingMaxFPS:                 "0",
+		KeyTranscodingThreads:                "0",
+		KeyTranscodingConcurrency:            "16",
+		KeyImportJobsConcurrency:             "1",
+		KeyTranscodingOriginalResolution:     "true",
+		KeyUploadAdditionalExtensionsEnabled: "false",
+		KeyTranscodingResolutions:            `["2160","144"]`,
+	}
+	for key, val := range valid {
+		if err := svc.Apply(ctx, map[string]Update{key: {Value: val}}, admin); err != nil {
+			t.Errorf("Apply(%s=%s) = %v, want ok", key, val, err)
+		}
+	}
+	for _, tc := range []struct{ key, val string }{
+		{KeyTranscodingMaxFPS, "23"},  // below the 24 floor
+		{KeyTranscodingMaxFPS, "241"}, // above the 240 cap
+		{KeyTranscodingMaxFPS, "-1"},
+		{KeyTranscodingThreads, "65"},
+		{KeyTranscodingThreads, "-1"},
+		{KeyTranscodingConcurrency, "0"}, // 0 is NOT unlimited here: 1..16
+		{KeyTranscodingConcurrency, "17"},
+		{KeyImportJobsConcurrency, "0"},
+		{KeyImportJobsConcurrency, "17"},
+		{KeyTranscodingResolutions, `[]`},            // empty ladder refused
+		{KeyTranscodingResolutions, `["999"]`},       // non-canonical rung
+		{KeyTranscodingResolutions, `["0"]`},         // no audio-only 0p rung in v1
+		{KeyTranscodingResolutions, `["720","720"]`}, // duplicates refused
+		{KeyTranscodingResolutions, `["720p"]`},      // strings must be bare heights
+		{KeyTranscodingResolutions, `"1080"`},        // must be an array
+	} {
+		err := svc.Apply(ctx, map[string]Update{tc.key: {Value: tc.val}}, admin)
+		var ve *ValidationError
+		if !errors.As(err, &ve) || ve.Key != tc.key {
+			t.Errorf("Apply(%s=%s) = %v, want ValidationError on the key", tc.key, tc.val, err)
+		}
+	}
+
+	// Boundary accepts.
+	for _, tc := range []struct{ key, val string }{
+		{KeyTranscodingMaxFPS, "24"},
+		{KeyTranscodingMaxFPS, "240"},
+		{KeyTranscodingThreads, "1"},
+		{KeyTranscodingThreads, "64"},
+		{KeyTranscodingConcurrency, "1"},
+	} {
+		if err := svc.Apply(ctx, map[string]Update{tc.key: {Value: tc.val}}, admin); err != nil {
+			t.Errorf("Apply(%s=%s) = %v, want ok (boundary value)", tc.key, tc.val, err)
+		}
+	}
+
+	// null-PATCH-clears-override convention: a delete falls back to the default.
+	if err := svc.Apply(ctx, map[string]Update{KeyTranscodingResolutions: {Delete: true}}, admin); err != nil {
+		t.Fatalf("Apply(delete transcoding_resolutions): %v", err)
+	}
+	if got := svc.Strings(KeyTranscodingResolutions); FormatList(got) != `["1080","720","480","360"]` {
+		t.Errorf("after delete, transcoding_resolutions = %v, want the default ladder", got)
+	}
+
+	// ParseRungHeights maps stored list items back to ints for the encode seam.
+	if got := ParseRungHeights([]string{"1080", " 720", "junk"}); len(got) != 2 || got[0] != 1080 || got[1] != 720 {
+		t.Errorf("ParseRungHeights = %v, want [1080 720]", got)
+	}
 }

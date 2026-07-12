@@ -15,10 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/instancesettings"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/transcode"
 )
 
 // instanceSettingsFakeRepo is an in-memory instance_settings store for handler
@@ -78,6 +82,8 @@ func settingsDefaultsFromConfig(cfg *config.Config) instancesettings.Defaults {
 		ChannelSyncEnabled:    cfg.ChannelSyncEnabled,
 		ChannelSyncMaxPerUser: int64(cfg.ChannelSyncMaxPerUser),
 		TranscriptionEnabled:  cfg.WhisperEnabled,
+
+		TranscodingEnabled: cfg.TranscodingEnabled,
 	}
 }
 
@@ -157,10 +163,11 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// Default state: instance_name is the config value and nothing is overridden.
 	// 13 feature/base keys + 21 platform-information keys + 4 operational limits
 	// + 19 core-config-surface keys (config-parity W1) + 10 shipped-feature
-	// toggles (config-parity W8).
+	// toggles (config-parity W8) + 8 VOD transcoding/worker-pool knobs
+	// (config-parity W10).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 67 {
-		t.Fatalf("settings count = %d, want 67", len(got.Settings))
+	if len(got.Settings) != 75 {
+		t.Fatalf("settings count = %d, want 75", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {
@@ -639,5 +646,87 @@ func TestInstanceFeaturesW8Flags(t *testing.T) {
 	got = features()
 	if got["storyboards"] || got["user_export"] {
 		t.Errorf("flags after toggles = storyboards:%v user_export:%v, want false/false", got["storyboards"], got["user_export"])
+	}
+}
+
+// --- config-parity W10: VOD transcoding knobs & upload container policy ---
+
+// TestUploadAdditionalExtensionsGate: upload_additional_extensions_enabled
+// governs the EXTENDED container set at session create (the same gate
+// AttachOriginal enforces at the service seam); the base set is unaffected,
+// and a runtime flip needs no restart.
+func TestUploadAdditionalExtensionsGate(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, adminTok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	session := func(filename string) int {
+		rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+id+"/upload-session",
+			`{"size":40,"filename":"`+filename+`"}`, adminTok)
+		return rec.Code
+	}
+
+	// Default ON (deviation from PT's off default: the shipped allow-list
+	// already included the extended set): .avi opens a session.
+	if code := session("clip.avi"); code != http.StatusCreated {
+		t.Fatalf("session .avi default = %d, want 201", code)
+	}
+
+	// OFF: extended containers are 415; base containers still work.
+	setToggle(t, srv, adminTok, instancesettings.KeyUploadAdditionalExtensionsEnabled, false)
+	for _, f := range []string{"clip.avi", "clip.mkv", "clip.mov", "clip.ts"} {
+		if code := session(f); code != http.StatusUnsupportedMediaType {
+			t.Errorf("session %s with additional extensions off = %d, want 415", f, code)
+		}
+	}
+	for _, f := range []string{"clip.mp4", "clip.webm", "clip.ogv"} {
+		if code := session(f); code != http.StatusCreated {
+			t.Errorf("session %s with additional extensions off = %d, want 201 (base set)", f, code)
+		}
+	}
+
+	// Back ON without a restart.
+	setToggle(t, srv, adminTok, instancesettings.KeyUploadAdditionalExtensionsEnabled, true)
+	if code := session("clip.avi"); code != http.StatusCreated {
+		t.Errorf("session .avi re-enabled = %d, want 201", code)
+	}
+}
+
+// capableFakeTranscoder makes a transcode.Service report Capable() (the boot
+// half of the effective transcoding flag). Never invoked by these tests.
+type capableFakeTranscoder struct{}
+
+func (capableFakeTranscoder) Transcode(context.Context, uuid.UUID, string) (media.HLSResult, error) {
+	return media.HLSResult{}, nil
+}
+
+// TestInstanceFeaturesTranscodingFlag: features.transcoding is the EFFECTIVE
+// availability — the runtime transcoding_enabled setting AND the boot
+// capability (a wired transcoder).
+func TestInstanceFeaturesTranscodingFlag(t *testing.T) {
+	cfg := testConfig()
+	cfg.TranscodingEnabled = true
+
+	// Boot-capable deployment: flag follows the runtime setting.
+	srv, _, _, _, _ := videoServerFullWith(t, cfg, []Option{
+		WithTranscodeService(transcode.NewService(newTranscodeFakeRepo(), capableFakeTranscoder{})),
+	})
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	if got := publicInstance(t, srv); !got.Features.Transcoding {
+		t.Fatalf("features.transcoding = false, want true (setting on + capable)")
+	}
+	setToggle(t, srv, adminTok, instancesettings.KeyTranscodingEnabled, false)
+	if got := publicInstance(t, srv); got.Features.Transcoding {
+		t.Errorf("features.transcoding after runtime off = true, want false")
+	}
+	setToggle(t, srv, adminTok, instancesettings.KeyTranscodingEnabled, true)
+	if got := publicInstance(t, srv); !got.Features.Transcoding {
+		t.Errorf("features.transcoding after re-enable = false, want true (no restart needed)")
+	}
+
+	// No boot capability (nil transcoder): the setting can't conjure ffmpeg.
+	bare := videoServerCfg(t, cfg)
+	if got := publicInstance(t, bare); got.Features.Transcoding {
+		t.Errorf("features.transcoding without a capable transcoder = true, want false")
 	}
 }

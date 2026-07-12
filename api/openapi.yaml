@@ -9739,16 +9739,23 @@ paths:
         (registration_enabled, registration_require_approval,
         quarantine_new_uploads, uploads_enabled, imports_enabled, live_enabled,
         comments_enabled, downloads_enabled, contact_form_enabled,
-        instance_is_sensitive, and the config-parity W8 feature toggles
+        instance_is_sensitive, the config-parity W8 feature toggles
         import_http_enabled, channel_sync_enabled, storyboards_enabled,
-        transcription_enabled, user_import_enabled, user_export_enabled), an
-        integer for the int-kind limits (including the W8 keys
+        transcription_enabled, user_import_enabled, user_export_enabled, and
+        the config-parity W10 VOD knobs transcoding_enabled,
+        transcoding_original_resolution, upload_additional_extensions_enabled),
+        an integer for the int-kind limits (including the W8 keys
         channel_sync_max_per_user, user_export_expiration_hours,
         user_export_max_quota_bytes, max_channels_per_user — 0 always means
-        unlimited/never), a string
+        unlimited/never — and the W10 keys transcoding_max_fps (0 = no cap,
+        else 24..240), transcoding_threads (0 = ffmpeg default, else 1..64),
+        and transcoding_concurrency / import_jobs_concurrency (1..16, read per
+        worker tick so changes apply without a restart)), a string
         for the text/markdown/link keys and enum keys such as
         sensitive_content_policy, and an array of strings for list keys
-        (instance_categories, moderator_languages). A null value
+        (instance_categories, moderator_languages, and transcoding_resolutions
+        — a non-empty, duplicate-free subset of the canonical ladder rungs
+        2160/1440/1080/720/480/360/240/144). A null value
         clears that override (resets the key to its config default). Only the keys
         present are changed. An unknown key, a type mismatch, or a content-invalid
         value (e.g. a malformed URL/email, an empty instance_name, an unknown
@@ -11000,14 +11007,16 @@ components:
             - transcription
             - user_import
             - user_export
+            - transcoding
           description: >-
             Effective feature toggles (the DB-backed instance-settings overlay
             over static config). The frontend disables the matching affordances
             in lock-step with the backend's enforcement. The config-parity W8
             flags (import_http, channel_sync, storyboards, transcription,
-            user_import, user_export) report EFFECTIVE availability — the
-            runtime admin setting AND, where one exists, the deployment's boot
-            capability (yt-dlp resolver, Whisper endpoint).
+            user_import, user_export) and the W10 transcoding flag report
+            EFFECTIVE availability — the runtime admin setting AND, where one
+            exists, the deployment's boot capability (yt-dlp resolver, Whisper
+            endpoint, ffmpeg/ffprobe).
           properties:
             uploads:
               type: boolean
@@ -11054,6 +11063,14 @@ components:
             user_export:
               type: boolean
               description: Whether POST /api/v1/me/export accepts export requests.
+            transcoding:
+              type: boolean
+              description: >-
+                Whether the HLS transcoding pipeline is effectively available
+                (transcoding_enabled on AND ffmpeg/ffprobe wired at boot,
+                config-parity W10). Already-produced playlists keep serving
+                when this is false; new uploads stay playable via the retained
+                original.
         branding:
           type: object
           description: >-

@@ -182,6 +182,11 @@ func run() error {
 		ChannelSyncEnabled:    cfg.ChannelSyncEnabled,
 		ChannelSyncMaxPerUser: int64(cfg.ChannelSyncMaxPerUser),
 		TranscriptionEnabled:  cfg.WhisperEnabled,
+
+		// VOD transcoding master toggle (config-parity W10): the runtime
+		// setting defaults to the boot env; the ffmpeg/ffprobe boot capability
+		// is ANDed in at the enqueue/pickup seams.
+		TranscodingEnabled: cfg.TranscodingEnabled,
 	})
 	if err := settingssvc.Load(startCtx); err != nil {
 		return err
@@ -458,22 +463,42 @@ func run() error {
 	vopts = append(vopts, video.WithStoryboardGate(func() bool {
 		return settingssvc.Bool(instancesettings.KeyStoryboardsEnabled)
 	}))
+	// Upload container policy (config-parity W10): the extended extension set
+	// follows upload_additional_extensions_enabled at runtime (default on —
+	// the shipped allow-list already included it). Consulted per AttachOriginal;
+	// the HTTP layer applies the same gate up front at session create.
+	vopts = append(vopts, video.WithAdditionalExtGate(func() bool {
+		return settingssvc.Bool(instancesettings.KeyUploadAdditionalExtensionsEnabled)
+	}))
 	if cfg.QuarantineNewUploads {
 		logger.Info("upload quarantine enabled by default (QUARANTINE_NEW_UPLOADS)")
 	}
 	// HLS transcoding. The read side (playlist/rendition lookups + the /hls
 	// serving routes) is always wired so previously produced playlists keep
-	// serving even when the pipeline is later disabled; the enqueue hook and
-	// worker run only when TRANSCODING_ENABLED and ffmpeg+ffprobe are present.
+	// serving even when the pipeline is later disabled. The transcoder, enqueue
+	// hook, and worker are wired whenever ffmpeg+ffprobe are present (the BOOT
+	// capability); the runtime transcoding_enabled setting — defaulting to
+	// TRANSCODING_ENABLED — gates job enqueue and worker pickup per call
+	// (config-parity W10), never construction, so an admin can flip the
+	// pipeline on/off without a restart (the boot-baked-worker gotcha).
 	var hlsTranscoder transcode.Transcoder
-	if cfg.TranscodingEnabled {
-		if tc, ok := media.DetectHLSTranscoder(blobs); ok {
-			tc.SetVP9(cfg.TranscodingVP9Enabled)
-			hlsTranscoder = tc
-			logger.Info("hls transcoding enabled (ffmpeg + ffprobe found)", "vp9", cfg.TranscodingVP9Enabled)
-		} else {
-			logger.Warn("TRANSCODING_ENABLED=true but ffmpeg/ffprobe not on PATH; transcoding disabled")
-		}
+	if tc, ok := media.DetectHLSTranscoder(blobs); ok {
+		tc.SetVP9(cfg.TranscodingVP9Enabled)
+		// Encode knobs (ladder/FPS/threads/original-resolution) resolve from the
+		// settings overlay once per job, so changes apply without a restart.
+		tc.SetEncodeSettingsFunc(func() media.HLSEncodeSettings {
+			return media.HLSEncodeSettings{
+				Resolutions:        instancesettings.ParseRungHeights(settingssvc.Strings(instancesettings.KeyTranscodingResolutions)),
+				MaxFPS:             int(settingssvc.Int(instancesettings.KeyTranscodingMaxFPS)),
+				Threads:            int(settingssvc.Int(instancesettings.KeyTranscodingThreads)),
+				OriginalResolution: settingssvc.Bool(instancesettings.KeyTranscodingOriginalResolution),
+			}
+		})
+		hlsTranscoder = tc
+		logger.Info("hls transcoding pipeline wired (ffmpeg + ffprobe found; runtime gate transcoding_enabled)",
+			"enabled_default", cfg.TranscodingEnabled, "vp9", cfg.TranscodingVP9Enabled)
+	} else if cfg.TranscodingEnabled {
+		logger.Warn("TRANSCODING_ENABLED=true but ffmpeg/ffprobe not on PATH; transcoding disabled")
 	}
 	// IPFS mirror (P19.4): on transcode completion, add+pin the finalized VOD HLS
 	// tree as one directory (car_root) row and refresh the VP9/WebM alternate — for
@@ -487,11 +512,23 @@ func run() error {
 			}
 		}))
 	}
+	// Runtime gates (config-parity W10): transcoding_enabled is consulted at
+	// enqueue AND pickup; transcoding_concurrency per drain tick.
+	tcopts = append(tcopts,
+		transcode.WithEnabledFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyTranscodingEnabled)
+		}),
+		transcode.WithConcurrencyFunc(func() int64 {
+			return settingssvc.Int(instancesettings.KeyTranscodingConcurrency)
+		}),
+	)
 	transcodesvc := transcode.NewService(db.Queries(), hlsTranscoder, tcopts...)
 	opts = append(opts, httpapi.WithTranscodeService(transcodesvc))
 	if hlsTranscoder != nil {
 		vopts = append(vopts, video.WithTranscodeHook(func(ctx context.Context, videoID uuid.UUID, sourceKey string) {
 			// Best-effort: an enqueue failure must never block the publish.
+			// While transcoding_enabled is off, Enqueue is a silent no-op and
+			// the video stays playable via the retained original.
 			if err := transcodesvc.Enqueue(ctx, videoID, sourceKey); err != nil {
 				logger.Warn("transcode enqueue failed", "video_id", videoID, "error", err)
 			}
@@ -714,6 +751,11 @@ func run() error {
 		videoimport.WithAllowPrivateFetch(cfg.ImportAllowPrivateURLs),
 		videoimport.WithQuota(quotasvc),
 		videoimport.WithLogger(logger),
+		// Runtime worker parallelism (import_jobs_concurrency, config-parity
+		// W10), resolved per drain tick so changes apply without a restart.
+		videoimport.WithConcurrencyFunc(func() int64 {
+			return settingssvc.Int(instancesettings.KeyImportJobsConcurrency)
+		}),
 		// The per-file cap follows the upload-size overlay at runtime (resolved per
 		// job); the constructor value stays the boot default.
 		videoimport.WithMaxBytesFunc(func() int64 {
@@ -1208,15 +1250,15 @@ func runATProtoPostWorker(ctx context.Context, logger *slog.Logger, svc *atproto
 }
 
 // runTranscodeWorker drains the durable transcode job queue on a ticker until
-// ctx is canceled (mirrors runFederationDeliveryWorker). A single worker with a
-// small batch keeps at most a couple of ffmpeg runs in flight per tick; it logs
-// only claim-query errors — per-job failures are recorded in the queue
-// (retry/backoff/dead-letter) rather than logged.
+// ctx is canceled (mirrors runFederationDeliveryWorker). A single worker
+// goroutine claims a batch per pass and runs it on the service's bounded pool
+// (transcoding_concurrency, config-parity W10); the batch size follows the
+// effective concurrency per pass — minimum 2, the historical batch — so a
+// runtime change applies without a restart. It logs only claim-query errors —
+// per-job failures are recorded in the queue (retry/backoff/dead-letter)
+// rather than logged.
 func runTranscodeWorker(ctx context.Context, logger *slog.Logger, svc *transcode.Service) {
-	const (
-		interval = 10 * time.Second
-		batch    = 2
-	)
+	const interval = 10 * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -1225,12 +1267,12 @@ func runTranscodeWorker(ctx context.Context, logger *slog.Logger, svc *transcode
 			return
 		case <-ticker.C:
 			// Drain the whole due backlog, batch by batch, so a burst of
-			// uploads doesn't wait a tick per pair of jobs. DrainJobs only
+			// uploads doesn't wait a tick per batch of jobs. DrainJobs only
 			// counts completions, so a persistently failing job ends the
 			// inner loop and backoff retries it on a later tick.
 			total := 0
 			for {
-				n, err := svc.DrainJobs(ctx, batch)
+				n, err := svc.DrainJobs(ctx, drainBatch(svc.Concurrency()))
 				if err != nil {
 					logger.Warn("transcode drain failed", "error", err)
 					break
@@ -1245,6 +1287,17 @@ func runTranscodeWorker(ctx context.Context, logger *slog.Logger, svc *transcode
 			}
 		}
 	}
+}
+
+// drainBatch sizes a queue worker's per-pass claim from its effective
+// concurrency (config-parity W10): at least the historical batch of 2 so the
+// backlog drains as before, and at least the pool width so a raised
+// concurrency is actually saturated.
+func drainBatch(concurrency int) int {
+	if concurrency < 2 {
+		return 2
+	}
+	return concurrency
 }
 
 // runAccountExportWorker drains the durable account-export queue and sweeps
@@ -1333,13 +1386,13 @@ func runScheduledPublishWorker(ctx context.Context, logger *slog.Logger, svc *vi
 }
 
 // runVideoImportWorker drains the durable URL-import queue on a ticker until
-// ctx is canceled (mirrors runTranscodeWorker). Per-job failures are recorded
-// in the queue (retry/backoff/dead-letter); only the claim-query error is logged.
+// ctx is canceled (mirrors runTranscodeWorker). The claimed batch runs on the
+// service's bounded pool (import_jobs_concurrency, config-parity W10), the
+// claim size following the effective concurrency per pass. Per-job failures
+// are recorded in the queue (retry/backoff/dead-letter); only the claim-query
+// error is logged.
 func runVideoImportWorker(ctx context.Context, logger *slog.Logger, svc *videoimport.Service) {
-	const (
-		interval = 10 * time.Second
-		batch    = 2
-	)
+	const interval = 10 * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -1349,7 +1402,7 @@ func runVideoImportWorker(ctx context.Context, logger *slog.Logger, svc *videoim
 		case <-ticker.C:
 			total := 0
 			for {
-				n, err := svc.DrainJobs(ctx, batch)
+				n, err := svc.DrainJobs(ctx, drainBatch(svc.Concurrency()))
 				if err != nil {
 					logger.Warn("video import drain failed", "error", err)
 					break

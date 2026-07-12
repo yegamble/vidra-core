@@ -146,3 +146,42 @@ func TestSweepRequiresLister(t *testing.T) {
 		t.Fatalf("want ErrListingUnsupported, got %v", err)
 	}
 }
+
+// TestSweepKeepsRenditionsOutsideCurrentLadder proves ladder shrinkage
+// (transcoding_resolutions, config-parity W10) can never orphan an existing
+// video's renditions: the HLS tree is collected at the VIDEO-ID level — the
+// sweep never consults the configured ladder — so rung directories that are no
+// longer in the admin-selected ladder (here 1440p/240p alongside 720p) survive
+// as long as their video exists, and the whole tree goes only when the video
+// row does.
+func TestSweepKeepsRenditionsOutsideCurrentLadder(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveVid := uuid.New()
+	keys := []string{
+		"streaming-playlists/" + liveVid.String() + "/master.m3u8",
+		"streaming-playlists/" + liveVid.String() + "/1440p/playlist.m3u8", // not in the default ladder
+		"streaming-playlists/" + liveVid.String() + "/1440p/seg_00000.ts",
+		"streaming-playlists/" + liveVid.String() + "/720p/seg_00000.ts",
+		"streaming-playlists/" + liveVid.String() + "/240p/seg_00000.ts", // not in the default ladder
+	}
+	for _, k := range keys {
+		put(t, blobs, k)
+	}
+	svc := NewService(&fakeRepo{videoIDs: []uuid.UUID{liveVid}}, blobs)
+	res, err := svc.Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if res.Deleted != 0 || len(res.Orphans) != 0 {
+		t.Fatalf("sweep = deleted %d orphans %v, want none (video exists)", res.Deleted, res.Orphans)
+	}
+	for _, k := range keys {
+		if !exists(t, blobs, k) {
+			t.Errorf("rendition object %q was deleted despite its video existing", k)
+		}
+	}
+}

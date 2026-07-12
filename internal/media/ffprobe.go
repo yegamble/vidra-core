@@ -92,9 +92,11 @@ func objectPath(ctx context.Context, blobs storage.Backend, key string) (string,
 // ffprobeOutput is the subset of `ffprobe -print_format json` we read.
 type ffprobeOutput struct {
 	Streams []struct {
-		CodecType string `json:"codec_type"`
-		Width     int    `json:"width"`
-		Height    int    `json:"height"`
+		CodecType    string `json:"codec_type"`
+		Width        int    `json:"width"`
+		Height       int    `json:"height"`
+		AvgFrameRate string `json:"avg_frame_rate"`
+		RFrameRate   string `json:"r_frame_rate"`
 	} `json:"streams"`
 	Format struct {
 		Duration string `json:"duration"`
@@ -121,8 +123,44 @@ func parseFFProbe(b []byte) (Metadata, error) {
 		if s.CodecType == "video" && s.Width > 0 && s.Height > 0 {
 			m.Width = s.Width
 			m.Height = s.Height
+			m.FPS = parseFrameRate(s.AvgFrameRate)
+			if m.FPS == 0 {
+				m.FPS = parseFrameRate(s.RFrameRate)
+			}
 			break
 		}
 	}
 	return m, nil
+}
+
+// maxProbeFPS caps a parsed frame rate so an absurd value a crafted file makes
+// ffprobe emit can't drive planning decisions (real content tops out well
+// below 1000 fps).
+const maxProbeFPS = 1000
+
+// parseFrameRate decodes ffprobe's rational frame-rate form ("30000/1001",
+// "25/1") or a plain decimal into frames per second. Unknown/degenerate values
+// ("0/0", "N/A", junk, non-positive, absurd) return 0 ("unknown").
+func parseFrameRate(v string) float64 {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	num, den := v, "1"
+	if i := strings.IndexByte(v, '/'); i >= 0 {
+		num, den = v[:i], v[i+1:]
+	}
+	n, err := strconv.ParseFloat(num, 64)
+	if err != nil {
+		return 0
+	}
+	d, err := strconv.ParseFloat(den, 64)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	fps := n / d
+	if fps <= 0 || fps >= maxProbeFPS {
+		return 0
+	}
+	return fps
 }

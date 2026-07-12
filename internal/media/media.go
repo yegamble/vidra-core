@@ -10,4 +10,8 @@ type Metadata struct {
 	DurationSeconds int
 	Width           int
 	Height          int
+	// FPS is the video stream's average frame rate (frames per second); 0 when
+	// unknown. The transcoder uses it to decide whether transcoding_max_fps
+	// needs an fps filter (a cap is never applied to a slower/unknown source).
+	FPS float64
 }

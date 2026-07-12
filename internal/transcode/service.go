@@ -11,12 +11,14 @@ package transcode
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/workerpool"
 )
 
 const (
@@ -71,6 +73,15 @@ type Service struct {
 	repo       Repository
 	transcoder Transcoder
 	onComplete func(ctx context.Context, videoID uuid.UUID)
+	// enabledFn is the runtime transcoding_enabled gate (config-parity W10),
+	// consulted at BOTH job enqueue and worker pickup — never at construction
+	// (the boot-baked-worker gotcha: the worker is always wired so a runtime
+	// re-enable needs no restart). nil = enabled.
+	enabledFn func() bool
+	// concurrencyFn is the runtime transcoding_concurrency value, resolved per
+	// DrainJobs call (per worker tick) so a change applies without a restart.
+	// nil = 1 (the pre-W10 sequential behavior).
+	concurrencyFn func() int64
 }
 
 // Option configures the transcode service.
@@ -85,6 +96,44 @@ func WithCompletionHook(fn func(ctx context.Context, videoID uuid.UUID)) Option 
 	return func(s *Service) { s.onComplete = fn }
 }
 
+// WithEnabledFunc wires the runtime transcoding_enabled gate (config-parity
+// W10). f is consulted per Enqueue and per DrainJobs call — the worker itself
+// stays constructed and ticking, so an admin can flip transcoding on/off
+// without a restart. While off, Enqueue is a silent no-op (the upload stays
+// playable via the retained original, served progressively) and the worker
+// claims nothing (pending jobs wait, they are not failed).
+func WithEnabledFunc(f func() bool) Option {
+	return func(s *Service) { s.enabledFn = f }
+}
+
+// WithConcurrencyFunc wires the runtime transcoding_concurrency value
+// (config-parity W10). f is resolved once per DrainJobs call (per worker
+// tick), clamped to [1, workerpool.MaxConcurrency]; running jobs keep the
+// parallelism they started with.
+func WithConcurrencyFunc(f func() int64) Option {
+	return func(s *Service) { s.concurrencyFn = f }
+}
+
+// Enabled reports the effective runtime transcoding gate (true when no
+// provider is wired — the pre-W10 behavior).
+func (s *Service) Enabled() bool {
+	return s.enabledFn == nil || s.enabledFn()
+}
+
+// Capable reports whether this service can actually run jobs (a transcoder is
+// wired — ffmpeg/ffprobe present at boot). The GET /instance features block
+// ANDs it with the runtime setting so clients see EFFECTIVE availability.
+func (s *Service) Capable() bool { return s.transcoder != nil }
+
+// Concurrency is the effective worker parallelism for the next drain, clamped
+// to [1, workerpool.MaxConcurrency] (1 when no provider is wired).
+func (s *Service) Concurrency() int {
+	if s.concurrencyFn == nil {
+		return 1
+	}
+	return workerpool.Clamp(s.concurrencyFn())
+}
+
 // NewService builds the transcode service. transcoder may be nil when only the
 // read side (playlist/rendition lookups) is needed.
 func NewService(repo Repository, transcoder Transcoder, opts ...Option) *Service {
@@ -97,8 +146,15 @@ func NewService(repo Repository, transcoder Transcoder, opts ...Option) *Service
 
 // Enqueue queues a transcode job for a video's stored original. Idempotent per
 // live job: while a pending/running job exists for the video, re-enqueueing is
-// a no-op (partial unique index + ON CONFLICT DO NOTHING).
+// a no-op (partial unique index + ON CONFLICT DO NOTHING). While the runtime
+// transcoding_enabled gate is off, Enqueue is a silent no-op: no job row is
+// written and the publish proceeds — the video stays playable via the retained
+// original (progressive Range serving), matching the pre-existing
+// transcoding-disabled behavior.
 func (s *Service) Enqueue(ctx context.Context, videoID uuid.UUID, sourceKey string) error {
+	if !s.Enabled() {
+		return nil
+	}
 	return s.repo.EnqueueTranscodeJob(ctx, sqlcgen.EnqueueTranscodeJobParams{
 		VideoID:   videoID,
 		SourceKey: sourceKey,
@@ -111,24 +167,35 @@ func (s *Service) Enqueue(ctx context.Context, videoID uuid.UUID, sourceKey stri
 // exponential backoff, or dead-lettered (and the playlist marked failed) after
 // maxAttempts. Returns the number completed. Only the claim-query error is
 // returned — per-job failures are persisted in the queue, not surfaced.
-// Intended to be called on a ticker by a single worker.
+// Intended to be called on a ticker by a single worker goroutine; the claimed
+// batch runs on a bounded pool sized by the runtime transcoding_concurrency
+// value, resolved per call (config-parity W10), so an admin change applies on
+// the next tick without a restart. While the runtime transcoding_enabled gate
+// is off, nothing is claimed (pending jobs wait; they are not failed).
 func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	if s.transcoder == nil {
 		return 0, ErrNoTranscoder
+	}
+	if !s.Enabled() {
+		return 0, nil
 	}
 	rows, err := s.repo.ClaimDueTranscodeJobs(ctx, int32(limit))
 	if err != nil {
 		return 0, err
 	}
-	done := 0
-	for _, row := range rows {
+	var (
+		mu   sync.Mutex
+		done int
+	)
+	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
+		row := rows[i]
 		res, err := s.transcoder.Transcode(ctx, row.VideoID, row.SourceKey)
 		if err == nil {
 			err = s.storeResult(ctx, row.VideoID, res)
 		}
 		if err != nil {
 			s.recordFailure(ctx, row, err)
-			continue
+			return
 		}
 		_ = s.repo.CompleteTranscodeJob(ctx, row.ID)
 		// Best-effort completion hook (IPFS mirror HLS-tree pin, P19.4). A hook
@@ -136,8 +203,10 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		if s.onComplete != nil {
 			s.onComplete(ctx, row.VideoID)
 		}
+		mu.Lock()
 		done++
-	}
+		mu.Unlock()
+	})
 	return done, nil
 }
 

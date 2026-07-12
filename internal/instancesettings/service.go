@@ -34,6 +34,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -134,6 +135,24 @@ const (
 	KeyUserExportExpirationHours = "user_export_expiration_hours" // 0 = archives never expire
 	KeyUserExportMaxQuotaBytes   = "user_export_max_quota_bytes"  // refuse export gen above this usage; 0 = unlimited
 	KeyMaxChannelsPerUser        = "max_channels_per_user"        // 0 = unlimited
+
+	// VOD transcoding runtime knobs & worker pools (config-parity W10). Every
+	// key is read through a provider-func seam at job/request time — never at
+	// worker construction (the boot-baked-worker gotcha) — so changes apply
+	// without a restart. transcoding_enabled gates job enqueue AND worker
+	// pickup; the boot capability (ffmpeg/ffprobe on PATH) stays env-side and
+	// is ANDed in at the seams.
+	KeyTranscodingEnabled            = "transcoding_enabled"             // default from TRANSCODING_ENABLED
+	KeyTranscodingResolutions        = "transcoding_resolutions"         // ladder rung heights (canonical set; no 0p audio-only rung in v1)
+	KeyTranscodingMaxFPS             = "transcoding_max_fps"             // 0 = no cap, else 24..240 (applied only when the source rate exceeds it)
+	KeyTranscodingThreads            = "transcoding_threads"             // 0 = ffmpeg default, else 1..64 (per-job -threads)
+	KeyTranscodingConcurrency        = "transcoding_concurrency"         // parallel transcode jobs per tick, 1..16
+	KeyImportJobsConcurrency         = "import_jobs_concurrency"         // parallel URL-import jobs per tick, 1..16
+	KeyTranscodingOriginalResolution = "transcoding_original_resolution" // extra HLS rung at source size above the ladder max
+	// Upload container policy (rides the transcoding wave; PT groups it under
+	// transcoding too). Default ON — vidra's shipped allow-list already
+	// included the extended set (documented deviation from PT's off default).
+	KeyUploadAdditionalExtensionsEnabled = "upload_additional_extensions_enabled"
 )
 
 // Kind is a setting's value type, reported to clients and used to validate the
@@ -280,6 +299,11 @@ type Defaults struct {
 	ChannelSyncEnabled    bool
 	ChannelSyncMaxPerUser int64
 	TranscriptionEnabled  bool
+
+	// TranscodingEnabled mirrors TRANSCODING_ENABLED (config-parity W10): the
+	// runtime master toggle's default. The boot capability (ffmpeg/ffprobe on
+	// PATH) stays env-side — effective availability is settingAND(boot).
+	TranscodingEnabled bool
 }
 
 // spec describes one setting: its key, value kind, how to resolve its default
@@ -493,6 +517,31 @@ var specs = []spec{
 	{key: KeyMaxChannelsPerUser, kind: KindInt,
 		defInt: func(Defaults) int64 { return 0 }, validate: intRange(0, 10000),
 		page: PageGeneral, section: "channels"},
+
+	// VOD transcoding runtime knobs & worker pools (config-parity W10).
+	{key: KeyTranscodingEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.TranscodingEnabled }, validate: validateBool,
+		page: PageVOD, section: "transcoding"},
+	{key: KeyTranscodingResolutions, kind: KindList, defString: hardcoded(defaultTranscodingResolutions),
+		validate: validateTranscodingResolutions,
+		page:     PageVOD, section: "transcoding"},
+	{key: KeyTranscodingMaxFPS, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: intZeroOrRange(24, 240),
+		page: PageVOD, section: "transcoding"},
+	{key: KeyTranscodingThreads, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: intZeroOrRange(1, 64),
+		page: PageVOD, section: "transcoding"},
+	{key: KeyTranscodingConcurrency, kind: KindInt,
+		defInt: func(Defaults) int64 { return 1 }, validate: intRange(1, 16),
+		page: PageVOD, section: "transcoding"},
+	{key: KeyTranscodingOriginalResolution, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageVOD, section: "transcoding"},
+	{key: KeyImportJobsConcurrency, kind: KindInt,
+		defInt: func(Defaults) int64 { return 1 }, validate: intRange(1, 16),
+		page: PageVOD, section: "imports"},
+	// Default ON: the shipped allow-list already included the extended
+	// container set (documented deviation from PeerTube's off default).
+	{key: KeyUploadAdditionalExtensionsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageVOD, section: "uploads"},
 }
 
 var specByKey = func() map[string]spec {
@@ -950,6 +999,61 @@ func validateOptionalTwitterUsername(v string) error {
 	}
 	if !twitterUsernameRe.MatchString(v) {
 		return errors.New(`must be an X/Twitter username like "@vidra"`)
+	}
+	return nil
+}
+
+// defaultTranscodingResolutions is the canonical stored form of the shipped
+// HLS ladder (media.DefaultHLSResolutionHeights), computed once so the
+// registry default can never drift from the transcoder's.
+var defaultTranscodingResolutions = FormatList(rungHeightsToStrings(media.DefaultHLSResolutionHeights))
+
+// rungHeightsToStrings renders ladder rung heights as the registry's list-item
+// strings ("1080", "720", …).
+func rungHeightsToStrings(heights []int) []string {
+	out := make([]string, 0, len(heights))
+	for _, h := range heights {
+		out = append(out, strconv.Itoa(h))
+	}
+	return out
+}
+
+// ParseRungHeights maps a transcoding_resolutions list value to integer rung
+// heights, dropping anything non-numeric (unreachable through Apply, which
+// validates every item). Exported for cmd/api's encode-settings provider.
+func ParseRungHeights(items []string) []int {
+	out := make([]int, 0, len(items))
+	for _, it := range items {
+		if n, err := strconv.Atoi(strings.TrimSpace(it)); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// validateTranscodingResolutions requires a non-empty, duplicate-free list of
+// canonical ladder rung heights (media.HLSCanonicalRungHeights; there is
+// deliberately no 0p audio-only rung in v1). An empty list is refused — it
+// would disable every rung while transcoding stays on; use transcoding_enabled
+// for that.
+func validateTranscodingResolutions(v string) error {
+	items, err := parseList(v)
+	if err != nil {
+		return errors.New("must be an array of strings")
+	}
+	if len(items) == 0 {
+		return errors.New("must enable at least one resolution (use transcoding_enabled to turn transcoding off)")
+	}
+	seen := map[int]bool{}
+	for _, it := range items {
+		n, err := strconv.Atoi(strings.TrimSpace(it))
+		if err != nil || !media.IsHLSRungHeight(n) {
+			return fmt.Errorf("unknown resolution %q (valid: %s)", it, strings.Join(rungHeightsToStrings(media.HLSCanonicalRungHeights), ", "))
+		}
+		if seen[n] {
+			return fmt.Errorf("duplicate resolution %q", it)
+		}
+		seen[n] = true
 	}
 	return nil
 }

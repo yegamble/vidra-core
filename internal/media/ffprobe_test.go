@@ -50,3 +50,51 @@ func TestParseFFProbeMissingAndInvalid(t *testing.T) {
 		t.Fatal("parseFFProbe(non-json) = nil error, want error")
 	}
 }
+
+// --- config-parity W10: frame-rate probing for transcoding_max_fps ---
+
+func TestParseFFProbeFrameRate(t *testing.T) {
+	const out = `{
+	  "streams": [
+	    {"codec_type": "video", "width": 1920, "height": 1080, "avg_frame_rate": "30000/1001", "r_frame_rate": "60/1"}
+	  ],
+	  "format": {"duration": "1.0"}
+	}`
+	m, err := parseFFProbe([]byte(out))
+	if err != nil {
+		t.Fatalf("parseFFProbe: %v", err)
+	}
+	if m.FPS < 29.9 || m.FPS > 30.0 {
+		t.Errorf("FPS = %v, want ~29.97 (avg_frame_rate preferred over r_frame_rate)", m.FPS)
+	}
+
+	// Degenerate avg ("0/0") falls back to r_frame_rate.
+	const fallback = `{"streams":[{"codec_type":"video","width":640,"height":360,"avg_frame_rate":"0/0","r_frame_rate":"25/1"}]}`
+	m, err = parseFFProbe([]byte(fallback))
+	if err != nil {
+		t.Fatalf("parseFFProbe fallback: %v", err)
+	}
+	if m.FPS != 25 {
+		t.Errorf("FPS = %v, want 25 (r_frame_rate fallback)", m.FPS)
+	}
+}
+
+func TestParseFrameRate(t *testing.T) {
+	cases := map[string]float64{
+		"30000/1001": 29.97002997002997,
+		"25/1":       25,
+		"24":         24,
+		"0/0":        0,
+		"N/A":        0,
+		"":           0,
+		"junk":       0,
+		"-30/1":      0,
+		"30/0":       0,
+		"100000/1":   0, // absurd rates read as unknown
+	}
+	for in, want := range cases {
+		if got := parseFrameRate(in); got != want {
+			t.Errorf("parseFrameRate(%q) = %v, want %v", in, got, want)
+		}
+	}
+}

@@ -136,6 +136,24 @@ func (s *Server) userExportEnabled() bool {
 	return s.settingBool(instancesettings.KeyUserExportEnabled, true)
 }
 
+// --- VOD transcoding runtime knobs (config-parity W10) ---
+
+// transcodingEnabled is the runtime master toggle over the HLS transcoding
+// pipeline (transcoding_enabled; default from TRANSCODING_ENABLED). EFFECTIVE
+// availability additionally requires the boot capability (ffmpeg/ffprobe
+// wired) — the features block ANDs in transcode.Service.Capable().
+func (s *Server) transcodingEnabled() bool {
+	return s.settingBool(instancesettings.KeyTranscodingEnabled, s.cfg.TranscodingEnabled)
+}
+
+// uploadAdditionalExtensionsEnabled reports whether the extended upload
+// container set is accepted (upload_additional_extensions_enabled). Default ON
+// — vidra's shipped allow-list already included the extended set (documented
+// deviation from PeerTube's off default).
+func (s *Server) uploadAdditionalExtensionsEnabled() bool {
+	return s.settingBool(instancesettings.KeyUploadAdditionalExtensionsEnabled, true)
+}
+
 // --- admin GET/PATCH /admin/instance-settings ---
 
 // instanceSettingView is one setting's effective state in the admin response:

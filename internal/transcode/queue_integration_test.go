@@ -14,8 +14,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/transcode"
 )
 
 // seedVideo creates the user→channel→video FK chain and returns the video id.
@@ -189,5 +191,79 @@ func TestStreamingPlaylistAndRenditionsPersist(t *testing.T) {
 	}
 	if rends, _ := q.ListVideoRenditions(ctx, videoID); len(rends) != 0 {
 		t.Errorf("renditions after delete = %d, want 0", len(rends))
+	}
+}
+
+// fakeGateTranscoder satisfies transcode.Transcoder for the runtime-gate
+// integration test (never fails; the gate is what's under test).
+type fakeGateTranscoder struct{}
+
+func (fakeGateTranscoder) Transcode(_ context.Context, videoID uuid.UUID, _ string) (media.HLSResult, error) {
+	return media.HLSResult{MasterKey: "streaming-playlists/" + videoID.String() + "/master.m3u8"}, nil
+}
+
+// TestTranscodeRuntimeGateFlipIntegration proves — against the REAL
+// transcode_jobs queue (the job-run observability surface) — that the
+// transcoding_enabled runtime gate takes effect between two enqueues on ONE
+// service instance, without any reconstruction/restart (config-parity W10):
+// gate off → no job row is written and nothing is claimed; gate on → the
+// enqueue lands, the worker picks it up, and the playlist bookkeeping runs.
+func TestTranscodeRuntimeGateFlipIntegration(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	st, err := store.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	enabled := false
+	svc := transcode.NewService(q, fakeGateTranscoder{},
+		transcode.WithEnabledFunc(func() bool { return enabled }),
+		transcode.WithConcurrencyFunc(func() int64 { return 2 }),
+	)
+
+	// Enqueue while disabled: silent no-op — no row lands in transcode_jobs.
+	offVid := seedVideo(ctx, t, q)
+	if err := svc.Enqueue(ctx, offVid, "web-videos/"+offVid.String()+".mp4"); err != nil {
+		t.Fatalf("Enqueue while disabled: %v", err)
+	}
+	rows, err := q.ClaimDueTranscodeJobs(ctx, 500)
+	if err != nil {
+		t.Fatalf("ClaimDueTranscodeJobs: %v", err)
+	}
+	for _, r := range rows {
+		if r.VideoID == offVid {
+			t.Fatal("a job row was written while transcoding_enabled was off")
+		}
+		// Foreign rows claimed by this probe: put them back untouched.
+		_ = q.RescheduleTranscodeJob(ctx, sqlcgen.RescheduleTranscodeJobParams{
+			ID: r.ID, NextAttemptAt: time.Now(), LastError: "",
+		})
+	}
+
+	// Runtime flip on the SAME instance: enqueue lands and the worker runs it.
+	enabled = true
+	onVid := seedVideo(ctx, t, q)
+	if err := svc.Enqueue(ctx, onVid, "web-videos/"+onVid.String()+".mp4"); err != nil {
+		t.Fatalf("Enqueue while enabled: %v", err)
+	}
+	if n, err := svc.DrainJobs(ctx, 500); err != nil || n < 1 {
+		t.Fatalf("DrainJobs after enable = (%d, %v), want >= 1 completion", n, err)
+	}
+	if sp, ok := svc.Playlist(ctx, onVid); !ok || sp.State != transcode.PlaylistReady {
+		t.Fatalf("playlist after gated drain = (%+v, %v), want ready", sp, ok)
+	}
+
+	// Gate off again: DrainJobs claims nothing (a pending backlog would wait).
+	enabled = false
+	if n, err := svc.DrainJobs(ctx, 500); err != nil || n != 0 {
+		t.Fatalf("DrainJobs while disabled = (%d, %v), want (0, nil)", n, err)
 	}
 }

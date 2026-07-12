@@ -84,14 +84,26 @@ type EmbedValidationError struct{ Message string }
 
 func (e *EmbedValidationError) Error() string { return e.Message }
 
-// acceptedVideoExts is the allow-list of original-upload file extensions. It is
+// The allow-list of original-upload file extensions, split into the always-on
+// base containers and the ADDITIONAL set gated by the runtime
+// upload_additional_extensions_enabled setting (config-parity W10, mirroring
+// PeerTube's transcoding.allow_additional_extensions split). It is
 // deliberately a container/extension gate only — the declared content type is
 // client-controlled and not trusted; real content validation is FFprobe's job
 // in a later slice.
-var acceptedVideoExts = map[string]bool{
-	".mp4": true, ".m4v": true, ".mov": true, ".webm": true, ".mkv": true,
-	".avi": true, ".ogv": true, ".ogg": true, ".mpg": true, ".mpeg": true,
-	".ts": true, ".flv": true, ".wmv": true, ".3gp": true,
+//
+// NOTE: the pre-W10 allowlist was the UNION of both sets, so the setting
+// defaults ON — a documented deviation from PeerTube's off default (defaulting
+// off would have retroactively rejected containers vidra always accepted).
+var baseVideoExts = map[string]bool{
+	".mp4": true, ".webm": true, ".ogv": true, ".ogg": true,
+}
+
+// additionalVideoExts is the extended container set (PT's "additional
+// extensions"), accepted only while upload_additional_extensions_enabled.
+var additionalVideoExts = map[string]bool{
+	".m4v": true, ".mov": true, ".mkv": true, ".avi": true, ".mpg": true,
+	".mpeg": true, ".ts": true, ".flv": true, ".wmv": true, ".3gp": true,
 }
 
 // acceptedImageExts maps a custom-thumbnail upload extension to the content type
@@ -256,6 +268,7 @@ type Service struct {
 	thumbnailer          Thumbnailer
 	storyboarder         Storyboarder
 	storyboardGate       func() bool
+	additionalExtGate    func() bool
 	scanner              Scanner
 	scanMode             ScanMode
 	auditor              Auditor
@@ -321,6 +334,15 @@ func WithStoryboarder(sb Storyboarder) Option {
 // decider (the default) leaves generation on whenever a Storyboarder is wired.
 func WithStoryboardGate(decide func() bool) Option {
 	return func(s *Service) { s.storyboardGate = decide }
+}
+
+// WithAdditionalExtGate wires the runtime upload_additional_extensions_enabled
+// predicate (config-parity W10), consulted per AttachOriginal so an admin can
+// restrict uploads to the base container set (.mp4/.webm/.ogv/.ogg) without a
+// restart. A nil decider (the default) keeps the full pre-W10 allow-list.
+// Already-stored originals are untouched — the gate covers new attachments only.
+func WithAdditionalExtGate(decide func() bool) Option {
+	return func(s *Service) { s.additionalExtGate = decide }
 }
 
 // WithViewDeduper wires per-viewer view de-duplication. Without it, every
@@ -504,13 +526,17 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	if v.OwnerID != ownerID {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrForbidden
 	}
-	ext, ok := acceptedExt(in.Filename)
+	ext, ok := s.acceptedExt(in.Filename)
 	if !ok {
 		// Fall back to the declared content type — e.g. a URL import from a path
 		// with no file extension (`/download?id=…`) served as `Content-Type:
 		// video/mp4`. The multipart upload path always has a real filename, so
-		// this only matters for import.
-		ext, ok = extForContentType(in.ContentType)
+		// this only matters for import. The mapped extension passes back through
+		// the same gate so a content-type synonym can't bypass the runtime
+		// additional-extensions setting.
+		if ctExt, ctOK := extForContentType(in.ContentType); ctOK {
+			ext, ok = AcceptedVideoExtGated("x"+ctExt, s.additionalExtsAllowed())
+		}
 	}
 	if !ok {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrUnsupportedMedia
@@ -1103,25 +1129,43 @@ func posInt32(n int) *int32 {
 }
 
 // AcceptedVideoExt reports the normalized (lowercased) extension of filename
-// when it is an accepted video container, else ("", false). Exposed so the
-// resumable-upload session (internal/upload) validates a declared filename up
-// front against the exact same allow-list AttachOriginal enforces.
+// when it is an accepted video container (base OR additional set), else
+// ("", false). This is the permissive/full-universe form — the pre-W10
+// allowlist — used where only container RECOGNITION matters (e.g. the import
+// auto-resolver's routing); enforcement sites that honor the runtime
+// upload_additional_extensions_enabled gate use AcceptedVideoExtGated.
 func AcceptedVideoExt(filename string) (string, bool) {
-	return acceptedExt(filename)
+	return AcceptedVideoExtGated(filename, true)
 }
 
-// acceptedExt returns the normalized (lowercased) extension of filename when it
-// is an accepted video container, and false otherwise. It is the upload type gate.
-func acceptedExt(filename string) (string, bool) {
+// AcceptedVideoExtGated is the gate-aware upload type check (config-parity
+// W10): with additional=false only the base container set is accepted; with
+// additional=true the full (pre-W10) universe is. Exposed so the HTTP layer
+// validates a declared filename up front against the exact same allow-list
+// AttachOriginal enforces.
+func AcceptedVideoExtGated(filename string, additional bool) (string, bool) {
 	ext := strings.ToLower(filepath.Ext(filename))
-	if acceptedVideoExts[ext] {
+	if baseVideoExts[ext] || (additional && additionalVideoExts[ext]) {
 		return ext, true
 	}
 	return "", false
 }
 
+// acceptedExt is the service-level upload type gate: the base set plus, while
+// the wired additional-extensions gate allows it (nil = allowed, the pre-W10
+// behavior), the additional set.
+func (s *Service) acceptedExt(filename string) (string, bool) {
+	return AcceptedVideoExtGated(filename, s.additionalExtsAllowed())
+}
+
+// additionalExtsAllowed resolves the runtime additional-extensions gate
+// (upload_additional_extensions_enabled); nil = allowed.
+func (s *Service) additionalExtsAllowed() bool {
+	return s.additionalExtGate == nil || s.additionalExtGate()
+}
+
 // videoContentTypeExts maps common video-container MIME types to a canonical
-// extension (always one that acceptedVideoExts allows). Used as the fallback type
+// extension (always one the base/additional allow-list covers). Used as the fallback type
 // gate for URL imports whose path carries no usable extension.
 var videoContentTypeExts = map[string]string{
 	"video/mp4":        ".mp4",

@@ -30,24 +30,76 @@ const (
 	HLSM4AContentType            = "audio/mp4"
 )
 
-// hlsLadder is the H.264/AAC encoding ladder, highest rung first. Rungs above
-// the source height are skipped (never upscale); a source shorter than the
-// lowest rung gets a single rung at its own (even-rounded) size.
-var hlsLadder = []HLSRung{
-	{Height: 1080, VideoKbps: 5000, AudioKbps: 160},
-	{Height: 720, VideoKbps: 2800, AudioKbps: 128},
-	{Height: 480, VideoKbps: 1400, AudioKbps: 128},
-	{Height: 360, VideoKbps: 800, AudioKbps: 96},
+// hlsRungBitrates is the canonical H.264/AAC bitrate table per ladder rung
+// height (config-parity W10). The 1080/720/480/360 values are the original
+// hardcoded ladder, unchanged; the other rungs extend the same curve so an
+// admin-selected ladder (transcoding_resolutions) has defined bitrates.
+var hlsRungBitrates = map[int]struct{ VideoKbps, AudioKbps int }{
+	2160: {16000, 160},
+	1440: {9000, 160},
+	1080: {5000, 160},
+	720:  {2800, 128},
+	480:  {1400, 128},
+	360:  {800, 96},
+	240:  {500, 64},
+	144:  {250, 64},
+}
+
+// HLSCanonicalRungHeights is the full rung universe an admin may enable via
+// transcoding_resolutions, tallest first (PeerTube's resolution set minus the
+// deliberately absent 0p audio-only rung).
+var HLSCanonicalRungHeights = []int{2160, 1440, 1080, 720, 480, 360, 240, 144}
+
+// DefaultHLSResolutionHeights is the shipped default ladder (the original
+// hardcoded ladder), tallest first.
+var DefaultHLSResolutionHeights = []int{1080, 720, 480, 360}
+
+// IsHLSRungHeight reports whether h is one of the canonical ladder rung
+// heights (the transcoding_resolutions validation set).
+func IsHLSRungHeight(h int) bool {
+	_, ok := hlsRungBitrates[h]
+	return ok
+}
+
+// HLSEncodeSettings are the runtime-tunable encode knobs (config-parity W10),
+// resolved ONCE per transcode job so an admin change applies to the next job
+// without a restart and never mid-job.
+type HLSEncodeSettings struct {
+	// Resolutions is the enabled ladder rung heights (any order; only canonical
+	// rungs are honoured). Empty falls back to DefaultHLSResolutionHeights.
+	Resolutions []int
+	// MaxFPS caps the output frame rate on every generated rung when the SOURCE
+	// frame rate is known to exceed it (an fps filter never upsamples a slower
+	// source). 0 = no cap. Applied uniformly to all rungs — a documented
+	// deviation from PeerTube, whose per-rung fps rules depend on its own
+	// ladder machinery; vidra's rungs are planned uniformly.
+	MaxFPS int
+	// Threads is ffmpeg's -threads value per encode. 0 = ffmpeg's default.
+	Threads int
+	// OriginalResolution additionally plans a rung at the source's own
+	// (even-rounded) size when the source is taller than every enabled rung
+	// (transcoding_original_resolution) so ABR playback can reach full quality;
+	// the retained original keeps serving progressively regardless.
+	OriginalResolution bool
+}
+
+// DefaultHLSEncodeSettings is the boot/back-compat encode configuration: the
+// original hardcoded ladder with no fps cap, default threading, and no
+// original-resolution rung.
+func DefaultHLSEncodeSettings() HLSEncodeSettings {
+	return HLSEncodeSettings{Resolutions: DefaultHLSResolutionHeights}
 }
 
 // HLSRung is one planned rendition of the HLS ladder. Width/Height are the
 // exact (even) output dimensions; the bitrates drive both the encoder caps and
-// the master playlist's BANDWIDTH attribute.
+// the master playlist's BANDWIDTH attribute. FPS, when positive, caps the
+// rung's output frame rate via an fps filter (0 = keep the source rate).
 type HLSRung struct {
 	Height    int
 	Width     int
 	VideoKbps int
 	AudioKbps int
+	FPS       int
 }
 
 // Name is the rung's directory name under the video's playlist prefix ("720p").
@@ -59,36 +111,107 @@ func (r HLSRung) Bandwidth() int {
 	return (r.VideoKbps + r.AudioKbps) * 1000 * 11 / 10
 }
 
-// PlanHLSLadder plans the output ladder for a source of the given dimensions,
-// highest rung first. Rungs taller than the source are skipped (no upscaling);
-// when the source is shorter than every rung, a single rung at the source's
-// own (even-rounded) size is planned with the lowest rung's bitrates. Widths
-// preserve the source aspect ratio, rounded to even (required by H.264 4:2:0).
-// Unknown (non-positive) dimensions cannot be planned and return nil.
+// PlanHLSLadder plans the output ladder for a source of the given dimensions
+// with the default encode settings (the original hardcoded ladder). Kept as
+// the zero-configuration path; PlanHLSLadderWith is the runtime-tunable form.
 func PlanHLSLadder(sourceWidth, sourceHeight int) []HLSRung {
+	return PlanHLSLadderWith(DefaultHLSEncodeSettings(), sourceWidth, sourceHeight, 0)
+}
+
+// PlanHLSLadderWith plans the output ladder for a source of the given
+// dimensions under the supplied encode settings, highest rung first. Enabled
+// rungs taller than the source are skipped (no upscaling); when the source is
+// shorter than every enabled rung, a single rung at the source's own
+// (even-rounded) size is planned with the lowest enabled rung's bitrates.
+// When settings.OriginalResolution is on and the source is TALLER than every
+// enabled rung, an extra rung at the source's own size is planned on top.
+// A positive settings.MaxFPS below a KNOWN source frame rate caps every rung's
+// output rate (never upsampling: an unknown or slower source keeps its rate).
+// Widths preserve the source aspect ratio, rounded to even (required by H.264
+// 4:2:0). Unknown (non-positive) dimensions cannot be planned and return nil.
+func PlanHLSLadderWith(settings HLSEncodeSettings, sourceWidth, sourceHeight int, sourceFPS float64) []HLSRung {
 	if sourceWidth <= 0 || sourceHeight <= 0 {
 		return nil
 	}
+	heights := normalizeRungHeights(settings.Resolutions)
+	fps := 0
+	if settings.MaxFPS > 0 && sourceFPS > float64(settings.MaxFPS) {
+		fps = settings.MaxFPS
+	}
 	var rungs []HLSRung
-	for _, r := range hlsLadder {
-		if r.Height > sourceHeight {
+	if settings.OriginalResolution && sourceHeight > heights[0] {
+		h := evenDim(sourceHeight)
+		br := rungBitratesForHeight(sourceHeight)
+		rungs = append(rungs, HLSRung{
+			Height:    h,
+			Width:     evenScaledWidth(sourceWidth, sourceHeight, h),
+			VideoKbps: br.VideoKbps,
+			AudioKbps: br.AudioKbps,
+			FPS:       fps,
+		})
+	}
+	for _, height := range heights {
+		if height > sourceHeight {
 			continue
 		}
-		r.Width = evenScaledWidth(sourceWidth, sourceHeight, r.Height)
-		r.Height = evenDim(r.Height)
-		rungs = append(rungs, r)
+		br := hlsRungBitrates[height]
+		rungs = append(rungs, HLSRung{
+			Height:    evenDim(height),
+			Width:     evenScaledWidth(sourceWidth, sourceHeight, height),
+			VideoKbps: br.VideoKbps,
+			AudioKbps: br.AudioKbps,
+			FPS:       fps,
+		})
 	}
 	if len(rungs) == 0 {
-		lowest := hlsLadder[len(hlsLadder)-1]
+		lowest := hlsRungBitrates[heights[len(heights)-1]]
 		h := evenDim(sourceHeight)
 		rungs = append(rungs, HLSRung{
 			Height:    h,
 			Width:     evenScaledWidth(sourceWidth, sourceHeight, h),
 			VideoKbps: lowest.VideoKbps,
 			AudioKbps: lowest.AudioKbps,
+			FPS:       fps,
 		})
 	}
 	return rungs
+}
+
+// normalizeRungHeights maps a runtime resolutions value to the planned rung
+// heights: unknown heights and duplicates are dropped, the rest sorted tallest
+// first. An empty/all-invalid value falls back to the default ladder so a
+// defensive read can never plan an empty universe (the registry validator
+// refuses to store one).
+func normalizeRungHeights(resolutions []int) []int {
+	seen := map[int]bool{}
+	var heights []int
+	for _, h := range resolutions {
+		if IsHLSRungHeight(h) && !seen[h] {
+			seen[h] = true
+			heights = append(heights, h)
+		}
+	}
+	if len(heights) == 0 {
+		return DefaultHLSResolutionHeights
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(heights)))
+	return heights
+}
+
+// rungBitratesForHeight resolves bitrates for an arbitrary (original-
+// resolution) rung height: the smallest canonical rung at least as tall, or
+// the tallest canonical rung's bitrates for anything taller than the table.
+func rungBitratesForHeight(height int) struct{ VideoKbps, AudioKbps int } {
+	best, found := 0, false
+	for h := range hlsRungBitrates {
+		if h >= height && (!found || h < best) {
+			best, found = h, true
+		}
+	}
+	if !found {
+		best = HLSCanonicalRungHeights[0]
+	}
+	return hlsRungBitrates[best]
 }
 
 // evenScaledWidth is the width matching targetHeight at the source aspect
@@ -117,18 +240,29 @@ func evenDim(n int) int {
 // Pure (no exec) so it is unit-testable. The audio map is optional ("0:a:0?")
 // so silent sources still transcode; segments reference each other by bare
 // filename (they sit next to the variant playlist), which keeps every playlist
-// URI relative so the API can proxy them.
-func hlsRungArgs(src, dir string, r HLSRung) []string {
-	return []string{
+// URI relative so the API can proxy them. A positive r.FPS appends an fps
+// filter (transcoding_max_fps); a positive threads adds -threads
+// (transcoding_threads; 0 leaves ffmpeg's own default).
+func hlsRungArgs(src, dir string, r HLSRung, threads int) []string {
+	vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
+	if r.FPS > 0 {
+		vf += fmt.Sprintf(",fps=%d", r.FPS)
+	}
+	args := []string{
 		"-y",
 		"-i", src,
 		"-map", "0:v:0",
 		"-map", "0:a:0?",
+	}
+	if threads > 0 {
+		args = append(args, "-threads", fmt.Sprintf("%d", threads))
+	}
+	return append(args,
 		"-c:v", "libx264",
 		"-profile:v", "main",
 		"-preset", "veryfast",
 		"-pix_fmt", "yuv420p",
-		"-vf", fmt.Sprintf("scale=%d:%d", r.Width, r.Height),
+		"-vf", vf,
 		"-b:v", fmt.Sprintf("%dk", r.VideoKbps),
 		"-maxrate", fmt.Sprintf("%dk", r.VideoKbps),
 		"-bufsize", fmt.Sprintf("%dk", 2*r.VideoKbps),
@@ -141,7 +275,7 @@ func hlsRungArgs(src, dir string, r HLSRung) []string {
 		"-hls_list_size", "0",
 		"-hls_segment_filename", filepath.Join(dir, "seg_%05d.ts"),
 		filepath.Join(dir, "playlist.m3u8"),
-	}
+	)
 }
 
 // hlsProgressiveMP4Args builds an ffmpeg argument vector that remuxes an HLS
@@ -253,6 +387,24 @@ type HLSTranscoder struct {
 	probe *FFProbe
 	bin   string
 	vp9   bool // also emit a progressive VP9/WebM alternate (SetVP9)
+	// settingsFn resolves the runtime encode knobs (config-parity W10). nil =
+	// DefaultHLSEncodeSettings. Resolved once per Transcode call so an admin
+	// change applies to the next job without a restart and never mid-job.
+	settingsFn func() HLSEncodeSettings
+}
+
+// SetEncodeSettingsFunc wires the runtime encode-settings provider
+// (transcoding_resolutions / transcoding_max_fps / transcoding_threads /
+// transcoding_original_resolution). cmd/api points it at the instance-settings
+// overlay; nil keeps the shipped defaults.
+func (t *HLSTranscoder) SetEncodeSettingsFunc(f func() HLSEncodeSettings) { t.settingsFn = f }
+
+// encodeSettings resolves the current encode knobs (once per job).
+func (t *HLSTranscoder) encodeSettings() HLSEncodeSettings {
+	if t.settingsFn != nil {
+		return t.settingsFn()
+	}
+	return DefaultHLSEncodeSettings()
 }
 
 // NewHLSTranscoder builds an HLSTranscoder reading/writing objects on blobs via
@@ -282,7 +434,10 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 	if err != nil {
 		return HLSResult{}, err
 	}
-	rungs := PlanHLSLadder(md.Width, md.Height)
+	// Runtime encode knobs, resolved once per job (config-parity W10): a
+	// settings change applies to the next job, never mid-job.
+	settings := t.encodeSettings()
+	rungs := PlanHLSLadderWith(settings, md.Width, md.Height, md.FPS)
 	if len(rungs) == 0 {
 		return HLSResult{}, fmt.Errorf("media: source %q has no probeable video dimensions", sourceKey)
 	}
@@ -304,7 +459,7 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return HLSResult{}, err
 		}
-		cmd := exec.CommandContext(ctx, t.bin, hlsRungArgs(src, dir, r)...)
+		cmd := exec.CommandContext(ctx, t.bin, hlsRungArgs(src, dir, r, settings.Threads)...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
