@@ -2670,6 +2670,21 @@ paths:
         (per-viewer); an anonymous viewer sees all. Requires a non-empty q
         (<= 100 chars); paginated with limit (1–100, default 20) and offset
         (>= 0).
+
+        Remote-URI search (config-parity W13): a URI-shaped ("https://…") or
+        handle-shaped ("@user@host" / "user@host") first-page query is
+        additionally resolved to remote content through the federation
+        machinery (WebFinger/actor/object fetch, SSRF-guarded), gated per auth
+        state by search_remote_uri_users (default on) /
+        search_remote_uri_anonymous (default off) and rate-limited per caller
+        (10 resolutions/minute by default). Resolution runs CONCURRENTLY with
+        the local search under a strict ~2.5s deadline, so ordinary searches
+        are unaffected and a slow origin delays the response by at most that
+        deadline. A resolved remote video/channel/account rides the additive
+        `remote` array; anything unresolvable (bad target, blocked domain,
+        timeout, exhausted budget) silently yields local-only results. The
+        100-char q cap applies to shaped queries too — longer URLs are 400,
+        as before.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -9773,7 +9788,12 @@ paths:
         moderation becomes reactive, as in PeerTube). Every federation_* key
         governs the ActivityPub inbox ONLY: the ATProto integration is
         outbound cross-posting with no inbound path, so these gates are
-        explicitly out of scope for it), an integer for the int-kind limits
+        explicitly out of scope for it. The config-parity W13 remote-URI
+        search gates ride here too: search_remote_uri_users (default true)
+        and search_remote_uri_anonymous (default false) let logged-in /
+        anonymous callers resolve URL- and handle-shaped search queries to
+        remote content through the SSRF-guarded federation fetcher — both
+        effective only while federation is enabled), an integer for the int-kind limits
         (including the W8 keys channel_sync_max_per_user,
         user_export_expiration_hours, user_export_max_quota_bytes,
         max_channels_per_user — 0 always means unlimited/never — the W10 keys
@@ -11051,7 +11071,8 @@ components:
                  terms_url, privacy_url, contact_email, default_language, categories,
                  moderator_languages, server_country, is_sensitive,
                  sensitive_content_policy, contact_form_enabled, social_links, features,
-                 branding, defaults, broadcast, customization, social, homepage, live]
+                 branding, defaults, broadcast, customization, social, homepage, live,
+                 search]
       properties:
         name:
           type: string
@@ -11421,6 +11442,26 @@ components:
                 Max live-session duration; a watchdog force-closes over-limit
                 sessions (permanent streams return to offline, one-shots end).
                 0 = no limit.
+        search:
+          type: object
+          description: >-
+            EFFECTIVE remote-URI search gates (config-parity W13): whether a
+            URI/handle-shaped search query is resolved to remote content for
+            logged-in and anonymous callers. Each flag is the runtime setting
+            (search_remote_uri_users / search_remote_uri_anonymous) AND the
+            boot capability (federation enabled + wired), so the search UI's
+            help text stays in lock-step with the backend gate.
+          required: [remote_uri_users, remote_uri_anonymous]
+          properties:
+            remote_uri_users:
+              type: boolean
+              description: >-
+                Logged-in callers may search by URL/handle (default on).
+            remote_uri_anonymous:
+              type: boolean
+              description: >-
+                Anonymous callers may search by URL/handle (default off —
+                the SSRF/abuse surface, matching PeerTube).
     InstanceAssetRef:
       type: object
       description: >-
@@ -12814,12 +12855,62 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Video"
+        remote:
+          type: array
+          description: >-
+            Remote-URI search hits (config-parity W13). Present only on the
+            first page (offset 0) when the query was URI/handle-shaped, the
+            caller's auth-state gate (search_remote_uri_users /
+            search_remote_uri_anonymous) allowed resolution, AND the target
+            resolved within the strict deadline; omitted otherwise —
+            unresolvable/timeout/rate-limited resolution degrades silently to
+            local-only results.
+          items:
+            $ref: "#/components/schemas/RemoteSearchResult"
         limit:
           type: integer
           example: 20
         offset:
           type: integer
           example: 0
+    RemoteSearchResult:
+      type: object
+      required: [type]
+      description: >-
+        One typed remote hit resolved from a URI/handle-shaped search query
+        (config-parity W13): a remote video (same projection as
+        GET /api/v1/remote-videos/{id}) or a remote channel/account identity.
+        Exactly one of video/actor is present, matching type.
+      properties:
+        type:
+          type: string
+          enum: [video, channel, account]
+          description: >-
+            video = a resolved remote Video object (ingested + cached);
+            channel = a Group actor; account = a Person (or other non-Group)
+            actor.
+        video:
+          $ref: "#/components/schemas/RemoteVideo"
+        actor:
+          $ref: "#/components/schemas/RemoteSearchActor"
+    RemoteSearchActor:
+      type: object
+      required: [actor_url, handle, domain]
+      description: >-
+        A resolved remote channel/account: the followable identity —
+        POST /api/v1/me/remote-follows accepts either the handle or the
+        actor URL.
+      properties:
+        actor_url:
+          type: string
+          description: The ActivityPub actor URL on the origin.
+        handle:
+          type: string
+          description: The name@domain identity.
+          example: movies@tube.example
+        domain:
+          type: string
+          description: The origin instance's domain.
     WatchProgressRequest:
       type: object
       required: [position_seconds]

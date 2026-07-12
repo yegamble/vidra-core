@@ -178,6 +178,18 @@ const (
 	KeyFederationAllowChannelFollowers = "federation_allow_channel_followers" // off = inbound channel Follows answered with a Reject
 	KeyFederationFollowerApproval      = "federation_follower_approval"       // on = new channel Follows wait PENDING in the admin queue (Accept sent on approval)
 	KeyFederationAutoFollowBack        = "federation_auto_follow_back"        // on = an accepted channel Follow triggers a follow-back FROM THAT CHANNEL'S ACTOR (vidra has no instance actor)
+
+	// Remote-URI search gates (config-parity W13). A URI- or handle-shaped
+	// search query ("https://…", "@user@host", "user@host") is resolved through
+	// the EXISTING federation resolution machinery (WebFinger/actor/object
+	// fetches, always SSRF-guarded) and the resolved remote video/channel/
+	// account rides the search response as a typed `remote` item. The two keys
+	// gate that resolution per auth state; both are moot while federation
+	// itself is off (the /instance search block reports the EFFECTIVE values).
+	// Anonymous defaults FALSE, matching PeerTube — anonymous traffic is the
+	// SSRF/abuse surface.
+	KeySearchRemoteURIUsers     = "search_remote_uri_users"
+	KeySearchRemoteURIAnonymous = "search_remote_uri_anonymous"
 )
 
 // Kind is a setting's value type, reported to clients and used to validate the
@@ -601,6 +613,14 @@ var specs = []spec{
 		page: PageFederation, section: "followers"},
 	{key: KeyFederationAutoFollowBack, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageFederation, section: "followers"},
+
+	// Remote-URI search gates (config-parity W13). No env backing: the runtime
+	// settings are the operator controls. Logged-in resolution defaults ON
+	// (PT parity), anonymous defaults OFF (SSRF/abuse surface).
+	{key: KeySearchRemoteURIUsers, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageFederation, section: "search"},
+	{key: KeySearchRemoteURIAnonymous, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageFederation, section: "search"},
 }
 
 var specByKey = func() map[string]spec {

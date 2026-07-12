@@ -291,6 +291,17 @@ func run() error {
 		contactCounter = ratelimit.NewRedisCounter(rdb.Client)
 	}
 	opts = append(opts, httpapi.WithContactRateLimiter(ratelimit.NewLimiter(contactCounter, 1, time.Hour)))
+	// Remote-URI search resolution (config-parity W13) is an outbound-fetch
+	// surface, so it carries its own per-caller budget — 10 resolutions per
+	// minute — on the shared Redis counter when rate limiting is on (multi-node
+	// correctness), else an in-process counter (httpapi installs one itself
+	// when this option is absent; wiring it here keeps the counter choice
+	// consistent with the contact form).
+	var searchResolveCounter ratelimit.Counter = ratelimit.NewMemoryCounter()
+	if cfg.RateLimitEnabled {
+		searchResolveCounter = ratelimit.NewRedisCounter(rdb.Client)
+	}
+	opts = append(opts, httpapi.WithSearchResolveRateLimiter(ratelimit.NewLimiter(searchResolveCounter, 10, time.Minute)))
 	// TOTP two-factor auth (P4). Shared secrets are envelope-encrypted at rest
 	// with MFA_KEY_KEK (falling back to FEDERATION_KEY_KEK); without a KEK (dev)
 	// they are stored raw. NB: the KEK itself is never logged.

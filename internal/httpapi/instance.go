@@ -156,6 +156,16 @@ type instanceLiveConfig struct {
 	MaxDurationSecs   int64 `json:"max_duration_secs"`
 }
 
+// instanceSearchConfig reports the EFFECTIVE remote-URI search gates (config-
+// parity W13): whether a URI/handle-shaped search query is resolved to remote
+// content for logged-in and anonymous callers respectively. Each flag is the
+// runtime setting AND the boot capability (federation on + wired), so the
+// frontend's search help text stays in lock-step with the backend gate.
+type instanceSearchConfig struct {
+	RemoteURIUsers     bool `json:"remote_uri_users"`
+	RemoteURIAnonymous bool `json:"remote_uri_anonymous"`
+}
+
 // instanceResponse is the public "about this instance" document the frontend
 // app shell reads on load: instance name/description, software, whether signup
 // is open, and operator-provided legal/contact links (empty when unset).
@@ -211,6 +221,7 @@ type instanceResponse struct {
 	Social        instanceSocialMeta    `json:"social"`
 	Homepage      instanceHomepage      `json:"homepage"`
 	Live          instanceLiveConfig    `json:"live"`
+	Search        instanceSearchConfig  `json:"search"`
 }
 
 // handleInstance returns public instance metadata. No auth required; it exposes
@@ -301,6 +312,10 @@ func (s *Server) instanceDocument() instanceResponse {
 			MaxInstanceLives:  s.settingInt(instancesettings.KeyLiveMaxInstanceLives, 0),
 			MaxUserLives:      s.settingInt(instancesettings.KeyLiveMaxUserLives, 0),
 			MaxDurationSecs:   s.settingInt(instancesettings.KeyLiveMaxDurationSecs, 0),
+		},
+		Search: instanceSearchConfig{
+			RemoteURIUsers:     s.remoteSearchAvailable() && s.searchRemoteURIUsers(),
+			RemoteURIAnonymous: s.remoteSearchAvailable() && s.searchRemoteURIAnonymous(),
 		},
 	}
 }

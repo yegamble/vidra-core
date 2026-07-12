@@ -66,6 +66,9 @@ func TestRegistryPageSectionMetadata(t *testing.T) {
 		KeyFederationAllowChannelFollowers: {PageFederation, "followers"},
 		KeyFederationFollowerApproval:      {PageFederation, "followers"},
 		KeyFederationAutoFollowBack:        {PageFederation, "followers"},
+		// Remote-URI search gates (config-parity W13).
+		KeySearchRemoteURIUsers:     {PageFederation, "search"},
+		KeySearchRemoteURIAnonymous: {PageFederation, "search"},
 	}
 	for key, want := range placements {
 		e := snapshotByKey(t, svc, key)
