@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -16,12 +17,15 @@ import (
 const maxLiveTitleLen = 200
 
 // createLiveStreamRequest is the POST /channels/{handle}/live body.
+// ReplayEnabled is a pointer so an omitted field is distinguishable from an
+// explicit false: when omitted, the handler seeds the instance default
+// (live_default_save_replay, config-parity W11).
 type createLiveStreamRequest struct {
 	Title         string `json:"title"`
 	Description   string `json:"description"`
 	Privacy       string `json:"privacy"`
 	Permanent     bool   `json:"permanent"`
-	ReplayEnabled bool   `json:"replay_enabled"`
+	ReplayEnabled *bool  `json:"replay_enabled"`
 }
 
 func (r createLiveStreamRequest) Validate() []FieldError {
@@ -200,12 +204,21 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 	if ch.OwnerID != userID {
 		return echo.NewHTTPError(http.StatusForbidden, "you do not own this channel")
 	}
+	// An omitted replay_enabled is seeded from live_default_save_replay
+	// (config-parity W11); an explicit client value always wins. The default
+	// is a no-op while live_allow_replay is off (PT parity) — no replay would
+	// be produced anyway, so a stream created then must not carry a dormant
+	// opt-in the owner never asked for.
+	replayEnabled := s.liveDefaultSaveReplay()
+	if in.ReplayEnabled != nil {
+		replayEnabled = *in.ReplayEnabled
+	}
 	stream, key, err := s.livesvc.Create(ctx, ch.ID, live.CreateInput{
 		Title:         strings.TrimSpace(in.Title),
 		Description:   strings.TrimSpace(in.Description),
 		Privacy:       in.Privacy,
 		Permanent:     in.Permanent,
-		ReplayEnabled: in.ReplayEnabled,
+		ReplayEnabled: replayEnabled,
 	})
 	if err != nil {
 		return err
@@ -383,6 +396,17 @@ func (s *Server) handleLiveIngestStart(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "stream_key is required")
 	}
 	id, needsRename, err := s.livesvc.StartByIdentity(c.Request().Context(), ident)
+	if errors.Is(err, live.ErrInstanceLiveLimit) || errors.Is(err, live.ErrUserLiveLimit) {
+		// Simultaneous-live cap reached (config-parity W11): deny the publish.
+		// nginx-rtmp treats any non-2xx/3xx on_publish response as a deny, so a
+		// 403 closes the publisher's session; the JSON body serves harness/log
+		// diagnostics.
+		msg := "instance simultaneous-live limit reached"
+		if errors.Is(err, live.ErrUserLiveLimit) {
+			msg = "user simultaneous-live limit reached"
+		}
+		return echo.NewHTTPError(http.StatusForbidden, msg)
+	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "no live stream for that key")
 	}

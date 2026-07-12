@@ -49,11 +49,37 @@ RETURNING id, channel_id, title, description, privacy, state, permanent, replay_
 
 -- name: GetLiveStreamByKeyHash :one
 -- Look up a stream by its key hash — the RTMP ingest boundary authenticates a
--- publisher by hashing the presented stream key. Returns id, channel, permanent
--- (so stop can decide ended vs offline), and current state.
-SELECT id, channel_id, permanent, state
+-- publisher by hashing the presented stream key. Returns id, channel + owner
+-- (the per-user simultaneous-lives cap counts by owner, config-parity W11),
+-- permanent (so stop can decide ended vs offline), and current state.
+SELECT ls.id, ls.channel_id, ls.permanent, ls.state, ch.owner_id
+FROM live_streams ls
+JOIN channels ch ON ch.id = ls.channel_id
+WHERE ls.stream_key_hash = $1;
+
+-- name: CountLiveStreamsLive :one
+-- How many sessions are currently live across the instance (the
+-- live_max_instance_lives publish-callback cap, config-parity W11).
+SELECT count(*) FROM live_streams WHERE state = 'live';
+
+-- name: CountLiveStreamsLiveByOwner :one
+-- How many sessions the given user currently has live across all their
+-- channels (the live_max_user_lives publish-callback cap, config-parity W11).
+SELECT count(*)
+FROM live_streams ls
+JOIN channels ch ON ch.id = ls.channel_id
+WHERE ls.state = 'live' AND ch.owner_id = $1;
+
+-- name: ListOverdueLiveStreams :many
+-- Currently-live sessions that started before the cutoff — the
+-- live_max_duration_secs watchdog force-closes these (config-parity W11).
+-- started_at IS NOT NULL guards streams that went live before started_at
+-- tracking existed (migration 0076): with no session start there is nothing
+-- truthful to measure, so they are never force-closed.
+SELECT id, permanent, started_at
 FROM live_streams
-WHERE stream_key_hash = $1;
+WHERE state = 'live' AND started_at IS NOT NULL AND started_at < $1
+ORDER BY started_at, id;
 
 -- name: SetLiveStreamState :exec
 -- Flip a stream's live state (offline/live/ended), set by the ingest boundary.

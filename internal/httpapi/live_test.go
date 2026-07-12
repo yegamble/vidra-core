@@ -135,10 +135,47 @@ func (f *liveFakeRepo) GetLiveStreamByKeyHash(_ context.Context, h string) (sqlc
 	for id, hash := range f.hashes {
 		if hash == h {
 			r := f.rows[id]
-			return sqlcgen.GetLiveStreamByKeyHashRow{ID: id, ChannelID: r.ChannelID, Permanent: r.Permanent, State: r.State}, nil
+			ch, _ := f.channelByID(r.ChannelID)
+			return sqlcgen.GetLiveStreamByKeyHashRow{ID: id, ChannelID: r.ChannelID, Permanent: r.Permanent, State: r.State, OwnerID: ch.OwnerID}, nil
 		}
 	}
 	return sqlcgen.GetLiveStreamByKeyHashRow{}, errors.New("not found")
+}
+
+func (f *liveFakeRepo) CountLiveStreamsLive(_ context.Context) (int64, error) {
+	var n int64
+	for _, r := range f.rows {
+		if r.State == "live" {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *liveFakeRepo) CountLiveStreamsLiveByOwner(_ context.Context, ownerID uuid.UUID) (int64, error) {
+	var n int64
+	for _, r := range f.rows {
+		if r.State != "live" {
+			continue
+		}
+		if ch, ok := f.channelByID(r.ChannelID); ok && ch.OwnerID == ownerID {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// ListOverdueLiveStreams mirrors the SQL: live sessions whose non-NULL
+// started_at is strictly before the cutoff.
+func (f *liveFakeRepo) ListOverdueLiveStreams(_ context.Context, cutoff pgtype.Timestamptz) ([]sqlcgen.ListOverdueLiveStreamsRow, error) {
+	var out []sqlcgen.ListOverdueLiveStreamsRow
+	for _, r := range f.rows {
+		if r.State == "live" && r.StartedAt.Valid && r.StartedAt.Time.Before(cutoff.Time) {
+			out = append(out, sqlcgen.ListOverdueLiveStreamsRow{ID: r.ID, Permanent: r.Permanent, StartedAt: r.StartedAt})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.Time.Before(out[j].StartedAt.Time) })
+	return out, nil
 }
 
 func (f *liveFakeRepo) SetLiveStreamState(_ context.Context, a sqlcgen.SetLiveStreamStateParams) error {
@@ -642,6 +679,213 @@ func TestListLivePublicStreams(t *testing.T) {
 	if len(after.LiveStreams) != 1 || after.LiveStreams[0].ID != pubBID {
 		t.Fatalf("after ending Public A, want only Public B; got %+v", after.LiveStreams)
 	}
+}
+
+// patchLiveSettings applies an admin instance-settings PATCH and asserts 200.
+func patchLiveSettings(t *testing.T, srv *Server, adminTok, body string) {
+	t.Helper()
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings", body, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH instance-settings %s = %d; body=%s", body, rec.Code, rec.Body.String())
+	}
+}
+
+// TestLiveIngestSimultaneousCaps drives the live_max_instance_lives and
+// live_max_user_lives knobs through httptest-simulated nginx-rtmp publish
+// callbacks (config-parity W11): under the cap publishes are allowed, at the
+// cap they are refused with 403 (a non-2xx/3xx answer nginx-rtmp treats as
+// deny), the caps are enforced per instance vs per user, an already-live
+// session's re-invocation is never re-counted, 0/null means unlimited, and
+// freeing a slot admits the next publish — all flipped at runtime through
+// PATCH /admin/instance-settings, no restart.
+func TestLiveIngestSimultaneousCaps(t *testing.T) {
+	cfg := testConfig()
+	cfg.LiveIngestSecret = "s3cret"
+	srv := videoServerCfg(t, cfg)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada") // first user = admin
+	bobTok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+
+	create := func(handle, tok, title string) (id, key string) {
+		var out createLiveStreamResponse
+		rec := createLiveStream(srv, handle, `{"title":"`+title+`"}`, tok)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create %s = %d; body=%s", title, rec.Code, rec.Body.String())
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out.LiveStream.ID, out.StreamKey
+	}
+	adaAID, adaAKey := create("ada", adminTok, "Ada A")
+	_, adaBKey := create("ada", adminTok, "Ada B")
+	_, bobKey := create("bob", bobTok, "Bob")
+
+	// Instance cap 1: the first publish is admitted, the second (a DIFFERENT
+	// user) is refused at the callback — via both the JSON harness shape and
+	// the nginx-rtmp form shape.
+	patchLiveSettings(t, srv, adminTok, `{"live_max_instance_lives":1}`)
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+adaAKey+`"}`, "s3cret"); r.Code != http.StatusOK {
+		t.Fatalf("first publish under cap = %d, want 200; body=%s", r.Code, r.Body.String())
+	}
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+bobKey+`"}`, "s3cret"); r.Code != http.StatusForbidden {
+		t.Fatalf("publish at instance cap = %d, want 403; body=%s", r.Code, r.Body.String())
+	}
+	if r := ingestForm(srv, "/api/v1/live/ingest/start", bobKey, "s3cret"); r.Code != http.StatusForbidden {
+		t.Fatalf("form publish at instance cap = %d, want 403 (nginx-rtmp deny)", r.Code)
+	}
+	// A re-invocation of the ALREADY-live session (post-rename, by id) is
+	// allowed — it must not count against the cap it already occupies.
+	if r := ingestForm(srv, "/api/v1/live/ingest/start", adaAID, "s3cret"); r.Code != http.StatusOK {
+		t.Fatalf("re-assert already-live = %d, want 200", r.Code)
+	}
+
+	// Clearing the instance cap (null-PATCH resets the override) and setting a
+	// per-user cap of 1: Bob (0 live) is admitted, Ada's SECOND stream is
+	// refused while Bob's publish proves the cap is per user, not global.
+	patchLiveSettings(t, srv, adminTok, `{"live_max_instance_lives":null,"live_max_user_lives":1}`)
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+bobKey+`"}`, "s3cret"); r.Code != http.StatusOK {
+		t.Fatalf("bob under his user cap = %d, want 200; body=%s", r.Code, r.Body.String())
+	}
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+adaBKey+`"}`, "s3cret"); r.Code != http.StatusForbidden {
+		t.Fatalf("ada's 2nd live at user cap = %d, want 403; body=%s", r.Code, r.Body.String())
+	}
+	// Ada ends her live session: her next publish is admitted.
+	if r := ingestReq(srv, "/api/v1/live/ingest/stop", `{"stream_key":"`+adaAKey+`"}`, "s3cret"); r.Code != http.StatusNoContent {
+		t.Fatalf("stop ada A = %d, want 204", r.Code)
+	}
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+adaBKey+`"}`, "s3cret"); r.Code != http.StatusOK {
+		t.Fatalf("ada B after slot freed = %d, want 200; body=%s", r.Code, r.Body.String())
+	}
+}
+
+// TestLiveCreateSeedsDefaultSaveReplay proves live_default_save_replay seeds
+// the create handler's replay flag ONLY when the client omits it, that an
+// explicit client value always wins, and that the seed is inert while
+// live_allow_replay is off (PT parity). Also proves GET /instance exposes the
+// effective live policy block clients key off.
+func TestLiveCreateSeedsDefaultSaveReplay(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	created := func(body string) liveStreamView {
+		t.Helper()
+		rec := createLiveStream(srv, "ada", body, adminTok)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create %s = %d; body=%s", body, rec.Code, rec.Body.String())
+		}
+		var out createLiveStreamResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out.LiveStream
+	}
+
+	// Shipped default: omitted → replay off.
+	if st := created(`{"title":"default off"}`); st.ReplayEnabled {
+		t.Error("omitted replay_enabled with default off => true, want false")
+	}
+
+	// Admin turns the default on: omitted → on; explicit false/true still win.
+	patchLiveSettings(t, srv, adminTok, `{"live_default_save_replay":true}`)
+	if st := created(`{"title":"seeded"}`); !st.ReplayEnabled {
+		t.Error("omitted replay_enabled with live_default_save_replay=true => false, want true")
+	}
+	if st := created(`{"title":"explicit false","replay_enabled":false}`); st.ReplayEnabled {
+		t.Error("explicit replay_enabled=false was overridden by the default")
+	}
+	if st := created(`{"title":"explicit true","replay_enabled":true}`); !st.ReplayEnabled {
+		t.Error("explicit replay_enabled=true = false")
+	}
+
+	// With replay disallowed instance-wide the default seeds nothing (no
+	// dormant opt-in the owner never asked for), mirroring PT.
+	patchLiveSettings(t, srv, adminTok, `{"live_allow_replay":false}`)
+	if st := created(`{"title":"allow off"}`); st.ReplayEnabled {
+		t.Error("omitted replay_enabled while live_allow_replay=false => true, want false")
+	}
+
+	// GET /instance carries the effective policy block for clients.
+	patchLiveSettings(t, srv, adminTok, `{"live_max_instance_lives":5,"live_max_user_lives":2,"live_max_duration_secs":3600}`)
+	doc := publicInstance(t, srv)
+	if doc.Live.AllowReplay || doc.Live.DefaultSaveReplay {
+		t.Errorf("instance live block = %+v, want allow_replay=false and (effective) default_save_replay=false", doc.Live)
+	}
+	if doc.Live.MaxInstanceLives != 5 || doc.Live.MaxUserLives != 2 || doc.Live.MaxDurationSecs != 3600 {
+		t.Errorf("instance live limits = %+v, want 5/2/3600", doc.Live)
+	}
+	// Re-allowing replay restores the still-overridden default seed.
+	patchLiveSettings(t, srv, adminTok, `{"live_allow_replay":true}`)
+	if doc := publicInstance(t, srv); !doc.Live.AllowReplay || !doc.Live.DefaultSaveReplay {
+		t.Errorf("instance live block after re-allow = %+v, want allow_replay=true default_save_replay=true", doc.Live)
+	}
+}
+
+// TestLiveDurationWatchdogHTTP proves the end-to-end watchdog path over the
+// httptest server: a session flipped live via the ingest callback and backdated
+// past live_max_duration_secs is force-closed by SweepOverdueLive — it drops
+// out of the public listing and its live HLS stops serving — while the eventual
+// on-publish-done callback still lands cleanly (idempotent stop).
+func TestLiveDurationWatchdogHTTP(t *testing.T) {
+	srv, root := liveHLSServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	patchLiveSettings(t, srv, adminTok, `{"live_max_duration_secs":3600}`)
+
+	var created createLiveStreamResponse
+	_ = json.Unmarshal(createLiveStream(srv, "ada", `{"title":"Marathon"}`, adminTok).Body.Bytes(), &created)
+	id, key := created.LiveStream.ID, created.StreamKey
+	_ = os.WriteFile(filepath.Join(root, id+".m3u8"), []byte("#EXTM3U\n"), 0o644)
+
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+key+`"}`, "s3cret"); r.Code != http.StatusOK {
+		t.Fatalf("ingest start = %d", r.Code)
+	}
+	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8", ""); g.Code != http.StatusOK {
+		t.Fatalf("hls while live = %d, want 200", g.Code)
+	}
+
+	// Under the limit: the sweep closes nothing.
+	if n, err := srv.livesvc.SweepOverdueLive(context.Background()); err != nil || n != 0 {
+		t.Fatalf("sweep under limit = (%d, %v), want (0, nil)", n, err)
+	}
+
+	// Backdate the session past the limit in the fake repo and sweep again.
+	streamID, _ := uuid.Parse(id)
+	backdateLiveStream(t, srv, streamID, 2*time.Hour)
+	n, err := srv.livesvc.SweepOverdueLive(context.Background())
+	if err != nil || n != 1 {
+		t.Fatalf("sweep over limit = (%d, %v), want (1, nil)", n, err)
+	}
+
+	// Server-side termination: no longer live (404 HLS, gone from listings)...
+	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8", ""); g.Code != http.StatusNotFound {
+		t.Errorf("hls after force-close = %d, want 404", g.Code)
+	}
+	var listing liveStreamPublicListResponse
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live", "").Body.Bytes(), &listing)
+	if len(listing.LiveStreams) != 0 {
+		t.Errorf("public listing after force-close = %+v, want empty", listing.LiveStreams)
+	}
+	// ...and the publisher's lingering socket eventually fires publish_done,
+	// which lands as an idempotent stop (the documented no-control-endpoint
+	// reality: nginx-rtmp keeps the ingest socket until the client disconnects).
+	if r := ingestReq(srv, "/api/v1/live/ingest/stop", `{"stream_key":"`+key+`"}`, "s3cret"); r.Code != http.StatusNoContent {
+		t.Errorf("late publish_done after force-close = %d, want 204", r.Code)
+	}
+}
+
+// liveFakeRepoBySrv lets a test reach the in-memory live repo behind a harness
+// server (registered by videoServerFullWith) — the watchdog test backdates a
+// session's started_at instead of sleeping.
+var liveFakeRepoBySrv = map[*Server]*liveFakeRepo{}
+
+// backdateLiveStream rewrites a live stream's started_at in the httpapi fake
+// repo so watchdog tests can age a session without sleeping.
+func backdateLiveStream(t *testing.T, srv *Server, id uuid.UUID, ago time.Duration) {
+	t.Helper()
+	repo, ok := liveFakeRepoBySrv[srv]
+	if !ok {
+		t.Fatal("live service is not backed by the fake repo")
+	}
+	r, exists := repo.rows[id]
+	if !exists {
+		t.Fatalf("stream %s not in fake repo", id)
+	}
+	r.StartedAt = pgtype.Timestamptz{Time: time.Now().Add(-ago), Valid: true}
+	repo.rows[id] = r
 }
 
 // TestListLivePublicStreamsUngatedRead: the public listing is a read surface —

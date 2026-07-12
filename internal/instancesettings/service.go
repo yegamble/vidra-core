@@ -153,6 +153,18 @@ const (
 	// transcoding too). Default ON — vidra's shipped allow-list already
 	// included the extended set (documented deviation from PT's off default).
 	KeyUploadAdditionalExtensionsEnabled = "upload_additional_extensions_enabled"
+
+	// Live streaming enforcement knobs (config-parity W11). Every key has a
+	// real enforcement point today: the replay pipeline gate, the live-create
+	// default seed, the secret-handled nginx-rtmp publish-callback caps, and
+	// the duration watchdog. The unbuilt live-transcoding cluster (ladder/DVR/
+	// latency) is deliberately NOT registered — dormant keys mislead admins
+	// (architecture note 7; see the parity ledger).
+	KeyLiveAllowReplay       = "live_allow_replay"        // master replay gate; off = no replay produced regardless of per-stream save_replay
+	KeyLiveDefaultSaveReplay = "live_default_save_replay" // seeds the live-create replay flag when the client omits it; no effect while allow_replay is off (PT parity)
+	KeyLiveMaxInstanceLives  = "live_max_instance_lives"  // simultaneous live sessions across the instance; 0 = unlimited
+	KeyLiveMaxUserLives      = "live_max_user_lives"      // simultaneous live sessions per user; 0 = unlimited
+	KeyLiveMaxDurationSecs   = "live_max_duration_secs"   // watchdog force-closes sessions over this; 0 = no limit
 )
 
 // Kind is a setting's value type, reported to clients and used to validate the
@@ -542,6 +554,27 @@ var specs = []spec{
 	// container set (documented deviation from PeerTube's off default).
 	{key: KeyUploadAdditionalExtensionsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
 		page: PageVOD, section: "uploads"},
+
+	// Live streaming enforcement knobs (config-parity W11). None have env
+	// backing: the runtime settings are the operator controls. Replay defaults
+	// ON (the shipped behaviour — replay has always been available when a
+	// stream opts in); the save-replay default and every limit default to the
+	// shipped "off"/unlimited state.
+	{key: KeyLiveAllowReplay, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageLive, section: "replay"},
+	{key: KeyLiveDefaultSaveReplay, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageLive, section: "replay"},
+	{key: KeyLiveMaxInstanceLives, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: intRange(0, 10000),
+		page: PageLive, section: "limits"},
+	{key: KeyLiveMaxUserLives, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: intRange(0, 10000),
+		page: PageLive, section: "limits"},
+	// 0 = no limit; otherwise 1 minute .. 30 days (the watchdog sweeps every
+	// ~30s, so sub-minute limits would be noise).
+	{key: KeyLiveMaxDurationSecs, kind: KindInt,
+		defInt: func(Defaults) int64 { return 0 }, validate: intZeroOrRange(60, 2592000),
+		page: PageLive, section: "limits"},
 }
 
 var specByKey = func() map[string]spec {

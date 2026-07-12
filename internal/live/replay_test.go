@@ -193,3 +193,35 @@ func TestRunReplayNoopWhenUnconfigured(t *testing.T) {
 	// No panic, no work — replay stays dormant on an instance without a media plane.
 	svc.RunReplay(context.Background(), id)
 }
+
+// TestRunReplayGatedByLiveAllowReplay proves the instance-level
+// live_allow_replay master gate (config-parity W11): while the setting is off,
+// NO replay is produced even for a stream whose per-stream flag is on; flipping
+// the setting back on (a runtime provider-func read, no restart) resumes
+// replays for subsequent sessions.
+func TestRunReplayGatedByLiveAllowReplay(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	pipe := &fakePipeline{}
+	auditor := &fakeAuditor{}
+	allow := false
+	svc, id, _ := replayStream(t, repo, []Option{
+		WithReplayPipeline(pipe), WithRecordingStore(&fakeRecordingStore{data: []byte("x"), filename: "r.flv"}),
+		WithAuditor(auditor),
+		WithAllowReplayFunc(func() bool { return allow }),
+	}, true) // per-stream replay ON — the instance gate must still win
+
+	svc.RunReplay(context.Background(), id)
+	if pipe.createCalls != 0 {
+		t.Errorf("CreateDraft called %d times with live_allow_replay off, want 0", pipe.createCalls)
+	}
+	if len(auditor.events) != 0 {
+		t.Errorf("audit events = %+v, want none (an admin-disabled replay is not a failure)", auditor.events)
+	}
+
+	// Admin re-enables at runtime: the same service produces the replay.
+	allow = true
+	svc.RunReplay(context.Background(), id)
+	if pipe.createCalls != 1 {
+		t.Errorf("CreateDraft called %d times after re-enabling, want 1", pipe.createCalls)
+	}
+}

@@ -35,6 +35,12 @@ import (
 var (
 	// ErrNotFound means no live stream matches the lookup.
 	ErrNotFound = errors.New("live: not found")
+	// ErrInstanceLiveLimit means the publish was refused because the instance
+	// already has live_max_instance_lives sessions live (config-parity W11).
+	ErrInstanceLiveLimit = errors.New("live: instance simultaneous-live limit reached")
+	// ErrUserLiveLimit means the publish was refused because the stream's owner
+	// already has live_max_user_lives sessions live (config-parity W11).
+	ErrUserLiveLimit = errors.New("live: user simultaneous-live limit reached")
 )
 
 // streamKeyBytes is the entropy of a raw stream key (256 bits).
@@ -52,6 +58,10 @@ type Repository interface {
 	GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash string) (sqlcgen.GetLiveStreamByKeyHashRow, error)
 	SetLiveStreamState(ctx context.Context, arg sqlcgen.SetLiveStreamStateParams) error
 	ListLivePublicStreams(ctx context.Context, arg sqlcgen.ListLivePublicStreamsParams) ([]sqlcgen.ListLivePublicStreamsRow, error)
+	// Simultaneous-live caps + duration watchdog (config-parity W11).
+	CountLiveStreamsLive(ctx context.Context) (int64, error)
+	CountLiveStreamsLiveByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error)
+	ListOverdueLiveStreams(ctx context.Context, startedBefore pgtype.Timestamptz) ([]sqlcgen.ListOverdueLiveStreamsRow, error)
 }
 
 // VideoPipeline is the on-demand ingest seam the replay conversion drives: create
@@ -84,6 +94,17 @@ type Service struct {
 	recordings RecordingStore
 	auditor    Auditor
 	logger     *slog.Logger
+
+	// Runtime enforcement seams (config-parity W11): provider funcs read the
+	// effective instance settings at enforcement time so an admin change
+	// applies without a restart. A nil func means "no restriction" (allow
+	// replay / unlimited / no duration limit), preserving pre-W11 behaviour
+	// for callers that wire none.
+	allowReplayFunc      func() bool
+	maxInstanceLivesFunc func() int64
+	maxUserLivesFunc     func() int64
+	maxDurationSecsFunc  func() int64
+	now                  func() time.Time
 }
 
 // Option customises the Service.
@@ -115,13 +136,77 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
+// WithAllowReplayFunc wires the runtime live_allow_replay setting (config-
+// parity W11): when it reports false, RunReplay produces no VOD regardless of
+// the per-stream replay flag. Nil (or not wiring it) means replay is allowed.
+func WithAllowReplayFunc(f func() bool) Option {
+	return func(s *Service) { s.allowReplayFunc = f }
+}
+
+// WithMaxInstanceLivesFunc wires the runtime live_max_instance_lives cap
+// enforced at the RTMP publish boundary; 0 = unlimited.
+func WithMaxInstanceLivesFunc(f func() int64) Option {
+	return func(s *Service) { s.maxInstanceLivesFunc = f }
+}
+
+// WithMaxUserLivesFunc wires the runtime live_max_user_lives cap enforced at
+// the RTMP publish boundary (counted across all the owner's channels);
+// 0 = unlimited.
+func WithMaxUserLivesFunc(f func() int64) Option {
+	return func(s *Service) { s.maxUserLivesFunc = f }
+}
+
+// WithMaxDurationSecsFunc wires the runtime live_max_duration_secs limit the
+// SweepOverdueLive watchdog enforces; 0 = no limit.
+func WithMaxDurationSecsFunc(f func() int64) Option {
+	return func(s *Service) { s.maxDurationSecsFunc = f }
+}
+
+// WithNowFunc overrides the clock (the duration watchdog's cutoff math);
+// tests inject a fake time.
+func WithNowFunc(f func() time.Time) Option {
+	return func(s *Service) {
+		if f != nil {
+			s.now = f
+		}
+	}
+}
+
 // NewService builds the live service.
 func NewService(repo Repository, opts ...Option) *Service {
-	s := &Service{repo: repo, logger: slog.Default()}
+	s := &Service{repo: repo, logger: slog.Default(), now: time.Now}
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
+}
+
+// allowReplay resolves the effective live_allow_replay setting (default true).
+func (s *Service) allowReplay() bool {
+	return s.allowReplayFunc == nil || s.allowReplayFunc()
+}
+
+// maxInstanceLives / maxUserLives / maxDurationSecs resolve the effective
+// limits (0 = unlimited/no limit).
+func (s *Service) maxInstanceLives() int64 {
+	if s.maxInstanceLivesFunc == nil {
+		return 0
+	}
+	return s.maxInstanceLivesFunc()
+}
+
+func (s *Service) maxUserLives() int64 {
+	if s.maxUserLivesFunc == nil {
+		return 0
+	}
+	return s.maxUserLivesFunc()
+}
+
+func (s *Service) maxDurationSecs() int64 {
+	if s.maxDurationSecsFunc == nil {
+		return 0
+	}
+	return s.maxDurationSecsFunc()
 }
 
 // Stream is a live stream's metadata. OwnerID/ChannelHandle/ChannelDisplayName
@@ -345,7 +430,15 @@ func (s *Service) StartByIdentity(ctx context.Context, ident string) (id uuid.UU
 	// A UUID identity is a post-rename re-invocation: already bound, just ensure
 	// live and allow (no further rename).
 	if parsed, perr := uuid.Parse(ident); perr == nil {
-		if _, gerr := s.repo.GetLiveStreamByID(ctx, parsed); gerr == nil {
+		if got, gerr := s.repo.GetLiveStreamByID(ctx, parsed); gerr == nil {
+			// Only a transition INTO live counts against the simultaneous-live
+			// caps — a re-assert of an already-live session (the post-rename
+			// re-invocation) is neither re-counted nor rejectable.
+			if got.State != StateLive {
+				if cerr := s.checkLiveCaps(ctx, got.OwnerID); cerr != nil {
+					return uuid.Nil, false, cerr
+				}
+			}
 			if serr := s.repo.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: parsed, State: StateLive}); serr != nil {
 				return uuid.Nil, false, serr
 			}
@@ -356,10 +449,47 @@ func (s *Service) StartByIdentity(ctx context.Context, ident string) (id uuid.UU
 	if err != nil {
 		return uuid.Nil, false, ErrNotFound
 	}
+	if row.State != StateLive {
+		if cerr := s.checkLiveCaps(ctx, row.OwnerID); cerr != nil {
+			return uuid.Nil, false, cerr
+		}
+	}
 	if err := s.repo.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: row.ID, State: StateLive}); err != nil {
 		return uuid.Nil, false, err
 	}
 	return row.ID, true, nil
+}
+
+// checkLiveCaps enforces the simultaneous-live limits (config-parity W11) for
+// a session about to transition into "live": live_max_instance_lives across
+// the instance, then live_max_user_lives for the stream's owner. 0 = unlimited.
+//
+// Race posture (deliberate, documented): the check is count-then-set with no
+// lock, so two publish callbacks racing through it can overshoot a cap by one.
+// RTMP publishes are rare, human-paced events and these caps are operator
+// policy knobs, not hard resource guarantees — a pg advisory lock would
+// serialise every publish on the instance to close a window that in practice
+// never matters. Accepting the small overshoot keeps the hot callback lock-free.
+func (s *Service) checkLiveCaps(ctx context.Context, ownerID uuid.UUID) error {
+	if limit := s.maxInstanceLives(); limit > 0 {
+		n, err := s.repo.CountLiveStreamsLive(ctx)
+		if err != nil {
+			return err
+		}
+		if n >= limit {
+			return ErrInstanceLiveLimit
+		}
+	}
+	if limit := s.maxUserLives(); limit > 0 {
+		n, err := s.repo.CountLiveStreamsLiveByOwner(ctx, ownerID)
+		if err != nil {
+			return err
+		}
+		if n >= limit {
+			return ErrUserLiveLimit
+		}
+	}
+	return nil
 }
 
 // StopIngest ends a publish session for the stream identified by the raw key: a
@@ -428,6 +558,13 @@ const replayTitleSuffix = " (replay)"
 func (s *Service) RunReplay(ctx context.Context, streamID uuid.UUID) {
 	if s.pipeline == nil || s.recordings == nil {
 		return // replay not configured on this instance
+	}
+	if !s.allowReplay() {
+		// The instance-level live_allow_replay gate (config-parity W11): when
+		// off, no replay is produced regardless of the per-stream flag. The
+		// stored flag is untouched — replays resume when the admin re-enables.
+		s.logger.InfoContext(ctx, "live replay skipped: live_allow_replay is off", "stream_id", streamID.String())
+		return
 	}
 	st, err := s.Get(ctx, streamID)
 	if err != nil {
@@ -500,6 +637,58 @@ func (s *Service) audit(ctx context.Context, result, reason string) {
 		Actor:  audit.ActorSnapshot{Kind: "system"},
 		Reason: reason,
 	})
+}
+
+// SweepOverdueLive is the live_max_duration_secs watchdog (config-parity W11):
+// it force-closes every currently-live session whose started_at is older than
+// the effective limit, flipping it to ended (or offline for a permanent
+// stream) exactly like an ingest-stop would. A no-op (0, nil) when the limit
+// is 0/unset. Returns how many sessions were closed.
+//
+// Enforcement reality (documented finding): the deployed media server
+// (deploy/media/nginx.conf.template) exposes NO nginx-rtmp control/drop
+// endpoint, so this is a SERVER-SIDE termination: the state flip immediately
+// stops live HLS serving (the /live/{id}/hls routes 404 for non-live streams)
+// and drops the session from every listing, but the publisher's RTMP ingest
+// socket lingers — nginx-rtmp keeps accepting and packaging segments to disk
+// until the publisher disconnects. When that eventual disconnect fires the
+// on-publish-done hook, the normal stop path runs again (idempotent state
+// re-assert) and, for replay-enabled streams, triggers the replay-to-VOD —
+// which is also WHY the watchdog never runs the replay itself: the recording
+// is still being written while the socket lingers.
+func (s *Service) SweepOverdueLive(ctx context.Context) (int, error) {
+	maxSecs := s.maxDurationSecs()
+	if maxSecs <= 0 {
+		return 0, nil
+	}
+	cutoff := s.now().Add(-time.Duration(maxSecs) * time.Second)
+	rows, err := s.repo.ListOverdueLiveStreams(ctx, pgtype.Timestamptz{Time: cutoff, Valid: true})
+	if err != nil {
+		return 0, err
+	}
+	closed := 0
+	for _, r := range rows {
+		next := StateEnded
+		if r.Permanent {
+			next = StateOffline
+		}
+		if err := s.repo.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: r.ID, State: next}); err != nil {
+			s.logger.WarnContext(ctx, "live duration watchdog: force-close failed", "stream_id", r.ID.String(), "error", err)
+			continue
+		}
+		closed++
+		s.logger.InfoContext(ctx, "live duration watchdog force-closed an over-limit session",
+			"stream_id", r.ID.String(), "max_duration_secs", maxSecs, "next_state", next)
+		if s.auditor != nil {
+			_ = s.auditor.Record(ctx, audit.Event{
+				Action: observability.ActionLiveForceClose,
+				Result: observability.ResultSuccess,
+				Actor:  audit.ActorSnapshot{Kind: "system"},
+				Reason: "stream=" + r.ID.String() + " max_duration_secs exceeded",
+			})
+		}
+	}
+	return closed, nil
 }
 
 // generateStreamKey returns a new high-entropy opaque stream key and its storage

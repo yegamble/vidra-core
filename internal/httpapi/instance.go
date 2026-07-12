@@ -135,6 +135,20 @@ type instanceHomepage struct {
 	Hash    string `json:"hash"`
 }
 
+// instanceLiveConfig is the effective live-streaming policy block (config-
+// parity W11) so the live-create UI can hide the replay toggle, seed its
+// default, and explain the caps. features.live stays the master availability
+// flag; these are the policy knobs under it. Every limit follows the vidra
+// 0 = unlimited/no-limit convention.
+type instanceLiveConfig struct {
+	AllowReplay bool `json:"allow_replay"`
+	// DefaultSaveReplay is the EFFECTIVE seed (setting AND allow_replay).
+	DefaultSaveReplay bool  `json:"default_save_replay"`
+	MaxInstanceLives  int64 `json:"max_instance_lives"`
+	MaxUserLives      int64 `json:"max_user_lives"`
+	MaxDurationSecs   int64 `json:"max_duration_secs"`
+}
+
 // instanceResponse is the public "about this instance" document the frontend
 // app shell reads on load: instance name/description, software, whether signup
 // is open, and operator-provided legal/contact links (empty when unset).
@@ -189,6 +203,7 @@ type instanceResponse struct {
 	Customization instanceCustomization `json:"customization"`
 	Social        instanceSocialMeta    `json:"social"`
 	Homepage      instanceHomepage      `json:"homepage"`
+	Live          instanceLiveConfig    `json:"live"`
 }
 
 // handleInstance returns public instance metadata. No auth required; it exposes
@@ -269,6 +284,13 @@ func (s *Server) instanceDocument() instanceResponse {
 			TwitterUsername: s.settingString(instancesettings.KeySocialMetaTwitterUsername, ""),
 		},
 		Homepage: s.instanceHomepageBlock(),
+		Live: instanceLiveConfig{
+			AllowReplay:       s.liveAllowReplay(),
+			DefaultSaveReplay: s.liveDefaultSaveReplay(),
+			MaxInstanceLives:  s.settingInt(instancesettings.KeyLiveMaxInstanceLives, 0),
+			MaxUserLives:      s.settingInt(instancesettings.KeyLiveMaxUserLives, 0),
+			MaxDurationSecs:   s.settingInt(instancesettings.KeyLiveMaxDurationSecs, 0),
+		},
 	}
 }
 

@@ -54,6 +54,12 @@ func TestRegistryPageSectionMetadata(t *testing.T) {
 		KeyTranscodingConcurrency:            {PageVOD, "transcoding"},
 		KeyImportJobsConcurrency:             {PageVOD, "imports"},
 		KeyUploadAdditionalExtensionsEnabled: {PageVOD, "uploads"},
+		// Live enforcement knobs (config-parity W11).
+		KeyLiveAllowReplay:       {PageLive, "replay"},
+		KeyLiveDefaultSaveReplay: {PageLive, "replay"},
+		KeyLiveMaxInstanceLives:  {PageLive, "limits"},
+		KeyLiveMaxUserLives:      {PageLive, "limits"},
+		KeyLiveMaxDurationSecs:   {PageLive, "limits"},
 	}
 	for key, want := range placements {
 		e := snapshotByKey(t, svc, key)
