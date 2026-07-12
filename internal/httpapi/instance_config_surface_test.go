@@ -177,7 +177,7 @@ func TestInstanceConfigBlocksDefaults(t *testing.T) {
 		d.Theme != "system" || !d.PlayerAutoplay || d.MiniaturePreferAuthorDisplayName {
 		t.Errorf("defaults = %+v", d)
 	}
-	if d.Publish.Privacy != "public" || d.Publish.Licence != 0 ||
+	if d.Publish.Privacy != "private" || d.Publish.Licence != 0 ||
 		d.Publish.CommentPolicy != "enabled" || !d.Publish.DownloadEnabled {
 		t.Errorf("defaults.publish = %+v", d.Publish)
 	}

@@ -297,7 +297,11 @@ const (
 	DefaultFeedScope      = "local"
 	DefaultLandingPage    = "home-recent"
 	DefaultTheme          = "system"
-	DefaultVideoPrivacy   = "public"
+	// DefaultVideoPrivacy keeps the pre-W9 shipped behaviour (an omitted
+	// privacy on create means private) — silently loosening third-party API
+	// clients' drafts to public is not acceptable as a side effect of adding
+	// the knob. Admins who want PeerTube's public-by-default set it here.
+	DefaultVideoPrivacy   = "private"
 	DefaultCommentPolicy  = "enabled"
 	defaultPlayerAutoplay = true
 

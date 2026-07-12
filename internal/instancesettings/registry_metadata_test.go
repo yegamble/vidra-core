@@ -108,8 +108,8 @@ func TestCoreConfigSurfaceDefaults(t *testing.T) {
 	if svc.Bool(KeyMiniaturePreferAuthorDisplayName) {
 		t.Error("miniature_prefer_author_display_name default = true, want false")
 	}
-	if got := svc.String(KeyDefaultVideoPrivacy); got != "public" {
-		t.Errorf("default_video_privacy default = %q, want public", got)
+	if got := svc.String(KeyDefaultVideoPrivacy); got != "private" {
+		t.Errorf("default_video_privacy default = %q, want private (omit-means-private shipped behaviour)", got)
 	}
 	if got := svc.Int(KeyDefaultVideoLicence); got != 0 {
 		t.Errorf("default_video_licence default = %d, want 0 (no default)", got)

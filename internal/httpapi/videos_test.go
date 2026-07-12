@@ -1093,9 +1093,9 @@ func TestCreateVideoUnknownChannel404(t *testing.T) {
 }
 
 // TestCreateVideoSeedsPublishDefaults: an omitted privacy seeds the
-// default_video_privacy instance setting (registry default "public" — the
-// pre-W9 hardcoded "private" fallback only survives where no settings overlay
-// is wired). State still starts at draft.
+// default_video_privacy instance setting (registry default "private",
+// preserving the pre-W9 omit-means-private behaviour; admins opt into
+// public-by-default via the knob). State still starts at draft.
 func TestCreateVideoSeedsPublishDefaults(t *testing.T) {
 	srv := videoServer(t)
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
@@ -1105,7 +1105,7 @@ func TestCreateVideoSeedsPublishDefaults(t *testing.T) {
 	}
 	var v videoView
 	_ = json.Unmarshal(rec.Body.Bytes(), &v)
-	if v.Privacy != "public" || v.State != "draft" {
+	if v.Privacy != "private" || v.State != "draft" {
 		t.Errorf("unexpected video: %+v", v)
 	}
 	if v.CommentsPolicy != "enabled" {
