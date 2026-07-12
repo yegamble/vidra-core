@@ -12,6 +12,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 const maxCommentLen = 2000
@@ -78,25 +79,33 @@ func uuidPtrString(u pgtype.UUID) *string {
 	return &s
 }
 
-// publicVideoID parses the :id param and confirms the video exists and is
+// publicVideo parses the :id param and confirms the video exists and is
 // public + published, so it can carry public interactions (comments, ratings).
 // Anything else (missing, draft, unlisted, private) is a 404 — interactions on
-// those are a later slice.
-func (s *Server) publicVideoID(c echo.Context) (uuid.UUID, error) {
+// those are a later slice. Returns the full row so callers can consult
+// per-video policy (comments_policy, config-parity W9) without a second fetch.
+func (s *Server) publicVideo(c echo.Context) (sqlcgen.GetVideoByIDRow, error) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	v, err := s.videosvc.GetByID(c.Request().Context(), id)
 	if err != nil || v.State != "published" || v.Privacy != "public" {
-		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
-		return uuid.UUID{}, err
+		return sqlcgen.GetVideoByIDRow{}, err
 	} else if hidden {
-		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	return id, nil
+	return v, nil
+}
+
+// publicVideoID is the id-only shorthand over publicVideo for interaction
+// endpoints that do not consult per-video policy.
+func (s *Server) publicVideoID(c echo.Context) (uuid.UUID, error) {
+	v, err := s.publicVideo(c)
+	return v.ID, err
 }
 
 // createCommentRequest is the POST /videos/{id}/comments body. parent_id is
@@ -146,10 +155,17 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 	if !s.commentsEnabled() {
 		return &FeatureDisabledError{Feature: "comments"}
 	}
-	videoID, err := s.publicVideoID(c)
+	v, err := s.publicVideo(c)
 	if err != nil {
 		return err
 	}
+	// Per-video comment policy (config-parity W9): the owner can turn off new
+	// comments for one video. Same feature-disabled shape as the instance gate;
+	// reading existing comments stays open here too.
+	if v.CommentsPolicy == video.CommentsPolicyDisabled {
+		return &FeatureDisabledError{Feature: "comments"}
+	}
+	videoID := v.ID
 	var in createCommentRequest
 	if err := bindAndValidate(c, &in); err != nil {
 		return err

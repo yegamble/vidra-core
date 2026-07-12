@@ -178,7 +178,7 @@ func TestInstanceConfigBlocksDefaults(t *testing.T) {
 		t.Errorf("defaults = %+v", d)
 	}
 	if d.Publish.Privacy != "public" || d.Publish.Licence != 0 ||
-		d.Publish.CommentPolicy != "enabled" || d.Publish.DownloadEnabled {
+		d.Publish.CommentPolicy != "enabled" || !d.Publish.DownloadEnabled {
 		t.Errorf("defaults.publish = %+v", d.Publish)
 	}
 	// broadcast / customization / social / homepage zero values.

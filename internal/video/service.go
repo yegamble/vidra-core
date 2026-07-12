@@ -282,6 +282,10 @@ type Service struct {
 	// (config-parity W7) after AttachOriginal stores an original. Best-effort;
 	// nil = no daily accounting.
 	uploadUsageRecorder func(ctx context.Context, ownerID uuid.UUID, bytes int64) error
+	// publishDefaults provides the instance publish defaults seeded into
+	// CreateDraft when the caller leaves a field unset (config-parity W9).
+	// nil = the shipped pre-W9 behaviour.
+	publishDefaults func() PublishDefaults
 }
 
 // Option customises the Service.
@@ -453,6 +457,54 @@ type CreateInput struct {
 	// excluded from public browse/search when the instance policy is "hide";
 	// otherwise presentation-only.
 	IsSensitive bool
+	// CommentsPolicy is the per-video comment policy (config-parity W9), one of
+	// CommentsPolicyEnabled/CommentsPolicyDisabled; "" seeds the instance's
+	// default_comment_policy (via the WithPublishDefaultsFunc seam). The HTTP
+	// layer validates non-empty values.
+	CommentsPolicy string
+	// DownloadEnabled is the per-video download policy (config-parity W9). It
+	// LAYERS on the instance-wide downloads_enabled setting: instance off => no
+	// downloads regardless; instance on => this flag decides. nil seeds the
+	// instance's default_download_enabled.
+	DownloadEnabled *bool
+}
+
+// Per-video comment-policy values (config-parity W9). PeerTube's third tier
+// requires_approval is deliberately deferred (no comment-approval queue; see
+// the parity ledger §13).
+const (
+	CommentsPolicyEnabled  = "enabled"
+	CommentsPolicyDisabled = "disabled"
+)
+
+// IsCommentsPolicy reports whether v is a valid per-video comment policy.
+func IsCommentsPolicy(v string) bool {
+	return v == CommentsPolicyEnabled || v == CommentsPolicyDisabled
+}
+
+// PublishDefaults are the instance-level publish defaults (config-parity W9,
+// defaults.publish) seeded into a new video wherever the caller leaves the
+// matching CreateInput field unset — the HTTP create handler, channel-sync
+// drafts, and live-replay drafts all seed through the same seam.
+type PublishDefaults struct {
+	Privacy         string // one of public|unlisted|private
+	License         string // taxonomy licence id; "" = no default licence
+	CommentsPolicy  string // CommentsPolicyEnabled | CommentsPolicyDisabled
+	DownloadEnabled bool
+}
+
+// shippedPublishDefaults preserve pre-W9 behaviour when no provider is wired:
+// omitted privacy meant private, no licence, comments and downloads allowed.
+func shippedPublishDefaults() PublishDefaults {
+	return PublishDefaults{Privacy: "private", CommentsPolicy: CommentsPolicyEnabled, DownloadEnabled: true}
+}
+
+// WithPublishDefaultsFunc wires the runtime provider for the instance publish
+// defaults (default_video_privacy / default_video_licence /
+// default_comment_policy / default_download_enabled), consulted per CreateDraft
+// so admin changes apply without a restart.
+func WithPublishDefaultsFunc(fn func() PublishDefaults) Option {
+	return func(s *Service) { s.publishDefaults = fn }
 }
 
 // CreateDraft creates a new draft video under the given channel. Ownership is
@@ -464,16 +516,46 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 	if in.Privacy == PrivacyPassword {
 		return sqlcgen.Video{}, ErrPasswordRequired
 	}
+	// Seed unset fields from the instance publish defaults (config-parity W9).
+	// The seam covers every draft producer — the HTTP handler, channel-sync,
+	// and live replays — so admin defaults apply uniformly. The seeded privacy
+	// can never be "password" (the enum excludes it: a password video needs a
+	// password first).
+	def := shippedPublishDefaults()
+	if s.publishDefaults != nil {
+		def = s.publishDefaults()
+	}
+	privacy := in.Privacy
+	if privacy == "" {
+		privacy = def.Privacy
+	}
+	license := in.License
+	if license == "" {
+		license = def.License
+	}
+	commentsPolicy := in.CommentsPolicy
+	if commentsPolicy == "" {
+		commentsPolicy = def.CommentsPolicy
+	}
+	if commentsPolicy == "" {
+		commentsPolicy = CommentsPolicyEnabled // defensive: a provider returning zero values
+	}
+	downloadEnabled := def.DownloadEnabled
+	if in.DownloadEnabled != nil {
+		downloadEnabled = *in.DownloadEnabled
+	}
 	v, err := s.repo.CreateVideo(ctx, sqlcgen.CreateVideoParams{
-		ChannelID:   channelID,
-		Title:       strings.TrimSpace(in.Title),
-		Description: strings.TrimSpace(in.Description),
-		Privacy:     in.Privacy,
-		Category:    nilIfEmpty(in.Category),
-		Language:    nilIfEmpty(in.Language),
-		License:     nilIfEmpty(in.License),
-		PublishAt:   timestamptz(in.PublishAt),
-		IsSensitive: in.IsSensitive,
+		ChannelID:       channelID,
+		Title:           strings.TrimSpace(in.Title),
+		Description:     strings.TrimSpace(in.Description),
+		Privacy:         privacy,
+		Category:        nilIfEmpty(in.Category),
+		Language:        nilIfEmpty(in.Language),
+		License:         nilIfEmpty(license),
+		PublishAt:       timestamptz(in.PublishAt),
+		IsSensitive:     in.IsSensitive,
+		CommentsPolicy:  commentsPolicy,
+		DownloadEnabled: downloadEnabled,
 	})
 	if err != nil {
 		return sqlcgen.Video{}, err
@@ -1276,6 +1358,12 @@ type UpdateInput struct {
 	// IsSensitive: nil leaves the sensitive-content flag unchanged; a non-nil
 	// value sets it.
 	IsSensitive *bool
+	// CommentsPolicy: nil leaves the per-video comment policy unchanged; a
+	// non-nil value (validated by the HTTP layer) sets it (config-parity W9).
+	CommentsPolicy *string
+	// DownloadEnabled: nil leaves the per-video download policy unchanged; a
+	// non-nil value sets it.
+	DownloadEnabled *bool
 }
 
 // Update changes a video's mutable metadata. It preserves the owner-only
@@ -1314,15 +1402,17 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 		}
 	}
 	updated, err := s.repo.UpdateVideo(ctx, sqlcgen.UpdateVideoParams{
-		ID:          id,
-		Title:       trimPtr(in.Title),
-		Description: trimPtr(in.Description),
-		Privacy:     in.Privacy,
-		Category:    in.Category,
-		Language:    in.Language,
-		License:     in.License,
-		PublishAt:   timestamptz(in.PublishAt),
-		IsSensitive: in.IsSensitive,
+		ID:              id,
+		Title:           trimPtr(in.Title),
+		Description:     trimPtr(in.Description),
+		Privacy:         in.Privacy,
+		Category:        in.Category,
+		Language:        in.Language,
+		License:         in.License,
+		PublishAt:       timestamptz(in.PublishAt),
+		IsSensitive:     in.IsSensitive,
+		CommentsPolicy:  in.CommentsPolicy,
+		DownloadEnabled: in.DownloadEnabled,
 	})
 	if err != nil {
 		return sqlcgen.Video{}, err
@@ -1412,6 +1502,7 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]Fee
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
 		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it.AuthorDisplayName = r.AuthorDisplayName
 		it.PublishAt = TimePtr(r.PublishAt) // studio view: badge scheduled videos
 		items = append(items, it)
 	}
@@ -1431,7 +1522,9 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, 
 		if hideSensitive && r.IsSensitive {
 			continue
 		}
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive))
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it.AuthorDisplayName = r.AuthorDisplayName
+		items = append(items, it)
 	}
 	return items, nil
 }
@@ -1453,8 +1546,13 @@ type FeedItem struct {
 	HasThumbnail       bool
 	ChannelHandle      string
 	ChannelDisplayName string
-	DurationSeconds    *int32
-	PublishAt          *time.Time
+	// AuthorDisplayName is the uploader ACCOUNT's display name (config-parity
+	// W5/W9: miniature_prefer_author_display_name), carried alongside the
+	// channel identity on local cards; empty on remote cards (no local
+	// account).
+	AuthorDisplayName string
+	DurationSeconds   *int32
+	PublishAt         *time.Time
 
 	Remote    bool
 	Domain    string
@@ -1552,6 +1650,7 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
 		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, nil
@@ -1573,6 +1672,7 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
 		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, nil
@@ -1602,7 +1702,9 @@ func (s *Service) ListSaved(ctx context.Context, userID uuid.UUID, limit, offset
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive))
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it.AuthorDisplayName = r.AuthorDisplayName
+		items = append(items, it)
 	}
 	return items, nil
 }
@@ -1655,8 +1757,10 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 	}
 	items := make([]HistoryItem, 0, len(rows))
 	for _, r := range rows {
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, HistoryItem{
-			FeedItem:        newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive),
+			FeedItem:        it,
 			PositionSeconds: r.PositionSeconds,
 			WatchedAt:       r.WatchedAt,
 		})
@@ -1698,6 +1802,7 @@ func (s *Service) SearchPublic(ctx context.Context, query string, filter FeedFil
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
 		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, nil

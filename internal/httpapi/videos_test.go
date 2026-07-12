@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -377,6 +378,7 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
 		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive,
+		CommentsPolicy: a.CommentsPolicy, DownloadEnabled: a.DownloadEnabled,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
@@ -384,6 +386,7 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 		Category: v.Category, Language: v.Language, License: v.License,
 		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive,
+		CommentsPolicy: v.CommentsPolicy, DownloadEnabled: v.DownloadEnabled,
 		OwnerID: owner,
 	}
 	return v, nil
@@ -394,10 +397,26 @@ func (f *videoFakeRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.G
 	if !ok {
 		return sqlcgen.GetVideoByIDRow{}, errors.New("not found")
 	}
-	// Mirror the real query's channels JOIN so the detail view carries the
-	// owning channel's identity.
+	// Mirror the real query's channels + users JOINs so the detail view carries
+	// the owning channel's identity and the uploader's display name.
 	v.ChannelHandle, v.ChannelDisplayName = f.channelInfo(v.ChannelID)
+	v.AuthorDisplayName = f.authorName(v.ChannelID)
 	return v, nil
+}
+
+// authorName mirrors the discovery queries' users JOIN: the owning account's
+// display name (config-parity W5/W9 author_display_name).
+func (f *videoFakeRepo) authorName(channelID uuid.UUID) string {
+	if f.users == nil {
+		return ""
+	}
+	owner := f.channelOwner(channelID)
+	for _, u := range f.users.users {
+		if u.ID == owner {
+			return u.DisplayName
+		}
+	}
+	return ""
 }
 
 func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
@@ -405,7 +424,7 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		Category: r.Category, Language: r.Language, License: r.License, PublishAt: r.PublishAt,
-		IsSensitive: r.IsSensitive,
+		IsSensitive: r.IsSensitive, CommentsPolicy: r.CommentsPolicy, DownloadEnabled: r.DownloadEnabled,
 	}
 }
 
@@ -489,6 +508,12 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	}
 	if a.IsSensitive != nil {
 		r.IsSensitive = *a.IsSensitive
+	}
+	if a.CommentsPolicy != nil {
+		r.CommentsPolicy = *a.CommentsPolicy
+	}
+	if a.DownloadEnabled != nil {
+		r.DownloadEnabled = *a.DownloadEnabled
 	}
 	f.videos[a.ID] = r
 	return vidRowToVideo(r), nil
@@ -610,7 +635,8 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
-				IsSensitive: r.IsSensitive,
+				AuthorDisplayName: f.authorName(r.ChannelID),
+				IsSensitive:       r.IsSensitive,
 			})
 		}
 	}
@@ -735,7 +761,8 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 				ChannelHandle: ch, ChannelDisplayName: cn,
-				IsSensitive: r.IsSensitive,
+				AuthorDisplayName: f.authorName(r.ChannelID),
+				IsSensitive:       r.IsSensitive,
 			})
 		}
 	}
@@ -904,6 +931,24 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		}
 		return nil
 	}))
+	// Instance publish defaults (config-parity W9), mirroring cmd/api: unset
+	// create fields seed from the defaults.publish overlay. Late-bound like the
+	// auth funcs above (the settings service is constructed after the video
+	// service here).
+	opts = append(opts, video.WithPublishDefaultsFunc(func() video.PublishDefaults {
+		if settingsRef == nil {
+			return video.PublishDefaults{Privacy: "private", CommentsPolicy: video.CommentsPolicyEnabled, DownloadEnabled: true}
+		}
+		def := video.PublishDefaults{
+			Privacy:         settingsRef.String(instancesettings.KeyDefaultVideoPrivacy),
+			CommentsPolicy:  settingsRef.String(instancesettings.KeyDefaultCommentPolicy),
+			DownloadEnabled: settingsRef.Bool(instancesettings.KeyDefaultDownloadEnabled),
+		}
+		if licence := settingsRef.Int(instancesettings.KeyDefaultVideoLicence); licence != 0 {
+			def.License = strconv.FormatInt(licence, 10)
+		}
+		return def
+	}))
 	videosvc := video.NewService(repo, blobs, opts...)
 	// DB-backed instance-settings overlay: an in-memory fake repo, seeded with the
 	// config defaults. With no overrides the effective values equal the config, so
@@ -1047,7 +1092,11 @@ func TestCreateVideoUnknownChannel404(t *testing.T) {
 	}
 }
 
-func TestCreateVideoDefaultsPrivate(t *testing.T) {
+// TestCreateVideoSeedsPublishDefaults: an omitted privacy seeds the
+// default_video_privacy instance setting (registry default "public" — the
+// pre-W9 hardcoded "private" fallback only survives where no settings overlay
+// is wired). State still starts at draft.
+func TestCreateVideoSeedsPublishDefaults(t *testing.T) {
 	srv := videoServer(t)
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	rec := postJSONAuth(srv, "/api/v1/channels/ada/videos", `{"title":"My Draft"}`, tok)
@@ -1056,8 +1105,17 @@ func TestCreateVideoDefaultsPrivate(t *testing.T) {
 	}
 	var v videoView
 	_ = json.Unmarshal(rec.Body.Bytes(), &v)
-	if v.Privacy != "private" || v.State != "draft" {
+	if v.Privacy != "public" || v.State != "draft" {
 		t.Errorf("unexpected video: %+v", v)
+	}
+	if v.CommentsPolicy != "enabled" {
+		t.Errorf("comments_policy = %q, want enabled (registry default)", v.CommentsPolicy)
+	}
+	if v.DownloadEnabled == nil || !*v.DownloadEnabled {
+		t.Errorf("download_enabled = %v, want true (registry default)", v.DownloadEnabled)
+	}
+	if v.License != nil {
+		t.Errorf("license = %v, want unset (default_video_licence 0 = no default)", *v.License)
 	}
 }
 

@@ -518,7 +518,11 @@ var specs = []spec{
 	{key: KeyDefaultCommentPolicy, kind: KindEnum, defString: hardcoded(DefaultCommentPolicy),
 		options: CommentPolicyOptions, validate: enumOf(CommentPolicyOptions),
 		page: PageVOD, section: "publish_defaults"},
-	{key: KeyDefaultDownloadEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+	// Default ON, preserving the shipped behaviour (every video downloadable
+	// while the instance downloads_enabled gate is on) and matching PeerTube's
+	// defaults.publish default. W9 corrects the placeholder false registered in
+	// W1 before enforcement existed.
+	{key: KeyDefaultDownloadEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
 		page: PageVOD, section: "publish_defaults"},
 	// Customization: theme, header, player, email (W4/W5/W6 consume).
 	{key: KeyDefaultTheme, kind: KindEnum, defString: hardcoded(DefaultTheme),

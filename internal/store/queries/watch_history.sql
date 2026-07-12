@@ -26,11 +26,13 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
        vm.duration_seconds, v.is_sensitive,
        wh.position_seconds, wh.updated_at AS watched_at
 FROM watch_history wh
 JOIN videos v ON v.id = wh.video_id
 JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE wh.user_id = sqlc.arg('user_id')

@@ -117,8 +117,10 @@ func TestCoreConfigSurfaceDefaults(t *testing.T) {
 	if got := svc.String(KeyDefaultCommentPolicy); got != "enabled" {
 		t.Errorf("default_comment_policy default = %q, want enabled", got)
 	}
-	if svc.Bool(KeyDefaultDownloadEnabled) {
-		t.Error("default_download_enabled default = true, want false")
+	// W9 corrected this default to true (the shipped behaviour: every video
+	// downloadable while the instance downloads gate is on; PT parity).
+	if !svc.Bool(KeyDefaultDownloadEnabled) {
+		t.Error("default_download_enabled default = false, want true")
 	}
 	for _, key := range []string{KeyThemePrimaryColor, KeySocialMetaTwitterUsername, KeyEmailSubjectPrefix, KeyEmailBodySignature, KeyBroadcastMessage} {
 		if got := svc.String(key); got != "" {

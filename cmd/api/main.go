@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -527,6 +528,21 @@ func run() error {
 	// gate is off — it covers generation only.
 	vopts = append(vopts, video.WithStoryboardGate(func() bool {
 		return settingssvc.Bool(instancesettings.KeyStoryboardsEnabled)
+	}))
+	// Instance publish defaults (config-parity W9): fields a creator leaves
+	// unset on a new video seed from the defaults.publish settings, read live
+	// per CreateDraft so admin changes apply without a restart. Covers every
+	// draft producer (HTTP create, channel-sync, live replays).
+	vopts = append(vopts, video.WithPublishDefaultsFunc(func() video.PublishDefaults {
+		def := video.PublishDefaults{
+			Privacy:         settingssvc.String(instancesettings.KeyDefaultVideoPrivacy),
+			CommentsPolicy:  settingssvc.String(instancesettings.KeyDefaultCommentPolicy),
+			DownloadEnabled: settingssvc.Bool(instancesettings.KeyDefaultDownloadEnabled),
+		}
+		if licence := settingssvc.Int(instancesettings.KeyDefaultVideoLicence); licence != 0 {
+			def.License = strconv.FormatInt(licence, 10)
+		}
+		return def
 	}))
 	// Upload container policy (config-parity W10): the extended extension set
 	// follows upload_additional_extensions_enabled at runtime (default on —

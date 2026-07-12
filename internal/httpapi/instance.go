@@ -388,7 +388,7 @@ func (s *Server) instanceDefaultsBlock() instanceDefaults {
 			Privacy:         s.settingString(instancesettings.KeyDefaultVideoPrivacy, instancesettings.DefaultVideoPrivacy),
 			Licence:         s.settingInt(instancesettings.KeyDefaultVideoLicence, 0),
 			CommentPolicy:   s.settingString(instancesettings.KeyDefaultCommentPolicy, instancesettings.DefaultCommentPolicy),
-			DownloadEnabled: s.settingBool(instancesettings.KeyDefaultDownloadEnabled, false),
+			DownloadEnabled: s.settingBool(instancesettings.KeyDefaultDownloadEnabled, true),
 		},
 	}
 }

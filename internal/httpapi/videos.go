@@ -40,6 +40,14 @@ type createVideoRequest struct {
 	// IsSensitive optionally marks the video as sensitive content
 	// (instance-platform-info); defaults to false.
 	IsSensitive bool `json:"is_sensitive"`
+	// CommentsPolicy is the per-video comment policy (config-parity W9):
+	// enabled|disabled. Omitted/empty seeds the instance's
+	// default_comment_policy setting.
+	CommentsPolicy string `json:"comments_policy"`
+	// DownloadEnabled is the per-video download policy (config-parity W9),
+	// layered on the instance downloads_enabled gate. Omitted (null) seeds the
+	// instance's default_download_enabled setting.
+	DownloadEnabled *bool `json:"download_enabled"`
 }
 
 func (r createVideoRequest) Validate() []FieldError {
@@ -55,6 +63,9 @@ func (r createVideoRequest) Validate() []FieldError {
 	}
 	if r.Privacy != "" && !validVideoPrivacy[r.Privacy] {
 		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private, password"})
+	}
+	if r.CommentsPolicy != "" && !video.IsCommentsPolicy(r.CommentsPolicy) {
+		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled"})
 	}
 	fes = append(fes, validateTaxonomy(r.Category, r.Language, r.License)...)
 	fes = append(fes, validateTags(r.Tags)...)
@@ -159,6 +170,25 @@ type videoView struct {
 	// channel).
 	ChannelHandle      *string `json:"channel_handle,omitempty"`
 	ChannelDisplayName *string `json:"channel_display_name,omitempty"`
+	// AuthorDisplayName is the uploader ACCOUNT's display name (config-parity
+	// W5/W9: miniature_prefer_author_display_name), present alongside the
+	// channel identity on local card/feed views and the detail view; omitted on
+	// remote cards (no local account).
+	AuthorDisplayName *string `json:"author_display_name,omitempty"`
+	// CommentsPolicy is the per-video comment policy (config-parity W9):
+	// enabled|disabled. Present on the create/update/detail views; omitted on
+	// list/feed views and remote cards.
+	CommentsPolicy string `json:"comments_policy,omitempty"`
+	// CommentsEnabled is the EFFECTIVE comment availability on the DETAIL view:
+	// the instance-wide comments_enabled setting AND this video's
+	// comments_policy. Omitted elsewhere. Reading existing comments stays open
+	// either way; this gates posting.
+	CommentsEnabled *bool `json:"comments_enabled,omitempty"`
+	// DownloadEnabled is the per-video download policy (config-parity W9),
+	// present on the create/update/detail views. Effective availability is this
+	// flag AND the instance downloads feature (GET /instance features.downloads);
+	// moderators/admins bypass both.
+	DownloadEnabled *bool `json:"download_enabled,omitempty"`
 	// Category, Language, License are the optional taxonomy ids (see GET
 	// /videos/config); omitted when unset. Populated on create/update/detail.
 	Category *string `json:"category,omitempty"`
@@ -198,25 +228,29 @@ type videoIPFSView struct {
 }
 
 func newVideoView(v sqlcgen.Video) videoView {
+	downloadEnabled := v.DownloadEnabled
 	return videoView{
-		ID:          v.ID.String(),
-		ChannelID:   v.ChannelID.String(),
-		Title:       v.Title,
-		Description: v.Description,
-		Privacy:     v.Privacy,
-		State:       v.State,
-		IsSensitive: v.IsSensitive,
-		CreatedAt:   v.CreatedAt,
-		Category:    v.Category,
-		Language:    v.Language,
-		License:     v.License,
-		PublishAt:   video.TimePtr(v.PublishAt),
+		ID:              v.ID.String(),
+		ChannelID:       v.ChannelID.String(),
+		Title:           v.Title,
+		Description:     v.Description,
+		Privacy:         v.Privacy,
+		State:           v.State,
+		IsSensitive:     v.IsSensitive,
+		CreatedAt:       v.CreatedAt,
+		Category:        v.Category,
+		Language:        v.Language,
+		License:         v.License,
+		PublishAt:       video.TimePtr(v.PublishAt),
+		CommentsPolicy:  v.CommentsPolicy,
+		DownloadEnabled: &downloadEnabled,
 	}
 }
 
 func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
-	handle, name := v.ChannelHandle, v.ChannelDisplayName
-	return videoView{
+	handle, name, author := v.ChannelHandle, v.ChannelDisplayName, v.AuthorDisplayName
+	downloadEnabled := v.DownloadEnabled
+	view := videoView{
 		ID:          v.ID.String(),
 		ChannelID:   v.ChannelID.String(),
 		Title:       v.Title,
@@ -233,7 +267,13 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 		// and label without a second request (Wave A contract gap).
 		ChannelHandle:      &handle,
 		ChannelDisplayName: &name,
+		CommentsPolicy:     v.CommentsPolicy,
+		DownloadEnabled:    &downloadEnabled,
 	}
+	if author != "" {
+		view.AuthorDisplayName = &author
+	}
+	return view
 }
 
 // handleCreateVideo creates a draft video under a channel owned by the caller.
@@ -256,20 +296,23 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "you do not own this channel")
 	}
 
-	privacy := in.Privacy
-	if privacy == "" {
-		privacy = "private"
-	}
+	// Omitted fields seed from the instance publish defaults (config-parity
+	// W9): an empty privacy/license/comments_policy and a null download_enabled
+	// pass through unset and CreateDraft resolves them via the
+	// WithPublishDefaultsFunc seam (default_video_privacy,
+	// default_video_licence, default_comment_policy, default_download_enabled).
 	v, err := s.videosvc.CreateDraft(ctx, ch.ID, video.CreateInput{
-		Title:       in.Title,
-		Description: in.Description,
-		Privacy:     privacy,
-		Category:    in.Category,
-		Language:    in.Language,
-		License:     in.License,
-		Tags:        in.Tags,
-		PublishAt:   in.PublishAt,
-		IsSensitive: in.IsSensitive,
+		Title:           in.Title,
+		Description:     in.Description,
+		Privacy:         in.Privacy,
+		Category:        in.Category,
+		Language:        in.Language,
+		License:         in.License,
+		Tags:            in.Tags,
+		PublishAt:       in.PublishAt,
+		IsSensitive:     in.IsSensitive,
+		CommentsPolicy:  in.CommentsPolicy,
+		DownloadEnabled: in.DownloadEnabled,
 	})
 	if err != nil {
 		return videoError(err) // ErrPasswordRequired → 400
@@ -382,6 +425,11 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 		return err
 	}
 	view := videoViewFromRow(v)
+	// The EFFECTIVE comment availability (config-parity W9): the instance-wide
+	// comments_enabled toggle AND this video's comments_policy. The watch page
+	// shows/hides its composer from this one field.
+	commentsEnabled := s.commentsEnabled() && v.CommentsPolicy == video.CommentsPolicyEnabled
+	view.CommentsEnabled = &commentsEnabled
 	if md, ok, err := s.videosvc.GetMetadata(c.Request().Context(), id); err == nil && ok {
 		view.DurationSeconds = md.DurationSeconds
 		view.Width = md.Width
@@ -445,6 +493,10 @@ const (
 // privacy/state (zero values, dropped by omitempty).
 func feedItemView(it video.FeedItem) videoView {
 	v := newVideoView(it.Video)
+	// Card queries do not select the per-video publish policies; drop the
+	// zero-valued fields newVideoView stamped so cards never claim a policy.
+	v.CommentsPolicy = ""
+	v.DownloadEnabled = nil
 	views := it.Views
 	v.Views = &views
 	has := it.HasThumbnail
@@ -453,6 +505,10 @@ func feedItemView(it video.FeedItem) videoView {
 	v.ChannelHandle = &handle
 	name := it.ChannelDisplayName
 	v.ChannelDisplayName = &name
+	if it.AuthorDisplayName != "" {
+		author := it.AuthorDisplayName
+		v.AuthorDisplayName = &author
+	}
 	v.DurationSeconds = it.DurationSeconds
 	if it.PublishAt != nil {
 		v.PublishAt = it.PublishAt // owner (studio) list: scheduled badge
@@ -691,12 +747,17 @@ type updateVideoRequest struct {
 	Tags        *[]string  `json:"tags"`
 	PublishAt   *time.Time `json:"publish_at"`
 	IsSensitive *bool      `json:"is_sensitive"`
+	// CommentsPolicy / DownloadEnabled are the per-video publish policies
+	// (config-parity W9); nil leaves each unchanged.
+	CommentsPolicy  *string `json:"comments_policy"`
+	DownloadEnabled *bool   `json:"download_enabled"`
 }
 
 func (r updateVideoRequest) Validate() []FieldError {
 	if r.Title == nil && r.Description == nil && r.Privacy == nil &&
 		r.Category == nil && r.Language == nil && r.License == nil && r.Tags == nil &&
-		r.PublishAt == nil && r.IsSensitive == nil {
+		r.PublishAt == nil && r.IsSensitive == nil &&
+		r.CommentsPolicy == nil && r.DownloadEnabled == nil {
 		return []FieldError{{Field: "title", Message: "at least one updatable field is required"}}
 	}
 	var fes []FieldError
@@ -713,6 +774,9 @@ func (r updateVideoRequest) Validate() []FieldError {
 	}
 	if r.Privacy != nil && !validVideoPrivacy[*r.Privacy] {
 		fes = append(fes, FieldError{Field: "privacy", Message: "must be one of public, unlisted, private, password"})
+	}
+	if r.CommentsPolicy != nil && !video.IsCommentsPolicy(*r.CommentsPolicy) {
+		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled"})
 	}
 	// A provided taxonomy field must be a known, non-empty id (clearing to unset
 	// is not supported via update).
@@ -765,15 +829,17 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		}
 	}
 	v, err := s.videosvc.UpdateForActor(c.Request().Context(), userID, id, video.UpdateInput{
-		Title:       in.Title,
-		Description: in.Description,
-		Privacy:     in.Privacy,
-		Category:    in.Category,
-		Language:    in.Language,
-		License:     in.License,
-		Tags:        in.Tags,
-		PublishAt:   in.PublishAt,
-		IsSensitive: in.IsSensitive,
+		Title:           in.Title,
+		Description:     in.Description,
+		Privacy:         in.Privacy,
+		Category:        in.Category,
+		Language:        in.Language,
+		License:         in.License,
+		Tags:            in.Tags,
+		PublishAt:       in.PublishAt,
+		IsSensitive:     in.IsSensitive,
+		CommentsPolicy:  in.CommentsPolicy,
+		DownloadEnabled: in.DownloadEnabled,
 	}, canManage)
 	if err != nil {
 		if errors.Is(err, video.ErrPublished) {
@@ -823,6 +889,12 @@ func updateVideoFieldNames(in updateVideoRequest) []string {
 	}
 	if in.IsSensitive != nil {
 		fields = append(fields, "is_sensitive")
+	}
+	if in.CommentsPolicy != nil {
+		fields = append(fields, "comments_policy")
+	}
+	if in.DownloadEnabled != nil {
+		fields = append(fields, "download_enabled")
 	}
 	return fields
 }

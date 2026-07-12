@@ -43,11 +43,15 @@ type videoDownloadResponse struct {
 }
 
 // videoForDownload is the single authorization boundary for official download
-// metadata and bytes. Moderator/admin callers bypass the runtime toggle and may
-// download any local video for moderation. Everyone else needs downloads on and
-// the ordinary detail visibility policy (privacy, scheduled/quarantine/block,
-// and password gate). It also returns the identity FileForView should use;
-// privileged callers impersonate the real owner only for that storage lookup.
+// metadata and bytes — EVERY /videos/{id}/download route resolves through it.
+// Moderator/admin callers bypass the download gates and may download any local
+// video for moderation. Everyone else needs the LAYERED download policy
+// (config-parity W9): the instance-wide downloads_enabled setting AND the
+// video's own download_enabled flag — instance gate off means no downloads
+// regardless of the per-video flag — plus the ordinary detail visibility policy
+// (privacy, scheduled/quarantine/block, and password gate). It also returns the
+// identity FileForView should use; privileged callers impersonate the real
+// owner only for that storage lookup.
 func (s *Server) videoForDownload(c echo.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, uuid.UUID, bool, error) {
 	viewerID, role, authed := principalFromContext(c)
 	privileged := authed && (role == "admin" || role == "moderator")
@@ -67,6 +71,12 @@ func (s *Server) videoForDownload(c echo.Context, id uuid.UUID) (sqlcgen.GetVide
 	v, err := s.videoVisibleForMedia(c, id)
 	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, uuid.Nil, false, err
+	}
+	// Per-video download policy (config-parity W9), checked AFTER visibility so
+	// a hidden video keeps answering 404, and only once the instance gate above
+	// passed (the layering contract).
+	if !v.DownloadEnabled {
+		return sqlcgen.GetVideoByIDRow{}, uuid.Nil, false, &FeatureDisabledError{Feature: "downloads"}
 	}
 	return v, viewerID, authed, nil
 }
