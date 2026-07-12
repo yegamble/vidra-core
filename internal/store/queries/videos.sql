@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive;
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -24,9 +24,12 @@ LIMIT $2 OFFSET $3;
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at, v.is_sensitive,
-       c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name
+       v.comments_policy, v.download_enabled,
+       c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
 WHERE v.id = $1;
 
 -- name: ListVideoIDsByOwner :many
@@ -52,9 +55,11 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
        vm.duration_seconds, v.is_sensitive
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = $1
@@ -70,9 +75,11 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
        vm.duration_seconds, v.is_sensitive
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
@@ -96,6 +103,7 @@ ORDER BY v.created_at DESC;
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
+       feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
        feed.is_sensitive
 FROM (
@@ -110,6 +118,7 @@ FROM (
                WHERE f.video_id = v.id AND f.kind = 'thumbnail'
            ) AS has_thumbnail,
            c.handle AS channel_handle, c.display_name AS channel_display_name,
+           au.display_name AS author_display_name,
            vm.duration_seconds,
            ''::text AS domain,
            ''::text AS watch_url,
@@ -117,6 +126,7 @@ FROM (
            v.is_sensitive
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
+    JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
     WHERE v.privacy = 'public' AND v.state = 'published'
@@ -150,6 +160,7 @@ FROM (
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
            ra.preferred_username AS channel_display_name,
+           ''::text AS author_display_name,
            rv.duration_seconds,
            ra.domain,
            rv.watch_url,
@@ -187,6 +198,7 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
+       feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
        feed.is_sensitive
 FROM (
@@ -201,6 +213,7 @@ FROM (
                WHERE f.video_id = v.id AND f.kind = 'thumbnail'
            ) AS has_thumbnail,
            c.handle AS channel_handle, c.display_name AS channel_display_name,
+           au.display_name AS author_display_name,
            vm.duration_seconds,
            ''::text AS domain,
            ''::text AS watch_url,
@@ -208,6 +221,7 @@ FROM (
            v.is_sensitive
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
+    JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
     WHERE v.privacy = 'public' AND v.state = 'published'
@@ -234,6 +248,7 @@ FROM (
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
            ra.preferred_username AS channel_display_name,
+           ''::text AS author_display_name,
            rv.duration_seconds,
            ra.domain,
            rv.watch_url,
@@ -267,6 +282,7 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
+       feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
        feed.is_sensitive
 FROM (
@@ -281,6 +297,7 @@ FROM (
                WHERE f.video_id = v.id AND f.kind = 'thumbnail'
            ) AS has_thumbnail,
            c.handle AS channel_handle, c.display_name AS channel_display_name,
+           au.display_name AS author_display_name,
            vm.duration_seconds,
            ''::text AS domain,
            ''::text AS watch_url,
@@ -289,6 +306,7 @@ FROM (
            similarity(v.title, sqlc.arg('query')) AS search_rank
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
+    JOIN users au ON au.id = c.owner_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
     LEFT JOIN video_metadata vm ON vm.video_id = v.id
     WHERE v.privacy = 'public' AND v.state = 'published'
@@ -329,6 +347,7 @@ FROM (
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
            ra.preferred_username AS channel_display_name,
+           ''::text AS author_display_name,
            rv.duration_seconds,
            ra.domain,
            rv.watch_url,
@@ -363,16 +382,18 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     license     = COALESCE(sqlc.narg('license'), license),
     publish_at  = COALESCE(sqlc.narg('publish_at'), publish_at),
     is_sensitive = COALESCE(sqlc.narg('is_sensitive'), is_sensitive),
+    comments_policy  = COALESCE(sqlc.narg('comments_policy'), comments_policy),
+    download_enabled = COALESCE(sqlc.narg('download_enabled'), download_enabled),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled;
 
 -- name: ListDueScheduledVideos :many
 -- Videos whose scheduled publish time has arrived, joined with their stored

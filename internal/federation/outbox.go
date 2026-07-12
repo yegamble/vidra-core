@@ -129,6 +129,17 @@ func (s *Service) buildVideoActivity(activityType, channelHandle string, v sqlcg
 }
 
 // videoObject renders a video as an AS Video object.
+//
+// DELIBERATELY OMITTED (config-parity W9): PeerTube's per-video policy fields
+// (pt:commentsPolicy / pt:downloadEnabled — vidra's comments_policy and
+// download_enabled columns). Vidra's outbound Video is plain ActivityStreams
+// with no PeerTube JSON-LD context; emitting those fields alone would be
+// piecemeal PT-vocabulary adoption without the @context that names it, and no
+// consumer reads them from vidra today — remote viewers of a federated card
+// click through to the origin watch page, where the HTTP API enforces both
+// policies. Revisit if/when the outbound representation adopts the PT context
+// wholesale (duration, views, category would come with it); the contract
+// golden fixtures pin today's shape.
 func videoObject(channelActor, videoURL, title, description string) map[string]any {
 	return map[string]any{
 		"id":           videoURL,
