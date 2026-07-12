@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 // ---- fakes ----------------------------------------------------------------
 
 type fakeRepo struct {
+	mu       sync.Mutex // DrainJobs runs jobs on a bounded pool (W10); the fake must be safe under -race
 	jobs     map[uuid.UUID]sqlcgen.ImportJob
 	order    []uuid.UUID
 	stageLog []string // every stage written (progress ordering assertions)
@@ -27,6 +29,8 @@ type fakeRepo struct {
 func newFakeRepo() *fakeRepo { return &fakeRepo{jobs: map[uuid.UUID]sqlcgen.ImportJob{}} }
 
 func (r *fakeRepo) EnqueueImportJob(_ context.Context, arg sqlcgen.EnqueueImportJobParams) (sqlcgen.ImportJob, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, id := range r.order {
 		j := r.jobs[id]
 		if j.VideoID == arg.VideoID && (j.State == "pending" || j.State == "running") {
@@ -43,6 +47,8 @@ func (r *fakeRepo) EnqueueImportJob(_ context.Context, arg sqlcgen.EnqueueImport
 	return j, nil
 }
 func (r *fakeRepo) SetImportJobStage(_ context.Context, arg sqlcgen.SetImportJobStageParams) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	j := r.jobs[arg.ID]
 	j.Stage = arg.Stage
 	r.jobs[arg.ID] = j
@@ -50,6 +56,8 @@ func (r *fakeRepo) SetImportJobStage(_ context.Context, arg sqlcgen.SetImportJob
 	return nil
 }
 func (r *fakeRepo) SetImportJobResolver(_ context.Context, arg sqlcgen.SetImportJobResolverParams) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	j := r.jobs[arg.ID]
 	j.Resolver, j.Stage = arg.Resolver, arg.Stage
 	r.jobs[arg.ID] = j
@@ -57,6 +65,8 @@ func (r *fakeRepo) SetImportJobResolver(_ context.Context, arg sqlcgen.SetImport
 	return nil
 }
 func (r *fakeRepo) GetLatestImportJobByVideo(_ context.Context, videoID uuid.UUID) (sqlcgen.ImportJob, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for i := len(r.order) - 1; i >= 0; i-- {
 		if j := r.jobs[r.order[i]]; j.VideoID == videoID {
 			return j, nil
@@ -65,6 +75,8 @@ func (r *fakeRepo) GetLatestImportJobByVideo(_ context.Context, videoID uuid.UUI
 	return sqlcgen.ImportJob{}, pgx.ErrNoRows
 }
 func (r *fakeRepo) ClaimDueImportJobs(_ context.Context, limit int32) ([]sqlcgen.ClaimDueImportJobsRow, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var rows []sqlcgen.ClaimDueImportJobsRow
 	for _, id := range r.order {
 		j := r.jobs[id]
@@ -80,18 +92,24 @@ func (r *fakeRepo) ClaimDueImportJobs(_ context.Context, limit int32) ([]sqlcgen
 	return rows, nil
 }
 func (r *fakeRepo) CompleteImportJob(_ context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	j := r.jobs[id]
 	j.State, j.Error, j.Stage = "done", "", ""
 	r.jobs[id] = j
 	return nil
 }
 func (r *fakeRepo) RescheduleImportJob(_ context.Context, arg sqlcgen.RescheduleImportJobParams) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	j := r.jobs[arg.ID]
 	j.State, j.Attempts, j.NextAttemptAt, j.Error, j.Stage = "pending", j.Attempts+1, arg.NextAttemptAt, arg.Error, ""
 	r.jobs[arg.ID] = j
 	return nil
 }
 func (r *fakeRepo) FailImportJob(_ context.Context, arg sqlcgen.FailImportJobParams) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	j := r.jobs[arg.ID]
 	j.State, j.Attempts, j.Error, j.Stage = "failed", j.Attempts+1, arg.Error, ""
 	r.jobs[arg.ID] = j
@@ -101,6 +119,8 @@ func (r *fakeRepo) FailImportJob(_ context.Context, arg sqlcgen.FailImportJobPar
 // forceDue resets every pending job's next_attempt_at to the past so the next
 // drain re-claims it (exercising the retry ladder without real backoff waits).
 func (r *fakeRepo) forceDue() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for id, j := range r.jobs {
 		if j.State == "pending" {
 			j.NextAttemptAt = time.Now().Add(-time.Hour)
@@ -118,6 +138,7 @@ func (r *fakeRepo) latest(videoID uuid.UUID) sqlcgen.ImportJob {
 // (so the size/quota caps surface), gates on the filename/Content-Type, and
 // records the stored size; Process marks the video published.
 type fakePipeline struct {
+	mu         sync.Mutex // safe under the W10 bounded pool
 	owners     map[uuid.UUID]uuid.UUID
 	storedSize map[uuid.UUID]int64
 	published  map[uuid.UUID]bool
@@ -129,6 +150,8 @@ func newFakePipeline() *fakePipeline {
 }
 
 func (p *fakePipeline) GetByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	owner, ok := p.owners[id]
 	if !ok {
 		return sqlcgen.GetVideoByIDRow{}, video.ErrNotFound
@@ -145,14 +168,20 @@ func (p *fakePipeline) AttachOriginal(_ context.Context, _, videoID uuid.UUID, i
 	if !okExt && !okType {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, video.ErrUnsupportedMedia
 	}
+	p.mu.Lock()
 	p.storedSize[videoID] = int64(len(data))
+	p.mu.Unlock()
 	return sqlcgen.Video{ID: videoID}, sqlcgen.VideoFile{StorageKey: "web-videos/" + videoID.String(), SizeBytes: int64(len(data))}, nil
 }
 func (p *fakePipeline) Process(_ context.Context, videoID uuid.UUID, _ string) (sqlcgen.Video, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.published[videoID] = true
 	return sqlcgen.Video{ID: videoID, State: "published"}, nil
 }
 func (p *fakePipeline) PrefillMetadata(_ context.Context, videoID uuid.UUID, title, description string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.prefill == nil {
 		p.prefill = map[uuid.UUID][2]string{}
 	}
@@ -382,5 +411,89 @@ func TestRetryThenDeadLetter(t *testing.T) {
 	}
 	if j.Error == "" {
 		t.Errorf("dead-lettered job has empty error, want a safe reason")
+	}
+}
+
+// --- config-parity W10: bounded worker pool ---
+
+// TestDrainJobsBoundedConcurrencyImports proves import_jobs_concurrency is
+// resolved per drain call and parallelises the claimed batch, with per-job
+// completion bookkeeping intact.
+func TestDrainJobsBoundedConcurrencyImports(t *testing.T) {
+	origin := originServer(t)
+	repo := newFakeRepo()
+	pipe := newFakePipeline()
+	concurrency := int64(4)
+	svc := NewService(repo, pipe, 0,
+		WithHTTPClient(origin.Client()),
+		WithAllowPrivateFetch(true),
+		WithConcurrencyFunc(func() int64 { return concurrency }),
+	)
+
+	const jobs = 8
+	vids := make([]uuid.UUID, jobs)
+	for i := range vids {
+		vids[i] = seedVideo(pipe, uuid.New())
+		if _, err := svc.Enqueue(context.Background(), vids[i], origin.URL+"/clip.mp4", ""); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+	}
+	n, err := svc.DrainJobs(context.Background(), jobs)
+	if err != nil || n != jobs {
+		t.Fatalf("DrainJobs = (%d, %v), want (%d, nil)", n, err, jobs)
+	}
+	for _, id := range vids {
+		if j := repo.latest(id); j.State != "done" {
+			t.Errorf("video %s job state = %q, want done", id, j.State)
+		}
+		if !pipe.published[id] {
+			t.Errorf("video %s not published", id)
+		}
+	}
+
+	// The provider is re-read per call (runtime change without a restart) and
+	// clamps defensively.
+	concurrency = 0
+	if got := svc.Concurrency(); got != 1 {
+		t.Errorf("Concurrency(provider=0) = %d, want clamp to 1", got)
+	}
+	concurrency = 99
+	if got := svc.Concurrency(); got != 16 {
+		t.Errorf("Concurrency(provider=99) = %d, want clamp to 16", got)
+	}
+	if got := NewService(newFakeRepo(), newFakePipeline(), 0).Concurrency(); got != 1 {
+		t.Errorf("Concurrency without provider = %d, want 1", got)
+	}
+}
+
+// TestDrainJobsConcurrentFailureIsolation proves one failing job under a
+// parallel pool reschedules alone while the rest of the batch completes.
+func TestDrainJobsConcurrentFailureIsolation(t *testing.T) {
+	origin := originServer(t)
+	repo := newFakeRepo()
+	pipe := newFakePipeline()
+	svc := NewService(repo, pipe, 0,
+		WithHTTPClient(origin.Client()),
+		WithAllowPrivateFetch(true),
+		WithConcurrencyFunc(func() int64 { return 4 }),
+	)
+
+	good := seedVideo(pipe, uuid.New())
+	bad := seedVideo(pipe, uuid.New())
+	if _, err := svc.Enqueue(context.Background(), good, origin.URL+"/clip.mp4", ""); err != nil {
+		t.Fatalf("Enqueue good: %v", err)
+	}
+	if _, err := svc.Enqueue(context.Background(), bad, origin.URL+"/notavideo.txt", ""); err != nil {
+		t.Fatalf("Enqueue bad: %v", err)
+	}
+	n, err := svc.DrainJobs(context.Background(), 10)
+	if err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
+	}
+	if j := repo.latest(good); j.State != "done" {
+		t.Errorf("good job state = %q, want done", j.State)
+	}
+	if j := repo.latest(bad); j.State != "pending" || j.Attempts != 1 || j.Error == "" {
+		t.Errorf("bad job = state %q attempts %d error %q, want pending/1 with a safe error", j.State, j.Attempts, j.Error)
 	}
 }

@@ -75,7 +75,7 @@ func TestPlanHLSLadderUnknownDimensions(t *testing.T) {
 
 func TestHLSRungArgs(t *testing.T) {
 	r := HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128}
-	args := strings.Join(hlsRungArgs("/in/src.mp4", "/out/720p", r), " ")
+	args := strings.Join(hlsRungArgs("/in/src.mp4", "/out/720p", r, 0), " ")
 	for _, want := range []string{
 		"-i /in/src.mp4",
 		"-c:v libx264",
@@ -208,5 +208,152 @@ func TestHLSDownloadKeys(t *testing.T) {
 	}
 	if HLSMP4ContentType != "video/mp4" || HLSM4AContentType != "audio/mp4" {
 		t.Errorf("download content types = %q, %q", HLSMP4ContentType, HLSM4AContentType)
+	}
+}
+
+// --- config-parity W10: runtime encode settings ---
+
+func TestPlanHLSLadderWithCustomResolutions(t *testing.T) {
+	// Only the enabled rungs are planned; order of the input doesn't matter
+	// (planning sorts tallest first); rungs above the source stay skipped.
+	st := HLSEncodeSettings{Resolutions: []int{360, 1080, 720}}
+	got := rungSizes(PlanHLSLadderWith(st, 1920, 1080, 0))
+	want := []string{"1920x1080", "1280x720", "640x360"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("custom ladder = %v, want %v", got, want)
+	}
+}
+
+func TestPlanHLSLadderWithExtendedRungs(t *testing.T) {
+	st := HLSEncodeSettings{Resolutions: []int{2160, 1440, 240, 144}}
+	rungs := PlanHLSLadderWith(st, 3840, 2160, 0)
+	got := rungSizes(rungs)
+	want := []string{"3840x2160", "2560x1440", "426x240", "256x144"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("extended ladder = %v, want %v", got, want)
+	}
+	if rungs[0].VideoKbps != 16000 || rungs[0].AudioKbps != 160 {
+		t.Errorf("2160 rung bitrates = %d/%d, want 16000/160", rungs[0].VideoKbps, rungs[0].AudioKbps)
+	}
+}
+
+func TestPlanHLSLadderWithInvalidOrEmptyResolutionsFallsBack(t *testing.T) {
+	// Defensive: unknown heights are dropped, duplicates collapse, and an
+	// empty/all-invalid universe falls back to the default ladder (the registry
+	// validator refuses to store one, but a direct DB edit must not break
+	// planning).
+	for _, res := range [][]int{nil, {}, {999, -1, 0}, {717}} {
+		got := rungSizes(PlanHLSLadderWith(HLSEncodeSettings{Resolutions: res}, 1920, 1080, 0))
+		want := rungSizes(PlanHLSLadder(1920, 1080))
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("resolutions %v = %v, want default ladder %v", res, got, want)
+		}
+	}
+	dup := rungSizes(PlanHLSLadderWith(HLSEncodeSettings{Resolutions: []int{720, 720}}, 1920, 1080, 0))
+	if strings.Join(dup, ",") != "1280x720" {
+		t.Errorf("duplicate rung heights = %v, want a single 1280x720", dup)
+	}
+}
+
+func TestPlanHLSLadderWithOriginalResolution(t *testing.T) {
+	// Source taller than the highest enabled rung: an extra rung at the
+	// source's own size tops the ladder, with the bitrates of the smallest
+	// canonical rung at least as tall.
+	st := HLSEncodeSettings{Resolutions: []int{1080, 720}, OriginalResolution: true}
+	rungs := PlanHLSLadderWith(st, 2560, 1440, 0)
+	got := rungSizes(rungs)
+	want := []string{"2560x1440", "1920x1080", "1280x720"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("original-resolution ladder = %v, want %v", got, want)
+	}
+	if rungs[0].VideoKbps != 9000 || rungs[0].AudioKbps != 160 {
+		t.Errorf("original 1440 rung bitrates = %d/%d, want the canonical 1440 rung's 9000/160", rungs[0].VideoKbps, rungs[0].AudioKbps)
+	}
+
+	// Taller than the whole canonical table: clamps to the tallest rung's bitrates.
+	huge := PlanHLSLadderWith(st, 7680, 4320, 0)
+	if huge[0].Height != 4320 || huge[0].VideoKbps != 16000 {
+		t.Errorf("8K original rung = %dp @ %dk, want 4320p @ 16000k", huge[0].Height, huge[0].VideoKbps)
+	}
+
+	// Source equal to the highest enabled rung: no extra rung.
+	same := rungSizes(PlanHLSLadderWith(st, 1920, 1080, 0))
+	if strings.Join(same, ",") != "1920x1080,1280x720" {
+		t.Errorf("1080 source with original-resolution on = %v, want no extra rung", same)
+	}
+
+	// Off (default): the source's extra height is simply not laddered.
+	off := rungSizes(PlanHLSLadderWith(HLSEncodeSettings{Resolutions: []int{1080, 720}}, 2560, 1440, 0))
+	if strings.Join(off, ",") != "1920x1080,1280x720" {
+		t.Errorf("original-resolution off = %v, want ladder only", off)
+	}
+}
+
+func TestPlanHLSLadderWithMaxFPS(t *testing.T) {
+	st := HLSEncodeSettings{Resolutions: []int{1080, 720}, MaxFPS: 30}
+	// Source faster than the cap: every rung carries the cap (uniform —
+	// documented deviation from PeerTube's per-rung fps rules).
+	for _, r := range PlanHLSLadderWith(st, 1920, 1080, 60) {
+		if r.FPS != 30 {
+			t.Errorf("rung %dp FPS = %d, want 30 (source 60 > cap 30)", r.Height, r.FPS)
+		}
+	}
+	// Source at/below the cap, or unknown: no filter (never upsample).
+	for _, sourceFPS := range []float64{0, 24, 30} {
+		for _, r := range PlanHLSLadderWith(st, 1920, 1080, sourceFPS) {
+			if r.FPS != 0 {
+				t.Errorf("source %v fps: rung %dp FPS = %d, want 0 (no cap applied)", sourceFPS, r.Height, r.FPS)
+			}
+		}
+	}
+	// No cap configured: nothing regardless of source rate.
+	for _, r := range PlanHLSLadderWith(HLSEncodeSettings{Resolutions: []int{720}}, 1920, 1080, 120) {
+		if r.FPS != 0 {
+			t.Errorf("uncapped rung FPS = %d, want 0", r.FPS)
+		}
+	}
+	// The single-rung tiny-source fallback also honors the cap.
+	tiny := PlanHLSLadderWith(HLSEncodeSettings{Resolutions: []int{1080}, MaxFPS: 30}, 320, 240, 60)
+	if len(tiny) != 1 || tiny[0].FPS != 30 {
+		t.Errorf("tiny-source fallback = %+v, want one rung with FPS 30", tiny)
+	}
+}
+
+func TestHLSRungArgsFPSAndThreads(t *testing.T) {
+	r := HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128, FPS: 30}
+	args := strings.Join(hlsRungArgs("/in/src.mp4", "/out/720p", r, 4), " ")
+	for _, want := range []string{
+		"-vf scale=1280:720,fps=30",
+		"-threads 4",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args missing %q\nargs: %s", want, args)
+		}
+	}
+	// Defaults (FPS 0, threads 0) must leave the vector exactly ffmpeg-default.
+	def := strings.Join(hlsRungArgs("/in/src.mp4", "/out/720p", HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128}, 0), " ")
+	if strings.Contains(def, "fps=") || strings.Contains(def, "-threads") {
+		t.Errorf("default args must carry no fps filter or -threads\nargs: %s", def)
+	}
+}
+
+func TestIsHLSRungHeightAndCanonicalSet(t *testing.T) {
+	for _, h := range HLSCanonicalRungHeights {
+		if !IsHLSRungHeight(h) {
+			t.Errorf("IsHLSRungHeight(%d) = false, want true", h)
+		}
+	}
+	for _, h := range []int{0, 1, 480 + 1, 4320} {
+		if IsHLSRungHeight(h) {
+			t.Errorf("IsHLSRungHeight(%d) = true, want false", h)
+		}
+	}
+	// No 0p audio-only rung in v1 (ledgered).
+	if IsHLSRungHeight(0) {
+		t.Error("audio-only 0p rung must not be canonical in v1")
+	}
+	// The default ladder is the original hardcoded one.
+	if got := fmt.Sprint(DefaultHLSResolutionHeights); got != "[1080 720 480 360]" {
+		t.Errorf("DefaultHLSResolutionHeights = %v", got)
 	}
 }

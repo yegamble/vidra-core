@@ -48,6 +48,12 @@ func TestRegistryPageSectionMetadata(t *testing.T) {
 		KeyDefaultTheme:              {PageCustomization, "theme"},
 		KeyEmailSubjectPrefix:        {PageCustomization, "email"},
 		KeySocialMetaTwitterUsername: {PageGeneral, "social"},
+		// VOD transcoding knobs (config-parity W10).
+		KeyTranscodingEnabled:                {PageVOD, "transcoding"},
+		KeyTranscodingResolutions:            {PageVOD, "transcoding"},
+		KeyTranscodingConcurrency:            {PageVOD, "transcoding"},
+		KeyImportJobsConcurrency:             {PageVOD, "imports"},
+		KeyUploadAdditionalExtensionsEnabled: {PageVOD, "uploads"},
 	}
 	for key, want := range placements {
 		e := snapshotByKey(t, svc, key)

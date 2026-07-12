@@ -41,6 +41,11 @@ type instanceFeatures struct {
 	Transcription bool `json:"transcription"`
 	UserImport    bool `json:"user_import"`
 	UserExport    bool `json:"user_export"`
+	// Transcoding reports the EFFECTIVE HLS pipeline availability (config-
+	// parity W10): the runtime transcoding_enabled setting AND the boot
+	// capability (ffmpeg/ffprobe wired). Already-produced playlists keep
+	// serving when this is false.
+	Transcoding bool `json:"transcoding"`
 }
 
 // instanceSocialLinks is the operator's social/link row (empty strings when
@@ -254,6 +259,7 @@ func (s *Server) instanceDocument() instanceResponse {
 			Transcription: s.transcriptionEnabled() && s.captionjobsvc != nil && s.captionjobsvc.Enabled(),
 			UserImport:    s.userImportEnabled(),
 			UserExport:    s.userExportEnabled(),
+			Transcoding:   s.transcodingEnabled() && s.transcodesvc != nil && s.transcodesvc.Capable(),
 		},
 		Branding:      s.instanceBrandingBlock(),
 		Defaults:      s.instanceDefaultsBlock(),

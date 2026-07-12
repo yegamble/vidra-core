@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,7 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/video"
+	"github.com/vidra/vidra-core/internal/workerpool"
 )
 
 const (
@@ -126,6 +128,10 @@ type Service struct {
 	// (import_http_enabled, config-parity W8). nil = always allowed; the boot
 	// capability (ytdlp != nil) still applies either way.
 	ytdlpGate func() bool
+	// concurrencyFn is the runtime import_jobs_concurrency value (config-parity
+	// W10), resolved per DrainJobs call (per worker tick) so a change applies
+	// without a restart. nil = 1 (the pre-W10 sequential behavior).
+	concurrencyFn func() int64
 }
 
 // Option customises the Service.
@@ -183,6 +189,23 @@ func WithYtdlp(ext Extractor, workRoot string) Option {
 		s.ytdlp = ext
 		s.ytdlpWork = workRoot
 	}
+}
+
+// WithConcurrencyFunc wires the runtime import_jobs_concurrency value
+// (config-parity W10). f is resolved once per DrainJobs call (per worker
+// tick), clamped to [1, workerpool.MaxConcurrency]; running imports keep the
+// parallelism they started with.
+func WithConcurrencyFunc(f func() int64) Option {
+	return func(s *Service) { s.concurrencyFn = f }
+}
+
+// Concurrency is the effective import-worker parallelism for the next drain,
+// clamped to [1, workerpool.MaxConcurrency] (1 when no provider is wired).
+func (s *Service) Concurrency() int {
+	if s.concurrencyFn == nil {
+		return 1
+	}
+	return workerpool.Clamp(s.concurrencyFn())
 }
 
 // WithYtdlpGate wires the runtime admin toggle over the platform resolver
@@ -282,21 +305,30 @@ func (s *Service) LatestForVideo(ctx context.Context, videoID uuid.UUID) (sqlcge
 // pipeline. On success the job completes; on failure it is rescheduled with
 // backoff, or dead-lettered after maxAttempts. Returns the number completed.
 // Only the claim-query error is returned — per-job outcomes are persisted.
-// Intended to be called on a ticker by a single worker.
+// Intended to be called on a ticker by a single worker goroutine; the claimed
+// batch runs on a bounded pool sized by the runtime import_jobs_concurrency
+// value, resolved per call (config-parity W10), so an admin change applies on
+// the next tick without a restart.
 func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	rows, err := s.repo.ClaimDueImportJobs(ctx, int32(limit))
 	if err != nil {
 		return 0, err
 	}
-	done := 0
-	for _, row := range rows {
+	var (
+		mu   sync.Mutex
+		done int
+	)
+	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
+		row := rows[i]
 		if err := s.runImport(ctx, row); err != nil {
 			s.recordFailure(ctx, row, err)
-			continue
+			return
 		}
 		_ = s.repo.CompleteImportJob(ctx, row.ID)
+		mu.Lock()
 		done++
-	}
+		mu.Unlock()
+	})
 	return done, nil
 }
 

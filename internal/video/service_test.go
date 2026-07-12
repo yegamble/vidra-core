@@ -976,17 +976,17 @@ func TestAcceptedExtAndOriginalKey(t *testing.T) {
 		"x.mkv":     ".mkv",
 	}
 	for filename, wantExt := range accepted {
-		ext, ok := acceptedExt(filename)
+		ext, ok := AcceptedVideoExt(filename)
 		if !ok || ext != wantExt {
-			t.Errorf("acceptedExt(%q) = (%q, %v), want (%q, true)", filename, ext, ok, wantExt)
+			t.Errorf("AcceptedVideoExt(%q) = (%q, %v), want (%q, true)", filename, ext, ok, wantExt)
 		}
 		if got, want := originalKey(id, ext), "web-videos/"+id.String()+wantExt; got != want {
 			t.Errorf("originalKey(%q) = %q, want %q", ext, got, want)
 		}
 	}
 	for _, filename := range []string{"noext", "weird.tar.gz", "evil.../x.m p", "doc.pdf", "image.png", "a.exe", ""} {
-		if ext, ok := acceptedExt(filename); ok {
-			t.Errorf("acceptedExt(%q) = (%q, true), want false (not a video container)", filename, ext)
+		if ext, ok := AcceptedVideoExt(filename); ok {
+			t.Errorf("AcceptedVideoExt(%q) = (%q, true), want false (not a video container)", filename, ext)
 		}
 	}
 }
@@ -1505,5 +1505,71 @@ func TestRecordViewVisibilityAndUnknown(t *testing.T) {
 	}
 	if err := svc.RecordView(ctx, uuid.New(), uuid.Nil, false, "x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("view of unknown = %v, want ErrNotFound", err)
+	}
+}
+
+// --- config-parity W10: upload_additional_extensions_enabled gate ---
+
+func TestAcceptedVideoExtGated(t *testing.T) {
+	// Base containers pass regardless of the gate.
+	for _, f := range []string{"a.mp4", "b.WEBM", "c.ogv", "d.ogg"} {
+		if _, ok := AcceptedVideoExtGated(f, false); !ok {
+			t.Errorf("AcceptedVideoExtGated(%q, false) = false, want true (base set)", f)
+		}
+	}
+	// Additional containers follow the gate.
+	for _, f := range []string{"a.avi", "b.mov", "c.mkv", "d.flv", "e.wmv", "f.m4v", "g.3gp", "h.mpg", "i.mpeg", "j.ts"} {
+		if _, ok := AcceptedVideoExtGated(f, true); !ok {
+			t.Errorf("AcceptedVideoExtGated(%q, true) = false, want true (additional set on)", f)
+		}
+		if ext, ok := AcceptedVideoExtGated(f, false); ok {
+			t.Errorf("AcceptedVideoExtGated(%q, false) = (%q, true), want refused (additional set off)", f, ext)
+		}
+	}
+	// Junk is refused either way.
+	if _, ok := AcceptedVideoExtGated("x.exe", true); ok {
+		t.Error("AcceptedVideoExtGated(x.exe, true) accepted a non-video container")
+	}
+}
+
+// TestAttachOriginalAdditionalExtGateRuntimeFlip proves the gate is consulted
+// per call on ONE service instance: flipping it changes acceptance without
+// reconstruction, and base containers are unaffected.
+func TestAttachOriginalAdditionalExtGateRuntimeFlip(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	blobs, _ := storage.NewLocal(t.TempDir())
+	allowed := false
+	svc := NewService(repo, blobs, WithAdditionalExtGate(func() bool { return allowed }))
+	ctx := context.Background()
+
+	// Gate off: an additional-set container is refused…
+	v1, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "private"})
+	if _, _, err := svc.AttachOriginal(ctx, owner, v1.ID, UploadInput{Filename: "clip.avi", Reader: strings.NewReader("x")}); !errors.Is(err, ErrUnsupportedMedia) {
+		t.Fatalf("gate off .avi err = %v, want ErrUnsupportedMedia", err)
+	}
+	// …the content-type fallback can't smuggle one in…
+	if _, _, err := svc.AttachOriginal(ctx, owner, v1.ID, UploadInput{Filename: "noext", ContentType: "video/x-msvideo", Reader: strings.NewReader("x")}); !errors.Is(err, ErrUnsupportedMedia) {
+		t.Fatalf("gate off content-type fallback err = %v, want ErrUnsupportedMedia", err)
+	}
+	// …and a base container still lands.
+	if _, _, err := svc.AttachOriginal(ctx, owner, v1.ID, UploadInput{Filename: "clip.mp4", Reader: strings.NewReader("x")}); err != nil {
+		t.Fatalf("gate off .mp4 err = %v, want ok", err)
+	}
+
+	// Runtime flip — same service instance.
+	allowed = true
+	v2, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t2", Privacy: "private"})
+	if _, file, err := svc.AttachOriginal(ctx, owner, v2.ID, UploadInput{Filename: "clip.avi", Reader: strings.NewReader("x")}); err != nil {
+		t.Fatalf("gate on .avi err = %v, want ok", err)
+	} else if !strings.HasSuffix(file.StorageKey, ".avi") {
+		t.Errorf("stored key = %q, want .avi original", file.StorageKey)
+	}
+
+	// Default (no gate wired) keeps the full pre-W10 allow-list.
+	def := NewService(newFakeRepo(owner), blobs)
+	v3, _ := def.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t3", Privacy: "private"})
+	if _, _, err := def.AttachOriginal(ctx, owner, v3.ID, UploadInput{Filename: "clip.mkv", Reader: strings.NewReader("x")}); err != nil {
+		t.Fatalf("default gate .mkv err = %v, want ok (pre-W10 behavior)", err)
 	}
 }

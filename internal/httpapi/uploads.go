@@ -167,8 +167,10 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	// Extension allow-list up front (same gate AttachOriginal enforces on complete).
-	if _, ok := video.AcceptedVideoExt(in.Filename); !ok {
+	// Extension allow-list up front (same gate AttachOriginal enforces on
+	// complete), honoring the runtime additional-extensions setting
+	// (upload_additional_extensions_enabled, config-parity W10).
+	if _, ok := video.AcceptedVideoExtGated(in.Filename, s.uploadAdditionalExtensionsEnabled()); !ok {
 		return echo.NewHTTPError(http.StatusUnsupportedMediaType, "unsupported media type")
 	}
 	// Size vs the effective upload cap up front (413). The cap is the DB overlay
