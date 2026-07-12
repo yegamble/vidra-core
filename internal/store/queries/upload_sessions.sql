@@ -3,8 +3,8 @@
 -- these rows are the resume contract + sweeper input.
 
 -- name: CreateUploadSession :one
-INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at, file_fingerprint)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at, file_fingerprint, purpose)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: GetUploadSession :one
@@ -39,6 +39,18 @@ SELECT count(*)::bigint FROM upload_sessions
 WHERE user_id = sqlc.arg('user_id')
   AND state = 'active'
   AND expires_at > now();
+
+-- name: HasActiveReplaceSessionForVideo :one
+-- Whether a replace-purpose session is already open for the video (config-
+-- parity W14): at most one replacement may be in flight per video, so the
+-- replace-session create answers 409 replace_conflict while one exists.
+SELECT EXISTS (
+    SELECT 1 FROM upload_sessions
+    WHERE video_id = sqlc.arg('video_id')
+      AND purpose = 'replace'
+      AND state = 'active'
+      AND expires_at > now()
+);
 
 -- name: UpsertUploadChunk :exec
 -- Idempotent re-PUT: a chunk index that has already landed just updates its

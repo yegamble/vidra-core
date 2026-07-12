@@ -55,10 +55,11 @@ func VP9WebMKey(videoID uuid.UUID) string {
 func (t *HLSTranscoder) SetVP9(enabled bool) { t.vp9 = enabled }
 
 // encodeVP9 renders the progressive VP9/WebM alternate for src (a local path)
-// at the top rung, stores it at VP9WebMKey(videoID), and returns the stored key
+// at the top rung, stores it at <hlsPrefix>/vp9.webm (the same generation
+// directory as the HLS tree it accompanies — W14), and returns the stored key
 // and byte size. Best-effort at the call site: a failure must not fail the HLS
 // transcode.
-func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, src string, top HLSRung) (key string, size int64, err error) {
+func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPrefix, src string, top HLSRung) (key string, size int64, err error) {
 	out, err := os.CreateTemp("", "vidra-vp9-*.webm")
 	if err != nil {
 		return "", 0, err
@@ -78,7 +79,7 @@ func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, src st
 		return "", 0, err
 	}
 	defer func() { _ = f.Close() }()
-	key = VP9WebMKey(videoID)
+	key = hlsPrefix + "/vp9.webm"
 	n, err := t.blobs.Put(ctx, key, f)
 	if err != nil {
 		return "", 0, err

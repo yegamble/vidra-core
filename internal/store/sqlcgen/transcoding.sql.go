@@ -102,6 +102,19 @@ func (q *Queries) CreateVideoRendition(ctx context.Context, arg CreateVideoRendi
 	return i, err
 }
 
+const deleteStreamingPlaylist = `-- name: DeleteStreamingPlaylist :exec
+DELETE FROM streaming_playlists WHERE video_id = $1
+`
+
+// Drops a video's playlist row (with DeleteVideoRenditions) when a replacement
+// lands while transcoding is unavailable (config-parity W14): the old HLS tree
+// must stop serving superseded content; playback falls back to the progressive
+// original until a future transcode re-promotes a ladder.
+func (q *Queries) DeleteStreamingPlaylist(ctx context.Context, videoID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteStreamingPlaylist, videoID)
+	return err
+}
+
 const deleteVideoRenditions = `-- name: DeleteVideoRenditions :exec
 DELETE FROM video_renditions WHERE video_id = $1
 `
@@ -164,6 +177,24 @@ func (q *Queries) GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const hasLiveTranscodeJob = `-- name: HasLiveTranscodeJob :one
+SELECT EXISTS (
+    SELECT 1 FROM transcode_jobs
+    WHERE video_id = $1 AND state IN ('pending', 'running')
+)
+`
+
+// Whether a pending/running transcode job exists for the video. The video-file
+// replacement flow (config-parity W14) answers 409 replace_conflict while one
+// does: enqueueing is idempotent per live job, so a replacement accepted now
+// would silently never be transcoded.
+func (q *Queries) HasLiveTranscodeJob(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasLiveTranscodeJob, videoID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const listVideoRenditions = `-- name: ListVideoRenditions :many

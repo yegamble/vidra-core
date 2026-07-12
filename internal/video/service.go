@@ -67,7 +67,21 @@ var (
 	// ErrThumbnailOutOfRange means the requested frame timestamp is outside the
 	// half-open interval [0, duration). The HTTP layer maps it to 422 (W2.C5).
 	ErrThumbnailOutOfRange = errors.New("video: thumbnail timestamp out of range")
+	// ErrReplaceConflict means a source replacement cannot start right now
+	// (config-parity W14): the video is not in the published state (still
+	// processing, scheduled, quarantined, failed, or a draft with no source),
+	// or another replacement is already in flight. The HTTP layer maps it to
+	// 409 replace_conflict.
+	ErrReplaceConflict = errors.New("video: replacement conflict")
 )
+
+// ReplaceRejectedError means a replacement source was refused before anything
+// was swapped (malware scan or media probe, config-parity W14) — the video and
+// its current source are untouched. The HTTP layer maps it to 422 with the
+// client-safe Reason.
+type ReplaceRejectedError struct{ Reason string }
+
+func (e *ReplaceRejectedError) Error() string { return "video: replacement rejected: " + e.Reason }
 
 // PasswordValidationError is a 400-class failure validating a video-password
 // write (a plaintext outside 6–100 chars, or a replace-all set outside 1–20
@@ -669,6 +683,159 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	// the owner's rolling 24h window. Best-effort by design.
 	if s.uploadUsageRecorder != nil {
 		_ = s.uploadUsageRecorder(ctx, ownerID, size)
+	}
+	return updated, file, nil
+}
+
+// ReplaceSource stores a NEW source version for an already-published video —
+// the video file replacement flow (config-parity W14, PT video_file.update).
+//
+// SEMANTICS (the in-place-swap source-version model; see also
+// media.OriginalVideoKey): the video's identity — id, URLs, metadata, title,
+// policies — never changes. The new source lands at a fresh VERSIONED key
+// (web-videos/<id>.rN<ext>), is scanned and probed BEFORE anything is swapped
+// (a rejected replacement leaves the video fully intact), and only then does
+// the kind='original' file row flip to the new key. Playback keeps working
+// throughout: the HLS tree players are streaming belongs to the previous
+// generation and is only superseded when the re-transcode (enqueued by the
+// caller with the returned file's key) promotes the new generation's DB rows;
+// mediagc then collects the old generation and the old source blob. The
+// progressive-original and download endpoints resolve the file row, so they
+// serve the new source from the moment of the swap.
+//
+// Owner or (canManage) moderator/admin only. The video must be published with
+// no replacement already in flight — the HTTP layer additionally guards the
+// live-transcode-job and active-replace-session states; here the state gate is
+// ErrReplaceConflict. Scan-policy note: an unscannable file is REJECTED under
+// both fail-closed and quarantine modes (quarantining a published video would
+// unpublish it — not a replacement semantic); fail-open proceeds with a loud
+// log, mirroring Process. Thumbnails and captions are deliberately left
+// untouched (they may be creator-authored); the storyboard is regenerated
+// best-effort since a stale seek-preview would show the previous content.
+// Quota accounting (total + rolling daily ledger) is attributed to the video's
+// OWNER — storage usage always aggregates against the owning account — even
+// when a privileged actor performs the replacement.
+func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID, in UploadInput, canManage bool) (sqlcgen.Video, sqlcgen.VideoFile, error) {
+	if s.blobs == nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrStorageUnavailable
+	}
+	v, err := s.GetByID(ctx, videoID)
+	if err != nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	if v.OwnerID != actorID && !canManage {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrForbidden
+	}
+	if v.State != "published" {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrReplaceConflict
+	}
+	ext, ok := s.acceptedExt(in.Filename)
+	if !ok {
+		if ctExt, ctOK := extForContentType(in.ContentType); ctOK {
+			ext, ok = AcceptedVideoExtGated("x"+ctExt, s.additionalExtsAllowed())
+		}
+	}
+	if !ok {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, ErrUnsupportedMedia
+	}
+
+	// Next source version: current version + 1, parsed from the current
+	// original's key (a published video always has one; a missing row — e.g. a
+	// GC'd source — starts the versioned scheme at 1).
+	version := 1
+	if cur, cerr := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "original"}); cerr == nil {
+		version = media.OriginalKeyVersion(cur.StorageKey) + 1
+	}
+	key := media.OriginalVideoKey(videoID, version, ext)
+	size, err := s.blobs.Put(ctx, key, in.Reader)
+	if err != nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	// reject drops the not-yet-referenced new blob and refuses the replacement;
+	// the video and its current source stay fully intact.
+	reject := func(reason string) (sqlcgen.Video, sqlcgen.VideoFile, error) {
+		_ = s.blobs.Delete(ctx, key)
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, &ReplaceRejectedError{Reason: reason}
+	}
+
+	// Malware scan first (same fail-closed posture as Process; quarantine mode
+	// rejects here — see the method doc).
+	if s.scanner != nil {
+		clean, serr := s.scanner.Scan(ctx, key)
+		switch {
+		case serr != nil:
+			if s.scanMode == ScanModeFailOpen {
+				slog.WarnContext(ctx, "malware scan failed; accepting replacement anyway (MALWARE_SCAN_MODE=fail-open)",
+					"video_id", videoID.String(), "error", serr.Error())
+			} else {
+				s.auditMalwareRejected(ctx, videoID, "scan_error")
+				return reject("the file could not be scanned; try again later")
+			}
+		case !clean:
+			s.auditMalwareRejected(ctx, videoID, "infected")
+			return reject("the file failed the malware scan")
+		}
+	}
+	// Probe: the replacement must be playable media (when a prober is wired;
+	// without one the extension gate is the only validation, as at publish).
+	durationHint := 0
+	var md media.Metadata
+	probed := false
+	if s.prober != nil {
+		md, err = s.prober.Probe(ctx, key)
+		if err != nil {
+			return reject("the file is not a playable video")
+		}
+		durationHint = md.DurationSeconds
+		probed = true
+	}
+
+	// The swap: from here the new source is the video's original. Downloads and
+	// progressive playback follow the file row immediately; HLS keeps serving
+	// the previous generation until the re-transcode promotes the new one.
+	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
+		VideoID: videoID,
+		Kind:    "original",
+	}); err != nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	file, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+		VideoID:      videoID,
+		Kind:         "original",
+		StorageKey:   key,
+		ContentType:  strings.TrimSpace(in.ContentType),
+		OriginalName: strings.TrimSpace(in.Filename),
+		SizeBytes:    size,
+	})
+	if err != nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	if probed {
+		if _, err := s.repo.UpsertVideoMetadata(ctx, metadataParams(videoID, md)); err != nil {
+			return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+		}
+	}
+	// Daily-quota ledger (W7 convention): replacement bytes count against the
+	// OWNER's rolling window like any other stored original. Best-effort.
+	if s.uploadUsageRecorder != nil {
+		_ = s.uploadUsageRecorder(ctx, v.OwnerID, size)
+	}
+	// Storyboard regeneration is best-effort and honors the runtime
+	// storyboards_enabled gate; the (possibly creator-picked) thumbnail is
+	// deliberately kept.
+	if s.storyboarder != nil && (s.storyboardGate == nil || s.storyboardGate()) {
+		s.generateStoryboard(ctx, videoID, key, durationHint)
+	}
+	// The video row itself is unchanged apart from updated_at; re-assert the
+	// published state to bump it and return the row.
+	updated, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "published"})
+	if err != nil {
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
+	}
+	// Update hooks: federation fans an Update{Video} out to remote followers
+	// (duration/metadata changed), the IPFS mirror re-evaluates its pins.
+	for _, hook := range s.onUpdate {
+		hook(ctx, videoID)
 	}
 	return updated, file, nil
 }

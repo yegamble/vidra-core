@@ -88,6 +88,20 @@ func (f *transcodeFakeRepo) FailTranscodeJob(_ context.Context, a sqlcgen.FailTr
 	return nil
 }
 
+func (f *transcodeFakeRepo) HasLiveTranscodeJob(_ context.Context, videoID uuid.UUID) (bool, error) {
+	for _, j := range f.jobs {
+		if j.VideoID == videoID && (j.State == "pending" || j.State == "running") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *transcodeFakeRepo) DeleteStreamingPlaylist(_ context.Context, videoID uuid.UUID) error {
+	delete(f.playlists, videoID)
+	return nil
+}
+
 func (f *transcodeFakeRepo) UpsertStreamingPlaylist(_ context.Context, a sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error) {
 	sp := sqlcgen.StreamingPlaylist{VideoID: a.VideoID, MasterKey: a.MasterKey, State: a.State}
 	f.playlists[a.VideoID] = sp

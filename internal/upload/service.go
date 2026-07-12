@@ -41,6 +41,15 @@ const (
 	StateCancelled = "cancelled"
 )
 
+// Session purposes persisted on upload_sessions (migration 0090, config-parity
+// W14): what completing the session does with the assembled bytes. 'upload' is
+// the shipped attach-and-publish pipeline; 'replace' swaps the source of an
+// already-published video (video.ReplaceSource).
+const (
+	PurposeUpload  = "upload"
+	PurposeReplace = "replace"
+)
+
 // Sentinel errors the HTTP layer maps to status codes.
 var (
 	// ErrNotFound means no session matches the id, or it is not owned by the
@@ -74,6 +83,7 @@ var (
 type Repository interface {
 	CreateUploadSession(ctx context.Context, arg sqlcgen.CreateUploadSessionParams) (sqlcgen.UploadSession, error)
 	CountActiveUploadSessionsForUser(ctx context.Context, userID uuid.UUID) (int64, error)
+	HasActiveReplaceSessionForVideo(ctx context.Context, videoID uuid.UUID) (bool, error)
 	GetUploadSession(ctx context.Context, id uuid.UUID) (sqlcgen.UploadSession, error)
 	UpsertUploadChunk(ctx context.Context, arg sqlcgen.UpsertUploadChunkParams) error
 	ListUploadChunks(ctx context.Context, uploadID uuid.UUID) ([]sqlcgen.ListUploadChunksRow, error)
@@ -144,7 +154,13 @@ func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service
 // fileFingerprint is an OPAQUE client identity for the file (recommended recipe:
 // SHA-256 over size + first/last 1 MiB) used for server-side resume (UPLOAD-03);
 // it is stored verbatim and never parsed. Pass "" when the client supplies none.
-func (s *Service) CreateSession(ctx context.Context, videoID, userID uuid.UUID, filename string, size int64, fileFingerprint string) (sqlcgen.UploadSession, error) {
+// purpose is PurposeUpload for the shipped attach-and-publish flow or
+// PurposeReplace for a source replacement (W14); anything else falls back to
+// PurposeUpload.
+func (s *Service) CreateSession(ctx context.Context, videoID, userID uuid.UUID, filename string, size int64, fileFingerprint, purpose string) (sqlcgen.UploadSession, error) {
+	if purpose != PurposeReplace {
+		purpose = PurposeUpload
+	}
 	// Batch-upload guard (UPLOAD-10): cap concurrent active sessions per user so a
 	// client's batch orchestration queues instead of opening unbounded sessions.
 	// This is a fairness/backpressure signal, not a security boundary — a small
@@ -171,7 +187,16 @@ func (s *Service) CreateSession(ctx context.Context, videoID, userID uuid.UUID, 
 		ChunkSize:       s.chunkSize,
 		ExpiresAt:       s.now().UTC().Add(SessionTTL),
 		FileFingerprint: fileFingerprint,
+		Purpose:         purpose,
 	})
+}
+
+// HasActiveReplaceSession reports whether a replace-purpose session is already
+// open for the video (W14): at most one replacement in flight per video.
+// Errors report as busy (fail-safe 409 at the HTTP layer).
+func (s *Service) HasActiveReplaceSession(ctx context.Context, videoID uuid.UUID) bool {
+	busy, err := s.repo.HasActiveReplaceSessionForVideo(ctx, videoID)
+	return err != nil || busy
 }
 
 // ActiveUpload is one of the caller's resumable sessions still open for resume

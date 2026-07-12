@@ -47,8 +47,10 @@ type Repository interface {
 	CompleteTranscodeJob(ctx context.Context, id uuid.UUID) error
 	RescheduleTranscodeJob(ctx context.Context, arg sqlcgen.RescheduleTranscodeJobParams) error
 	FailTranscodeJob(ctx context.Context, arg sqlcgen.FailTranscodeJobParams) error
+	HasLiveTranscodeJob(ctx context.Context, videoID uuid.UUID) (bool, error)
 	UpsertStreamingPlaylist(ctx context.Context, arg sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error)
 	GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (sqlcgen.StreamingPlaylist, error)
+	DeleteStreamingPlaylist(ctx context.Context, videoID uuid.UUID) error
 	CreateVideoRendition(ctx context.Context, arg sqlcgen.CreateVideoRenditionParams) (sqlcgen.VideoRendition, error)
 	DeleteVideoRenditions(ctx context.Context, videoID uuid.UUID) error
 	ListVideoRenditions(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.VideoRendition, error)
@@ -159,6 +161,28 @@ func (s *Service) Enqueue(ctx context.Context, videoID uuid.UUID, sourceKey stri
 		VideoID:   videoID,
 		SourceKey: sourceKey,
 	})
+}
+
+// HasLiveJob reports whether a pending/running transcode job exists for the
+// video. The replacement flow (config-parity W14) refuses to start while one
+// does: Enqueue is idempotent per live job, so a replacement accepted now
+// would never be transcoded. Errors are reported as busy (fail-safe: the
+// caller answers 409 and the client retries).
+func (s *Service) HasLiveJob(ctx context.Context, videoID uuid.UUID) bool {
+	live, err := s.repo.HasLiveTranscodeJob(ctx, videoID)
+	return err != nil || live
+}
+
+// Invalidate drops a video's streaming playlist + rendition rows (config-
+// parity W14): when a source replacement lands while transcoding is
+// unavailable, the old HLS tree must stop serving the superseded content —
+// playback falls back to the progressive original (the new source). The
+// orphaned generation's blobs are mediagc's to collect.
+func (s *Service) Invalidate(ctx context.Context, videoID uuid.UUID) error {
+	if err := s.repo.DeleteVideoRenditions(ctx, videoID); err != nil {
+		return err
+	}
+	return s.repo.DeleteStreamingPlaylist(ctx, videoID)
 }
 
 // DrainJobs claims up to limit due jobs and runs each through the transcoder:

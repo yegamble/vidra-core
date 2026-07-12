@@ -17,6 +17,13 @@ SELECT storage_key FROM captions;
 -- of any existing video: a whole tree is orphan only when its video is gone.
 SELECT id FROM videos;
 
+-- name: ListStreamingPlaylistRefs :many
+-- video id + master key of every recorded streaming playlist, so the GC can
+-- tell which HLS GENERATION (streaming-playlists/<id>/rN/ vs the legacy
+-- in-place layout) is the live one after a source replacement (config-parity
+-- W14). Failed playlists carry master_key '' and yield no live generation.
+SELECT video_id, master_key FROM streaming_playlists;
+
 -- name: ListPlaylistThumbnailRefs :many
 -- id + extension of every playlist that has an uploaded cover, so its
 -- playlist-thumbnails/<id>.<ext> key can be reconstructed as a live reference.

@@ -34,9 +34,9 @@ func (q *Queries) CountActiveUploadSessionsForUser(ctx context.Context, userID u
 
 const createUploadSession = `-- name: CreateUploadSession :one
 
-INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at, file_fingerprint)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint
+INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at, file_fingerprint, purpose)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint, purpose
 `
 
 type CreateUploadSessionParams struct {
@@ -47,6 +47,7 @@ type CreateUploadSessionParams struct {
 	ChunkSize       int32     `json:"chunk_size"`
 	ExpiresAt       time.Time `json:"expires_at"`
 	FileFingerprint string    `json:"file_fingerprint"`
+	Purpose         string    `json:"purpose"`
 }
 
 // Resumable upload sessions + received-chunk ledger (migration 0059, fix_plan
@@ -61,6 +62,7 @@ func (q *Queries) CreateUploadSession(ctx context.Context, arg CreateUploadSessi
 		arg.ChunkSize,
 		arg.ExpiresAt,
 		arg.FileFingerprint,
+		arg.Purpose,
 	)
 	var i UploadSession
 	err := row.Scan(
@@ -75,6 +77,7 @@ func (q *Queries) CreateUploadSession(ctx context.Context, arg CreateUploadSessi
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FileFingerprint,
+		&i.Purpose,
 	)
 	return i, err
 }
@@ -90,7 +93,7 @@ func (q *Queries) DeleteUploadSession(ctx context.Context, id uuid.UUID) error {
 }
 
 const getUploadSession = `-- name: GetUploadSession :one
-SELECT id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint FROM upload_sessions WHERE id = $1
+SELECT id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint, purpose FROM upload_sessions WHERE id = $1
 `
 
 func (q *Queries) GetUploadSession(ctx context.Context, id uuid.UUID) (UploadSession, error) {
@@ -108,8 +111,29 @@ func (q *Queries) GetUploadSession(ctx context.Context, id uuid.UUID) (UploadSes
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FileFingerprint,
+		&i.Purpose,
 	)
 	return i, err
+}
+
+const hasActiveReplaceSessionForVideo = `-- name: HasActiveReplaceSessionForVideo :one
+SELECT EXISTS (
+    SELECT 1 FROM upload_sessions
+    WHERE video_id = $1
+      AND purpose = 'replace'
+      AND state = 'active'
+      AND expires_at > now()
+)
+`
+
+// Whether a replace-purpose session is already open for the video (config-
+// parity W14): at most one replacement may be in flight per video, so the
+// replace-session create answers 409 replace_conflict while one exists.
+func (q *Queries) HasActiveReplaceSessionForVideo(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasActiveReplaceSessionForVideo, videoID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const listActiveUploadSessionsForUser = `-- name: ListActiveUploadSessionsForUser :many

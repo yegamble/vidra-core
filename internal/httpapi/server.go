@@ -160,6 +160,12 @@ type Server struct {
 // exempted from the default body limit (which gets its own larger one).
 const uploadRoutePath = "/api/v1/videos/:id/file"
 
+// replaceRoutePath is the Echo route template for the direct video-file
+// replacement upload (config-parity W14). Exempted from the default JSON body
+// limit exactly like uploadRoutePath (it carries the same media payload and
+// gets the same dynamic UploadMaxSize limit at registration).
+const replaceRoutePath = "/api/v1/videos/:id/replace"
+
 // uploadChunkRoutePath is the Echo route template for a resumable-upload chunk
 // PUT. Like uploadRoutePath it is exempted from the default JSON body limit —
 // the upload service bounds each chunk at the fixed chunk size itself.
@@ -626,7 +632,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{
 		Skipper: func(c echo.Context) bool {
 			r := c.Request()
-			if r.Method == http.MethodPost && c.Path() == uploadRoutePath {
+			if r.Method == http.MethodPost && (c.Path() == uploadRoutePath || c.Path() == replaceRoutePath) {
 				return true
 			}
 			// DM attachment uploads carry a bounded (100 MiB) media body.
@@ -999,6 +1005,9 @@ func (s *Server) routes() {
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
 		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, s.dynamicBodyLimit())
+		// Video file replacement (config-parity W14): the direct multipart
+		// shape. Gated at runtime by video_replace_enabled (403 while off).
+		api.POST("/videos/:id/replace", s.handleReplaceVideoFile, s.requireAuth, s.dynamicBodyLimit())
 
 		// Resumable/chunked upload (P6.1): open a session, PUT fixed-size chunks
 		// (each bounded by the upload service, hence exempt from the JSON body
@@ -1006,6 +1015,9 @@ func (s *Server) routes() {
 		// pipeline as a direct upload), or cancel.
 		if s.uploadsvc != nil {
 			api.POST("/videos/:id/upload-session", s.handleCreateUploadSession, s.requireAuth)
+			// Replace-purpose session (W14): identical chunk/complete/cancel
+			// machinery; completion routes through the replacement flow.
+			api.POST("/videos/:id/replace-session", s.handleCreateReplaceSession, s.requireAuth)
 			api.GET("/me/uploads", s.handleListMyUploads, s.requireAuth)
 			api.PUT("/uploads/:upload_id/chunks/:n", s.handlePutUploadChunk, s.requireAuth)
 			api.GET("/uploads/:upload_id", s.handleGetUploadSession, s.requireAuth)

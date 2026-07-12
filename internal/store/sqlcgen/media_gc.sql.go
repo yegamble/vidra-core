@@ -123,3 +123,36 @@ func (q *Queries) ListPlaylistThumbnailRefs(ctx context.Context) ([]ListPlaylist
 	}
 	return items, nil
 }
+
+const listStreamingPlaylistRefs = `-- name: ListStreamingPlaylistRefs :many
+SELECT video_id, master_key FROM streaming_playlists
+`
+
+type ListStreamingPlaylistRefsRow struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	MasterKey string    `json:"master_key"`
+}
+
+// video id + master key of every recorded streaming playlist, so the GC can
+// tell which HLS GENERATION (streaming-playlists/<id>/rN/ vs the legacy
+// in-place layout) is the live one after a source replacement (config-parity
+// W14). Failed playlists carry master_key ” and yield no live generation.
+func (q *Queries) ListStreamingPlaylistRefs(ctx context.Context) ([]ListStreamingPlaylistRefsRow, error) {
+	rows, err := q.db.Query(ctx, listStreamingPlaylistRefs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStreamingPlaylistRefsRow
+	for rows.Next() {
+		var i ListStreamingPlaylistRefsRow
+		if err := rows.Scan(&i.VideoID, &i.MasterKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

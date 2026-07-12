@@ -22,6 +22,9 @@ func (mediagcFakeRepo) ListAllVideoIDs(context.Context) ([]uuid.UUID, error)   {
 func (mediagcFakeRepo) ListPlaylistThumbnailRefs(context.Context) ([]sqlcgen.ListPlaylistThumbnailRefsRow, error) {
 	return nil, nil
 }
+func (mediagcFakeRepo) ListStreamingPlaylistRefs(context.Context) ([]sqlcgen.ListStreamingPlaylistRefsRow, error) {
+	return nil, nil
+}
 
 func TestAdminMediaGC(t *testing.T) {
 	srv, blobs, _, _ := videoServerEnv(t, testConfig())
