@@ -1669,6 +1669,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/users/{username}/profile:
+    get:
+      operationId: getUserProfile
+      summary: Get a user's profile
+      description: >-
+        Returns an active account's profile and owned channels when the account
+        opted into a public profile. Private, inactive, and unknown accounts all
+        return 404. An authenticated owner may view their own private profile as
+        a preview.
+      tags: [users]
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The profile and its publishing channels.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicUserProfile"
+        "404":
+          description: The profile is private, inactive, or unknown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/users/{id}/donation-addresses:
     get:
       operationId: listUserDonationAddresses
@@ -11922,7 +11954,7 @@ components:
               type: string
     User:
       type: object
-      required: [id, username, email, role, email_verified, display_name, bio, history_enabled, created_at]
+      required: [id, username, email, role, email_verified, display_name, bio, history_enabled, profile_public, created_at]
       properties:
         id:
           type: string
@@ -11959,6 +11991,11 @@ components:
             no-op 204). Seeded at account creation from the
             new_user_history_enabled instance setting; existing entries are
             kept (clear them via DELETE /me/history).
+        profile_public:
+          type: boolean
+          description: >-
+            Whether the account profile is publicly accessible. Private,
+            inactive, and unknown profile URLs all return 404.
         created_at:
           type: string
           format: date-time
@@ -12015,6 +12052,33 @@ components:
           description: >-
             Toggle the per-user watch-history preference (see
             User.history_enabled).
+        profile_public:
+          type: boolean
+          description: Toggle public access to the account profile.
+    PublicUserProfile:
+      type: object
+      required: [id, username, display_name, bio, created_at, has_avatar, has_banner, channels]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        bio:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        has_avatar:
+          type: boolean
+        has_banner:
+          type: boolean
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/Channel"
     Channel:
       type: object
       required: [id, owner_id, handle, display_name, description, follower_count, created_at]

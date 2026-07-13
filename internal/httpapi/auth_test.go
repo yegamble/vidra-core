@@ -238,6 +238,18 @@ func (f *authFakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.Use
 	return sqlcgen.User{}, errors.New("not found")
 }
 
+func (f *authFakeRepo) GetPublicUserProfileByUsername(_ context.Context, username string) (sqlcgen.GetPublicUserProfileByUsernameRow, error) {
+	for _, u := range f.users {
+		if strings.EqualFold(u.Username, username) && u.IsActive && u.ProfilePublic {
+			return sqlcgen.GetPublicUserProfileByUsernameRow{
+				ID: u.ID, Username: u.Username, DisplayName: u.DisplayName,
+				Bio: u.Bio, CreatedAt: u.CreatedAt, ProfilePublic: true,
+			}, nil
+		}
+	}
+	return sqlcgen.GetPublicUserProfileByUsernameRow{}, errors.New("not found")
+}
+
 func (f *authFakeRepo) CreateRegistrationRequest(_ context.Context, a sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error) {
 	for _, r := range f.regReqs {
 		if r.status == "pending" && (strings.EqualFold(r.email, a.Email) || strings.EqualFold(r.username, a.Username)) {
@@ -320,6 +332,9 @@ func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUser
 			}
 			if a.HistoryEnabled != nil {
 				u.HistoryEnabled = *a.HistoryEnabled
+			}
+			if a.ProfilePublic != nil {
+				u.ProfilePublic = *a.ProfilePublic
 			}
 			u.UpdatedAt = time.Now()
 			f.users[k] = u

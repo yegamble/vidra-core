@@ -480,6 +480,36 @@ func TestListFollowedChannels(t *testing.T) {
 	}
 }
 
+func TestUserProfilePrivacyAndOwnedChannels(t *testing.T) {
+	srv := channelServer(t)
+	token := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	if rec := postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada_makes","display_name":"Ada Makes"}`, token); rec.Code != http.StatusCreated {
+		t.Fatalf("create channel = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	path := "/api/v1/users/ada/profile"
+	if rec := getWithAuth(srv, path, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("anonymous private profile = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := getWithAuth(srv, path, token); rec.Code != http.StatusOK {
+		t.Fatalf("owner preview = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me", `{"profile_public":true}`, token); rec.Code != http.StatusOK {
+		t.Fatalf("publish profile = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	public := getWithAuth(srv, path, "")
+	if public.Code != http.StatusOK {
+		t.Fatalf("public profile = %d, want 200; body=%s", public.Code, public.Body.String())
+	}
+	var profile publicUserProfileView
+	if err := json.Unmarshal(public.Body.Bytes(), &profile); err != nil {
+		t.Fatalf("unmarshal profile: %v", err)
+	}
+	if profile.Username != "ada" || len(profile.Channels) != 1 || profile.Channels[0].Handle != "ada_makes" {
+		t.Fatalf("unexpected profile: %+v", profile)
+	}
+}
+
 // postJSONAuth posts a JSON body with a bearer token.
 func postJSONAuth(srv *Server, path, body, token string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
