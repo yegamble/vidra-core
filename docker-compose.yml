@@ -164,7 +164,7 @@ services:
       start_period: 30s
 
   migrate:
-    image: migrate/migrate:v4.17.1
+    image: migrate/migrate:v4.19.1
     profiles: ["core"]
     depends_on:
       postgres:
