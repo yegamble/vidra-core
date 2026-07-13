@@ -47,6 +47,8 @@ import (
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/remotevideo"
+	"github.com/vidra/vidra-core/internal/searchclient"
+	"github.com/vidra/vidra-core/internal/searchevents"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/upload"
@@ -129,14 +131,28 @@ type Server struct {
 	remotevideosvc    *remotevideo.Service
 	instancemodsvc    *instancemod.Service
 	settingssvc       *instancesettings.Service
-	instancedocssvc   *instancedocs.Service
-	mediagcsvc        *mediagc.Service
-	jobStatusSvc      jobStatusProvider
-	jobOperationsSvc  jobOperationsProvider
-	peertubeimportsvc peerTubeImportProvider
-	ipfsmirrorsvc     ipfsMirrorProvider
-	metrics           *observability.Metrics
-	media             storage.Backend
+	// searchClient talks to the vidra-search internal API (search-service W4).
+	// Nil when SEARCH_SERVICE_URL is unset — every search surface then degrades
+	// to local behaviour. searchEnabled() gates on it.
+	searchClient *searchclient.Client
+	// searchEvents durably enqueues search domain/behavioural events to the
+	// search_outbox (best-effort, never on the request path). Wired in cmd/api
+	// only when the search service is enabled; nil in unit tests / when disabled,
+	// where every Enqueue* is a safe no-op.
+	searchEvents *searchevents.Enqueuer
+	// searchWatchThrottle rate-limits video.watch_progress emission to at most one
+	// event per (user,video) per 30s window (Redis SETNX). Returns true when the
+	// event may be emitted. Nil (tests / no Redis) suppresses watch_progress
+	// emission entirely (it is a low-value signal).
+	searchWatchThrottle func(ctx context.Context, key string) bool
+	instancedocssvc     *instancedocs.Service
+	mediagcsvc          *mediagc.Service
+	jobStatusSvc        jobStatusProvider
+	jobOperationsSvc    jobOperationsProvider
+	peertubeimportsvc   peerTubeImportProvider
+	ipfsmirrorsvc       ipfsMirrorProvider
+	metrics             *observability.Metrics
+	media               storage.Backend
 	// playbackSigner mints/verifies the short-lived, video-scoped playback tokens
 	// that unlock password-protected videos (CORE-17 / W1.C2). Derived in New()
 	// from the JWT secret via domain separation, so it is always present.
@@ -515,6 +531,31 @@ func WithSettingsService(svc *instancesettings.Service) Option {
 	return func(s *Server) { s.settingssvc = svc }
 }
 
+// WithSearchClient wires the vidra-search internal-API client (search-service
+// W4). When set, GET /search/suggestions, the recommendation rails, the
+// search-history proxy, and handleSearchVideos consult vidra-search (each
+// degrading silently to local behaviour on any error); when unset, all of those
+// use their local fallbacks and the search-history endpoints answer 503.
+func WithSearchClient(c *searchclient.Client) Option {
+	return func(s *Server) { s.searchClient = c }
+}
+
+// WithSearchEvents wires the search-event outbox enqueuer (search-service W4).
+// When set, publish/edit/delete/moderation/settings/watch hooks and the public
+// event endpoint enqueue search events to the durable search_outbox. When unset,
+// every Enqueue* is a no-op (the enqueuer is a nil-safe receiver).
+func WithSearchEvents(e *searchevents.Enqueuer) Option {
+	return func(s *Server) { s.searchEvents = e }
+}
+
+// WithSearchWatchThrottle wires the video.watch_progress emission throttle
+// (search-service W4): a Redis SETNX gate that admits at most one progress event
+// per (user,video) per 30s window. When unset, watch_progress events are not
+// emitted.
+func WithSearchWatchThrottle(fn func(ctx context.Context, key string) bool) Option {
+	return func(s *Server) { s.searchWatchThrottle = fn }
+}
+
 // WithInstanceDocumentsService wires the instance-document store (config-parity
 // W1): the admin GET/PUT /admin/instance-documents/{name} editor surface and
 // the public delivery routes (/instance/homepage, /instance/custom.css,
@@ -824,6 +865,14 @@ func (s *Server) routes() {
 		authGroup.POST("/verify-email/confirm", s.handleConfirmEmailVerification, authMW...)
 		authGroup.GET("/me", s.handleMe, s.requireAuth)
 		authGroup.PATCH("/me", s.handleUpdateMe, s.requireAuth)
+
+		// Search history (search-service W4): the caller reads/clears their
+		// stored vidra-search history. Proxied to the search service; 503
+		// search_unavailable when it is disabled/unreachable (never a fake empty
+		// history or a silent no-op delete).
+		api.GET("/me/search-history", s.handleGetSearchHistory, s.requireAuth)
+		api.DELETE("/me/search-history", s.handleClearSearchHistory, s.requireAuth)
+		api.DELETE("/me/search-history/:query", s.handleDeleteSearchHistoryQuery, s.requireAuth)
 		authGroup.POST("/me/deactivate", s.handleDeactivateAccount, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
 
@@ -954,6 +1003,14 @@ func (s *Server) routes() {
 		api.PUT("/videos/:id/watch-progress", s.handleRecordWatchProgress, s.requireAuth)
 		api.GET("/videos/config", s.handleVideoConfig)
 		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)
+		// Discovery (search-service W4): autocomplete + recommendation rails +
+		// behavioural events. Always mounted (they degrade to empty/fallback when
+		// vidra-search is disabled, so the contract surface is stable); each
+		// hydrates/relates through the video service, so they ride this block.
+		api.GET("/search/suggestions", s.handleSearchSuggestions, s.optionalAuth)
+		api.GET("/recommendations/home", s.handleHomeRecommendations, s.optionalAuth)
+		api.GET("/videos/:id/recommendations", s.handleVideoRecommendations, s.optionalAuth)
+		api.POST("/search/events", s.handleSearchEvents, s.optionalAuth)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
 		api.GET("/videos/:id/download", s.handleGetVideoDownloads, s.optionalAuth)

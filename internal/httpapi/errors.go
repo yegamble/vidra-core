@@ -59,7 +59,12 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var tma *TooManyActiveUploadsError
 	var cfd *ContactFormDisabledError
 	var rc *ReplaceConflictError
+	var su *SearchUnavailableError
 	switch {
+	case errors.As(err, &su):
+		status = http.StatusServiceUnavailable
+		message = "search is temporarily unavailable"
+		code = "search_unavailable"
 	case errors.As(err, &rc):
 		status = http.StatusConflict
 		message = rc.Reason
@@ -238,6 +243,15 @@ func (e *ReplaceConflictError) Error() string { return "replace conflict: " + e.
 type ContactFormDisabledError struct{}
 
 func (e *ContactFormDisabledError) Error() string { return "contact form disabled" }
+
+// SearchUnavailableError renders as 503 with the stable code "search_unavailable"
+// (search-service W4): a search-history read/delete could not reach vidra-search
+// (the service is disabled on this instance or currently unreachable). The
+// search-history endpoints surface this honestly rather than silently pretending
+// the history is empty or the delete succeeded.
+type SearchUnavailableError struct{}
+
+func (e *SearchUnavailableError) Error() string { return "search service unavailable" }
 
 // IPFSDisabledError renders as 503 with the stable code "ipfs_disabled": the
 // hybrid IPFS media mirror (fix_plan P19) is off (IPFS_ENABLED=false) on this

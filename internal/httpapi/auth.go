@@ -174,6 +174,12 @@ type userView struct {
 	// HistoryEnabled is the per-user watch-history preference (config-parity
 	// W7): while false, watch-progress/history writes are skipped.
 	HistoryEnabled bool `json:"history_enabled"`
+	// Search & recommendation preferences (search-service W4): the user half of
+	// the two-factor personalization gate (instance setting AND user pref AND
+	// signed-in). All default true.
+	SearchHistoryEnabled               bool `json:"search_history_enabled"`
+	PersonalizedSearchEnabled          bool `json:"personalized_search_enabled"`
+	PersonalizedRecommendationsEnabled bool `json:"personalized_recommendations_enabled"`
 	// ProfilePublic is an explicit opt-in. A false profile returns 404 publicly.
 	ProfilePublic bool      `json:"profile_public"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -185,17 +191,20 @@ type userView struct {
 
 func newUserView(u sqlcgen.User) userView {
 	return userView{
-		ID:             u.ID.String(),
-		Username:       u.Username,
-		Email:          u.Email,
-		Role:           u.Role,
-		EmailVerified:  u.EmailVerified,
-		DisplayName:    u.DisplayName,
-		Bio:            u.Bio,
-		Unlisted:       u.Unlisted,
-		HistoryEnabled: u.HistoryEnabled,
-		ProfilePublic:  u.ProfilePublic,
-		CreatedAt:      u.CreatedAt,
+		ID:                                 u.ID.String(),
+		Username:                           u.Username,
+		Email:                              u.Email,
+		Role:                               u.Role,
+		EmailVerified:                      u.EmailVerified,
+		DisplayName:                        u.DisplayName,
+		Bio:                                u.Bio,
+		Unlisted:                           u.Unlisted,
+		HistoryEnabled:                     u.HistoryEnabled,
+		SearchHistoryEnabled:               u.SearchHistoryEnabled,
+		PersonalizedSearchEnabled:          u.PersonalizedSearchEnabled,
+		PersonalizedRecommendationsEnabled: u.PersonalizedRecommendationsEnabled,
+		ProfilePublic:                      u.ProfilePublic,
+		CreatedAt:                          u.CreatedAt,
 	}
 }
 
@@ -337,11 +346,16 @@ type updateProfileRequest struct {
 	// HistoryEnabled toggles the per-user watch-history preference (W7).
 	HistoryEnabled *bool `json:"history_enabled"`
 	ProfilePublic  *bool `json:"profile_public"`
+	// Search & recommendation preferences (search-service W4).
+	SearchHistoryEnabled               *bool `json:"search_history_enabled"`
+	PersonalizedSearchEnabled          *bool `json:"personalized_search_enabled"`
+	PersonalizedRecommendationsEnabled *bool `json:"personalized_recommendations_enabled"`
 }
 
 func (r updateProfileRequest) Validate() []FieldError {
 	var fes []FieldError
-	if r.DisplayName == nil && r.Bio == nil && r.Unlisted == nil && r.HistoryEnabled == nil && r.ProfilePublic == nil {
+	if r.DisplayName == nil && r.Bio == nil && r.Unlisted == nil && r.HistoryEnabled == nil && r.ProfilePublic == nil &&
+		r.SearchHistoryEnabled == nil && r.PersonalizedSearchEnabled == nil && r.PersonalizedRecommendationsEnabled == nil {
 		return []FieldError{{Field: "display_name", Message: "at least one profile field is required"}}
 	}
 	if r.DisplayName != nil && len(strings.TrimSpace(*r.DisplayName)) > 50 {
@@ -364,11 +378,14 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 		return err
 	}
 	user, err := s.authsvc.UpdateProfile(c.Request().Context(), userID, auth.ProfileInput{
-		DisplayName:    in.DisplayName,
-		Bio:            in.Bio,
-		Unlisted:       in.Unlisted,
-		HistoryEnabled: in.HistoryEnabled,
-		ProfilePublic:  in.ProfilePublic,
+		DisplayName:                        in.DisplayName,
+		Bio:                                in.Bio,
+		Unlisted:                           in.Unlisted,
+		HistoryEnabled:                     in.HistoryEnabled,
+		ProfilePublic:                      in.ProfilePublic,
+		SearchHistoryEnabled:               in.SearchHistoryEnabled,
+		PersonalizedSearchEnabled:          in.PersonalizedSearchEnabled,
+		PersonalizedRecommendationsEnabled: in.PersonalizedRecommendationsEnabled,
 	})
 	if err != nil {
 		if errors.Is(err, auth.ErrAccountNotFound) {
@@ -389,6 +406,11 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 		if err := s.ipfsmirrorsvc.EnqueueUserReeval(c.Request().Context(), userID); err != nil {
 			s.logger.Warn("ipfs mirror reeval enqueue failed", "user_id", userID, "error", err)
 		}
+	}
+	// Search: an unlisted toggle suppresses/restores the owner's docs in the
+	// index (search-service W4). Best-effort.
+	if in.Unlisted != nil {
+		s.searchEvents.EnqueueUserSuppress(c.Request().Context(), userID, *in.Unlisted)
 	}
 	view := newUserView(user)
 	s.attachUserImageFlags(c.Request().Context(), &view, userID)

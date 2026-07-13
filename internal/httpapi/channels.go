@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/channel"
@@ -215,6 +216,9 @@ func (s *Server) handleUpdateChannel(c echo.Context) error {
 	if err != nil {
 		return channelError(err)
 	}
+	// Search: refresh the denormalized channel fields on its docs (search-service
+	// W4). Best-effort.
+	s.searchEvents.EnqueueChannelUpsert(ctx, ch.ID, ch.Handle, ch.DisplayName, ch.OwnerID)
 	count, err := s.channelsvc.FollowerCount(ctx, ch.ID)
 	if err != nil {
 		return err
@@ -228,10 +232,20 @@ func (s *Server) handleDeleteChannel(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	if err := s.channelsvc.Delete(c.Request().Context(), userID, c.Param("handle")); err != nil {
+	ctx := c.Request().Context()
+	// Resolve the id before deletion so the search suppression targets it.
+	var chID uuid.UUID
+	if ch, gerr := s.channelsvc.GetByHandle(ctx, c.Param("handle")); gerr == nil {
+		chID = ch.ID
+	}
+	if err := s.channelsvc.Delete(ctx, userID, c.Param("handle")); err != nil {
 		return channelError(err)
 	}
 	s.audit(c, observability.ActionChannelDelete, observability.ResultSuccess, userID.String(), c.Param("handle"))
+	// Search: suppress the channel's docs (search-service W4). Best-effort.
+	if chID != uuid.Nil {
+		s.searchEvents.EnqueueChannelDelete(ctx, chID)
+	}
 	return c.NoContent(http.StatusNoContent)
 }
 
