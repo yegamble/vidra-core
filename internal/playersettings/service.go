@@ -1,14 +1,15 @@
 // Package playersettings implements per-user player defaults (PLAY-07, backport
 // wave W1.C3). A signed-in user has one set of playback preferences — autoplay
-// of the next video, playback speed, default quality, and whether captions /
-// theater mode start on — that the custom player in vidra-user reads on load and
-// persists here (replacing the interim localStorage store). It is HTTP-agnostic
-// and testable without a server.
+// of the next video, playback speed, default quality, whether captions / theater
+// mode start on, and whether video-card hover previews are enabled — that the
+// custom player in vidra-user reads on load and persists here (replacing the
+// interim localStorage store). It is HTTP-agnostic and testable without a server.
 //
-// A user who never saved has no stored row: Get returns the built-in Defaults,
-// and the first Update upserts the row. Update is a MERGE (a partial patch keeps
-// the stored value for any omitted field), done via read-modify-write so the
-// upsert always writes the full effective object.
+// A user who never saved has no stored row: Get returns the built-in defaults,
+// with the video-card preview preference inherited from the current instance
+// default. The nullable database field preserves that inherited state even after
+// another player setting is saved; only an explicit preview choice stores true
+// or false. Update is a MERGE, done via read-modify-write.
 //
 // Scope is PER-USER ONLY — the archived openapi_player_settings.yaml scoped
 // settings per-video/per-channel; PLAY-07 is per-user defaults, so
@@ -38,24 +39,29 @@ var PlaybackRates = []float64{0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.
 var qualityPattern = regexp.MustCompile(`^[0-9]{2,4}p$`)
 
 // Settings is a user's full, effective player configuration. Every field is
-// always present (a fresh user gets Defaults), so the API response is complete.
+// always present (a fresh user gets effective defaults), so the API response is
+// complete.
 type Settings struct {
-	AutoplayNext    bool
-	DefaultSpeed    float64
-	DefaultQuality  string
-	CaptionsDefault bool
-	TheaterDefault  bool
+	AutoplayNext             bool
+	DefaultSpeed             float64
+	DefaultQuality           string
+	CaptionsDefault          bool
+	TheaterDefault           bool
+	VideoCardPreviewsEnabled bool
 }
 
-// Defaults returns the built-in player settings for a user who never saved.
-// These mirror the column DEFAULTs in migration 0075.
+// Defaults returns the built-in player settings. The preview value is the
+// fallback used when no runtime instance-default provider is configured; a
+// configured Service resolves inherited preview values dynamically in Get and
+// Update.
 func Defaults() Settings {
 	return Settings{
-		AutoplayNext:    true,
-		DefaultSpeed:    1,
-		DefaultQuality:  "auto",
-		CaptionsDefault: false,
-		TheaterDefault:  false,
+		AutoplayNext:             true,
+		DefaultSpeed:             1,
+		DefaultQuality:           "auto",
+		CaptionsDefault:          false,
+		TheaterDefault:           false,
+		VideoCardPreviewsEnabled: false,
 	}
 }
 
@@ -63,11 +69,12 @@ func Defaults() Settings {
 // from the request body and leaves the stored value unchanged; a non-nil field
 // replaces it.
 type Patch struct {
-	AutoplayNext    *bool
-	DefaultSpeed    *float64
-	DefaultQuality  *string
-	CaptionsDefault *bool
-	TheaterDefault  *bool
+	AutoplayNext             *bool
+	DefaultSpeed             *float64
+	DefaultQuality           *string
+	CaptionsDefault          *bool
+	TheaterDefault           *bool
+	VideoCardPreviewsEnabled *bool
 }
 
 // ValidationError describes a rejected player-settings value. The HTTP layer maps
@@ -122,6 +129,9 @@ func (s Settings) apply(p Patch) Settings {
 	if p.TheaterDefault != nil {
 		s.TheaterDefault = *p.TheaterDefault
 	}
+	if p.VideoCardPreviewsEnabled != nil {
+		s.VideoCardPreviewsEnabled = *p.VideoCardPreviewsEnabled
+	}
 	return s
 }
 
@@ -132,55 +142,98 @@ type Repository interface {
 	UpsertUserPlayerSettings(ctx context.Context, arg sqlcgen.UpsertUserPlayerSettingsParams) error
 }
 
+// Option configures runtime player-setting behaviour.
+type Option func(*Service)
+
+// WithVideoCardPreviewsDefaultEnabledFunc supplies the current admin-selected
+// default for users whose nullable preview override is unset. The function is
+// called on every Get/Update so an admin change applies immediately to inheriting
+// users without overwriting explicit user choices.
+func WithVideoCardPreviewsDefaultEnabledFunc(fn func() bool) Option {
+	return func(s *Service) { s.videoCardPreviewsDefaultEnabled = fn }
+}
+
 // Service holds the player-settings application logic.
 type Service struct {
-	repo Repository
+	repo                            Repository
+	videoCardPreviewsDefaultEnabled func() bool
 }
 
 // NewService builds the player-settings service.
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo Repository, opts ...Option) *Service {
+	s := &Service{repo: repo}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
-// Get returns the caller's effective player settings. A user who never saved
-// gets Defaults (never an error, never a 404).
-func (s *Service) Get(ctx context.Context, userID uuid.UUID) (Settings, error) {
+func (s *Service) inheritedVideoCardPreviewsEnabled() bool {
+	if s.videoCardPreviewsDefaultEnabled == nil {
+		return Defaults().VideoCardPreviewsEnabled
+	}
+	return s.videoCardPreviewsDefaultEnabled()
+}
+
+// stored returns the persisted player fields and the nullable explicit preview
+// override. A missing row is represented by Defaults plus a nil override.
+func (s *Service) stored(ctx context.Context, userID uuid.UUID) (Settings, *bool, error) {
 	row, err := s.repo.GetUserPlayerSettings(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Defaults(), nil
+			settings := Defaults()
+			settings.VideoCardPreviewsEnabled = s.inheritedVideoCardPreviewsEnabled()
+			return settings, nil, nil
 		}
-		return Settings{}, err
+		return Settings{}, nil, err
 	}
-	return Settings{
-		AutoplayNext:    row.AutoplayNext,
-		DefaultSpeed:    row.DefaultSpeed,
-		DefaultQuality:  row.DefaultQuality,
-		CaptionsDefault: row.CaptionsDefault,
-		TheaterDefault:  row.TheaterDefault,
-	}, nil
+	settings := Settings{
+		AutoplayNext:             row.AutoplayNext,
+		DefaultSpeed:             row.DefaultSpeed,
+		DefaultQuality:           row.DefaultQuality,
+		CaptionsDefault:          row.CaptionsDefault,
+		TheaterDefault:           row.TheaterDefault,
+		VideoCardPreviewsEnabled: s.inheritedVideoCardPreviewsEnabled(),
+	}
+	if row.VideoCardPreviewsEnabled != nil {
+		settings.VideoCardPreviewsEnabled = *row.VideoCardPreviewsEnabled
+	}
+	return settings, row.VideoCardPreviewsEnabled, nil
+}
+
+// Get returns the caller's effective player settings. A user who never saved,
+// or who saved only unrelated settings, inherits the current instance preview
+// default (never an error, never a 404).
+func (s *Service) Get(ctx context.Context, userID uuid.UUID) (Settings, error) {
+	settings, _, err := s.stored(ctx, userID)
+	return settings, err
 }
 
 // Update applies a partial patch (merge-PUT) and returns the full effective
 // settings. Any invalid supplied field returns a *ValidationError and nothing is
-// written. Omitted fields keep their stored value (or the default, for a user who
-// never saved).
+// written. Omitted fields keep their stored value; an unset preview override
+// continues to inherit the current instance default.
 func (s *Service) Update(ctx context.Context, userID uuid.UUID, patch Patch) (Settings, error) {
 	if err := patch.validate(); err != nil {
 		return Settings{}, err
 	}
-	current, err := s.Get(ctx, userID)
+	current, previewOverride, err := s.stored(ctx, userID)
 	if err != nil {
 		return Settings{}, err
 	}
 	merged := current.apply(patch)
+	if patch.VideoCardPreviewsEnabled != nil {
+		chosen := *patch.VideoCardPreviewsEnabled
+		previewOverride = &chosen
+	}
 	if err := s.repo.UpsertUserPlayerSettings(ctx, sqlcgen.UpsertUserPlayerSettingsParams{
-		UserID:          userID,
-		AutoplayNext:    merged.AutoplayNext,
-		DefaultSpeed:    merged.DefaultSpeed,
-		DefaultQuality:  merged.DefaultQuality,
-		CaptionsDefault: merged.CaptionsDefault,
-		TheaterDefault:  merged.TheaterDefault,
+		UserID:                   userID,
+		AutoplayNext:             merged.AutoplayNext,
+		DefaultSpeed:             merged.DefaultSpeed,
+		DefaultQuality:           merged.DefaultQuality,
+		CaptionsDefault:          merged.CaptionsDefault,
+		TheaterDefault:           merged.TheaterDefault,
+		VideoCardPreviewsEnabled: previewOverride,
 	}); err != nil {
 		return Settings{}, err
 	}

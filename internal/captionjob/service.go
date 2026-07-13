@@ -76,6 +76,10 @@ type Repository interface {
 	FailCaptionJob(ctx context.Context, arg sqlcgen.FailCaptionJobParams) error
 }
 
+type progressRepository interface {
+	SetCaptionJobProgress(ctx context.Context, arg sqlcgen.SetCaptionJobProgressParams) error
+}
+
 // Transcriber turns a stored video's audio into a WebVTT caption track.
 // *media.WhisperClient satisfies it; tests use a fake or an httptest-backed one.
 type Transcriber interface {
@@ -257,6 +261,7 @@ func (s *Service) runJob(ctx context.Context, row sqlcgen.ClaimDueCaptionJobsRow
 	if err != nil {
 		return failf("the video has no processed media to caption")
 	}
+	s.setProgress(ctx, row.ID, "transcribing", 20)
 
 	vtt, err := s.transcriber.Transcribe(ctx, sourceKey, row.Language)
 	if err != nil {
@@ -264,6 +269,7 @@ func (s *Service) runJob(ctx context.Context, row sqlcgen.ClaimDueCaptionJobsRow
 		// endpoint URL is never echoed back.
 		return s.internalf("whisper transcription", err)
 	}
+	s.setProgress(ctx, row.ID, "storing", 90)
 
 	if _, err := s.videos.AddCaption(ctx, v.OwnerID, row.VideoID, video.CaptionInput{
 		Language: row.Language,
@@ -288,6 +294,14 @@ func (s *Service) runJob(ctx context.Context, row sqlcgen.ClaimDueCaptionJobsRow
 		}
 	}
 	return nil
+}
+
+func (s *Service) setProgress(ctx context.Context, id uuid.UUID, stage string, percent int16) {
+	if repo, ok := s.repo.(progressRepository); ok {
+		_ = repo.SetCaptionJobProgress(ctx, sqlcgen.SetCaptionJobProgressParams{
+			ID: id, Stage: stage, ProgressPercent: percent,
+		})
+	}
 }
 
 // recordFailure reschedules with backoff, or dead-letters after the cap. The

@@ -21,14 +21,15 @@ WHERE id IN (
     ORDER BY next_attempt_at
     LIMIT $1
 )
-RETURNING id, video_id, source_key, attempts
+RETURNING id, video_id, source_key, transcode_type, attempts
 `
 
 type ClaimDueTranscodeJobsRow struct {
-	ID        uuid.UUID `json:"id"`
-	VideoID   uuid.UUID `json:"video_id"`
-	SourceKey string    `json:"source_key"`
-	Attempts  int32     `json:"attempts"`
+	ID            uuid.UUID `json:"id"`
+	VideoID       uuid.UUID `json:"video_id"`
+	SourceKey     string    `json:"source_key"`
+	TranscodeType string    `json:"transcode_type"`
+	Attempts      int32     `json:"attempts"`
 }
 
 // Atomically claims due pending jobs (oldest first) by flipping them to
@@ -47,6 +48,7 @@ func (q *Queries) ClaimDueTranscodeJobs(ctx context.Context, limit int32) ([]Cla
 			&i.ID,
 			&i.VideoID,
 			&i.SourceKey,
+			&i.TranscodeType,
 			&i.Attempts,
 		); err != nil {
 			return nil, err
@@ -71,9 +73,9 @@ func (q *Queries) CompleteTranscodeJob(ctx context.Context, id uuid.UUID) error 
 }
 
 const createVideoRendition = `-- name: CreateVideoRendition :one
-INSERT INTO video_renditions (video_id, height, width, key_prefix)
-VALUES ($1, $2, $3, $4)
-RETURNING id, video_id, height, width, key_prefix, created_at
+INSERT INTO video_renditions (video_id, height, width, key_prefix, size_bytes)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, video_id, height, width, key_prefix, created_at, size_bytes
 `
 
 type CreateVideoRenditionParams struct {
@@ -81,6 +83,7 @@ type CreateVideoRenditionParams struct {
 	Height    int32     `json:"height"`
 	Width     int32     `json:"width"`
 	KeyPrefix string    `json:"key_prefix"`
+	SizeBytes int64     `json:"size_bytes"`
 }
 
 func (q *Queries) CreateVideoRendition(ctx context.Context, arg CreateVideoRenditionParams) (VideoRendition, error) {
@@ -89,6 +92,7 @@ func (q *Queries) CreateVideoRendition(ctx context.Context, arg CreateVideoRendi
 		arg.Height,
 		arg.Width,
 		arg.KeyPrefix,
+		arg.SizeBytes,
 	)
 	var i VideoRendition
 	err := row.Scan(
@@ -98,6 +102,7 @@ func (q *Queries) CreateVideoRendition(ctx context.Context, arg CreateVideoRendi
 		&i.Width,
 		&i.KeyPrefix,
 		&i.CreatedAt,
+		&i.SizeBytes,
 	)
 	return i, err
 }
@@ -126,14 +131,15 @@ func (q *Queries) DeleteVideoRenditions(ctx context.Context, videoID uuid.UUID) 
 
 const enqueueTranscodeJob = `-- name: EnqueueTranscodeJob :exec
 
-INSERT INTO transcode_jobs (video_id, source_key)
-VALUES ($1, $2)
+INSERT INTO transcode_jobs (video_id, source_key, transcode_type)
+VALUES ($1, $2, $3)
 ON CONFLICT (video_id) WHERE state IN ('pending', 'running') DO NOTHING
 `
 
 type EnqueueTranscodeJobParams struct {
-	VideoID   uuid.UUID `json:"video_id"`
-	SourceKey string    `json:"source_key"`
+	VideoID       uuid.UUID `json:"video_id"`
+	SourceKey     string    `json:"source_key"`
+	TranscodeType string    `json:"transcode_type"`
 }
 
 // HLS transcoding pipeline (migration 0039): durable transcode job queue plus
@@ -141,7 +147,7 @@ type EnqueueTranscodeJobParams struct {
 // Idempotent per live job: at most one pending/running job per video (partial
 // unique index), so a re-upload while one is queued does not double the work.
 func (q *Queries) EnqueueTranscodeJob(ctx context.Context, arg EnqueueTranscodeJobParams) error {
-	_, err := q.db.Exec(ctx, enqueueTranscodeJob, arg.VideoID, arg.SourceKey)
+	_, err := q.db.Exec(ctx, enqueueTranscodeJob, arg.VideoID, arg.SourceKey, arg.TranscodeType)
 	return err
 }
 
@@ -198,7 +204,7 @@ func (q *Queries) HasLiveTranscodeJob(ctx context.Context, videoID uuid.UUID) (b
 }
 
 const listVideoRenditions = `-- name: ListVideoRenditions :many
-SELECT id, video_id, height, width, key_prefix, created_at FROM video_renditions WHERE video_id = $1 ORDER BY height DESC
+SELECT id, video_id, height, width, key_prefix, created_at, size_bytes FROM video_renditions WHERE video_id = $1 ORDER BY height DESC
 `
 
 func (q *Queries) ListVideoRenditions(ctx context.Context, videoID uuid.UUID) ([]VideoRendition, error) {
@@ -217,6 +223,7 @@ func (q *Queries) ListVideoRenditions(ctx context.Context, videoID uuid.UUID) ([
 			&i.Width,
 			&i.KeyPrefix,
 			&i.CreatedAt,
+			&i.SizeBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -271,4 +278,55 @@ func (q *Queries) UpsertStreamingPlaylist(ctx context.Context, arg UpsertStreami
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertTranscodeStep = `-- name: UpsertTranscodeStep :exec
+INSERT INTO transcode_steps (
+    transcode_job_id, video_id, format, height, width, state, stage,
+    progress_percent, started_at, finished_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8,
+    CASE WHEN $6 = 'running' THEN now() ELSE NULL END,
+    CASE WHEN $6 IN ('succeeded', 'failed') THEN now() ELSE NULL END
+)
+ON CONFLICT (transcode_job_id, format, height) DO UPDATE SET
+    width = EXCLUDED.width,
+    state = EXCLUDED.state,
+    stage = EXCLUDED.stage,
+    progress_percent = EXCLUDED.progress_percent,
+    started_at = CASE
+        WHEN transcode_steps.started_at IS NULL AND EXCLUDED.state = 'running' THEN now()
+        ELSE transcode_steps.started_at
+    END,
+    finished_at = CASE
+        WHEN EXCLUDED.state IN ('succeeded', 'failed') THEN now()
+        ELSE NULL
+    END,
+    updated_at = now()
+`
+
+type UpsertTranscodeStepParams struct {
+	TranscodeJobID  uuid.UUID `json:"transcode_job_id"`
+	VideoID         uuid.UUID `json:"video_id"`
+	Format          string    `json:"format"`
+	Height          int32     `json:"height"`
+	Width           int32     `json:"width"`
+	State           string    `json:"state"`
+	Stage           string    `json:"stage"`
+	ProgressPercent int16     `json:"progress_percent"`
+}
+
+func (q *Queries) UpsertTranscodeStep(ctx context.Context, arg UpsertTranscodeStepParams) error {
+	_, err := q.db.Exec(ctx, upsertTranscodeStep,
+		arg.TranscodeJobID,
+		arg.VideoID,
+		arg.Format,
+		arg.Height,
+		arg.Width,
+		arg.State,
+		arg.Stage,
+		arg.ProgressPercent,
+	)
+	return err
 }

@@ -167,12 +167,13 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// (config-parity W10) + 5 live enforcement knobs (config-parity W11)
 	// + 4 federation policy gates (config-parity W12) + 2 remote-URI search
 	// gates (config-parity W13) + 5 sign-up & new-user keys (config-parity W7)
-	// + video_replace_enabled (config-parity W14) + 7 search & recommendation
+	// + video_replace_enabled (config-parity W14) + the video-card preview
+	// playback gate and inherited user default + 7 search & recommendation
 	// keys (search-service W4) + search_service_enabled routing toggle
 	// (search-service W9).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 100 {
-		t.Fatalf("settings count = %d, want 100", len(got.Settings))
+	if len(got.Settings) != 102 {
+		t.Fatalf("settings count = %d, want 102", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {
@@ -196,6 +197,14 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	}
 	if dl := settingView(t, got, instancesettings.KeyDownloadsEnabled); dl.Value != true || dl.Default != true || dl.Type != "bool" {
 		t.Errorf("downloads_enabled default view = %+v, want value/default=true type=bool", dl)
+	}
+	if previews := settingView(t, got, instancesettings.KeyVideoCardPreviewsEnabled); previews.Value != false || previews.Default != false ||
+		previews.Type != "bool" || previews.Page != "vod" || previews.Section != "playback" {
+		t.Errorf("video_card_previews_enabled default view = %+v, want false bool at vod/playback", previews)
+	}
+	if previewDefault := settingView(t, got, instancesettings.KeyVideoCardPreviewsDefaultEnabled); previewDefault.Value != false || previewDefault.Default != false ||
+		previewDefault.Type != "bool" || previewDefault.Page != "vod" || previewDefault.Section != "playback" {
+		t.Errorf("video_card_previews_default_enabled default view = %+v, want false bool at vod/playback", previewDefault)
 	}
 	if policy := settingView(t, got, instancesettings.KeySensitiveContentPolicy); policy.Value != "hide" ||
 		policy.Type != "enum" || !reflect.DeepEqual(policy.Options, instancesettings.SensitiveContentPolicyOptions) {

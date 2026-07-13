@@ -14,7 +14,7 @@ import (
 
 const claimDueCaptionJobs = `-- name: ClaimDueCaptionJobs :many
 UPDATE caption_jobs
-SET state = 'running', updated_at = now()
+SET state = 'running', stage = 'preparing', progress_percent = 5, updated_at = now()
 WHERE id IN (
     SELECT id FROM caption_jobs
     WHERE state = 'pending' AND next_attempt_at <= now()
@@ -60,7 +60,7 @@ func (q *Queries) ClaimDueCaptionJobs(ctx context.Context, limit int32) ([]Claim
 
 const completeCaptionJob = `-- name: CompleteCaptionJob :exec
 UPDATE caption_jobs
-SET state = 'done', error = '', updated_at = now()
+SET state = 'done', error = '', stage = 'complete', progress_percent = 100, updated_at = now()
 WHERE id = $1
 `
 
@@ -74,7 +74,7 @@ const enqueueCaptionJob = `-- name: EnqueueCaptionJob :one
 INSERT INTO caption_jobs (video_id, language)
 VALUES ($1, $2)
 ON CONFLICT (video_id) WHERE state IN ('pending', 'running') DO NOTHING
-RETURNING id, video_id, language, state, error, attempts, next_attempt_at, created_at, updated_at
+RETURNING id, video_id, language, state, error, attempts, next_attempt_at, created_at, updated_at, stage, progress_percent
 `
 
 type EnqueueCaptionJobParams struct {
@@ -101,13 +101,15 @@ func (q *Queries) EnqueueCaptionJob(ctx context.Context, arg EnqueueCaptionJobPa
 		&i.NextAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Stage,
+		&i.ProgressPercent,
 	)
 	return i, err
 }
 
 const failCaptionJob = `-- name: FailCaptionJob :exec
 UPDATE caption_jobs
-SET state = 'failed', attempts = attempts + 1, error = $2, updated_at = now()
+SET state = 'failed', attempts = attempts + 1, error = $2, stage = 'failed', updated_at = now()
 WHERE id = $1
 `
 
@@ -123,7 +125,7 @@ func (q *Queries) FailCaptionJob(ctx context.Context, arg FailCaptionJobParams) 
 }
 
 const getLatestCaptionJobByVideo = `-- name: GetLatestCaptionJobByVideo :one
-SELECT id, video_id, language, state, error, attempts, next_attempt_at, created_at, updated_at FROM caption_jobs
+SELECT id, video_id, language, state, error, attempts, next_attempt_at, created_at, updated_at, stage, progress_percent FROM caption_jobs
 WHERE video_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT 1
@@ -142,13 +144,16 @@ func (q *Queries) GetLatestCaptionJobByVideo(ctx context.Context, videoID uuid.U
 		&i.NextAttemptAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Stage,
+		&i.ProgressPercent,
 	)
 	return i, err
 }
 
 const rescheduleCaptionJob = `-- name: RescheduleCaptionJob :exec
 UPDATE caption_jobs
-SET state = 'pending', attempts = attempts + 1, next_attempt_at = $2, error = $3, updated_at = now()
+SET state = 'pending', attempts = attempts + 1, next_attempt_at = $2, error = $3,
+    stage = '', progress_percent = 0, updated_at = now()
 WHERE id = $1
 `
 
@@ -161,5 +166,22 @@ type RescheduleCaptionJobParams struct {
 // Back to pending with backoff so a later drain retries it.
 func (q *Queries) RescheduleCaptionJob(ctx context.Context, arg RescheduleCaptionJobParams) error {
 	_, err := q.db.Exec(ctx, rescheduleCaptionJob, arg.ID, arg.NextAttemptAt, arg.Error)
+	return err
+}
+
+const setCaptionJobProgress = `-- name: SetCaptionJobProgress :exec
+UPDATE caption_jobs
+SET stage = $2, progress_percent = $3, updated_at = now()
+WHERE id = $1
+`
+
+type SetCaptionJobProgressParams struct {
+	ID              uuid.UUID `json:"id"`
+	Stage           string    `json:"stage"`
+	ProgressPercent int16     `json:"progress_percent"`
+}
+
+func (q *Queries) SetCaptionJobProgress(ctx context.Context, arg SetCaptionJobProgressParams) error {
+	_, err := q.db.Exec(ctx, setCaptionJobProgress, arg.ID, arg.Stage, arg.ProgressPercent)
 	return err
 }

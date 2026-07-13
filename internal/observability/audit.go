@@ -65,6 +65,8 @@ const (
 	ActionAdminInstanceAssetDelete = "admin.instance_asset.delete"
 	ActionVideoUpdate              = "content.video.update"
 	ActionVideoDelete              = "content.video.delete"
+	ActionVideoTranscode           = "content.video.transcode"
+	ActionVideoCaptionGenerate     = "content.video.caption_generate"
 	ActionChannelDelete            = "content.channel.delete"
 	ActionMediaGC                  = "admin.media.gc"
 	// ActionIPFSReconcile records an admin kicking the one-shot IPFS mirror

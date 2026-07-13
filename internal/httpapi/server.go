@@ -1186,6 +1186,11 @@ func (s *Server) routes() {
 		api.POST("/admin/media/gc", s.handleAdminMediaGC, s.requireAuth, s.requireRole("admin"))
 	}
 
+	if s.videosvc != nil && s.transcodesvc != nil {
+		api.POST("/admin/videos/:id/transcoding", s.handleRunVideoTranscoding,
+			s.requireAuth, s.requireRole("admin", "moderator"))
+	}
+
 	// Abuse reports: any authed user can file one; the queue + resolution are
 	// restricted to moderators/admins. Reporting a video needs the video service.
 	if s.moderationsvc != nil && s.videosvc != nil {

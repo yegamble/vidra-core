@@ -11,6 +11,7 @@ package transcode
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -31,6 +32,12 @@ const (
 	maxBackoff = time.Hour
 	// maxLastErrorLen bounds the stored last_error string.
 	maxLastErrorLen = 500
+)
+
+const (
+	TargetAll      = "all"
+	TargetHLS      = "hls"
+	TargetWebVideo = "web_video"
 )
 
 // Playlist states persisted on streaming_playlists.
@@ -63,6 +70,27 @@ type Repository interface {
 type Transcoder interface {
 	Transcode(ctx context.Context, videoID uuid.UUID, sourceKey string) (media.HLSResult, error)
 }
+
+// TargetTranscoder is implemented by the production media transcoder. It lets
+// manual operator actions rebuild HLS and Web Video outputs independently and
+// reports one progress stream per resolution. The narrow Transcoder interface
+// remains for test doubles and backwards-compatible adapters.
+type TargetTranscoder interface {
+	TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, progress media.ProgressFunc) (media.HLSResult, error)
+	TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, progress media.ProgressFunc) ([]media.WebVideoResult, error)
+}
+
+type stepRepository interface {
+	UpsertTranscodeStep(ctx context.Context, arg sqlcgen.UpsertTranscodeStepParams) error
+}
+
+type targetRunError struct {
+	target string
+	err    error
+}
+
+func (e *targetRunError) Error() string { return e.err.Error() }
+func (e *targetRunError) Unwrap() error { return e.err }
 
 // ErrNoTranscoder means DrainJobs was called on a read-only service (no
 // Transcoder wired) — the worker should not be running in that configuration.
@@ -154,12 +182,24 @@ func NewService(repo Repository, transcoder Transcoder, opts ...Option) *Service
 // original (progressive Range serving), matching the pre-existing
 // transcoding-disabled behavior.
 func (s *Service) Enqueue(ctx context.Context, videoID uuid.UUID, sourceKey string) error {
+	return s.EnqueueTarget(ctx, videoID, sourceKey, TargetAll)
+}
+
+// EnqueueTarget queues a full initial transcode or one operator-requested
+// output class. sourceKey must be the video's retained original key; callers
+// never derive it from an HLS/Web Video output, preventing generational quality
+// loss on repeated manual runs.
+func (s *Service) EnqueueTarget(ctx context.Context, videoID uuid.UUID, sourceKey, target string) error {
 	if !s.Enabled() {
 		return nil
 	}
+	if target != TargetAll && target != TargetHLS && target != TargetWebVideo {
+		return errors.New("transcode: invalid target")
+	}
 	return s.repo.EnqueueTranscodeJob(ctx, sqlcgen.EnqueueTranscodeJobParams{
-		VideoID:   videoID,
-		SourceKey: sourceKey,
+		VideoID:       videoID,
+		SourceKey:     sourceKey,
+		TranscodeType: target,
 	})
 }
 
@@ -173,14 +213,22 @@ func (s *Service) HasLiveJob(ctx context.Context, videoID uuid.UUID) bool {
 	return err != nil || live
 }
 
-// Invalidate drops a video's streaming playlist + rendition rows (config-
+// Invalidate drops a video's streaming playlist + derivative rows (config-
 // parity W14): when a source replacement lands while transcoding is
-// unavailable, the old HLS tree must stop serving the superseded content —
-// playback falls back to the progressive original (the new source). The
-// orphaned generation's blobs are mediagc's to collect.
+// unavailable, old HLS and progressive Web Videos must stop serving the
+// superseded content. Playback falls back to the new original; the orphaned
+// generation's blobs are mediagc's to collect.
 func (s *Service) Invalidate(ctx context.Context, videoID uuid.UUID) error {
 	if err := s.repo.DeleteVideoRenditions(ctx, videoID); err != nil {
 		return err
+	}
+	for _, kind := range []string{"rendition", "webm"} {
+		if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
+			VideoID: videoID,
+			Kind:    kind,
+		}); err != nil {
+			return err
+		}
 	}
 	return s.repo.DeleteStreamingPlaylist(ctx, videoID)
 }
@@ -213,10 +261,7 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	)
 	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
 		row := rows[i]
-		res, err := s.transcoder.Transcode(ctx, row.VideoID, row.SourceKey)
-		if err == nil {
-			err = s.storeResult(ctx, row.VideoID, res)
-		}
+		err := s.runTarget(ctx, row)
 		if err != nil {
 			s.recordFailure(ctx, row, err)
 			return
@@ -234,6 +279,56 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	return done, nil
 }
 
+func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJobsRow) error {
+	target := row.TranscodeType
+	if target == "" {
+		target = TargetAll
+	}
+	advanced, ok := s.transcoder.(TargetTranscoder)
+	if !ok {
+		res, err := s.transcoder.Transcode(ctx, row.VideoID, row.SourceKey)
+		if err != nil {
+			return err
+		}
+		return s.storeResult(ctx, row.VideoID, res)
+	}
+	progress := func(p media.TranscodeProgress) {
+		repo, ok := s.repo.(stepRepository)
+		if !ok {
+			return
+		}
+		_ = repo.UpsertTranscodeStep(ctx, sqlcgen.UpsertTranscodeStepParams{
+			TranscodeJobID:  row.ID,
+			VideoID:         row.VideoID,
+			Format:          p.Format,
+			Height:          int32(p.Height),
+			Width:           int32(p.Width),
+			State:           p.State,
+			Stage:           p.Stage,
+			ProgressPercent: int16(p.Percent),
+		})
+	}
+	if target == TargetAll || target == TargetHLS {
+		res, err := advanced.TranscodeHLS(ctx, row.VideoID, row.SourceKey, progress)
+		if err != nil {
+			return &targetRunError{target: TargetHLS, err: err}
+		}
+		if err := s.storeResult(ctx, row.VideoID, res); err != nil {
+			return &targetRunError{target: TargetHLS, err: err}
+		}
+	}
+	if target == TargetAll || target == TargetWebVideo {
+		files, err := advanced.TranscodeWebVideos(ctx, row.VideoID, row.SourceKey, progress)
+		if err != nil {
+			return &targetRunError{target: TargetWebVideo, err: err}
+		}
+		if err := s.storeWebVideos(ctx, row.VideoID, files); err != nil {
+			return &targetRunError{target: TargetWebVideo, err: err}
+		}
+	}
+	return nil
+}
+
 // storeResult persists a successful transcode: the video's renditions are
 // replaced wholesale and its streaming playlist upserted as ready.
 func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.HLSResult) error {
@@ -246,6 +341,7 @@ func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.
 			Height:    int32(r.Height),
 			Width:     int32(r.Width),
 			KeyPrefix: r.KeyPrefix,
+			SizeBytes: r.SizeBytes,
 		}); err != nil {
 			return err
 		}
@@ -279,6 +375,28 @@ func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.
 	return err
 }
 
+func (s *Service) storeWebVideos(ctx context.Context, videoID uuid.UUID, files []media.WebVideoResult) error {
+	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
+		VideoID: videoID,
+		Kind:    "rendition",
+	}); err != nil {
+		return err
+	}
+	for _, f := range files {
+		if _, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+			VideoID:      videoID,
+			Kind:         "rendition",
+			StorageKey:   f.StorageKey,
+			ContentType:  media.HLSMP4ContentType,
+			OriginalName: fmt.Sprintf("%dp.mp4", f.Height),
+			SizeBytes:    f.SizeBytes,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // recordFailure reschedules with backoff, or dead-letters after the cap (also
 // marking the video's playlist failed so the outcome is observable).
 func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTranscodeJobsRow, cause error) {
@@ -289,11 +407,18 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTransco
 	}
 	if attempts >= maxAttempts {
 		_ = s.repo.FailTranscodeJob(ctx, sqlcgen.FailTranscodeJobParams{ID: row.ID, LastError: msg})
-		_, _ = s.repo.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{
-			VideoID:   row.VideoID,
-			MasterKey: "",
-			State:     PlaylistFailed,
-		})
+		affectsHLS := row.TranscodeType != TargetWebVideo
+		var targetErr *targetRunError
+		if errors.As(cause, &targetErr) {
+			affectsHLS = targetErr.target == TargetHLS
+		}
+		if affectsHLS {
+			_, _ = s.repo.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{
+				VideoID:   row.VideoID,
+				MasterKey: "",
+				State:     PlaylistFailed,
+			})
+		}
 		return
 	}
 	_ = s.repo.RescheduleTranscodeJob(ctx, sqlcgen.RescheduleTranscodeJobParams{

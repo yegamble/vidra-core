@@ -166,16 +166,56 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 }
 
 const listAdminVideos = `-- name: ListAdminVideos :many
-SELECT v.id, v.title, v.privacy, v.state,
-       c.handle AS channel_handle, c.display_name AS channel_display_name,
-       COALESCE(vc.views, 0)::bigint AS views,
-       v.created_at,
-       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-LEFT JOIN video_view_counts vc ON vc.video_id = v.id
-WHERE ($1::text IS NULL OR v.title ILIKE '%' || $1 || '%')
-ORDER BY v.created_at DESC, v.id DESC
+SELECT inventory.id, inventory.title, inventory.privacy, inventory.state, inventory.channel_handle, inventory.channel_display_name, inventory.views, inventory.created_at, inventory.duration_seconds, inventory.is_local, inventory.origin_domain, inventory.watch_url, inventory.is_sensitive, inventory.external_link, inventory.has_thumbnail, inventory.has_original, inventory.hls_count, inventory.web_video_count, inventory.size_bytes, inventory.blocked
+FROM (
+    SELECT v.id, v.title, v.privacy, v.state,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           COALESCE(vc.views, 0)::bigint AS views,
+           v.created_at,
+           vm.duration_seconds,
+           true AS is_local,
+           ''::text AS origin_domain,
+           ''::text AS watch_url,
+           v.is_sensitive,
+           EXISTS (SELECT 1 FROM import_jobs ij WHERE ij.video_id = v.id) AS external_link,
+           EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'thumbnail') AS has_thumbnail,
+           EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'original') AS has_original,
+           (SELECT count(*)::int FROM video_renditions r WHERE r.video_id = v.id) AS hls_count,
+           (SELECT count(*)::int FROM video_files f WHERE f.video_id = v.id AND f.kind IN ('rendition', 'webm')) AS web_video_count,
+           (
+               COALESCE((SELECT sum(f.size_bytes) FROM video_files f WHERE f.video_id = v.id), 0) +
+               COALESCE((SELECT sum(r.size_bytes) FROM video_renditions r WHERE r.video_id = v.id), 0)
+           )::bigint AS size_bytes,
+           EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+
+    UNION ALL
+
+    SELECT rv.id, rv.title, 'public'::text AS privacy, 'published'::text AS state,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username::text AS channel_display_name,
+           0::bigint AS views,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at,
+           rv.duration_seconds,
+           false AS is_local,
+           ra.domain AS origin_domain,
+           rv.watch_url,
+           false AS is_sensitive,
+           false AS external_link,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           false AS has_original,
+           0::int AS hls_count,
+           0::int AS web_video_count,
+           0::bigint AS size_bytes,
+           EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+) inventory
+WHERE ($1::text IS NULL OR inventory.title ILIKE '%' || $1 || '%')
+ORDER BY inventory.created_at DESC, inventory.id DESC
 LIMIT $3 OFFSET $2
 `
 
@@ -194,12 +234,23 @@ type ListAdminVideosRow struct {
 	ChannelDisplayName string    `json:"channel_display_name"`
 	Views              int64     `json:"views"`
 	CreatedAt          time.Time `json:"created_at"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
+	IsLocal            bool      `json:"is_local"`
+	OriginDomain       string    `json:"origin_domain"`
+	WatchUrl           string    `json:"watch_url"`
+	IsSensitive        bool      `json:"is_sensitive"`
+	ExternalLink       bool      `json:"external_link"`
+	HasThumbnail       bool      `json:"has_thumbnail"`
+	HasOriginal        bool      `json:"has_original"`
+	HlsCount           int32     `json:"hls_count"`
+	WebVideoCount      int32     `json:"web_video_count"`
+	SizeBytes          int64     `json:"size_bytes"`
 	Blocked            bool      `json:"blocked"`
 }
 
-// The admin/moderator videos overview: ALL videos (any privacy/state) newest
-// first, with the owning channel, view count, and whether the video is currently
-// blocked. An optional case-insensitive title filter (NULL = no filter).
+// The moderation inventory includes both locally hosted videos and federated
+// metadata rows. Local file facts are derived from the authoritative media
+// tables; remote rows never pretend to own files.
 func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams) ([]ListAdminVideosRow, error) {
 	rows, err := q.db.Query(ctx, listAdminVideos, arg.Query, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
@@ -218,6 +269,17 @@ func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams
 			&i.ChannelDisplayName,
 			&i.Views,
 			&i.CreatedAt,
+			&i.DurationSeconds,
+			&i.IsLocal,
+			&i.OriginDomain,
+			&i.WatchUrl,
+			&i.IsSensitive,
+			&i.ExternalLink,
+			&i.HasThumbnail,
+			&i.HasOriginal,
+			&i.HlsCount,
+			&i.WebVideoCount,
+			&i.SizeBytes,
 			&i.Blocked,
 		); err != nil {
 			return nil, err

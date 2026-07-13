@@ -125,16 +125,18 @@ const (
 	// capabilities stay env-only (yt-dlp binary/proxy, WHISPER_ENDPOINT,
 	// channel-sync cadence): a runtime toggle can never conjure a dependency
 	// the deployment lacks — the effective value is settingAND(boot).
-	KeyImportHTTPEnabled         = "import_http_enabled"          // yt-dlp platform-URL import path; imports_enabled stays the master
-	KeyChannelSyncEnabled        = "channel_sync_enabled"         // channel auto-sync create + ticker pickup
-	KeyChannelSyncMaxPerUser     = "channel_sync_max_per_user"    // 0 = unlimited
-	KeyStoryboardsEnabled        = "storyboards_enabled"          // seek-preview sprite generation at publish
-	KeyTranscriptionEnabled      = "transcription_enabled"        // Whisper auto-captions; effective only with WHISPER_ENDPOINT
-	KeyUserImportEnabled         = "user_import_enabled"          // POST /me/import
-	KeyUserExportEnabled         = "user_export_enabled"          // POST /me/export
-	KeyUserExportExpirationHours = "user_export_expiration_hours" // 0 = archives never expire
-	KeyUserExportMaxQuotaBytes   = "user_export_max_quota_bytes"  // refuse export gen above this usage; 0 = unlimited
-	KeyMaxChannelsPerUser        = "max_channels_per_user"        // 0 = unlimited
+	KeyImportHTTPEnabled               = "import_http_enabled"                 // yt-dlp platform-URL import path; imports_enabled stays the master
+	KeyChannelSyncEnabled              = "channel_sync_enabled"                // channel auto-sync create + ticker pickup
+	KeyChannelSyncMaxPerUser           = "channel_sync_max_per_user"           // 0 = unlimited
+	KeyStoryboardsEnabled              = "storyboards_enabled"                 // seek-preview sprite generation at publish
+	KeyVideoCardPreviewsEnabled        = "video_card_previews_enabled"         // master gate for signed-in users' hover-preview preference
+	KeyVideoCardPreviewsDefaultEnabled = "video_card_previews_default_enabled" // inherited preference until a user explicitly chooses
+	KeyTranscriptionEnabled            = "transcription_enabled"               // Whisper auto-captions; effective only with WHISPER_ENDPOINT
+	KeyUserImportEnabled               = "user_import_enabled"                 // POST /me/import
+	KeyUserExportEnabled               = "user_export_enabled"                 // POST /me/export
+	KeyUserExportExpirationHours       = "user_export_expiration_hours"        // 0 = archives never expire
+	KeyUserExportMaxQuotaBytes         = "user_export_max_quota_bytes"         // refuse export gen above this usage; 0 = unlimited
+	KeyMaxChannelsPerUser              = "max_channels_per_user"               // 0 = unlimited
 
 	// VOD transcoding runtime knobs & worker pools (config-parity W10). Every
 	// key is read through a provider-func seam at job/request time — never at
@@ -628,6 +630,13 @@ var specs = []spec{
 	// the single operator control (generation additionally needs ffmpeg).
 	{key: KeyStoryboardsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
 		page: PageVOD, section: "storyboards"},
+	// Video-card previews are a NEW playback capability and therefore both the
+	// global gate and the default for users without an explicit preference start
+	// OFF. The default never bypasses the global gate.
+	{key: KeyVideoCardPreviewsEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageVOD, section: "playback"},
+	{key: KeyVideoCardPreviewsDefaultEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageVOD, section: "playback"},
 	{key: KeyTranscriptionEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.TranscriptionEnabled }, validate: validateBool,
 		page: PageVOD, section: "transcription"},
 	// User data portability (shipped internal/account flows). Both default ON

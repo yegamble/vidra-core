@@ -96,6 +96,8 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 		{KeyChannelSyncEnabled, KindBool, true, PageVOD, "imports"}, // testDefaults: ChannelSyncEnabled=true
 		{KeyChannelSyncMaxPerUser, KindInt, int64(5), PageVOD, "imports"},
 		{KeyStoryboardsEnabled, KindBool, true, PageVOD, "storyboards"},
+		{KeyVideoCardPreviewsEnabled, KindBool, false, PageVOD, "playback"},
+		{KeyVideoCardPreviewsDefaultEnabled, KindBool, false, PageVOD, "playback"},
 		{KeyTranscriptionEnabled, KindBool, false, PageVOD, "transcription"}, // TranscriptionEnabled=false
 		{KeyUserImportEnabled, KindBool, true, PageAdvanced, "user_data"},
 		{KeyUserExportEnabled, KindBool, true, PageAdvanced, "user_data"},
@@ -126,15 +128,17 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 	// Validator boundaries: each rejected before anything is written.
 	by := uuid.New()
 	bad := map[string]map[string]Update{
-		"bool not boolean":            {KeyImportHTTPEnabled: {Value: "yes"}},
-		"sync cap negative":           {KeyChannelSyncMaxPerUser: {Value: "-1"}},
-		"sync cap over max":           {KeyChannelSyncMaxPerUser: {Value: "10001"}},
-		"export ttl negative":         {KeyUserExportExpirationHours: {Value: "-1"}},
-		"export ttl over a year":      {KeyUserExportExpirationHours: {Value: "8761"}},
-		"export quota negative":       {KeyUserExportMaxQuotaBytes: {Value: "-5"}},
-		"channel cap negative":        {KeyMaxChannelsPerUser: {Value: "-1"}},
-		"channel cap over max":        {KeyMaxChannelsPerUser: {Value: "10001"}},
-		"transcription not a boolean": {KeyTranscriptionEnabled: {Value: "1"}},
+		"bool not boolean":                   {KeyImportHTTPEnabled: {Value: "yes"}},
+		"sync cap negative":                  {KeyChannelSyncMaxPerUser: {Value: "-1"}},
+		"sync cap over max":                  {KeyChannelSyncMaxPerUser: {Value: "10001"}},
+		"export ttl negative":                {KeyUserExportExpirationHours: {Value: "-1"}},
+		"export ttl over a year":             {KeyUserExportExpirationHours: {Value: "8761"}},
+		"export quota negative":              {KeyUserExportMaxQuotaBytes: {Value: "-5"}},
+		"channel cap negative":               {KeyMaxChannelsPerUser: {Value: "-1"}},
+		"channel cap over max":               {KeyMaxChannelsPerUser: {Value: "10001"}},
+		"transcription not a boolean":        {KeyTranscriptionEnabled: {Value: "1"}},
+		"card previews not a boolean":        {KeyVideoCardPreviewsEnabled: {Value: "enabled"}},
+		"card preview default not a boolean": {KeyVideoCardPreviewsDefaultEnabled: {Value: "enabled"}},
 	}
 	for name, updates := range bad {
 		var verr *ValidationError
@@ -145,12 +149,14 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 
 	// Boundary accepts: 0 sentinels and in-range values round-trip.
 	if err := svc.Apply(ctx, map[string]Update{
-		KeyChannelSyncMaxPerUser:     {Value: "0"}, // unlimited
-		KeyUserExportExpirationHours: {Value: "0"}, // never expires
-		KeyUserExportMaxQuotaBytes:   {Value: "0"}, // no cap
-		KeyMaxChannelsPerUser:        {Value: "3"},
-		KeyImportHTTPEnabled:         {Value: "false"},
-		KeyStoryboardsEnabled:        {Value: "false"},
+		KeyChannelSyncMaxPerUser:           {Value: "0"}, // unlimited
+		KeyUserExportExpirationHours:       {Value: "0"}, // never expires
+		KeyUserExportMaxQuotaBytes:         {Value: "0"}, // no cap
+		KeyMaxChannelsPerUser:              {Value: "3"},
+		KeyImportHTTPEnabled:               {Value: "false"},
+		KeyStoryboardsEnabled:              {Value: "false"},
+		KeyVideoCardPreviewsEnabled:        {Value: "true"},
+		KeyVideoCardPreviewsDefaultEnabled: {Value: "true"},
 	}, by); err != nil {
 		t.Fatalf("apply boundary values: %v", err)
 	}
@@ -163,16 +169,24 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 	if svc.Bool(KeyImportHTTPEnabled) || svc.Bool(KeyStoryboardsEnabled) {
 		t.Error("bool overrides did not apply")
 	}
+	if !svc.Bool(KeyVideoCardPreviewsEnabled) || !svc.Bool(KeyVideoCardPreviewsDefaultEnabled) {
+		t.Error("video-card preview gate/default overrides did not apply")
+	}
 
 	// null-PATCH (Delete) clears back to the defaults.
 	if err := svc.Apply(ctx, map[string]Update{
-		KeyImportHTTPEnabled:  {Delete: true},
-		KeyStoryboardsEnabled: {Delete: true},
+		KeyImportHTTPEnabled:               {Delete: true},
+		KeyStoryboardsEnabled:              {Delete: true},
+		KeyVideoCardPreviewsEnabled:        {Delete: true},
+		KeyVideoCardPreviewsDefaultEnabled: {Delete: true},
 	}, by); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	if !svc.Bool(KeyImportHTTPEnabled) || !svc.Bool(KeyStoryboardsEnabled) {
 		t.Error("delete did not restore defaults")
+	}
+	if svc.Bool(KeyVideoCardPreviewsEnabled) || svc.Bool(KeyVideoCardPreviewsDefaultEnabled) {
+		t.Error("delete did not restore video-card preview gate/default off")
 	}
 }
 

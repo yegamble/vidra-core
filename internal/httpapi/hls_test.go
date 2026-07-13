@@ -45,7 +45,8 @@ func (f *transcodeFakeRepo) EnqueueTranscodeJob(_ context.Context, a sqlcgen.Enq
 	id := uuid.New()
 	f.jobs[id] = &sqlcgen.TranscodeJob{
 		ID: id, VideoID: a.VideoID, SourceKey: a.SourceKey,
-		State: "pending", NextAttemptAt: time.Now().Add(-time.Second),
+		State: "pending", TranscodeType: a.TranscodeType,
+		NextAttemptAt: time.Now().Add(-time.Second),
 	}
 	return nil
 }
@@ -59,7 +60,8 @@ func (f *transcodeFakeRepo) ClaimDueTranscodeJobs(_ context.Context, limit int32
 		if j.State == "pending" && !j.NextAttemptAt.After(time.Now()) {
 			j.State = "running"
 			rows = append(rows, sqlcgen.ClaimDueTranscodeJobsRow{
-				ID: j.ID, VideoID: j.VideoID, SourceKey: j.SourceKey, Attempts: j.Attempts,
+				ID: j.ID, VideoID: j.VideoID, SourceKey: j.SourceKey,
+				TranscodeType: j.TranscodeType, Attempts: j.Attempts,
 			})
 		}
 	}

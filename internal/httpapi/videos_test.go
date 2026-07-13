@@ -732,10 +732,23 @@ func (f *videoFakeRepo) ListAdminVideos(_ context.Context, a sqlcgen.ListAdminVi
 			blocked, _ = f.blocks.IsVideoBlocked(context.Background(), r.ID)
 		}
 		ch, cn := f.channelInfo(r.ChannelID)
+		var duration *int32
+		if md, ok := f.metadata[r.ID]; ok {
+			duration = md.DurationSeconds
+		}
+		var hasThumbnail, hasOriginal bool
+		var sizeBytes int64
+		for _, file := range f.files[r.ID] {
+			hasThumbnail = hasThumbnail || file.Kind == "thumbnail"
+			hasOriginal = hasOriginal || file.Kind == "original"
+			sizeBytes += file.SizeBytes
+		}
 		rows = append(rows, sqlcgen.ListAdminVideosRow{
 			ID: r.ID, Title: r.Title, Privacy: r.Privacy, State: r.State,
 			ChannelHandle: ch, ChannelDisplayName: cn,
-			Views: f.views[r.ID], CreatedAt: r.CreatedAt, Blocked: blocked,
+			Views: f.views[r.ID], CreatedAt: r.CreatedAt, DurationSeconds: duration,
+			IsLocal: true, IsSensitive: r.IsSensitive, HasThumbnail: hasThumbnail,
+			HasOriginal: hasOriginal, SizeBytes: sizeBytes, Blocked: blocked,
 		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
@@ -1056,7 +1069,10 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		WithCommentService(comment.NewService(cmRepo)),
 		WithRatingService(rating.NewService(ratingRepo)),
 		WithNotificationService(notification.NewService(notifRepo)),
-		WithPlayerSettingsService(playersettings.NewService(newPlayerSettingsFakeRepo())),
+		WithPlayerSettingsService(playersettings.NewService(newPlayerSettingsFakeRepo(),
+			playersettings.WithVideoCardPreviewsDefaultEnabledFunc(func() bool {
+				return settingssvc.Bool(instancesettings.KeyVideoCardPreviewsDefaultEnabled)
+			}))),
 		WithPlaylistService(playlist.NewService(plRepo, playlist.WithStorage(blobs))),
 		WithMediaGCService(mediagc.NewService(&mediagcFakeRepo{}, blobs)),
 		WithModerationService(moderation.NewService(modRepo)),

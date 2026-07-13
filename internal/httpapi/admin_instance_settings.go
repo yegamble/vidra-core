@@ -177,6 +177,20 @@ func (s *Server) storyboardsEnabled() bool {
 	return s.settingBool(instancesettings.KeyStoryboardsEnabled, true)
 }
 
+// videoCardPreviewsEnabled is the instance-level master gate for video-card
+// hover playback. It is intentionally independent from the signed-in user's
+// player preference: clients enable previews only when BOTH are true.
+func (s *Server) videoCardPreviewsEnabled() bool {
+	return s.settingBool(instancesettings.KeyVideoCardPreviewsEnabled, false)
+}
+
+// videoCardPreviewsDefaultEnabled is the effective preference for a signed-in
+// user who has never explicitly enabled or disabled video-card previews. It is
+// independent from the master gate above: clients still require both values.
+func (s *Server) videoCardPreviewsDefaultEnabled() bool {
+	return s.settingBool(instancesettings.KeyVideoCardPreviewsDefaultEnabled, false)
+}
+
 // transcriptionEnabled is the auto-caption runtime setting
 // (transcription_enabled). The EFFECTIVE availability is this AND the Whisper
 // boot capability — the captionjob service folds both in (503 when only the

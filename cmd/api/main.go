@@ -803,7 +803,10 @@ func run() error {
 	notifsvc := notification.NewService(db.Queries())
 	opts = append(opts, httpapi.WithNotificationService(notifsvc))
 
-	playersettingssvc := playersettings.NewService(db.Queries())
+	playersettingssvc := playersettings.NewService(db.Queries(),
+		playersettings.WithVideoCardPreviewsDefaultEnabledFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyVideoCardPreviewsDefaultEnabled)
+		}))
 	opts = append(opts, httpapi.WithPlayerSettingsService(playersettingssvc))
 
 	playlistsvc := playlist.NewService(db.Queries(), playlist.WithStorage(blobs), playlist.WithMirror(ipfsMirror))

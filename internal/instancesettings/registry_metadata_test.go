@@ -54,6 +54,8 @@ func TestRegistryPageSectionMetadata(t *testing.T) {
 		KeyTranscodingConcurrency:            {PageVOD, "transcoding"},
 		KeyImportJobsConcurrency:             {PageVOD, "imports"},
 		KeyUploadAdditionalExtensionsEnabled: {PageVOD, "uploads"},
+		KeyVideoCardPreviewsEnabled:          {PageVOD, "playback"},
+		KeyVideoCardPreviewsDefaultEnabled:   {PageVOD, "playback"},
 		// Live enforcement knobs (config-parity W11).
 		KeyLiveAllowReplay:       {PageLive, "replay"},
 		KeyLiveDefaultSaveReplay: {PageLive, "replay"},
@@ -107,6 +109,12 @@ func TestCoreConfigSurfaceDefaults(t *testing.T) {
 	}
 	if svc.Bool(KeyMiniaturePreferAuthorDisplayName) {
 		t.Error("miniature_prefer_author_display_name default = true, want false")
+	}
+	if svc.Bool(KeyVideoCardPreviewsEnabled) {
+		t.Error("video_card_previews_enabled default = true, want false")
+	}
+	if svc.Bool(KeyVideoCardPreviewsDefaultEnabled) {
+		t.Error("video_card_previews_default_enabled default = true, want false")
 	}
 	if got := svc.String(KeyDefaultVideoPrivacy); got != "private" {
 		t.Errorf("default_video_privacy default = %q, want private (omit-means-private shipped behaviour)", got)

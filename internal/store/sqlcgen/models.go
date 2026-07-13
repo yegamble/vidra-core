@@ -98,15 +98,17 @@ type Caption struct {
 }
 
 type CaptionJob struct {
-	ID            uuid.UUID `json:"id"`
-	VideoID       uuid.UUID `json:"video_id"`
-	Language      string    `json:"language"`
-	State         string    `json:"state"`
-	Error         string    `json:"error"`
-	Attempts      int32     `json:"attempts"`
-	NextAttemptAt time.Time `json:"next_attempt_at"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID              uuid.UUID `json:"id"`
+	VideoID         uuid.UUID `json:"video_id"`
+	Language        string    `json:"language"`
+	State           string    `json:"state"`
+	Error           string    `json:"error"`
+	Attempts        int32     `json:"attempts"`
+	NextAttemptAt   time.Time `json:"next_attempt_at"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	Stage           string    `json:"stage"`
+	ProgressPercent int16     `json:"progress_percent"`
 }
 
 type Channel struct {
@@ -703,6 +705,23 @@ type TranscodeJob struct {
 	LastError     string    `json:"last_error"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	TranscodeType string    `json:"transcode_type"`
+}
+
+type TranscodeStep struct {
+	ID              uuid.UUID          `json:"id"`
+	TranscodeJobID  uuid.UUID          `json:"transcode_job_id"`
+	VideoID         uuid.UUID          `json:"video_id"`
+	Format          string             `json:"format"`
+	Height          int32              `json:"height"`
+	Width           int32              `json:"width"`
+	State           string             `json:"state"`
+	Stage           string             `json:"stage"`
+	ProgressPercent int16              `json:"progress_percent"`
+	CreatedAt       time.Time          `json:"created_at"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
+	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
 }
 
 type UploadChunk struct {
@@ -783,13 +802,14 @@ type UserMfa struct {
 }
 
 type UserPlayerSetting struct {
-	UserID          uuid.UUID      `json:"user_id"`
-	AutoplayNext    bool           `json:"autoplay_next"`
-	DefaultSpeed    pgtype.Numeric `json:"default_speed"`
-	DefaultQuality  string         `json:"default_quality"`
-	CaptionsDefault bool           `json:"captions_default"`
-	TheaterDefault  bool           `json:"theater_default"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	UserID                   uuid.UUID      `json:"user_id"`
+	AutoplayNext             bool           `json:"autoplay_next"`
+	DefaultSpeed             pgtype.Numeric `json:"default_speed"`
+	DefaultQuality           string         `json:"default_quality"`
+	CaptionsDefault          bool           `json:"captions_default"`
+	TheaterDefault           bool           `json:"theater_default"`
+	UpdatedAt                time.Time      `json:"updated_at"`
+	VideoCardPreviewsEnabled *bool          `json:"video_card_previews_enabled"`
 }
 
 type Video struct {
@@ -866,6 +886,7 @@ type VideoRendition struct {
 	Width     int32     `json:"width"`
 	KeyPrefix string    `json:"key_prefix"`
 	CreatedAt time.Time `json:"created_at"`
+	SizeBytes int64     `json:"size_bytes"`
 }
 
 type VideoTag struct {

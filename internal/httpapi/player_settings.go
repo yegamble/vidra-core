@@ -10,15 +10,16 @@ import (
 )
 
 // playerSettingsResponse is the GET/PUT /me/player-settings body: a user's full,
-// effective player defaults. Every field is always present (a fresh user gets the
-// built-in defaults), so the player can hydrate from one object. default_speed is
+// effective player defaults. Every field is always present; a fresh user's card
+// preview value is resolved from the current instance default. default_speed is
 // a JSON number (e.g. 1 or 1.25); default_quality is "auto" or "<height>p".
 type playerSettingsResponse struct {
-	AutoplayNext    bool    `json:"autoplay_next"`
-	DefaultSpeed    float64 `json:"default_speed"`
-	DefaultQuality  string  `json:"default_quality"`
-	CaptionsDefault bool    `json:"captions_default"`
-	TheaterDefault  bool    `json:"theater_default"`
+	AutoplayNext             bool    `json:"autoplay_next"`
+	DefaultSpeed             float64 `json:"default_speed"`
+	DefaultQuality           string  `json:"default_quality"`
+	CaptionsDefault          bool    `json:"captions_default"`
+	TheaterDefault           bool    `json:"theater_default"`
+	VideoCardPreviewsEnabled bool    `json:"video_card_previews_enabled"`
 }
 
 // updatePlayerSettingsRequest is the PUT /me/player-settings body. It is a MERGE:
@@ -28,27 +29,29 @@ type playerSettingsResponse struct {
 // in the player-settings service and surface as 400, per the contract. A body
 // that supplies the wrong JSON type for a field fails binding (400 malformed).
 type updatePlayerSettingsRequest struct {
-	AutoplayNext    *bool    `json:"autoplay_next"`
-	DefaultSpeed    *float64 `json:"default_speed"`
-	DefaultQuality  *string  `json:"default_quality"`
-	CaptionsDefault *bool    `json:"captions_default"`
-	TheaterDefault  *bool    `json:"theater_default"`
+	AutoplayNext             *bool    `json:"autoplay_next"`
+	DefaultSpeed             *float64 `json:"default_speed"`
+	DefaultQuality           *string  `json:"default_quality"`
+	CaptionsDefault          *bool    `json:"captions_default"`
+	TheaterDefault           *bool    `json:"theater_default"`
+	VideoCardPreviewsEnabled *bool    `json:"video_card_previews_enabled"`
 }
 
 // playerSettingsView projects the domain settings to the API response.
 func playerSettingsView(s playersettings.Settings) playerSettingsResponse {
 	return playerSettingsResponse{
-		AutoplayNext:    s.AutoplayNext,
-		DefaultSpeed:    s.DefaultSpeed,
-		DefaultQuality:  s.DefaultQuality,
-		CaptionsDefault: s.CaptionsDefault,
-		TheaterDefault:  s.TheaterDefault,
+		AutoplayNext:             s.AutoplayNext,
+		DefaultSpeed:             s.DefaultSpeed,
+		DefaultQuality:           s.DefaultQuality,
+		CaptionsDefault:          s.CaptionsDefault,
+		TheaterDefault:           s.TheaterDefault,
+		VideoCardPreviewsEnabled: s.VideoCardPreviewsEnabled,
 	}
 }
 
 // handleGetPlayerSettings returns the caller's effective player settings. Behind
 // requireAuth. Always 200 with the full object — a user who never saved gets the
-// built-in defaults (no 404).
+// effective defaults (no 404).
 func (s *Server) handleGetPlayerSettings(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
@@ -75,11 +78,12 @@ func (s *Server) handleUpdatePlayerSettings(c echo.Context) error {
 		return err
 	}
 	patch := playersettings.Patch{
-		AutoplayNext:    in.AutoplayNext,
-		DefaultSpeed:    in.DefaultSpeed,
-		DefaultQuality:  in.DefaultQuality,
-		CaptionsDefault: in.CaptionsDefault,
-		TheaterDefault:  in.TheaterDefault,
+		AutoplayNext:             in.AutoplayNext,
+		DefaultSpeed:             in.DefaultSpeed,
+		DefaultQuality:           in.DefaultQuality,
+		CaptionsDefault:          in.CaptionsDefault,
+		TheaterDefault:           in.TheaterDefault,
+		VideoCardPreviewsEnabled: in.VideoCardPreviewsEnabled,
 	}
 	settings, err := s.playersettingssvc.Update(c.Request().Context(), userID, patch)
 	if err != nil {

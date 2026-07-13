@@ -19,23 +19,27 @@ SELECT user_id,
        default_quality,
        captions_default,
        theater_default,
+       video_card_previews_enabled,
        updated_at
 FROM user_player_settings
 WHERE user_id = $1
 `
 
 type GetUserPlayerSettingsRow struct {
-	UserID          uuid.UUID `json:"user_id"`
-	AutoplayNext    bool      `json:"autoplay_next"`
-	DefaultSpeed    float64   `json:"default_speed"`
-	DefaultQuality  string    `json:"default_quality"`
-	CaptionsDefault bool      `json:"captions_default"`
-	TheaterDefault  bool      `json:"theater_default"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	UserID                   uuid.UUID `json:"user_id"`
+	AutoplayNext             bool      `json:"autoplay_next"`
+	DefaultSpeed             float64   `json:"default_speed"`
+	DefaultQuality           string    `json:"default_quality"`
+	CaptionsDefault          bool      `json:"captions_default"`
+	TheaterDefault           bool      `json:"theater_default"`
+	VideoCardPreviewsEnabled *bool     `json:"video_card_previews_enabled"`
+	UpdatedAt                time.Time `json:"updated_at"`
 }
 
 // The caller's stored player settings. A miss (no row) means the user never
-// saved; the service serves the built-in defaults in that case. default_speed is
+// saved; the service serves effective defaults in that case. The nullable
+// video-card preview value remains an inherited admin default until the user
+// explicitly chooses. default_speed is
 // read through a COALESCE+cast so it maps to a plain float64 (never pgtype.Numeric
 // and never a pointer — the column is NOT NULL, COALESCE just proves it to sqlc).
 func (q *Queries) GetUserPlayerSettings(ctx context.Context, userID uuid.UUID) (GetUserPlayerSettingsRow, error) {
@@ -48,6 +52,7 @@ func (q *Queries) GetUserPlayerSettings(ctx context.Context, userID uuid.UUID) (
 		&i.DefaultQuality,
 		&i.CaptionsDefault,
 		&i.TheaterDefault,
+		&i.VideoCardPreviewsEnabled,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -55,14 +60,16 @@ func (q *Queries) GetUserPlayerSettings(ctx context.Context, userID uuid.UUID) (
 
 const upsertUserPlayerSettings = `-- name: UpsertUserPlayerSettings :exec
 INSERT INTO user_player_settings (
-    user_id, autoplay_next, default_speed, default_quality, captions_default, theater_default
+    user_id, autoplay_next, default_speed, default_quality, captions_default, theater_default,
+    video_card_previews_enabled
 ) VALUES (
     $1,
     $2,
     $3::float8,
     $4,
     $5,
-    $6
+    $6,
+    $7
 )
 ON CONFLICT (user_id) DO UPDATE SET
     autoplay_next    = EXCLUDED.autoplay_next,
@@ -70,22 +77,25 @@ ON CONFLICT (user_id) DO UPDATE SET
     default_quality  = EXCLUDED.default_quality,
     captions_default = EXCLUDED.captions_default,
     theater_default  = EXCLUDED.theater_default,
+    video_card_previews_enabled = EXCLUDED.video_card_previews_enabled,
     updated_at       = now()
 `
 
 type UpsertUserPlayerSettingsParams struct {
-	UserID          uuid.UUID `json:"user_id"`
-	AutoplayNext    bool      `json:"autoplay_next"`
-	DefaultSpeed    float64   `json:"default_speed"`
-	DefaultQuality  string    `json:"default_quality"`
-	CaptionsDefault bool      `json:"captions_default"`
-	TheaterDefault  bool      `json:"theater_default"`
+	UserID                   uuid.UUID `json:"user_id"`
+	AutoplayNext             bool      `json:"autoplay_next"`
+	DefaultSpeed             float64   `json:"default_speed"`
+	DefaultQuality           string    `json:"default_quality"`
+	CaptionsDefault          bool      `json:"captions_default"`
+	TheaterDefault           bool      `json:"theater_default"`
+	VideoCardPreviewsEnabled *bool     `json:"video_card_previews_enabled"`
 }
 
-// Insert or replace the caller's player settings with the full effective object.
-// The merge (keep-stored-value for omitted fields) is done at the service layer
-// via read-modify-write, so this always writes every field. default_speed is
-// passed as a float8 and assignment-cast into the numeric(4,2) column.
+// Insert or replace the caller's stored player settings. The merge
+// (keep-stored-value for omitted fields) is done at the service layer via
+// read-modify-write. video_card_previews_enabled stays NULL while inherited;
+// all other fields are always written. default_speed is passed as a float8 and
+// assignment-cast into the numeric(4,2) column.
 func (q *Queries) UpsertUserPlayerSettings(ctx context.Context, arg UpsertUserPlayerSettingsParams) error {
 	_, err := q.db.Exec(ctx, upsertUserPlayerSettings,
 		arg.UserID,
@@ -94,6 +104,7 @@ func (q *Queries) UpsertUserPlayerSettings(ctx context.Context, arg UpsertUserPl
 		arg.DefaultQuality,
 		arg.CaptionsDefault,
 		arg.TheaterDefault,
+		arg.VideoCardPreviewsEnabled,
 	)
 	return err
 }

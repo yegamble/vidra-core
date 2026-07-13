@@ -4,7 +4,7 @@
 
 -- name: ListOperationalJobRuns :many
 SELECT *
-FROM job_runs
+FROM job_runs j
 WHERE (sqlc.narg('state')::text IS NULL OR state = sqlc.narg('state'))
   AND (sqlc.narg('type')::text IS NULL OR type = sqlc.narg('type'))
   AND (sqlc.narg('queue')::text IS NULL OR queue = sqlc.narg('queue'))
@@ -15,12 +15,15 @@ WHERE (sqlc.narg('state')::text IS NULL OR state = sqlc.narg('state'))
        OR ((state IN ('failed', 'dead_lettered')) = sqlc.narg('failure')))
   AND (sqlc.narg('created_after')::timestamptz IS NULL OR created_at >= sqlc.narg('created_after'))
   AND (sqlc.narg('created_before')::timestamptz IS NULL OR created_at <= sqlc.narg('created_before'))
+  AND NOT (j.queue = 'transcode_jobs' AND EXISTS (
+      SELECT 1 FROM job_runs child WHERE child.parent_job_id = j.id
+  ))
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: CountOperationalJobRuns :one
 SELECT count(*)::bigint
-FROM job_runs
+FROM job_runs j
 WHERE (sqlc.narg('state')::text IS NULL OR state = sqlc.narg('state'))
   AND (sqlc.narg('type')::text IS NULL OR type = sqlc.narg('type'))
   AND (sqlc.narg('queue')::text IS NULL OR queue = sqlc.narg('queue'))
@@ -30,7 +33,10 @@ WHERE (sqlc.narg('state')::text IS NULL OR state = sqlc.narg('state'))
   AND (sqlc.narg('failure')::boolean IS NULL
        OR ((state IN ('failed', 'dead_lettered')) = sqlc.narg('failure')))
   AND (sqlc.narg('created_after')::timestamptz IS NULL OR created_at >= sqlc.narg('created_after'))
-  AND (sqlc.narg('created_before')::timestamptz IS NULL OR created_at <= sqlc.narg('created_before'));
+  AND (sqlc.narg('created_before')::timestamptz IS NULL OR created_at <= sqlc.narg('created_before'))
+  AND NOT (j.queue = 'transcode_jobs' AND EXISTS (
+      SELECT 1 FROM job_runs child WHERE child.parent_job_id = j.id
+  ));
 
 -- name: GetOperationalJobRun :one
 SELECT * FROM job_runs WHERE id = $1;

@@ -513,17 +513,57 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 DELETE FROM videos WHERE id = $1;
 
 -- name: ListAdminVideos :many
--- The admin/moderator videos overview: ALL videos (any privacy/state) newest
--- first, with the owning channel, view count, and whether the video is currently
--- blocked. An optional case-insensitive title filter (NULL = no filter).
-SELECT v.id, v.title, v.privacy, v.state,
-       c.handle AS channel_handle, c.display_name AS channel_display_name,
-       COALESCE(vc.views, 0)::bigint AS views,
-       v.created_at,
-       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
-FROM videos v
-JOIN channels c ON c.id = v.channel_id
-LEFT JOIN video_view_counts vc ON vc.video_id = v.id
-WHERE (sqlc.narg('query')::text IS NULL OR v.title ILIKE '%' || sqlc.narg('query') || '%')
-ORDER BY v.created_at DESC, v.id DESC
+-- The moderation inventory includes both locally hosted videos and federated
+-- metadata rows. Local file facts are derived from the authoritative media
+-- tables; remote rows never pretend to own files.
+SELECT inventory.*
+FROM (
+    SELECT v.id, v.title, v.privacy, v.state,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           COALESCE(vc.views, 0)::bigint AS views,
+           v.created_at,
+           vm.duration_seconds,
+           true AS is_local,
+           ''::text AS origin_domain,
+           ''::text AS watch_url,
+           v.is_sensitive,
+           EXISTS (SELECT 1 FROM import_jobs ij WHERE ij.video_id = v.id) AS external_link,
+           EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'thumbnail') AS has_thumbnail,
+           EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'original') AS has_original,
+           (SELECT count(*)::int FROM video_renditions r WHERE r.video_id = v.id) AS hls_count,
+           (SELECT count(*)::int FROM video_files f WHERE f.video_id = v.id AND f.kind IN ('rendition', 'webm')) AS web_video_count,
+           (
+               COALESCE((SELECT sum(f.size_bytes) FROM video_files f WHERE f.video_id = v.id), 0) +
+               COALESCE((SELECT sum(r.size_bytes) FROM video_renditions r WHERE r.video_id = v.id), 0)
+           )::bigint AS size_bytes,
+           EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+
+    UNION ALL
+
+    SELECT rv.id, rv.title, 'public'::text AS privacy, 'published'::text AS state,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username::text AS channel_display_name,
+           0::bigint AS views,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at,
+           rv.duration_seconds,
+           false AS is_local,
+           ra.domain AS origin_domain,
+           rv.watch_url,
+           false AS is_sensitive,
+           false AS external_link,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           false AS has_original,
+           0::int AS hls_count,
+           0::int AS web_video_count,
+           0::bigint AS size_bytes,
+           EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+) inventory
+WHERE (sqlc.narg('query')::text IS NULL OR inventory.title ILIKE '%' || sqlc.narg('query') || '%')
+ORDER BY inventory.created_at DESC, inventory.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');

@@ -5223,15 +5223,16 @@ paths:
       operationId: requestAutoCaption
       summary: Request an auto-generated caption track (Whisper)
       description: >-
-        Enqueues an ASYNCHRONOUS auto-caption job for a video (owner only) and
+        Enqueues an ASYNCHRONOUS auto-caption job for a video (owner, moderator,
+        or admin) and
         returns 202 with the queued job. A background worker extracts the audio
         (ffmpeg → 16 kHz mono WAV), sends it to the configured Whisper
         transcription service, renders the result to WebVTT, and stores it via
         the same replace-by-language path as a manual caption upload — then
         notifies the owner (a caption_ready notification, honoring preferences).
         `language` is optional (defaults to WHISPER_DEFAULT_LANGUAGE); it is both
-        the caption's language tag and the transcription hint. Ownership is
-        checked before any job is created, so a non-owner or unknown video is
+        the caption's language tag and the transcription hint. Authorization is
+        checked before any job is created, so an ordinary non-owner or unknown video is
         404. Auto-captioning turned off at runtime (transcription_enabled,
         config-parity W8) → 403 feature_disabled; the Whisper boot capability
         missing (no WHISPER_ENDPOINT) → 503; a malformed language tag → 422; a
@@ -5304,11 +5305,11 @@ paths:
       operationId: getAutoCaption
       summary: Get a video's auto-caption job status
       description: >-
-        Returns the most recent auto-caption (Whisper) job for a video (owner
-        only). state is pending, running, done, or failed; on failure `error` is
-        a safe, human-readable reason (never a raw internal error or the Whisper
-        endpoint URL). Non-owner/unknown video → 404; a video that never
-        requested auto-captioning → 404.
+        Returns the most recent auto-caption (Whisper) job for a video's owner,
+        a moderator, or an admin. state is pending, running, done, or failed;
+        on failure `error` is a safe, human-readable reason (never a raw internal
+        error or the Whisper endpoint URL). Ordinary non-owner/unknown video →
+        404; a video that never requested auto-captioning → 404.
       tags: [captions]
       security:
         - bearerAuth: []
@@ -5333,7 +5334,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: No such video (or not owned by the caller), or no auto-caption job exists.
+          description: No such/authorized video, or no auto-caption job exists.
           content:
             application/json:
               schema:
@@ -6417,10 +6418,14 @@ paths:
       description: >-
         Returns the signed-in user's effective player defaults (PLAY-07): whether
         the next video autoplays, the default playback speed, the default quality,
-        and whether captions / theater mode start on. Always 200 with the full
-        object — a user who never saved gets the built-in defaults (no 404). The
-        custom player hydrates from this on load, replacing its interim local
-        storage.
+        whether captions / theater mode start on, and whether video-card hover
+        previews are enabled. Always 200 with the full object — a user who never
+        saved gets effective defaults (no 404). Until the user explicitly
+        chooses, the preview preference follows GET /instance
+        features.video_card_previews_default_enabled. It is the user half of a
+        two-factor gate and only takes effect while features.video_card_previews
+        is also true. The custom player hydrates from this on load, replacing its
+        interim local storage.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -7441,6 +7446,83 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/videos/{id}/transcoding:
+    post:
+      operationId: runAdminVideoTranscoding
+      summary: Re-run a video's HLS or Web Video transcoding
+      description: >-
+        Enqueues recovery transcoding for one locally hosted video. Restricted
+        to moderators/admins. The server always resolves the retained original
+        video file as the source; a client cannot provide a derivative storage
+        key. Existing output files for the selected class are replaced and
+        stale files removed. Returns 409 when another transcode is active or no
+        original exists.
+      tags: [moderation, videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  enum: [hls, web_video]
+      responses:
+        "202":
+          description: Transcoding was queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, type]
+                properties:
+                  status:
+                    type: string
+                    enum: [queued]
+                  type:
+                    type: string
+                    enum: [hls, web_video]
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller lacks permission or transcoding is disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The local video does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: No original exists or another transcode is active.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: ffmpeg/ffprobe transcoding capability is unavailable.
           content:
             application/json:
               schema:
@@ -10348,7 +10430,9 @@ paths:
         comments_enabled, downloads_enabled, contact_form_enabled,
         instance_is_sensitive, the config-parity W8 feature toggles
         import_http_enabled, channel_sync_enabled, storyboards_enabled,
-        transcription_enabled, user_import_enabled, user_export_enabled, and
+        video_card_previews_enabled, video_card_previews_default_enabled,
+        transcription_enabled,
+        user_import_enabled, user_export_enabled, and
         the config-parity W10 VOD knobs transcoding_enabled,
         transcoding_original_resolution, upload_additional_extensions_enabled,
         the config-parity W11 live knobs live_allow_replay and
@@ -11816,6 +11900,8 @@ components:
             - import_http
             - channel_sync
             - storyboards
+            - video_card_previews
+            - video_card_previews_default_enabled
             - transcription
             - user_import
             - user_export
@@ -11831,8 +11917,12 @@ components:
             user_import, user_export) and the W10 transcoding flag report
             EFFECTIVE availability — the runtime admin setting AND, where one
             exists, the deployment's boot capability (yt-dlp resolver, Whisper
-            endpoint, ffmpeg/ffprobe). The mail flag is pure boot capability
-            (an outbound mail path exists).
+            endpoint, ffmpeg/ffprobe). video_card_previews is the global half of
+            the hover-preview gate; video_card_previews_default_enabled is the
+            preference inherited by users who have never explicitly chosen.
+            Signed-in clients must still require both the global gate and the
+            effective video_card_previews_enabled player preference. The mail
+            flag is pure boot capability (an outbound mail path exists).
           properties:
             uploads:
               type: boolean
@@ -11868,6 +11958,20 @@ components:
                 Whether seek-preview storyboard generation is enabled
                 (storyboards_enabled). Already-stored storyboards keep serving
                 when this is off.
+            video_card_previews:
+              type: boolean
+              description: >-
+                Instance-level master gate for video-card hover playback
+                (video_card_previews_enabled, default false). A client may start
+                a preview only for a signed-in user whose player setting
+                video_card_previews_enabled is also true.
+            video_card_previews_default_enabled:
+              type: boolean
+              description: >-
+                Current instance default inherited by signed-in users who have
+                never explicitly enabled or disabled video-card previews
+                (video_card_previews_default_enabled, default false). This does
+                not bypass the video_card_previews global gate.
             transcription:
               type: boolean
               description: >-
@@ -13908,8 +14012,10 @@ components:
       type: object
       description: >-
         A signed-in user's effective player defaults (PLAY-07). Every field is
-        always present; a user who never saved gets these built-in defaults.
-      required: [autoplay_next, default_speed, default_quality, captions_default, theater_default]
+        always present. video_card_previews_enabled is resolved from the current
+        instance default until the user explicitly chooses true or false.
+      required: [autoplay_next, default_speed, default_quality, captions_default,
+                 theater_default, video_card_previews_enabled]
       properties:
         autoplay_next:
           type: boolean
@@ -13935,6 +14041,15 @@ components:
           type: boolean
           description: Whether the player opens in theater mode by default.
           example: false
+        video_card_previews_enabled:
+          type: boolean
+          description: >-
+            The signed-in user's effective video-card hover-preview preference.
+            Until the user explicitly chooses, it follows GET /instance
+            features.video_card_previews_default_enabled; an explicit true or
+            false is durable across later admin-default changes. This preference
+            only permits playback while features.video_card_previews is true.
+          example: false
     UpdatePlayerSettingsRequest:
       type: object
       description: >-
@@ -13942,6 +14057,8 @@ components:
         stored value (or the default, for a user who never saved); a supplied
         field replaces it. At least one field is normally sent, but an empty body
         is accepted as a no-op that returns the current effective settings.
+        Omitting video_card_previews_enabled does not turn an inherited value
+        into an explicit choice.
       properties:
         autoplay_next:
           type: boolean
@@ -13961,6 +14078,13 @@ components:
           example: true
         theater_default:
           type: boolean
+          example: true
+        video_card_previews_enabled:
+          type: boolean
+          description: >-
+            Explicitly enable or disable the caller's video-card hover-preview
+            preference, overriding the instance default. The preference only
+            takes effect while the instance feature gate is enabled.
           example: true
     Playlist:
       type: object
@@ -14303,8 +14427,8 @@ components:
           example: 0
     AdminVideo:
       type: object
-      description: A video in the admin/moderator overview (any privacy/state), with block status.
-      required: [id, title, privacy, state, channel_handle, channel_display_name, views, created_at, blocked]
+      description: A local or federated video in the moderator inventory, with media/storage facts.
+      required: [id, title, privacy, state, channel_handle, channel_display_name, views, published_at, is_local, sensitive, external_link, has_thumbnail, has_original, hls_count, web_video_count, object_storage, size_bytes, blocked]
       properties:
         id:
           type: string
@@ -14324,9 +14448,43 @@ components:
         views:
           type: integer
           format: int64
-        created_at:
+        published_at:
           type: string
           format: date-time
+        duration_seconds:
+          type: integer
+          minimum: 0
+        is_local:
+          type: boolean
+        origin_domain:
+          type: string
+          description: Origin instance for a federated video; omitted for local videos.
+        watch_url:
+          type: string
+          format: uri
+          description: Origin watch URL for a federated video; omitted for local videos.
+        sensitive:
+          type: boolean
+        external_link:
+          type: boolean
+          description: Whether a local video was imported from an external URL.
+        has_thumbnail:
+          type: boolean
+        has_original:
+          type: boolean
+        hls_count:
+          type: integer
+          minimum: 0
+        web_video_count:
+          type: integer
+          minimum: 0
+        object_storage:
+          type: boolean
+          description: Whether the local media backend is S3-compatible object storage.
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
         blocked:
           type: boolean
           description: Whether the video is currently blocked (hidden from public surfaces).
@@ -16532,7 +16690,7 @@ components:
     CaptionJob:
       type: object
       description: An asynchronous auto-caption (Whisper) job for a video.
-      required: [id, video_id, language, state, attempts, created_at, updated_at]
+      required: [id, video_id, language, state, attempts, progress_percent, created_at, updated_at]
       properties:
         id:
           type: string
@@ -16555,6 +16713,13 @@ components:
         attempts:
           type: integer
           description: How many times the auto-caption has been attempted.
+        stage:
+          type: string
+          description: Safe coarse stage such as preparing, transcribing, storing, or complete.
+        progress_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
         created_at:
           type: string
           format: date-time

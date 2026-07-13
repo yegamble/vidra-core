@@ -41,12 +41,13 @@ func (f *fakeRepo) UpsertUserPlayerSettings(_ context.Context, a sqlcgen.UpsertU
 		return f.upsertErr
 	}
 	f.rows[a.UserID] = sqlcgen.GetUserPlayerSettingsRow{
-		UserID:          a.UserID,
-		AutoplayNext:    a.AutoplayNext,
-		DefaultSpeed:    a.DefaultSpeed,
-		DefaultQuality:  a.DefaultQuality,
-		CaptionsDefault: a.CaptionsDefault,
-		TheaterDefault:  a.TheaterDefault,
+		UserID:                   a.UserID,
+		AutoplayNext:             a.AutoplayNext,
+		DefaultSpeed:             a.DefaultSpeed,
+		DefaultQuality:           a.DefaultQuality,
+		CaptionsDefault:          a.CaptionsDefault,
+		TheaterDefault:           a.TheaterDefault,
+		VideoCardPreviewsEnabled: a.VideoCardPreviewsEnabled,
 	}
 	return nil
 }
@@ -68,6 +69,38 @@ func TestGetFreshUserReturnsDefaults(t *testing.T) {
 	}
 }
 
+func TestVideoCardPreviewDefaultInheritanceAndExplicitOverride(t *testing.T) {
+	repo := newFakeRepo()
+	defaultEnabled := false
+	svc := NewService(repo, WithVideoCardPreviewsDefaultEnabledFunc(func() bool { return defaultEnabled }))
+	ctx := context.Background()
+	inheriting, explicit := uuid.New(), uuid.New()
+
+	// A missing row inherits dynamically. Saving an unrelated player setting
+	// creates a row but must leave the nullable preview override unset.
+	defaultEnabled = true
+	if got, err := svc.Update(ctx, inheriting, Patch{DefaultSpeed: ptrFloat(1.5)}); err != nil || !got.VideoCardPreviewsEnabled {
+		t.Fatalf("inheriting unrelated update = %+v, %v; want previews enabled", got, err)
+	}
+	if got := repo.rows[inheriting].VideoCardPreviewsEnabled; got != nil {
+		t.Fatalf("unrelated update stored preview override %v, want nil", *got)
+	}
+
+	defaultEnabled = false
+	if got, err := svc.Get(ctx, inheriting); err != nil || got.VideoCardPreviewsEnabled {
+		t.Fatalf("inheriting GET after default change = %+v, %v; want previews disabled", got, err)
+	}
+
+	// Explicit true remains true across later changes to the admin default.
+	if got, err := svc.Update(ctx, explicit, Patch{VideoCardPreviewsEnabled: ptrBool(true)}); err != nil || !got.VideoCardPreviewsEnabled {
+		t.Fatalf("explicit update = %+v, %v; want previews enabled", got, err)
+	}
+	defaultEnabled = false
+	if got, err := svc.Get(ctx, explicit); err != nil || !got.VideoCardPreviewsEnabled {
+		t.Fatalf("explicit GET after default change = %+v, %v; want previews enabled", got, err)
+	}
+}
+
 // TestUpdateMergeKeepsOmittedFields: a partial patch changes only the supplied
 // fields; omitted fields keep the stored value across successive updates.
 func TestUpdateMergeKeepsOmittedFields(t *testing.T) {
@@ -76,11 +109,22 @@ func TestUpdateMergeKeepsOmittedFields(t *testing.T) {
 	ctx := context.Background()
 
 	// From defaults, set speed + captions.
-	got, err := svc.Update(ctx, uid, Patch{DefaultSpeed: ptrFloat(1.5), CaptionsDefault: ptrBool(true)})
+	got, err := svc.Update(ctx, uid, Patch{
+		DefaultSpeed:             ptrFloat(1.5),
+		CaptionsDefault:          ptrBool(true),
+		VideoCardPreviewsEnabled: ptrBool(true),
+	})
 	if err != nil {
 		t.Fatalf("update 1: %v", err)
 	}
-	want := Settings{AutoplayNext: true, DefaultSpeed: 1.5, DefaultQuality: "auto", CaptionsDefault: true, TheaterDefault: false}
+	want := Settings{
+		AutoplayNext:             true,
+		DefaultSpeed:             1.5,
+		DefaultQuality:           "auto",
+		CaptionsDefault:          true,
+		TheaterDefault:           false,
+		VideoCardPreviewsEnabled: true,
+	}
 	if got != want {
 		t.Fatalf("after update 1 = %+v, want %+v", got, want)
 	}
@@ -103,6 +147,16 @@ func TestUpdateMergeKeepsOmittedFields(t *testing.T) {
 	}
 	if got.AutoplayNext {
 		t.Fatalf("autoplay_next still true after explicit false: %+v", got)
+	}
+
+	// The preview opt-in is also a real merge field: explicit false disables it
+	// without disturbing the other saved player defaults.
+	got, err = svc.Update(ctx, uid, Patch{VideoCardPreviewsEnabled: ptrBool(false)})
+	if err != nil {
+		t.Fatalf("update 4: %v", err)
+	}
+	if got.VideoCardPreviewsEnabled || got.DefaultSpeed != 1.5 || !got.CaptionsDefault {
+		t.Fatalf("preview disable did not merge cleanly: %+v", got)
 	}
 }
 

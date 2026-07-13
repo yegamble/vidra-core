@@ -341,6 +341,7 @@ type HLSRendition struct {
 	Height    int
 	Width     int
 	KeyPrefix string
+	SizeBytes int64
 }
 
 // HLSResult is a completed transcode: the master playlist's storage key and
@@ -511,6 +512,14 @@ func DetectHLSTranscoder(blobs storage.Backend) (*HLSTranscoder, bool) {
 // streaming-playlists/<videoID>/. All playlist URIs are relative, so the files
 // serve correctly through the authenticated proxy endpoints.
 func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, sourceKey string) (HLSResult, error) {
+	return t.TranscodeHLS(ctx, videoID, sourceKey, nil)
+}
+
+// TranscodeHLS is the progress-aware HLS path used by the durable worker. Each
+// planned rung reports its own lifecycle so the operational job projection can
+// render one execution per resolution. The source is always sourceKey (the
+// retained original supplied by the queue), never a previous derivative.
+func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, progress ProgressFunc) (HLSResult, error) {
 	md, err := t.probe.Probe(ctx, sourceKey)
 	if err != nil {
 		return HLSResult{}, err
@@ -521,6 +530,12 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 	rungs := PlanHLSLadderWith(settings, md.Width, md.Height, md.FPS)
 	if len(rungs) == 0 {
 		return HLSResult{}, fmt.Errorf("media: source %q has no probeable video dimensions", sourceKey)
+	}
+	for _, r := range rungs {
+		reportProgress(progress, TranscodeProgress{
+			Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+			State: ProgressQueued, Stage: "queued", Percent: 0,
+		})
 	}
 
 	src, cleanup, err := objectPath(ctx, t.blobs, sourceKey)
@@ -535,19 +550,43 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
+	rungSizes := make(map[int]int64, len(rungs))
 	for i, r := range rungs {
 		dir := filepath.Join(tmp, r.Name())
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return HLSResult{}, err
 		}
-		cmd := exec.CommandContext(ctx, t.bin, hlsRungArgs(src, dir, r, settings.Threads)...)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			return HLSResult{}, fmt.Errorf("media: ffmpeg hls %s for %q: %w: %s", r.Name(), sourceKey, err, tailOf(stderr.String()))
+		reportProgress(progress, TranscodeProgress{
+			Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+			State: ProgressRunning, Stage: "encoding", Percent: 1,
+		})
+		stderr, runErr := runFFmpegWithProgress(ctx, t.bin, hlsRungArgs(src, dir, r, settings.Threads), md.DurationSeconds, func(percent int) {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+				State: ProgressRunning, Stage: "encoding", Percent: percent * 9 / 10,
+			})
+		})
+		if runErr != nil {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+				State: ProgressFailed, Stage: "encoding", Percent: 0,
+			})
+			return HLSResult{}, fmt.Errorf("media: ffmpeg hls %s for %q: %w: %s", r.Name(), sourceKey, runErr, tailOf(stderr))
 		}
+		reportProgress(progress, TranscodeProgress{
+			Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+			State: ProgressRunning, Stage: "packaging", Percent: 92,
+		})
 		playlist := filepath.Join(dir, "playlist.m3u8")
 		if err := t.remuxHLSDownloads(ctx, sourceKey, playlist, dir, r); err != nil {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+				State: ProgressFailed, Stage: "packaging", Percent: 92,
+			})
+			return HLSResult{}, err
+		}
+		rungSizes[r.Height], err = directorySize(dir)
+		if err != nil {
 			return HLSResult{}, err
 		}
 		if i == 0 {
@@ -564,12 +603,35 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 	if err := os.WriteFile(filepath.Join(tmp, "master.m3u8"), []byte(master), 0o644); err != nil {
 		return HLSResult{}, err
 	}
+	// Attribute top-level HLS assets (master playlist and optional audio-only
+	// download) to the top rendition so summing video_renditions.size_bytes is
+	// the exact stored HLS-tree size, not just the variant subdirectories.
+	totalSize, err := directorySize(tmp)
+	if err != nil {
+		return HLSResult{}, err
+	}
+	var rungTotal int64
+	for _, size := range rungSizes {
+		rungTotal += size
+	}
+	if extra := totalSize - rungTotal; extra > 0 {
+		rungSizes[rungs[0].Height] += extra
+	}
 
 	// The output prefix is derived from the SOURCE key (W14): a replacement
 	// source writes a fresh generation directory so the tree players are
 	// currently streaming is never disturbed; promotion is the DB-row swap in
 	// transcode.storeResult.
 	prefix := HLSPrefixForSource(videoID, sourceKey)
+	// A manual re-run of the same source version uses the same stable prefix.
+	// Remove that prior generation immediately before promotion so stale
+	// resolutions/segments cannot survive the overwrite. Replacement uploads use
+	// a fresh rN prefix, preserving uninterrupted playback until DB promotion.
+	if deleter, ok := t.blobs.(storage.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, prefix); err != nil {
+			return HLSResult{}, err
+		}
+	}
 	// A replacement source may be silent even when the previous generation had
 	// audio. storeTree only overwrites files present in the new tree, so remove
 	// the old optional derivative before storing a generation that omits it.
@@ -581,6 +643,12 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 		return HLSResult{}, statErr
 	}
 	if err := t.storeTree(ctx, tmp, prefix); err != nil {
+		for _, r := range rungs {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+				State: ProgressFailed, Stage: "storing", Percent: 96,
+			})
+		}
 		return HLSResult{}, err
 	}
 	res := HLSResult{MasterKey: prefix + "/master.m3u8"}
@@ -589,6 +657,11 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 			Height:    r.Height,
 			Width:     r.Width,
 			KeyPrefix: prefix + "/" + r.Name(),
+			SizeBytes: rungSizes[r.Height],
+		})
+		reportProgress(progress, TranscodeProgress{
+			Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+			State: ProgressSucceeded, Stage: "complete", Percent: 100,
 		})
 	}
 	if t.vp9 {
@@ -604,6 +677,25 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 		}
 	}
 	return res, nil
+}
+
+func directorySize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		total += info.Size()
+		return nil
+	})
+	return total, err
 }
 
 // remuxHLSDownloads emits the two required progressive MP4 assets for a

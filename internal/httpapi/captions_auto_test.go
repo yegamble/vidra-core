@@ -231,4 +231,13 @@ func TestAutoCaptionAuthAndOwnership(t *testing.T) {
 	if rec := getAutoCaption(srv, vid, other); rec.Code != http.StatusNotFound {
 		t.Errorf("non-owner status = %d, want 404", rec.Code)
 	}
+
+	// The instance admin may recover captions for somebody else's local video.
+	otherVideo := createPublishedVideo(t, srv, other, "bob", `{"title":"Needs recovery","privacy":"public"}`)
+	if rec := requestAutoCaption(srv, otherVideo, `{}`, owner); rec.Code != http.StatusAccepted {
+		t.Errorf("admin recovery request = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := getAutoCaption(srv, otherVideo, owner); rec.Code != http.StatusOK {
+		t.Errorf("admin recovery status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
 }
