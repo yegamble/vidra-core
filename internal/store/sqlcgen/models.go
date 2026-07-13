@@ -662,6 +662,18 @@ type SavedVideo struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type SearchOutbox struct {
+	ID            int64     `json:"id"`
+	EventID       uuid.UUID `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	Payload       []byte    `json:"payload"`
+	State         string    `json:"state"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type Session struct {
 	ID          uuid.UUID          `json:"id"`
 	UserID      uuid.UUID          `json:"user_id"`
@@ -724,24 +736,27 @@ type UploadUsageEvent struct {
 }
 
 type User struct {
-	ID                       uuid.UUID          `json:"id"`
-	Username                 string             `json:"username"`
-	Email                    string             `json:"email"`
-	PasswordHash             string             `json:"password_hash"`
-	Role                     string             `json:"role"`
-	EmailVerified            bool               `json:"email_verified"`
-	IsActive                 bool               `json:"is_active"`
-	CreatedAt                time.Time          `json:"created_at"`
-	UpdatedAt                time.Time          `json:"updated_at"`
-	DisplayName              string             `json:"display_name"`
-	Bio                      string             `json:"bio"`
-	StorageQuotaBytes        *int64             `json:"storage_quota_bytes"`
-	Unlisted                 bool               `json:"unlisted"`
-	BypassQuarantine         bool               `json:"bypass_quarantine"`
-	DeletedAt                pgtype.Timestamptz `json:"deleted_at"`
-	PendingEmailVerification bool               `json:"pending_email_verification"`
-	HistoryEnabled           bool               `json:"history_enabled"`
-	ProfilePublic            bool               `json:"profile_public"`
+	ID                                 uuid.UUID          `json:"id"`
+	Username                           string             `json:"username"`
+	Email                              string             `json:"email"`
+	PasswordHash                       string             `json:"password_hash"`
+	Role                               string             `json:"role"`
+	EmailVerified                      bool               `json:"email_verified"`
+	IsActive                           bool               `json:"is_active"`
+	CreatedAt                          time.Time          `json:"created_at"`
+	UpdatedAt                          time.Time          `json:"updated_at"`
+	DisplayName                        string             `json:"display_name"`
+	Bio                                string             `json:"bio"`
+	StorageQuotaBytes                  *int64             `json:"storage_quota_bytes"`
+	Unlisted                           bool               `json:"unlisted"`
+	BypassQuarantine                   bool               `json:"bypass_quarantine"`
+	DeletedAt                          pgtype.Timestamptz `json:"deleted_at"`
+	PendingEmailVerification           bool               `json:"pending_email_verification"`
+	HistoryEnabled                     bool               `json:"history_enabled"`
+	ProfilePublic                      bool               `json:"profile_public"`
+	SearchHistoryEnabled               bool               `json:"search_history_enabled"`
+	PersonalizedSearchEnabled          bool               `json:"personalized_search_enabled"`
+	PersonalizedRecommendationsEnabled bool               `json:"personalized_recommendations_enabled"`
 }
 
 type UserBlock struct {

@@ -24,7 +24,7 @@ SET role       = COALESCE($1, role),
                                ELSE storage_quota_bytes END,
     updated_at = now()
 WHERE id = $7
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
 `
 
 type AdminUpdateUserParams struct {
@@ -72,6 +72,9 @@ func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
 		&i.ProfilePublic,
+		&i.SearchHistoryEnabled,
+		&i.PersonalizedSearchEnabled,
+		&i.PersonalizedRecommendationsEnabled,
 	)
 	return i, err
 }
@@ -125,7 +128,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
 `
 
 type CreateUserParams struct {
@@ -170,6 +173,9 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
 		&i.ProfilePublic,
+		&i.SearchHistoryEnabled,
+		&i.PersonalizedSearchEnabled,
+		&i.PersonalizedRecommendationsEnabled,
 	)
 	return i, err
 }
@@ -278,7 +284,7 @@ func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (Get
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -305,12 +311,15 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
 		&i.ProfilePublic,
+		&i.SearchHistoryEnabled,
+		&i.PersonalizedSearchEnabled,
+		&i.PersonalizedRecommendationsEnabled,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
 FROM users
 WHERE id = $1
 `
@@ -337,12 +346,15 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
 		&i.ProfilePublic,
+		&i.SearchHistoryEnabled,
+		&i.PersonalizedSearchEnabled,
+		&i.PersonalizedRecommendationsEnabled,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
 FROM users
 WHERE lower(username) = lower($1) AND is_active = true
 `
@@ -373,6 +385,9 @@ func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, er
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
 		&i.ProfilePublic,
+		&i.SearchHistoryEnabled,
+		&i.PersonalizedSearchEnabled,
+		&i.PersonalizedRecommendationsEnabled,
 	)
 	return i, err
 }
@@ -473,18 +488,26 @@ SET display_name = COALESCE($1, display_name),
     unlisted     = COALESCE($3, unlisted),
     history_enabled = COALESCE($4, history_enabled),
     profile_public = COALESCE($5, profile_public),
+    -- Search & recommendation preferences (search-service W4): the user half of
+    -- the two-factor personalization gate. Partial: NULL args leave each unchanged.
+    search_history_enabled = COALESCE($6, search_history_enabled),
+    personalized_search_enabled = COALESCE($7, personalized_search_enabled),
+    personalized_recommendations_enabled = COALESCE($8, personalized_recommendations_enabled),
     updated_at   = now()
-WHERE id = $6
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
+WHERE id = $9
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
 `
 
 type UpdateUserProfileParams struct {
-	DisplayName    *string   `json:"display_name"`
-	Bio            *string   `json:"bio"`
-	Unlisted       *bool     `json:"unlisted"`
-	HistoryEnabled *bool     `json:"history_enabled"`
-	ProfilePublic  *bool     `json:"profile_public"`
-	ID             uuid.UUID `json:"id"`
+	DisplayName                        *string   `json:"display_name"`
+	Bio                                *string   `json:"bio"`
+	Unlisted                           *bool     `json:"unlisted"`
+	HistoryEnabled                     *bool     `json:"history_enabled"`
+	ProfilePublic                      *bool     `json:"profile_public"`
+	SearchHistoryEnabled               *bool     `json:"search_history_enabled"`
+	PersonalizedSearchEnabled          *bool     `json:"personalized_search_enabled"`
+	PersonalizedRecommendationsEnabled *bool     `json:"personalized_recommendations_enabled"`
+	ID                                 uuid.UUID `json:"id"`
 }
 
 func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (User, error) {
@@ -494,6 +517,9 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		arg.Unlisted,
 		arg.HistoryEnabled,
 		arg.ProfilePublic,
+		arg.SearchHistoryEnabled,
+		arg.PersonalizedSearchEnabled,
+		arg.PersonalizedRecommendationsEnabled,
 		arg.ID,
 	)
 	var i User
@@ -516,6 +542,9 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
 		&i.ProfilePublic,
+		&i.SearchHistoryEnabled,
+		&i.PersonalizedSearchEnabled,
+		&i.PersonalizedRecommendationsEnabled,
 	)
 	return i, err
 }

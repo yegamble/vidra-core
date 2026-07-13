@@ -372,6 +372,85 @@ FROM (
 ORDER BY feed.search_rank DESC, feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: ListPublicVideosByIDs :many
+-- Hydrate a set of ranked video ids to discovery cards under the FULL canonical
+-- predicate (search-service W4): public+published, not blocked, owner not
+-- unlisted, per-viewer mutes/blocks, and the server-side hide_sensitive policy.
+-- vidra-search returns ranked ids only (visibility-safe: the index stores static
+-- eligibility, never per-viewer state); core hydrates + filters here and the Go
+-- layer re-applies the search order. Rows come back in arbitrary order.
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE v.id = ANY (sqlc.arg('ids')::uuid[])
+  AND v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+  )
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive);
+
+-- name: ListRelatedVideosFallback :many
+-- Server-side "related videos" fallback (search-service W4) when vidra-search is
+-- unavailable or empty: same-channel + same-category candidates, excluding the
+-- source video, under the full canonical predicate (public+published, not
+-- blocked, owner not unlisted, per-viewer mutes/blocks, hide_sensitive). Ordered
+-- same-channel first, then by all-time views, then newest — the server-side
+-- version of the frontend's current related heuristic.
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive,
+       (v.channel_id = sqlc.arg('channel_id'))::bool AS same_channel
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE v.privacy = 'public' AND v.state = 'published'
+  AND v.id <> sqlc.arg('exclude_id')
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+  )
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+  AND (
+      v.channel_id = sqlc.arg('channel_id')
+      OR (sqlc.narg('category')::text IS NOT NULL AND v.category = sqlc.narg('category'))
+  )
+ORDER BY same_channel DESC, views DESC, v.created_at DESC, v.id DESC
+LIMIT sqlc.arg('result_limit');
+
 -- name: UpdateVideo :one
 UPDATE videos
 SET title       = COALESCE(sqlc.narg('title'), title),

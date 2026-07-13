@@ -385,6 +385,103 @@ func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.
 	return items, nil
 }
 
+const listPublicVideosByIDs = `-- name: ListPublicVideosByIDs :many
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE v.id = ANY ($1::uuid[])
+  AND v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
+  )
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+  AND (NOT $3::bool OR NOT v.is_sensitive)
+`
+
+type ListPublicVideosByIDsParams struct {
+	Ids           []uuid.UUID `json:"ids"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	HideSensitive bool        `json:"hide_sensitive"`
+}
+
+type ListPublicVideosByIDsRow struct {
+	ID                 uuid.UUID `json:"id"`
+	ChannelID          uuid.UUID `json:"channel_id"`
+	Title              string    `json:"title"`
+	Description        string    `json:"description"`
+	Privacy            string    `json:"privacy"`
+	State              string    `json:"state"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	Views              int64     `json:"views"`
+	HasThumbnail       bool      `json:"has_thumbnail"`
+	ChannelHandle      string    `json:"channel_handle"`
+	ChannelDisplayName string    `json:"channel_display_name"`
+	AuthorDisplayName  string    `json:"author_display_name"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
+	IsSensitive        bool      `json:"is_sensitive"`
+}
+
+// Hydrate a set of ranked video ids to discovery cards under the FULL canonical
+// predicate (search-service W4): public+published, not blocked, owner not
+// unlisted, per-viewer mutes/blocks, and the server-side hide_sensitive policy.
+// vidra-search returns ranked ids only (visibility-safe: the index stores static
+// eligibility, never per-viewer state); core hydrates + filters here and the Go
+// layer re-applies the search order. Rows come back in arbitrary order.
+func (q *Queries) ListPublicVideosByIDs(ctx context.Context, arg ListPublicVideosByIDsParams) ([]ListPublicVideosByIDsRow, error) {
+	rows, err := q.db.Query(ctx, listPublicVideosByIDs, arg.Ids, arg.ViewerID, arg.HideSensitive)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPublicVideosByIDsRow
+	for rows.Next() {
+		var i ListPublicVideosByIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Description,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Views,
+			&i.HasThumbnail,
+			&i.ChannelHandle,
+			&i.ChannelDisplayName,
+			&i.AuthorDisplayName,
+			&i.DurationSeconds,
+			&i.IsSensitive,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublicVideosSorted = `-- name: ListPublicVideosSorted :many
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
@@ -622,6 +719,122 @@ func (q *Queries) ListQuarantinedVideos(ctx context.Context, arg ListQuarantined
 			&i.ChannelHandle,
 			&i.ChannelDisplayName,
 			&i.OwnerUsername,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRelatedVideosFallback = `-- name: ListRelatedVideosFallback :many
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive,
+       (v.channel_id = $1)::bool AS same_channel
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE v.privacy = 'public' AND v.state = 'published'
+  AND v.id <> $2
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $3 AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $3 AND ub.blocked_id = c.owner_id
+  )
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+  AND (NOT $4::bool OR NOT v.is_sensitive)
+  AND (
+      v.channel_id = $1
+      OR ($5::text IS NOT NULL AND v.category = $5)
+  )
+ORDER BY same_channel DESC, views DESC, v.created_at DESC, v.id DESC
+LIMIT $6
+`
+
+type ListRelatedVideosFallbackParams struct {
+	ChannelID     uuid.UUID   `json:"channel_id"`
+	ExcludeID     uuid.UUID   `json:"exclude_id"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	HideSensitive bool        `json:"hide_sensitive"`
+	Category      *string     `json:"category"`
+	ResultLimit   int32       `json:"result_limit"`
+}
+
+type ListRelatedVideosFallbackRow struct {
+	ID                 uuid.UUID `json:"id"`
+	ChannelID          uuid.UUID `json:"channel_id"`
+	Title              string    `json:"title"`
+	Description        string    `json:"description"`
+	Privacy            string    `json:"privacy"`
+	State              string    `json:"state"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	Views              int64     `json:"views"`
+	HasThumbnail       bool      `json:"has_thumbnail"`
+	ChannelHandle      string    `json:"channel_handle"`
+	ChannelDisplayName string    `json:"channel_display_name"`
+	AuthorDisplayName  string    `json:"author_display_name"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
+	IsSensitive        bool      `json:"is_sensitive"`
+	SameChannel        bool      `json:"same_channel"`
+}
+
+// Server-side "related videos" fallback (search-service W4) when vidra-search is
+// unavailable or empty: same-channel + same-category candidates, excluding the
+// source video, under the full canonical predicate (public+published, not
+// blocked, owner not unlisted, per-viewer mutes/blocks, hide_sensitive). Ordered
+// same-channel first, then by all-time views, then newest — the server-side
+// version of the frontend's current related heuristic.
+func (q *Queries) ListRelatedVideosFallback(ctx context.Context, arg ListRelatedVideosFallbackParams) ([]ListRelatedVideosFallbackRow, error) {
+	rows, err := q.db.Query(ctx, listRelatedVideosFallback,
+		arg.ChannelID,
+		arg.ExcludeID,
+		arg.ViewerID,
+		arg.HideSensitive,
+		arg.Category,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRelatedVideosFallbackRow
+	for rows.Next() {
+		var i ListRelatedVideosFallbackRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Description,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Views,
+			&i.HasThumbnail,
+			&i.ChannelHandle,
+			&i.ChannelDisplayName,
+			&i.AuthorDisplayName,
+			&i.DurationSeconds,
+			&i.IsSensitive,
+			&i.SameChannel,
 		); err != nil {
 			return nil, err
 		}
