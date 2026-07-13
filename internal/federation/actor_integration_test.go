@@ -304,7 +304,9 @@ func TestAnnounceVideoEnqueuesToFollowers(t *testing.T) {
 	}
 
 	// A published, public video on that channel.
-	v, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{ChannelID: ch.ID, Title: "Clip", Description: "", Privacy: "public"})
+	v, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{
+		ChannelID: ch.ID, Title: "Clip", Description: "", Privacy: "public", CommentsPolicy: "enabled",
+	})
 	if err != nil {
 		t.Fatalf("CreateVideo: %v", err)
 	}

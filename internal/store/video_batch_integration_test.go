@@ -166,7 +166,7 @@ func TestScheduledPublishPersists(t *testing.T) {
 	// precision, so a nanosecond-precision Go time would not round-trip exactly.
 	future := time.Now().Add(1 * time.Hour).UTC().Truncate(time.Microsecond)
 	created, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{
-		ChannelID: channelID, Title: "premiere", Privacy: "public",
+		ChannelID: channelID, Title: "premiere", Privacy: "public", CommentsPolicy: "enabled",
 		PublishAt: pgtype.Timestamptz{Time: future, Valid: true},
 	})
 	if err != nil {

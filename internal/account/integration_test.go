@@ -79,7 +79,9 @@ func TestAccountHardDeletePersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vid, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{ChannelID: ch.ID, Title: "mine", Privacy: "public"})
+	vid, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{
+		ChannelID: ch.ID, Title: "mine", Privacy: "public", CommentsPolicy: "enabled",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +117,9 @@ func TestAccountHardDeletePersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherVid, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{ChannelID: otherCh.ID, Title: "theirs", Privacy: "public"})
+	otherVid, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{
+		ChannelID: otherCh.ID, Title: "theirs", Privacy: "public", CommentsPolicy: "enabled",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +354,9 @@ func TestAccountExportQueuePersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vid, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{ChannelID: ch.ID, Title: "clip", Privacy: "public"})
+	vid, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{
+		ChannelID: ch.ID, Title: "clip", Privacy: "public", CommentsPolicy: "enabled",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
