@@ -216,6 +216,10 @@ func (f *authFakeRepo) CreateUser(_ context.Context, a sqlcgen.CreateUserParams)
 		PasswordHash: a.PasswordHash, Role: a.Role, IsActive: true, CreatedAt: time.Now(),
 		PendingEmailVerification: a.PendingEmailVerification,
 		HistoryEnabled:           a.HistoryEnabled,
+		// Search prefs mirror the migration's NOT NULL DEFAULT TRUE (W4).
+		SearchHistoryEnabled:               true,
+		PersonalizedSearchEnabled:          true,
+		PersonalizedRecommendationsEnabled: true,
 	}
 	f.users[key] = u
 	return u, nil
@@ -335,6 +339,15 @@ func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUser
 			}
 			if a.ProfilePublic != nil {
 				u.ProfilePublic = *a.ProfilePublic
+			}
+			if a.SearchHistoryEnabled != nil {
+				u.SearchHistoryEnabled = *a.SearchHistoryEnabled
+			}
+			if a.PersonalizedSearchEnabled != nil {
+				u.PersonalizedSearchEnabled = *a.PersonalizedSearchEnabled
+			}
+			if a.PersonalizedRecommendationsEnabled != nil {
+				u.PersonalizedRecommendationsEnabled = *a.PersonalizedRecommendationsEnabled
 			}
 			u.UpdatedAt = time.Now()
 			f.users[k] = u
