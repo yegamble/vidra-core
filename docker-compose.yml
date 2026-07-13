@@ -56,7 +56,7 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     profiles: ["core"]
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
