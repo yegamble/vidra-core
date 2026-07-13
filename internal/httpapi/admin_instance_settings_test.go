@@ -168,10 +168,11 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// + 4 federation policy gates (config-parity W12) + 2 remote-URI search
 	// gates (config-parity W13) + 5 sign-up & new-user keys (config-parity W7)
 	// + video_replace_enabled (config-parity W14) + 7 search & recommendation
-	// keys (search-service W4).
+	// keys (search-service W4) + search_service_enabled routing toggle
+	// (search-service W9).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 99 {
-		t.Fatalf("settings count = %d, want 99", len(got.Settings))
+	if len(got.Settings) != 100 {
+		t.Fatalf("settings count = %d, want 100", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

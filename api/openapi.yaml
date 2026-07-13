@@ -12104,6 +12104,13 @@ components:
               description: >-
                 Anonymous callers may search by URL/handle (default off —
                 the SSRF/abuse surface, matching PeerTube).
+            service_enabled:
+              type: boolean
+              description: >-
+                Effective smart-search availability (search-service W9): the
+                vidra-search service is wired AND the admin routing toggle
+                (search_service_enabled) is on. When false, all search surfaces
+                use their local backup path.
             mode:
               type: string
               enum: [simple, advanced]
@@ -12114,7 +12121,8 @@ components:
               type: boolean
               description: >-
                 Whether autocomplete suggestions are available (the search
-                service is wired AND the admin toggle is on).
+                service is wired AND the admin routing toggle is on AND the
+                suggestions toggle is on).
             personalized_search_enabled:
               type: boolean
               description: >-
