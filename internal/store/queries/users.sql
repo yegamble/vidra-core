@@ -1,5 +1,5 @@
 -- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
 FROM users
 WHERE id = $1;
 
@@ -27,7 +27,7 @@ FROM users
 WHERE id = $1 AND is_active = true;
 
 -- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
 FROM users
 WHERE lower(email) = lower($1);
 
@@ -36,7 +36,7 @@ WHERE lower(email) = lower($1);
 -- (deactivated accounts are treated as not found → the caller 404s, so an
 -- inactive account's existence is not leaked differently from an unknown one).
 -- Used to start a DM by username instead of by id.
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
 FROM users
 WHERE lower(username) = lower($1) AND is_active = true;
 
@@ -47,7 +47,7 @@ WHERE lower(username) = lower($1) AND is_active = true;
 -- is seeded from the new_user_history_enabled instance setting.
 INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public;
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled;
 
 -- name: CountUsers :one
 SELECT count(*) FROM users;
@@ -59,9 +59,14 @@ SET display_name = COALESCE(sqlc.narg('display_name'), display_name),
     unlisted     = COALESCE(sqlc.narg('unlisted'), unlisted),
     history_enabled = COALESCE(sqlc.narg('history_enabled'), history_enabled),
     profile_public = COALESCE(sqlc.narg('profile_public'), profile_public),
+    -- Search & recommendation preferences (search-service W4): the user half of
+    -- the two-factor personalization gate. Partial: NULL args leave each unchanged.
+    search_history_enabled = COALESCE(sqlc.narg('search_history_enabled'), search_history_enabled),
+    personalized_search_enabled = COALESCE(sqlc.narg('personalized_search_enabled'), personalized_search_enabled),
+    personalized_recommendations_enabled = COALESCE(sqlc.narg('personalized_recommendations_enabled'), personalized_recommendations_enabled),
     updated_at   = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public;
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled;
 
 -- name: DeactivateUser :exec
 UPDATE users
@@ -105,7 +110,7 @@ SET role       = COALESCE(sqlc.narg('role'), role),
                                ELSE storage_quota_bytes END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public;
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled;
 
 -- name: AnonymizeDeletedUser :execrows
 -- The §1 hard delete's final step: the users row is anonymised, NOT removed
