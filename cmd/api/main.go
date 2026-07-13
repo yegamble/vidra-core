@@ -59,6 +59,8 @@ import (
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/remotevideo"
+	"github.com/vidra/vidra-core/internal/searchclient"
+	"github.com/vidra/vidra-core/internal/searchevents"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store"
@@ -95,6 +97,13 @@ func run() error {
 	}
 	slog.SetDefault(logger)
 	opts := []httpapi.Option{httpapi.WithLogger(logger)}
+	// Prometheus metrics registry (P17.3). Built early when enabled so the search
+	// outbox enqueuer/drainer can meter drops/dead-letters; the scrape sources
+	// that need late-built services are registered lower down.
+	var metrics *observability.Metrics
+	if cfg.MetricsEnabled {
+		metrics = observability.NewMetrics()
+	}
 	logger.Info("configuration loaded",
 		"env", cfg.Environment,
 		"addr", cfg.HTTPAddr(),
@@ -203,6 +212,43 @@ func run() error {
 		return err
 	}
 	opts = append(opts, httpapi.WithInstanceDocumentsService(instancedocssvc))
+
+	// vidra-search integration (search-service W4). Wired only when
+	// SEARCH_SERVICE_URL is set; otherwise every search surface degrades to local
+	// behaviour and no client/enqueuer/worker is constructed. The enqueuer is
+	// built here (before the video service) so the publish/update/delete hooks
+	// below can capture it.
+	var searchEnqueuer *searchevents.Enqueuer
+	var searchClient *searchclient.Client
+	var searchDrainer *searchevents.Drainer
+	if cfg.SearchServiceEnabled() {
+		var enqOpts []searchevents.Option
+		var drainOpts []searchevents.DrainOption
+		if metrics != nil {
+			enqOpts = append(enqOpts, searchevents.WithMetrics(metrics))
+			drainOpts = append(drainOpts, searchevents.WithDrainMetrics(metrics))
+		}
+		searchEnqueuer = searchevents.NewEnqueuer(db.Queries(), logger, enqOpts...)
+		searchClient = searchclient.New(cfg.SearchServiceURL, cfg.SearchInternalSecret,
+			searchclient.WithTimeouts(
+				time.Duration(cfg.SearchSuggestTimeoutMS)*time.Millisecond,
+				time.Duration(cfg.SearchQueryTimeoutMS)*time.Millisecond,
+				time.Duration(cfg.SearchRecsTimeoutMS)*time.Millisecond,
+			),
+		)
+		searchDrainer = searchevents.NewDrainer(db.Queries(), searchClient, logger, drainOpts...)
+		// video.watch_progress throttle: one event per (user,video) per 30s window.
+		searchThrottle := cache.NewDeduper(rdb.Client)
+		opts = append(opts,
+			httpapi.WithSearchClient(searchClient),
+			httpapi.WithSearchEvents(searchEnqueuer),
+			httpapi.WithSearchWatchThrottle(func(ctx context.Context, key string) bool {
+				first, terr := searchThrottle.First(ctx, key, 30*time.Second)
+				return terr == nil && first
+			}),
+		)
+		logger.Info("vidra-search integration enabled", "url", cfg.SearchServiceURL)
+	}
 
 	if cfg.RateLimitEnabled {
 		counter := ratelimit.NewRedisCounter(rdb.Client)
@@ -683,6 +729,22 @@ func run() error {
 				if err := ipfsMirror.UnpinVideo(ctx, videoID); err != nil {
 					logger.Warn("ipfs mirror delete unpin failed", "video_id", videoID, "error", err)
 				}
+			}),
+		)
+	}
+	// Search indexing hooks (search-service W4): publish + metadata/privacy edit
+	// re-index the full doc (search recomputes eligibility); delete suppresses it.
+	// Best-effort — a search hiccup never fails the video mutation.
+	if searchEnqueuer != nil {
+		vopts = append(vopts,
+			video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
+				searchEnqueuer.EnqueueVideoUpsert(ctx, videoID)
+			}),
+			video.WithUpdateHook(func(ctx context.Context, videoID uuid.UUID) {
+				searchEnqueuer.EnqueueVideoUpsert(ctx, videoID)
+			}),
+			video.WithDeleteHook(func(ctx context.Context, videoID, channelID uuid.UUID, wasPublic bool) {
+				searchEnqueuer.EnqueueVideoSuppress(ctx, videoID, searchevents.SuppressDeleted)
 			}),
 		)
 	}
@@ -1168,6 +1230,21 @@ func run() error {
 		logger.Info("media gc worker started")
 	}
 
+	// Search outbox drain + reconcile sweep (search-service W4). Only when the
+	// search service is wired. The outbox worker delivers enqueued events to
+	// vidra-search on a 5s ticker; the reconcile worker performs a full
+	// index-repair sweep at startup and every SEARCH_RECONCILE_INTERVAL.
+	if searchDrainer != nil {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runSearchOutboxWorker(workerCtx, logger, searchDrainer)
+		go runSearchReconcileWorker(workerCtx, logger, searchEnqueuer, cfg.SearchReconcileInterval)
+		// Seed the effective config once at startup so a freshly-started search
+		// service is configured even if no admin change follows.
+		searchEnqueuer.EnqueueConfigUpdated(context.Background(), searchConfigFromSettings(settingssvc))
+		logger.Info("search outbox + reconcile workers started", "reconcile_interval", cfg.SearchReconcileInterval.String())
+	}
+
 	// Drain the IPFS mirror pin/unpin queue and periodically re-arm dead-letters
 	// (fix_plan P19). Only when IPFS_ENABLED — the mirror is a sidecar, so this
 	// never affects the authoritative write/serve paths.
@@ -1262,16 +1339,23 @@ func run() error {
 
 	// Prometheus RED metrics (P17.3), gated behind METRICS_ENABLED. The queue-depth
 	// gauge pulls from the jobs snapshot at scrape time. Off by default → zero cost.
-	if cfg.MetricsEnabled {
-		metrics := observability.NewMetrics()
+	if metrics != nil {
 		metrics.RegisterQueueDepthSource(func(ctx context.Context) ([]observability.QueueDepth, error) {
 			depths, err := jobStatusSvc.Depths(ctx)
 			if err != nil {
 				return nil, err
 			}
-			out := make([]observability.QueueDepth, len(depths))
-			for i, d := range depths {
-				out[i] = observability.QueueDepth{Queue: d.Queue, State: d.State, Count: d.Count}
+			out := make([]observability.QueueDepth, 0, len(depths)+3)
+			for _, d := range depths {
+				out = append(out, observability.QueueDepth{Queue: d.Queue, State: d.State, Count: d.Count})
+			}
+			// Search outbox depth by state (search-service W4).
+			if cfg.SearchServiceEnabled() {
+				if rows, derr := db.Queries().SearchOutboxDepth(ctx); derr == nil {
+					for _, r := range rows {
+						out = append(out, observability.QueueDepth{Queue: "search_outbox", State: r.State, Count: r.Depth})
+					}
+				}
 			}
 			return out, nil
 		})
@@ -1343,6 +1427,69 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 				logger.Warn("federation delivery drain failed", "error", err)
 			}
 		}
+	}
+}
+
+// runSearchOutboxWorker drains the search event outbox on a 5s ticker until ctx
+// is canceled (search-service W4). A single worker claims a batch (≤200) per pass
+// and delivers it to vidra-search; per-event failures are persisted in the queue
+// (retry/backoff/dead-letter), so only the claim-query error is logged.
+func runSearchOutboxWorker(ctx context.Context, logger *slog.Logger, drainer *searchevents.Drainer) {
+	const (
+		interval = 5 * time.Second
+		batch    = 200
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := drainer.Drain(ctx, batch); err != nil {
+				logger.Warn("search outbox drain failed", "error", err)
+			}
+		}
+	}
+}
+
+// runSearchReconcileWorker performs a full index-reconciliation sweep at startup
+// and then every interval (search-service W4). The sweep pages every eligible
+// public+published local video into reconcile.begin/page/end events so the search
+// service can repair the index against any dropped incremental event.
+func runSearchReconcileWorker(ctx context.Context, logger *slog.Logger, enq *searchevents.Enqueuer, interval time.Duration) {
+	if interval <= 0 {
+		interval = 24 * time.Hour
+	}
+	if err := enq.RunReconcile(ctx, searchevents.DefaultReconcilePageSize); err != nil {
+		logger.Warn("search reconcile sweep failed", "error", err)
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := enq.RunReconcile(ctx, searchevents.DefaultReconcilePageSize); err != nil {
+				logger.Warn("search reconcile sweep failed", "error", err)
+			}
+		}
+	}
+}
+
+// searchConfigFromSettings builds the effective search-config subset pushed to
+// vidra-search on startup (search-service W4).
+func searchConfigFromSettings(s *instancesettings.Service) searchevents.SearchConfig {
+	return searchevents.SearchConfig{
+		SearchMode:                         s.String(instancesettings.KeySearchMode),
+		SuggestionsEnabled:                 s.Bool(instancesettings.KeySearchSuggestionsEnabled),
+		PersonalizedSearchEnabled:          s.Bool(instancesettings.KeyPersonalizedSearchEnabled),
+		PersonalizedRecommendationsEnabled: s.Bool(instancesettings.KeyPersonalizedRecommendationsEnabled),
+		SearchHistoryEnabled:               s.Bool(instancesettings.KeySearchHistoryEnabled),
+		SearchEventRetentionDays:           s.Int(instancesettings.KeySearchEventRetentionDays),
+		MinimumQueryUserCount:              s.Int(instancesettings.KeySearchMinQueryUserCount),
+		HideSensitiveDefault:               s.String(instancesettings.KeySensitiveContentPolicy) == instancesettings.SensitiveContentPolicyHide,
 	}
 }
 
