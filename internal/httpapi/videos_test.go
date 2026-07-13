@@ -659,6 +659,66 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 	return all[lo:hi], nil
 }
 
+// ListPublicVideosByIDs hydrates a set of ids under the (simplified) canonical
+// predicate, mirroring the real query for the search-service W4 handlers.
+func (f *videoFakeRepo) ListPublicVideosByIDs(_ context.Context, a sqlcgen.ListPublicVideosByIDsParams) ([]sqlcgen.ListPublicVideosByIDsRow, error) {
+	want := make(map[uuid.UUID]bool, len(a.Ids))
+	for _, id := range a.Ids {
+		want[id] = true
+	}
+	var rows []sqlcgen.ListPublicVideosByIDsRow
+	for _, r := range f.videos {
+		if !want[r.ID] || r.Privacy != "public" || r.State != "published" {
+			continue
+		}
+		if a.HideSensitive && r.IsSensitive {
+			continue
+		}
+		if f.mutedFromFeed(a.ViewerID, r.ChannelID) || f.ownerUnlisted(r.ChannelID) {
+			continue
+		}
+		rows = append(rows, sqlcgen.ListPublicVideosByIDsRow{
+			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			AuthorDisplayName: f.authorName(r.ChannelID), IsSensitive: r.IsSensitive,
+		})
+	}
+	return rows, nil
+}
+
+// ListRelatedVideosFallback mirrors the server-side related heuristic.
+func (f *videoFakeRepo) ListRelatedVideosFallback(_ context.Context, a sqlcgen.ListRelatedVideosFallbackParams) ([]sqlcgen.ListRelatedVideosFallbackRow, error) {
+	var rows []sqlcgen.ListRelatedVideosFallbackRow
+	for _, r := range f.videos {
+		if r.ID == a.ExcludeID || r.Privacy != "public" || r.State != "published" {
+			continue
+		}
+		if a.HideSensitive && r.IsSensitive {
+			continue
+		}
+		if f.mutedFromFeed(a.ViewerID, r.ChannelID) || f.ownerUnlisted(r.ChannelID) {
+			continue
+		}
+		sameChannel := r.ChannelID == a.ChannelID
+		matchCat := a.Category != nil && r.Category != nil && *r.Category == *a.Category
+		if !sameChannel && !matchCat {
+			continue
+		}
+		rows = append(rows, sqlcgen.ListRelatedVideosFallbackRow{
+			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			AuthorDisplayName: f.authorName(r.ChannelID), IsSensitive: r.IsSensitive,
+			SameChannel: sameChannel,
+		})
+	}
+	if int(a.ResultLimit) < len(rows) {
+		rows = rows[:a.ResultLimit]
+	}
+	return rows, nil
+}
+
 // ListAdminVideos returns all videos (any privacy/state) with the current block
 // status, mirroring the real admin overview query. An optional title filter.
 func (f *videoFakeRepo) ListAdminVideos(_ context.Context, a sqlcgen.ListAdminVideosParams) ([]sqlcgen.ListAdminVideosRow, error) {
