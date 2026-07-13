@@ -591,7 +591,7 @@ services:
   # mesh adds a second cluster peer bound to kubo-private-2 — see README (documented
   # extension). The cluster proxy/swarm ports stay internal to the compose network.
   ipfs-cluster-private:
-    image: ipfs/ipfs-cluster:v1.1.1
+    image: ipfs/ipfs-cluster:v1.1.6
     profiles: ["ipfs-private-cluster"]
     depends_on:
       kubo-private:
