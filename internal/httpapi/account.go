@@ -61,6 +61,7 @@ func (s *Server) handleDeleteAccount(c echo.Context) error {
 		return err
 	}
 	s.audit(c, observability.ActionAccountDelete, observability.ResultSuccess, userID.String(), "")
+	s.purgeUserFromSearch(c.Request().Context(), userID)
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -88,6 +89,7 @@ func (s *Server) handleAdminDeleteUser(c echo.Context) error {
 	}
 	// Reason carries only the target's id — safe, no PII.
 	s.audit(c, observability.ActionAdminUserDelete, observability.ResultSuccess, adminID.String(), "target="+targetID.String())
+	s.purgeUserFromSearch(c.Request().Context(), targetID)
 	return c.NoContent(http.StatusNoContent)
 }
 

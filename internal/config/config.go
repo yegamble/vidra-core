@@ -157,6 +157,28 @@ type Config struct {
 	// under and the language hint passed to Whisper. Default "en".
 	WhisperDefaultLanguage string
 
+	// --- vidra-search integration (search-service W4) ---
+	//
+	// SearchServiceURL is the vidra-search origin (e.g. http://search:8080), with
+	// any trailing slash trimmed. Empty DISABLES the integration entirely:
+	// suggestions degrade to an empty list, search + recommendations fall back to
+	// local SQL, and no search client or outbox/reconcile workers run.
+	// SearchServiceEnabled() reports URL != "".
+	SearchServiceURL string
+	// SearchInternalSecret is the shared HMAC secret for the internal S2S auth
+	// header (matches vidra-search INTERNAL_SECRET). Required (>=32 chars) in
+	// production when SearchServiceURL is set; NEVER commit a real value.
+	SearchInternalSecret string
+	// SearchSuggestTimeoutMS / SearchQueryTimeoutMS / SearchRecsTimeoutMS override
+	// the per-endpoint client deadlines in milliseconds (0 = the client defaults,
+	// 250 / 800 / 800 ms respectively).
+	SearchSuggestTimeoutMS int
+	SearchQueryTimeoutMS   int
+	SearchRecsTimeoutMS    int
+	// SearchReconcileInterval is the cadence of the full index reconcile sweep
+	// (default 24h). Tunable via SEARCH_RECONCILE_INTERVAL.
+	SearchReconcileInterval time.Duration
+
 	// FederationKeyKEK is the base64 (standard) 32-byte key-encryption key used to
 	// envelope-encrypt actor private keys at rest (AES-256-GCM via internal/secretbox).
 	// Required in production when FederationEnabled; empty in dev stores keys raw
@@ -553,6 +575,9 @@ func Load() (*Config, error) {
 		WhisperEnabled:                 getEnvBool("WHISPER_ENABLED", false),
 		WhisperEndpoint:                strings.TrimRight(getEnv("WHISPER_ENDPOINT", ""), "/"),
 		WhisperDefaultLanguage:         strings.TrimSpace(getEnv("WHISPER_DEFAULT_LANGUAGE", "en")),
+		SearchServiceURL:               strings.TrimRight(getEnv("SEARCH_SERVICE_URL", ""), "/"),
+		SearchInternalSecret:           getEnv("SEARCH_INTERNAL_SECRET", ""),
+		SearchReconcileInterval:        getEnvDuration("SEARCH_RECONCILE_INTERVAL", 24*time.Hour),
 		LiveRTMPURL:                    getEnv("LIVE_RTMP_URL", ""),
 		LiveIngestSecret:               getEnv("LIVE_INGEST_SECRET", ""),
 		LiveHLSRoot:                    strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
@@ -698,6 +723,23 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.IPFSPinConcurrency = pinConcurrency
+
+	// Search client per-endpoint deadline overrides (ms; 0 = client defaults).
+	searchSuggestMS, err := getEnvInt("SEARCH_SUGGEST_TIMEOUT_MS", 0)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SearchSuggestTimeoutMS = searchSuggestMS
+	searchQueryMS, err := getEnvInt("SEARCH_QUERY_TIMEOUT_MS", 0)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SearchQueryTimeoutMS = searchQueryMS
+	searchRecsMS, err := getEnvInt("SEARCH_RECS_TIMEOUT_MS", 0)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SearchRecsTimeoutMS = searchRecsMS
 
 	// Private-tier worker tuning INHERITS the public defaults when unset (spec §2).
 	cfg.IPFSPrivateAddTimeout = getEnvDuration("IPFS_PRIVATE_ADD_TIMEOUT", cfg.IPFSAddTimeout)
@@ -879,6 +921,17 @@ func (c *Config) validate() error {
 	}
 	if c.WhisperDefaultLanguage != "" && !languageTag.MatchString(c.WhisperDefaultLanguage) {
 		return fmt.Errorf("config: WHISPER_DEFAULT_LANGUAGE %q must be a BCP-47-ish language tag (e.g. en, pt-BR)", c.WhisperDefaultLanguage)
+	}
+	// vidra-search integration (search-service W4): validate the URL shape when
+	// set, and require a strong shared secret in production.
+	if c.SearchServiceURL != "" {
+		u, err := url.Parse(c.SearchServiceURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("config: SEARCH_SERVICE_URL must be a valid http(s) URL when set")
+		}
+		if c.Environment == "production" && len(c.SearchInternalSecret) < 32 {
+			return fmt.Errorf("config: SEARCH_INTERNAL_SECRET must be at least 32 characters when SEARCH_SERVICE_URL is set in production")
+		}
 	}
 	// yt-dlp platform-URL import: validate the combination only when enabled so a
 	// default (disabled) deployment never trips these. YTDLP_MAX_HEIGHT is bounded
@@ -1084,6 +1137,13 @@ func (c *Config) validatePeerTubeImport() error {
 // PeerTubeImportEnabled AND this is true.
 func (c *Config) PeerTubeImportConfigured() bool {
 	return c.PeerTubeImportEnabled && strings.TrimSpace(c.PeerTubeSourceDatabaseURL) != ""
+}
+
+// SearchServiceEnabled reports whether the vidra-search integration is wired
+// (SEARCH_SERVICE_URL set). When false, every search surface degrades to local
+// behaviour and no search client or outbox/reconcile worker is constructed.
+func (c *Config) SearchServiceEnabled() bool {
+	return c.SearchServiceURL != ""
 }
 
 // oauthProviderName constrains provider names to URL-path- and env-var-safe

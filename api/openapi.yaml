@@ -1669,6 +1669,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/users/{username}/profile:
+    get:
+      operationId: getUserProfile
+      summary: Get a user's profile
+      description: >-
+        Returns an active account's profile and owned channels when the account
+        opted into a public profile. Private, inactive, and unknown accounts all
+        return 404. An authenticated owner may view their own private profile as
+        a preview.
+      tags: [users]
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The profile and its publishing channels.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicUserProfile"
+        "404":
+          description: The profile is private, inactive, or unknown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/users/{id}/donation-addresses:
     get:
       operationId: listUserDonationAddresses
@@ -2773,6 +2805,135 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: An unknown category or language filter value.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/search/suggestions:
+    get:
+      operationId: searchSuggestions
+      summary: Autocomplete suggestions for a search prefix
+      description: >-
+        Proxies query/video/channel/tag/history autocomplete to the search
+        service (search-service W4) with core-computed personalization and
+        history flags (instance setting AND user pref AND signed-in). Optional
+        auth. Always 200: a disabled service, a disabled suggestions toggle, an
+        empty query, a timeout, or any error degrades to an empty list — a
+        suggestion box never errors.
+      tags: [search]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 10
+      responses:
+        "200":
+          description: Suggestions (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [query, suggestions]
+                properties:
+                  query:
+                    type: string
+                  suggestions:
+                    type: array
+                    items:
+                      type: object
+                      required: [text, type, is_personal]
+                      properties:
+                        text:
+                          type: string
+                        type:
+                          type: string
+                          description: query | video | channel | tag | history
+                        video_id:
+                          type: string
+                        channel_handle:
+                          type: string
+                        is_personal:
+                          type: boolean
+  /api/v1/recommendations/home:
+    get:
+      operationId: getHomeRecommendations
+      summary: Home ("for you" / trending) recommendation rail
+      description: >-
+        Personalized home recommendations from the search service when the
+        instance + user allow it and the caller is signed in; otherwise the
+        trending feed. Optional auth. Never errors — any search failure falls
+        back to the trending feed (source="fallback").
+      tags: [search]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: A recommendation rail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecommendationsResponse"
+  /api/v1/search/events:
+    post:
+      operationId: recordSearchEvents
+      summary: Record behavioural search/discovery events
+      description: >-
+        Accepts a batch (<= 20) of behavioural events (suggestions shown /
+        selected, search submitted, result clicked, impression, play started,
+        completed), enriches each with the caller's user id, session, and an
+        allow_history flag, and enqueues them for the search service
+        (search-service W4). Optional auth, rate-limited. Never blocks on the
+        search service.
+      tags: [search]
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [events]
+              properties:
+                events:
+                  type: array
+                  maxItems: 20
+                  items:
+                    type: object
+                    required: [type]
+                    properties:
+                      type:
+                        type: string
+                        description: One of the behavioural-event allowlist types.
+      responses:
+        "202":
+          description: Events accepted for asynchronous delivery.
+        "422":
+          description: More than 20 events, or an unsupported event type.
           content:
             application/json:
               schema:
@@ -5754,6 +5915,148 @@ paths:
           description: The video is no longer saved.
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/recommendations:
+    get:
+      operationId: getVideoRecommendations
+      summary: Related-videos rail for a watch page
+      description: >-
+        Related recommendations for a video from the search service
+        (search-service W4); falls back to a server-side same-channel +
+        same-category heuristic when the service is unavailable or returns
+        nothing. Optional auth.
+      tags: [search]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 12
+      responses:
+        "200":
+          description: A related-videos rail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecommendationsResponse"
+  /api/v1/me/search-history:
+    get:
+      operationId: getMySearchHistory
+      summary: Get my search history
+      description: >-
+        Returns the caller's stored search history from the search service
+        (search-service W4). Requires auth. Answers 503 search_unavailable when
+        the search service is disabled or unreachable — never a fake empty
+        history.
+      tags: [search]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: The caller's search history.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, limit, offset]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        query:
+                          type: string
+                        normalized_query:
+                          type: string
+                        last_used_at:
+                          type: string
+                          format: date-time
+                        use_count:
+                          type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+        "503":
+          description: The search service is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: clearMySearchHistory
+      summary: Clear my entire search history
+      description: >-
+        Clears the caller's entire search history in the search service
+        (search-service W4). Requires auth. Answers 503 search_unavailable when
+        the service is down — the delete must not silently fail.
+      tags: [search]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: History cleared.
+        "503":
+          description: The search service is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/search-history/{query}:
+    delete:
+      operationId: deleteMySearchHistoryEntry
+      summary: Delete a single search-history entry
+      description: >-
+        Removes one normalized query from the caller's search history
+        (search-service W4). Requires auth. Answers 503 search_unavailable when
+        the service is down.
+      tags: [search]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: query
+          in: path
+          required: true
+          description: The normalized query string to remove (path-escaped).
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Entry removed.
+        "503":
+          description: The search service is unavailable.
           content:
             application/json:
               schema:
@@ -11801,6 +12104,30 @@ components:
               description: >-
                 Anonymous callers may search by URL/handle (default off —
                 the SSRF/abuse surface, matching PeerTube).
+            mode:
+              type: string
+              enum: [simple, advanced]
+              description: >-
+                Effective search ranking family (search-service W4): simple
+                heuristics or advanced learned/behavioural signals.
+            suggestions_enabled:
+              type: boolean
+              description: >-
+                Whether autocomplete suggestions are available (the search
+                service is wired AND the admin toggle is on).
+            personalized_search_enabled:
+              type: boolean
+              description: >-
+                Instance-level personalized-search gate (search-service W4).
+            personalized_recommendations_enabled:
+              type: boolean
+              description: >-
+                Instance-level personalized-recommendations gate (search-service
+                W4).
+            search_history_enabled:
+              type: boolean
+              description: >-
+                Instance-level search-history gate (search-service W4).
     InstanceAssetRef:
       type: object
       description: >-
@@ -11922,7 +12249,7 @@ components:
               type: string
     User:
       type: object
-      required: [id, username, email, role, email_verified, display_name, bio, history_enabled, created_at]
+      required: [id, username, email, role, email_verified, display_name, bio, history_enabled, profile_public, created_at]
       properties:
         id:
           type: string
@@ -11959,6 +12286,26 @@ components:
             no-op 204). Seeded at account creation from the
             new_user_history_enabled instance setting; existing entries are
             kept (clear them via DELETE /me/history).
+        profile_public:
+          type: boolean
+          description: >-
+            Whether the account profile is publicly accessible. Private,
+            inactive, and unknown profile URLs all return 404.
+        search_history_enabled:
+          type: boolean
+          description: >-
+            Per-user search-history preference (search-service W4): the user
+            half of the two-factor history gate. Default true.
+        personalized_search_enabled:
+          type: boolean
+          description: >-
+            Per-user personalized-search preference (search-service W4).
+            Default true.
+        personalized_recommendations_enabled:
+          type: boolean
+          description: >-
+            Per-user personalized-recommendations preference (search-service
+            W4). Default true.
         created_at:
           type: string
           format: date-time
@@ -12015,6 +12362,42 @@ components:
           description: >-
             Toggle the per-user watch-history preference (see
             User.history_enabled).
+        profile_public:
+          type: boolean
+          description: Toggle public access to the account profile.
+        search_history_enabled:
+          type: boolean
+          description: Toggle the per-user search-history preference (search-service W4).
+        personalized_search_enabled:
+          type: boolean
+          description: Toggle the per-user personalized-search preference (search-service W4).
+        personalized_recommendations_enabled:
+          type: boolean
+          description: Toggle the per-user personalized-recommendations preference (search-service W4).
+    PublicUserProfile:
+      type: object
+      required: [id, username, display_name, bio, created_at, has_avatar, has_banner, channels]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        bio:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        has_avatar:
+          type: boolean
+        has_banner:
+          type: boolean
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/Channel"
     Channel:
       type: object
       required: [id, owner_id, handle, display_name, description, follower_count, created_at]
@@ -13286,6 +13669,30 @@ components:
         offset:
           type: integer
           example: 0
+    RecommendationsResponse:
+      type: object
+      required: [items, personalized, source]
+      description: >-
+        A recommendation rail (search-service W4). items are video cards, each
+        with an added `reason`; personalized reflects whether personalization
+        was applied; source is "search" (ranked by vidra-search) or "fallback"
+        (server-side trending / related heuristic).
+      properties:
+        items:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/Video"
+              - type: object
+                properties:
+                  reason:
+                    type: string
+                    description: subscribed | trending | co_watch | similar | fresh | popular | related
+        personalized:
+          type: boolean
+        source:
+          type: string
+          enum: [search, fallback]
     RemoteSearchResult:
       type: object
       required: [type]

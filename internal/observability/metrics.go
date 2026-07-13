@@ -33,6 +33,11 @@ type Metrics struct {
 	registry *prometheus.Registry
 	requests *prometheus.CounterVec
 	duration *prometheus.HistogramVec
+	// searchEnqueueFailures / searchDeadLetters count best-effort search-outbox
+	// drops (enqueue-time) and dead-letters (drain-time) by event type
+	// (search-service W4). Labels are the fixed event-type set — bounded.
+	searchEnqueueFailures *prometheus.CounterVec
+	searchDeadLetters     *prometheus.CounterVec
 }
 
 // NewMetrics builds the RED instruments on a fresh private registry, together
@@ -52,8 +57,16 @@ func NewMetrics() *Metrics {
 			Help:    "HTTP request duration in seconds, labelled by method, route template, and status class.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"method", "route", "status_class"}),
+		searchEnqueueFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "vidra_search_enqueue_failures_total",
+			Help: "Search-outbox events dropped at enqueue time (best-effort), by event type.",
+		}, []string{"event_type"}),
+		searchDeadLetters: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "vidra_search_dead_letters_total",
+			Help: "Search-outbox events dead-lettered after the retry cap, by event type.",
+		}, []string{"event_type"}),
 	}
-	reg.MustRegister(m.requests, m.duration)
+	reg.MustRegister(m.requests, m.duration, m.searchEnqueueFailures, m.searchDeadLetters)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -72,6 +85,16 @@ func (m *Metrics) ObserveRequest(method, route string, status int, d time.Durati
 	class := statusClass(status)
 	m.requests.WithLabelValues(method, route, class).Inc()
 	m.duration.WithLabelValues(method, route, class).Observe(d.Seconds())
+}
+
+// IncSearchEnqueueFailure counts one dropped search event (enqueue-time).
+func (m *Metrics) IncSearchEnqueueFailure(eventType string) {
+	m.searchEnqueueFailures.WithLabelValues(eventType).Inc()
+}
+
+// IncSearchDeadLetter counts one dead-lettered search event (drain-time).
+func (m *Metrics) IncSearchDeadLetter(eventType string) {
+	m.searchDeadLetters.WithLabelValues(eventType).Inc()
 }
 
 // QueueDepth is one durable-queue depth sample: how many rows sit in a given

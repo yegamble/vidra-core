@@ -217,7 +217,55 @@ const (
 	KeyRegistrationMinimumAge               = "registration_minimum_age"
 	KeyDefaultUserDailyQuotaBytes           = "default_user_daily_quota_bytes"
 	KeyNewUserHistoryEnabled                = "new_user_history_enabled"
+
+	// Search & recommendations (search-service W4). None have env/config
+	// backing: the runtime settings are the operator controls, defaults preserve
+	// the shipped (fully-on, simple-mode) behaviour. A change to ANY of these
+	// pushes a search.config_updated event to the search service. search_mode
+	// picks the ranking family (simple heuristics vs advanced learned/behavioural);
+	// the personalization/history gates are the INSTANCE half of the two-factor
+	// per-request gate (instance setting AND user pref AND signed-in). All live on
+	// the advanced admin page, section 'search' (the frontend mirrors the id).
+	KeySearchMode                         = "search_mode"
+	KeySearchSuggestionsEnabled           = "search_suggestions_enabled"
+	KeyPersonalizedSearchEnabled          = "personalized_search_enabled"
+	KeyPersonalizedRecommendationsEnabled = "personalized_recommendations_enabled"
+	KeySearchHistoryEnabled               = "search_history_enabled"
+	KeySearchEventRetentionDays           = "search_event_retention_days"
+	KeySearchMinQueryUserCount            = "search_min_query_user_count"
 )
+
+// SearchSettingKeys are the settings whose change pushes a search.config_updated
+// event to the search service (search-service W4). Order is irrelevant.
+var SearchSettingKeys = []string{
+	KeySearchMode,
+	KeySearchSuggestionsEnabled,
+	KeyPersonalizedSearchEnabled,
+	KeyPersonalizedRecommendationsEnabled,
+	KeySearchHistoryEnabled,
+	KeySearchEventRetentionDays,
+	KeySearchMinQueryUserCount,
+}
+
+// searchSettingKeySet is the membership set for IsSearchSettingKey.
+var searchSettingKeySet = func() map[string]bool {
+	m := make(map[string]bool, len(SearchSettingKeys))
+	for _, k := range SearchSettingKeys {
+		m[k] = true
+	}
+	return m
+}()
+
+// IsSearchSettingKey reports whether key is one of the search settings whose
+// change must be pushed to the search service.
+func IsSearchSettingKey(key string) bool { return searchSettingKeySet[key] }
+
+// Search-mode enum (KeySearchMode). Simple = deterministic heuristics that work
+// with zero behavioural data; advanced layers learned/behavioural signals.
+var SearchModeOptions = []string{"simple", "advanced"}
+
+// DefaultSearchMode keeps the shipped, always-available ranking family.
+const DefaultSearchMode = "simple"
 
 // Kind is a setting's value type, reported to clients and used to validate the
 // incoming PATCH payload.
@@ -680,6 +728,27 @@ var specs = []spec{
 	{key: KeyDefaultUserDailyQuotaBytes, kind: KindInt,
 		defInt: func(Defaults) int64 { return 0 }, validate: intMin(0),
 		page: PageVOD, section: "uploads"},
+
+	// Search & recommendations (search-service W4). Defaults preserve the shipped
+	// behaviour: fully on, simple mode. A change to any of these enqueues a
+	// search.config_updated (handled in the admin settings handler).
+	{key: KeySearchMode, kind: KindEnum, defString: hardcoded(DefaultSearchMode),
+		options: SearchModeOptions, validate: enumOf(SearchModeOptions),
+		page: PageAdvanced, section: "search"},
+	{key: KeySearchSuggestionsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageAdvanced, section: "search"},
+	{key: KeyPersonalizedSearchEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageAdvanced, section: "search"},
+	{key: KeyPersonalizedRecommendationsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageAdvanced, section: "search"},
+	{key: KeySearchHistoryEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageAdvanced, section: "search"},
+	{key: KeySearchEventRetentionDays, kind: KindInt,
+		defInt: func(Defaults) int64 { return 90 }, validate: intRange(1, 365),
+		page: PageAdvanced, section: "search"},
+	{key: KeySearchMinQueryUserCount, kind: KindInt,
+		defInt: func(Defaults) int64 { return 3 }, validate: intRange(1, 100),
+		page: PageAdvanced, section: "search"},
 }
 
 var specByKey = func() map[string]spec {
