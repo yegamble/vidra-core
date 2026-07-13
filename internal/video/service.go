@@ -2053,7 +2053,18 @@ type AdminVideo struct {
 	ChannelHandle      string
 	ChannelDisplayName string
 	Views              int64
-	CreatedAt          time.Time
+	PublishedAt        time.Time
+	DurationSeconds    *int32
+	IsLocal            bool
+	OriginDomain       string
+	WatchURL           string
+	IsSensitive        bool
+	ExternalLink       bool
+	HasThumbnail       bool
+	HasOriginal        bool
+	HLSCount           int32
+	WebVideoCount      int32
+	SizeBytes          int64
 	Blocked            bool
 }
 
@@ -2083,7 +2094,18 @@ func (s *Service) ListAdmin(ctx context.Context, query string, limit, offset int
 			ChannelHandle:      r.ChannelHandle,
 			ChannelDisplayName: r.ChannelDisplayName,
 			Views:              r.Views,
-			CreatedAt:          r.CreatedAt,
+			PublishedAt:        r.CreatedAt,
+			DurationSeconds:    r.DurationSeconds,
+			IsLocal:            r.IsLocal,
+			OriginDomain:       r.OriginDomain,
+			WatchURL:           r.WatchUrl,
+			IsSensitive:        r.IsSensitive,
+			ExternalLink:       r.ExternalLink,
+			HasThumbnail:       r.HasThumbnail,
+			HasOriginal:        r.HasOriginal,
+			HLSCount:           r.HlsCount,
+			WebVideoCount:      r.WebVideoCount,
+			SizeBytes:          r.SizeBytes,
 			Blocked:            r.Blocked,
 		})
 	}

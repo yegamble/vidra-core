@@ -4,8 +4,8 @@
 -- name: EnqueueTranscodeJob :exec
 -- Idempotent per live job: at most one pending/running job per video (partial
 -- unique index), so a re-upload while one is queued does not double the work.
-INSERT INTO transcode_jobs (video_id, source_key)
-VALUES ($1, $2)
+INSERT INTO transcode_jobs (video_id, source_key, transcode_type)
+VALUES ($1, $2, $3)
 ON CONFLICT (video_id) WHERE state IN ('pending', 'running') DO NOTHING;
 
 -- name: ClaimDueTranscodeJobs :many
@@ -20,7 +20,7 @@ WHERE id IN (
     ORDER BY next_attempt_at
     LIMIT $1
 )
-RETURNING id, video_id, source_key, attempts;
+RETURNING id, video_id, source_key, transcode_type, attempts;
 
 -- name: HasLiveTranscodeJob :one
 -- Whether a pending/running transcode job exists for the video. The video-file
@@ -67,8 +67,8 @@ RETURNING *;
 SELECT * FROM streaming_playlists WHERE video_id = $1;
 
 -- name: CreateVideoRendition :one
-INSERT INTO video_renditions (video_id, height, width, key_prefix)
-VALUES ($1, $2, $3, $4)
+INSERT INTO video_renditions (video_id, height, width, key_prefix, size_bytes)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: DeleteVideoRenditions :exec
@@ -76,3 +76,28 @@ DELETE FROM video_renditions WHERE video_id = $1;
 
 -- name: ListVideoRenditions :many
 SELECT * FROM video_renditions WHERE video_id = $1 ORDER BY height DESC;
+
+-- name: UpsertTranscodeStep :exec
+INSERT INTO transcode_steps (
+    transcode_job_id, video_id, format, height, width, state, stage,
+    progress_percent, started_at, finished_at
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8,
+    CASE WHEN $6 = 'running' THEN now() ELSE NULL END,
+    CASE WHEN $6 IN ('succeeded', 'failed') THEN now() ELSE NULL END
+)
+ON CONFLICT (transcode_job_id, format, height) DO UPDATE SET
+    width = EXCLUDED.width,
+    state = EXCLUDED.state,
+    stage = EXCLUDED.stage,
+    progress_percent = EXCLUDED.progress_percent,
+    started_at = CASE
+        WHEN transcode_steps.started_at IS NULL AND EXCLUDED.state = 'running' THEN now()
+        ELSE transcode_steps.started_at
+    END,
+    finished_at = CASE
+        WHEN EXCLUDED.state IN ('succeeded', 'failed') THEN now()
+        ELSE NULL
+    END,
+    updated_at = now();

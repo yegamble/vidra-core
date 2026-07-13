@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/captionjob"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -29,6 +30,8 @@ type captionJobView struct {
 	State     string    `json:"state"`
 	Error     string    `json:"error,omitempty"`
 	Attempts  int       `json:"attempts"`
+	Stage     string    `json:"stage,omitempty"`
+	Progress  int16     `json:"progress_percent"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -46,21 +49,23 @@ func newCaptionJobResponse(row sqlcgen.CaptionJob) captionJobResponse {
 		State:     row.State,
 		Error:     row.Error,
 		Attempts:  int(row.Attempts),
+		Stage:     row.Stage,
+		Progress:  row.ProgressPercent,
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
 	}}
 }
 
 // handleRequestAutoCaption enqueues an auto-caption (Whisper) job for a video
-// (owner only) and returns 202 with the queued job. Ownership is checked before
-// any enqueue so a non-owner or unknown video is 404 and nothing runs on their
-// behalf. When the admin runtime setting turns auto-captioning off it is 403
+// for its owner or a moderator/admin and returns 202 with the queued job.
+// Ordinary non-owners and unknown videos are 404. When the admin runtime
+// setting turns auto-captioning off it is 403
 // feature_disabled (W8); when only the Whisper boot capability is missing it is
 // 503; a bad language tag is 422; while a job is already in flight for the
 // video it is 409. The audio-extraction, transcription, and caption upsert run
 // in the background worker; watch progress via GET /videos/:id/captions/auto.
 func (s *Server) handleRequestAutoCaption(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
+	userID, role, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
@@ -83,8 +88,11 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
-	// Authorize before any enqueue: a non-owner (or unknown video) gets 404.
-	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
+	// Owners and privileged moderators may request recovery work. Ordinary
+	// non-owners still receive 404 so private-video existence is not disclosed.
+	v, gerr := s.videosvc.GetByID(ctx, id)
+	privileged := role == "admin" || role == "moderator"
+	if gerr != nil || (v.OwnerID != userID && !privileged) {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	job, err := s.captionjobsvc.Enqueue(ctx, id, strings.TrimSpace(in.Language))
@@ -100,14 +108,18 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 			return err
 		}
 	}
+	if privileged {
+		s.audit(c, observability.ActionVideoCaptionGenerate, observability.ResultSuccess,
+			userID.String(), "video="+id.String())
+	}
 	return c.JSON(http.StatusAccepted, newCaptionJobResponse(job))
 }
 
 // handleGetAutoCaption reports the status of a video's most recent auto-caption
-// job (owner only). Non-owner/unknown video → 404; a video that never requested
-// auto-captioning → 404.
+// job to its owner or a moderator/admin. Ordinary non-owner/unknown video → 404;
+// a video that never requested auto-captioning → 404.
 func (s *Server) handleGetAutoCaption(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
+	userID, role, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
@@ -116,7 +128,8 @@ func (s *Server) handleGetAutoCaption(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	ctx := c.Request().Context()
-	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
+	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil ||
+		(v.OwnerID != userID && role != "admin" && role != "moderator") {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	job, err := s.captionjobsvc.LatestForVideo(ctx, id)

@@ -384,12 +384,20 @@ is a non-goal.
 **Per-user player settings** (PLAY-07): the signed-in user's playback defaults —
 `GET /api/v1/me/player-settings` always returns the full effective object
 (`{autoplay_next, default_speed, default_quality, captions_default,
-theater_default}`; a user who never saved gets the built-in defaults, no 404).
-`PUT /api/v1/me/player-settings` is a **merge**: any subset of the five fields is
-accepted and omitted fields keep their stored value (the first PUT creates the
-row). Validation is 400 — `default_speed` must be one of the shared playback
-rates `0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4` (kept in lockstep
-with the frontend `PLAYBACK_RATES`) and `default_quality` must be `auto` or a
+theater_default, video_card_previews_enabled}`; a user who never saved gets the
+effective defaults, no 404). Until the user explicitly chooses,
+`video_card_previews_enabled` inherits the public `GET /api/v1/instance` flag
+`features.video_card_previews_default_enabled` (backed by the admin setting of
+the same name, default false); explicit true or false survives later changes to
+that default. It is the user half of a two-factor hover-preview gate: the public
+`features.video_card_previews` global flag (backed by the admin
+`video_card_previews_enabled` setting, also default false) must be true as well.
+`PUT /api/v1/me/player-settings` is a **merge**: any subset of the six fields is
+accepted and omitted fields keep their stored value; omitting the preview field
+preserves inherited state. Validation is 400 — `default_speed` must be one of
+the shared playback rates `0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5,
+4` (kept in lockstep with the frontend `PLAYBACK_RATES`) and `default_quality`
+must be `auto` or a
 rendition height like `720p` (`^[0-9]{2,4}p$`). Scope is per-user only —
 per-video/per-channel overrides are deliberately not ported.
 

@@ -34,7 +34,7 @@ func (q *Queries) CountOperationalJobEvents(ctx context.Context, arg CountOperat
 
 const countOperationalJobRuns = `-- name: CountOperationalJobRuns :one
 SELECT count(*)::bigint
-FROM job_runs
+FROM job_runs j
 WHERE ($1::text IS NULL OR state = $1)
   AND ($2::text IS NULL OR type = $2)
   AND ($3::text IS NULL OR queue = $3)
@@ -45,6 +45,9 @@ WHERE ($1::text IS NULL OR state = $1)
        OR ((state IN ('failed', 'dead_lettered')) = $7))
   AND ($8::timestamptz IS NULL OR created_at >= $8)
   AND ($9::timestamptz IS NULL OR created_at <= $9)
+  AND NOT (j.queue = 'transcode_jobs' AND EXISTS (
+      SELECT 1 FROM job_runs child WHERE child.parent_job_id = j.id
+  ))
 `
 
 type CountOperationalJobRunsParams struct {
@@ -271,7 +274,7 @@ func (q *Queries) ListOperationalJobEventsAfter(ctx context.Context, arg ListOpe
 const listOperationalJobRuns = `-- name: ListOperationalJobRuns :many
 
 SELECT id, pipeline_run_id, parent_job_id, type, queue, source_id, state, stage, progress_percent, priority, attempt, max_attempts, idempotency_key, actor_id, resource_type, resource_id, request_id, correlation_id, trace_id, worker_id, lease_token, lease_expires_at, heartbeat_at, cancel_requested_at, input_metadata, output_metadata, error_class, error_code, error_detail, error_retryable, created_at, claimed_at, started_at, updated_at, finished_at
-FROM job_runs
+FROM job_runs j
 WHERE ($1::text IS NULL OR state = $1)
   AND ($2::text IS NULL OR type = $2)
   AND ($3::text IS NULL OR queue = $3)
@@ -282,6 +285,9 @@ WHERE ($1::text IS NULL OR state = $1)
        OR ((state IN ('failed', 'dead_lettered')) = $7))
   AND ($8::timestamptz IS NULL OR created_at >= $8)
   AND ($9::timestamptz IS NULL OR created_at <= $9)
+  AND NOT (j.queue = 'transcode_jobs' AND EXISTS (
+      SELECT 1 FROM job_runs child WHERE child.parent_job_id = j.id
+  ))
 ORDER BY created_at DESC, id DESC
 LIMIT $11 OFFSET $10
 `

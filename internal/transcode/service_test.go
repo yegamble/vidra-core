@@ -22,6 +22,7 @@ type fakeRepo struct {
 	playlists  map[uuid.UUID]sqlcgen.StreamingPlaylist
 	renditions map[uuid.UUID][]sqlcgen.VideoRendition
 	videoFiles map[uuid.UUID][]sqlcgen.VideoFile
+	steps      []sqlcgen.UpsertTranscodeStepParams
 }
 
 func newFakeRepo() *fakeRepo {
@@ -69,7 +70,8 @@ func (f *fakeRepo) EnqueueTranscodeJob(_ context.Context, a sqlcgen.EnqueueTrans
 	id := uuid.New()
 	f.jobs[id] = &sqlcgen.TranscodeJob{
 		ID: id, VideoID: a.VideoID, SourceKey: a.SourceKey,
-		State: "pending", NextAttemptAt: time.Now().Add(-time.Second),
+		State: "pending", TranscodeType: a.TranscodeType,
+		NextAttemptAt: time.Now().Add(-time.Second),
 	}
 	return nil
 }
@@ -85,11 +87,19 @@ func (f *fakeRepo) ClaimDueTranscodeJobs(_ context.Context, limit int32) ([]sqlc
 		if j.State == "pending" && !j.NextAttemptAt.After(time.Now()) {
 			j.State = "running"
 			rows = append(rows, sqlcgen.ClaimDueTranscodeJobsRow{
-				ID: j.ID, VideoID: j.VideoID, SourceKey: j.SourceKey, Attempts: j.Attempts,
+				ID: j.ID, VideoID: j.VideoID, SourceKey: j.SourceKey,
+				TranscodeType: j.TranscodeType, Attempts: j.Attempts,
 			})
 		}
 	}
 	return rows, nil
+}
+
+func (f *fakeRepo) UpsertTranscodeStep(_ context.Context, a sqlcgen.UpsertTranscodeStepParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.steps = append(f.steps, a)
+	return nil
 }
 
 func (f *fakeRepo) CompleteTranscodeJob(_ context.Context, id uuid.UUID) error {
@@ -210,6 +220,45 @@ type fakeTranscoder struct {
 	block chan struct{} // nil = never block
 }
 
+type fakeTargetTranscoder struct {
+	hlsResult media.HLSResult
+	webResult []media.WebVideoResult
+	hlsErr    error
+	webErr    error
+	hlsCalls  []string
+	webCalls  []string
+}
+
+func (f *fakeTargetTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, sourceKey string) (media.HLSResult, error) {
+	return f.TranscodeHLS(ctx, videoID, sourceKey, nil)
+}
+
+func (f *fakeTargetTranscoder) TranscodeHLS(_ context.Context, _ uuid.UUID, sourceKey string, progress media.ProgressFunc) (media.HLSResult, error) {
+	f.hlsCalls = append(f.hlsCalls, sourceKey)
+	if progress != nil {
+		progress(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "encoding", Percent: 42})
+	}
+	if f.hlsErr != nil {
+		if progress != nil {
+			progress(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressFailed, Stage: "encoding", Percent: 42})
+		}
+	}
+	return f.hlsResult, f.hlsErr
+}
+
+func (f *fakeTargetTranscoder) TranscodeWebVideos(_ context.Context, _ uuid.UUID, sourceKey string, progress media.ProgressFunc) ([]media.WebVideoResult, error) {
+	f.webCalls = append(f.webCalls, sourceKey)
+	if progress != nil {
+		progress(media.TranscodeProgress{Format: media.TranscodeFormatWebVideo, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "encoding", Percent: 63})
+	}
+	if f.webErr != nil {
+		if progress != nil {
+			progress(media.TranscodeProgress{Format: media.TranscodeFormatWebVideo, Height: 720, Width: 1280, State: media.ProgressFailed, Stage: "encoding", Percent: 63})
+		}
+	}
+	return f.webResult, f.webErr
+}
+
 func (f *fakeTranscoder) Transcode(_ context.Context, _ uuid.UUID, _ string) (media.HLSResult, error) {
 	f.mu.Lock()
 	f.calls++
@@ -312,6 +361,84 @@ func TestDrainJobsNoWebMWhenAbsent(t *testing.T) {
 	}
 	if len(repo.videoFiles[videoID]) != 0 {
 		t.Errorf("stored webm video_file when VP9 was off: %+v", repo.videoFiles[videoID])
+	}
+}
+
+func TestWebVideoTargetUsesOriginalAndProjectsResolutionProgress(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	originalKey := "web-videos/" + videoID.String() + ".mp4"
+	tc := &fakeTargetTranscoder{webResult: []media.WebVideoResult{
+		{Height: 720, Width: 1280, StorageKey: "web-videos/" + videoID.String() + "/720p.mp4", SizeBytes: 4096},
+	}}
+	svc := NewService(repo, tc)
+
+	if err := svc.EnqueueTarget(context.Background(), videoID, originalKey, TargetWebVideo); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	if got := repo.job(t, videoID); got.SourceKey != originalKey || got.TranscodeType != TargetWebVideo {
+		t.Fatalf("job source/type = %q/%q, want original/%q", got.SourceKey, got.TranscodeType, TargetWebVideo)
+	}
+	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
+	}
+	if len(tc.hlsCalls) != 0 || len(tc.webCalls) != 1 || tc.webCalls[0] != originalKey {
+		t.Fatalf("target calls HLS=%v Web=%v, want Web once with retained original", tc.hlsCalls, tc.webCalls)
+	}
+	if len(repo.steps) == 0 {
+		t.Fatal("no resolution progress was projected")
+	}
+	for _, step := range repo.steps {
+		if step.Format != media.TranscodeFormatWebVideo || step.Height != 720 {
+			t.Errorf("step = %+v, want independent Web Video 720p progress", step)
+		}
+	}
+	files := repo.videoFiles[videoID]
+	if len(files) != 1 || files[0].Kind != "rendition" || files[0].StorageKey != tc.webResult[0].StorageKey {
+		t.Fatalf("stored web videos = %+v, want replacement rendition", files)
+	}
+}
+
+func TestInvalidateRemovesEveryDerivativeButKeepsOriginal(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	repo.playlists[videoID] = sqlcgen.StreamingPlaylist{VideoID: videoID, State: PlaylistReady}
+	repo.renditions[videoID] = []sqlcgen.VideoRendition{{VideoID: videoID, Height: 720}}
+	repo.videoFiles[videoID] = []sqlcgen.VideoFile{
+		{VideoID: videoID, Kind: "original", StorageKey: "web-videos/original.mp4"},
+		{VideoID: videoID, Kind: "thumbnail", StorageKey: "thumbnails/poster.jpg"},
+		{VideoID: videoID, Kind: "rendition", StorageKey: "web-videos/720p.mp4"},
+		{VideoID: videoID, Kind: "webm", StorageKey: "streaming-playlists/vp9.webm"},
+	}
+
+	if err := NewService(repo, nil).Invalidate(context.Background(), videoID); err != nil {
+		t.Fatalf("Invalidate: %v", err)
+	}
+	if _, ok := repo.playlists[videoID]; ok || len(repo.renditions[videoID]) != 0 {
+		t.Fatal("HLS derivatives survived invalidation")
+	}
+	files := repo.videoFiles[videoID]
+	if len(files) != 2 || files[0].Kind != "original" || files[1].Kind != "thumbnail" {
+		t.Fatalf("files after invalidation = %+v, want original and thumbnail only", files)
+	}
+}
+
+func TestWebVideoFailureDoesNotReplaceHealthyHLSState(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	repo.playlists[videoID] = sqlcgen.StreamingPlaylist{VideoID: videoID, MasterKey: "master.m3u8", State: PlaylistReady}
+	tc := &fakeTargetTranscoder{webErr: errors.New("web encode failed")}
+	svc := NewService(repo, tc)
+	if err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/original.mp4", TargetWebVideo); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	repo.job(t, videoID).Attempts = maxAttempts - 1
+
+	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 0 {
+		t.Fatalf("DrainJobs = (%d, %v), want failed job", n, err)
+	}
+	if got := repo.playlists[videoID]; got.State != PlaylistReady || got.MasterKey != "master.m3u8" {
+		t.Fatalf("healthy HLS state was overwritten by Web Video failure: %+v", got)
 	}
 }
 

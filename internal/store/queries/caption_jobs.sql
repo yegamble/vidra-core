@@ -21,7 +21,7 @@ LIMIT 1;
 -- Atomically claims due pending jobs (oldest first) by flipping them to
 -- 'running', exactly like ClaimDueImportJobs.
 UPDATE caption_jobs
-SET state = 'running', updated_at = now()
+SET state = 'running', stage = 'preparing', progress_percent = 5, updated_at = now()
 WHERE id IN (
     SELECT id FROM caption_jobs
     WHERE state = 'pending' AND next_attempt_at <= now()
@@ -30,19 +30,25 @@ WHERE id IN (
 )
 RETURNING id, video_id, language, attempts;
 
+-- name: SetCaptionJobProgress :exec
+UPDATE caption_jobs
+SET stage = $2, progress_percent = $3, updated_at = now()
+WHERE id = $1;
+
 -- name: CompleteCaptionJob :exec
 UPDATE caption_jobs
-SET state = 'done', error = '', updated_at = now()
+SET state = 'done', error = '', stage = 'complete', progress_percent = 100, updated_at = now()
 WHERE id = $1;
 
 -- name: RescheduleCaptionJob :exec
 -- Back to pending with backoff so a later drain retries it.
 UPDATE caption_jobs
-SET state = 'pending', attempts = attempts + 1, next_attempt_at = $2, error = $3, updated_at = now()
+SET state = 'pending', attempts = attempts + 1, next_attempt_at = $2, error = $3,
+    stage = '', progress_percent = 0, updated_at = now()
 WHERE id = $1;
 
 -- name: FailCaptionJob :exec
 -- Dead-letter: no further retries.
 UPDATE caption_jobs
-SET state = 'failed', attempts = attempts + 1, error = $2, updated_at = now()
+SET state = 'failed', attempts = attempts + 1, error = $2, stage = 'failed', updated_at = now()
 WHERE id = $1;

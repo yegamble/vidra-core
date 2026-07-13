@@ -13,8 +13,62 @@ import (
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/searchevents"
+	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/video"
 )
+
+type runVideoTranscodingRequest struct {
+	Type string `json:"type"`
+}
+
+func (r runVideoTranscodingRequest) Validate() []FieldError {
+	if r.Type != transcode.TargetHLS && r.Type != transcode.TargetWebVideo {
+		return []FieldError{{Field: "type", Message: "must be hls or web_video"}}
+	}
+	return nil
+}
+
+// handleRunVideoTranscoding lets a moderator/admin rebuild one output class.
+// The source key is resolved from video_files.kind='original' on the server;
+// clients cannot submit a derivative key, so repeated runs never transcode an
+// already-transcoded file and therefore cannot accumulate generation loss.
+func (s *Server) handleRunVideoTranscoding(c echo.Context) error {
+	actorID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	var in runVideoTranscodingRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if !s.transcodesvc.Enabled() {
+		return &FeatureDisabledError{Feature: "transcoding"}
+	}
+	if !s.transcodesvc.Capable() {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "transcoding is not available on this server")
+	}
+	ctx := c.Request().Context()
+	if _, err := s.videosvc.GetByID(ctx, id); err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	sourceKey, err := s.videosvc.OriginalFileKey(ctx, id)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusConflict, "video has no original file")
+	}
+	if s.transcodesvc.HasLiveJob(ctx, id) {
+		return echo.NewHTTPError(http.StatusConflict, "a transcode job is already in progress for this video")
+	}
+	if err := s.transcodesvc.EnqueueTarget(ctx, id, sourceKey, in.Type); err != nil {
+		return err
+	}
+	s.audit(c, observability.ActionVideoTranscode, observability.ResultSuccess,
+		actorID.String(), "video="+id.String()+" type="+in.Type)
+	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued", "type": in.Type})
+}
 
 // adminVideoView is the admin/moderator videos-overview projection of a video.
 type adminVideoView struct {
@@ -25,7 +79,19 @@ type adminVideoView struct {
 	ChannelHandle      string    `json:"channel_handle"`
 	ChannelDisplayName string    `json:"channel_display_name"`
 	Views              int64     `json:"views"`
-	CreatedAt          time.Time `json:"created_at"`
+	PublishedAt        time.Time `json:"published_at"`
+	DurationSeconds    *int32    `json:"duration_seconds,omitempty"`
+	IsLocal            bool      `json:"is_local"`
+	OriginDomain       string    `json:"origin_domain,omitempty"`
+	WatchURL           string    `json:"watch_url,omitempty"`
+	Sensitive          bool      `json:"sensitive"`
+	ExternalLink       bool      `json:"external_link"`
+	HasThumbnail       bool      `json:"has_thumbnail"`
+	HasOriginal        bool      `json:"has_original"`
+	HLSCount           int32     `json:"hls_count"`
+	WebVideoCount      int32     `json:"web_video_count"`
+	ObjectStorage      bool      `json:"object_storage"`
+	SizeBytes          int64     `json:"size_bytes"`
 	Blocked            bool      `json:"blocked"`
 }
 
@@ -61,7 +127,19 @@ func (s *Server) handleListAdminVideos(c echo.Context) error {
 			ChannelHandle:      it.ChannelHandle,
 			ChannelDisplayName: it.ChannelDisplayName,
 			Views:              it.Views,
-			CreatedAt:          it.CreatedAt,
+			PublishedAt:        it.PublishedAt,
+			DurationSeconds:    it.DurationSeconds,
+			IsLocal:            it.IsLocal,
+			OriginDomain:       it.OriginDomain,
+			WatchURL:           it.WatchURL,
+			Sensitive:          it.IsSensitive,
+			ExternalLink:       it.ExternalLink,
+			HasThumbnail:       it.HasThumbnail,
+			HasOriginal:        it.HasOriginal,
+			HLSCount:           it.HLSCount,
+			WebVideoCount:      it.WebVideoCount,
+			ObjectStorage:      it.IsLocal && s.cfg.StorageBackend == "s3",
+			SizeBytes:          it.SizeBytes,
 			Blocked:            it.Blocked,
 		})
 	}

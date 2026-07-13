@@ -36,12 +36,18 @@ type instanceFeatures struct {
 	// EFFECTIVE availability: the runtime admin setting AND (where one exists)
 	// the boot capability — import_http and transcription report false when
 	// yt-dlp/Whisper is not wired regardless of the setting.
-	ImportHTTP    bool `json:"import_http"`
-	ChannelSync   bool `json:"channel_sync"`
-	Storyboards   bool `json:"storyboards"`
-	Transcription bool `json:"transcription"`
-	UserImport    bool `json:"user_import"`
-	UserExport    bool `json:"user_export"`
+	ImportHTTP  bool `json:"import_http"`
+	ChannelSync bool `json:"channel_sync"`
+	Storyboards bool `json:"storyboards"`
+	// VideoCardPreviews is the instance half of the two-factor hover-preview
+	// gate. VideoCardPreviewsDefaultEnabled is inherited by users who have not
+	// made an explicit choice; the player-settings endpoint resolves that default
+	// and returns the effective preference.
+	VideoCardPreviews               bool `json:"video_card_previews"`
+	VideoCardPreviewsDefaultEnabled bool `json:"video_card_previews_default_enabled"`
+	Transcription                   bool `json:"transcription"`
+	UserImport                      bool `json:"user_import"`
+	UserExport                      bool `json:"user_export"`
 	// Transcoding reports the EFFECTIVE HLS pipeline availability (config-
 	// parity W10): the runtime transcoding_enabled setting AND the boot
 	// capability (ffmpeg/ffprobe wired). Already-produced playlists keep
@@ -339,15 +345,17 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 			Downloads: s.downloadsEnabled(),
 			// W8 flags: setting AND boot capability (service Enabled() folds
 			// the runtime provider in when cmd/api wires one).
-			ImportHTTP:                 s.importsEnabled() && s.importHTTPEnabled() && s.importsvc != nil && s.importsvc.YtdlpEnabled(),
-			ChannelSync:                s.channelSyncEnabled() && s.channelsyncsvc != nil && s.channelsyncsvc.Enabled(),
-			Storyboards:                s.storyboardsEnabled(),
-			Transcription:              s.transcriptionEnabled() && s.captionjobsvc != nil && s.captionjobsvc.Enabled(),
-			UserImport:                 s.userImportEnabled(),
-			UserExport:                 s.userExportEnabled(),
-			Transcoding:                s.transcodingEnabled() && s.transcodesvc != nil && s.transcodesvc.Capable(),
-			VideoReplace:               s.videoReplaceAvailable(),
-			UploadAdditionalExtensions: s.uploadAdditionalExtensionsEnabled(),
+			ImportHTTP:                      s.importsEnabled() && s.importHTTPEnabled() && s.importsvc != nil && s.importsvc.YtdlpEnabled(),
+			ChannelSync:                     s.channelSyncEnabled() && s.channelsyncsvc != nil && s.channelsyncsvc.Enabled(),
+			Storyboards:                     s.storyboardsEnabled(),
+			VideoCardPreviews:               s.videoCardPreviewsEnabled(),
+			VideoCardPreviewsDefaultEnabled: s.videoCardPreviewsDefaultEnabled(),
+			Transcription:                   s.transcriptionEnabled() && s.captionjobsvc != nil && s.captionjobsvc.Enabled(),
+			UserImport:                      s.userImportEnabled(),
+			UserExport:                      s.userExportEnabled(),
+			Transcoding:                     s.transcodingEnabled() && s.transcodesvc != nil && s.transcodesvc.Capable(),
+			VideoReplace:                    s.videoReplaceAvailable(),
+			UploadAdditionalExtensions:      s.uploadAdditionalExtensionsEnabled(),
 			// The contact mailer is wired whenever ANY outbound mail path
 			// exists (SMTP or the dev capture seam) — the deployment's
 			// mail-capability signal.

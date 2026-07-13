@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -37,13 +38,14 @@ func (f *playerSettingsFakeRepo) UpsertUserPlayerSettings(_ context.Context, a s
 		f.rows = map[uuid.UUID]sqlcgen.GetUserPlayerSettingsRow{}
 	}
 	f.rows[a.UserID] = sqlcgen.GetUserPlayerSettingsRow{
-		UserID:          a.UserID,
-		AutoplayNext:    a.AutoplayNext,
-		DefaultSpeed:    a.DefaultSpeed,
-		DefaultQuality:  a.DefaultQuality,
-		CaptionsDefault: a.CaptionsDefault,
-		TheaterDefault:  a.TheaterDefault,
-		UpdatedAt:       time.Now(),
+		UserID:                   a.UserID,
+		AutoplayNext:             a.AutoplayNext,
+		DefaultSpeed:             a.DefaultSpeed,
+		DefaultQuality:           a.DefaultQuality,
+		CaptionsDefault:          a.CaptionsDefault,
+		TheaterDefault:           a.TheaterDefault,
+		VideoCardPreviewsEnabled: a.VideoCardPreviewsEnabled,
+		UpdatedAt:                time.Now(),
 	}
 	return nil
 }
@@ -69,11 +71,12 @@ func TestPlayerSettingsDefaultsForFreshUser(t *testing.T) {
 
 	got := getPlayerSettings(t, srv, tok)
 	want := playerSettingsResponse{
-		AutoplayNext:    true,
-		DefaultSpeed:    1,
-		DefaultQuality:  "auto",
-		CaptionsDefault: false,
-		TheaterDefault:  false,
+		AutoplayNext:             true,
+		DefaultSpeed:             1,
+		DefaultQuality:           "auto",
+		CaptionsDefault:          false,
+		TheaterDefault:           false,
+		VideoCardPreviewsEnabled: false,
 	}
 	if got != want {
 		t.Fatalf("defaults = %+v, want %+v", got, want)
@@ -87,9 +90,9 @@ func TestPlayerSettingsMergePut(t *testing.T) {
 	srv := videoServer(t)
 	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
-	// First: set two fields; the other three keep their defaults.
+	// First: set three fields; the others keep their defaults.
 	rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/me/player-settings",
-		`{"default_speed":1.5,"captions_default":true}`, tok)
+		`{"default_speed":1.5,"captions_default":true,"video_card_previews_enabled":true}`, tok)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT = %d; body=%s", rec.Code, rec.Body.String())
 	}
@@ -98,11 +101,12 @@ func TestPlayerSettingsMergePut(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	want := playerSettingsResponse{
-		AutoplayNext:    true, // default kept
-		DefaultSpeed:    1.5,  // set
-		DefaultQuality:  "auto",
-		CaptionsDefault: true, // set
-		TheaterDefault:  false,
+		AutoplayNext:             true, // default kept
+		DefaultSpeed:             1.5,  // set
+		DefaultQuality:           "auto",
+		CaptionsDefault:          true, // set
+		TheaterDefault:           false,
+		VideoCardPreviewsEnabled: true, // set
 	}
 	if body != want {
 		t.Fatalf("after PUT = %+v, want %+v", body, want)
@@ -144,6 +148,7 @@ func TestPlayerSettingsValidation(t *testing.T) {
 		{"quality garbage", `{"default_quality":"ultra"}`},
 		{"malformed speed type", `{"default_speed":"fast"}`},
 		{"malformed bool type", `{"autoplay_next":"yes"}`},
+		{"malformed preview bool type", `{"video_card_previews_enabled":"yes"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -184,7 +189,7 @@ func TestPlayerSettingsPerUserIsolation(t *testing.T) {
 	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
 
 	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/me/player-settings",
-		`{"autoplay_next":false,"default_speed":2,"theater_default":true}`, ada); rec.Code != http.StatusOK {
+		`{"autoplay_next":false,"default_speed":2,"theater_default":true,"video_card_previews_enabled":true}`, ada); rec.Code != http.StatusOK {
 		t.Fatalf("ada PUT = %d; body=%s", rec.Code, rec.Body.String())
 	}
 	// Bob still sees the pristine defaults.
@@ -194,8 +199,69 @@ func TestPlayerSettingsPerUserIsolation(t *testing.T) {
 	}
 	// Ada sees her own.
 	adaGot := getPlayerSettings(t, srv, ada)
-	if !(!adaGot.AutoplayNext && adaGot.DefaultSpeed == 2 && adaGot.TheaterDefault) {
+	if !(!adaGot.AutoplayNext && adaGot.DefaultSpeed == 2 && adaGot.TheaterDefault && adaGot.VideoCardPreviewsEnabled) {
 		t.Fatalf("ada's settings not persisted: %+v", adaGot)
+	}
+}
+
+// TestVideoCardPreviewAdminDefaultAndTwoFactorGate proves the three independent
+// parts of the contract: global gate, inherited admin default, and explicit user
+// override. Only the first and the effective user preference permit playback.
+func TestVideoCardPreviewAdminDefaultAndTwoFactorGate(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	features := publicInstance(t, srv).Features
+	if features.VideoCardPreviews || features.VideoCardPreviewsDefaultEnabled {
+		t.Fatalf("preview feature defaults = gate:%v user-default:%v, want both false",
+			features.VideoCardPreviews, features.VideoCardPreviewsDefaultEnabled)
+	}
+	if getPlayerSettings(t, srv, adminTok).VideoCardPreviewsEnabled {
+		t.Fatal("fresh user's video_card_previews_enabled = true, want false")
+	}
+
+	// Untouched users inherit changes to the admin default immediately, even
+	// while the separate master gate keeps actual preview playback off.
+	setToggle(t, srv, adminTok, instancesettings.KeyVideoCardPreviewsDefaultEnabled, true)
+	features = publicInstance(t, srv).Features
+	if !features.VideoCardPreviewsDefaultEnabled || features.VideoCardPreviews {
+		t.Fatalf("after default enable: gate:%v user-default:%v, want false/true",
+			features.VideoCardPreviews, features.VideoCardPreviewsDefaultEnabled)
+	}
+	if !getPlayerSettings(t, srv, adminTok).VideoCardPreviewsEnabled || !getPlayerSettings(t, srv, bobTok).VideoCardPreviewsEnabled {
+		t.Fatal("users without an explicit choice did not inherit enabled admin default")
+	}
+
+	// Ada explicitly opts out. Bob remains inherited. Enabling the master gate
+	// makes previews effective for Bob only.
+	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/me/player-settings",
+		`{"video_card_previews_enabled":false}`, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("user opt-out PUT = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if getPlayerSettings(t, srv, adminTok).VideoCardPreviewsEnabled {
+		t.Fatal("explicit user opt-out was not stored")
+	}
+	setToggle(t, srv, adminTok, instancesettings.KeyVideoCardPreviewsEnabled, true)
+	if !publicInstance(t, srv).Features.VideoCardPreviews || getPlayerSettings(t, srv, adminTok).VideoCardPreviewsEnabled ||
+		!getPlayerSettings(t, srv, bobTok).VideoCardPreviewsEnabled {
+		t.Fatal("global gate/default/explicit override did not remain independent")
+	}
+
+	// Later default changes affect inherited Bob, but never overwrite Ada's
+	// explicit choice. Ada can explicitly opt in; disabling the global gate then
+	// suspends playback without erasing that choice.
+	setToggle(t, srv, adminTok, instancesettings.KeyVideoCardPreviewsDefaultEnabled, false)
+	if getPlayerSettings(t, srv, bobTok).VideoCardPreviewsEnabled || getPlayerSettings(t, srv, adminTok).VideoCardPreviewsEnabled {
+		t.Fatal("disabled admin default was not inherited or changed explicit opt-out")
+	}
+	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/me/player-settings",
+		`{"video_card_previews_enabled":true}`, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("user opt-in PUT = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	setToggle(t, srv, adminTok, instancesettings.KeyVideoCardPreviewsEnabled, false)
+	if !getPlayerSettings(t, srv, adminTok).VideoCardPreviewsEnabled || publicInstance(t, srv).Features.VideoCardPreviews {
+		t.Fatal("admin disable should preserve user opt-in while making effective preview false")
 	}
 }
 

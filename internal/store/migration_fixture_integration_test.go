@@ -166,7 +166,59 @@ func TestMigrationsAgainstExistingFixture(t *testing.T) {
 		if m.version <= snapshotVersion {
 			continue
 		}
+		// Migration 0095 deliberately adds a nullable preference override. Seed
+		// the pre-migration player-settings row so the test proves existing users
+		// inherit the admin default rather than being frozen to false.
+		if m.version == 95 {
+			if _, err := tempConn.Exec(ctx,
+				`INSERT INTO user_player_settings (user_id) VALUES ($1)`, userID,
+			); err != nil {
+				t.Fatalf("seed pre-0095 player settings: %v", err)
+			}
+		}
 		applyMigration(ctx, t, tempConn, m)
+		if m.version == 95 {
+			assertInherited := func(stage string) {
+				t.Helper()
+				var override *bool
+				if err := tempConn.QueryRow(ctx,
+					`SELECT video_card_previews_enabled FROM user_player_settings WHERE user_id = $1`, userID,
+				).Scan(&override); err != nil {
+					t.Fatalf("%s: read preview override: %v", stage, err)
+				}
+				if override != nil {
+					t.Fatalf("%s: existing user's preview override = %v, want NULL/inherit", stage, *override)
+				}
+			}
+			assertInherited("0095 up")
+
+			// Exercise the matching down migration immediately, before any later
+			// migration could depend on this column, then restore 0095 so the
+			// remainder of the chain sees the expected latest schema.
+			downPath := filepath.Join(filepath.Dir(m.path), "0095_video_card_previews.down.sql")
+			downSQL, err := os.ReadFile(downPath)
+			if err != nil {
+				t.Fatalf("read %s: %v", downPath, err)
+			}
+			if _, err := tempConn.Exec(ctx, string(downSQL)); err != nil {
+				t.Fatalf("apply migration 0095 down: %v", err)
+			}
+			var columnExists bool
+			if err := tempConn.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM information_schema.columns
+					WHERE table_schema = 'public'
+					  AND table_name = 'user_player_settings'
+					  AND column_name = 'video_card_previews_enabled'
+				)`).Scan(&columnExists); err != nil {
+				t.Fatalf("inspect 0095 down schema: %v", err)
+			}
+			if columnExists {
+				t.Fatal("0095 down left video_card_previews_enabled in place")
+			}
+			applyMigration(ctx, t, tempConn, m)
+			assertInherited("0095 re-up")
+		}
 	}
 
 	// 4) The fixture rows must have survived the full migration chain unchanged.
