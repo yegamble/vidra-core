@@ -741,6 +741,7 @@ type User struct {
 	DeletedAt                pgtype.Timestamptz `json:"deleted_at"`
 	PendingEmailVerification bool               `json:"pending_email_verification"`
 	HistoryEnabled           bool               `json:"history_enabled"`
+	ProfilePublic            bool               `json:"profile_public"`
 }
 
 type UserBlock struct {

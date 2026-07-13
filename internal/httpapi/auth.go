@@ -173,8 +173,10 @@ type userView struct {
 	Unlisted bool `json:"unlisted"`
 	// HistoryEnabled is the per-user watch-history preference (config-parity
 	// W7): while false, watch-progress/history writes are skipped.
-	HistoryEnabled bool      `json:"history_enabled"`
-	CreatedAt      time.Time `json:"created_at"`
+	HistoryEnabled bool `json:"history_enabled"`
+	// ProfilePublic is an explicit opt-in. A false profile returns 404 publicly.
+	ProfilePublic bool      `json:"profile_public"`
+	CreatedAt     time.Time `json:"created_at"`
 	// HasAvatar/HasBanner are set on GET/PATCH /auth/me (omitted elsewhere);
 	// when true the image is served at GET /users/{id}/avatar | /banner.
 	HasAvatar *bool `json:"has_avatar,omitempty"`
@@ -192,6 +194,7 @@ func newUserView(u sqlcgen.User) userView {
 		Bio:            u.Bio,
 		Unlisted:       u.Unlisted,
 		HistoryEnabled: u.HistoryEnabled,
+		ProfilePublic:  u.ProfilePublic,
 		CreatedAt:      u.CreatedAt,
 	}
 }
@@ -333,12 +336,13 @@ type updateProfileRequest struct {
 	Unlisted *bool `json:"unlisted"`
 	// HistoryEnabled toggles the per-user watch-history preference (W7).
 	HistoryEnabled *bool `json:"history_enabled"`
+	ProfilePublic  *bool `json:"profile_public"`
 }
 
 func (r updateProfileRequest) Validate() []FieldError {
 	var fes []FieldError
-	if r.DisplayName == nil && r.Bio == nil && r.Unlisted == nil && r.HistoryEnabled == nil {
-		return []FieldError{{Field: "display_name", Message: "at least one of display_name, bio, unlisted, history_enabled is required"}}
+	if r.DisplayName == nil && r.Bio == nil && r.Unlisted == nil && r.HistoryEnabled == nil && r.ProfilePublic == nil {
+		return []FieldError{{Field: "display_name", Message: "at least one profile field is required"}}
 	}
 	if r.DisplayName != nil && len(strings.TrimSpace(*r.DisplayName)) > 50 {
 		fes = append(fes, FieldError{Field: "display_name", Message: "must be at most 50 characters"})
@@ -364,6 +368,7 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 		Bio:            in.Bio,
 		Unlisted:       in.Unlisted,
 		HistoryEnabled: in.HistoryEnabled,
+		ProfilePublic:  in.ProfilePublic,
 	})
 	if err != nil {
 		if errors.Is(err, auth.ErrAccountNotFound) {

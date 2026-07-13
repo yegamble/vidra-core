@@ -42,6 +42,7 @@ type Repository interface {
 	CreateUser(ctx context.Context, arg sqlcgen.CreateUserParams) (sqlcgen.User, error)
 	GetUserByEmail(ctx context.Context, lowerEmail string) (sqlcgen.User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
+	GetPublicUserProfileByUsername(ctx context.Context, lowerUsername string) (sqlcgen.GetPublicUserProfileByUsernameRow, error)
 	CountUsers(ctx context.Context) (int64, error)
 	UpdateUserProfile(ctx context.Context, arg sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error)
 	DeactivateUser(ctx context.Context, id uuid.UUID) error
@@ -444,6 +445,17 @@ func (s *Service) UserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, err
 	return user, nil
 }
 
+// PublicProfileByUsername resolves only active accounts that explicitly opted
+// into a public profile. The query intentionally makes private and unknown
+// accounts indistinguishable to callers.
+func (s *Service) PublicProfileByUsername(ctx context.Context, username string) (sqlcgen.GetPublicUserProfileByUsernameRow, error) {
+	profile, err := s.repo.GetPublicUserProfileByUsername(ctx, strings.TrimSpace(username))
+	if err != nil {
+		return sqlcgen.GetPublicUserProfileByUsernameRow{}, ErrAccountNotFound
+	}
+	return profile, nil
+}
+
 // ProfileInput is a partial account-profile update: nil fields are unchanged.
 type ProfileInput struct {
 	DisplayName *string
@@ -455,6 +467,8 @@ type ProfileInput struct {
 	// HistoryEnabled toggles the per-user watch-history preference (config-
 	// parity W7): while false, watch-progress/history writes are skipped.
 	HistoryEnabled *bool
+	// ProfilePublic controls whether GET /users/{username}/profile exists.
+	ProfilePublic *bool
 }
 
 // UpdateProfile updates the authenticated account's presentation fields
@@ -467,6 +481,7 @@ func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in ProfileInp
 		Bio:            trimPtr(in.Bio),
 		Unlisted:       in.Unlisted,
 		HistoryEnabled: in.HistoryEnabled,
+		ProfilePublic:  in.ProfilePublic,
 	})
 	if err != nil {
 		return sqlcgen.User{}, ErrAccountNotFound

@@ -24,7 +24,7 @@ SET role       = COALESCE($1, role),
                                ELSE storage_quota_bytes END,
     updated_at = now()
 WHERE id = $7
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
 `
 
 type AdminUpdateUserParams struct {
@@ -71,6 +71,7 @@ func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams
 		&i.DeletedAt,
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
+		&i.ProfilePublic,
 	)
 	return i, err
 }
@@ -124,7 +125,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
 `
 
 type CreateUserParams struct {
@@ -168,6 +169,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.DeletedAt,
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
+		&i.ProfilePublic,
 	)
 	return i, err
 }
@@ -182,6 +184,39 @@ WHERE id = $1
 func (q *Queries) DeactivateUser(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deactivateUser, id)
 	return err
+}
+
+const getPublicUserProfileByUsername = `-- name: GetPublicUserProfileByUsername :one
+SELECT id, username, display_name, bio, created_at, profile_public
+FROM users
+WHERE lower(username) = lower($1)
+  AND is_active = TRUE
+  AND profile_public = TRUE
+`
+
+type GetPublicUserProfileByUsernameRow struct {
+	ID            uuid.UUID `json:"id"`
+	Username      string    `json:"username"`
+	DisplayName   string    `json:"display_name"`
+	Bio           string    `json:"bio"`
+	CreatedAt     time.Time `json:"created_at"`
+	ProfilePublic bool      `json:"profile_public"`
+}
+
+// Private, inactive, and unknown accounts deliberately collapse to no rows so
+// the HTTP surface returns the same non-enumerating 404 for all three.
+func (q *Queries) GetPublicUserProfileByUsername(ctx context.Context, lower string) (GetPublicUserProfileByUsernameRow, error) {
+	row := q.db.QueryRow(ctx, getPublicUserProfileByUsername, lower)
+	var i GetPublicUserProfileByUsernameRow
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.DisplayName,
+		&i.Bio,
+		&i.CreatedAt,
+		&i.ProfilePublic,
+	)
+	return i, err
 }
 
 const getUserActorByID = `-- name: GetUserActorByID :one
@@ -243,7 +278,7 @@ func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (Get
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -269,12 +304,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.DeletedAt,
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
+		&i.ProfilePublic,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
 FROM users
 WHERE id = $1
 `
@@ -300,12 +336,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.DeletedAt,
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
+		&i.ProfilePublic,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
 FROM users
 WHERE lower(username) = lower($1) AND is_active = true
 `
@@ -335,6 +372,7 @@ func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, er
 		&i.DeletedAt,
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
+		&i.ProfilePublic,
 	)
 	return i, err
 }
@@ -342,7 +380,7 @@ func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, er
 const listUsers = `-- name: ListUsers :many
 SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.is_active,
        u.created_at, u.updated_at, u.display_name, u.bio, u.storage_quota_bytes, u.unlisted,
-       u.bypass_quarantine, u.deleted_at, u.pending_email_verification, u.history_enabled,
+       u.bypass_quarantine, u.deleted_at, u.pending_email_verification, u.history_enabled, u.profile_public,
        (SELECT COALESCE(SUM(vf.size_bytes), 0)::bigint
           FROM video_files vf
           JOIN videos v ON v.id = vf.video_id
@@ -380,6 +418,7 @@ type ListUsersRow struct {
 	DeletedAt                pgtype.Timestamptz `json:"deleted_at"`
 	PendingEmailVerification bool               `json:"pending_email_verification"`
 	HistoryEnabled           bool               `json:"history_enabled"`
+	ProfilePublic            bool               `json:"profile_public"`
 	StorageUsedBytes         int64              `json:"storage_used_bytes"`
 }
 
@@ -414,6 +453,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 			&i.DeletedAt,
 			&i.PendingEmailVerification,
 			&i.HistoryEnabled,
+			&i.ProfilePublic,
 			&i.StorageUsedBytes,
 		); err != nil {
 			return nil, err
@@ -432,9 +472,10 @@ SET display_name = COALESCE($1, display_name),
     bio          = COALESCE($2, bio),
     unlisted     = COALESCE($3, unlisted),
     history_enabled = COALESCE($4, history_enabled),
+    profile_public = COALESCE($5, profile_public),
     updated_at   = now()
-WHERE id = $5
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled
+WHERE id = $6
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public
 `
 
 type UpdateUserProfileParams struct {
@@ -442,6 +483,7 @@ type UpdateUserProfileParams struct {
 	Bio            *string   `json:"bio"`
 	Unlisted       *bool     `json:"unlisted"`
 	HistoryEnabled *bool     `json:"history_enabled"`
+	ProfilePublic  *bool     `json:"profile_public"`
 	ID             uuid.UUID `json:"id"`
 }
 
@@ -451,6 +493,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		arg.Bio,
 		arg.Unlisted,
 		arg.HistoryEnabled,
+		arg.ProfilePublic,
 		arg.ID,
 	)
 	var i User
@@ -472,6 +515,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.DeletedAt,
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
+		&i.ProfilePublic,
 	)
 	return i, err
 }
