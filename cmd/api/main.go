@@ -235,7 +235,21 @@ func run() error {
 				time.Duration(cfg.SearchQueryTimeoutMS)*time.Millisecond,
 				time.Duration(cfg.SearchRecsTimeoutMS)*time.Millisecond,
 			),
+			// Active health detection (W9): the background prober GETs /healthz on
+			// this cadence so a down service is skipped with zero per-request latency.
+			searchclient.WithHealthInterval(cfg.SearchHealthInterval),
+			searchclient.WithLogger(logger),
 		)
+		// vidra_search_service_healthy gauge (W9): reflect the prober's /healthz
+		// verdict at scrape time (no writer coupling), alongside the other metrics.
+		if metrics != nil {
+			metrics.RegisterSearchServiceHealthSource(func() float64 {
+				if searchClient.ServiceProbeHealthy() {
+					return 1
+				}
+				return 0
+			})
+		}
 		searchDrainer = searchevents.NewDrainer(db.Queries(), searchClient, logger, drainOpts...)
 		// video.watch_progress throttle: one event per (user,video) per 30s window.
 		searchThrottle := cache.NewDeduper(rdb.Client)
@@ -1239,10 +1253,14 @@ func run() error {
 		defer workerCancel()
 		go runSearchOutboxWorker(workerCtx, logger, searchDrainer)
 		go runSearchReconcileWorker(workerCtx, logger, searchEnqueuer, cfg.SearchReconcileInterval)
+		// Active health prober (W9): drives Client.Healthy() so the routing policy
+		// fails over to backup the moment /healthz goes down. Context-cancelled on
+		// shutdown; never blocks it.
+		go searchClient.RunHealthProbe(workerCtx)
 		// Seed the effective config once at startup so a freshly-started search
 		// service is configured even if no admin change follows.
 		searchEnqueuer.EnqueueConfigUpdated(context.Background(), searchConfigFromSettings(settingssvc))
-		logger.Info("search outbox + reconcile workers started", "reconcile_interval", cfg.SearchReconcileInterval.String())
+		logger.Info("search outbox + reconcile workers started", "reconcile_interval", cfg.SearchReconcileInterval.String(), "health_interval", cfg.SearchHealthInterval.String())
 	}
 
 	// Drain the IPFS mirror pin/unpin queue and periodically re-arm dead-letters

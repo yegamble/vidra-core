@@ -148,9 +148,39 @@ func (m *Metrics) RegisterJobQueueHealthSource(source func(context.Context) ([]J
 	})
 }
 
+// RegisterSearchServiceHealthSource installs the vidra_search_service_healthy
+// gauge (1 = the background prober's last /healthz probe considers vidra-search
+// up, 0 = down), sampled from source at scrape time (search-service W9). Like the
+// other gauges it is a scrape-time source rather than a pushed value, so it stays
+// fresh with no background goroutine and needs no writer coupling. Call at most
+// once, only when the search service is configured.
+func (m *Metrics) RegisterSearchServiceHealthSource(source func() float64) {
+	m.registry.MustRegister(&searchHealthCollector{
+		desc: prometheus.NewDesc(
+			"vidra_search_service_healthy",
+			"Whether the vidra-search service is currently considered healthy by the active health prober (1) or not (0).",
+			nil, nil,
+		),
+		source: source,
+	})
+}
+
 // Handler returns the Prometheus scrape handler for this registry.
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
+}
+
+// searchHealthCollector reports the current search-service health (0/1) on each
+// scrape.
+type searchHealthCollector struct {
+	desc   *prometheus.Desc
+	source func() float64
+}
+
+func (c *searchHealthCollector) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
+
+func (c *searchHealthCollector) Collect(ch chan<- prometheus.Metric) {
+	ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, c.source())
 }
 
 // queueDepthCollector pulls durable-queue depths on each scrape.

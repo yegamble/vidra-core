@@ -550,6 +550,59 @@ func snapshotByKey(t *testing.T, svc *Service, key string) Effective {
 	return Effective{}
 }
 
+// TestW9SearchServiceEnabledRegistry covers the smart-search routing toggle
+// (search-service W9): its kind/default/placement, its validator, the
+// null-PATCH-clears-override behaviour, and — critically — that it is NOT a
+// config-pushed search key (its change must never emit search.config_updated).
+func TestW9SearchServiceEnabledRegistry(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Kind + default (true: use the service whenever it is wired).
+	if k, ok := KindOf(KeySearchServiceEnabled); !ok || k != KindBool {
+		t.Errorf("KindOf(%s) = %v,%v; want bool,true", KeySearchServiceEnabled, k, ok)
+	}
+	if !svc.Bool(KeySearchServiceEnabled) {
+		t.Error("search_service_enabled default = false, want true")
+	}
+
+	// Placement: advanced page, same 'search' section as the W4 keys.
+	if e := snapshotByKey(t, svc, KeySearchServiceEnabled); e.Kind != KindBool || e.Page != PageAdvanced || e.Section != "search" {
+		t.Errorf("%s = kind %s at %s/%s, want bool at advanced/search", KeySearchServiceEnabled, e.Kind, e.Page, e.Section)
+	}
+
+	// Routing-policy toggle, NOT search-service config: a change must not be
+	// pushed on search.config_updated.
+	if IsSearchSettingKey(KeySearchServiceEnabled) {
+		t.Error("search_service_enabled must NOT be a config-pushed search key (contract stays stable)")
+	}
+
+	admin := uuid.New()
+	// Validator: accepts booleans, rejects anything else.
+	if err := svc.Apply(ctx, map[string]Update{KeySearchServiceEnabled: {Value: "false"}}, admin); err != nil {
+		t.Errorf("Apply(false) = %v, want ok", err)
+	}
+	if svc.Bool(KeySearchServiceEnabled) {
+		t.Error("after Apply(false), value = true")
+	}
+	err := svc.Apply(ctx, map[string]Update{KeySearchServiceEnabled: {Value: "maybe"}}, admin)
+	var ve *ValidationError
+	if !errors.As(err, &ve) || ve.Key != KeySearchServiceEnabled {
+		t.Errorf("Apply(maybe) = %v, want ValidationError on the key", err)
+	}
+
+	// null-PATCH clears the override back to the true default.
+	if err := svc.Apply(ctx, map[string]Update{KeySearchServiceEnabled: {Delete: true}}, admin); err != nil {
+		t.Fatalf("Apply(delete): %v", err)
+	}
+	if !svc.Bool(KeySearchServiceEnabled) {
+		t.Error("after delete, search_service_enabled = false, want the true default")
+	}
+}
+
 // TestW10TranscodingKnobsRegistry covers the VOD transcoding runtime knobs &
 // worker pools batch (config-parity W10): every key's kind, default
 // resolution (transcoding_enabled from config, the ladder from the shipped

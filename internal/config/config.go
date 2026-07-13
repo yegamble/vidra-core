@@ -178,6 +178,13 @@ type Config struct {
 	// SearchReconcileInterval is the cadence of the full index reconcile sweep
 	// (default 24h). Tunable via SEARCH_RECONCILE_INTERVAL.
 	SearchReconcileInterval time.Duration
+	// SearchHealthInterval is the base cadence of the background health prober
+	// that GETs the search service's public /healthz (default 15s; jittered ±20%
+	// per tick). The prober is the active half of the routing policy (W9): a down
+	// service is detected within ~2 intervals so gateway surfaces skip it (zero
+	// per-request latency) instead of each paying a full timeout. Tunable via
+	// SEARCH_HEALTH_INTERVAL. Only runs when SearchServiceURL is set.
+	SearchHealthInterval time.Duration
 
 	// FederationKeyKEK is the base64 (standard) 32-byte key-encryption key used to
 	// envelope-encrypt actor private keys at rest (AES-256-GCM via internal/secretbox).
@@ -578,6 +585,7 @@ func Load() (*Config, error) {
 		SearchServiceURL:               strings.TrimRight(getEnv("SEARCH_SERVICE_URL", ""), "/"),
 		SearchInternalSecret:           getEnv("SEARCH_INTERNAL_SECRET", ""),
 		SearchReconcileInterval:        getEnvDuration("SEARCH_RECONCILE_INTERVAL", 24*time.Hour),
+		SearchHealthInterval:           getEnvDuration("SEARCH_HEALTH_INTERVAL", 15*time.Second),
 		LiveRTMPURL:                    getEnv("LIVE_RTMP_URL", ""),
 		LiveIngestSecret:               getEnv("LIVE_INGEST_SECRET", ""),
 		LiveHLSRoot:                    strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
