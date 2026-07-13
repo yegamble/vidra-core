@@ -79,6 +79,7 @@ func TestUploadSessionQueriesPersist(t *testing.T) {
 		TotalSize: 40,
 		ChunkSize: 16,
 		ExpiresAt: time.Now().Add(24 * time.Hour),
+		Purpose:   "upload",
 	})
 	if err != nil {
 		t.Fatalf("CreateUploadSession: %v", err)

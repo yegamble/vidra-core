@@ -42,7 +42,7 @@ func seedPublicVideo(t *testing.T, ctx context.Context, q *sqlcgen.Queries, owne
 		t.Fatalf("CreateChannel: %v", err)
 	}
 	v, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{
-		ChannelID: ch.ID, Title: "Commented " + suf, Privacy: "public",
+		ChannelID: ch.ID, Title: "Commented " + suf, Privacy: "public", CommentsPolicy: "enabled",
 	})
 	if err != nil {
 		t.Fatalf("CreateVideo: %v", err)

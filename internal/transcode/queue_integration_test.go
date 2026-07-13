@@ -34,7 +34,9 @@ func seedVideo(ctx context.Context, t *testing.T, q *sqlcgen.Queries) uuid.UUID 
 	if err != nil {
 		t.Fatalf("CreateChannel: %v", err)
 	}
-	v, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{ChannelID: ch.ID, Title: "t", Privacy: "public"})
+	v, err := q.CreateVideo(ctx, sqlcgen.CreateVideoParams{
+		ChannelID: ch.ID, Title: "t", Privacy: "public", CommentsPolicy: "enabled",
+	})
 	if err != nil {
 		t.Fatalf("CreateVideo: %v", err)
 	}
@@ -60,7 +62,9 @@ func TestTranscodeQueuePersistsClaimRescheduleComplete(t *testing.T) {
 	srcKey := "web-videos/" + videoID.String() + ".mp4"
 	enqueue := func() {
 		t.Helper()
-		if err := q.EnqueueTranscodeJob(ctx, sqlcgen.EnqueueTranscodeJobParams{VideoID: videoID, SourceKey: srcKey}); err != nil {
+		if err := q.EnqueueTranscodeJob(ctx, sqlcgen.EnqueueTranscodeJobParams{
+			VideoID: videoID, SourceKey: srcKey, TranscodeType: transcode.TargetAll,
+		}); err != nil {
 			t.Fatalf("EnqueueTranscodeJob: %v", err)
 		}
 	}
