@@ -453,7 +453,7 @@ services:
       - "${OTEL_HTTP_PORT:-4318}:4318" # OTLP HTTP
 
   jaeger:
-    image: jaegertracing/all-in-one:1.62.0
+    image: jaegertracing/all-in-one:1.76.0
     profiles: ["otel"]
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
