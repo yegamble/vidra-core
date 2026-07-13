@@ -130,6 +130,9 @@ func New(baseURL, secret string, opts ...Option) *Client {
 
 // authHeader builds the v1 HMAC header binding the timestamp, method, and path
 // (MASTER-PLAN §1.4): v1:{ts}:{hex(hmac_sha256(secret, ts "\n" METHOD "\n" PATH))}.
+// PATH is the DECODED path — vidra-search recomputes the signature over
+// r.URL.Path, which Go decodes — so callers pass the unescaped form even when
+// the wire path carries percent-escapes.
 func (c *Client) authHeader(method, path string) string {
 	ts := strconv.FormatInt(c.now().Unix(), 10)
 	mac := hmac.New(sha256.New, c.secret)
@@ -140,7 +143,18 @@ func (c *Client) authHeader(method, path string) string {
 // do performs one request under the group's breaker + deadline. A transport
 // error or 5xx trips the breaker and returns an error; a 4xx returns *HTTPError
 // (service healthy); a 2xx decodes into out (when non-nil) and closes the breaker.
+// path must contain no characters needing escaping (wire path == sign path);
+// the one endpoint embedding a caller-supplied path segment uses doPaths.
 func (c *Client) do(ctx context.Context, g group, method, path string, q url.Values, body, out any) error {
+	return c.doPaths(ctx, g, method, path, path, q, body, out)
+}
+
+// doPaths is do with the wire path (the escaped form placed in the request URI)
+// split from the sign path (the DECODED path the HMAC covers). The server
+// verifies over r.URL.Path — Go's decoded form — so a path segment carrying
+// percent-escapes on the wire MUST be signed unescaped or the signature will
+// never match (401).
+func (c *Client) doPaths(ctx context.Context, g group, method, wirePath, signPath string, q url.Values, body, out any) error {
 	b := c.breakers[g]
 	if !b.allow() {
 		return ErrCircuitOpen
@@ -156,7 +170,7 @@ func (c *Client) do(ctx context.Context, g group, method, path string, q url.Val
 		}
 		reader = bytes.NewReader(buf)
 	}
-	target := c.baseURL + path
+	target := c.baseURL + wirePath
 	if len(q) > 0 {
 		target += "?" + q.Encode()
 	}
@@ -164,7 +178,7 @@ func (c *Client) do(ctx context.Context, g group, method, path string, q url.Val
 	if err != nil {
 		return err
 	}
-	req.Header.Set(authHeaderName, c.authHeader(method, path))
+	req.Header.Set(authHeaderName, c.authHeader(method, signPath))
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -175,13 +189,13 @@ func (c *Client) do(ctx context.Context, g group, method, path string, q url.Val
 	resp, err := c.http.Do(req)
 	if err != nil {
 		b.failure()
-		return fmt.Errorf("searchclient: %s %s: %w", method, path, err)
+		return fmt.Errorf("searchclient: %s %s: %w", method, wirePath, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 500 {
 		b.failure()
-		return fmt.Errorf("searchclient: %s %s: status %d", method, path, resp.StatusCode)
+		return fmt.Errorf("searchclient: %s %s: status %d", method, wirePath, resp.StatusCode)
 	}
 	b.success()
 	if resp.StatusCode >= 400 {
@@ -189,7 +203,7 @@ func (c *Client) do(ctx context.Context, g group, method, path string, q url.Val
 	}
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			return fmt.Errorf("searchclient: decode %s: %w", path, err)
+			return fmt.Errorf("searchclient: decode %s: %w", wirePath, err)
 		}
 	}
 	return nil
@@ -301,9 +315,13 @@ func (c *Client) DeleteUserHistory(ctx context.Context, userID uuid.UUID) error 
 }
 
 // DeleteUserHistoryQuery removes one normalized query from a user's history.
+// The query segment is percent-escaped on the wire but the HMAC covers the
+// DECODED path (the server verifies over r.URL.Path), so the two forms are
+// passed separately.
 func (c *Client) DeleteUserHistoryQuery(ctx context.Context, userID uuid.UUID, normalizedQuery string) error {
-	path := "/internal/v1/users/" + userID.String() + "/search-history/" + url.PathEscape(normalizedQuery)
-	return c.do(ctx, groupHistory, http.MethodDelete, path, nil, nil, nil)
+	base := "/internal/v1/users/" + userID.String() + "/search-history/"
+	return c.doPaths(ctx, groupHistory, http.MethodDelete,
+		base+url.PathEscape(normalizedQuery), base+normalizedQuery, nil, nil, nil)
 }
 
 // DeleteUser purges all of a user's search-side data (best-effort account-delete

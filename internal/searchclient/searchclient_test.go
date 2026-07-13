@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -184,5 +185,49 @@ func TestDeleteUserHistoryQueryPathEscaped(t *testing.T) {
 	}
 	if !strings.Contains(gotPath, "hello%20world%2Fslash") {
 		t.Errorf("path not escaped: %q", gotPath)
+	}
+}
+
+// TestDeleteUserHistoryQueryHMACSignsDecodedPath pins the HMAC contract for the
+// one endpoint whose wire path carries percent-escapes: vidra-search verifies
+// the signature over ts+"\n"+METHOD+"\n"+r.URL.Path — Go's DECODED path — so
+// the client must sign the unescaped form while sending the escaped form on the
+// wire. The fake server below IS the authoritative server-side recipe: it
+// recomputes over the decoded r.URL.Path and 401s a mismatch.
+func TestDeleteUserHistoryQueryHMACSignsDecodedPath(t *testing.T) {
+	for _, query := range []string{
+		"hello world",    // space → %20 on the wire
+		"go/concurrency", // slash → %2F on the wire
+		"こんにちは 世界",       // CJK + space → multi-byte escapes on the wire
+	} {
+		t.Run(query, func(t *testing.T) {
+			var validated bool
+			var wirePath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				wirePath = r.URL.EscapedPath()
+				// Server-side recipe: recompute over the DECODED r.URL.Path.
+				validated = verifyHMAC(r.Header.Get(authHeaderName), r.Method, r.URL.Path)
+				if !validated {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer srv.Close()
+
+			c := New(srv.URL, testSecret)
+			uid := uuid.New()
+			if err := c.DeleteUserHistoryQuery(context.Background(), uid, query); err != nil {
+				t.Fatalf("delete %q: %v", query, err)
+			}
+			if !validated {
+				t.Fatalf("server-side decoded-path HMAC recipe rejected the signature for %q", query)
+			}
+			// The wire path must be the ESCAPED form, not the raw query.
+			wantEscaped := "/internal/v1/users/" + uid.String() + "/search-history/" + url.PathEscape(query)
+			if wirePath != wantEscaped {
+				t.Errorf("wire path = %q, want %q", wirePath, wantEscaped)
+			}
+		})
 	}
 }
