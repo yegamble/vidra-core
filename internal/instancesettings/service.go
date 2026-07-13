@@ -233,6 +233,16 @@ const (
 	KeySearchHistoryEnabled               = "search_history_enabled"
 	KeySearchEventRetentionDays           = "search_event_retention_days"
 	KeySearchMinQueryUserCount            = "search_min_query_user_count"
+
+	// KeySearchServiceEnabled is the admin runtime toggle that makes vidra-search
+	// the authoritative search path (search-service W9). Default true: when the
+	// service is wired it is ALWAYS used unless an admin flips this off (then every
+	// gateway surface takes its local backup path WITHOUT calling the service) or
+	// the active health prober detects it down. Unlike the other search keys this
+	// is CORE-SIDE ROUTING POLICY, not search-service config: a change is
+	// deliberately NOT pushed on search.config_updated (it is absent from
+	// SearchSettingKeys) so that contract stays stable.
+	KeySearchServiceEnabled = "search_service_enabled"
 )
 
 // SearchSettingKeys are the settings whose change pushes a search.config_updated
@@ -748,6 +758,13 @@ var specs = []spec{
 		page: PageAdvanced, section: "search"},
 	{key: KeySearchMinQueryUserCount, kind: KindInt,
 		defInt: func(Defaults) int64 { return 3 }, validate: intRange(1, 100),
+		page: PageAdvanced, section: "search"},
+
+	// search_service_enabled: the W9 routing-policy toggle. Default true (use the
+	// smart search service whenever it is wired). Same advanced/search placement as
+	// the W4 keys, but deliberately NOT in SearchSettingKeys — flipping it changes
+	// core-side routing only, never the search service's own config.
+	{key: KeySearchServiceEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
 		page: PageAdvanced, section: "search"},
 }
 
