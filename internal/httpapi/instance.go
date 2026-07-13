@@ -175,6 +175,15 @@ type instanceLiveConfig struct {
 type instanceSearchConfig struct {
 	RemoteURIUsers     bool `json:"remote_uri_users"`
 	RemoteURIAnonymous bool `json:"remote_uri_anonymous"`
+	// Search-service block (search-service W4): the effective instance-level
+	// search config the frontend threads into its discovery surfaces. Mode is the
+	// ranking family; suggestions_enabled is svc-wired AND the admin toggle; the
+	// personalization/history flags are the INSTANCE half of the two-factor gate.
+	Mode                               string `json:"mode"`
+	SuggestionsEnabled                 bool   `json:"suggestions_enabled"`
+	PersonalizedSearchEnabled          bool   `json:"personalized_search_enabled"`
+	PersonalizedRecommendationsEnabled bool   `json:"personalized_recommendations_enabled"`
+	SearchHistoryEnabled               bool   `json:"search_history_enabled"`
 }
 
 // instanceResponse is the public "about this instance" document the frontend
@@ -356,8 +365,13 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 			MaxDurationSecs:   s.settingInt(instancesettings.KeyLiveMaxDurationSecs, 0),
 		},
 		Search: instanceSearchConfig{
-			RemoteURIUsers:     s.remoteSearchAvailable() && s.searchRemoteURIUsers(),
-			RemoteURIAnonymous: s.remoteSearchAvailable() && s.searchRemoteURIAnonymous(),
+			RemoteURIUsers:                     s.remoteSearchAvailable() && s.searchRemoteURIUsers(),
+			RemoteURIAnonymous:                 s.remoteSearchAvailable() && s.searchRemoteURIAnonymous(),
+			Mode:                               s.searchMode(),
+			SuggestionsEnabled:                 s.searchEnabled() && s.instanceSuggestionsEnabled(),
+			PersonalizedSearchEnabled:          s.instancePersonalizedSearch(),
+			PersonalizedRecommendationsEnabled: s.instancePersonalizedRecs(),
+			SearchHistoryEnabled:               s.instanceSearchHistoryEnabled(),
 		},
 	}
 }

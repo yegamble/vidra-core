@@ -17,6 +17,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/searchevents"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -669,15 +670,31 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	if offset == 0 {
 		remoteCh = s.startRemoteSearch(c, q)
 	}
-	items, err := s.videosvc.SearchPublic(c.Request().Context(), q, filter, viewerID, authed, int32(limit), int32(offset))
-	if err != nil {
-		return err
+	// vidra-search routing (search-service W4): when the service is wired both
+	// modes route through it (it handles simple ranking too); ANY error falls
+	// back to the existing local SQL path, so behaviour is unchanged when search
+	// is disabled or unhealthy. The public response contract is identical.
+	var views []videoView
+	source := "local"
+	if s.searchEnabled() {
+		if svcViews, ok := s.searchViaService(c, q, filter, limit, offset, viewerID, authed); ok {
+			views = svcViews
+			source = "search"
+		}
 	}
-	views := make([]videoView, 0, len(items))
-	for _, it := range items {
-		views = append(views, feedItemView(it))
+	if source == "local" {
+		items, err := s.videosvc.SearchPublic(c.Request().Context(), q, filter, viewerID, authed, int32(limit), int32(offset))
+		if err != nil {
+			return err
+		}
+		views = make([]videoView, 0, len(items))
+		for _, it := range items {
+			views = append(views, feedItemView(it))
+		}
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
+	// Additive: record the search as a behavioural event (async via the outbox).
+	s.emitSearchSubmitted(c, q, len(views), source)
 	resp := videoSearchResponse{Query: q, Videos: views, Limit: limit, Offset: offset}
 	if remoteCh != nil {
 		resp.Remote = <-remoteCh // always delivers within the resolve deadline
@@ -1369,6 +1386,8 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 		return err
 	}
 	s.audit(c, observability.ActionVideoBlock, observability.ResultSuccess, userID.String(), "")
+	// Search: suppress the doc (search-service W4). Best-effort.
+	s.searchEvents.EnqueueVideoSuppress(c.Request().Context(), id, searchevents.SuppressBlocked)
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -1388,6 +1407,9 @@ func (s *Server) handleUnblockVideo(c echo.Context) error {
 		return err
 	}
 	s.audit(c, observability.ActionVideoUnblock, observability.ResultSuccess, userID.String(), "")
+	// Search: re-index the doc; the service recomputes eligibility from it
+	// (search-service W4). Best-effort.
+	s.searchEvents.EnqueueVideoUpsert(c.Request().Context(), id)
 	return c.NoContent(http.StatusNoContent)
 }
 
