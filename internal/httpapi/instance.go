@@ -175,10 +175,14 @@ type instanceLiveConfig struct {
 type instanceSearchConfig struct {
 	RemoteURIUsers     bool `json:"remote_uri_users"`
 	RemoteURIAnonymous bool `json:"remote_uri_anonymous"`
-	// Search-service block (search-service W4): the effective instance-level
+	// Search-service block (search-service W4/W9): the effective instance-level
 	// search config the frontend threads into its discovery surfaces. Mode is the
-	// ranking family; suggestions_enabled is svc-wired AND the admin toggle; the
-	// personalization/history flags are the INSTANCE half of the two-factor gate.
+	// ranking family; service_enabled is the effective smart-search availability
+	// (svc-wired AND the admin routing toggle); suggestions_enabled is that AND the
+	// suggestions toggle (so the frontend stops per-keystroke traffic the moment an
+	// admin kills smart search); the personalization/history flags are the INSTANCE
+	// half of the two-factor gate.
+	ServiceEnabled                     bool   `json:"service_enabled"`
 	Mode                               string `json:"mode"`
 	SuggestionsEnabled                 bool   `json:"suggestions_enabled"`
 	PersonalizedSearchEnabled          bool   `json:"personalized_search_enabled"`
@@ -367,8 +371,9 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		Search: instanceSearchConfig{
 			RemoteURIUsers:                     s.remoteSearchAvailable() && s.searchRemoteURIUsers(),
 			RemoteURIAnonymous:                 s.remoteSearchAvailable() && s.searchRemoteURIAnonymous(),
+			ServiceEnabled:                     s.searchEnabled() && s.searchServiceEnabled(),
 			Mode:                               s.searchMode(),
-			SuggestionsEnabled:                 s.searchEnabled() && s.instanceSuggestionsEnabled(),
+			SuggestionsEnabled:                 s.searchEnabled() && s.searchServiceEnabled() && s.instanceSuggestionsEnabled(),
 			PersonalizedSearchEnabled:          s.instancePersonalizedSearch(),
 			PersonalizedRecommendationsEnabled: s.instancePersonalizedRecs(),
 			SearchHistoryEnabled:               s.instanceSearchHistoryEnabled(),

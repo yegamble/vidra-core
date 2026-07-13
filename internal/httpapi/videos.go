@@ -670,13 +670,16 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	if offset == 0 {
 		remoteCh = s.startRemoteSearch(c, q)
 	}
-	// vidra-search routing (search-service W4): when the service is wired both
-	// modes route through it (it handles simple ranking too); ANY error falls
-	// back to the existing local SQL path, so behaviour is unchanged when search
-	// is disabled or unhealthy. The public response contract is identical.
+	// vidra-search routing (search-service W4/W9): when the service is the
+	// authoritative path (wired AND the admin toggle on AND Healthy()), BOTH modes
+	// route through it — it handles simple ranking too, and nothing else routes to
+	// SQL. Admin-off or a prober/breaker-detected outage takes the local SQL backup
+	// WITHOUT paying a per-request timeout; a per-request error/timeout while
+	// healthy still falls back (ok == false) as the last-resort safety. The public
+	// response contract is identical on every path.
 	var views []videoView
 	source := "local"
-	if s.searchEnabled() {
+	if s.useSearchService() {
 		if svcViews, ok := s.searchViaService(c, q, filter, limit, offset, viewerID, authed); ok {
 			views = svcViews
 			source = "search"

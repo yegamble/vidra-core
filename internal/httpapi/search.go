@@ -15,11 +15,46 @@ import (
 	"github.com/vidra/vidra-core/internal/video"
 )
 
+// searchGateway is the subset of the vidra-search client the HTTP handlers use,
+// plus Healthy() — the active-health signal the W9 routing policy consults. The
+// concrete *searchclient.Client satisfies it; unit tests inject a fake with a
+// programmable health flag and a per-method call log so the routing truth table
+// can be asserted without a live service.
+type searchGateway interface {
+	Healthy() bool
+	Suggestions(ctx context.Context, p searchclient.SuggestParams) (searchclient.SuggestionsResponse, error)
+	Search(ctx context.Context, p searchclient.SearchParams) (searchclient.SearchResponse, error)
+	RecommendationsHome(ctx context.Context, p searchclient.RecsParams) (searchclient.RecommendationsResponse, error)
+	RecommendationsRelated(ctx context.Context, p searchclient.RecsParams) (searchclient.RecommendationsResponse, error)
+	GetUserHistory(ctx context.Context, p searchclient.HistoryParams) (searchclient.HistoryResponse, error)
+	DeleteUserHistory(ctx context.Context, userID uuid.UUID) error
+	DeleteUserHistoryQuery(ctx context.Context, userID uuid.UUID, normalizedQuery string) error
+	DeleteUser(ctx context.Context, userID uuid.UUID) error
+}
+
 // --- effective search config accessors (search-service W4) ---
 //
 // searchEnabled reports whether the vidra-search client is wired (SEARCH_SERVICE_
 // URL set). When false every search surface degrades to local behaviour.
 func (s *Server) searchEnabled() bool { return s.searchClient != nil }
+
+// searchServiceEnabled is the admin runtime toggle (search_service_enabled,
+// default true; search-service W9). When an admin flips it off, every gateway
+// surface takes its local backup path WITHOUT calling vidra-search — even if the
+// service is wired and healthy.
+func (s *Server) searchServiceEnabled() bool {
+	return s.settingBool(instancesettings.KeySearchServiceEnabled, true)
+}
+
+// useSearchService reports whether a gateway surface (search, suggestions, home/
+// related recs) should route to vidra-search RIGHT NOW: the client is wired, the
+// admin toggle is on, and the client reports Healthy() (active prober up + no
+// breaker open). When false the caller takes its backup path with no per-request
+// timeout latency. The search-history proxy does NOT use this helper — it must
+// distinguish admin-off (403) from service-down (503).
+func (s *Server) useSearchService() bool {
+	return s.searchEnabled() && s.searchServiceEnabled() && s.searchClient.Healthy()
+}
 
 // searchMode is the effective ranking family (simple|advanced).
 func (s *Server) searchMode() string {
@@ -127,7 +162,10 @@ func (s *Server) handleSearchSuggestions(c echo.Context) error {
 	limit := clampInt(queryInt(c, "limit", 10), 1, 20)
 	resp := suggestionsResponse{Query: q, Suggestions: []suggestionView{}}
 
-	if q == "" || !s.searchEnabled() || !s.instanceSuggestionsEnabled() {
+	// Backup path (empty list, never an error) when the query is empty, smart
+	// search is off/down (admin toggle or health), or suggestions are disabled —
+	// all WITHOUT calling the service (W9). Health is folded in via useSearchService.
+	if q == "" || !s.useSearchService() || !s.instanceSuggestionsEnabled() {
 		return c.JSON(http.StatusOK, resp)
 	}
 	userID, prefs, authed := s.searchUserPrefs(c)
@@ -218,7 +256,7 @@ func (s *Server) handleHomeRecommendations(c echo.Context) error {
 	userID, prefs, _ := s.searchUserPrefs(c)
 	personalized := s.instancePersonalizedRecs() && authed && prefs.PersonalizedRecs
 
-	if s.searchEnabled() {
+	if s.useSearchService() {
 		var uid *uuid.UUID
 		if authed {
 			uid = &userID
@@ -274,7 +312,7 @@ func (s *Server) handleVideoRecommendations(c echo.Context) error {
 	userID, prefs, _ := s.searchUserPrefs(c)
 	personalized := s.instancePersonalizedRecs() && authed && prefs.PersonalizedRecs
 
-	if s.searchEnabled() {
+	if s.useSearchService() {
 		var uid *uuid.UUID
 		if authed {
 			uid = &userID
@@ -423,16 +461,32 @@ type searchHistoryResponse struct {
 	Offset  int                      `json:"offset"`
 }
 
+// searchHistoryGate returns the error a search-history proxy handler must surface
+// before touching vidra-search, or nil when it may proceed (search-service W9).
+// The admin toggle being off is a 403 feature_disabled (the operator deliberately
+// turned smart search off — this is a feature-disabled state, distinct from an
+// outage); a service that is unwired or currently unhealthy is a 503
+// search_unavailable (an honest "down", never a fake empty history / silent no-op).
+func (s *Server) searchHistoryGate() error {
+	if !s.searchServiceEnabled() {
+		return &FeatureDisabledError{Feature: "search_service"}
+	}
+	if !s.searchEnabled() || !s.searchClient.Healthy() {
+		return &SearchUnavailableError{}
+	}
+	return nil
+}
+
 // handleGetSearchHistory proxies the caller's stored search history from
-// vidra-search. requireAuth. When the service is disabled/unreachable it answers
-// 503 search_unavailable (an honest failure, not a fake empty history).
+// vidra-search. requireAuth. Admin-off → 403 feature_disabled; unwired/unreachable
+// → 503 search_unavailable (an honest failure, not a fake empty history).
 func (s *Server) handleGetSearchHistory(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	if !s.searchEnabled() {
-		return &SearchUnavailableError{}
+	if err := s.searchHistoryGate(); err != nil {
+		return err
 	}
 	limit := clampInt(queryInt(c, "limit", 20), 1, 100)
 	offset := queryInt(c, "offset", 0)
@@ -458,15 +512,15 @@ func (s *Server) handleGetSearchHistory(c echo.Context) error {
 }
 
 // handleClearSearchHistory clears the caller's entire search history in
-// vidra-search. requireAuth. 503 when the service is down (must not silently
-// fail).
+// vidra-search. requireAuth. Admin-off → 403 feature_disabled; service down → 503
+// search_unavailable (must not silently fail).
 func (s *Server) handleClearSearchHistory(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	if !s.searchEnabled() {
-		return &SearchUnavailableError{}
+	if err := s.searchHistoryGate(); err != nil {
+		return err
 	}
 	if err := s.searchClient.DeleteUserHistory(c.Request().Context(), userID); err != nil {
 		return &SearchUnavailableError{}
@@ -475,14 +529,15 @@ func (s *Server) handleClearSearchHistory(c echo.Context) error {
 }
 
 // handleDeleteSearchHistoryQuery removes a single normalized query from the
-// caller's history. requireAuth. 503 when the service is down.
+// caller's history. requireAuth. Admin-off → 403 feature_disabled; service down
+// → 503 search_unavailable.
 func (s *Server) handleDeleteSearchHistoryQuery(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	if !s.searchEnabled() {
-		return &SearchUnavailableError{}
+	if err := s.searchHistoryGate(); err != nil {
+		return err
 	}
 	query := strings.TrimSpace(c.Param("query"))
 	if query == "" {

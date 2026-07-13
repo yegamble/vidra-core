@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -26,6 +28,9 @@ import (
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/searchevents"
 )
+
+// defaultJitterRand is the prober's default ±jitter source (concurrency-safe).
+func defaultJitterRand() float64 { return rand.Float64() }
 
 // authHeaderName is the internal S2S auth header (MASTER-PLAN §1.4).
 const authHeaderName = "X-Vidra-Internal-Auth"
@@ -71,6 +76,10 @@ type Client struct {
 	now      func() time.Time
 	breakers map[group]*breaker
 	timeouts map[group]time.Duration
+	// prober is the active health detector behind Healthy(). It is always
+	// constructed (optimistic) so Healthy() is usable even before RunHealthProbe
+	// is started; cmd/api starts the loop only when the service is configured.
+	prober *prober
 }
 
 // Option customises the Client.
@@ -99,6 +108,36 @@ func WithTimeouts(suggest, search, recs time.Duration) Option {
 	}
 }
 
+// WithHealthInterval overrides the health prober's base cadence (SEARCH_HEALTH_
+// INTERVAL env). A non-positive value keeps the 15s default.
+func WithHealthInterval(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.prober.interval = d
+		}
+	}
+}
+
+// WithLogger sets the logger the health prober uses for its transition lines
+// (nil keeps slog.Default()).
+func WithLogger(l *slog.Logger) Option {
+	return func(c *Client) {
+		if l != nil {
+			c.prober.logger = l
+		}
+	}
+}
+
+// WithProberRand overrides the prober's [0,1) jitter source (test seam for the
+// ±20% interval-bounds assertions).
+func WithProberRand(fn func() float64) Option {
+	return func(c *Client) {
+		if fn != nil {
+			c.prober.rand = fn
+		}
+	}
+}
+
 // New builds a Client for baseURL (the search service origin, no trailing slash)
 // authenticated with secret. It is safe for concurrent use.
 func New(baseURL, secret string, opts ...Option) *Client {
@@ -114,6 +153,7 @@ func New(baseURL, secret string, opts ...Option) *Client {
 			groupHistory: defaultHistoryTimeout,
 			groupEvents:  defaultEventsTimeout,
 		},
+		prober: newProber(baseURL),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -337,4 +377,36 @@ func (c *Client) SendEvents(ctx context.Context, batch searchevents.EventBatch) 
 	var out searchevents.EventBatchResult
 	err := c.do(ctx, groupEvents, http.MethodPost, "/internal/v1/events", nil, batch, &out)
 	return out, err
+}
+
+// RunHealthProbe drives the background health prober until ctx is cancelled.
+// Start it once, when the service is configured, with `go c.RunHealthProbe(ctx)`;
+// it returns promptly on cancellation and never blocks shutdown.
+func (c *Client) RunHealthProbe(ctx context.Context) { c.prober.run(ctx) }
+
+// Healthy reports whether vidra-search should be used right now: the active
+// prober currently considers /healthz up AND no endpoint-group breaker is open.
+// A false result routes the caller to its backup path with no per-request
+// latency. This never wedges: a tripped breaker reports "open" only during its
+// cooldown window, after which it self-clears (admitting a half-open probe on the
+// next real call), and the prober independently re-forgives the service on the
+// first successful /healthz.
+func (c *Client) Healthy() bool {
+	return c.prober.healthy.Load() && !c.anyBreakerOpen()
+}
+
+// ServiceProbeHealthy is the prober's view of the service (/healthz) alone,
+// independent of breaker state — the signal behind the vidra_search_service_healthy
+// gauge and the transition logs.
+func (c *Client) ServiceProbeHealthy() bool { return c.prober.healthy.Load() }
+
+// anyBreakerOpen reports whether any endpoint-group breaker is currently refusing
+// calls (a service-wide 5xx/transport symptom; 4xx never trips a breaker).
+func (c *Client) anyBreakerOpen() bool {
+	for _, b := range c.breakers {
+		if b.isOpen() {
+			return true
+		}
+	}
+	return false
 }

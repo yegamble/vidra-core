@@ -47,7 +47,6 @@ import (
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/remotevideo"
-	"github.com/vidra/vidra-core/internal/searchclient"
 	"github.com/vidra/vidra-core/internal/searchevents"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/transcode"
@@ -131,10 +130,13 @@ type Server struct {
 	remotevideosvc    *remotevideo.Service
 	instancemodsvc    *instancemod.Service
 	settingssvc       *instancesettings.Service
-	// searchClient talks to the vidra-search internal API (search-service W4).
+	// searchClient talks to the vidra-search internal API (search-service W4/W9).
 	// Nil when SEARCH_SERVICE_URL is unset — every search surface then degrades
-	// to local behaviour. searchEnabled() gates on it.
-	searchClient *searchclient.Client
+	// to local behaviour. searchEnabled() gates on it; useSearchService() folds in
+	// the admin runtime toggle and the client's active-health signal. It is the
+	// searchGateway interface (not the concrete client) so unit tests inject a fake
+	// with a programmable health flag and call log.
+	searchClient searchGateway
 	// searchEvents durably enqueues search domain/behavioural events to the
 	// search_outbox (best-effort, never on the request path). Wired in cmd/api
 	// only when the search service is enabled; nil in unit tests / when disabled,
@@ -531,12 +533,14 @@ func WithSettingsService(svc *instancesettings.Service) Option {
 	return func(s *Server) { s.settingssvc = svc }
 }
 
-// WithSearchClient wires the vidra-search internal-API client (search-service
-// W4). When set, GET /search/suggestions, the recommendation rails, the
-// search-history proxy, and handleSearchVideos consult vidra-search (each
-// degrading silently to local behaviour on any error); when unset, all of those
-// use their local fallbacks and the search-history endpoints answer 503.
-func WithSearchClient(c *searchclient.Client) Option {
+// WithSearchClient wires the vidra-search internal-API gateway (search-service
+// W4/W9). When set — and the admin toggle is on and the client reports Healthy() —
+// GET /search/suggestions, the recommendation rails, the search-history proxy, and
+// handleSearchVideos route to vidra-search (each degrading silently to local
+// behaviour on any per-request error); when unset/off/unhealthy, all of those use
+// their local backups. The parameter is the searchGateway interface: the concrete
+// *searchclient.Client satisfies it, and tests pass a fake.
+func WithSearchClient(c searchGateway) Option {
 	return func(s *Server) { s.searchClient = c }
 }
 
