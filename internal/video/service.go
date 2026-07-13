@@ -140,6 +140,8 @@ type Repository interface {
 	SaveVideo(ctx context.Context, arg sqlcgen.SaveVideoParams) error
 	UnsaveVideo(ctx context.Context, arg sqlcgen.UnsaveVideoParams) error
 	SearchPublicVideos(ctx context.Context, arg sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error)
+	ListPublicVideosByIDs(ctx context.Context, arg sqlcgen.ListPublicVideosByIDsParams) ([]sqlcgen.ListPublicVideosByIDsRow, error)
+	ListRelatedVideosFallback(ctx context.Context, arg sqlcgen.ListRelatedVideosFallbackParams) ([]sqlcgen.ListRelatedVideosFallbackRow, error)
 	ListAdminVideos(ctx context.Context, arg sqlcgen.ListAdminVideosParams) ([]sqlcgen.ListAdminVideosRow, error)
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
@@ -1973,6 +1975,72 @@ func (s *Service) SearchPublic(ctx context.Context, query string, filter FeedFil
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, nil
+}
+
+// HydrateByIDs resolves a ranked list of video ids to discovery cards under the
+// full canonical predicate (search-service W4): the returned cards are in the
+// SAME order as ids, with any id that fails visibility (blocked, owner
+// unlisted/muted/blocked, sensitive-under-hide, non-public) dropped. This is how
+// core hydrates the visibility-safe id list vidra-search returns for
+// search/recommendations — the search index never holds per-viewer state.
+func (s *Service) HydrateByIDs(ctx context.Context, ids []uuid.UUID, viewerID uuid.UUID, viewerAuthed, hideSensitive bool) ([]FeedItem, error) {
+	if len(ids) == 0 {
+		return []FeedItem{}, nil
+	}
+	rows, err := s.repo.ListPublicVideosByIDs(ctx, sqlcgen.ListPublicVideosByIDsParams{
+		Ids:           ids,
+		ViewerID:      pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
+		HideSensitive: hideSensitive,
+	})
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[uuid.UUID]FeedItem, len(rows))
+	for _, r := range rows {
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it.AuthorDisplayName = r.AuthorDisplayName
+		byID[r.ID] = it
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, id := range ids {
+		if it, ok := byID[id]; ok {
+			items = append(items, it)
+		}
+	}
+	return items, nil
+}
+
+// RelatedFallback is the server-side "related videos" fallback (search-service
+// W4) used when vidra-search is unavailable or returns nothing: same-channel +
+// same-category candidates for the source video, under the full canonical
+// predicate, ordered same-channel first then by popularity. category may be nil.
+func (s *Service) RelatedFallback(ctx context.Context, videoID, channelID uuid.UUID, category *string, viewerID uuid.UUID, viewerAuthed, hideSensitive bool, limit int32) ([]FeedItem, error) {
+	rows, err := s.repo.ListRelatedVideosFallback(ctx, sqlcgen.ListRelatedVideosFallbackParams{
+		ChannelID:     channelID,
+		ExcludeID:     videoID,
+		ViewerID:      pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
+		HideSensitive: hideSensitive,
+		Category:      nilIfEmpty(derefString(category)),
+		ResultLimit:   limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it.AuthorDisplayName = r.AuthorDisplayName
+		items = append(items, it)
+	}
+	return items, nil
+}
+
+// derefString returns the pointee or "" when nil.
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // AdminVideo is a video as seen in the admin/moderator videos overview: any

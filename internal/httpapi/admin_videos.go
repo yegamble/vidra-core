@@ -12,6 +12,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/searchevents"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -194,6 +195,10 @@ func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
 			s.logger.WarnContext(ctx, "notify video rejection failed", "error", nerr, "video_id", id)
 		}
 	}
+	// Search: a rejected quarantined video must never surface (search-service
+	// W4). Best-effort suppression (it was likely never indexed, but this is the
+	// safe backstop).
+	s.searchEvents.EnqueueVideoSuppress(ctx, id, searchevents.SuppressModerated)
 	// The moderator's prose remains in the moderation workflow/notification; the
 	// security ledger stores only a stable classification and whether prose was
 	// supplied. Free-form content can contain PII and must never enter audit_log.

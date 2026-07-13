@@ -265,6 +265,9 @@ func (f *fakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUserProf
 			if a.HistoryEnabled != nil {
 				u.HistoryEnabled = *a.HistoryEnabled
 			}
+			if a.ProfilePublic != nil {
+				u.ProfilePublic = *a.ProfilePublic
+			}
 			u.UpdatedAt = time.Now()
 			f.byEmail[k] = u
 			return u, nil
@@ -315,6 +318,18 @@ func (f *fakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.User, e
 		}
 	}
 	return sqlcgen.User{}, errors.New("not found")
+}
+
+func (f *fakeRepo) GetPublicUserProfileByUsername(_ context.Context, username string) (sqlcgen.GetPublicUserProfileByUsernameRow, error) {
+	for _, u := range f.byEmail {
+		if lower(u.Username) == lower(username) && u.IsActive && u.ProfilePublic {
+			return sqlcgen.GetPublicUserProfileByUsernameRow{
+				ID: u.ID, Username: u.Username, DisplayName: u.DisplayName,
+				Bio: u.Bio, CreatedAt: u.CreatedAt, ProfilePublic: true,
+			}, nil
+		}
+	}
+	return sqlcgen.GetPublicUserProfileByUsernameRow{}, errors.New("not found")
 }
 
 func lower(s string) string {

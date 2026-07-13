@@ -372,6 +372,9 @@ func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 
 	sort.Strings(changed)
 	s.audit(c, observability.ActionAdminInstanceUpdate, observability.ResultSuccess, callerID.String(), "keys="+strings.Join(changed, ","))
+	// Search: push the effective config to vidra-search when a search key changed
+	// (search-service W4). Best-effort.
+	s.emitSearchConfigChangedIfNeeded(c.Request().Context(), changed)
 	return c.JSON(http.StatusOK, s.instanceSettingsResponse())
 }
 

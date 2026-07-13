@@ -216,6 +216,10 @@ func (f *authFakeRepo) CreateUser(_ context.Context, a sqlcgen.CreateUserParams)
 		PasswordHash: a.PasswordHash, Role: a.Role, IsActive: true, CreatedAt: time.Now(),
 		PendingEmailVerification: a.PendingEmailVerification,
 		HistoryEnabled:           a.HistoryEnabled,
+		// Search prefs mirror the migration's NOT NULL DEFAULT TRUE (W4).
+		SearchHistoryEnabled:               true,
+		PersonalizedSearchEnabled:          true,
+		PersonalizedRecommendationsEnabled: true,
 	}
 	f.users[key] = u
 	return u, nil
@@ -236,6 +240,18 @@ func (f *authFakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.Use
 		}
 	}
 	return sqlcgen.User{}, errors.New("not found")
+}
+
+func (f *authFakeRepo) GetPublicUserProfileByUsername(_ context.Context, username string) (sqlcgen.GetPublicUserProfileByUsernameRow, error) {
+	for _, u := range f.users {
+		if strings.EqualFold(u.Username, username) && u.IsActive && u.ProfilePublic {
+			return sqlcgen.GetPublicUserProfileByUsernameRow{
+				ID: u.ID, Username: u.Username, DisplayName: u.DisplayName,
+				Bio: u.Bio, CreatedAt: u.CreatedAt, ProfilePublic: true,
+			}, nil
+		}
+	}
+	return sqlcgen.GetPublicUserProfileByUsernameRow{}, errors.New("not found")
 }
 
 func (f *authFakeRepo) CreateRegistrationRequest(_ context.Context, a sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error) {
@@ -320,6 +336,18 @@ func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUser
 			}
 			if a.HistoryEnabled != nil {
 				u.HistoryEnabled = *a.HistoryEnabled
+			}
+			if a.ProfilePublic != nil {
+				u.ProfilePublic = *a.ProfilePublic
+			}
+			if a.SearchHistoryEnabled != nil {
+				u.SearchHistoryEnabled = *a.SearchHistoryEnabled
+			}
+			if a.PersonalizedSearchEnabled != nil {
+				u.PersonalizedSearchEnabled = *a.PersonalizedSearchEnabled
+			}
+			if a.PersonalizedRecommendationsEnabled != nil {
+				u.PersonalizedRecommendationsEnabled = *a.PersonalizedRecommendationsEnabled
 			}
 			u.UpdatedAt = time.Now()
 			f.users[k] = u

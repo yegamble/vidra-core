@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+
+	"github.com/vidra/vidra-core/internal/searchevents"
 )
 
 // watchProgressRequest is the PUT /videos/{id}/watch-progress body: the viewer's
@@ -53,7 +55,33 @@ func (s *Server) handleRecordWatchProgress(c echo.Context) error {
 	if err := s.videosvc.RecordProgress(c.Request().Context(), videoID, userID, in.PositionSeconds); err != nil {
 		return err
 	}
+	s.emitWatchProgress(c, videoID, userID, in.PositionSeconds)
 	return c.NoContent(http.StatusNoContent)
+}
+
+// emitWatchProgress enqueues a throttled video.watch_progress event (search-
+// service W4): at most one per (user,video) per 30s window, gated by the Redis
+// SETNX seam. duration_seconds is omitted (not cheaply available on this path).
+// No-op when the enqueuer or throttle is unwired.
+func (s *Server) emitWatchProgress(c echo.Context, videoID, userID uuid.UUID, positionSeconds int32) {
+	if s.searchEvents == nil || s.searchWatchThrottle == nil {
+		return
+	}
+	key := "search:wp:" + userID.String() + ":" + videoID.String()
+	if !s.searchWatchThrottle(c.Request().Context(), key) {
+		return
+	}
+	uid := userID.String()
+	sid := sessionIDFromRequest(c)
+	wp := searchevents.WatchProgress{
+		VideoID:         videoID,
+		UserID:          &uid,
+		PositionSeconds: positionSeconds,
+	}
+	if sid != "" {
+		wp.SessionID = &sid
+	}
+	s.searchEvents.EnqueueWatchProgress(c.Request().Context(), wp)
 }
 
 // handleGetWatchProgress returns the caller's saved resume position for a public,
@@ -146,5 +174,7 @@ func (s *Server) handleClearHistory(c echo.Context) error {
 	if err := s.videosvc.ClearHistory(c.Request().Context(), userID); err != nil {
 		return err
 	}
+	// Search: purge the user's derived watch projection (search-service W4).
+	s.searchEvents.EnqueueUserHistoryDeleted(c.Request().Context(), userID, searchevents.HistoryScopeWatch)
 	return c.NoContent(http.StatusNoContent)
 }
