@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
-	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/labstack/echo/v4 v4.15.4
