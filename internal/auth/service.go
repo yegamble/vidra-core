@@ -469,6 +469,11 @@ type ProfileInput struct {
 	HistoryEnabled *bool
 	// ProfilePublic controls whether GET /users/{username}/profile exists.
 	ProfilePublic *bool
+	// Search & recommendation preferences (search-service W4): the user half of
+	// the two-factor personalization gate. nil leaves each unchanged.
+	SearchHistoryEnabled               *bool
+	PersonalizedSearchEnabled          *bool
+	PersonalizedRecommendationsEnabled *bool
 }
 
 // UpdateProfile updates the authenticated account's presentation fields
@@ -476,12 +481,15 @@ type ProfileInput struct {
 // intentionally not changed here — those need their own re-verification flow.
 func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in ProfileInput) (sqlcgen.User, error) {
 	user, err := s.repo.UpdateUserProfile(ctx, sqlcgen.UpdateUserProfileParams{
-		ID:             id,
-		DisplayName:    trimPtr(in.DisplayName),
-		Bio:            trimPtr(in.Bio),
-		Unlisted:       in.Unlisted,
-		HistoryEnabled: in.HistoryEnabled,
-		ProfilePublic:  in.ProfilePublic,
+		ID:                                 id,
+		DisplayName:                        trimPtr(in.DisplayName),
+		Bio:                                trimPtr(in.Bio),
+		Unlisted:                           in.Unlisted,
+		HistoryEnabled:                     in.HistoryEnabled,
+		ProfilePublic:                      in.ProfilePublic,
+		SearchHistoryEnabled:               in.SearchHistoryEnabled,
+		PersonalizedSearchEnabled:          in.PersonalizedSearchEnabled,
+		PersonalizedRecommendationsEnabled: in.PersonalizedRecommendationsEnabled,
 	})
 	if err != nil {
 		return sqlcgen.User{}, ErrAccountNotFound
