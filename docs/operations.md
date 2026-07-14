@@ -63,6 +63,35 @@ additively in API responses. Nothing private/unlisted/quarantined/DM/export is e
 pinned (the eligibility gate is a hard privacy fence). Local/S3 stays the only
 authoritative copy.
 
+### Local-only vs live public mode
+
+The compose `ipfs` service is local-only unless the operator explicitly sets
+`IPFS_PUBLIC_NETWORK=true`. Its init hook blocks all swarm addresses, removes
+bootstrap peers, and disables routing, providing, and relay/NAT traversal in local mode. Live mode restores the
+public bootstrap/DHT provider configuration and enables relay reservations plus
+hole punching so a NAT'd node can actually serve an independently operated public
+gateway. Merely having outbound swarm peers is not proof of public retrievability.
+
+From the meta-repository, `make ipfs-live` starts both tiers with the intended
+split: `IPFS_ENABLED=true`, public networking on, the client gateway defaulting to
+`https://ipfs.io`, and `IPFS_MIRROR_PRIVATE=true` pointed at the separate keyed
+node. To exercise the backend node directly:
+
+```bash
+IPFS_ENABLED=true \
+IPFS_PUBLIC_NETWORK=true \
+IPFS_GATEWAY_URL=https://ipfs.io \
+docker compose --profile core --profile ipfs up -d --build
+```
+
+The Kubo RPC (`:5001`), private RPC (`:5002`), local gateway (`:9090`), and private
+Cluster REST (`:9094`) bind to host loopback in the reference compose file; never
+publish an RPC port to an untrusted network. Only the public libp2p swarm port
+(`:4001` TCP+UDP) is host-public. The live integration workflow adds a fresh real
+MP4, retrieves its unique CID through an independent public gateway, and compares
+the bytes. `make test-ipfs-integration` keeps this proof opt-in locally via
+`IPFS_TEST_PUBLIC_GATEWAY_URL` + `IPFS_TEST_VIDEO_PATH`.
+
 **The pinset is a distribution surface, never a backup.** Do **not** back up the
 Kubo datastore for durability — it holds only re-derivable copies of already-public
 bytes:
@@ -122,12 +151,16 @@ local/S3 store through the authenticated app API.
 - `LIBP2P_FORCE_PNET=1` — the daemon **refuses to boot** without a `swarm.key`
   (fail-closed: keyless never means "fell back to the public network").
 - Default bootstrap **cleared** (`ipfs bootstrap rm --all`) — you self-manage peers;
-  `Routing.Type=none` (explicit peering only, no DHT) + `Reprovider.Interval=0`
+  `Routing.Type=none` (explicit peering only, no DHT) + `Provide.Enabled=false`
   (no content announcements) keep even the private swarm from advertising CIDs.
 - `Gateway.NoFetch=true`, gateway **bound internally / never host-published** — no
   public gateway route exists for this node. If DR tooling ever needs gateway reads,
   that is an infra decision (reverse-proxy auth) outside the app contract; the app
   never links to it.
+
+The dedicated private integration workflow adds a fresh real MP4 to one keyed
+node, replicates and compares it byte-for-byte on the second keyed node, and then
+proves a keyless public node cannot connect to the PNet or retrieve its CID.
 
 **swarm.key custody — the operational realities (accept these before enabling):**
 

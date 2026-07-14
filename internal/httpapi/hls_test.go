@@ -160,9 +160,11 @@ func seedReadyHLS(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backend, 
 			t.Fatalf("Put %q: %v", key, err)
 		}
 	}
-	put(prefix+"/master.m3u8", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=985600,RESOLUTION=320x240\n240p/playlist.m3u8\n")
+	put(prefix+"/master.m3u8", "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-STREAM-INF:BANDWIDTH=985600,RESOLUTION=320x240\n240p/playlist.m3u8\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=60000,RESOLUTION=320x240,CODECS=\"avc1.4d4015\",URI=\"240p/iframe.m3u8\"\n")
 	put(prefix+"/240p/playlist.m3u8", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXTINF:2.0,\nseg_00000.ts\n#EXT-X-ENDLIST\n")
 	put(prefix+"/240p/seg_00000.ts", "fake-ts-bytes")
+	put(prefix+"/240p/iframe.m3u8", "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-I-FRAMES-ONLY\n#EXTINF:1.0,\n#EXT-X-BYTERANGE:8@0\niframe.ts\n#EXT-X-ENDLIST\n")
+	put(prefix+"/240p/iframe.ts", "fake-iframe-ts-bytes")
 	put(media.HLSDownloadKey(prefix+"/240p", true), "fake-muxed-mp4")
 	put(media.HLSDownloadKey(prefix+"/240p", false), "fake-video-only-mp4")
 	put(media.HLSAudioDownloadKey(prefix+"/master.m3u8"), "fake-audio-m4a")
@@ -202,7 +204,7 @@ func seedReadyLadder(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backen
 		bw   int
 	}{{720, 1280, 3220800}, {480, 854, 1680800}, {360, 640, 985600}}
 	var master strings.Builder
-	master.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n")
+	master.WriteString("#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-INDEPENDENT-SEGMENTS\n")
 	for _, r := range rungs {
 		repo.renditions[id] = append(repo.renditions[id], sqlcgen.VideoRendition{
 			ID: uuid.New(), VideoID: id, Height: int32(r.h), Width: int32(r.w),
@@ -210,6 +212,7 @@ func seedReadyLadder(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backen
 		})
 		master.WriteString("#EXT-X-STREAM-INF:BANDWIDTH=" + itoa(r.bw) + ",RESOLUTION=" + itoa(r.w) + "x" + itoa(r.h) + "\n")
 		master.WriteString(itoa(r.h) + "p/playlist.m3u8\n")
+		master.WriteString("#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=60000,RESOLUTION=" + itoa(r.w) + "x" + itoa(r.h) + ",CODECS=\"avc1.4d401f\",URI=\"" + itoa(r.h) + "p/iframe.m3u8\"\n")
 		put := func(key, content string) {
 			if _, err := blobs.Put(context.Background(), key, strings.NewReader(content)); err != nil {
 				t.Fatalf("Put %q: %v", key, err)
@@ -218,6 +221,9 @@ func seedReadyLadder(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backen
 		put(prefix+"/"+itoa(r.h)+"p/playlist.m3u8",
 			"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXTINF:2.0,\nseg_00000.ts\n#EXT-X-ENDLIST\n")
 		put(prefix+"/"+itoa(r.h)+"p/seg_00000.ts", "fake-ts-bytes")
+		put(prefix+"/"+itoa(r.h)+"p/iframe.m3u8",
+			"#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-I-FRAMES-ONLY\n#EXTINF:1.0,\n#EXT-X-BYTERANGE:8@0\niframe.ts\n#EXT-X-ENDLIST\n")
+		put(prefix+"/"+itoa(r.h)+"p/iframe.ts", "fake-iframe-ts-bytes")
 		put(media.HLSDownloadKey(prefix+"/"+itoa(r.h)+"p", true), "fake-muxed-mp4")
 		put(media.HLSDownloadKey(prefix+"/"+itoa(r.h)+"p", false), "fake-video-only-mp4")
 	}
@@ -250,30 +256,37 @@ func TestHLSServesMasterVariantAndSegment(t *testing.T) {
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
 	seedReadyHLS(t, tcRepo, blobs, id)
+	version := hlsCacheVersion(tcRepo.playlists[uuid.MustParse(id)])
 
-	rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/master.m3u8", "")
+	rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/master.m3u8?v="+version, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("master = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/vnd.apple.mpegurl" {
 		t.Errorf("master Content-Type = %q, want application/vnd.apple.mpegurl", ct)
 	}
-	if !strings.Contains(rec.Body.String(), "240p/playlist.m3u8") {
+	if cc := rec.Header().Get("Cache-Control"); cc != hlsVersionedCacheControl {
+		t.Errorf("master Cache-Control = %q, want %q", cc, hlsVersionedCacheControl)
+	}
+	if !strings.Contains(rec.Body.String(), "240p/playlist.m3u8?v="+version) {
 		t.Errorf("master should reference the variant relatively:\n%s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `URI="240p/iframe.m3u8?v=`+version+`"`) {
+		t.Errorf("master should advertise the versioned trick-play playlist:\n%s", rec.Body.String())
+	}
 
-	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/240p/playlist.m3u8", "")
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/240p/playlist.m3u8?v="+version, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("variant = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/vnd.apple.mpegurl" {
 		t.Errorf("variant Content-Type = %q, want application/vnd.apple.mpegurl", ct)
 	}
-	if !strings.Contains(rec.Body.String(), "seg_00000.ts") {
+	if !strings.Contains(rec.Body.String(), "seg_00000.ts?v="+version) {
 		t.Errorf("variant should list its segment:\n%s", rec.Body.String())
 	}
 
-	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/240p/seg_00000.ts", "")
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/240p/seg_00000.ts?v="+version, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("segment = %d, want 200", rec.Code)
 	}
@@ -283,6 +296,30 @@ func TestHLSServesMasterVariantAndSegment(t *testing.T) {
 	if rec.Body.String() != "fake-ts-bytes" {
 		t.Errorf("segment bytes = %q", rec.Body.String())
 	}
+	if cc := rec.Header().Get("Cache-Control"); cc != hlsVersionedCacheControl {
+		t.Errorf("segment Cache-Control = %q, want %q", cc, hlsVersionedCacheControl)
+	}
+
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/240p/iframe.m3u8?v="+version, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "#EXT-X-I-FRAMES-ONLY") {
+		t.Fatalf("I-frame playlist = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "iframe.ts?v="+version) {
+		t.Fatalf("I-frame playlist should propagate its generation:\n%s", rec.Body.String())
+	}
+	rangeRec := httptest.NewRecorder()
+	rangeReq := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/hls/240p/iframe.ts?v="+version, nil)
+	rangeReq.Header.Set("Range", "bytes=0-3")
+	srv.Handler().ServeHTTP(rangeRec, rangeReq)
+	if rangeRec.Code != http.StatusPartialContent || rangeRec.Body.String() != "fake" {
+		t.Fatalf("I-frame byte range = %d body=%q, want 206/fake", rangeRec.Code, rangeRec.Body.String())
+	}
+	if cr := rangeRec.Header().Get("Content-Range"); cr != "bytes 0-3/20" {
+		t.Errorf("I-frame Content-Range = %q, want bytes 0-3/20", cr)
+	}
+	if stale := getHLS(srv, "/api/v1/videos/"+id+"/hls/master.m3u8?v=stale", ""); stale.Code != http.StatusNotFound {
+		t.Errorf("stale generation = %d, want 404", stale.Code)
+	}
 }
 
 func TestHLSServesReferencedPeerTubeFlatFMP4Tree(t *testing.T) {
@@ -290,12 +327,13 @@ func TestHLSServesReferencedPeerTubeFlatFMP4Tree(t *testing.T) {
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"PeerTube HLS","privacy":"public"}`)
 	seedReadyPeerTubeHLS(t, tcRepo, blobs, id)
+	version := hlsCacheVersion(tcRepo.playlists[uuid.MustParse(id)])
 
 	rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/master.m3u8", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("master = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "\npeertube/v1-720.m3u8\n") {
+	if !strings.Contains(rec.Body.String(), "\npeertube/v1-720.m3u8?v="+version+"\n") {
 		t.Fatalf("master should route PeerTube flat variant through peertube/:\n%s", rec.Body.String())
 	}
 
@@ -303,7 +341,8 @@ func TestHLSServesReferencedPeerTubeFlatFMP4Tree(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("variant = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `URI="v1-init.mp4"`) || !strings.Contains(rec.Body.String(), "v1-720-fragmented.mp4") {
+	if !strings.Contains(rec.Body.String(), `URI="v1-init.mp4?v=`+version+`"`) ||
+		!strings.Contains(rec.Body.String(), "v1-720-fragmented.mp4?v="+version) {
 		t.Fatalf("variant should keep flat relative media references:\n%s", rec.Body.String())
 	}
 
@@ -319,12 +358,15 @@ func TestHLSServesReferencedPeerTubeFlatFMP4Tree(t *testing.T) {
 	}
 
 	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/master.m3u8?pt=secret", "")
-	if !strings.Contains(rec.Body.String(), "peertube/v1-720.m3u8?pt=secret") {
+	if !strings.Contains(rec.Body.String(), "peertube/v1-720.m3u8?pt=secret&v="+version) {
 		t.Fatalf("master should propagate playback token into rewritten URI:\n%s", rec.Body.String())
 	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "private, no-store" {
+		t.Fatalf("tokenized master Cache-Control = %q, want private, no-store", cc)
+	}
 	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/peertube/v1-720.m3u8?pt=secret", "")
-	if !strings.Contains(rec.Body.String(), `URI="v1-init.mp4?pt=secret"`) ||
-		!strings.Contains(rec.Body.String(), "v1-720-fragmented.mp4?pt=secret") {
+	if !strings.Contains(rec.Body.String(), `URI="v1-init.mp4?pt=secret&v=`+version+`"`) ||
+		!strings.Contains(rec.Body.String(), "v1-720-fragmented.mp4?pt=secret&v="+version) {
 		t.Fatalf("variant should propagate playback token to URI attrs and media lines:\n%s", rec.Body.String())
 	}
 }
@@ -349,7 +391,8 @@ func TestHLSMultiRenditionLadderExposed(t *testing.T) {
 		t.Fatalf("detail = %d", rec.Code)
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &v)
-	wantURL := "/api/v1/videos/" + id + "/hls/master.m3u8"
+	wantURL := "/api/v1/videos/" + id + "/hls/master.m3u8?v=" +
+		hlsCacheVersion(tcRepo.playlists[uuid.MustParse(id)])
 	if v.HLSURL == nil || *v.HLSURL != wantURL {
 		t.Fatalf("hls_url = %v, want %q", v.HLSURL, wantURL)
 	}
@@ -383,7 +426,7 @@ func TestHLSMultiRenditionLadderExposed(t *testing.T) {
 	}
 	// Distinct BANDWIDTH per rung — an ABR client collapses two rungs advertised
 	// at the same bitrate, so the ladder must carry three distinct values.
-	bwMatches := regexp.MustCompile(`BANDWIDTH=(\d+)`).FindAllStringSubmatch(master, -1)
+	bwMatches := regexp.MustCompile(`#EXT-X-STREAM-INF:BANDWIDTH=(\d+)`).FindAllStringSubmatch(master, -1)
 	if len(bwMatches) != 3 {
 		t.Fatalf("master has %d BANDWIDTH attrs, want 3:\n%s", len(bwMatches), master)
 	}
@@ -508,7 +551,8 @@ func TestVideoDetailCarriesHLSWhenReady(t *testing.T) {
 		t.Fatalf("detail = %d", rec.Code)
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &after)
-	wantURL := "/api/v1/videos/" + id + "/hls/master.m3u8"
+	wantURL := "/api/v1/videos/" + id + "/hls/master.m3u8?v=" +
+		hlsCacheVersion(tcRepo.playlists[uuid.MustParse(id)])
 	if after.HLSURL == nil || *after.HLSURL != wantURL {
 		t.Errorf("hls_url = %v, want %q", after.HLSURL, wantURL)
 	}

@@ -3,7 +3,10 @@ package media
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path"
@@ -18,8 +21,9 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
-// hlsSegmentSeconds is the target MPEG-TS segment duration.
-const hlsSegmentSeconds = 4
+// hlsSegmentSeconds is the target MPEG-TS segment duration. Six seconds follows
+// Apple's VOD authoring guidance while keeping enough switching points for ABR.
+const hlsSegmentSeconds = 6
 
 // Stable filenames and content types for the progressive download assets
 // emitted alongside HLS playlists. The muxed and video-only files live in a
@@ -28,6 +32,8 @@ const (
 	HLSMuxedDownloadFilename     = "video.mp4"
 	HLSVideoOnlyDownloadFilename = "video-only.mp4"
 	HLSAudioDownloadFilename     = "audio.m4a"
+	HLSIFramePlaylistFilename    = "iframe.m3u8"
+	HLSIFrameMediaFilename       = "iframe.ts"
 	HLSMP4ContentType            = "video/mp4"
 	HLSM4AContentType            = "audio/mp4"
 )
@@ -268,6 +274,10 @@ func hlsRungArgs(src, dir string, r HLSRung, threads int) []string {
 		"-b:v", fmt.Sprintf("%dk", r.VideoKbps),
 		"-maxrate", fmt.Sprintf("%dk", r.VideoKbps),
 		"-bufsize", fmt.Sprintf("%dk", 2*r.VideoKbps),
+		// HLS segments must begin on independently decodable IDR frames. Force an
+		// IDR at every segment boundary; the muxer then cuts on those frames and
+		// advertises the resulting independent-segment guarantee.
+		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", hlsSegmentSeconds),
 		"-c:a", "aac",
 		"-b:a", fmt.Sprintf("%dk", r.AudioKbps),
 		"-ac", "2",
@@ -275,9 +285,141 @@ func hlsRungArgs(src, dir string, r HLSRung, threads int) []string {
 		"-hls_time", fmt.Sprintf("%d", hlsSegmentSeconds),
 		"-hls_playlist_type", "vod",
 		"-hls_list_size", "0",
+		"-hls_flags", "independent_segments",
 		"-hls_segment_filename", filepath.Join(dir, "seg_%05d.ts"),
 		filepath.Join(dir, "playlist.m3u8"),
 	)
+}
+
+// hlsTrickPlayArgs builds a dense I-frame rendition alongside one normal rung.
+// It samples one frame per second and makes every sample an IDR, then asks the
+// HLS muxer for a single byte-range media file. FFmpeg's `iframes_only` flag
+// currently emits incorrect repeated @0 offsets for an all-I-frame single-file
+// stream, so we generate the valid byte ranges with `single_file` and add the
+// standards tag after verifying the playlist shape (markIFramesOnlyPlaylist).
+func hlsTrickPlayArgs(src, dir string, r HLSRung, threads int) []string {
+	args := []string{
+		"-y",
+		"-i", src,
+		"-map", "0:v:0",
+		"-an",
+	}
+	if threads > 0 {
+		args = append(args, "-threads", fmt.Sprintf("%d", threads))
+	}
+	return append(args,
+		"-c:v", "libx264",
+		"-profile:v", "main",
+		"-preset", "veryfast",
+		"-pix_fmt", "yuv420p",
+		"-vf", fmt.Sprintf("scale=%d:%d,fps=1", r.Width, r.Height),
+		"-g", "1",
+		"-keyint_min", "1",
+		"-sc_threshold", "0",
+		"-crf", "28",
+		"-f", "hls",
+		"-hls_time", "1",
+		"-hls_playlist_type", "vod",
+		"-hls_list_size", "0",
+		"-hls_flags", "single_file",
+		"-hls_segment_filename", filepath.Join(dir, HLSIFrameMediaFilename),
+		filepath.Join(dir, HLSIFramePlaylistFilename),
+	)
+}
+
+// markIFramesOnlyPlaylist validates the FFmpeg single-file playlist and adds
+// EXT-X-I-FRAMES-ONLY. The encode is one frame/second with GOP=1, so every
+// byte-range segment contains exactly one independently decodable IDR frame.
+func markIFramesOnlyPlaylist(playlist []byte) ([]byte, error) {
+	s := string(playlist)
+	if !strings.HasPrefix(s, "#EXTM3U\n") ||
+		!strings.Contains(s, "#EXT-X-BYTERANGE:") ||
+		!strings.Contains(s, HLSIFrameMediaFilename) {
+		return nil, errors.New("media: malformed trick-play playlist")
+	}
+	if strings.Contains(s, "#EXT-X-I-FRAMES-ONLY") {
+		return playlist, nil
+	}
+	return []byte(strings.Replace(s, "#EXTM3U\n", "#EXTM3U\n#EXT-X-I-FRAMES-ONLY\n", 1)), nil
+}
+
+// trickPlayPeakBandwidth calculates the declared peak bitrate from the actual
+// byte ranges rather than guessing from encoder settings. The 10% allowance
+// covers MPEG-TS/container overhead consistently with the normal ladder.
+func trickPlayPeakBandwidth(playlist []byte) (int64, error) {
+	var duration float64
+	var peak int64
+	for _, line := range strings.Split(string(playlist), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#EXTINF:") {
+			raw := strings.TrimSuffix(strings.TrimPrefix(line, "#EXTINF:"), ",")
+			parsed, err := strconv.ParseFloat(raw, 64)
+			if err != nil || parsed <= 0 {
+				return 0, errors.New("media: invalid trick-play segment duration")
+			}
+			duration = parsed
+			continue
+		}
+		if !strings.HasPrefix(line, "#EXT-X-BYTERANGE:") || duration <= 0 {
+			continue
+		}
+		raw := strings.TrimPrefix(line, "#EXT-X-BYTERANGE:")
+		if at := strings.IndexByte(raw, '@'); at >= 0 {
+			raw = raw[:at]
+		}
+		bytes, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || bytes <= 0 {
+			return 0, errors.New("media: invalid trick-play byte range")
+		}
+		bitrate := int64(math.Ceil(float64(bytes*8) / duration * 1.1))
+		if bitrate > peak {
+			peak = bitrate
+		}
+		duration = 0
+	}
+	if peak == 0 {
+		return 0, errors.New("media: trick-play playlist has no byte ranges")
+	}
+	return peak, nil
+}
+
+type h264CodecProbe struct {
+	Streams []struct {
+		CodecName string `json:"codec_name"`
+		Profile   string `json:"profile"`
+		Level     int    `json:"level"`
+	} `json:"streams"`
+}
+
+func probeH264CodecString(ctx context.Context, ffprobeBin, mediaPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, ffprobeBin,
+		"-v", "error",
+		"-print_format", "json",
+		"-show_entries", "stream=codec_name,profile,level",
+		"-select_streams", "v:0",
+		mediaPath,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("media: ffprobe trick-play codec: %w", err)
+	}
+	return parseH264CodecString(out)
+}
+
+func parseH264CodecString(data []byte) (string, error) {
+	var probe h264CodecProbe
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return "", fmt.Errorf("media: parse trick-play codec: %w", err)
+	}
+	for _, stream := range probe.Streams {
+		if stream.CodecName != "h264" || stream.Profile != "Main" || stream.Level <= 0 || stream.Level > 255 {
+			continue
+		}
+		// libx264's Main profile sets constraint_set1_flag (0x40); level is
+		// ffprobe's decimal level_idc and is rendered as the final hex byte.
+		return fmt.Sprintf("avc1.4d40%02x", stream.Level), nil
+	}
+	return "", errors.New("media: trick-play output is not H.264 Main profile")
 }
 
 // hlsProgressiveMP4Args builds an ffmpeg argument vector that remuxes an HLS
@@ -325,12 +467,23 @@ func hlsAudioM4AArgs(playlist, dst string) []string {
 // renderMasterPlaylist renders the HLS master playlist for the given rungs.
 // Variant URIs are RELATIVE ("720p/playlist.m3u8") so the playlist works when
 // proxied from any base path. Pure (no exec/IO) so it is unit-testable.
-func renderMasterPlaylist(rungs []HLSRung) string {
+type hlsTrickPlayInfo struct {
+	Bandwidth int64
+	Codec     string
+}
+
+func renderMasterPlaylist(rungs []HLSRung, trickPlay map[int]hlsTrickPlayInfo) string {
 	var b strings.Builder
-	b.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n")
+	b.WriteString("#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-INDEPENDENT-SEGMENTS\n")
 	for _, r := range rungs {
 		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d\n", r.Bandwidth(), r.Width, r.Height)
 		b.WriteString(r.Name() + "/playlist.m3u8\n")
+		if tp, ok := trickPlay[r.Height]; ok && tp.Bandwidth > 0 && tp.Codec != "" {
+			fmt.Fprintf(&b,
+				"#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=%q,URI=%q\n",
+				tp.Bandwidth, r.Width, r.Height, tp.Codec, r.Name()+"/"+HLSIFramePlaylistFilename,
+			)
+		}
 	}
 	return b.String()
 }
@@ -551,6 +704,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	defer func() { _ = os.RemoveAll(tmp) }()
 
 	rungSizes := make(map[int]int64, len(rungs))
+	trickPlay := make(map[int]hlsTrickPlayInfo, len(rungs))
 	for i, r := range rungs {
 		dir := filepath.Join(tmp, r.Name())
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -585,6 +739,15 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			})
 			return HLSResult{}, err
 		}
+		trickInfo, err := t.encodeHLSTrickPlay(ctx, src, dir, r, settings.Threads, md.DurationSeconds)
+		if err != nil {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+				State: ProgressFailed, Stage: "packaging", Percent: 92,
+			})
+			return HLSResult{}, fmt.Errorf("media: trick-play %s for %q: %w", r.Name(), sourceKey, err)
+		}
+		trickPlay[r.Height] = trickInfo
 		rungSizes[r.Height], err = directorySize(dir)
 		if err != nil {
 			return HLSResult{}, err
@@ -599,7 +762,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			}
 		}
 	}
-	master := renderMasterPlaylist(rungs)
+	master := renderMasterPlaylist(rungs, trickPlay)
 	if err := os.WriteFile(filepath.Join(tmp, "master.m3u8"), []byte(master), 0o644); err != nil {
 		return HLSResult{}, err
 	}
@@ -696,6 +859,45 @@ func directorySize(root string) (int64, error) {
 		return nil
 	})
 	return total, err
+}
+
+func (t *HLSTranscoder) encodeHLSTrickPlay(
+	ctx context.Context,
+	src, dir string,
+	r HLSRung,
+	threads, durationSeconds int,
+) (hlsTrickPlayInfo, error) {
+	stderr, err := runFFmpegWithProgress(
+		ctx,
+		t.bin,
+		hlsTrickPlayArgs(src, dir, r, threads),
+		durationSeconds,
+		nil,
+	)
+	if err != nil {
+		return hlsTrickPlayInfo{}, fmt.Errorf("ffmpeg: %w: %s", err, tailOf(stderr))
+	}
+	playlistPath := filepath.Join(dir, HLSIFramePlaylistFilename)
+	playlist, err := os.ReadFile(playlistPath)
+	if err != nil {
+		return hlsTrickPlayInfo{}, err
+	}
+	playlist, err = markIFramesOnlyPlaylist(playlist)
+	if err != nil {
+		return hlsTrickPlayInfo{}, err
+	}
+	if err := os.WriteFile(playlistPath, playlist, 0o644); err != nil {
+		return hlsTrickPlayInfo{}, err
+	}
+	bandwidth, err := trickPlayPeakBandwidth(playlist)
+	if err != nil {
+		return hlsTrickPlayInfo{}, err
+	}
+	codec, err := probeH264CodecString(ctx, t.probe.bin, filepath.Join(dir, HLSIFrameMediaFilename))
+	if err != nil {
+		return hlsTrickPlayInfo{}, err
+	}
+	return hlsTrickPlayInfo{Bandwidth: bandwidth, Codec: codec}, nil
 }
 
 // remuxHLSDownloads emits the two required progressive MP4 assets for a

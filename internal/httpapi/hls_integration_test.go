@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,8 +91,8 @@ func TestHLSPipelineEndToEnd(t *testing.T) {
 		t.Fatalf("detail = %d", rec.Code)
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &v)
-	if v.HLSURL == nil || *v.HLSURL != "/api/v1/videos/"+id+"/hls/master.m3u8" {
-		t.Fatalf("hls_url = %v, want the master playlist path", v.HLSURL)
+	if v.HLSURL == nil || !strings.HasPrefix(*v.HLSURL, "/api/v1/videos/"+id+"/hls/master.m3u8?v=") {
+		t.Fatalf("hls_url = %v, want a versioned master playlist path", v.HLSURL)
 	}
 	if len(v.Renditions) != 1 || v.Renditions[0].Height != 240 || v.Renditions[0].Width != 320 {
 		t.Fatalf("renditions = %+v, want the single 320x240 rung (cap-at-source)", v.Renditions)
@@ -109,6 +110,10 @@ func TestHLSPipelineEndToEnd(t *testing.T) {
 	if !strings.Contains(master, "240p/playlist.m3u8") {
 		t.Fatalf("master must reference the variant relatively:\n%s", master)
 	}
+	if !strings.Contains(master, "#EXT-X-I-FRAME-STREAM-INF") ||
+		!strings.Contains(master, `URI="240p/iframe.m3u8`) {
+		t.Fatalf("master must advertise the 240p trick-play rendition:\n%s", master)
+	}
 
 	// Variant playlist over HTTP: parses and lists real segments.
 	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/240p/playlist.m3u8", "")
@@ -118,6 +123,9 @@ func TestHLSPipelineEndToEnd(t *testing.T) {
 	variant := rec.Body.String()
 	if !strings.HasPrefix(variant, "#EXTM3U") || !strings.Contains(variant, "#EXT-X-ENDLIST") {
 		t.Fatalf("variant malformed:\n%s", variant)
+	}
+	if !strings.Contains(variant, "#EXT-X-INDEPENDENT-SEGMENTS") {
+		t.Fatalf("variant does not advertise independently decodable segments:\n%s", variant)
 	}
 	var segments []string
 	for _, line := range strings.Split(variant, "\n") {
@@ -142,5 +150,26 @@ func TestHLSPipelineEndToEnd(t *testing.T) {
 		if b := rec.Body.Bytes(); len(b) == 0 || b[0] != 0x47 {
 			t.Errorf("segment %q is not MPEG-TS (first byte %x)", seg, rec.Body.Bytes()[:1])
 		}
+	}
+
+	// The dense trick-play playlist is a real I-frame-only, byte-range HLS
+	// rendition. Its single media object must honor Range requests because the
+	// playlist addresses each one-second IDR by byte range.
+	query := strings.SplitN(*v.HLSURL, "?", 2)[1]
+	iframe := getHLS(srv, "/api/v1/videos/"+id+"/hls/240p/iframe.m3u8?"+query, "")
+	if iframe.Code != http.StatusOK ||
+		!strings.Contains(iframe.Body.String(), "#EXT-X-I-FRAMES-ONLY") ||
+		!strings.Contains(iframe.Body.String(), "#EXT-X-BYTERANGE:") {
+		t.Fatalf("I-frame playlist = %d:\n%s", iframe.Code, iframe.Body.String())
+	}
+	rangeRec := httptest.NewRecorder()
+	rangeReq := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/hls/240p/iframe.ts?"+query, nil)
+	rangeReq.Header.Set("Range", "bytes=0-187")
+	srv.Handler().ServeHTTP(rangeRec, rangeReq)
+	if rangeRec.Code != http.StatusPartialContent {
+		t.Fatalf("I-frame media Range = %d, want 206", rangeRec.Code)
+	}
+	if body := rangeRec.Body.Bytes(); len(body) == 0 || body[0] != 0x47 {
+		t.Fatalf("I-frame media Range is not MPEG-TS (first bytes %x)", body)
 	}
 }

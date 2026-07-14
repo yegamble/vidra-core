@@ -1,12 +1,15 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -16,15 +19,23 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// maxPlaylistBytes bounds an m3u8 read when rewriting it for a ?pt= playback
-// token. Playlists are tiny (a handful of KiB); 1 MiB is a generous ceiling.
-const maxPlaylistBytes = 1 << 20
+// maxPlaylistBytes bounds an m3u8 read while references are rewritten. Dense
+// trick-play indexes add one byte-range entry per second, so multi-hour videos
+// can legitimately be larger than an ordinary variant playlist.
+const maxPlaylistBytes = 16 << 20
 
 // HLS media content types (RFC 8216).
 const (
 	contentTypeM3U8 = "application/vnd.apple.mpegurl"
 	contentTypeTS   = "video/mp2t"
 	contentTypeMP4  = "video/mp4"
+	hlsVersionParam = "v"
+
+	// HLS routes remain authorization gates, so their immutable cache entries
+	// are browser-private. A deployment may promote these to shared-CDN entries
+	// only when it also purges old generations on privacy changes and deletion.
+	hlsVersionedCacheControl = "private, max-age=31536000, immutable"
+	hlsStableCacheControl    = "private, max-age=0, must-revalidate"
 )
 
 // The two file shapes a rendition directory contains: its variant playlist and
@@ -33,7 +44,7 @@ const (
 // "<height>p" ("720p").
 var (
 	hlsRenditionName     = regexp.MustCompile(`^[0-9]{2,4}p$`)
-	hlsFileName          = regexp.MustCompile(`^(playlist\.m3u8|seg_[0-9]+\.ts)$`)
+	hlsFileName          = regexp.MustCompile(`^(playlist\.m3u8|iframe\.m3u8|iframe\.ts|seg_[0-9]+\.ts)$`)
 	hlsPeerTubeFileName  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.(m3u8|mp4|m4s|ts)$`)
 	hlsPlaylistURIAttrRE = regexp.MustCompile(`URI="([^"]+)"`)
 )
@@ -71,10 +82,13 @@ func (s *Server) handleGetHLSMaster(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if isPeerTubeHLSMasterKey(sp.MasterKey) {
-		return s.servePeerTubeHLSMaster(c, sp.MasterKey)
+	if err := validateHLSVersion(c, sp); err != nil {
+		return err
 	}
-	return s.serveHLSPlaylist(c, sp.MasterKey)
+	if isPeerTubeHLSMasterKey(sp.MasterKey) {
+		return s.servePeerTubeHLSMaster(c, sp)
+	}
+	return s.serveHLSPlaylist(c, sp.MasterKey, sp)
 }
 
 // handleGetHLSFile serves one rendition file: a variant playlist
@@ -98,6 +112,9 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := validateHLSVersion(c, sp); err != nil {
+		return err
+	}
 	if peertube && !isPeerTubeHLSMasterKey(sp.MasterKey) {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
@@ -110,8 +127,9 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 	// native player propagates the token to segment requests); a .ts segment is
 	// binary and streamed as-is.
 	if strings.HasSuffix(file, ".m3u8") {
-		return s.serveHLSPlaylist(c, key)
+		return s.serveHLSPlaylist(c, key, sp)
 	}
+	setHLSCacheControl(c, sp)
 	if strings.HasSuffix(file, ".ts") {
 		return s.serveStoredObject(c, key, contentTypeTS)
 	}
@@ -123,12 +141,13 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 // (variant playlists in the master, segments in a variant) so a header-less
 // native-HLS player keeps carrying the token through the whole chain — the
 // adaptation that makes password-protected HLS work in Safari (CORE-17 / W1.C2).
-// Without a ?pt= it streams the stored playlist unchanged (Range-capable).
-func (s *Server) serveHLSPlaylist(c echo.Context, key string) error {
+// Every response also rewrites relative references with the playlist generation
+// version. That makes variant and segment URLs immutable within a generation;
+// the unversioned compatibility route remains revalidated on every use.
+func (s *Server) serveHLSPlaylist(c echo.Context, key string, sp sqlcgen.StreamingPlaylist) error {
 	token := c.QueryParam(playbackTokenParam)
-	if token == "" {
-		return s.serveStoredObject(c, key, contentTypeM3U8)
-	}
+	version := hlsCacheVersion(sp)
+	setHLSCacheControl(c, sp)
 	if s.media == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
 	}
@@ -144,14 +163,15 @@ func (s *Server) serveHLSPlaylist(c echo.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	return c.Blob(http.StatusOK, contentTypeM3U8, rewritePlaylistToken(data, token))
+	return c.Blob(http.StatusOK, contentTypeM3U8, rewritePlaylistReferences(data, "", token, version, false))
 }
 
-func (s *Server) servePeerTubeHLSMaster(c echo.Context, key string) error {
+func (s *Server) servePeerTubeHLSMaster(c echo.Context, sp sqlcgen.StreamingPlaylist) error {
+	setHLSCacheControl(c, sp)
 	if s.media == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
 	}
-	rc, err := s.media.Open(c.Request().Context(), key)
+	rc, err := s.media.Open(c.Request().Context(), sp.MasterKey)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "video not found")
@@ -163,7 +183,11 @@ func (s *Server) servePeerTubeHLSMaster(c echo.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	return c.Blob(http.StatusOK, contentTypeM3U8, rewritePeerTubeMasterPlaylist(data, c.QueryParam(playbackTokenParam)))
+	return c.Blob(http.StatusOK, contentTypeM3U8, rewritePeerTubeMasterPlaylist(
+		data,
+		c.QueryParam(playbackTokenParam),
+		hlsCacheVersion(sp),
+	))
 }
 
 func isPeerTubeHLSMasterKey(key string) bool {
@@ -174,18 +198,25 @@ func isPeerTubeHLSMasterKey(key string) bool {
 // including URI="..." tag attributes such as EXT-X-MAP. Blank lines and
 // absolute/rooted URLs are left untouched. It preserves line order.
 func rewritePlaylistToken(playlist []byte, token string) []byte {
-	return rewritePlaylistReferences(playlist, "", token, false)
+	return rewritePlaylistReferences(playlist, "", token, "", false)
 }
 
 // rewritePeerTubeMasterPlaylist maps PeerTube's flat HLS master playlist entries
 // into Vidra's compatibility route: peertube/<basename>. Variant playlists then
 // keep resolving their own segment/media URIs relative to /hls/peertube/.
-func rewritePeerTubeMasterPlaylist(playlist []byte, token string) []byte {
-	return rewritePlaylistReferences(playlist, "peertube", token, true)
+func rewritePeerTubeMasterPlaylist(playlist []byte, token, version string) []byte {
+	return rewritePlaylistReferences(playlist, "peertube", token, version, true)
 }
 
-func rewritePlaylistReferences(playlist []byte, uriPrefix, token string, forceBasename bool) []byte {
-	esc := url.QueryEscape(token)
+func rewritePlaylistReferences(playlist []byte, uriPrefix, token, version string, forceBasename bool) []byte {
+	query := url.Values{}
+	if token != "" {
+		query.Set(playbackTokenParam, token)
+	}
+	if version != "" {
+		query.Set(hlsVersionParam, version)
+	}
+	escapedQuery := query.Encode()
 	lines := strings.Split(string(playlist), "\n")
 	for i, line := range lines {
 		cr := strings.HasSuffix(line, "\r")
@@ -194,14 +225,14 @@ func rewritePlaylistReferences(playlist []byte, uriPrefix, token string, forceBa
 			continue
 		}
 		if strings.HasPrefix(uri, "#") {
-			rewritten := rewritePlaylistURIAttributes(uri, uriPrefix, esc, forceBasename)
+			rewritten := rewritePlaylistURIAttributes(uri, uriPrefix, escapedQuery, forceBasename)
 			if cr {
 				rewritten += "\r"
 			}
 			lines[i] = rewritten
 			continue
 		}
-		rewritten, ok := rewritePlaylistURI(uri, uriPrefix, esc, forceBasename)
+		rewritten, ok := rewritePlaylistURI(uri, uriPrefix, escapedQuery, forceBasename)
 		if !ok {
 			continue
 		}
@@ -213,10 +244,10 @@ func rewritePlaylistReferences(playlist []byte, uriPrefix, token string, forceBa
 	return []byte(strings.Join(lines, "\n"))
 }
 
-func rewritePlaylistURIAttributes(line, uriPrefix, escapedToken string, forceBasename bool) string {
+func rewritePlaylistURIAttributes(line, uriPrefix, escapedQuery string, forceBasename bool) string {
 	return hlsPlaylistURIAttrRE.ReplaceAllStringFunc(line, func(match string) string {
 		raw := strings.TrimSuffix(strings.TrimPrefix(match, `URI="`), `"`)
-		rewritten, ok := rewritePlaylistURI(raw, uriPrefix, escapedToken, forceBasename)
+		rewritten, ok := rewritePlaylistURI(raw, uriPrefix, escapedQuery, forceBasename)
 		if !ok {
 			return match
 		}
@@ -224,7 +255,7 @@ func rewritePlaylistURIAttributes(line, uriPrefix, escapedToken string, forceBas
 	})
 }
 
-func rewritePlaylistURI(raw, uriPrefix, escapedToken string, forceBasename bool) (string, bool) {
+func rewritePlaylistURI(raw, uriPrefix, escapedQuery string, forceBasename bool) (string, bool) {
 	if raw == "" {
 		return raw, false
 	}
@@ -239,7 +270,7 @@ func rewritePlaylistURI(raw, uriPrefix, escapedToken string, forceBasename bool)
 		head = strings.TrimSuffix(uriPrefix, "/") + "/" + path.Base(head)
 	}
 	out := head + suffix
-	if escapedToken == "" {
+	if escapedQuery == "" {
 		return out, true
 	}
 	frag := ""
@@ -251,7 +282,40 @@ func rewritePlaylistURI(raw, uriPrefix, escapedToken string, forceBasename bool)
 	if strings.ContainsRune(out, '?') {
 		sep = "&"
 	}
-	return out + sep + playbackTokenParam + "=" + escapedToken + frag, true
+	return out + sep + escapedQuery + frag, true
+}
+
+// hlsCacheVersion identifies one persisted HLS generation. UpdatedAt changes on
+// every playlist upsert; the hash fallback keeps hand-built/import fixtures and
+// legacy zero timestamps deterministic without exposing a storage key.
+func hlsCacheVersion(sp sqlcgen.StreamingPlaylist) string {
+	if !sp.UpdatedAt.IsZero() {
+		return strconv.FormatInt(sp.UpdatedAt.UnixNano(), 36)
+	}
+	sum := sha256.Sum256([]byte(sp.MasterKey))
+	return hex.EncodeToString(sum[:8])
+}
+
+func validateHLSVersion(c echo.Context, sp sqlcgen.StreamingPlaylist) error {
+	requested := c.QueryParam(hlsVersionParam)
+	if requested == "" || requested == hlsCacheVersion(sp) {
+		return nil
+	}
+	// Never serve a new generation under an old immutable URL.
+	return echo.NewHTTPError(http.StatusNotFound, "video not found")
+}
+
+func setHLSCacheControl(c echo.Context, sp sqlcgen.StreamingPlaylist) {
+	header := c.Response().Header()
+	if c.QueryParam(playbackTokenParam) != "" || c.Request().Header.Get("Authorization") != "" {
+		header.Set("Cache-Control", "private, no-store")
+		return
+	}
+	if c.QueryParam(hlsVersionParam) == hlsCacheVersion(sp) {
+		header.Set("Cache-Control", hlsVersionedCacheControl)
+		return
+	}
+	header.Set("Cache-Control", hlsStableCacheControl)
 }
 
 func isRelativePlaylistURI(raw string) bool {
@@ -291,7 +355,8 @@ func (s *Server) hlsDetail(c echo.Context, id uuid.UUID) (*string, []renditionVi
 	if !ok || sp.State != "ready" || sp.MasterKey == "" {
 		return nil, nil
 	}
-	url := "/api/v1/videos/" + id.String() + "/hls/master.m3u8"
+	url := "/api/v1/videos/" + id.String() + "/hls/master.m3u8?" +
+		hlsVersionParam + "=" + hlsCacheVersion(sp)
 	var rends []renditionView
 	for _, r := range s.transcodesvc.Renditions(c.Request().Context(), id) {
 		rends = append(rends, renditionView{Height: r.Height, Width: r.Width})

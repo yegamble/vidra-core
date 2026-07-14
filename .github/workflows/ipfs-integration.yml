@@ -2,7 +2,8 @@ name: ipfs-integration
 
 # Optional job: runs the IPFS-integration-tagged tests (`-tags=ipfs_integration`)
 # against a REAL ipfs/kubo node. These exercise the actual Kubo RPC add→pin→cat
-# round-trip and a directory (HLS-tree) add resolved through the HTTP gateway —
+# round-trip, a directory (HLS-tree) add resolved through the HTTP gateway, and
+# a fresh real MP4 retrieved through an independently operated PUBLIC gateway —
 # coverage the fast `make ci` gate (unit tests against FakeIPFSClient) deliberately
 # does not have.
 #
@@ -27,25 +28,6 @@ jobs:
   ipfs-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      # Dedicated kubo node for the integration tests (the archive's "ipfs-test"
-      # pattern). The ipfs/kubo image binds the RPC API + gateway to 0.0.0.0 inside
-      # the container on first init, so the mapped host ports below reach the daemon.
-      # An isolated CI runner has no local node to clash with, so the default 5001
-      # is used (the archive used :15001 only to avoid a dev-box clash).
-      ipfs:
-        image: ipfs/kubo:v0.32.1
-        env:
-          IPFS_PROFILE: server
-        ports:
-          - 5001:5001
-          - 8080:8080
-        options: >-
-          --health-cmd "ipfs --api=/ip4/127.0.0.1/tcp/5001 id"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 20
-          --health-start-period 20s
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -58,10 +40,75 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
+      # Start in the safe default first, then transition the SAME persisted repo
+      # to live mode. This catches peerstore/config residue that a fresh live-only
+      # container would miss.
+      - name: Bring up Kubo in local-only mode
+        run: docker compose --profile ipfs up -d ipfs
+
+      - name: Assert local-only node configuration
+        run: |
+          set -eux
+          for i in $(seq 1 30); do
+            health=$(docker inspect -f '{{ .State.Health.Status }}' "$(docker compose ps -q ipfs)" 2>/dev/null || echo starting)
+            if [ "$health" = healthy ]; then break; fi
+            sleep 3
+          done
+          test "$(docker inspect -f '{{ .State.Health.Status }}' "$(docker compose ps -q ipfs)")" = healthy
+          test -z "$(docker compose exec -T ipfs ipfs bootstrap list)"
+          test -z "$(docker compose exec -T ipfs ipfs swarm peers)"
+          test "$(docker compose exec -T ipfs ipfs config AutoConf.Enabled)" = false
+          test "$(docker compose exec -T ipfs ipfs config Routing.Type)" = none
+          test "$(docker compose exec -T ipfs ipfs config Provide.Enabled)" = false
+          test "$(docker compose exec -T ipfs ipfs config Swarm.RelayClient.Enabled)" = false
+          filters=$(docker compose exec -T ipfs ipfs config --json Swarm.AddrFilters)
+          case "$filters" in *'/ip4/0.0.0.0/ipcidr/0'*) ;; *) exit 1 ;; esac
+
+      # Use the repository's actual compose service + init hook so CI proves the
+      # IPFS_PUBLIC_NETWORK transition operators run, including DHT providing and
+      # NAT traversal.
+      - name: Transition Kubo to live public mode
+        env:
+          IPFS_PUBLIC_NETWORK: "true"
+        run: docker compose --profile ipfs up -d --force-recreate ipfs
+
+      - name: Assert live-mode node configuration
+        run: |
+          set -eux
+          for i in $(seq 1 30); do
+            health=$(docker inspect -f '{{ .State.Health.Status }}' "$(docker compose ps -q ipfs)" 2>/dev/null || echo starting)
+            if [ "$health" = healthy ]; then break; fi
+            sleep 3
+          done
+          test "$(docker inspect -f '{{ .State.Health.Status }}' "$(docker compose ps -q ipfs)")" = healthy
+          test -n "$(docker compose exec -T ipfs ipfs bootstrap list)"
+          test "$(docker compose exec -T ipfs ipfs config Provide.Enabled)" = true
+          test "$(docker compose exec -T ipfs ipfs config AutoConf.Enabled)" = true
+          test "$(docker compose exec -T ipfs ipfs config Swarm.RelayClient.Enabled)" = true
+          test "$(docker compose exec -T ipfs ipfs config Swarm.EnableHolePunching)" = true
+          filters=$(docker compose exec -T ipfs ipfs config --json Swarm.AddrFilters)
+          case "$filters" in *'/ip4/0.0.0.0/ipcidr/0'*) exit 1 ;; *) ;; esac
+
+      - name: Generate a tiny real MP4 fixture
+        run: >-
+          ffmpeg -hide_banner -loglevel error
+          -f lavfi -i testsrc2=size=160x90:rate=10
+          -f lavfi -i sine=frequency=440:sample_rate=8000
+          -t 1 -c:v libx264 -pix_fmt yuv420p -c:a aac
+          -movflags +faststart -y /tmp/vidra-ipfs-live-test.mp4
+
       - name: Run IPFS integration tests (make test-ipfs-integration)
         env:
           # Point the tests at the kubo service above so they execute (and can fail
           # the job) instead of self-skipping.
           IPFS_TEST_API_URL: http://localhost:5001
-          IPFS_TEST_GATEWAY_URL: http://localhost:8080
+          IPFS_TEST_GATEWAY_URL: http://localhost:9090
+          IPFS_TEST_PUBLIC_GATEWAY_URL: https://ipfs.io
+          IPFS_TEST_PUBLIC_GATEWAY_TIMEOUT: 5m
+          IPFS_TEST_VIDEO_PATH: /tmp/vidra-ipfs-live-test.mp4
+          IPFS_PUBLIC_PROOFS_REQUIRED: "1"
         run: make test-ipfs-integration
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile ipfs down -v

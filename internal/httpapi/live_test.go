@@ -466,9 +466,15 @@ func TestLiveHLSServing(t *testing.T) {
 	if ct := m.Header().Get("Content-Type"); !strings.Contains(ct, "mpegurl") {
 		t.Errorf("master content-type = %q, want an m3u8 type", ct)
 	}
+	if cc := m.Header().Get("Cache-Control"); cc != "no-cache, no-store" {
+		t.Errorf("master Cache-Control = %q, want no-cache, no-store", cc)
+	}
 	seg := getWithAuth(srv, "/api/v1/live/"+id+"/hls/"+id+"-0.ts", "")
 	if seg.Code != http.StatusOK || seg.Body.String() != "TSDATA" {
 		t.Fatalf("segment = %d body=%q", seg.Code, seg.Body.String())
+	}
+	if cc := seg.Header().Get("Cache-Control"); cc != "private, max-age=12" {
+		t.Errorf("segment Cache-Control = %q, want private, max-age=12", cc)
 	}
 
 	// A file name that is not this stream's playlist/segment is 404.

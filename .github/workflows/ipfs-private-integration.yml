@@ -44,7 +44,7 @@ jobs:
       - name: Install kubo binary (matches the compose image)
         run: |
           set -eux
-          ver=v0.32.1
+          ver=v0.41.0
           curl -fsSL "https://dist.ipfs.tech/kubo/${ver}/kubo_${ver}_linux-amd64.tar.gz" -o /tmp/kubo.tgz
           tar -C /tmp -xzf /tmp/kubo.tgz
           sudo install /tmp/kubo/ipfs /usr/local/bin/ipfs
@@ -60,7 +60,7 @@ jobs:
           services:
             kubo-private-2:
               ports:
-                - "5003:5001"
+                - "127.0.0.1:5003:5001"
           YAML
           docker compose \
             -f docker-compose.yml -f docker-compose.ci-private.yml \
@@ -98,6 +98,14 @@ jobs:
           echo "peer_b=/dns4/kubo-private-2/tcp/4001/p2p/${bid}" >> "$GITHUB_OUTPUT"
           echo "peer_a=/dns4/kubo-private/tcp/4001/p2p/${aid}" >> "$GITHUB_OUTPUT"
 
+      - name: Generate a tiny real MP4 fixture
+        run: >-
+          ffmpeg -hide_banner -loglevel error
+          -f lavfi -i testsrc2=size=160x90:rate=10
+          -f lavfi -i sine=frequency=440:sample_rate=8000
+          -t 1 -c:v libx264 -pix_fmt yuv420p -c:a aac
+          -movflags +faststart -y /tmp/vidra-ipfs-private-test.mp4
+
       - name: Run private-swarm integration tests
         env:
           # CI sentinel (set ONLY here): every would-skip path in the proofs becomes a hard
@@ -118,6 +126,8 @@ jobs:
           IPFS_PRIVATE_TEST_KUBO_BIN: /usr/local/bin/ipfs
           # Optional cluster leg.
           IPFS_PRIVATE_TEST_CLUSTER_API: http://localhost:9094
+          # Real media bytes for the keyed A→B replication proof.
+          IPFS_PRIVATE_TEST_VIDEO_PATH: /tmp/vidra-ipfs-private-test.mp4
         run: make test-ipfs-private-integration
 
       - name: Tear down

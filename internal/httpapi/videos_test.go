@@ -1900,6 +1900,9 @@ func TestThumbnailServedAndFlaggedOnDetail(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Errorf("Content-Type = %q, want image/jpeg", ct)
 	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "private, max-age=300, must-revalidate" {
+		t.Errorf("Cache-Control = %q, want short private thumbnail caching", cc)
+	}
 
 	// Detail flags that a thumbnail exists.
 	drec := getVideo(srv, id, "")

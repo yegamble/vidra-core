@@ -50,13 +50,34 @@ if [ -f "$KEY_SHARED" ]; then
 fi
 
 # 2. Network isolation (belt-and-suspenders on top of LIBP2P_FORCE_PNET=1): no public
-#    bootstrap peers, routing OFF (explicit peering only), reprovide OFF (keep even the
+#    bootstrap peers, routing OFF (explicit peering only), providing OFF (keep even the
 #    private DHT quiet), and the gateway serves ONLY local repo content (NoFetch) and
 #    is never host-published — private CIDs are replication, not distribution (§5).
 ipfs bootstrap rm --all >/dev/null 2>&1 || true
 ipfs config Routing.Type none
-ipfs config Reprovider.Interval 0
+# Kubo 0.41 refuses to start a private-network repo while the public-mainnet
+# AutoConf endpoint is enabled. More importantly, a private swarm must never
+# consult mainnet configuration in the first place.
+ipfs config --json AutoConf.Enabled false
+# Remove the `auto` consumers as well. Leaving these behind is safe at runtime
+# once AutoConf is disabled, but Kubo logs them as configuration errors and they
+# would become mainnet-capable again if this single flag were ever regressed.
+ipfs config --json DNS.Resolvers '{}'
+ipfs config --json Routing.DelegatedRouters '[]'
+ipfs config --json Ipns.DelegatedPublishers '[]'
+# AutoTLS and the shared TCP/WebSocket listener are explicitly incompatible
+# with PNet in Kubo 0.41. Disable both instead of accepting error-level logs.
+ipfs config --json AutoTLS.Enabled false
+ipfs config --json Swarm.Transports.Network.Websocket false
+# Kubo 0.38+ replaced Reprovider.Interval with the Provide section. The built-in
+# profile is migration-aware and sets both Provide.Enabled=false and a zero DHT
+# interval on current repos (and the legacy equivalent on older repos).
+ipfs config profile apply announce-off >/dev/null
 ipfs config --json Gateway.NoFetch true
+ipfs config --json Swarm.RelayClient.Enabled false
+ipfs config --json Swarm.EnableHolePunching false
+ipfs config --json Swarm.RelayService.Enabled false
+ipfs config --json AutoNAT.ServiceMode '"disabled"'
 # The `server` IPFS_PROFILE (init above) installs Swarm.AddrFilters that BLOCK dialing
 # every private IP range (10/8, 172.16/12, 192.168/16, …) — it assumes a public node.
 # A private swarm lives ENTIRELY on a private network (the compose bridge is 172.x, a
@@ -65,10 +86,13 @@ ipfs config --json Gateway.NoFetch true
 # isolation here comes from the swarm.key / LIBP2P_FORCE_PNET, NOT from IP filtering, so
 # allowing private-address dialing is both correct and required for the swarm to function.
 ipfs config --json Swarm.AddrFilters '[]'
+# Kubo 0.41's server profile also suppresses RFC1918 announce addresses. Private
+# peers intentionally live on those addresses, so allow them inside the PNet.
+ipfs config --json Addresses.NoAnnounce '[]'
 # Reject any accidental public announce: bind the gateway to the container only and
 # keep the API on all interfaces of the compose network (RPC is the app's path in).
 ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8080
-log "isolation config applied (bootstrap cleared, Routing=none, Reprovider=0, Gateway.NoFetch=true, AddrFilters cleared for intra-swarm private-network dialing)"
+log "isolation config applied (AutoConf/AutoTLS/bootstrap/routing/providing/relay disabled, Gateway.NoFetch=true, private addresses allowed for intra-swarm dialing)"
 
 # 3. Publish this node's peer id to the shared volume so a peer node can dial it, and —
 #    when PRIVATE_PEER_HOST is set (the optional second node) — configure explicit
