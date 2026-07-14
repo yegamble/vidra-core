@@ -302,16 +302,28 @@ func TestPasswordVideoMediaGatedAndPtRewrite(t *testing.T) {
 	if master.Code != http.StatusOK {
 		t.Fatalf("master with ?pt= = %d, want 200", master.Code)
 	}
-	if !strings.Contains(master.Body.String(), "240p/playlist.m3u8?pt="+token) {
+	version := hlsCacheVersion(tcRepo.playlists[uuid.MustParse(id)])
+	if !strings.Contains(master.Body.String(), "240p/playlist.m3u8?pt="+token+"&v="+version) {
 		t.Fatalf("master should rewrite the variant URI with ?pt=:\n%s", master.Body.String())
+	}
+	if !strings.Contains(master.Body.String(), `URI="240p/iframe.m3u8?pt=`+token+`&v=`+version+`"`) {
+		t.Fatalf("master should rewrite the trick-play URI with ?pt=:\n%s", master.Body.String())
+	}
+	if cc := master.Header().Get("Cache-Control"); cc != "private, no-store" {
+		t.Fatalf("tokenized master Cache-Control = %q, want private, no-store", cc)
 	}
 	// Variant playlist served with ?pt= rewrites the segment URI.
 	variant := getHLS(srv, "/api/v1/videos/"+id+"/hls/240p/playlist.m3u8?pt="+token, "")
 	if variant.Code != http.StatusOK {
 		t.Fatalf("variant with ?pt= = %d, want 200", variant.Code)
 	}
-	if !strings.Contains(variant.Body.String(), "seg_00000.ts?pt="+token) {
+	if !strings.Contains(variant.Body.String(), "seg_00000.ts?pt="+token+"&v="+version) {
 		t.Fatalf("variant should rewrite the segment URI with ?pt=:\n%s", variant.Body.String())
+	}
+	iframe := getHLS(srv, "/api/v1/videos/"+id+"/hls/240p/iframe.m3u8?pt="+token, "")
+	if iframe.Code != http.StatusOK ||
+		!strings.Contains(iframe.Body.String(), "iframe.ts?pt="+token+"&v="+version) {
+		t.Fatalf("I-frame playlist should rewrite its media URI with ?pt=:\n%s", iframe.Body.String())
 	}
 	// A tag line is never rewritten.
 	if strings.Contains(variant.Body.String(), "#EXTINF:2.0,?pt=") || strings.Contains(master.Body.String(), "#EXT-X-STREAM-INF") && strings.Contains(master.Body.String(), "INF?pt=") {

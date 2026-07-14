@@ -63,6 +63,35 @@ func privateAPIClient(t *testing.T, env string) *KuboClient {
 	return NewKuboClient(api, &http.Client{Timeout: 30 * time.Second})
 }
 
+// privateReplicationPayload uses a real video when one is supplied. CI requires
+// it so both public and private live proofs exercise Vidra's actual media shape;
+// ad-hoc local runs retain a small generated payload for convenience.
+func privateReplicationPayload(t *testing.T) (string, []byte) {
+	t.Helper()
+	videoPath := os.Getenv("IPFS_PRIVATE_TEST_VIDEO_PATH")
+	if videoPath == "" {
+		if os.Getenv("IPFS_PRIVATE_PROOFS_REQUIRED") != "" {
+			t.Fatal("IPFS_PRIVATE_TEST_VIDEO_PATH is required for the private video-replication proof")
+		}
+		return "blob.txt", []byte("vidra private-swarm replication " + time.Now().UTC().Format(time.RFC3339Nano))
+	}
+	info, err := os.Stat(videoPath)
+	if err != nil {
+		t.Fatalf("stat private-video fixture: %v", err)
+	}
+	if info.Size() == 0 || info.Size() > 16<<20 {
+		t.Fatalf("private-video fixture size = %d; want 1..16 MiB", info.Size())
+	}
+	data, err := os.ReadFile(videoPath)
+	if err != nil {
+		t.Fatalf("read private-video fixture: %v", err)
+	}
+	// Keep each CID fresh while preserving a valid MP4 (trailing application
+	// bytes are permitted and ignored by normal players).
+	data = append(data, []byte("\nvidra-private-ipfs-proof:"+time.Now().UTC().Format(time.RFC3339Nano)+"\n")...)
+	return "vidra-private-proof.mp4", data
+}
+
 // idResponse is /api/v0/id (subset).
 type idResponse struct {
 	ID        string   `json:"ID"`
@@ -108,7 +137,8 @@ func catRPC(ctx context.Context, c *KuboClient, cid string) ([]byte, error) {
 		return nil, err
 	}
 	defer body.Close()
-	return io.ReadAll(io.LimitReader(body, 1<<20))
+	// The private video fixture is capped at 16 MiB plus a short marker.
+	return io.ReadAll(io.LimitReader(body, 17<<20))
 }
 
 // dialAddrForB resolves the multiaddr node A should dial to reach B: an explicit
@@ -141,8 +171,8 @@ func TestPrivateSwarmReplication(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	data := []byte("vidra private-swarm replication " + time.Now().UTC().Format(time.RFC3339Nano))
-	res, err := a.Add(ctx, "blob.txt", bytes.NewReader(data))
+	name, data := privateReplicationPayload(t)
+	res, err := a.Add(ctx, name, bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("Add on A: %v", err)
 	}
@@ -166,8 +196,9 @@ func TestPrivateSwarmReplication(t *testing.T) {
 		t.Fatalf("cat on B: %v", err)
 	}
 	if !bytes.Equal(got, data) {
-		t.Errorf("B replicated bytes mismatch: got %q, want %q", got, data)
+		t.Errorf("B replicated bytes mismatch: got %d bytes, want %d", len(got), len(data))
 	}
+	t.Logf("private swarm replicated fresh video CID %s (%d bytes)", res.CID, len(got))
 	_ = b.Unpin(ctx, res.CID)
 	_ = a.Unpin(ctx, res.CID)
 }

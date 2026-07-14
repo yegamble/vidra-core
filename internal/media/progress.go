@@ -79,7 +79,9 @@ func runFFmpegWithProgress(ctx context.Context, bin string, args []string, durat
 		}
 		if percent > last {
 			last = percent
-			onPercent(percent)
+			if onPercent != nil {
+				onPercent(percent)
+			}
 		}
 	}
 	waitErr := cmd.Wait()

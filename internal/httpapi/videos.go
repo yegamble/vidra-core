@@ -1131,6 +1131,14 @@ func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
 	if err != nil {
 		return videoError(err)
 	}
+	// The public thumbnail URL is stable and owners can replace its bytes, so it
+	// cannot honestly be immutable. Allow a short browser-private reuse window;
+	// never retain authenticated or password-token media.
+	if c.QueryParam(playbackTokenParam) != "" || c.Request().Header.Get("Authorization") != "" {
+		c.Response().Header().Set("Cache-Control", "private, no-store")
+	} else {
+		c.Response().Header().Set("Cache-Control", "private, max-age=300, must-revalidate")
+	}
 	return s.serveStoredObject(c, f.StorageKey, f.ContentType)
 }
 

@@ -85,8 +85,10 @@ func TestHLSRungArgs(t *testing.T) {
 		"-c:a aac",
 		"-b:a 128k",
 		"-f hls",
-		"-hls_time 4",
+		"-force_key_frames expr:gte(t,n_forced*6)",
+		"-hls_time 6",
 		"-hls_playlist_type vod",
+		"-hls_flags independent_segments",
 		"-hls_segment_filename /out/720p/seg_%05d.ts",
 		"/out/720p/playlist.m3u8",
 	} {
@@ -97,6 +99,69 @@ func TestHLSRungArgs(t *testing.T) {
 	// The audio map must be optional so silent sources still transcode.
 	if !strings.Contains(args, "-map 0:a:0?") {
 		t.Errorf("audio map must be optional (0:a:0?)\nargs: %s", args)
+	}
+}
+
+func TestHLSTrickPlayArgs(t *testing.T) {
+	r := HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128}
+	args := strings.Join(hlsTrickPlayArgs("/in/src.mp4", "/out/720p", r, 3), " ")
+	for _, want := range []string{
+		"-i /in/src.mp4",
+		"-map 0:v:0",
+		"-an",
+		"-threads 3",
+		"-profile:v main",
+		"-vf scale=1280:720,fps=1",
+		"-g 1",
+		"-keyint_min 1",
+		"-sc_threshold 0",
+		"-crf 28",
+		"-hls_time 1",
+		"-hls_flags single_file",
+		"-hls_segment_filename /out/720p/iframe.ts",
+		"/out/720p/iframe.m3u8",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("trick-play args missing %q\nargs: %s", want, args)
+		}
+	}
+}
+
+func TestMarkIFramesOnlyPlaylistAndPeakBandwidth(t *testing.T) {
+	raw := []byte("#EXTM3U\n#EXT-X-VERSION:4\n#EXTINF:1.0,\n#EXT-X-BYTERANGE:1000@0\niframe.ts\n#EXTINF:1.0,\n#EXT-X-BYTERANGE:1500@1000\niframe.ts\n#EXT-X-ENDLIST\n")
+	marked, err := markIFramesOnlyPlaylist(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(marked), "#EXT-X-I-FRAMES-ONLY") != 1 {
+		t.Fatalf("marked playlist =\n%s", marked)
+	}
+	markedAgain, err := markIFramesOnlyPlaylist(marked)
+	if err != nil || string(markedAgain) != string(marked) {
+		t.Fatalf("marking must be idempotent: err=%v\n%s", err, markedAgain)
+	}
+	bandwidth, err := trickPlayPeakBandwidth(marked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bandwidth != 13201 {
+		t.Errorf("peak bandwidth = %d, want 13201", bandwidth)
+	}
+	if _, err := markIFramesOnlyPlaylist([]byte("#EXTM3U\n#EXT-X-ENDLIST\n")); err == nil {
+		t.Error("malformed playlist should fail validation")
+	}
+}
+
+func TestParseH264CodecString(t *testing.T) {
+	got, err := parseH264CodecString([]byte(`{"streams":[{"codec_name":"h264","profile":"Main","level":22}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "avc1.4d4016" {
+		t.Errorf("codec = %q, want avc1.4d4016", got)
+	}
+	if _, err := parseH264CodecString([]byte(`{"streams":[{"codec_name":"hevc","profile":"Main","level":120}]}`)); err == nil {
+		t.Error("non-H.264 output should fail")
 	}
 }
 
@@ -165,13 +230,20 @@ func TestRenderMasterPlaylist(t *testing.T) {
 		{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128},
 		{Height: 360, Width: 640, VideoKbps: 800, AudioKbps: 96},
 	}
-	m := renderMasterPlaylist(rungs)
+	m := renderMasterPlaylist(rungs, map[int]hlsTrickPlayInfo{
+		720: {Bandwidth: 120000, Codec: "avc1.4d401f"},
+		360: {Bandwidth: 60000, Codec: "avc1.4d4016"},
+	})
 	if !strings.HasPrefix(m, "#EXTM3U\n") {
 		t.Fatalf("master playlist must start with #EXTM3U:\n%s", m)
 	}
 	for _, want := range []string{
+		"#EXT-X-VERSION:4\n",
+		"#EXT-X-INDEPENDENT-SEGMENTS\n",
 		"#EXT-X-STREAM-INF:BANDWIDTH=3220800,RESOLUTION=1280x720\n720p/playlist.m3u8\n",
 		"#EXT-X-STREAM-INF:BANDWIDTH=985600,RESOLUTION=640x360\n360p/playlist.m3u8\n",
+		`#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=120000,RESOLUTION=1280x720,CODECS="avc1.4d401f",URI="720p/iframe.m3u8"` + "\n",
+		`#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=60000,RESOLUTION=640x360,CODECS="avc1.4d4016",URI="360p/iframe.m3u8"` + "\n",
 	} {
 		if !strings.Contains(m, want) {
 			t.Errorf("master playlist missing %q\n%s", want, m)

@@ -19,6 +19,7 @@ package ipfs
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -50,7 +51,8 @@ func catViaRPC(t *testing.T, c *KuboClient, cid string) []byte {
 		t.Fatalf("cat %s: %v", cid, err)
 	}
 	defer body.Close()
-	b, err := io.ReadAll(io.LimitReader(body, 1<<20))
+	// The live fixture is capped at 16 MiB plus a short freshness marker.
+	b, err := io.ReadAll(io.LimitReader(body, 17<<20))
 	if err != nil {
 		t.Fatalf("read cat body: %v", err)
 	}
@@ -74,6 +76,85 @@ func getViaGateway(t *testing.T, gatewayURL, path string) []byte {
 		t.Fatalf("read gateway body: %v", err)
 	}
 	return b
+}
+
+// publicProofInput returns the independently hosted gateway and a small real
+// video fixture. Local tagged runs self-skip when either is absent; CI sets the
+// sentinel so a wiring regression cannot turn the live proof falsely green.
+func publicProofInput(t *testing.T) (string, []byte) {
+	t.Helper()
+	gw := strings.TrimRight(os.Getenv("IPFS_TEST_PUBLIC_GATEWAY_URL"), "/")
+	videoPath := os.Getenv("IPFS_TEST_VIDEO_PATH")
+	if gw == "" || videoPath == "" {
+		msg := "IPFS_TEST_PUBLIC_GATEWAY_URL and IPFS_TEST_VIDEO_PATH are required for the public-video proof"
+		if os.Getenv("IPFS_PUBLIC_PROOFS_REQUIRED") != "" {
+			t.Fatal(msg)
+		}
+		t.Skip(msg)
+	}
+	info, err := os.Stat(videoPath)
+	if err != nil {
+		t.Fatalf("stat public-video fixture: %v", err)
+	}
+	if info.Size() == 0 || info.Size() > 16<<20 {
+		t.Fatalf("public-video fixture size = %d; want 1..16 MiB", info.Size())
+	}
+	base, err := os.ReadFile(videoPath)
+	if err != nil {
+		t.Fatalf("read public-video fixture: %v", err)
+	}
+	// A unique trailing marker keeps every run's CID fresh, preventing a cached
+	// response from an older run from masquerading as live provider reachability.
+	// MP4 readers tolerate trailing application bytes; the source fixture remains
+	// a real playable video rather than a text blob with a .mp4 name.
+	data := append([]byte(nil), base...)
+	data = append(data, []byte(fmt.Sprintf("\nvidra-public-ipfs-proof:%d\n", time.Now().UnixNano()))...)
+	return gw, data
+}
+
+func getViaPublicGatewayEventually(t *testing.T, gatewayURL, cid string, want []byte) {
+	t.Helper()
+	timeout := 3 * time.Minute
+	if raw := os.Getenv("IPFS_TEST_PUBLIC_GATEWAY_TIMEOUT"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil || parsed <= 0 {
+			t.Fatalf("IPFS_TEST_PUBLIC_GATEWAY_TIMEOUT=%q is not a positive duration", raw)
+		}
+		timeout = parsed
+	}
+
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 35 * time.Second}
+	path := gatewayURL + "/ipfs/" + cid
+	last := "no request made"
+	for {
+		req, err := http.NewRequest(http.MethodGet, path, nil)
+		if err != nil {
+			t.Fatalf("build public gateway request: %v", err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			last = err.Error()
+		} else {
+			got, readErr := io.ReadAll(io.LimitReader(resp.Body, int64(len(want)+1)))
+			_ = resp.Body.Close()
+			switch {
+			case readErr != nil:
+				last = "read response: " + readErr.Error()
+			case resp.StatusCode != http.StatusOK:
+				last = fmt.Sprintf("status %d", resp.StatusCode)
+			case !bytes.Equal(got, want):
+				last = fmt.Sprintf("body mismatch (got %d bytes, want %d)", len(got), len(want))
+			default:
+				t.Logf("public gateway retrieved fresh video CID %s (%d bytes)", cid, len(got))
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("public gateway did not retrieve fresh CID %s within %s: %s", cid, timeout, last)
+		}
+		time.Sleep(3 * time.Second)
+	}
 }
 
 // TestIntegrationAddPinCat: version probe, single-object add+pin, and a cat
@@ -153,4 +234,29 @@ func TestIntegrationAddDirectoryHLSTree(t *testing.T) {
 	if err := c.Unpin(ctx, res.CID); err != nil {
 		t.Errorf("Unpin: %v", err)
 	}
+}
+
+// TestIntegrationPublicVideoRoundTrip is the live-network proof: add+pin a
+// fresh real MP4 on this node, verify its bytes locally, then retrieve the same
+// CID through an independently operated public gateway. Local gateway success
+// alone is insufficient because it does not prove DHT providing or reachability.
+func TestIntegrationPublicVideoRoundTrip(t *testing.T) {
+	c, _ := testClient(t)
+	publicGateway, data := publicProofInput(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	res, err := c.Add(ctx, "vidra-public-proof.mp4", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Add public video: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Unpin(context.Background(), res.CID) })
+	if err := ValidateCID(res.CID); err != nil {
+		t.Fatalf("public video CID %q invalid: %v", res.CID, err)
+	}
+	if got := catViaRPC(t, c, res.CID); !bytes.Equal(got, data) {
+		t.Fatalf("local public-video cat mismatch: got %d bytes, want %d", len(got), len(data))
+	}
+
+	getViaPublicGatewayEventually(t, publicGateway, res.CID, data)
 }

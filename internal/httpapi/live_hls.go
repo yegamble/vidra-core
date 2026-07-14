@@ -118,8 +118,9 @@ func (s *Server) handleGetLiveHLSFile(c echo.Context) error {
 // serveLiveHLSFile streams a validated live HLS file from LIVE_HLS_ROOT. The name
 // has already been checked to be a plain, id-scoped file, and the resolved path
 // is re-verified to stay within the configured root before opening (defence in
-// depth against traversal). Playlists are marked no-cache (they mutate as the
-// live session progresses).
+// depth against traversal). Playlists are never stored because they mutate as
+// the live session progresses. Sequence-named segments receive only a tiny
+// private TTL: nginx-rtmp can reuse the same names after a stream restarts.
 func (s *Server) serveLiveHLSFile(c echo.Context, id uuid.UUID, name, contentType string) error {
 	notFound := echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	root, err := filepath.Abs(s.cfg.LiveHLSRoot)
@@ -147,7 +148,9 @@ func (s *Server) serveLiveHLSFile(c echo.Context, id uuid.UUID, name, contentTyp
 	}
 	c.Response().Header().Set("Content-Type", contentType)
 	if strings.HasSuffix(name, ".m3u8") {
-		c.Response().Header().Set("Cache-Control", "no-cache")
+		c.Response().Header().Set("Cache-Control", "no-cache, no-store")
+	} else {
+		c.Response().Header().Set("Cache-Control", "private, max-age=12")
 	}
 	http.ServeContent(c.Response(), c.Request(), info.Name(), info.ModTime(), file)
 	return nil

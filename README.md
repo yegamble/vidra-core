@@ -317,8 +317,11 @@ a durable job in `transcode_jobs` (mirroring the federation delivery queue) and
 an in-process worker produces an H.264/AAC HLS ladder — rungs from
 1080p/720p/480p/360p, capped at the source height (never upscaled; a smaller
 source gets a single rung at its own size) — stored under
-`streaming-playlists/<video_id>/` with ~4s MPEG-TS segments. Failures retry
-with exponential backoff and dead-letter after 5 attempts. Once the
+`streaming-playlists/<video_id>/` with ~6s MPEG-TS segments whose boundaries are
+aligned to forced IDR frames for independent decoding and clean ABR switches.
+Every rung also carries a compact one-frame-per-second I-frame-only byte-range
+playlist (`iframe.m3u8` + `iframe.ts`) for native HLS trick-play scanning.
+Failures retry with exponential backoff and dead-letter after 5 attempts. Once the
 `streaming_playlists` row is `ready`, the video detail carries `hls_url` +
 `renditions [{height,width}]`, and playback is served (same visibility rules as
 `/original`) by `GET /api/v1/videos/{id}/hls/master.m3u8`
@@ -617,12 +620,17 @@ reader. IPFS is NOT an authoritative backend (`STORAGE_BACKEND=ipfs` is rejected
 it is an orthogonal, opt-in **mirror sidecar** for eligible already-public media
 (`IPFS_ENABLED`, `IPFS_*`; admin `GET /api/v1/ipfs/status` +
 `POST /api/v1/admin/ipfs/reconcile` answer 503 when disabled). For local dev the
-compose `ipfs` profile runs a Kubo node
+compose `ipfs` profile runs Kubo v0.41
 (`docker compose --profile core --profile ipfs up`; then `IPFS_ENABLED=true` with
 `IPFS_API_URL=http://ipfs:5001` and dev gateway `http://localhost:9090`, which are
-the compose defaults). The dev node is kept **local** — public-network
-distribution (AutoRelay / DHT server / hole-punching) is an explicit operator
-opt-in, never a default. An optional **IPFS Cluster** (`IPFS_CLUSTER_API_URL`,
+the compose defaults). It is genuinely **local-only** by default: the init hook
+blocks all swarm addresses, removes bootstrap peers, and disables routing,
+providing, and relay/NAT traversal.
+Set `IPFS_PUBLIC_NETWORK=true` for live public distribution and point
+`IPFS_GATEWAY_URL` at the client-facing public/self-hosted gateway. Live mode
+enables DHT providing plus relay/hole-punch reachability and is deliberately
+explicit because every public CID is a permanent disclosure. Kubo RPC ports are
+published on host loopback only. An optional **IPFS Cluster** (`IPFS_CLUSTER_API_URL`,
 `IPFS_CLUSTER_TOKEN` — a secret Bearer token) replicates node pins across peers
 (STOR-05). Real-node round-trip tests live behind the `ipfs_integration` build tag
 (`make test-ipfs-integration`; self-skips without a node) and a dedicated optional
@@ -642,7 +650,8 @@ daemon **refuse to boot** without a key. Enable with `IPFS_MIRROR_PRIVATE=true` 
 compose **`ipfs-private`** profile runs the private node
 (`docker compose --profile core --profile ipfs-private up`; RPC on host `:5002`, gateway
 NOT published; the init script auto-generates a **dev-only** `swarm.key`, clears
-bootstrap, and sets `Routing.Type=none` / `Reprovider.Interval=0` / `Gateway.NoFetch=true`).
+bootstrap, and sets `Routing.Type=none` / `Provide.Enabled=false` /
+`Gateway.NoFetch=true`, with public relay/NAT traversal disabled).
 The optional **`ipfs-private-cluster`** profile adds a second keyed node + an IPFS Cluster
 peer (`IPFS_PRIVATE_CLUSTER_API_URL`, `IPFS_PRIVATE_CLUSTER_SECRET` — both secrets) for
 replication testing. **`swarm.key` custody:** possession == full network membership; there

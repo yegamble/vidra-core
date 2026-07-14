@@ -468,11 +468,12 @@ Add a `kubo` service under an `ipfs` profile (currently unchecked at
       test: ["CMD","wget","--spider","-q","http://127.0.0.1:5001/api/v0/version"]
 ```
 The api service, when `IPFS_ENABLED=true`, sets `IPFS_API_URL=http://ipfs:5001`
-and `IPFS_GATEWAY_URL=http://localhost:9090` (dev). **Do not** copy the archive's
-`configure-node.sh` public-network AutoRelay/hole-punching config wholesale into a
-default profile — for dev keep the node local; document the public-network config
-as an opt-in for operators who intend public distribution (it is a privacy-relevant
-choice).
+and `IPFS_GATEWAY_URL=http://localhost:9090` (dev). The default init path is
+genuinely local-only (all swarm addresses blocked; bootstrap/routing/providing/relay disabled). Operators who
+intend real distribution explicitly set `IPFS_PUBLIC_NETWORK=true`; that path
+restores DHT providing and relay/hole-punch reachability and should pair with a
+client-facing public/self-hosted `IPFS_GATEWAY_URL`. This is a privacy-relevant,
+permanent-disclosure choice, never a default.
 
 ---
 
