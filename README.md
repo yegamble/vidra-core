@@ -630,7 +630,13 @@ Set `IPFS_PUBLIC_NETWORK=true` for live public distribution and point
 `IPFS_GATEWAY_URL` at the client-facing public/self-hosted gateway. Live mode
 enables DHT providing plus relay/hole-punch reachability and is deliberately
 explicit because every public CID is a permanent disclosure. Kubo RPC ports are
-published on host loopback only. An optional **IPFS Cluster** (`IPFS_CLUSTER_API_URL`,
+published on host loopback only. Once an eligible public asset is fully pinned, its
+stable application URL returns a short-lived `307` to the immutable gateway CID for
+video thumbnails, storyboard sprite sheets, user/channel avatars and banners, and
+public playlist covers. Missing, pending, failed, invalid, or private-swarm pins — and
+IPFS lookup failures — transparently fall back to the authoritative local/S3 object.
+The small storyboard VTT map stays on the stable application URL and points at the
+independently redirected `storyboard.jpg`. An optional **IPFS Cluster** (`IPFS_CLUSTER_API_URL`,
 `IPFS_CLUSTER_TOKEN` — a secret Bearer token) replicates node pins across peers
 (STOR-05). Real-node round-trip tests live behind the `ipfs_integration` build tag
 (`make test-ipfs-integration`; self-skips without a node) and a dedicated optional

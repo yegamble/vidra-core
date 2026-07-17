@@ -15,6 +15,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/channel"
+	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -83,6 +84,10 @@ func (f *imageFakeRepo) DeleteChannelImage(_ context.Context, a sqlcgen.DeleteCh
 // profileImageServer wires real auth + channel + profile-image services over
 // in-memory fakes, with a real local blob backend for storage/serving.
 func profileImageServer(t *testing.T) *Server {
+	return profileImageServerWith(t, testConfig())
+}
+
+func profileImageServerWith(t *testing.T, cfg *config.Config, opts ...Option) *Server {
 	t.Helper()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	authsvc := auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour)
@@ -91,12 +96,14 @@ func profileImageServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("storage.NewLocal: %v", err)
 	}
-	return New(testConfig(), nil, nil,
+	baseOpts := []Option{
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(chansvc),
 		WithProfileImageService(profileimage.NewService(newImageFakeRepo(), blobs)),
 		WithMediaStorage(blobs),
-	)
+	}
+	baseOpts = append(baseOpts, opts...)
+	return New(cfg, nil, nil, baseOpts...)
 }
 
 // registerUser registers an account and returns its access token and user id.

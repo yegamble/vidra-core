@@ -1343,8 +1343,8 @@ func (s *Server) routes() {
 
 	// Hybrid IPFS media mirroring (fix_plan P19). Admin-only, always mounted
 	// (stable contract): status + kick a reconcile. Both answer 503 ipfs_disabled
-	// when IPFS_ENABLED=false; the real payloads land in P19.2 (status) / P19.6
-	// (reconcile). Config-gated inside the handler, so no service wiring is needed.
+	// when neither the public nor private tier is enabled. Config-gated inside the
+	// handler, so no service wiring is needed when both tiers are off.
 	api.GET("/ipfs/status", s.handleIPFSStatus, s.requireAuth, s.requireRole("admin"))
 	api.POST("/admin/ipfs/reconcile", s.handleIPFSReconcile, s.requireAuth, s.requireRole("admin"))
 

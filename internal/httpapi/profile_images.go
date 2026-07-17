@@ -83,6 +83,9 @@ func (s *Server) handleGetUserImage(kind string) echo.HandlerFunc {
 		if err != nil {
 			return profileImageError(err, kind)
 		}
+		if redirected, err := s.redirectPublicIPFS(c, img.StorageKey, identityIPFSClass("user", kind)); redirected {
+			return err
+		}
 		return s.serveStoredObjectNamed(c, img.StorageKey, img.ContentType, kind+" not found")
 	}
 }
@@ -135,6 +138,9 @@ func (s *Server) handleGetChannelImage(kind string) echo.HandlerFunc {
 		img, err := s.imagesvc.ChannelImage(c.Request().Context(), ch.ID, kind)
 		if err != nil {
 			return profileImageError(err, kind)
+		}
+		if redirected, err := s.redirectPublicIPFS(c, img.StorageKey, identityIPFSClass("channel", kind)); redirected {
+			return err
 		}
 		return s.serveStoredObjectNamed(c, img.StorageKey, img.ContentType, kind+" not found")
 	}

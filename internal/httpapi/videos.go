@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/searchevents"
@@ -1123,13 +1124,19 @@ func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if _, err := s.videoVisibleForMedia(c, id); err != nil {
+	v, err := s.videoVisibleForMedia(c, id)
+	if err != nil {
 		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
 	f, err := s.videosvc.FileForView(c.Request().Context(), id, viewerID, authed, "thumbnail")
 	if err != nil {
 		return videoError(err)
+	}
+	if publicVideoForIPFS(v.Privacy, v.State) {
+		if redirected, err := s.redirectPublicIPFS(c, f.StorageKey, ipfsmirror.ClassThumbnail); redirected {
+			return err
+		}
 	}
 	// The public thumbnail URL is stable and owners can replace its bytes, so it
 	// cannot honestly be immutable. Allow a short browser-private reuse window;

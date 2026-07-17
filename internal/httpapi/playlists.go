@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -469,7 +470,13 @@ func (s *Server) handleGetPlaylistThumbnail(c echo.Context) error {
 	if !ok {
 		ct = "application/octet-stream"
 	}
-	return s.serveStoredObjectNamed(c, media.PlaylistThumbnailKey(id, *p.ThumbnailExt), ct, "playlist not found")
+	key := media.PlaylistThumbnailKey(id, *p.ThumbnailExt)
+	if p.Visibility == "public" {
+		if redirected, err := s.redirectPublicIPFS(c, key, ipfsmirror.ClassPlaylistCover); redirected {
+			return err
+		}
+	}
+	return s.serveStoredObjectNamed(c, key, ct, "playlist not found")
 }
 
 // playlistError maps playlist service sentinels to HTTP error envelopes. A
