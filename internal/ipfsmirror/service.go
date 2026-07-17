@@ -2,6 +2,7 @@ package ipfsmirror
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/ipfs"
@@ -113,6 +115,7 @@ type Repository interface {
 	SweepIneligibleIPFSPins(ctx context.Context, batchSize int32) (int64, error)
 	CountIPFSPinsByNetworkStateClass(ctx context.Context) ([]sqlcgen.CountIPFSPinsByNetworkStateClassRow, error)
 	CountIPFSPinsSharingCID(ctx context.Context, arg sqlcgen.CountIPFSPinsSharingCIDParams) (int64, error)
+	GetIPFSPinByObjectKey(ctx context.Context, objectKey string) (sqlcgen.MediaIpfsPin, error)
 	ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) ([]sqlcgen.MediaIpfsPin, error)
 	ListPinnedVideoIDs(ctx context.Context, videoIds []uuid.UUID) ([]pgtype.UUID, error)
 	// ---- durable per-user re-evaluation queue (P19 round-2 audit) --------------
@@ -880,6 +883,30 @@ func (s *Service) VideoPins(ctx context.Context, videoID uuid.UUID) (VideoIPFS, 
 	}
 	out.GatewayURL = s.gatewayURL
 	return out, true, nil
+}
+
+// PublicAssetURL resolves one authoritative storage object to its immutable
+// public-gateway URL. It is deliberately strict: the public tier must be on,
+// the ledger row must match the handler's expected media class, be fully pinned
+// on the PUBLIC network, and carry a validated CIDv1. Private-swarm rows are
+// never surfaced. A missing/not-yet-pinned object is a normal ok=false result so
+// HTTP handlers can fall back to local/S3 without turning IPFS into a dependency.
+func (s *Service) PublicAssetURL(ctx context.Context, objectKey string, expectedClass MediaClass) (string, bool, error) {
+	if !s.publicEnabled || s.gatewayURL == "" || objectKey == "" || expectedClass == "" {
+		return "", false, nil
+	}
+	row, err := s.repo.GetIPFSPinByObjectKey(ctx, objectKey)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if MediaClass(row.MediaClass) != expectedClass || normalizeNetwork(row.Network) != networkPublic ||
+		row.State != "pinned" || row.Cid == "" || ipfs.ValidateCID(row.Cid) != nil {
+		return "", false, nil
+	}
+	return strings.TrimRight(s.gatewayURL, "/") + "/ipfs/" + row.Cid, true, nil
 }
 
 // PinnedVideoIDs returns the subset of videoIDs that have at least one pinned

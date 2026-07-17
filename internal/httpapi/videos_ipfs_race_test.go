@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
@@ -14,13 +15,23 @@ import (
 )
 
 // stubLedgerRepo is a minimal ipfsmirror.Repository backed by an in-memory slice of
-// ledger rows. It implements ONLY the two read queries the serving fields depend on
-// (ListIPFSPinsByVideo → VideoPins detail object; ListPinnedVideoIDs → card badge);
+// ledger rows. It implements ONLY the three read queries the serving fields depend on
+// (ListIPFSPinsByVideo → VideoPins detail object; ListPinnedVideoIDs → card badge;
+// GetIPFSPinByObjectKey → static-asset gateway redirects);
 // every other method is an inert stub. It exists so the handler-level contract
 // regression below drives the REAL ipfsmirror.Service (not a hand-rolled double),
 // exercising the actual state='pinned'-only read logic the P19 audit flagged.
 type stubLedgerRepo struct {
 	rows []sqlcgen.MediaIpfsPin
+}
+
+func (r *stubLedgerRepo) GetIPFSPinByObjectKey(ctx context.Context, objectKey string) (sqlcgen.MediaIpfsPin, error) {
+	for _, row := range r.rows {
+		if row.ObjectKey == objectKey {
+			return row, nil
+		}
+	}
+	return sqlcgen.MediaIpfsPin{}, pgx.ErrNoRows
 }
 
 func (r *stubLedgerRepo) ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) ([]sqlcgen.MediaIpfsPin, error) {

@@ -1989,6 +1989,13 @@ paths:
               schema:
                 type: string
                 format: binary
+        "307":
+          description: The public avatar is pinned; redirect to its immutable public IPFS gateway URL.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "404":
           description: No channel with that handle, or no avatar set.
           content:
@@ -2113,6 +2120,13 @@ paths:
               schema:
                 type: string
                 format: binary
+        "307":
+          description: The public banner is pinned; redirect to its immutable public IPFS gateway URL.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "404":
           description: No channel with that handle, or no banner set.
           content:
@@ -2383,6 +2397,13 @@ paths:
               schema:
                 type: string
                 format: binary
+        "307":
+          description: The public avatar is pinned; redirect to its immutable public IPFS gateway URL.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "404":
           description: No such user, or no avatar set.
           content:
@@ -2413,6 +2434,13 @@ paths:
               schema:
                 type: string
                 format: binary
+        "307":
+          description: The public banner is pinned; redirect to its immutable public IPFS gateway URL.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "404":
           description: No such user, or no banner set.
           content:
@@ -3626,6 +3654,13 @@ paths:
               schema:
                 type: string
                 format: binary
+        "307":
+          description: The public poster is pinned; redirect to its immutable public IPFS gateway URL.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "404":
           description: No such video (or private and not yours), or no thumbnail.
           content:
@@ -3761,6 +3796,13 @@ paths:
               schema:
                 type: string
                 format: binary
+        "307":
+          description: The public sprite sheet is pinned; redirect to its immutable public IPFS gateway URL.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "404":
           description: No such video (or not visible), or no storyboard.
           content:
@@ -6820,6 +6862,13 @@ paths:
               schema:
                 type: string
                 format: binary
+        "307":
+          description: The public playlist cover is pinned; redirect to its immutable public IPFS gateway URL.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "404":
           description: No such playlist (or not visible), or no cover.
           content:
@@ -11085,8 +11134,9 @@ paths:
         public gateway URL in use, whether an IPFS Cluster is configured, and pin
         counts overall and per media class. IPFS is a MIRROR SIDECAR — local/S3
         stays authoritative — so this never reflects on the readiness of media
-        serving. Returns 503 ipfs_disabled when IPFS_ENABLED=false. Restricted to
-        admins. (Status aggregation is delivered in P19.2; until then an enabled
+        serving. Returns 503 ipfs_disabled when both IPFS_ENABLED=false and
+        IPFS_MIRROR_PRIVATE=false. Restricted to admins. (Status aggregation is
+        delivered in P19.2; until then an enabled
         instance answers 501 not_implemented.)
       tags: [admin]
       security:
@@ -11130,8 +11180,9 @@ paths:
         Triggers an immediate reconciliation scan of the IPFS mirror: re-enqueue
         failed pins and upsert pin intents for eligible ALREADY-PUBLIC objects that
         have no ledger row yet (the outage-backfill path). Idempotent — a second
-        run enqueues nothing new. Returns 503 ipfs_disabled when IPFS_ENABLED=false.
-        Restricted to admins; audited. (The real scan is delivered in P19.6; until
+        run enqueues nothing new. Returns 503 ipfs_disabled when both
+        IPFS_ENABLED=false and IPFS_MIRROR_PRIVATE=false. Restricted to admins;
+        audited. (The real scan is delivered in P19.6; until
         then an enabled instance answers 501 not_implemented.)
       tags: [admin]
       security:

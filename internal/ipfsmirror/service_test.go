@@ -393,6 +393,14 @@ func (r *fakeRepo) CountIPFSPinsSharingCID(ctx context.Context, arg sqlcgen.Coun
 	return n, nil
 }
 
+func (r *fakeRepo) GetIPFSPinByObjectKey(ctx context.Context, objectKey string) (sqlcgen.MediaIpfsPin, error) {
+	row, ok := r.rows[objectKey]
+	if !ok {
+		return sqlcgen.MediaIpfsPin{}, pgx.ErrNoRows
+	}
+	return *row, nil
+}
+
 func (r *fakeRepo) ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) ([]sqlcgen.MediaIpfsPin, error) {
 	var out []sqlcgen.MediaIpfsPin
 	for _, row := range r.rows {
@@ -959,6 +967,66 @@ func TestVideoPinsRejectsInvalidCID(t *testing.T) {
 
 	if _, ok, err := svc.VideoPins(context.Background(), vid); err != nil || ok {
 		t.Errorf("VideoPins with an invalid CID: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+}
+
+func TestPublicAssetURL(t *testing.T) {
+	repo := newFakeRepo()
+	key := "thumbnails/video.jpg"
+	cid := ipfs.RawLeafCIDv1([]byte("thumbnail-bytes"))
+	seedPinned(repo, key, string(ClassThumbnail), cid, uuid.New())
+	svc := New(repo, &fakeLookups{}, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+
+	got, ok, err := svc.PublicAssetURL(context.Background(), key, ClassThumbnail)
+	if err != nil {
+		t.Fatalf("PublicAssetURL: %v", err)
+	}
+	if !ok {
+		t.Fatal("PublicAssetURL ok = false, want true")
+	}
+	want := "https://gw.example.org/ipfs/" + cid
+	if got != want {
+		t.Errorf("PublicAssetURL = %q, want %q", got, want)
+	}
+}
+
+func TestPublicAssetURLRejectsNonPublicOrUnreadyPins(t *testing.T) {
+	key := "thumbnails/video.jpg"
+	validCID := ipfs.RawLeafCIDv1([]byte("thumbnail-bytes"))
+	tests := []struct {
+		name     string
+		mutate   func(*sqlcgen.MediaIpfsPin)
+		expected MediaClass
+	}{
+		{name: "wrong class", mutate: func(r *sqlcgen.MediaIpfsPin) {}, expected: ClassStoryboard},
+		{name: "private network", mutate: func(r *sqlcgen.MediaIpfsPin) { r.Network = networkPrivate }, expected: ClassThumbnail},
+		{name: "pending", mutate: func(r *sqlcgen.MediaIpfsPin) { r.State = "pending" }, expected: ClassThumbnail},
+		{name: "invalid cid", mutate: func(r *sqlcgen.MediaIpfsPin) { r.Cid = "not-a-cid" }, expected: ClassThumbnail},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			seedPinned(repo, key, string(ClassThumbnail), validCID, uuid.New())
+			tt.mutate(repo.rows[key])
+			svc := New(repo, &fakeLookups{}, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+			if got, ok, err := svc.PublicAssetURL(context.Background(), key, tt.expected); err != nil || ok || got != "" {
+				t.Errorf("PublicAssetURL = %q, ok=%v, err=%v; want empty, false, nil", got, ok, err)
+			}
+		})
+	}
+
+	repo := newFakeRepo()
+	svc := New(repo, &fakeLookups{}, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+	if got, ok, err := svc.PublicAssetURL(context.Background(), key, ClassThumbnail); err != nil || ok || got != "" {
+		t.Errorf("missing row = %q, ok=%v, err=%v; want empty, false, nil", got, ok, err)
+	}
+
+	cfg := testConfig()
+	cfg.Enabled = false
+	seedPinned(repo, key, string(ClassThumbnail), validCID, uuid.New())
+	disabled := New(repo, &fakeLookups{}, newBlobs(t), ipfs.NewFakeIPFSClient(), cfg)
+	if got, ok, err := disabled.PublicAssetURL(context.Background(), key, ClassThumbnail); err != nil || ok || got != "" {
+		t.Errorf("disabled public tier = %q, ok=%v, err=%v; want empty, false, nil", got, ok, err)
 	}
 }
 

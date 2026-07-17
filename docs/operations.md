@@ -63,6 +63,16 @@ additively in API responses. Nothing private/unlisted/quarantined/DM/export is e
 pinned (the eligibility gate is a hard privacy fence). Local/S3 stays the only
 authoritative copy.
 
+For bandwidth offload, the existing stable asset endpoints return a short-cache
+`307 Temporary Redirect` to `{IPFS_GATEWAY_URL}/ipfs/{cid}` when the ledger row has
+the expected media class, is `pinned` on the **public** network, and contains a valid
+CID. This applies to public video thumbnails, storyboard JPEG sprite sheets,
+user/channel avatars and banners, and public playlist covers. The storyboard VTT
+remains on the application endpoint so its relative `storyboard.jpg` cue stays
+correct. If a pin is absent, pending, failed, private-network, invalid, or the lookup
+fails, the same request transparently serves the authoritative local/S3 object.
+Private-swarm CIDs are never used in a redirect or exposed to clients.
+
 ### Local-only vs live public mode
 
 The compose `ipfs` service is local-only unless the operator explicitly sets

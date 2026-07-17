@@ -38,6 +38,8 @@ type fakeIPFSMirror struct {
 	// PinnedVideoIDs reports true for. Both default to empty/nothing pinned.
 	videoPins map[uuid.UUID]ipfsmirror.VideoIPFS
 	pinnedIDs map[uuid.UUID]bool
+	assetURLs map[string]string
+	assetErr  error
 	// reconcile/backfill test knobs + call counters.
 	rearmed         int64
 	backfill        ipfsmirror.BackfillCounts
@@ -67,6 +69,16 @@ func (f *fakeIPFSMirror) VideoPins(ctx context.Context, videoID uuid.UUID) (ipfs
 		return p, true, nil
 	}
 	return ipfsmirror.VideoIPFS{}, false, nil
+}
+func fakeAssetLookupKey(objectKey string, class ipfsmirror.MediaClass) string {
+	return string(class) + "\x00" + objectKey
+}
+func (f *fakeIPFSMirror) PublicAssetURL(ctx context.Context, objectKey string, class ipfsmirror.MediaClass) (string, bool, error) {
+	if f.assetErr != nil {
+		return "", false, f.assetErr
+	}
+	u, ok := f.assetURLs[fakeAssetLookupKey(objectKey, class)]
+	return u, ok, nil
 }
 func (f *fakeIPFSMirror) PinnedVideoIDs(ctx context.Context, videoIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
 	out := map[uuid.UUID]bool{}
@@ -98,6 +110,40 @@ func TestIPFSStatusDisabled(t *testing.T) {
 	}
 	if rec := getWithAuth(srv, "/api/v1/ipfs/status", ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anon status = %d, want 401", rec.Code)
+	}
+}
+
+func TestIPFSStatusPrivateOnly(t *testing.T) {
+	cfg := testConfig()
+	cfg.IPFSMirrorPrivate = true
+	cfg.IPFSPrivateAPIURL = "http://ipfs-private:5001"
+	mirror := &fakeIPFSMirror{status: ipfsmirror.Status{
+		Enabled: true,
+		Networks: map[string]ipfsmirror.NetworkStatus{
+			ipfsmirror.NetworkPublic:  {Enabled: false},
+			ipfsmirror.NetworkPrivate: {Enabled: true, NodeReachable: true},
+		},
+	}}
+	srv := ipfsServer(t, cfg, WithIPFSMirrorService(mirror))
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	rec := getWithAuth(srv, "/api/v1/ipfs/status", admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("private-only status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got ipfsStatusView
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode private-only status: %v", err)
+	}
+	if !got.Networks.Private.Enabled {
+		t.Error("private network enabled = false, want true")
+	}
+	if got.Networks.Public.Enabled {
+		t.Error("public network enabled = true, want false")
+	}
+
+	if rec := postJSONWithAuth(srv, "/api/v1/admin/ipfs/reconcile?network=private", admin, `{}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("private-only reconcile = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

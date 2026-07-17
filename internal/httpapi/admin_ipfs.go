@@ -17,8 +17,8 @@ import (
 // authoritative — so these endpoints are informational and never gate serving.
 //
 // Behavior:
-//   - IPFS_ENABLED=false (default) ⇒ 503 ipfs_disabled (mirrors the
-//     PeerTube-import "not configured" 503).
+//   - both IPFS_ENABLED=false and IPFS_MIRROR_PRIVATE=false (default) ⇒ 503
+//     ipfs_disabled (mirrors the PeerTube-import "not configured" 503).
 //   - GET /ipfs/status: real payload from the mirror service (P19.2). If enabled
 //     but the mirror is not wired on this build, an honest 501.
 //   - POST /admin/ipfs/reconcile: real one-shot scan (P19.6) — re-arm dead-letters
@@ -47,6 +47,9 @@ type ipfsMirrorProvider interface {
 	// VideoPins backs the detail `ipfs` object: the pinned original/HLS CIDs +
 	// gateway base for one video (ok=false when nothing is pinned).
 	VideoPins(ctx context.Context, videoID uuid.UUID) (ipfsmirror.VideoIPFS, bool, error)
+	// PublicAssetURL resolves an already-pinned public object to its immutable
+	// gateway URL. ok=false means the handler must serve authoritative local/S3.
+	PublicAssetURL(ctx context.Context, objectKey string, expectedClass ipfsmirror.MediaClass) (string, bool, error)
 	// PinnedVideoIDs backs the card/feed `ipfs_pinned` badge: which of the given
 	// videos have at least one pinned object, in one batched query.
 	PinnedVideoIDs(ctx context.Context, videoIDs []uuid.UUID) (map[uuid.UUID]bool, error)
@@ -140,7 +143,7 @@ func toIPFSStatusView(st ipfsmirror.Status) ipfsStatusView {
 // handleIPFSStatus reports the mirror's status to an admin (P19.2): enabled, node
 // reachability, gateway URL, cluster config, and pin counts overall + per class.
 func (s *Server) handleIPFSStatus(c echo.Context) error {
-	if !s.cfg.IPFSEnabled {
+	if !s.ipfsConfigured() {
 		return &IPFSDisabledError{}
 	}
 	if s.ipfsmirrorsvc == nil {
@@ -170,7 +173,7 @@ type ipfsReconcileResultView struct {
 // Admin-gated and audit-logged. Returns 503 ipfs_disabled when off, 501 when the
 // mirror subsystem is not wired on this build.
 func (s *Server) handleIPFSReconcile(c echo.Context) error {
-	if !s.cfg.IPFSEnabled {
+	if !s.ipfsConfigured() {
 		return &IPFSDisabledError{}
 	}
 	if s.ipfsmirrorsvc == nil {
@@ -217,4 +220,8 @@ func (s *Server) handleIPFSReconcile(c echo.Context) error {
 		Enqueued: counts.Total,
 		ByClass:  byClass,
 	})
+}
+
+func (s *Server) ipfsConfigured() bool {
+	return s.cfg.IPFSEnabled || s.cfg.IPFSMirrorPrivate
 }
