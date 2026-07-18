@@ -1058,6 +1058,27 @@ func TestATProtoDefaults(t *testing.T) {
 	}
 }
 
+func TestATProtoLoginEnabledToggle(t *testing.T) {
+	// Defaults off, independent of the cross-posting switch.
+	t.Setenv("ATPROTO_LOGIN_ENABLED", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if cfg.ATProtoLoginEnabled {
+		t.Errorf("ATProtoLoginEnabled default = true, want false")
+	}
+
+	t.Setenv("ATPROTO_LOGIN_ENABLED", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if !cfg.ATProtoLoginEnabled {
+		t.Errorf("ATProtoLoginEnabled = false, want true when ATPROTO_LOGIN_ENABLED=true")
+	}
+}
+
 func TestATProtoKEKFallsBackToFederationKEK(t *testing.T) {
 	fedKEK := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	t.Setenv("ATPROTO_KEY_KEK", "")
