@@ -17,6 +17,7 @@ package atproto
 //     JWK (x, y) is ever emitted, inside the proof header where it belongs.
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -29,6 +30,10 @@ import (
 	"net/url"
 	"time"
 )
+
+// p256UncompressedLen is the length of an uncompressed SEC1 P-256 public point
+// (0x04 || X(32) || Y(32)), the form ecdsa.PublicKey.Bytes emits.
+const p256UncompressedLen = 65
 
 // dpopKey is the per-flow P-256 signing key. The zero value is unusable; build
 // one with newDPoPKey or parseDPoPKey.
@@ -60,8 +65,9 @@ func GenerateDPoPKeyJWK() (string, error) {
 // b64url is the JOSE/JWK base64url (no padding) encoding used throughout DPoP.
 func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
-// p256Coord left-pads a curve scalar/coordinate to the fixed 32-byte P-256 field
-// width, as required for JWK `x`/`y`/`d` and the raw R||S signature encoding.
+// p256Coord left-pads an ECDSA signature integer (R or S) to the fixed 32-byte
+// P-256 width, as required for the raw R||S JWS signature encoding. The `r`/`s`
+// values come from ecdsa.Sign (fresh outputs, not key material).
 func p256Coord(i *big.Int) []byte {
 	b := i.Bytes()
 	if len(b) >= 32 {
@@ -72,15 +78,33 @@ func p256Coord(i *big.Int) []byte {
 	return out
 }
 
+// pubXY returns the 32-byte big-endian X and Y coordinates of the key's public
+// point via the supported ecdsa.PublicKey.Bytes API (no deprecated raw big.Int
+// field access). The point is the uncompressed SEC1 form 0x04 || X || Y.
+func (k *dpopKey) pubXY() (x, y []byte, err error) {
+	pub, err := k.priv.PublicKey.Bytes()
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(pub) != p256UncompressedLen || pub[0] != 0x04 {
+		return nil, nil, errors.New("atproto: unexpected P-256 public key encoding")
+	}
+	return pub[1:33], pub[33:65], nil
+}
+
 // publicJWK returns the public key as the JWK map embedded in the DPoP proof
 // header. Only the public coordinates are exposed — never the `d` scalar.
-func (k *dpopKey) publicJWK() map[string]string {
+func (k *dpopKey) publicJWK() (map[string]string, error) {
+	x, y, err := k.pubXY()
+	if err != nil {
+		return nil, err
+	}
 	return map[string]string{
 		"kty": "EC",
 		"crv": "P-256",
-		"x":   b64url(p256Coord(k.priv.X)),
-		"y":   b64url(p256Coord(k.priv.Y)),
-	}
+		"x":   b64url(x),
+		"y":   b64url(y),
+	}, nil
 }
 
 // privateJWK is the serialised private key threaded through the signed, httpOnly
@@ -94,13 +118,23 @@ type privateJWK struct {
 	D   string `json:"d"`
 }
 
-// marshalPrivateJWK serialises the key for the state round-trip.
+// marshalPrivateJWK serialises the key for the state round-trip. The private
+// scalar comes from ecdsa.PrivateKey.Bytes (already the fixed 32-byte width) and
+// the public coordinates from pubXY — both supported, non-deprecated APIs.
 func (k *dpopKey) marshalPrivateJWK() (string, error) {
+	x, y, err := k.pubXY()
+	if err != nil {
+		return "", err
+	}
+	d, err := k.priv.Bytes()
+	if err != nil {
+		return "", err
+	}
 	body, err := json.Marshal(privateJWK{
 		Kty: "EC", Crv: "P-256",
-		X: b64url(p256Coord(k.priv.X)),
-		Y: b64url(p256Coord(k.priv.Y)),
-		D: b64url(p256Coord(k.priv.D)),
+		X: b64url(x),
+		Y: b64url(y),
+		D: b64url(d),
 	})
 	if err != nil {
 		return "", err
@@ -108,9 +142,11 @@ func (k *dpopKey) marshalPrivateJWK() (string, error) {
 	return string(body), nil
 }
 
-// parseDPoPKey rebuilds a key from a marshalPrivateJWK string, validating the
-// curve and that the public point actually lies on P-256 (fail-closed on a
-// tampered cookie).
+// parseDPoPKey rebuilds a key from a marshalPrivateJWK string. The key is
+// reconstructed from the private scalar via ecdsa.ParseRawPrivateKey, which
+// validates the scalar and DERIVES the public point — so a tampered x/y can never
+// ride along. We additionally fail closed if the JWK's carried coordinates
+// disagree with the ones the scalar actually derives.
 func parseDPoPKey(s string) (*dpopKey, error) {
 	var jwk privateJWK
 	if err := json.Unmarshal([]byte(s), &jwk); err != nil {
@@ -125,15 +161,19 @@ func parseDPoPKey(s string) (*dpopKey, error) {
 	if err1 != nil || err2 != nil || err3 != nil {
 		return nil, errors.New("atproto: malformed DPoP key coordinates")
 	}
-	priv := new(ecdsa.PrivateKey)
-	priv.PublicKey.Curve = elliptic.P256()
-	priv.PublicKey.X = new(big.Int).SetBytes(xb)
-	priv.PublicKey.Y = new(big.Int).SetBytes(yb)
-	priv.D = new(big.Int).SetBytes(db)
-	if !priv.PublicKey.Curve.IsOnCurve(priv.PublicKey.X, priv.PublicKey.Y) {
-		return nil, errors.New("atproto: DPoP public key is not on P-256")
+	priv, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), db)
+	if err != nil {
+		return nil, errors.New("atproto: invalid DPoP private key")
 	}
-	return &dpopKey{priv: priv}, nil
+	k := &dpopKey{priv: priv}
+	dx, dy, err := k.pubXY()
+	if err != nil {
+		return nil, errors.New("atproto: invalid DPoP public key")
+	}
+	if !bytes.Equal(xb, dx) || !bytes.Equal(yb, dy) {
+		return nil, errors.New("atproto: DPoP public key does not match its private scalar")
+	}
+	return k, nil
 }
 
 // Proof builds a DPoP proof JWT for a single request: header
@@ -142,10 +182,14 @@ func parseDPoPKey(s string) (*dpopKey, error) {
 // included as the `nonce` claim once we have one (empty nonce omits it). The
 // ES256 signature is the raw R||S (32+32 bytes) over base64url(header).base64url(claims).
 func (k *dpopKey) Proof(method, rawURL, nonce string) (string, error) {
+	jwk, err := k.publicJWK()
+	if err != nil {
+		return "", err
+	}
 	header := map[string]any{
 		"typ": "dpop+jwt",
 		"alg": "ES256",
-		"jwk": k.publicJWK(),
+		"jwk": jwk,
 	}
 	claims := map[string]any{
 		"jti": randomJTI(),
