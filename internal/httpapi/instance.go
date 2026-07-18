@@ -226,6 +226,10 @@ type instanceResponse struct {
 	// frontend can render "continue with …" buttons pointing at
 	// GET /api/v1/auth/oauth/{provider}. Empty array when OAuth is off.
 	OAuthProviders []string `json:"oauth_providers"`
+	// ATProtoLogin reports whether ATProto identity login (Bluesky / any PDS) is
+	// enabled (ATPROTO_LOGIN_ENABLED), so the frontend can show the "sign in with
+	// a handle" affordance. Independent of the OAuth providers above.
+	ATProtoLogin bool `json:"atproto_login"`
 	// FederationEnabled reports whether ActivityPub federation is on, so the
 	// frontend can show/hide remote-content surfaces (remote follows, remote
 	// videos).
@@ -320,6 +324,7 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		RegistrationRequiresEmailVerification: s.registrationRequiresEmailVerification(),
 		RegistrationMinimumAge:                s.registrationMinimumAge(),
 		OAuthProviders:                        s.cfg.OAuthProviderNames(),
+		ATProtoLogin:                          s.atprotologinsvc != nil && s.atprotologinsvc.Enabled(),
 		FederationEnabled:                     s.cfg.FederationEnabled,
 		TermsURL:                              s.settingString(instancesettings.KeyTermsURL, s.cfg.InstanceTermsURL),
 		PrivacyURL:                            s.settingString(instancesettings.KeyPrivacyURL, s.cfg.InstancePrivacyURL),
