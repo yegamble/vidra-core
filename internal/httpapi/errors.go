@@ -60,7 +60,12 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var cfd *ContactFormDisabledError
 	var rc *ReplaceConflictError
 	var su *SearchUnavailableError
+	var ale *ATProtoLoginError
 	switch {
+	case errors.As(err, &ale):
+		status = ale.Status
+		message = ale.Message
+		code = ale.Code
 	case errors.As(err, &su):
 		status = http.StatusServiceUnavailable
 		message = "search is temporarily unavailable"
@@ -252,6 +257,18 @@ func (e *ContactFormDisabledError) Error() string { return "contact form disable
 type SearchUnavailableError struct{}
 
 func (e *SearchUnavailableError) Error() string { return "search service unavailable" }
+
+// ATProtoLoginError renders an ATProto identity-login failure with a stable,
+// snake_case code at the given status (503 atproto_disabled, 422 invalid_handle,
+// 502 atproto_resolution_failed / atproto_upstream). It carries only safe machine
+// codes — never an upstream body, token, PKCE verifier, or DPoP key.
+type ATProtoLoginError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *ATProtoLoginError) Error() string { return e.Code }
 
 // IPFSDisabledError renders as 503 with the stable code "ipfs_disabled": the
 // hybrid IPFS media mirror (fix_plan P19) is off (IPFS_ENABLED=false) on this
