@@ -82,6 +82,38 @@ func TestResolveHandleDNSAndWellKnown(t *testing.T) {
 		}
 	})
 
+	t.Run("ambiguous TXT (two different DIDs) is rejected, not picked", func(t *testing.T) {
+		// Two TXT records naming DIFFERENT valid DIDs must not resolve to an
+		// arbitrary one (an injected second record must not be able to win); DNS is
+		// treated as unanswered and the well-known method is consulted instead.
+		c := NewOAuthClient(
+			WithOAuthClientAllowPrivate(true),
+			WithTXTResolver(fakeTXT(map[string][]string{"_atproto.alice.example": {
+				"did=did:plc:legit", "did=did:plc:attacker",
+			}})),
+			WithHandleWellKnownBase(wk.URL),
+		)
+		did, err := c.ResolveHandle(context.Background(), "alice.example")
+		if err != nil || did != "did:plc:fromhttp" {
+			t.Fatalf("ResolveHandle = %q, %v; want the well-known DID (ambiguous DNS ignored)", did, err)
+		}
+	})
+
+	t.Run("duplicate identical TXT records still resolve", func(t *testing.T) {
+		// Two records naming the SAME DID are not ambiguous.
+		c := NewOAuthClient(
+			WithOAuthClientAllowPrivate(true),
+			WithTXTResolver(fakeTXT(map[string][]string{"_atproto.alice.example": {
+				"did=did:plc:fromdns", "did=did:plc:fromdns",
+			}})),
+			WithHandleWellKnownBase(wk.URL),
+		)
+		did, err := c.ResolveHandle(context.Background(), "alice.example")
+		if err != nil || did != "did:plc:fromdns" {
+			t.Fatalf("ResolveHandle = %q, %v; want did:plc:fromdns", did, err)
+		}
+	})
+
 	t.Run("well-known body cap", func(t *testing.T) {
 		big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 9 KiB of padding before anything a DID could parse from: past the
