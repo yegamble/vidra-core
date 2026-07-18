@@ -1118,6 +1118,21 @@ func run() error {
 	atprotosvc = atproto.NewService(db.Queries(), atprotoOpts...)
 	opts = append(opts, httpapi.WithATProtoService(atprotosvc))
 
+	// ATProto IDENTITY LOGIN (sign in with a Bluesky / any-PDS handle) — distinct
+	// from the cross-posting extension above and independent of it. Constructed
+	// ALWAYS so the /auth/atproto/* routes are a stable contract; ATPROTO_LOGIN_ENABLED
+	// gates start/callback at request time (503 when off). It keeps NO PDS tokens,
+	// so it needs no KEK. Reuses the outbound-fetch dev knob (ImportAllowPrivateURLs)
+	// so backed e2e can reach a loopback PDS/auth server; production stays https+public.
+	atprotoLoginClient := atproto.NewOAuthClient(
+		atproto.WithOAuthClientAllowPrivate(cfg.ImportAllowPrivateURLs),
+	)
+	atprotoLoginSvc := auth.NewATProtoOAuthService(db.Queries(), authsvc, atprotoLoginClient,
+		auth.WithATProtoEnabled(cfg.ATProtoLoginEnabled),
+		auth.WithATProtoPublicBaseURL(cfg.PublicBaseURL),
+	)
+	opts = append(opts, httpapi.WithATProtoLoginService(atprotoLoginSvc))
+
 	// Remote-video read side (metadata + cached thumbnail) and instance-level
 	// moderation (per-user instance mutes + admin blocklist). REST surface, so
 	// wired unconditionally — the tables are simply empty until federation
