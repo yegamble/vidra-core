@@ -170,7 +170,7 @@ func declaredOperations(t *testing.T, specPath string) map[string]bool {
 	ops := map[string]bool{}
 	inPaths := false
 	current := ""
-	for _, raw := range strings.Split(string(data), "\n") {
+	for raw := range strings.SplitSeq(string(data), "\n") {
 		line := strings.TrimRight(raw, " \t\r")
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
