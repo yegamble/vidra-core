@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -242,11 +243,11 @@ func (c *OAuthClient) DiscoverAuthServer(ctx context.Context, pdsURL string) (Au
 	if m.PAREndpoint == "" || m.AuthorizationEndpoint == "" || m.TokenEndpoint == "" {
 		return AuthServerMeta{}, ErrBadAuthServerMeta
 	}
-	if !contains(m.ScopesSupported, loginScope) ||
-		!contains(m.DPoPSigningAlgValuesSupported, "ES256") ||
-		!contains(m.ResponseTypesSupported, "code") ||
-		!contains(m.GrantTypesSupported, "authorization_code") ||
-		!contains(m.CodeChallengeMethodsSupported, "S256") {
+	if !slices.Contains(m.ScopesSupported, loginScope) ||
+		!slices.Contains(m.DPoPSigningAlgValuesSupported, "ES256") ||
+		!slices.Contains(m.ResponseTypesSupported, "code") ||
+		!slices.Contains(m.GrantTypesSupported, "authorization_code") ||
+		!slices.Contains(m.CodeChallengeMethodsSupported, "S256") {
 		return AuthServerMeta{}, ErrBadAuthServerMeta
 	}
 	if !m.AuthorizationResponseISSParameterSupported ||
@@ -395,7 +396,7 @@ func (c *OAuthClient) doDPoPForm(ctx context.Context, op, endpoint string, key *
 	}
 	client := c.guard().NewClient(loginHTTPTimeout)
 	nonce := initialNonce
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		proof, err := key.Proof(http.MethodPost, safeURL, nonce)
 		if err != nil {
 			return nil, "", err
@@ -458,19 +459,11 @@ func (c *OAuthClient) validOrigin(raw string) bool {
 	return true
 }
 
-// contains reports whether s is present in list (case-sensitive exact match).
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
 // scopeContains reports whether a space-delimited scope string grants scope.
+// FieldsSeq ranges the tokens without allocating an intermediate slice; the split
+// on whitespace means a substring like "atprotox" is one token and never matches.
 func scopeContains(scope, want string) bool {
-	for _, s := range strings.Fields(scope) {
+	for s := range strings.FieldsSeq(scope) {
 		if s == want {
 			return true
 		}

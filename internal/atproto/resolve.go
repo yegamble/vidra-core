@@ -125,21 +125,34 @@ func (c *OAuthClient) ResolveHandle(ctx context.Context, handle string) (string,
 	return "", ErrHandleNotFound
 }
 
-// resolveHandleDNS looks up `_atproto.<handle>` TXT records and returns the first
-// `did=<did>` value, or "" if none/error (the HTTPS method is the fallback).
+// resolveHandleDNS looks up `_atproto.<handle>` TXT records for `did=<did>`
+// values. ATProto requires an UNAMBIGUOUS DNS answer: a single DID authorises the
+// handle. If two records name DIFFERENT valid DIDs (a misconfigured or poisoned
+// record set) the result is ambiguous and MUST NOT be resolved by arbitrarily
+// picking one — we return "" so the caller falls back to the HTTPS well-known
+// method (or fails closed) instead of trusting an attacker-injected record.
+// Returns "" on none/error/ambiguity.
 func (c *OAuthClient) resolveHandleDNS(ctx context.Context, handle string) string {
 	records, err := c.lookupTXT(ctx, "_atproto."+handle)
 	if err != nil {
 		return ""
 	}
+	found := ""
 	for _, rec := range records {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(rec), "did="); ok {
-			if did := strings.TrimSpace(v); validDIDSyntax(did) {
-				return did
-			}
+		v, ok := strings.CutPrefix(strings.TrimSpace(rec), "did=")
+		if !ok {
+			continue
 		}
+		did := strings.TrimSpace(v)
+		if !validDIDSyntax(did) {
+			continue
+		}
+		if found != "" && did != found {
+			return "" // ambiguous: two different DIDs claim the handle → reject
+		}
+		found = did
 	}
-	return ""
+	return found
 }
 
 // resolveHandleHTTP fetches https://<handle>/.well-known/atproto-did (SSRF
