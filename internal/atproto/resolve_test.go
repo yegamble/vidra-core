@@ -254,6 +254,25 @@ func TestDIDWebHostAndUnsupported(t *testing.T) {
 	}
 }
 
+func TestResolveSSRFGuardBlocksLoopbackByDefault(t *testing.T) {
+	const did = "did:plc:abc123"
+	const handle = "alice.example"
+	plc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(didDocJSON(did, handle, "https://pds.example")))
+	}))
+	defer plc.Close()
+
+	// DNS resolves the handle (no network), but the DID-document fetch targets a
+	// loopback origin: the DEFAULT client (no allowPrivate) must refuse it.
+	c := NewOAuthClient(
+		WithTXTResolver(fakeTXT(map[string][]string{"_atproto." + handle: {"did=" + did}})),
+		WithPLCURL(plc.URL),
+	)
+	if _, err := c.ResolveIdentity(context.Background(), handle); !errors.Is(err, ErrOAuthUpstream) {
+		t.Fatalf("err = %v, want ErrOAuthUpstream (SSRF guard must block the loopback DID doc)", err)
+	}
+}
+
 func TestValidDIDSyntax(t *testing.T) {
 	valid := []string{"did:plc:abc", "did:web:example.com"}
 	invalid := []string{"", "did:", "did:plc:", "notadid", "did::x", strings.Repeat("did:plc:", 400)}
