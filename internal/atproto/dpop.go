@@ -45,6 +45,18 @@ func newDPoPKey() (*dpopKey, error) {
 	return &dpopKey{priv: priv}, nil
 }
 
+// GenerateDPoPKeyJWK mints a fresh per-flow DPoP key and returns its private JWK
+// serialisation. The login service calls this at Begin, stashes the JWK in the
+// signed state cookie, and passes it back into PushAuthRequest/ExchangeCode — so
+// the concrete key type never leaves this package.
+func GenerateDPoPKeyJWK() (string, error) {
+	k, err := newDPoPKey()
+	if err != nil {
+		return "", err
+	}
+	return k.marshalPrivateJWK()
+}
+
 // b64url is the JOSE/JWK base64url (no padding) encoding used throughout DPoP.
 func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
