@@ -226,6 +226,37 @@ func TestExchangeRejectsWrongScope(t *testing.T) {
 	}
 }
 
+func TestSSRFGuardEngagedByDefault(t *testing.T) {
+	// A loopback backend resolves fine under the dev/test knob...
+	f := newFakeAuthServer(t)
+	if _, err := testLoginClient().DiscoverAuthServer(context.Background(), f.srv.URL); err != nil {
+		t.Fatalf("allowPrivate client: %v", err)
+	}
+	// ...but the DEFAULT (production) client refuses the non-https, private-IP hop:
+	// the SSRF guard is engaged on every login fetch.
+	if _, err := NewOAuthClient().DiscoverAuthServer(context.Background(), f.srv.URL); !errors.Is(err, ErrOAuthUpstream) {
+		t.Fatalf("default client err = %v, want ErrOAuthUpstream (SSRF guard must block)", err)
+	}
+}
+
+func TestLoginErrorsDoNotLeakUpstreamBody(t *testing.T) {
+	const secret = "SUPER-SECRET-BEARER-TOKEN"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"boom","leak":"` + secret + `"}`))
+	}))
+	defer srv.Close()
+
+	_, err := testLoginClient().DiscoverAuthServer(context.Background(), srv.URL)
+	if !errors.Is(err, ErrOAuthUpstream) {
+		t.Fatalf("err = %v, want ErrOAuthUpstream", err)
+	}
+	// The error carries only a safe {Op, Status} — never the upstream body.
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("error leaks the upstream body: %q", err.Error())
+	}
+}
+
 // assertProofNonce decodes a DPoP proof header and checks its nonce/htu/htm.
 func assertProofNonce(t *testing.T, proof, wantNonce, wantHTU, wantHTM string) {
 	t.Helper()
