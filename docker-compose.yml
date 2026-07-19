@@ -39,7 +39,7 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     profiles: ["core"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-vidra}
