@@ -89,6 +89,13 @@ jobs:
           filters=$(docker compose exec -T ipfs ipfs config --json Swarm.AddrFilters)
           case "$filters" in *'/ip4/0.0.0.0/ipcidr/0'*) exit 1 ;; *) ;; esac
 
+      # ubuntu-latest (24.04) no longer ships ffmpeg preinstalled (it did on 22.04),
+      # so install it explicitly before generating the fixture below.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
       - name: Generate a tiny real MP4 fixture
         run: >-
           ffmpeg -hide_banner -loglevel error
