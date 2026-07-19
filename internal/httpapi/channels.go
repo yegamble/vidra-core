@@ -68,6 +68,10 @@ type channelView struct {
 	// extension is on. Computed only where cheap (single GET, /me/channels);
 	// omitted (nil) in bulk listings and when the extension is not wired.
 	AtprotoActive *bool `json:"atproto_active,omitempty"`
+	// Role is the caller's role on the channel ("owner" | "editor"), set only on
+	// GET /me/channels where the listing spans owned + collaborated channels;
+	// omitted on public/single-channel views.
+	Role string `json:"role,omitempty"`
 }
 
 func newChannelView(c sqlcgen.Channel, followerCount int64) channelView {
@@ -143,25 +147,21 @@ func (s *Server) handleListMyChannels(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	ctx := c.Request().Context()
-	chans, err := s.channelsvc.ListOwn(ctx, userID)
+	// Owned channels PLUS channels shared with the caller as an editor
+	// (migration 0097), each tagged with the caller's role.
+	managed, err := s.channelsvc.ListManaged(ctx, userID)
 	if err != nil {
 		return err
 	}
-	// All of these channels share one owner (the caller), so the ATProto
-	// owner-linked probe is identical for each — resolve it once to keep
-	// /me/channels O(1) in ATProto lookups rather than O(channels).
-	atActive := s.atprotoActiveForOwner(ctx, userID)
-	views := make([]channelView, 0, len(chans))
-	for _, ch := range chans {
-		count, err := s.channelsvc.FollowerCount(ctx, ch.ID)
+	views := make([]channelView, 0, len(managed))
+	for _, m := range managed {
+		count, err := s.channelsvc.FollowerCount(ctx, m.Channel.ID)
 		if err != nil {
 			return err
 		}
-		view := s.channelViewFor(ctx, ch, count)
-		if atActive != nil {
-			active := *atActive && ch.AtprotoEnabled
-			view.AtprotoActive = &active
-		}
+		view := s.channelViewFor(ctx, m.Channel, count)
+		view.AtprotoActive = s.atprotoActive(ctx, m.Channel)
+		view.Role = m.Role
 		views = append(views, view)
 	}
 	return c.JSON(http.StatusOK, channelListResponse{Channels: views})

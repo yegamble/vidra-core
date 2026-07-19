@@ -958,6 +958,11 @@ func (s *Server) routes() {
 		api.DELETE("/channels/:handle/follow", s.handleUnfollowChannel, s.requireAuth)
 		api.GET("/me/channels", s.handleListMyChannels, s.requireAuth)
 		api.GET("/me/subscriptions", s.handleListFollowedChannels, s.requireAuth)
+		// Channel collaborators (migration 0097): owner manages members; owner +
+		// members may view the roster.
+		api.GET("/channels/:handle/members", s.handleListChannelMembers, s.requireAuth)
+		api.POST("/channels/:handle/members", s.handleAddChannelMember, s.requireAuth)
+		api.DELETE("/channels/:handle/members/:userId", s.handleRemoveChannelMember, s.requireAuth)
 		if s.authsvc != nil {
 			api.GET("/users/:username/profile", s.handleGetUserProfile, s.optionalAuth)
 		}

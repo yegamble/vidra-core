@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -15,18 +16,112 @@ import (
 
 // fakeRepo is an in-memory channel.Repository keyed by lowercased handle.
 type fakeRepo struct {
-	byHandle   map[string]sqlcgen.Channel
-	follows    map[string]bool      // "followerID|channelID"
-	followedAt map[string]time.Time // when each follow was created
-	followSeq  []string             // follow keys in follow order
+	byHandle    map[string]sqlcgen.Channel
+	follows     map[string]bool                  // "followerID|channelID"
+	followedAt  map[string]time.Time             // when each follow was created
+	followSeq   []string                         // follow keys in follow order
+	members     map[string]sqlcgen.ChannelMember // "channelID|userID"
+	usersByName map[string]sqlcgen.User          // lowercased username -> user
 }
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		byHandle:   map[string]sqlcgen.Channel{},
-		follows:    map[string]bool{},
-		followedAt: map[string]time.Time{},
+		byHandle:    map[string]sqlcgen.Channel{},
+		follows:     map[string]bool{},
+		followedAt:  map[string]time.Time{},
+		members:     map[string]sqlcgen.ChannelMember{},
+		usersByName: map[string]sqlcgen.User{},
 	}
+}
+
+func memberKey(channelID, userID uuid.UUID) string {
+	return channelID.String() + "|" + userID.String()
+}
+
+func (f *fakeRepo) GetUserByUsername(_ context.Context, username string) (sqlcgen.User, error) {
+	if u, ok := f.usersByName[strings.ToLower(strings.TrimSpace(username))]; ok {
+		return u, nil
+	}
+	return sqlcgen.User{}, pgx.ErrNoRows
+}
+
+func (f *fakeRepo) AddChannelMember(_ context.Context, a sqlcgen.AddChannelMemberParams) (sqlcgen.ChannelMember, error) {
+	m := sqlcgen.ChannelMember{
+		ChannelID: a.ChannelID, UserID: a.UserID, Role: a.Role,
+		InvitedBy: a.InvitedBy, CreatedAt: time.Now(),
+	}
+	f.members[memberKey(a.ChannelID, a.UserID)] = m
+	return m, nil
+}
+
+func (f *fakeRepo) GetChannelMember(_ context.Context, a sqlcgen.GetChannelMemberParams) (sqlcgen.ChannelMember, error) {
+	if m, ok := f.members[memberKey(a.ChannelID, a.UserID)]; ok {
+		return m, nil
+	}
+	return sqlcgen.ChannelMember{}, pgx.ErrNoRows
+}
+
+func (f *fakeRepo) DeleteChannelMember(_ context.Context, a sqlcgen.DeleteChannelMemberParams) (int64, error) {
+	key := memberKey(a.ChannelID, a.UserID)
+	if _, ok := f.members[key]; ok {
+		delete(f.members, key)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f *fakeRepo) ListChannelMembers(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListChannelMembersRow, error) {
+	var out []sqlcgen.ListChannelMembersRow
+	for _, m := range f.members {
+		if m.ChannelID != channelID {
+			continue
+		}
+		row := sqlcgen.ListChannelMembersRow{
+			UserID: m.UserID, Role: m.Role, InvitedBy: m.InvitedBy, CreatedAt: m.CreatedAt,
+		}
+		for _, u := range f.usersByName {
+			if u.ID == m.UserID {
+				row.Username, row.DisplayName = u.Username, u.DisplayName
+				break
+			}
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (f *fakeRepo) IsChannelManager(_ context.Context, a sqlcgen.IsChannelManagerParams) (bool, error) {
+	for _, ch := range f.byHandle {
+		if ch.ID == a.ChannelID {
+			if ch.OwnerID == a.UserID {
+				return true, nil
+			}
+			_, ok := f.members[memberKey(a.ChannelID, a.UserID)]
+			return ok, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeRepo) ListChannelsForMember(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListChannelsForMemberRow, error) {
+	var out []sqlcgen.ListChannelsForMemberRow
+	for _, m := range f.members {
+		if m.UserID != userID {
+			continue
+		}
+		for _, ch := range f.byHandle {
+			if ch.ID != m.ChannelID {
+				continue
+			}
+			out = append(out, sqlcgen.ListChannelsForMemberRow{
+				ID: ch.ID, OwnerID: ch.OwnerID, Handle: ch.Handle,
+				DisplayName: ch.DisplayName, Description: ch.Description,
+				ActivitypubEnabled: ch.ActivitypubEnabled, AtprotoEnabled: ch.AtprotoEnabled,
+				CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt, Role: m.Role,
+			})
+		}
+	}
+	return out, nil
 }
 
 func followKey(follower, channel uuid.UUID) string { return follower.String() + "|" + channel.String() }
@@ -244,6 +339,106 @@ func TestUpdateChannelNonOwnerForbidden(t *testing.T) {
 	_, err := svc.Update(context.Background(), uuid.New(), "ada", UpdateInput{DisplayName: strptr("Hax")})
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
+	}
+}
+
+func TestChannelMembersLifecycle(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(repo)
+	owner := uuid.New()
+	editor := uuid.New()
+	stranger := uuid.New()
+	repo.usersByName["bob"] = sqlcgen.User{ID: editor, Username: "bob", DisplayName: "Bob", IsActive: true}
+
+	ch, _ := svc.Create(ctx, owner, CreateInput{Handle: "ada", DisplayName: "Ada"})
+
+	// Owner invites bob as an editor.
+	m, err := svc.AddMember(ctx, owner, "ada", "bob", "")
+	if err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	if m.UserID != editor || m.Role != RoleEditor {
+		t.Errorf("member = %+v", m)
+	}
+
+	// The editor may now manage content; the owner always could; a stranger cannot.
+	for _, tc := range []struct {
+		user uuid.UUID
+		want bool
+	}{{owner, true}, {editor, true}, {stranger, false}} {
+		got, err := svc.CanManageContent(ctx, ch.ID, tc.user)
+		if err != nil {
+			t.Fatalf("CanManageContent: %v", err)
+		}
+		if got != tc.want {
+			t.Errorf("CanManageContent(%v) = %v, want %v", tc.user, got, tc.want)
+		}
+	}
+
+	// ListManaged: owner sees it as "owner"; editor sees it as "editor".
+	ownerList, _ := svc.ListManaged(ctx, owner)
+	if len(ownerList) != 1 || ownerList[0].Role != RoleOwner {
+		t.Errorf("owner ListManaged = %+v", ownerList)
+	}
+	editorList, _ := svc.ListManaged(ctx, editor)
+	if len(editorList) != 1 || editorList[0].Role != RoleEditor || editorList[0].Channel.ID != ch.ID {
+		t.Errorf("editor ListManaged = %+v", editorList)
+	}
+
+	// ListMembers: owner and editor may view; a stranger gets ErrForbidden.
+	if members, err := svc.ListMembers(ctx, owner, "ada"); err != nil || len(members) != 1 {
+		t.Errorf("owner ListMembers = %+v, err %v", members, err)
+	}
+	if _, err := svc.ListMembers(ctx, editor, "ada"); err != nil {
+		t.Errorf("editor ListMembers err = %v, want nil", err)
+	}
+	if _, err := svc.ListMembers(ctx, stranger, "ada"); !errors.Is(err, ErrForbidden) {
+		t.Errorf("stranger ListMembers err = %v, want ErrForbidden", err)
+	}
+
+	// Owner removes the member; content authority is revoked.
+	if err := svc.RemoveMember(ctx, owner, "ada", editor); err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+	if got, _ := svc.CanManageContent(ctx, ch.ID, editor); got {
+		t.Error("editor still manages content after removal")
+	}
+}
+
+func TestAddMemberErrors(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(repo)
+	owner := uuid.New()
+	other := uuid.New()
+	bob := uuid.New()
+	repo.usersByName["bob"] = sqlcgen.User{ID: bob, Username: "bob", DisplayName: "Bob", IsActive: true}
+	_, _ = svc.Create(ctx, owner, CreateInput{Handle: "ada", DisplayName: "Ada"})
+
+	// Non-owner cannot invite.
+	if _, err := svc.AddMember(ctx, other, "ada", "bob", ""); !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-owner AddMember err = %v, want ErrForbidden", err)
+	}
+	// Unknown target user → 404.
+	if _, err := svc.AddMember(ctx, owner, "ada", "ghost", ""); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("unknown user AddMember err = %v, want ErrUserNotFound", err)
+	}
+	// Inviting the owner as a member → 409.
+	repo.usersByName["ada_owner"] = sqlcgen.User{ID: owner, Username: "ada_owner", IsActive: true}
+	if _, err := svc.AddMember(ctx, owner, "ada", "ada_owner", ""); !errors.Is(err, ErrAlreadyMember) {
+		t.Errorf("owner-as-member err = %v, want ErrAlreadyMember", err)
+	}
+	// Duplicate invite → 409.
+	if _, err := svc.AddMember(ctx, owner, "ada", "bob", ""); err != nil {
+		t.Fatalf("first AddMember: %v", err)
+	}
+	if _, err := svc.AddMember(ctx, owner, "ada", "bob", ""); !errors.Is(err, ErrAlreadyMember) {
+		t.Errorf("duplicate AddMember err = %v, want ErrAlreadyMember", err)
+	}
+	// Unknown channel → 404.
+	if _, err := svc.AddMember(ctx, owner, "ghost", "bob", ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown channel AddMember err = %v, want ErrNotFound", err)
 	}
 }
 

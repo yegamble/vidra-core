@@ -115,8 +115,9 @@ func (s *Server) handleGetChannelStats(c echo.Context) error {
 		}
 		return err
 	}
-	if ch.OwnerID != userID {
-		// Owner-only, reported as 404 (not 403) to everyone else.
+	// Owner OR editor collaborators (migration 0097) may view channel stats;
+	// reported as 404 (not 403) to everyone else so existence is not leaked.
+	if ch.OwnerID != userID && !s.canManageChannelContent(ctx, userID, ch.ID) {
 		return echo.NewHTTPError(http.StatusNotFound, "channel not found")
 	}
 	stats, err := s.videosvc.ChannelStats(ctx, ch.ID)

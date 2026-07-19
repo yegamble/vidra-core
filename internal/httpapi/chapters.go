@@ -85,7 +85,12 @@ func (s *Server) handleSetVideoChapters(c echo.Context) error {
 	for _, ch := range in.Chapters {
 		chapters = append(chapters, video.Chapter{StartSeconds: ch.StartSeconds, Title: ch.Title})
 	}
-	stored, err := s.videosvc.ReplaceChapters(c.Request().Context(), userID, id, chapters)
+	// Owner OR editor collaborator (migration 0097).
+	v, canManage := s.canManageVideo(c.Request().Context(), userID, id)
+	if !canManage {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	stored, err := s.videosvc.ReplaceChapters(c.Request().Context(), v.OwnerID, id, chapters)
 	if err != nil {
 		var ve *video.ChapterValidationError
 		if errors.As(err, &ve) {

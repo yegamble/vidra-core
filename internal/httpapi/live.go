@@ -201,8 +201,9 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 	if err != nil {
 		return channelError(err)
 	}
-	if ch.OwnerID != userID {
-		return echo.NewHTTPError(http.StatusForbidden, "you do not own this channel")
+	// Owner OR editor collaborator (migration 0097) may run the channel's streams.
+	if !s.canManageChannelContent(ctx, userID, ch.ID) {
+		return echo.NewHTTPError(http.StatusForbidden, "you do not manage this channel")
 	}
 	// An omitted replay_enabled is seeded from live_default_save_replay
 	// (config-parity W11); an explicit client value always wins. The default
@@ -249,7 +250,7 @@ func (s *Server) handleUpdateLiveStream(c echo.Context) error {
 	}
 	ctx := c.Request().Context()
 	stream, err := s.livesvc.Get(ctx, id)
-	if err != nil || stream.OwnerID != userID {
+	if err != nil || (stream.OwnerID != userID && !s.canManageChannelContent(ctx, userID, stream.ChannelID)) {
 		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	}
 	updated, err := s.livesvc.Update(ctx, id, live.UpdateInput{
@@ -277,8 +278,9 @@ func (s *Server) handleListLiveStreams(c echo.Context) error {
 	if err != nil {
 		return channelError(err)
 	}
-	if ch.OwnerID != userID {
-		return echo.NewHTTPError(http.StatusForbidden, "you do not own this channel")
+	// Owner OR editor collaborator (migration 0097).
+	if !s.canManageChannelContent(ctx, userID, ch.ID) {
+		return echo.NewHTTPError(http.StatusForbidden, "you do not manage this channel")
 	}
 	streams, err := s.livesvc.ListByChannel(ctx, ch.ID)
 	if err != nil {
@@ -305,7 +307,7 @@ func (s *Server) handleGetLiveStream(c echo.Context) error {
 	}
 	if stream.Privacy == "private" {
 		userID, _, ok := principalFromContext(c)
-		if !ok || userID != stream.OwnerID {
+		if !ok || (userID != stream.OwnerID && !s.canManageChannelContent(c.Request().Context(), userID, stream.ChannelID)) {
 			return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 		}
 	}
@@ -325,7 +327,7 @@ func (s *Server) handleRegenerateLiveStreamKey(c echo.Context) error {
 	}
 	ctx := c.Request().Context()
 	stream, err := s.livesvc.Get(ctx, id)
-	if err != nil || stream.OwnerID != userID {
+	if err != nil || (stream.OwnerID != userID && !s.canManageChannelContent(ctx, userID, stream.ChannelID)) {
 		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	}
 	key, err := s.livesvc.RegenerateKey(ctx, id)
@@ -461,7 +463,7 @@ func (s *Server) handleDeleteLiveStream(c echo.Context) error {
 	}
 	ctx := c.Request().Context()
 	stream, err := s.livesvc.Get(ctx, id)
-	if err != nil || stream.OwnerID != userID {
+	if err != nil || (stream.OwnerID != userID && !s.canManageChannelContent(ctx, userID, stream.ChannelID)) {
 		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	}
 	if err := s.livesvc.Delete(ctx, id); err != nil {

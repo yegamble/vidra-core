@@ -1555,19 +1555,167 @@ paths:
   /api/v1/me/channels:
     get:
       operationId: listMyChannels
-      summary: List the authenticated user's channels
+      summary: List the channels the authenticated user can manage
+      description: >-
+        The channels the caller OWNS plus the channels shared with them as an
+        editor collaborator (migration 0097), owned first. Each channel carries
+        a `role` of "owner" or "editor".
       tags: [channels]
       security:
         - bearerAuth: []
       responses:
         "200":
-          description: The user's channels (possibly empty).
+          description: The user's owned + collaborated channels (possibly empty).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChannelListResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/members:
+    get:
+      operationId: listChannelMembers
+      summary: List a channel's collaborators
+      description: >-
+        The channel's editor collaborators. Visible to the channel owner and to
+        existing members; anyone else gets 403 (unknown handle → 404).
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The channel's members (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelMembersResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller neither owns nor is a member of the channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: addChannelMember
+      summary: Invite a collaborator to a channel
+      description: >-
+        Adds a local user as an editor of the channel. Owner only. The target is
+        identified by their handle (username). 404 when the channel or the target
+        user is unknown; 409 when the target already manages the channel (owner or
+        existing member).
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddChannelMemberRequest"
+      responses:
+        "201":
+          description: The added member.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelMember"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller does not own the channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such channel, or no such target user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The target is already the owner or a member.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/members/{userId}:
+    delete:
+      operationId: removeChannelMember
+      summary: Remove a collaborator from a channel
+      description: >-
+        Removes a member from the channel. Owner only. Idempotent — removing
+        someone who is not a member is a 204. Unknown handle → 404.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The member was removed (or was not a member).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller does not own the channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle.
           content:
             application/json:
               schema:
@@ -12811,6 +12959,13 @@ components:
             extension is on. Computed only where cheap (single-channel GET and
             /me/channels); omitted in bulk listings and when the extension is not
             enabled on the instance.
+        role:
+          type: string
+          enum: [owner, editor]
+          description: >-
+            The caller's role on this channel, set only on GET /me/channels
+            (which spans owned + collaborated channels); omitted on public and
+            single-channel views.
     CreateChannelRequest:
       type: object
       required: [handle, display_name]
@@ -12858,6 +13013,47 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Channel"
+    ChannelMember:
+      type: object
+      description: A channel collaborator (migration 0097).
+      required: [user_id, username, display_name, role, created_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          example: bob
+        display_name:
+          type: string
+          example: Bob
+        role:
+          type: string
+          enum: [editor]
+          description: The member's role. Today only "editor".
+        created_at:
+          type: string
+          format: date-time
+    ChannelMembersResponse:
+      type: object
+      required: [members]
+      properties:
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelMember"
+    AddChannelMemberRequest:
+      type: object
+      required: [handle]
+      properties:
+        handle:
+          type: string
+          description: The handle (username) of the local user to invite.
+          example: bob
+        role:
+          type: string
+          enum: [editor]
+          description: The role to grant. Defaults to "editor" when omitted.
     FollowedChannel:
       description: A channel the caller follows, with the follow timestamp.
       allOf:
