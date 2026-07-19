@@ -23,6 +23,42 @@ func (q *Queries) CountChannelFollowers(ctx context.Context, channelID uuid.UUID
 	return count, err
 }
 
+const countFollowersByOwner = `-- name: CountFollowersByOwner :many
+SELECT c.id AS channel_id, count(cf.follower_id)::bigint AS followers
+FROM channels c
+LEFT JOIN channel_follows cf ON cf.channel_id = c.id
+WHERE c.owner_id = $1
+GROUP BY c.id
+`
+
+type CountFollowersByOwnerRow struct {
+	ChannelID uuid.UUID `json:"channel_id"`
+	Followers int64     `json:"followers"`
+}
+
+// Follower count for every channel a user owns, in one grouped query — the
+// channel-domain half of the account stats rollup (GET /me/stats). Channels
+// with no followers appear with 0 via the LEFT JOIN.
+func (q *Queries) CountFollowersByOwner(ctx context.Context, ownerID uuid.UUID) ([]CountFollowersByOwnerRow, error) {
+	rows, err := q.db.Query(ctx, countFollowersByOwner, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountFollowersByOwnerRow
+	for rows.Next() {
+		var i CountFollowersByOwnerRow
+		if err := rows.Scan(&i.ChannelID, &i.Followers); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const followChannel = `-- name: FollowChannel :execrows
 INSERT INTO channel_follows (follower_id, channel_id)
 VALUES ($1, $2)

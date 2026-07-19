@@ -3325,6 +3325,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/stats:
+    get:
+      operationId: getAccountStats
+      summary: Creator statistics across all channels the caller owns
+      description: >-
+        Account-level analytics rollup for the authenticated user: engagement
+        totals summed across every channel they OWN, the aggregated 30-day
+        daily-views series (zero-filled, oldest first, UTC days), and a
+        per-channel breakdown (each with all-time views, follower count, video
+        count, and trailing-28-day views). Owner-scoped by construction — only
+        the caller's own channels are included. Powers the studio "All channels"
+        analytics scope.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's account-level statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountStatsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/original:
     get:
       operationId: streamVideoOriginal
@@ -13392,6 +13420,77 @@ components:
           description: Dense 30-day series aggregated across the channel's videos.
           items:
             $ref: "#/components/schemas/DailyViews"
+    AccountStatsResponse:
+      type: object
+      description: >-
+        Owner-only account-level rollup (GET /me/stats): totals summed across
+        all owned channels, the aggregated 30-day daily series, and a per-channel
+        breakdown.
+      required: [totals, daily_views, channels]
+      properties:
+        totals:
+          type: object
+          required: [views, likes, dislikes, comments, followers, videos]
+          properties:
+            views:
+              type: integer
+              format: int64
+            likes:
+              type: integer
+              format: int64
+            dislikes:
+              type: integer
+              format: int64
+            comments:
+              type: integer
+              format: int64
+            followers:
+              type: integer
+              format: int64
+              description: Sum of follower counts across all owned channels.
+            videos:
+              type: integer
+              format: int64
+        daily_views:
+          type: array
+          description: >-
+            Dense 30-day series aggregated across every video of every owned
+            channel (zero-filled, oldest first, UTC days).
+          items:
+            $ref: "#/components/schemas/DailyViews"
+        channels:
+          type: array
+          description: Per-channel breakdown, oldest channel first.
+          items:
+            $ref: "#/components/schemas/AccountChannelStats"
+    AccountChannelStats:
+      type: object
+      description: One owned channel's row in the account stats breakdown.
+      required: [id, handle, display_name, views, followers, videos, views_28d]
+      properties:
+        id:
+          type: string
+          format: uuid
+        handle:
+          type: string
+          example: ada_makes
+        display_name:
+          type: string
+          example: Ada Makes
+        views:
+          type: integer
+          format: int64
+          description: All-time views across the channel's videos.
+        followers:
+          type: integer
+          format: int64
+        videos:
+          type: integer
+          format: int64
+        views_28d:
+          type: integer
+          format: int64
+          description: Views over the trailing 28 days.
     VideoDownloadFile:
       type: object
       description: >-

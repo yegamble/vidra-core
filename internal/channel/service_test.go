@@ -105,6 +105,18 @@ func (f *fakeRepo) CountChannelFollowers(_ context.Context, channelID uuid.UUID)
 	return n, nil
 }
 
+func (f *fakeRepo) CountFollowersByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.CountFollowersByOwnerRow, error) {
+	var rows []sqlcgen.CountFollowersByOwnerRow
+	for _, ch := range f.byHandle {
+		if ch.OwnerID != ownerID {
+			continue
+		}
+		n, _ := f.CountChannelFollowers(ctx, ch.ID)
+		rows = append(rows, sqlcgen.CountFollowersByOwnerRow{ChannelID: ch.ID, Followers: n})
+	}
+	return rows, nil
+}
+
 func (f *fakeRepo) CreateChannel(_ context.Context, a sqlcgen.CreateChannelParams) (sqlcgen.Channel, error) {
 	key := strings.ToLower(a.Handle)
 	if _, ok := f.byHandle[key]; ok {
