@@ -92,6 +92,13 @@ type Config struct {
 	// passwords are stored raw with a loud boot warning. NEVER commit a real value.
 	ATProtoKeyKEK string
 
+	// ATProtoLoginEnabled is the master switch for ATProto IDENTITY LOGIN (sign in
+	// with a Bluesky / any-PDS handle). Independent of ATProtoEnabled (which gates
+	// outbound cross-posting): an instance may enable either, both, or neither.
+	// When false (default) the /auth/atproto/start + /callback endpoints answer 503.
+	// No KEK is needed — identity login keeps no PDS tokens.
+	ATProtoLoginEnabled bool
+
 	// MalwareScanEnabled turns on ClamAV scanning of uploaded originals before
 	// publish (fail-closed: infected or unscannable media is not published).
 	// Requires ClamAVAddr. Default false.
@@ -570,6 +577,7 @@ func Load() (*Config, error) {
 		FederationKeyKEK:               getEnv("FEDERATION_KEY_KEK", ""),
 		ATProtoEnabled:                 getEnvBool("ATPROTO_ENABLED", false),
 		ATProtoKeyKEK:                  getEnv("ATPROTO_KEY_KEK", ""),
+		ATProtoLoginEnabled:            getEnvBool("ATPROTO_LOGIN_ENABLED", false),
 		MFAKeyKEK:                      getEnv("MFA_KEY_KEK", ""),
 		TOTPIssuer:                     getEnv("TOTP_ISSUER", ""),
 		MalwareScanEnabled:             getEnvBool("MALWARE_SCAN_ENABLED", false),

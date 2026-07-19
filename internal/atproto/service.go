@@ -1,8 +1,18 @@
 // Package atproto implements the Vidra ATProto / Bluesky extension (P10.2), v1:
 // OUTBOUND cross-posting only. A creator links a Bluesky account (handle + app
 // password) and, when auto_post is on, Vidra announces their newly published
-// PUBLIC videos on Bluesky. There is no PDS hosting, no inbound firehose, and no
-// DID-based login — those are out of scope until a future spec.
+// PUBLIC videos on Bluesky. There is no PDS hosting and no inbound firehose —
+// those are out of scope until a future spec.
+//
+// This package ALSO provides the protocol client for ATProto identity login
+// (resolve.go, oauth_client.go, dpop.go): handle→DID→PDS resolution with
+// bidirectional verification, auth-server discovery, and the public-client
+// PAR/PKCE/DPoP OAuth handshake. That client is HTTP-agnostic and SSRF-guarded;
+// the login ladder that turns a verified DID into a Vidra session lives in
+// internal/auth (ATProtoOAuthService) and the transport in internal/httpapi.
+// Identity login is gated independently by ATPROTO_LOGIN_ENABLED and, unlike
+// cross-posting, keeps NO tokens: the PDS tokens are discarded once the returned
+// DID is verified.
 //
 // The feature is gated by ATPROTO_ENABLED (default false) and is independent of
 // ActivityPub. The linked app password is sealed at rest with secretbox

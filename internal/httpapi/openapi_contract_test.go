@@ -55,6 +55,9 @@ func fullRouteOptions() []Option {
 		WithAuthService(auth.NewService(nil, issuer, time.Hour), time.Minute),
 		WithAccountService(account.NewService(nil, nil, nil)),
 		WithOAuthService(auth.NewOAuthService(nil, nil, nil)),
+		// ATProto identity login: always part of the contract, gated at request
+		// time by ATPROTO_LOGIN_ENABLED (see cmd/api — always constructed).
+		WithATProtoLoginService(auth.NewATProtoOAuthService(nil, nil, nil)),
 		WithChannelService(channel.NewService(nil)),
 		WithDonationService(donation.NewService(nil, "vidra.test")),
 		WithVideoService(video.NewService(nil, nil)),
@@ -167,7 +170,7 @@ func declaredOperations(t *testing.T, specPath string) map[string]bool {
 	ops := map[string]bool{}
 	inPaths := false
 	current := ""
-	for _, raw := range strings.Split(string(data), "\n") {
+	for raw := range strings.SplitSeq(string(data), "\n") {
 		line := strings.TrimRight(raw, " \t\r")
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
