@@ -13,7 +13,7 @@ require (
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.23.2
-	github.com/redis/go-redis/v9 v9.20.1
+	github.com/redis/go-redis/v9 v9.21.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.69.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
 	go.opentelemetry.io/otel v1.44.0
