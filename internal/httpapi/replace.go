@@ -52,10 +52,19 @@ func (s *Server) replaceTarget(ctx context.Context, c echo.Context, id uuid.UUID
 	if !ok {
 		return sqlcgen.GetVideoByIDRow{}, false, echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
+	// Staff (admin/moderator) replace any local video; an editor collaborator
+	// (migration 0097) replaces their channel's videos. Both flow through the
+	// ReplaceSource canManage escape.
 	canManage := role == "admin" || role == "moderator"
 	v, err := s.videosvc.GetByID(ctx, id)
-	if err != nil || (v.OwnerID != userID && !canManage) {
+	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, false, echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if v.OwnerID != userID && !canManage {
+		canManage = s.canManageChannelContent(ctx, userID, v.ChannelID)
+		if !canManage {
+			return sqlcgen.GetVideoByIDRow{}, false, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
 	}
 	if v.State != "published" {
 		return sqlcgen.GetVideoByIDRow{}, false, &ReplaceConflictError{Reason: "only a published video can have its file replaced"}

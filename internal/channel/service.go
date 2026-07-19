@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -26,6 +27,18 @@ var (
 	// ErrMaxReached means the caller is at the per-user channel limit
 	// (max_channels_per_user, config-parity W8; 0 = unlimited).
 	ErrMaxReached = errors.New("channel: per-user limit reached")
+	// ErrUserNotFound means the invite target is not an existing local user (404).
+	ErrUserNotFound = errors.New("channel: user not found")
+	// ErrAlreadyMember means the invite target already manages the channel — it
+	// is the owner or an existing member (409).
+	ErrAlreadyMember = errors.New("channel: already a member or owner")
+)
+
+// Member roles. The owner is implicit (channels.owner_id) and never stored in
+// channel_members; members carry an explicit role, today only "editor".
+const (
+	RoleOwner  = "owner"
+	RoleEditor = "editor"
 )
 
 // Repository is the data access the channel service needs. *sqlcgen.Queries
@@ -42,6 +55,15 @@ type Repository interface {
 	CountChannelFollowers(ctx context.Context, channelID uuid.UUID) (int64, error)
 	CountFollowersByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.CountFollowersByOwnerRow, error)
 	ListFollowedChannels(ctx context.Context, arg sqlcgen.ListFollowedChannelsParams) ([]sqlcgen.ListFollowedChannelsRow, error)
+
+	// Collaborators (migration 0097).
+	GetUserByUsername(ctx context.Context, lowerUsername string) (sqlcgen.User, error)
+	AddChannelMember(ctx context.Context, arg sqlcgen.AddChannelMemberParams) (sqlcgen.ChannelMember, error)
+	GetChannelMember(ctx context.Context, arg sqlcgen.GetChannelMemberParams) (sqlcgen.ChannelMember, error)
+	DeleteChannelMember(ctx context.Context, arg sqlcgen.DeleteChannelMemberParams) (int64, error)
+	ListChannelMembers(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListChannelMembersRow, error)
+	IsChannelManager(ctx context.Context, arg sqlcgen.IsChannelManagerParams) (bool, error)
+	ListChannelsForMember(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListChannelsForMemberRow, error)
 }
 
 // Service holds the channel application logic.
@@ -258,6 +280,168 @@ func (s *Service) ListFollowed(ctx context.Context, followerID uuid.UUID, limit,
 			},
 			FollowerCount: r.FollowerCount,
 			FollowedAt:    r.FollowedAt,
+		})
+	}
+	return out, nil
+}
+
+// CanManageContent reports whether userID may manage channelID's content — the
+// channel owner or an editor member. This is the single authorization primitive
+// for every editor-accessible surface (upload/import, edit/delete/replace
+// videos + thumbnails/captions/chapters, live streams, channel stats).
+// Owner-only surfaces (channel PATCH/DELETE, avatar/banner, member management,
+// protocol flags, sync) never consult it.
+func (s *Service) CanManageContent(ctx context.Context, channelID, userID uuid.UUID) (bool, error) {
+	return s.repo.IsChannelManager(ctx, sqlcgen.IsChannelManagerParams{
+		ChannelID: channelID,
+		UserID:    userID,
+	})
+}
+
+// Member is a channel collaborator with the display fields the API surfaces.
+type Member struct {
+	UserID      uuid.UUID
+	Username    string
+	DisplayName string
+	Role        string
+	CreatedAt   time.Time
+}
+
+// ListMembers returns a channel's members. The owner and existing members may
+// view the roster; anyone else gets ErrForbidden. Unknown handle → ErrNotFound.
+func (s *Service) ListMembers(ctx context.Context, requesterID uuid.UUID, handle string) ([]Member, error) {
+	ch, err := s.GetByHandle(ctx, handle)
+	if err != nil {
+		return nil, err
+	}
+	if ch.OwnerID != requesterID {
+		manages, err := s.CanManageContent(ctx, ch.ID, requesterID)
+		if err != nil {
+			return nil, err
+		}
+		if !manages {
+			return nil, ErrForbidden
+		}
+	}
+	rows, err := s.repo.ListChannelMembers(ctx, ch.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Member, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Member{
+			UserID:      r.UserID,
+			Username:    r.Username,
+			DisplayName: r.DisplayName,
+			Role:        r.Role,
+			CreatedAt:   r.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
+// AddMember invites the local user identified by targetHandle as a member of
+// the channel. Owner only (non-owner → ErrForbidden, unknown handle →
+// ErrNotFound). The target must be an existing active local user
+// (ErrUserNotFound otherwise) and must not already manage the channel — being
+// the owner or an existing member is ErrAlreadyMember.
+func (s *Service) AddMember(ctx context.Context, ownerID uuid.UUID, handle, targetHandle, role string) (Member, error) {
+	ch, err := s.GetByHandle(ctx, handle)
+	if err != nil {
+		return Member{}, err
+	}
+	if ch.OwnerID != ownerID {
+		return Member{}, ErrForbidden
+	}
+	if role == "" {
+		role = RoleEditor
+	}
+	target, err := s.repo.GetUserByUsername(ctx, strings.TrimSpace(targetHandle))
+	if err != nil {
+		return Member{}, ErrUserNotFound
+	}
+	if target.ID == ch.OwnerID {
+		return Member{}, ErrAlreadyMember // the owner already manages it
+	}
+	if _, err := s.repo.GetChannelMember(ctx, sqlcgen.GetChannelMemberParams{
+		ChannelID: ch.ID,
+		UserID:    target.ID,
+	}); err == nil {
+		return Member{}, ErrAlreadyMember
+	}
+	if _, err := s.repo.AddChannelMember(ctx, sqlcgen.AddChannelMemberParams{
+		ChannelID: ch.ID,
+		UserID:    target.ID,
+		Role:      role,
+		InvitedBy: pgtype.UUID{Bytes: ownerID, Valid: true},
+	}); err != nil {
+		if isUniqueViolation(err) {
+			return Member{}, ErrAlreadyMember
+		}
+		return Member{}, err
+	}
+	return Member{
+		UserID:      target.ID,
+		Username:    target.Username,
+		DisplayName: target.DisplayName,
+		Role:        role,
+	}, nil
+}
+
+// RemoveMember removes a member from the channel. Owner only (non-owner →
+// ErrForbidden, unknown handle → ErrNotFound). Idempotent: removing someone who
+// is not a member is a no-op success.
+func (s *Service) RemoveMember(ctx context.Context, ownerID uuid.UUID, handle string, targetUserID uuid.UUID) error {
+	ch, err := s.GetByHandle(ctx, handle)
+	if err != nil {
+		return err
+	}
+	if ch.OwnerID != ownerID {
+		return ErrForbidden
+	}
+	_, err = s.repo.DeleteChannelMember(ctx, sqlcgen.DeleteChannelMemberParams{
+		ChannelID: ch.ID,
+		UserID:    targetUserID,
+	})
+	return err
+}
+
+// Managed pairs a channel with the caller's role on it (owner or editor).
+type Managed struct {
+	Channel sqlcgen.Channel
+	Role    string
+}
+
+// ListManaged returns every channel the user can act on: the ones they OWN
+// (role "owner") plus the ones they are a member of (role "editor"), owned
+// first. It backs GET /me/channels ("your channels" + "shared with you").
+func (s *Service) ListManaged(ctx context.Context, userID uuid.UUID) ([]Managed, error) {
+	owned, err := s.repo.ListChannelsByOwner(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Managed, 0, len(owned))
+	for _, ch := range owned {
+		out = append(out, Managed{Channel: ch, Role: RoleOwner})
+	}
+	shared, err := s.repo.ListChannelsForMember(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range shared {
+		out = append(out, Managed{
+			Channel: sqlcgen.Channel{
+				ID:                 r.ID,
+				OwnerID:            r.OwnerID,
+				Handle:             r.Handle,
+				DisplayName:        r.DisplayName,
+				Description:        r.Description,
+				ActivitypubEnabled: r.ActivitypubEnabled,
+				AtprotoEnabled:     r.AtprotoEnabled,
+				CreatedAt:          r.CreatedAt,
+				UpdatedAt:          r.UpdatedAt,
+			},
+			Role: r.Role,
 		})
 	}
 	return out, nil

@@ -154,6 +154,14 @@ type ChannelImage struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type ChannelMember struct {
+	ChannelID uuid.UUID   `json:"channel_id"`
+	UserID    uuid.UUID   `json:"user_id"`
+	Role      string      `json:"role"`
+	InvitedBy pgtype.UUID `json:"invited_by"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
 type ChannelSync struct {
 	ID                 uuid.UUID          `json:"id"`
 	ChannelID          uuid.UUID          `json:"channel_id"`
