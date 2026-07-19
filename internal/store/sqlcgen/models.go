@@ -112,13 +112,15 @@ type CaptionJob struct {
 }
 
 type Channel struct {
-	ID          uuid.UUID `json:"id"`
-	OwnerID     uuid.UUID `json:"owner_id"`
-	Handle      string    `json:"handle"`
-	DisplayName string    `json:"display_name"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                 uuid.UUID `json:"id"`
+	OwnerID            uuid.UUID `json:"owner_id"`
+	Handle             string    `json:"handle"`
+	DisplayName        string    `json:"display_name"`
+	Description        string    `json:"description"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	ActivitypubEnabled bool      `json:"activitypub_enabled"`
+	AtprotoEnabled     bool      `json:"atproto_enabled"`
 }
 
 type ChannelActorKey struct {
@@ -150,6 +152,14 @@ type ChannelImage struct {
 	SizeBytes   int64     `json:"size_bytes"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type ChannelMember struct {
+	ChannelID uuid.UUID   `json:"channel_id"`
+	UserID    uuid.UUID   `json:"user_id"`
+	Role      string      `json:"role"`
+	InvitedBy pgtype.UUID `json:"invited_by"`
+	CreatedAt time.Time   `json:"created_at"`
 }
 
 type ChannelSync struct {

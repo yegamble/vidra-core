@@ -37,6 +37,35 @@ type channelStatsResponse struct {
 	DailyViews []dailyViewsView `json:"daily_views"`
 }
 
+// accountStatsTotals is the account-wide engagement rollup (GET /me/stats).
+type accountStatsTotals struct {
+	Views     int64 `json:"views"`
+	Likes     int64 `json:"likes"`
+	Dislikes  int64 `json:"dislikes"`
+	Comments  int64 `json:"comments"`
+	Followers int64 `json:"followers"`
+	Videos    int64 `json:"videos"`
+}
+
+// accountChannelStats is one channel's row in the account stats breakdown.
+type accountChannelStats struct {
+	ID          string `json:"id"`
+	Handle      string `json:"handle"`
+	DisplayName string `json:"display_name"`
+	Views       int64  `json:"views"`
+	Followers   int64  `json:"followers"`
+	Videos      int64  `json:"videos"`
+	Views28d    int64  `json:"views_28d"`
+}
+
+// accountStatsResponse is the owner-only GET /me/stats body: account-wide
+// totals, the aggregated 30-day daily series, and a per-channel breakdown.
+type accountStatsResponse struct {
+	Totals     accountStatsTotals    `json:"totals"`
+	DailyViews []dailyViewsView      `json:"daily_views"`
+	Channels   []accountChannelStats `json:"channels"`
+}
+
 func dailyViews(days []video.DayViews) []dailyViewsView {
 	out := make([]dailyViewsView, 0, len(days))
 	for _, d := range days {
@@ -86,8 +115,9 @@ func (s *Server) handleGetChannelStats(c echo.Context) error {
 		}
 		return err
 	}
-	if ch.OwnerID != userID {
-		// Owner-only, reported as 404 (not 403) to everyone else.
+	// Owner OR editor collaborators (migration 0097) may view channel stats;
+	// reported as 404 (not 403) to everyone else so existence is not leaked.
+	if ch.OwnerID != userID && !s.canManageChannelContent(ctx, userID, ch.ID) {
 		return echo.NewHTTPError(http.StatusNotFound, "channel not found")
 	}
 	stats, err := s.videosvc.ChannelStats(ctx, ch.ID)
@@ -107,4 +137,53 @@ func (s *Server) handleGetChannelStats(c echo.Context) error {
 		Videos:     stats.Videos,
 		DailyViews: dailyViews(stats.Daily),
 	})
+}
+
+// handleGetAccountStats returns the authenticated user's stats aggregated
+// across every channel they OWN (the studio "All channels" scope): account-wide
+// totals, the merged 30-day daily series, and a per-channel breakdown. Behind
+// requireAuth; owner-scoped by construction (only the caller's own channels).
+func (s *Server) handleGetAccountStats(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	ctx := c.Request().Context()
+	stats, err := s.videosvc.AccountStats(ctx, userID)
+	if err != nil {
+		return err
+	}
+	// Follower counts live in the channel domain; fetch them in one grouped
+	// query and merge (per channel + summed into the account total).
+	followers, err := s.channelsvc.FollowerCountsByOwner(ctx, userID)
+	if err != nil {
+		return err
+	}
+	resp := accountStatsResponse{
+		Totals: accountStatsTotals{
+			Views:    stats.Totals.Views,
+			Likes:    stats.Totals.Likes,
+			Dislikes: stats.Totals.Dislikes,
+			Comments: stats.Totals.Comments,
+			Videos:   stats.Totals.Videos,
+		},
+		DailyViews: dailyViews(stats.Daily),
+		Channels:   make([]accountChannelStats, 0, len(stats.Channels)),
+	}
+	var totalFollowers int64
+	for _, ch := range stats.Channels {
+		f := followers[ch.ID]
+		totalFollowers += f
+		resp.Channels = append(resp.Channels, accountChannelStats{
+			ID:          ch.ID.String(),
+			Handle:      ch.Handle,
+			DisplayName: ch.DisplayName,
+			Views:       ch.Views,
+			Followers:   f,
+			Videos:      ch.Videos,
+			Views28d:    ch.Views28d,
+		})
+	}
+	resp.Totals.Followers = totalFollowers
+	return c.JSON(http.StatusOK, resp)
 }

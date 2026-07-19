@@ -160,6 +160,12 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 		}
 		return err
 	}
+	// activitypub_enabled off (migration 0096): the channel does not federate.
+	// Drop the inbound Follow — record nothing and send nothing (an AP-disabled
+	// channel emits no outbound activity, so no Reject either).
+	if !ch.ActivitypubEnabled {
+		return nil
+	}
 	// federation_allow_channel_followers off: answer with a Reject and record
 	// nothing. Existing followers are untouched (the gate is not retroactive).
 	if !s.channelFollowersAllowed() {

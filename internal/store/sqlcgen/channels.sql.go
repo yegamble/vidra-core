@@ -25,7 +25,7 @@ func (q *Queries) CountChannelsByOwner(ctx context.Context, ownerID uuid.UUID) (
 const createChannel = `-- name: CreateChannel :one
 INSERT INTO channels (owner_id, handle, display_name, description)
 VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, handle, display_name, description, created_at, updated_at
+RETURNING id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
 `
 
 type CreateChannelParams struct {
@@ -51,6 +51,8 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActivitypubEnabled,
+		&i.AtprotoEnabled,
 	)
 	return i, err
 }
@@ -65,7 +67,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id uuid.UUID) error {
 }
 
 const getChannelByHandle = `-- name: GetChannelByHandle :one
-SELECT id, owner_id, handle, display_name, description, created_at, updated_at
+SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
 FROM channels
 WHERE lower(handle) = lower($1)
 `
@@ -81,12 +83,14 @@ func (q *Queries) GetChannelByHandle(ctx context.Context, lower string) (Channel
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActivitypubEnabled,
+		&i.AtprotoEnabled,
 	)
 	return i, err
 }
 
 const getChannelByID = `-- name: GetChannelByID :one
-SELECT id, owner_id, handle, display_name, description, created_at, updated_at
+SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
 FROM channels
 WHERE id = $1
 `
@@ -102,12 +106,14 @@ func (q *Queries) GetChannelByID(ctx context.Context, id uuid.UUID) (Channel, er
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActivitypubEnabled,
+		&i.AtprotoEnabled,
 	)
 	return i, err
 }
 
 const listChannelsByOwner = `-- name: ListChannelsByOwner :many
-SELECT id, owner_id, handle, display_name, description, created_at, updated_at
+SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
 FROM channels
 WHERE owner_id = $1
 ORDER BY created_at
@@ -130,6 +136,8 @@ func (q *Queries) ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([
 			&i.Description,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ActivitypubEnabled,
+			&i.AtprotoEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -143,21 +151,31 @@ func (q *Queries) ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([
 
 const updateChannel = `-- name: UpdateChannel :one
 UPDATE channels
-SET display_name = COALESCE($1, display_name),
-    description  = COALESCE($2, description),
-    updated_at   = now()
-WHERE id = $3
-RETURNING id, owner_id, handle, display_name, description, created_at, updated_at
+SET display_name        = COALESCE($1, display_name),
+    description         = COALESCE($2, description),
+    activitypub_enabled = COALESCE($3, activitypub_enabled),
+    atproto_enabled     = COALESCE($4, atproto_enabled),
+    updated_at          = now()
+WHERE id = $5
+RETURNING id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
 `
 
 type UpdateChannelParams struct {
-	DisplayName *string   `json:"display_name"`
-	Description *string   `json:"description"`
-	ID          uuid.UUID `json:"id"`
+	DisplayName        *string   `json:"display_name"`
+	Description        *string   `json:"description"`
+	ActivitypubEnabled *bool     `json:"activitypub_enabled"`
+	AtprotoEnabled     *bool     `json:"atproto_enabled"`
+	ID                 uuid.UUID `json:"id"`
 }
 
 func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (Channel, error) {
-	row := q.db.QueryRow(ctx, updateChannel, arg.DisplayName, arg.Description, arg.ID)
+	row := q.db.QueryRow(ctx, updateChannel,
+		arg.DisplayName,
+		arg.Description,
+		arg.ActivitypubEnabled,
+		arg.AtprotoEnabled,
+		arg.ID,
+	)
 	var i Channel
 	err := row.Scan(
 		&i.ID,
@@ -167,6 +185,8 @@ func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (C
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActivitypubEnabled,
+		&i.AtprotoEnabled,
 	)
 	return i, err
 }

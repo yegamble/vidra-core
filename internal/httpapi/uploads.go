@@ -163,7 +163,11 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
-	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
+	// Owner OR editor collaborator (migration 0097). The session is owned by the
+	// caller; quotas count against the channel owner (v.OwnerID), consistent with
+	// where the stored bytes land on complete.
+	v, canManage := s.canManageVideo(ctx, userID, id)
+	if !canManage {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	// Extension allow-list up front (same gate AttachOriginal enforces on
@@ -179,7 +183,7 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 	}
 	// Quotas up front: total (422 quota_exceeded) then the rolling daily
 	// window (422 daily_quota_exceeded, config-parity W7).
-	if qerr := s.checkUploadQuotas(ctx, userID, in.Size); qerr != nil {
+	if qerr := s.checkUploadQuotas(ctx, v.OwnerID, in.Size); qerr != nil {
 		return qerr
 	}
 	sess, err := s.uploadsvc.CreateSession(ctx, id, userID, strings.TrimSpace(in.Filename), in.Size, strings.TrimSpace(in.FileFingerprint), upload.PurposeUpload)
@@ -273,13 +277,21 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 		return s.completeReplaceSession(c, sess, reader)
 	}
 
+	// The session belongs to the caller (PrepareComplete enforced that); confirm
+	// they still manage the target video's channel and resolve the channel owner
+	// so an editor collaborator's upload (migration 0097) lands under, and counts
+	// against, the owner.
+	mv, canManage := s.canManageVideo(ctx, userID, sess.VideoID)
+	if !canManage {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
 	// Re-check the quotas (total + rolling daily) against the assembled size
 	// before storing (the session may have sat while other uploads consumed
 	// headroom).
-	if qerr := s.checkUploadQuotas(ctx, userID, sess.TotalSize); qerr != nil {
+	if qerr := s.checkUploadQuotas(ctx, mv.OwnerID, sess.TotalSize); qerr != nil {
 		return qerr
 	}
-	_, file, err := s.videosvc.AttachOriginal(ctx, userID, sess.VideoID, video.UploadInput{
+	_, file, err := s.videosvc.AttachOriginal(ctx, mv.OwnerID, sess.VideoID, video.UploadInput{
 		Filename: sess.Filename,
 		Reader:   reader,
 	})

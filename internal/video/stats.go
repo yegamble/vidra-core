@@ -14,6 +14,11 @@ import (
 // owner stats endpoints (product-decisions §8: a 30-day series, zero-filled).
 const StatsWindowDays = 30
 
+// StatsRollupDays is the trailing window for the per-channel "recent views"
+// rollup surfaced on the studio dashboard/analytics (views_28d). PeerTube-style
+// analytics anchor on 28 days.
+const StatsRollupDays = 28
+
 // DayViews is one day of a stats series. Day is a UTC calendar day.
 type DayViews struct {
 	Day   time.Time
@@ -107,6 +112,87 @@ func (s *Service) ChannelStats(ctx context.Context, channelID uuid.UUID) (Channe
 		Videos:   totals.Videos,
 		Daily:    fillDays(since, byDay),
 	}, nil
+}
+
+// AccountTotals are the engagement totals summed across every channel a user
+// owns. Followers is filled by the HTTP layer (it lives in the channel domain).
+type AccountTotals struct {
+	Views     int64
+	Likes     int64
+	Dislikes  int64
+	Comments  int64
+	Followers int64
+	Videos    int64
+}
+
+// ChannelBreakdown is one channel's row in the account stats table. Followers
+// is filled by the HTTP layer.
+type ChannelBreakdown struct {
+	ID          uuid.UUID
+	Handle      string
+	DisplayName string
+	Views       int64
+	Followers   int64
+	Videos      int64
+	Views28d    int64
+}
+
+// AccountStats is the owner-only rollup across all channels a user owns:
+// account-wide totals, the aggregated zero-filled 30-day daily series, and a
+// per-channel breakdown. Follower counts are attached by the HTTP layer.
+type AccountStats struct {
+	Totals   AccountTotals
+	Daily    []DayViews
+	Channels []ChannelBreakdown
+}
+
+// AccountStats aggregates stats across every channel ownerID owns, in two
+// grouped queries (per-channel rollup + the account-wide daily series) rather
+// than N per-channel round-trips. Totals are summed from the per-channel rows.
+// Follower counts are the channel domain's concern and left zero here — the
+// HTTP layer merges them in.
+func (s *Service) AccountStats(ctx context.Context, ownerID uuid.UUID) (AccountStats, error) {
+	now := time.Now()
+	since := statsWindowStart(now)
+	since28 := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -(StatsRollupDays - 1))
+
+	rows, err := s.repo.GetOwnerChannelStats(ctx, sqlcgen.GetOwnerChannelStatsParams{
+		OwnerID:  ownerID,
+		Since28d: pgtype.Date{Time: since28, Valid: true},
+	})
+	if err != nil {
+		return AccountStats{}, err
+	}
+	out := AccountStats{Channels: make([]ChannelBreakdown, 0, len(rows))}
+	for _, r := range rows {
+		out.Channels = append(out.Channels, ChannelBreakdown{
+			ID:          r.ChannelID,
+			Handle:      r.Handle,
+			DisplayName: r.DisplayName,
+			Views:       r.Views,
+			Videos:      r.Videos,
+			Views28d:    r.Views28d,
+		})
+		out.Totals.Views += r.Views
+		out.Totals.Likes += r.Likes
+		out.Totals.Dislikes += r.Dislikes
+		out.Totals.Comments += r.Comments
+		out.Totals.Videos += r.Videos
+	}
+
+	days, err := s.repo.ListOwnerViewDays(ctx, sqlcgen.ListOwnerViewDaysParams{
+		OwnerID: ownerID,
+		Since:   pgtype.Date{Time: since, Valid: true},
+	})
+	if err != nil {
+		return AccountStats{}, err
+	}
+	byDay := make(map[string]int64, len(days))
+	for _, d := range days {
+		byDay[dayKey(d.Day.Time)] = d.Views
+	}
+	out.Daily = fillDays(since, byDay)
+	return out, nil
 }
 
 // statsWindowStart returns the UTC calendar day starting the 30-day series

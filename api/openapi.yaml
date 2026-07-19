@@ -1555,19 +1555,167 @@ paths:
   /api/v1/me/channels:
     get:
       operationId: listMyChannels
-      summary: List the authenticated user's channels
+      summary: List the channels the authenticated user can manage
+      description: >-
+        The channels the caller OWNS plus the channels shared with them as an
+        editor collaborator (migration 0097), owned first. Each channel carries
+        a `role` of "owner" or "editor".
       tags: [channels]
       security:
         - bearerAuth: []
       responses:
         "200":
-          description: The user's channels (possibly empty).
+          description: The user's owned + collaborated channels (possibly empty).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChannelListResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/members:
+    get:
+      operationId: listChannelMembers
+      summary: List a channel's collaborators
+      description: >-
+        The channel's editor collaborators. Visible to the channel owner and to
+        existing members; anyone else gets 403 (unknown handle → 404).
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The channel's members (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelMembersResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller neither owns nor is a member of the channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: addChannelMember
+      summary: Invite a collaborator to a channel
+      description: >-
+        Adds a local user as an editor of the channel. Owner only. The target is
+        identified by their handle (username). 404 when the channel or the target
+        user is unknown; 409 when the target already manages the channel (owner or
+        existing member).
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddChannelMemberRequest"
+      responses:
+        "201":
+          description: The added member.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelMember"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller does not own the channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such channel, or no such target user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The target is already the owner or a member.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/members/{userId}:
+    delete:
+      operationId: removeChannelMember
+      summary: Remove a collaborator from a channel
+      description: >-
+        Removes a member from the channel. Owner only. Idempotent — removing
+        someone who is not a member is a 204. Unknown handle → 404.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: The member was removed (or was not a member).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller does not own the channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle.
           content:
             application/json:
               schema:
@@ -3321,6 +3469,34 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such channel, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/stats:
+    get:
+      operationId: getAccountStats
+      summary: Creator statistics across all channels the caller owns
+      description: >-
+        Account-level analytics rollup for the authenticated user: engagement
+        totals summed across every channel they OWN, the aggregated 30-day
+        daily-views series (zero-filled, oldest first, UTC days), and a
+        per-channel breakdown (each with all-time views, follower count, video
+        count, and trailing-28-day views). Owner-scoped by construction — only
+        the caller's own channels are included. Powers the studio "All channels"
+        analytics scope.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's account-level statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountStatsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
           content:
             application/json:
               schema:
@@ -12731,7 +12907,7 @@ components:
             $ref: "#/components/schemas/Channel"
     Channel:
       type: object
-      required: [id, owner_id, handle, display_name, description, follower_count, created_at]
+      required: [id, owner_id, handle, display_name, description, follower_count, created_at, activitypub_enabled, atproto_enabled]
       properties:
         follower_count:
           type: integer
@@ -12763,6 +12939,33 @@ components:
           type: boolean
           description: >-
             Whether a banner is set (served at GET /channels/{handle}/banner).
+        activitypub_enabled:
+          type: boolean
+          description: >-
+            Whether this channel publishes over ActivityPub. When false the
+            channel does not federate: inbound Follows are ignored and outbound
+            Create/Update/Delete are skipped. Owner-editable via PATCH.
+        atproto_enabled:
+          type: boolean
+          description: >-
+            Whether this channel's published videos are cross-posted to
+            ATProto/Bluesky (subject to the owner having a linked account and the
+            instance ATProto extension being on). Owner-editable via PATCH.
+        atproto_active:
+          type: boolean
+          description: >-
+            Effective ATProto distribution status: atproto_enabled AND the
+            channel owner has a linked Bluesky account AND the instance ATProto
+            extension is on. Computed only where cheap (single-channel GET and
+            /me/channels); omitted in bulk listings and when the extension is not
+            enabled on the instance.
+        role:
+          type: string
+          enum: [owner, editor]
+          description: >-
+            The caller's role on this channel, set only on GET /me/channels
+            (which spans owned + collaborated channels); omitted on public and
+            single-channel views.
     CreateChannelRequest:
       type: object
       required: [handle, display_name]
@@ -12792,6 +12995,16 @@ components:
         description:
           type: string
           maxLength: 1000
+        activitypub_enabled:
+          type: boolean
+          description: >-
+            Toggle ActivityPub federation for this channel (owner only). Absent
+            leaves it unchanged.
+        atproto_enabled:
+          type: boolean
+          description: >-
+            Toggle ATProto/Bluesky cross-posting for this channel (owner only).
+            Absent leaves it unchanged.
     ChannelListResponse:
       type: object
       required: [channels]
@@ -12800,6 +13013,47 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Channel"
+    ChannelMember:
+      type: object
+      description: A channel collaborator (migration 0097).
+      required: [user_id, username, display_name, role, created_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          example: bob
+        display_name:
+          type: string
+          example: Bob
+        role:
+          type: string
+          enum: [editor]
+          description: The member's role. Today only "editor".
+        created_at:
+          type: string
+          format: date-time
+    ChannelMembersResponse:
+      type: object
+      required: [members]
+      properties:
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelMember"
+    AddChannelMemberRequest:
+      type: object
+      required: [handle]
+      properties:
+        handle:
+          type: string
+          description: The handle (username) of the local user to invite.
+          example: bob
+        role:
+          type: string
+          enum: [editor]
+          description: The role to grant. Defaults to "editor" when omitted.
     FollowedChannel:
       description: A channel the caller follows, with the follow timestamp.
       allOf:
@@ -13362,6 +13616,77 @@ components:
           description: Dense 30-day series aggregated across the channel's videos.
           items:
             $ref: "#/components/schemas/DailyViews"
+    AccountStatsResponse:
+      type: object
+      description: >-
+        Owner-only account-level rollup (GET /me/stats): totals summed across
+        all owned channels, the aggregated 30-day daily series, and a per-channel
+        breakdown.
+      required: [totals, daily_views, channels]
+      properties:
+        totals:
+          type: object
+          required: [views, likes, dislikes, comments, followers, videos]
+          properties:
+            views:
+              type: integer
+              format: int64
+            likes:
+              type: integer
+              format: int64
+            dislikes:
+              type: integer
+              format: int64
+            comments:
+              type: integer
+              format: int64
+            followers:
+              type: integer
+              format: int64
+              description: Sum of follower counts across all owned channels.
+            videos:
+              type: integer
+              format: int64
+        daily_views:
+          type: array
+          description: >-
+            Dense 30-day series aggregated across every video of every owned
+            channel (zero-filled, oldest first, UTC days).
+          items:
+            $ref: "#/components/schemas/DailyViews"
+        channels:
+          type: array
+          description: Per-channel breakdown, oldest channel first.
+          items:
+            $ref: "#/components/schemas/AccountChannelStats"
+    AccountChannelStats:
+      type: object
+      description: One owned channel's row in the account stats breakdown.
+      required: [id, handle, display_name, views, followers, videos, views_28d]
+      properties:
+        id:
+          type: string
+          format: uuid
+        handle:
+          type: string
+          example: ada_makes
+        display_name:
+          type: string
+          example: Ada Makes
+        views:
+          type: integer
+          format: int64
+          description: All-time views across the channel's videos.
+        followers:
+          type: integer
+          format: int64
+        videos:
+          type: integer
+          format: int64
+        views_28d:
+          type: integer
+          format: int64
+          description: Views over the trailing 28 days.
     VideoDownloadFile:
       type: object
       description: >-

@@ -266,8 +266,9 @@ func (s *Service) Unlink(ctx context.Context, userID uuid.UUID) error {
 // a PUBLIC video whose owner has auto_post on, it enqueues exactly one auto-post
 // (video_id is UNIQUE, so a repeat is a no-op). It is best-effort and never
 // blocks the publish; the caller logs any error. A no-op when disabled, when the
-// video is not public, when the owner has no linked account, or when auto_post is
-// off.
+// video's channel opted out of ATProto (atproto_enabled=false, migration 0096),
+// when the video is not public, when the owner has no linked account, or when
+// auto_post is off.
 func (s *Service) EnqueueForVideo(ctx context.Context, videoID uuid.UUID) error {
 	if !s.enabled {
 		return nil
@@ -275,6 +276,9 @@ func (s *Service) EnqueueForVideo(ctx context.Context, videoID uuid.UUID) error 
 	info, err := s.repo.GetATProtoPostVideo(ctx, videoID)
 	if err != nil {
 		return nil // video gone or not found — nothing to post
+	}
+	if !info.AtprotoEnabled {
+		return nil // channel opted out of ATProto cross-posting (migration 0096)
 	}
 	if info.Privacy != "public" {
 		return nil

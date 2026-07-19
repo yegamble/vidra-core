@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"regexp"
@@ -57,17 +58,33 @@ type channelView struct {
 	// GET /channels/{handle}/avatar | /banner.
 	HasAvatar *bool `json:"has_avatar,omitempty"`
 	HasBanner *bool `json:"has_banner,omitempty"`
+	// ActivitypubEnabled/AtprotoEnabled are the per-channel protocol
+	// distribution flags (migration 0096): whether the channel publishes over
+	// ActivityPub / ATProto. Owner-editable via PATCH.
+	ActivitypubEnabled bool `json:"activitypub_enabled"`
+	AtprotoEnabled     bool `json:"atproto_enabled"`
+	// AtprotoActive is the effective ATProto distribution status: atproto_enabled
+	// AND the channel owner has a linked Bluesky account AND the instance ATProto
+	// extension is on. Computed only where cheap (single GET, /me/channels);
+	// omitted (nil) in bulk listings and when the extension is not wired.
+	AtprotoActive *bool `json:"atproto_active,omitempty"`
+	// Role is the caller's role on the channel ("owner" | "editor"), set only on
+	// GET /me/channels where the listing spans owned + collaborated channels;
+	// omitted on public/single-channel views.
+	Role string `json:"role,omitempty"`
 }
 
 func newChannelView(c sqlcgen.Channel, followerCount int64) channelView {
 	return channelView{
-		ID:            c.ID.String(),
-		OwnerID:       c.OwnerID.String(),
-		Handle:        c.Handle,
-		DisplayName:   c.DisplayName,
-		Description:   c.Description,
-		FollowerCount: followerCount,
-		CreatedAt:     c.CreatedAt,
+		ID:                 c.ID.String(),
+		OwnerID:            c.OwnerID.String(),
+		Handle:             c.Handle,
+		DisplayName:        c.DisplayName,
+		Description:        c.Description,
+		FollowerCount:      followerCount,
+		CreatedAt:          c.CreatedAt,
+		ActivitypubEnabled: c.ActivitypubEnabled,
+		AtprotoEnabled:     c.AtprotoEnabled,
 	}
 }
 
@@ -118,7 +135,9 @@ func (s *Server) handleCreateChannel(c echo.Context) error {
 		return err
 	}
 	// A just-created channel has no followers yet.
-	return c.JSON(http.StatusCreated, s.channelViewFor(c.Request().Context(), ch, 0))
+	view := s.channelViewFor(c.Request().Context(), ch, 0)
+	view.AtprotoActive = s.atprotoActive(c.Request().Context(), ch)
+	return c.JSON(http.StatusCreated, view)
 }
 
 // handleListMyChannels lists the authenticated user's channels.
@@ -128,17 +147,22 @@ func (s *Server) handleListMyChannels(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	ctx := c.Request().Context()
-	chans, err := s.channelsvc.ListOwn(ctx, userID)
+	// Owned channels PLUS channels shared with the caller as an editor
+	// (migration 0097), each tagged with the caller's role.
+	managed, err := s.channelsvc.ListManaged(ctx, userID)
 	if err != nil {
 		return err
 	}
-	views := make([]channelView, 0, len(chans))
-	for _, ch := range chans {
-		count, err := s.channelsvc.FollowerCount(ctx, ch.ID)
+	views := make([]channelView, 0, len(managed))
+	for _, m := range managed {
+		count, err := s.channelsvc.FollowerCount(ctx, m.Channel.ID)
 		if err != nil {
 			return err
 		}
-		views = append(views, s.channelViewFor(ctx, ch, count))
+		view := s.channelViewFor(ctx, m.Channel, count)
+		view.AtprotoActive = s.atprotoActive(ctx, m.Channel)
+		view.Role = m.Role
+		views = append(views, view)
 	}
 	return c.JSON(http.StatusOK, channelListResponse{Channels: views})
 }
@@ -176,12 +200,16 @@ func (s *Server) handleListFollowedChannels(c echo.Context) error {
 type updateChannelRequest struct {
 	DisplayName *string `json:"display_name"`
 	Description *string `json:"description"`
+	// Per-channel protocol distribution flags (migration 0096). Owner-only, as
+	// with the rest of PATCH. Absent = unchanged.
+	ActivitypubEnabled *bool `json:"activitypub_enabled"`
+	AtprotoEnabled     *bool `json:"atproto_enabled"`
 }
 
 func (r updateChannelRequest) Validate() []FieldError {
 	var fes []FieldError
-	if r.DisplayName == nil && r.Description == nil {
-		fes = append(fes, FieldError{Field: "display_name", Message: "at least one of display_name, description is required"})
+	if r.DisplayName == nil && r.Description == nil && r.ActivitypubEnabled == nil && r.AtprotoEnabled == nil {
+		fes = append(fes, FieldError{Field: "display_name", Message: "at least one of display_name, description, activitypub_enabled, atproto_enabled is required"})
 		return fes
 	}
 	if r.DisplayName != nil {
@@ -210,8 +238,10 @@ func (s *Server) handleUpdateChannel(c echo.Context) error {
 	}
 	ctx := c.Request().Context()
 	ch, err := s.channelsvc.Update(ctx, userID, c.Param("handle"), channel.UpdateInput{
-		DisplayName: in.DisplayName,
-		Description: in.Description,
+		DisplayName:        in.DisplayName,
+		Description:        in.Description,
+		ActivitypubEnabled: in.ActivitypubEnabled,
+		AtprotoEnabled:     in.AtprotoEnabled,
 	})
 	if err != nil {
 		return channelError(err)
@@ -223,7 +253,9 @@ func (s *Server) handleUpdateChannel(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, s.channelViewFor(ctx, ch, count))
+	view := s.channelViewFor(ctx, ch, count)
+	view.AtprotoActive = s.atprotoActive(ctx, ch)
+	return c.JSON(http.StatusOK, view)
 }
 
 // handleDeleteChannel deletes a channel owned by the authenticated user.
@@ -277,7 +309,39 @@ func (s *Server) handleGetChannel(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, s.channelViewFor(ctx, ch, count))
+	view := s.channelViewFor(ctx, ch, count)
+	view.AtprotoActive = s.atprotoActive(ctx, ch)
+	return c.JSON(http.StatusOK, view)
+}
+
+// atprotoActive computes a channel's effective ATProto distribution status for
+// the studio Distribution surface: the instance ATProto extension is on, the
+// channel opted in (atproto_enabled), AND the channel owner has a linked
+// Bluesky account. Returns nil — omitting the field — when the ATProto
+// extension is not wired/enabled on this instance (the studio hides the row).
+func (s *Server) atprotoActive(ctx context.Context, ch sqlcgen.Channel) *bool {
+	owner := s.atprotoActiveForOwner(ctx, ch.OwnerID)
+	if owner == nil {
+		return nil
+	}
+	active := *owner && ch.AtprotoEnabled
+	return &active
+}
+
+// atprotoActiveForOwner reports whether ATProto cross-posting is live for the
+// given owner: extension enabled on the instance AND the owner has a linked
+// Bluesky account. Returns nil when the extension is not wired/enabled (the
+// atproto_active field is then omitted). Callers combine it with a channel's
+// own atproto_enabled flag.
+func (s *Server) atprotoActiveForOwner(ctx context.Context, ownerID uuid.UUID) *bool {
+	if s.atprotosvc == nil || !s.atprotosvc.Enabled() {
+		return nil
+	}
+	linked := false
+	if _, err := s.atprotosvc.Status(ctx, ownerID); err == nil {
+		linked = true
+	}
+	return &linked
 }
 
 // handleFollowChannel makes the authenticated user follow a channel. Idempotent.

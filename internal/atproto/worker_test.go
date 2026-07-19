@@ -16,7 +16,7 @@ func seedPublishable(t *testing.T, repo *fakeRepo) (uid, vid uuid.UUID) {
 	t.Helper()
 	uid = uuid.New()
 	vid = uuid.New()
-	repo.videos[vid] = sqlcgen.GetATProtoPostVideoRow{ID: vid, Title: "Launch Day", Privacy: "public", OwnerID: uid}
+	repo.videos[vid] = sqlcgen.GetATProtoPostVideoRow{ID: vid, Title: "Launch Day", Privacy: "public", OwnerID: uid, AtprotoEnabled: true}
 	repo.accounts[uid] = sqlcgen.AtprotoAccount{
 		UserID: uid, Handle: "alice.bsky.social", Did: "did:plc:test",
 		PdsUrl: DefaultPDSURL, AutoPost: true, AppPasswordSealed: "raw-app-pass",
