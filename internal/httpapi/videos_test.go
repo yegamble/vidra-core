@@ -899,6 +899,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	t.Helper()
 	chRepo := newChannelFakeRepo()
 	authRepo := newAuthFakeRepo()
+	chRepo.users = authRepo // resolve member-invite usernames against the auth fake
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	// The auth service reads the sign-up & new-user settings (config-parity W7)
 	// through late-bound refs: the settings service is constructed further down

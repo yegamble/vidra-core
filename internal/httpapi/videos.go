@@ -294,8 +294,9 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 	if err != nil {
 		return channelError(err) // ErrNotFound -> 404
 	}
-	if ch.OwnerID != userID {
-		return echo.NewHTTPError(http.StatusForbidden, "you do not own this channel")
+	// Owner OR an editor collaborator may publish to the channel (migration 0097).
+	if !s.canManageChannelContent(ctx, userID, ch.ID) {
+		return echo.NewHTTPError(http.StatusForbidden, "you do not manage this channel")
 	}
 
 	// Omitted fields seed from the instance publish defaults (config-parity
@@ -740,7 +741,9 @@ func (s *Server) handleListChannelVideos(c echo.Context) error {
 	}
 
 	var items []video.FeedItem
-	if userID, _, ok := principalFromContext(c); ok && userID == ch.OwnerID {
+	// The owner and editor collaborators (migration 0097) see the full list
+	// (drafts, scheduled, private); everyone else sees only public videos.
+	if userID, _, ok := principalFromContext(c); ok && s.canManageChannelContent(ctx, userID, ch.ID) {
 		items, err = s.videosvc.ListByChannel(ctx, ch.ID)
 	} else {
 		items, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.hideSensitiveVideos())
@@ -842,11 +845,18 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	canManage := role == "admin" || role == "moderator"
+	// Staff (admin/moderator) manage any local video via the moderation escape;
+	// an editor collaborator (migration 0097) manages their channel's videos.
+	// managedOther gates the moderation audit — it stays staff-only, so an
+	// editor's ordinary edit is not logged as a moderation action.
+	isStaff := role == "admin" || role == "moderator"
+	canManage := isStaff
 	managedOther := false
-	if canManage {
-		if existing, lookupErr := s.videosvc.GetByID(c.Request().Context(), id); lookupErr == nil {
+	if existing, lookupErr := s.videosvc.GetByID(c.Request().Context(), id); lookupErr == nil {
+		if isStaff {
 			managedOther = existing.OwnerID != userID
+		} else if existing.OwnerID != userID {
+			canManage = s.canManageChannelContent(c.Request().Context(), userID, existing.ChannelID)
 		}
 	}
 	v, err := s.videosvc.UpdateForActor(c.Request().Context(), userID, id, video.UpdateInput{
@@ -932,8 +942,17 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	canManage := role == "admin" || role == "moderator"
-	if err := s.videosvc.DeleteForActor(c.Request().Context(), userID, id, canManage); err != nil {
+	// Staff delete any local video (moderation escape); an editor collaborator
+	// (migration 0097) deletes their channel's videos.
+	ctx := c.Request().Context()
+	isStaff := role == "admin" || role == "moderator"
+	canManage := isStaff
+	if !isStaff {
+		if v, lookupErr := s.videosvc.GetByID(ctx, id); lookupErr == nil && v.OwnerID != userID {
+			canManage = s.canManageChannelContent(ctx, userID, v.ChannelID)
+		}
+	}
+	if err := s.videosvc.DeleteForActor(ctx, userID, id, canManage); err != nil {
 		return videoError(err)
 	}
 	s.audit(c, observability.ActionVideoDelete, observability.ResultSuccess, userID.String(), id.String())
@@ -998,16 +1017,19 @@ func (s *Server) handleUploadVideoFile(c echo.Context) error {
 	defer func() { _ = f.Close() }()
 
 	ctx := c.Request().Context()
-	// Ownership before the quota check so a non-owner still sees 404, then the
+	// Ownership before the quota check so a non-manager still sees 404, then the
 	// quota BEFORE storing anything. The usage counts the current original even
-	// when this upload replaces it — simple and conservative.
-	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
+	// when this upload replaces it — simple and conservative. An editor
+	// collaborator (migration 0097) uploads AS the channel owner: the quota and
+	// stored bytes count against the owner, which canManageVideo returns.
+	mv, canManage := s.canManageVideo(ctx, userID, id)
+	if !canManage {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if qerr := s.checkUploadQuotas(ctx, userID, fh.Size); qerr != nil {
+	if qerr := s.checkUploadQuotas(ctx, mv.OwnerID, fh.Size); qerr != nil {
 		return qerr
 	}
-	_, file, err := s.videosvc.AttachOriginal(ctx, userID, id, video.UploadInput{
+	_, file, err := s.videosvc.AttachOriginal(ctx, mv.OwnerID, id, video.UploadInput{
 		Filename:    fh.Filename,
 		ContentType: fh.Header.Get("Content-Type"),
 		Reader:      f,
@@ -1050,9 +1072,16 @@ func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	// Owner OR editor collaborator (migration 0097). Once authorized, the write
+	// executes as the channel owner (v.OwnerID) — the id the owner-gated thumbnail
+	// methods expect.
+	v, canManage := s.canManageVideo(c.Request().Context(), userID, id)
+	if !canManage {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
 	ct := strings.ToLower(strings.TrimSpace(c.Request().Header.Get(echo.HeaderContentType)))
 	if strings.HasPrefix(ct, echo.MIMEApplicationJSON) {
-		return s.setThumbnailFromFrame(c, userID, id)
+		return s.setThumbnailFromFrame(c, v.OwnerID, id)
 	}
 	fh, err := c.FormFile("file")
 	if err != nil {
@@ -1064,7 +1093,7 @@ func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
 	}
 	defer func() { _ = f.Close() }()
 
-	file, err := s.videosvc.SetThumbnail(c.Request().Context(), userID, id, video.UploadInput{
+	file, err := s.videosvc.SetThumbnail(c.Request().Context(), v.OwnerID, id, video.UploadInput{
 		Filename:    fh.Filename,
 		ContentType: fh.Header.Get("Content-Type"),
 		Reader:      f,

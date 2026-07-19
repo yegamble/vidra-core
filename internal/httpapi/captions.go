@@ -47,7 +47,13 @@ func (s *Server) handleUploadCaption(c echo.Context) error {
 	}
 	defer func() { _ = f.Close() }()
 
-	ct, err := s.videosvc.AddCaption(c.Request().Context(), userID, id, video.CaptionInput{
+	// Owner OR editor collaborator (migration 0097); the write executes as the
+	// channel owner once authorized.
+	v, canManage := s.canManageVideo(c.Request().Context(), userID, id)
+	if !canManage {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	ct, err := s.videosvc.AddCaption(c.Request().Context(), v.OwnerID, id, video.CaptionInput{
 		Language: c.FormValue("language"),
 		Label:    c.FormValue("label"),
 		Reader:   f,
@@ -141,7 +147,12 @@ func (s *Server) handleDeleteCaption(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if err := s.videosvc.DeleteCaption(c.Request().Context(), userID, id, strings.TrimSpace(c.Param("lang"))); err != nil {
+	// Owner OR editor collaborator (migration 0097).
+	v, canManage := s.canManageVideo(c.Request().Context(), userID, id)
+	if !canManage {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if err := s.videosvc.DeleteCaption(c.Request().Context(), v.OwnerID, id, strings.TrimSpace(c.Param("lang"))); err != nil {
 		return videoError(err)
 	}
 	return c.NoContent(http.StatusNoContent)

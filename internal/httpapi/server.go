@@ -958,6 +958,11 @@ func (s *Server) routes() {
 		api.DELETE("/channels/:handle/follow", s.handleUnfollowChannel, s.requireAuth)
 		api.GET("/me/channels", s.handleListMyChannels, s.requireAuth)
 		api.GET("/me/subscriptions", s.handleListFollowedChannels, s.requireAuth)
+		// Channel collaborators (migration 0097): owner manages members; owner +
+		// members may view the roster.
+		api.GET("/channels/:handle/members", s.handleListChannelMembers, s.requireAuth)
+		api.POST("/channels/:handle/members", s.handleAddChannelMember, s.requireAuth)
+		api.DELETE("/channels/:handle/members/:userId", s.handleRemoveChannelMember, s.requireAuth)
 		if s.authsvc != nil {
 			api.GET("/users/:username/profile", s.handleGetUserProfile, s.optionalAuth)
 		}
@@ -1088,6 +1093,9 @@ func (s *Server) routes() {
 		// Creator statistics (owner-only; non-owners get 404).
 		api.GET("/videos/:id/stats", s.handleGetVideoStats, s.requireAuth)
 		api.GET("/channels/:handle/stats", s.handleGetChannelStats, s.requireAuth)
+		// Account-level rollup across all channels the caller owns (studio
+		// "All channels" analytics scope). Owner-scoped by construction.
+		api.GET("/me/stats", s.handleGetAccountStats, s.requireAuth)
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
 		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, s.dynamicBodyLimit())

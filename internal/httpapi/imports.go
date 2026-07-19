@@ -105,9 +105,10 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 		return &FeatureDisabledError{Feature: "import_http"}
 	}
 	ctx := c.Request().Context()
-	// Authorize before any enqueue: a non-owner (or unknown video) gets 404 and no
-	// import runs on their behalf.
-	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
+	// Authorize before any enqueue: a non-manager (or unknown video) gets 404 and
+	// no import runs on their behalf. Owner OR editor collaborator (migration
+	// 0097); the import pipeline attaches the original as the channel owner.
+	if _, canManage := s.canManageVideo(ctx, userID, id); !canManage {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	job, err := s.importsvc.Enqueue(ctx, id, in.URL, in.Resolver)
@@ -140,7 +141,7 @@ func (s *Server) handleGetVideoImport(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	ctx := c.Request().Context()
-	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil || v.OwnerID != userID {
+	if _, canManage := s.canManageVideo(ctx, userID, id); !canManage {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	job, err := s.importsvc.LatestForVideo(ctx, id)

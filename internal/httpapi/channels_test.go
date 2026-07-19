@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
 
@@ -22,9 +23,13 @@ import (
 // channelFakeRepo is an in-memory channel.Repository for handler tests.
 type channelFakeRepo struct {
 	byHandle   map[string]sqlcgen.Channel
-	follows    map[string]bool      // "followerID|channelID"
-	followedAt map[string]time.Time // when each follow was created
-	followSeq  []string             // follow keys in follow order (for stable "newest first")
+	follows    map[string]bool                  // "followerID|channelID"
+	followedAt map[string]time.Time             // when each follow was created
+	followSeq  []string                         // follow keys in follow order (for stable "newest first")
+	members    map[string]sqlcgen.ChannelMember // "channelID|userID" (migration 0097)
+	// users, when wired, resolves usernames for member invites against the auth
+	// fake (nil-safe: unset → GetUserByUsername always 404s).
+	users *authFakeRepo
 }
 
 func newChannelFakeRepo() *channelFakeRepo {
@@ -32,7 +37,102 @@ func newChannelFakeRepo() *channelFakeRepo {
 		byHandle:   map[string]sqlcgen.Channel{},
 		follows:    map[string]bool{},
 		followedAt: map[string]time.Time{},
+		members:    map[string]sqlcgen.ChannelMember{},
 	}
+}
+
+func channelMemberKey(channelID, userID uuid.UUID) string {
+	return channelID.String() + "|" + userID.String()
+}
+
+func (f *channelFakeRepo) GetUserByUsername(_ context.Context, username string) (sqlcgen.User, error) {
+	if f.users != nil {
+		for _, u := range f.users.users {
+			if strings.EqualFold(u.Username, strings.TrimSpace(username)) && u.IsActive {
+				return u, nil
+			}
+		}
+	}
+	return sqlcgen.User{}, pgx.ErrNoRows
+}
+
+func (f *channelFakeRepo) AddChannelMember(_ context.Context, a sqlcgen.AddChannelMemberParams) (sqlcgen.ChannelMember, error) {
+	m := sqlcgen.ChannelMember{
+		ChannelID: a.ChannelID, UserID: a.UserID, Role: a.Role,
+		InvitedBy: a.InvitedBy, CreatedAt: time.Now(),
+	}
+	f.members[channelMemberKey(a.ChannelID, a.UserID)] = m
+	return m, nil
+}
+
+func (f *channelFakeRepo) GetChannelMember(_ context.Context, a sqlcgen.GetChannelMemberParams) (sqlcgen.ChannelMember, error) {
+	if m, ok := f.members[channelMemberKey(a.ChannelID, a.UserID)]; ok {
+		return m, nil
+	}
+	return sqlcgen.ChannelMember{}, pgx.ErrNoRows
+}
+
+func (f *channelFakeRepo) DeleteChannelMember(_ context.Context, a sqlcgen.DeleteChannelMemberParams) (int64, error) {
+	key := channelMemberKey(a.ChannelID, a.UserID)
+	if _, ok := f.members[key]; ok {
+		delete(f.members, key)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f *channelFakeRepo) ListChannelMembers(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListChannelMembersRow, error) {
+	var out []sqlcgen.ListChannelMembersRow
+	for _, m := range f.members {
+		if m.ChannelID != channelID {
+			continue
+		}
+		row := sqlcgen.ListChannelMembersRow{UserID: m.UserID, Role: m.Role, InvitedBy: m.InvitedBy, CreatedAt: m.CreatedAt}
+		if f.users != nil {
+			for _, u := range f.users.users {
+				if u.ID == m.UserID {
+					row.Username, row.DisplayName = u.Username, u.DisplayName
+					break
+				}
+			}
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (f *channelFakeRepo) IsChannelManager(_ context.Context, a sqlcgen.IsChannelManagerParams) (bool, error) {
+	for _, ch := range f.byHandle {
+		if ch.ID == a.ChannelID {
+			if ch.OwnerID == a.UserID {
+				return true, nil
+			}
+			_, ok := f.members[channelMemberKey(a.ChannelID, a.UserID)]
+			return ok, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *channelFakeRepo) ListChannelsForMember(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListChannelsForMemberRow, error) {
+	var out []sqlcgen.ListChannelsForMemberRow
+	for _, m := range f.members {
+		if m.UserID != userID {
+			continue
+		}
+		for _, ch := range f.byHandle {
+			if ch.ID != m.ChannelID {
+				continue
+			}
+			out = append(out, sqlcgen.ListChannelsForMemberRow{
+				ID: ch.ID, OwnerID: ch.OwnerID, Handle: ch.Handle,
+				DisplayName: ch.DisplayName, Description: ch.Description,
+				ActivitypubEnabled: ch.ActivitypubEnabled, AtprotoEnabled: ch.AtprotoEnabled,
+				CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt, Role: m.Role,
+			})
+		}
+	}
+	return out, nil
 }
 
 func (f *channelFakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChannelParams) (int64, error) {
@@ -112,6 +212,18 @@ func (f *channelFakeRepo) CountChannelFollowers(_ context.Context, channelID uui
 	return n, nil
 }
 
+func (f *channelFakeRepo) CountFollowersByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.CountFollowersByOwnerRow, error) {
+	var rows []sqlcgen.CountFollowersByOwnerRow
+	for _, ch := range f.byHandle {
+		if ch.OwnerID != ownerID {
+			continue
+		}
+		n, _ := f.CountChannelFollowers(ctx, ch.ID)
+		rows = append(rows, sqlcgen.CountFollowersByOwnerRow{ChannelID: ch.ID, Followers: n})
+	}
+	return rows, nil
+}
+
 func (f *channelFakeRepo) CreateChannel(_ context.Context, a sqlcgen.CreateChannelParams) (sqlcgen.Channel, error) {
 	key := strings.ToLower(a.Handle)
 	if _, ok := f.byHandle[key]; ok {
@@ -120,6 +232,9 @@ func (f *channelFakeRepo) CreateChannel(_ context.Context, a sqlcgen.CreateChann
 	ch := sqlcgen.Channel{
 		ID: uuid.New(), OwnerID: a.OwnerID, Handle: a.Handle,
 		DisplayName: a.DisplayName, Description: a.Description,
+		// Mirror the DB column defaults (migration 0096): a new channel
+		// federates over both protocols until the owner opts out.
+		ActivitypubEnabled: true, AtprotoEnabled: true,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.byHandle[key] = ch
@@ -153,6 +268,12 @@ func (f *channelFakeRepo) UpdateChannel(_ context.Context, a sqlcgen.UpdateChann
 			if a.Description != nil {
 				ch.Description = *a.Description
 			}
+			if a.ActivitypubEnabled != nil {
+				ch.ActivitypubEnabled = *a.ActivitypubEnabled
+			}
+			if a.AtprotoEnabled != nil {
+				ch.AtprotoEnabled = *a.AtprotoEnabled
+			}
 			ch.UpdatedAt = time.Now()
 			f.byHandle[k] = ch
 			return ch, nil
@@ -175,8 +296,11 @@ func (f *channelFakeRepo) DeleteChannel(_ context.Context, id uuid.UUID) error {
 func channelServer(t *testing.T) *Server {
 	t.Helper()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
-	authsvc := auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour)
-	chansvc := channel.NewService(newChannelFakeRepo())
+	authRepo := newAuthFakeRepo()
+	authsvc := auth.NewService(authRepo, issuer, 720*time.Hour)
+	chRepo := newChannelFakeRepo()
+	chRepo.users = authRepo // resolve member-invite usernames against the auth fake
+	chansvc := channel.NewService(chRepo)
 	return New(testConfig(), nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(chansvc),
@@ -324,6 +448,49 @@ func TestUpdateChannelValidation(t *testing.T) {
 	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/channels/ada_makes", `{}`, tok)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("empty patch = %d, want 422", rec.Code)
+	}
+}
+
+// TestUpdateChannelProtocolFlags proves the per-channel protocol flags
+// (migration 0096): they default enabled on create, PATCH toggles either
+// independently (owner only), and the flags round-trip on the public GET.
+func TestUpdateChannelProtocolFlags(t *testing.T) {
+	srv := channelServer(t)
+	ownerTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	create := postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada_makes","display_name":"Ada Makes"}`, ownerTok)
+	var created channelView
+	_ = json.Unmarshal(create.Body.Bytes(), &created)
+	if !created.ActivitypubEnabled || !created.AtprotoEnabled {
+		t.Fatalf("new channel should default both protocols enabled: %+v", created)
+	}
+
+	// A patch that toggles ONLY activitypub_enabled=false leaves atproto on.
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/channels/ada_makes", `{"activitypub_enabled":false}`, ownerTok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("flag patch = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var patched channelView
+	_ = json.Unmarshal(rec.Body.Bytes(), &patched)
+	if patched.ActivitypubEnabled {
+		t.Errorf("activitypub_enabled should be false after patch: %+v", patched)
+	}
+	if !patched.AtprotoEnabled {
+		t.Errorf("atproto_enabled should be unchanged (true): %+v", patched)
+	}
+
+	// The flag round-trips on the public GET.
+	get := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/channels/ada_makes", nil))
+	var got channelView
+	_ = json.Unmarshal(get.Body.Bytes(), &got)
+	if got.ActivitypubEnabled || !got.AtprotoEnabled {
+		t.Errorf("GET flags = ap:%v at:%v, want ap:false at:true", got.ActivitypubEnabled, got.AtprotoEnabled)
+	}
+
+	// A bare {activitypub_enabled:...} body is accepted (not the empty-patch 422).
+	if only := sendJSONAuth(srv, http.MethodPatch, "/api/v1/channels/ada_makes", `{"atproto_enabled":false}`, ownerTok); only.Code != http.StatusOK {
+		t.Fatalf("atproto-only patch = %d, want 200", only.Code)
 	}
 }
 
