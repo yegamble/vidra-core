@@ -120,6 +120,9 @@ func (f *channelFakeRepo) CreateChannel(_ context.Context, a sqlcgen.CreateChann
 	ch := sqlcgen.Channel{
 		ID: uuid.New(), OwnerID: a.OwnerID, Handle: a.Handle,
 		DisplayName: a.DisplayName, Description: a.Description,
+		// Mirror the DB column defaults (migration 0096): a new channel
+		// federates over both protocols until the owner opts out.
+		ActivitypubEnabled: true, AtprotoEnabled: true,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.byHandle[key] = ch
@@ -152,6 +155,12 @@ func (f *channelFakeRepo) UpdateChannel(_ context.Context, a sqlcgen.UpdateChann
 			}
 			if a.Description != nil {
 				ch.Description = *a.Description
+			}
+			if a.ActivitypubEnabled != nil {
+				ch.ActivitypubEnabled = *a.ActivitypubEnabled
+			}
+			if a.AtprotoEnabled != nil {
+				ch.AtprotoEnabled = *a.AtprotoEnabled
 			}
 			ch.UpdatedAt = time.Now()
 			f.byHandle[k] = ch
@@ -324,6 +333,49 @@ func TestUpdateChannelValidation(t *testing.T) {
 	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/channels/ada_makes", `{}`, tok)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("empty patch = %d, want 422", rec.Code)
+	}
+}
+
+// TestUpdateChannelProtocolFlags proves the per-channel protocol flags
+// (migration 0096): they default enabled on create, PATCH toggles either
+// independently (owner only), and the flags round-trip on the public GET.
+func TestUpdateChannelProtocolFlags(t *testing.T) {
+	srv := channelServer(t)
+	ownerTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	create := postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada_makes","display_name":"Ada Makes"}`, ownerTok)
+	var created channelView
+	_ = json.Unmarshal(create.Body.Bytes(), &created)
+	if !created.ActivitypubEnabled || !created.AtprotoEnabled {
+		t.Fatalf("new channel should default both protocols enabled: %+v", created)
+	}
+
+	// A patch that toggles ONLY activitypub_enabled=false leaves atproto on.
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/channels/ada_makes", `{"activitypub_enabled":false}`, ownerTok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("flag patch = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var patched channelView
+	_ = json.Unmarshal(rec.Body.Bytes(), &patched)
+	if patched.ActivitypubEnabled {
+		t.Errorf("activitypub_enabled should be false after patch: %+v", patched)
+	}
+	if !patched.AtprotoEnabled {
+		t.Errorf("atproto_enabled should be unchanged (true): %+v", patched)
+	}
+
+	// The flag round-trips on the public GET.
+	get := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/channels/ada_makes", nil))
+	var got channelView
+	_ = json.Unmarshal(get.Body.Bytes(), &got)
+	if got.ActivitypubEnabled || !got.AtprotoEnabled {
+		t.Errorf("GET flags = ap:%v at:%v, want ap:false at:true", got.ActivitypubEnabled, got.AtprotoEnabled)
+	}
+
+	// A bare {activitypub_enabled:...} body is accepted (not the empty-patch 422).
+	if only := sendJSONAuth(srv, http.MethodPatch, "/api/v1/channels/ada_makes", `{"atproto_enabled":false}`, ownerTok); only.Code != http.StatusOK {
+		t.Fatalf("atproto-only patch = %d, want 200", only.Code)
 	}
 }
 

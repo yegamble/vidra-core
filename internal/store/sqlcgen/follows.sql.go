@@ -66,7 +66,7 @@ func (q *Queries) IsFollowingChannel(ctx context.Context, arg IsFollowingChannel
 const listFollowedChannels = `-- name: ListFollowedChannels :many
 SELECT
     c.id, c.owner_id, c.handle, c.display_name, c.description,
-    c.created_at, c.updated_at,
+    c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
     (SELECT count(*) FROM channel_follows cf2 WHERE cf2.channel_id = c.id) AS follower_count,
     cf.created_at AS followed_at
 FROM channel_follows cf
@@ -83,15 +83,17 @@ type ListFollowedChannelsParams struct {
 }
 
 type ListFollowedChannelsRow struct {
-	ID            uuid.UUID `json:"id"`
-	OwnerID       uuid.UUID `json:"owner_id"`
-	Handle        string    `json:"handle"`
-	DisplayName   string    `json:"display_name"`
-	Description   string    `json:"description"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	FollowerCount int64     `json:"follower_count"`
-	FollowedAt    time.Time `json:"followed_at"`
+	ID                 uuid.UUID `json:"id"`
+	OwnerID            uuid.UUID `json:"owner_id"`
+	Handle             string    `json:"handle"`
+	DisplayName        string    `json:"display_name"`
+	Description        string    `json:"description"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	ActivitypubEnabled bool      `json:"activitypub_enabled"`
+	AtprotoEnabled     bool      `json:"atproto_enabled"`
+	FollowerCount      int64     `json:"follower_count"`
+	FollowedAt         time.Time `json:"followed_at"`
 }
 
 // The LOCAL channels the caller follows (the "FOLLOWING" list), most recently
@@ -114,6 +116,8 @@ func (q *Queries) ListFollowedChannels(ctx context.Context, arg ListFollowedChan
 			&i.Description,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ActivitypubEnabled,
+			&i.AtprotoEnabled,
 			&i.FollowerCount,
 			&i.FollowedAt,
 		); err != nil {

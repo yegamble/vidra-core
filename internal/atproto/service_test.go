@@ -194,7 +194,7 @@ func TestEnqueueForVideoGating(t *testing.T) {
 
 	setup := func(privacy string, autoPost, linked bool) *fakeRepo {
 		repo := newFakeRepo()
-		repo.videos[vid] = sqlcgen.GetATProtoPostVideoRow{ID: vid, Title: "T", Privacy: privacy, OwnerID: uid}
+		repo.videos[vid] = sqlcgen.GetATProtoPostVideoRow{ID: vid, Title: "T", Privacy: privacy, OwnerID: uid, AtprotoEnabled: true}
 		if linked {
 			repo.accounts[uid] = sqlcgen.AtprotoAccount{UserID: uid, Handle: "alice.bsky.social", Did: "did:plc:test", AutoPost: autoPost}
 		}
@@ -233,7 +233,7 @@ func TestEnqueueForVideoDedupe(t *testing.T) {
 	uid := uuid.New()
 	vid := uuid.New()
 	repo := newFakeRepo()
-	repo.videos[vid] = sqlcgen.GetATProtoPostVideoRow{ID: vid, Title: "T", Privacy: "public", OwnerID: uid}
+	repo.videos[vid] = sqlcgen.GetATProtoPostVideoRow{ID: vid, Title: "T", Privacy: "public", OwnerID: uid, AtprotoEnabled: true}
 	repo.accounts[uid] = sqlcgen.AtprotoAccount{UserID: uid, AutoPost: true, Handle: "alice.bsky.social"}
 	s := NewService(repo, WithEnabled(true), WithPDSClient(newFakePDS()))
 
@@ -255,5 +255,25 @@ func TestEnqueueForVideoDisabledNoop(t *testing.T) {
 	}
 	if len(repo.posts) != 0 {
 		t.Errorf("disabled service must not enqueue")
+	}
+}
+
+// TestEnqueueForVideoChannelATProtoDisabled proves the per-channel opt-out
+// (atproto_enabled=false, migration 0096): an otherwise-eligible publish
+// (public video, owner linked, auto_post on) is NOT enqueued when its channel
+// opted out of ATProto cross-posting.
+func TestEnqueueForVideoChannelATProtoDisabled(t *testing.T) {
+	uid := uuid.New()
+	vid := uuid.New()
+	repo := newFakeRepo()
+	repo.videos[vid] = sqlcgen.GetATProtoPostVideoRow{ID: vid, Title: "T", Privacy: "public", OwnerID: uid, AtprotoEnabled: false}
+	repo.accounts[uid] = sqlcgen.AtprotoAccount{UserID: uid, AutoPost: true, Handle: "alice.bsky.social"}
+	s := NewService(repo, WithEnabled(true), WithPDSClient(newFakePDS()))
+
+	if err := s.EnqueueForVideo(context.Background(), vid); err != nil {
+		t.Fatalf("EnqueueForVideo: %v", err)
+	}
+	if repo.postForVideo(vid) != nil {
+		t.Error("enqueued a post for a channel with atproto_enabled=false; want skip")
 	}
 }
