@@ -12,6 +12,16 @@ WHERE follower_id = $1 AND channel_id = $2;
 -- name: CountChannelFollowers :one
 SELECT count(*) FROM channel_follows WHERE channel_id = $1;
 
+-- name: CountFollowersByOwner :many
+-- Follower count for every channel a user owns, in one grouped query — the
+-- channel-domain half of the account stats rollup (GET /me/stats). Channels
+-- with no followers appear with 0 via the LEFT JOIN.
+SELECT c.id AS channel_id, count(cf.follower_id)::bigint AS followers
+FROM channels c
+LEFT JOIN channel_follows cf ON cf.channel_id = c.id
+WHERE c.owner_id = $1
+GROUP BY c.id;
+
 -- name: IsFollowingChannel :one
 SELECT EXISTS (
     SELECT 1 FROM channel_follows

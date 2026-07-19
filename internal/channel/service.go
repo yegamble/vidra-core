@@ -40,6 +40,7 @@ type Repository interface {
 	FollowChannel(ctx context.Context, arg sqlcgen.FollowChannelParams) (int64, error)
 	UnfollowChannel(ctx context.Context, arg sqlcgen.UnfollowChannelParams) error
 	CountChannelFollowers(ctx context.Context, channelID uuid.UUID) (int64, error)
+	CountFollowersByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.CountFollowersByOwnerRow, error)
 	ListFollowedChannels(ctx context.Context, arg sqlcgen.ListFollowedChannelsParams) ([]sqlcgen.ListFollowedChannelsRow, error)
 }
 
@@ -203,6 +204,22 @@ func (s *Service) Unfollow(ctx context.Context, followerID uuid.UUID, handle str
 // FollowerCount returns how many followers a channel has.
 func (s *Service) FollowerCount(ctx context.Context, channelID uuid.UUID) (int64, error) {
 	return s.repo.CountChannelFollowers(ctx, channelID)
+}
+
+// FollowerCountsByOwner returns follower counts for every channel ownerID owns,
+// keyed by channel id, in one grouped query — used by the account stats rollup
+// (GET /me/stats) to attach per-channel and total follower counts without an
+// N-per-channel fan-out. Channels with no followers are present with a 0.
+func (s *Service) FollowerCountsByOwner(ctx context.Context, ownerID uuid.UUID) (map[uuid.UUID]int64, error) {
+	rows, err := s.repo.CountFollowersByOwner(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]int64, len(rows))
+	for _, r := range rows {
+		out[r.ChannelID] = r.Followers
+	}
+	return out, nil
 }
 
 // Followed is a channel the caller follows, paired with the channel's total

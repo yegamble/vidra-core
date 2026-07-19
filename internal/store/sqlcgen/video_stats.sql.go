@@ -50,6 +50,80 @@ func (q *Queries) GetChannelEngagementTotals(ctx context.Context, channelID uuid
 	return i, err
 }
 
+const getOwnerChannelStats = `-- name: GetOwnerChannelStats :many
+SELECT
+    c.id AS channel_id,
+    c.handle,
+    c.display_name,
+    COALESCE((SELECT SUM(vc.views) FROM video_view_counts vc
+                JOIN videos v ON v.id = vc.video_id
+               WHERE v.channel_id = c.id), 0)::bigint AS views,
+    (SELECT COUNT(*) FROM video_ratings r JOIN videos v ON v.id = r.video_id
+      WHERE v.channel_id = c.id AND r.rating = 'like')::bigint AS likes,
+    (SELECT COUNT(*) FROM video_ratings r JOIN videos v ON v.id = r.video_id
+      WHERE v.channel_id = c.id AND r.rating = 'dislike')::bigint AS dislikes,
+    (SELECT COUNT(*) FROM comments cm JOIN videos v ON v.id = cm.video_id
+      WHERE v.channel_id = c.id)::bigint AS comments,
+    (SELECT COUNT(*) FROM videos WHERE channel_id = c.id)::bigint AS videos,
+    COALESCE((SELECT SUM(d.views) FROM video_view_days d
+                JOIN videos v ON v.id = d.video_id
+               WHERE v.channel_id = c.id AND d.day >= $1::date), 0)::bigint AS views_28d
+FROM channels c
+WHERE c.owner_id = $2
+ORDER BY c.created_at
+`
+
+type GetOwnerChannelStatsParams struct {
+	Since28d pgtype.Date `json:"since_28d"`
+	OwnerID  uuid.UUID   `json:"owner_id"`
+}
+
+type GetOwnerChannelStatsRow struct {
+	ChannelID   uuid.UUID `json:"channel_id"`
+	Handle      string    `json:"handle"`
+	DisplayName string    `json:"display_name"`
+	Views       int64     `json:"views"`
+	Likes       int64     `json:"likes"`
+	Dislikes    int64     `json:"dislikes"`
+	Comments    int64     `json:"comments"`
+	Videos      int64     `json:"videos"`
+	Views28d    int64     `json:"views_28d"`
+}
+
+// Per-channel engagement rollup for every channel the user owns — the account
+// stats breakdown table (GET /me/stats). views_28d is the trailing-28-day view
+// count (since_28d = today-27). Follower counts live in the channel domain and
+// are merged by the HTTP layer.
+func (q *Queries) GetOwnerChannelStats(ctx context.Context, arg GetOwnerChannelStatsParams) ([]GetOwnerChannelStatsRow, error) {
+	rows, err := q.db.Query(ctx, getOwnerChannelStats, arg.Since28d, arg.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetOwnerChannelStatsRow
+	for rows.Next() {
+		var i GetOwnerChannelStatsRow
+		if err := rows.Scan(
+			&i.ChannelID,
+			&i.Handle,
+			&i.DisplayName,
+			&i.Views,
+			&i.Likes,
+			&i.Dislikes,
+			&i.Comments,
+			&i.Videos,
+			&i.Views28d,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getVideoEngagementTotals = `-- name: GetVideoEngagementTotals :one
 SELECT
     COALESCE((SELECT vc.views FROM video_view_counts vc WHERE vc.video_id = $1), 0)::bigint AS views,
@@ -121,6 +195,49 @@ func (q *Queries) ListChannelViewDays(ctx context.Context, arg ListChannelViewDa
 	var items []ListChannelViewDaysRow
 	for rows.Next() {
 		var i ListChannelViewDaysRow
+		if err := rows.Scan(&i.Day, &i.Views); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOwnerViewDays = `-- name: ListOwnerViewDays :many
+SELECT d.day, SUM(d.views)::bigint AS views
+FROM video_view_days d
+JOIN videos v ON v.id = d.video_id
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = $1 AND d.day >= $2::date
+GROUP BY d.day
+ORDER BY d.day
+`
+
+type ListOwnerViewDaysParams struct {
+	OwnerID uuid.UUID   `json:"owner_id"`
+	Since   pgtype.Date `json:"since"`
+}
+
+type ListOwnerViewDaysRow struct {
+	Day   pgtype.Date `json:"day"`
+	Views int64       `json:"views"`
+}
+
+// View days aggregated across every video of every channel the user owns, since
+// a cutoff — the account-level ("all channels") daily series for GET /me/stats.
+// One grouped query in place of N per-channel calls.
+func (q *Queries) ListOwnerViewDays(ctx context.Context, arg ListOwnerViewDaysParams) ([]ListOwnerViewDaysRow, error) {
+	rows, err := q.db.Query(ctx, listOwnerViewDays, arg.OwnerID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOwnerViewDaysRow
+	for rows.Next() {
+		var i ListOwnerViewDaysRow
 		if err := rows.Scan(&i.Day, &i.Views); err != nil {
 			return nil, err
 		}

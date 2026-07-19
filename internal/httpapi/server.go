@@ -1088,6 +1088,9 @@ func (s *Server) routes() {
 		// Creator statistics (owner-only; non-owners get 404).
 		api.GET("/videos/:id/stats", s.handleGetVideoStats, s.requireAuth)
 		api.GET("/channels/:handle/stats", s.handleGetChannelStats, s.requireAuth)
+		// Account-level rollup across all channels the caller owns (studio
+		// "All channels" analytics scope). Owner-scoped by construction.
+		api.GET("/me/stats", s.handleGetAccountStats, s.requireAuth)
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
 		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, s.dynamicBodyLimit())

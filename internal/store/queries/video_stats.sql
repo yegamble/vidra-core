@@ -31,6 +31,44 @@ SELECT
     (SELECT COUNT(*) FROM video_ratings r WHERE r.video_id = $1 AND r.rating = 'dislike')::bigint AS dislikes,
     (SELECT COUNT(*) FROM comments cm WHERE cm.video_id = $1)::bigint AS comments;
 
+-- name: ListOwnerViewDays :many
+-- View days aggregated across every video of every channel the user owns, since
+-- a cutoff — the account-level ("all channels") daily series for GET /me/stats.
+-- One grouped query in place of N per-channel calls.
+SELECT d.day, SUM(d.views)::bigint AS views
+FROM video_view_days d
+JOIN videos v ON v.id = d.video_id
+JOIN channels c ON c.id = v.channel_id
+WHERE c.owner_id = sqlc.arg('owner_id') AND d.day >= sqlc.arg('since')::date
+GROUP BY d.day
+ORDER BY d.day;
+
+-- name: GetOwnerChannelStats :many
+-- Per-channel engagement rollup for every channel the user owns — the account
+-- stats breakdown table (GET /me/stats). views_28d is the trailing-28-day view
+-- count (since_28d = today-27). Follower counts live in the channel domain and
+-- are merged by the HTTP layer.
+SELECT
+    c.id AS channel_id,
+    c.handle,
+    c.display_name,
+    COALESCE((SELECT SUM(vc.views) FROM video_view_counts vc
+                JOIN videos v ON v.id = vc.video_id
+               WHERE v.channel_id = c.id), 0)::bigint AS views,
+    (SELECT COUNT(*) FROM video_ratings r JOIN videos v ON v.id = r.video_id
+      WHERE v.channel_id = c.id AND r.rating = 'like')::bigint AS likes,
+    (SELECT COUNT(*) FROM video_ratings r JOIN videos v ON v.id = r.video_id
+      WHERE v.channel_id = c.id AND r.rating = 'dislike')::bigint AS dislikes,
+    (SELECT COUNT(*) FROM comments cm JOIN videos v ON v.id = cm.video_id
+      WHERE v.channel_id = c.id)::bigint AS comments,
+    (SELECT COUNT(*) FROM videos WHERE channel_id = c.id)::bigint AS videos,
+    COALESCE((SELECT SUM(d.views) FROM video_view_days d
+                JOIN videos v ON v.id = d.video_id
+               WHERE v.channel_id = c.id AND d.day >= sqlc.arg('since_28d')::date), 0)::bigint AS views_28d
+FROM channels c
+WHERE c.owner_id = sqlc.arg('owner_id')
+ORDER BY c.created_at;
+
 -- name: GetChannelEngagementTotals :one
 -- One-shot totals for the owner stats view of a whole channel (all its videos,
 -- any privacy/state — the owner sees their own full numbers).

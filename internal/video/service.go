@@ -182,6 +182,8 @@ type Repository interface {
 	ListChannelViewDays(ctx context.Context, arg sqlcgen.ListChannelViewDaysParams) ([]sqlcgen.ListChannelViewDaysRow, error)
 	GetVideoEngagementTotals(ctx context.Context, videoID uuid.UUID) (sqlcgen.GetVideoEngagementTotalsRow, error)
 	GetChannelEngagementTotals(ctx context.Context, channelID uuid.UUID) (sqlcgen.GetChannelEngagementTotalsRow, error)
+	ListOwnerViewDays(ctx context.Context, arg sqlcgen.ListOwnerViewDaysParams) ([]sqlcgen.ListOwnerViewDaysRow, error)
+	GetOwnerChannelStats(ctx context.Context, arg sqlcgen.GetOwnerChannelStatsParams) ([]sqlcgen.GetOwnerChannelStatsRow, error)
 	UpsertWatchProgress(ctx context.Context, arg sqlcgen.UpsertWatchProgressParams) (sqlcgen.WatchHistory, error)
 	GetWatchProgress(ctx context.Context, arg sqlcgen.GetWatchProgressParams) (sqlcgen.WatchHistory, error)
 	ListWatchHistory(ctx context.Context, arg sqlcgen.ListWatchHistoryParams) ([]sqlcgen.ListWatchHistoryRow, error)
