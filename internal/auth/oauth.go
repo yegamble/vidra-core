@@ -462,10 +462,22 @@ func (s *OAuthService) Unlink(ctx context.Context, userID uuid.UUID, provider st
 	return nil
 }
 
-// deriveUsername builds a unique local username from the provider claims:
-// first non-empty of preferred_username, name, the email local part —
-// sanitized to lowercase [a-z0-9._-], then deduped with a numeric suffix.
+// usernameChecker is the repo capability deriveUsername needs. Both the OIDC and
+// the ATProto login services share the same derivation via this seam.
+type usernameChecker interface {
+	UsernameExists(ctx context.Context, lower string) (bool, error)
+}
+
+// deriveUsername is the OAuthService convenience wrapper over the package-level
+// deriveUsername (kept so existing callers/tests read unchanged).
 func (s *OAuthService) deriveUsername(ctx context.Context, preferred, name, email string) (string, error) {
+	return deriveUsername(ctx, s.repo, preferred, name, email)
+}
+
+// deriveUsername builds a unique local username from candidate labels: the first
+// non-empty of preferred, name, and the email local part — sanitized to lowercase
+// [a-z0-9._-], then deduped with a numeric suffix against repo.UsernameExists.
+func deriveUsername(ctx context.Context, repo usernameChecker, preferred, name, email string) (string, error) {
 	base := ""
 	local, _, _ := strings.Cut(email, "@")
 	for _, cand := range []string{preferred, name, local} {
@@ -485,7 +497,7 @@ func (s *OAuthService) deriveUsername(ctx context.Context, preferred, name, emai
 		if i > 0 {
 			cand = base + strconv.Itoa(i+1)
 		}
-		taken, err := s.repo.UsernameExists(ctx, cand)
+		taken, err := repo.UsernameExists(ctx, cand)
 		if err != nil {
 			return "", err
 		}

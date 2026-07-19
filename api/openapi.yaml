@@ -1136,6 +1136,148 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/atproto/start:
+    post:
+      operationId: startATProtoLogin
+      summary: Start an ATProto identity login
+      description: >-
+        Begins the ATProto (Bluesky / any PDS) identity-login flow for a handle:
+        resolves and bidirectionally verifies the handle, discovers the account's
+        authorization server, performs a Pushed Authorization Request (PAR) with
+        PKCE + DPoP, seals the attempt (including the ephemeral DPoP key) into a
+        short-lived, signed, httpOnly `vidra_atproto_state` cookie, and returns
+        the authorization URL. Call this with fetch (credentials included), then
+        top-level-navigate the browser to `authorization_url`. The redirect_uri
+        and client_id are always derived server-side from PUBLIC_BASE_URL — never
+        from request parameters.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [handle]
+              properties:
+                handle:
+                  type: string
+                  description: >-
+                    The ATProto handle to sign in with (e.g. alice.bsky.social).
+                return_to:
+                  type: string
+                  description: >-
+                    Same-origin relative path to return to after login (`/...`);
+                    absolute URLs and `//...` are rejected. Defaults to `/`.
+      responses:
+        "200":
+          description: The authorization URL to navigate the browser to.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorization_url:
+                    type: string
+        "422":
+          description: Invalid handle or return_to.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: >-
+            Identity resolution or authorization-server discovery / PAR failed
+            upstream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: ATProto login is not enabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/atproto/callback:
+    get:
+      operationId: completeATProtoLogin
+      summary: ATProto identity-login callback
+      description: >-
+        The redirect target the authorization server sends the browser back to.
+        Verifies the signed attempt cookie against the returned `state`, enforces
+        the RFC 9207 `iss`, the token `sub` (which must equal the DID resolved at
+        start), and the `atproto` scope, then logs in: a known identity signs its
+        account in, otherwise a new passwordless account is created (username
+        derived from the handle). The session is always issued in cookie mode —
+        the rotating refresh token is set as the httpOnly `vidra_refresh` cookie
+        and the SPA obtains an access token via POST /api/v1/auth/refresh with
+        credentials — and the browser is redirected (302) to the validated
+        `return_to` with `?oauth=1`. User-actionable failures redirect with an
+        `oauth_error` query code (`access_denied`, `atproto_identity_mismatch`,
+        `atproto_upstream`, `account_disabled`, `conflict`); protocol violations
+        (missing/forged/expired state, missing code) are 400.
+      tags: [auth]
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Authorization code from the authorization server.
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Must match the state sealed in the attempt cookie.
+        - name: iss
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            RFC 9207 issuer identifier; must exactly match the issuer bound at
+            start.
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Auth-server-reported error (e.g. the user denied consent).
+      responses:
+        "302":
+          description: >-
+            Redirect to return_to. On success the `vidra_refresh` session cookie
+            is set and `?oauth=1` is appended; on user-actionable failure the
+            location carries `?oauth_error=<code>` instead.
+        "400":
+          description: Missing/forged/expired state or missing authorization code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: ATProto login is not enabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/atproto/client-metadata.json:
+    get:
+      operationId: getATProtoClientMetadata
+      summary: ATProto OAuth client metadata document
+      description: >-
+        The public OAuth client-metadata document for this instance's ATProto
+        public client (production hosted-client mode). Served unauthenticated so
+        the authorization server can fetch it during the flow.
+      tags: [auth]
+      responses:
+        "200":
+          description: The client-metadata document.
+          content:
+            application/json:
+              schema:
+                type: object
   /api/v1/me/oauth-identities:
     get:
       operationId: listOAuthIdentities
@@ -11945,6 +12087,13 @@ components:
             "continue with <provider>" button per entry, navigating (top-level)
             to GET /api/v1/auth/oauth/{provider}. Empty when OAuth login is off.
           example: [google]
+        atproto_login:
+          type: boolean
+          description: >-
+            Whether ATProto identity login (Bluesky / any self-hosted PDS) is
+            enabled (ATPROTO_LOGIN_ENABLED). When true, render a "sign in with a
+            handle" affordance that POSTs to /api/v1/auth/atproto/start.
+            Independent of oauth_providers above.
         federation_enabled:
           type: boolean
           description: >-

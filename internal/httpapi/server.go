@@ -101,6 +101,7 @@ type Server struct {
 	authTTL           time.Duration
 	accountsvc        *account.Service
 	oauthsvc          *auth.OAuthService
+	atprotologinsvc   *auth.ATProtoOAuthService
 	channelsvc        *channel.Service
 	donationsvc       *donation.Service
 	videosvc          *video.Service
@@ -229,6 +230,16 @@ func WithAccountService(svc *account.Service) Option {
 // but every provider name 404s.
 func WithOAuthService(svc *auth.OAuthService) Option {
 	return func(s *Server) { s.oauthsvc = svc }
+}
+
+// WithATProtoLoginService mounts the ATProto identity-login endpoints
+// (start/callback + the public client-metadata document). The routes ARE part of
+// the REST OpenAPI contract and mount whenever the service is wired; the
+// service's Enabled() flag (ATPROTO_LOGIN_ENABLED) gates start/callback at
+// request time (503 when off), so the documented surface is stable regardless of
+// the toggle. Distinct from WithATProtoService (app-password cross-posting).
+func WithATProtoLoginService(svc *auth.ATProtoOAuthService) Option {
+	return func(s *Server) { s.atprotologinsvc = svc }
 }
 
 // WithAuthRateLimiter mounts a stricter, dedicated limiter on the sensitive auth
@@ -898,6 +909,17 @@ func (s *Server) routes() {
 			authGroup.GET("/oauth/:provider/callback", s.handleOAuthCallback, authMW...)
 			api.GET("/me/oauth-identities", s.handleListOAuthIdentities, s.requireAuth)
 			api.DELETE("/me/oauth-identities/:provider", s.handleUnlinkOAuthIdentity, s.requireAuth)
+		}
+
+		// ATProto identity login (Bluesky / any PDS). The start + callback are
+		// unauthenticated credential endpoints (behind the strict auth limiter);
+		// the client-metadata document is public. Always mounted when the service
+		// is wired (stable contract); ATPROTO_LOGIN_ENABLED gates start/callback at
+		// request time (503 when off).
+		if s.atprotologinsvc != nil {
+			authGroup.POST("/atproto/start", s.handleATProtoLoginStart, authMW...)
+			authGroup.GET("/atproto/callback", s.handleATProtoLoginCallback, authMW...)
+			authGroup.GET("/atproto/client-metadata.json", s.handleATProtoClientMetadata)
 		}
 
 		// Registration approval queue (admin-only). Present whenever auth is wired;
