@@ -128,6 +128,10 @@ func (s *Service) ListOwn(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.Cha
 type UpdateInput struct {
 	DisplayName *string
 	Description *string
+	// ActivitypubEnabled/AtprotoEnabled are the per-channel protocol
+	// distribution flags (migration 0096). nil leaves the flag unchanged.
+	ActivitypubEnabled *bool
+	AtprotoEnabled     *bool
 }
 
 // Update changes a channel's mutable fields. Only the owner may update; a
@@ -142,9 +146,11 @@ func (s *Service) Update(ctx context.Context, ownerID uuid.UUID, handle string, 
 		return sqlcgen.Channel{}, ErrForbidden
 	}
 	return s.repo.UpdateChannel(ctx, sqlcgen.UpdateChannelParams{
-		ID:          ch.ID,
-		DisplayName: trimPtr(in.DisplayName),
-		Description: trimPtr(in.Description),
+		ID:                 ch.ID,
+		DisplayName:        trimPtr(in.DisplayName),
+		Description:        trimPtr(in.Description),
+		ActivitypubEnabled: in.ActivitypubEnabled,
+		AtprotoEnabled:     in.AtprotoEnabled,
 	})
 }
 
@@ -223,13 +229,15 @@ func (s *Service) ListFollowed(ctx context.Context, followerID uuid.UUID, limit,
 	for _, r := range rows {
 		out = append(out, Followed{
 			Channel: sqlcgen.Channel{
-				ID:          r.ID,
-				OwnerID:     r.OwnerID,
-				Handle:      r.Handle,
-				DisplayName: r.DisplayName,
-				Description: r.Description,
-				CreatedAt:   r.CreatedAt,
-				UpdatedAt:   r.UpdatedAt,
+				ID:                 r.ID,
+				OwnerID:            r.OwnerID,
+				Handle:             r.Handle,
+				DisplayName:        r.DisplayName,
+				Description:        r.Description,
+				ActivitypubEnabled: r.ActivitypubEnabled,
+				AtprotoEnabled:     r.AtprotoEnabled,
+				CreatedAt:          r.CreatedAt,
+				UpdatedAt:          r.UpdatedAt,
 			},
 			FollowerCount: r.FollowerCount,
 			FollowedAt:    r.FollowedAt,

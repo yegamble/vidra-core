@@ -12731,7 +12731,7 @@ components:
             $ref: "#/components/schemas/Channel"
     Channel:
       type: object
-      required: [id, owner_id, handle, display_name, description, follower_count, created_at]
+      required: [id, owner_id, handle, display_name, description, follower_count, created_at, activitypub_enabled, atproto_enabled]
       properties:
         follower_count:
           type: integer
@@ -12763,6 +12763,26 @@ components:
           type: boolean
           description: >-
             Whether a banner is set (served at GET /channels/{handle}/banner).
+        activitypub_enabled:
+          type: boolean
+          description: >-
+            Whether this channel publishes over ActivityPub. When false the
+            channel does not federate: inbound Follows are ignored and outbound
+            Create/Update/Delete are skipped. Owner-editable via PATCH.
+        atproto_enabled:
+          type: boolean
+          description: >-
+            Whether this channel's published videos are cross-posted to
+            ATProto/Bluesky (subject to the owner having a linked account and the
+            instance ATProto extension being on). Owner-editable via PATCH.
+        atproto_active:
+          type: boolean
+          description: >-
+            Effective ATProto distribution status: atproto_enabled AND the
+            channel owner has a linked Bluesky account AND the instance ATProto
+            extension is on. Computed only where cheap (single-channel GET and
+            /me/channels); omitted in bulk listings and when the extension is not
+            enabled on the instance.
     CreateChannelRequest:
       type: object
       required: [handle, display_name]
@@ -12792,6 +12812,16 @@ components:
         description:
           type: string
           maxLength: 1000
+        activitypub_enabled:
+          type: boolean
+          description: >-
+            Toggle ActivityPub federation for this channel (owner only). Absent
+            leaves it unchanged.
+        atproto_enabled:
+          type: boolean
+          description: >-
+            Toggle ATProto/Bluesky cross-posting for this channel (owner only).
+            Absent leaves it unchanged.
     ChannelListResponse:
       type: object
       required: [channels]

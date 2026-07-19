@@ -52,7 +52,7 @@ func (f fakeFedRepo) GetUserActorByUsername(_ context.Context, name string) (sql
 
 func (f fakeFedRepo) GetChannelByHandle(_ context.Context, handle string) (sqlcgen.Channel, error) {
 	if strings.EqualFold(handle, "films") {
-		return sqlcgen.Channel{ID: f.channelID, Handle: "films", DisplayName: "Films"}, nil
+		return sqlcgen.Channel{ID: f.channelID, Handle: "films", DisplayName: "Films", ActivitypubEnabled: true}, nil
 	}
 	return sqlcgen.Channel{}, pgx.ErrNoRows
 }

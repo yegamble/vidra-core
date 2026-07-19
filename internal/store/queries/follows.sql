@@ -24,7 +24,7 @@ SELECT EXISTS (
 -- followed_at is when the caller followed it. Paginated via limit/offset.
 SELECT
     c.id, c.owner_id, c.handle, c.display_name, c.description,
-    c.created_at, c.updated_at,
+    c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
     (SELECT count(*) FROM channel_follows cf2 WHERE cf2.channel_id = c.id) AS follower_count,
     cf.created_at AS followed_at
 FROM channel_follows cf

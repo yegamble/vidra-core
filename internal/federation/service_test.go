@@ -42,6 +42,18 @@ type fakeRepo struct {
 	usersByID       map[uuid.UUID]sqlcgen.GetUserActorByIDRow
 	rcFollows       map[uuid.UUID]*sqlcgen.RemoteChannelFollow // keyed by row id
 	commentsByID    map[uuid.UUID]sqlcgen.Comment              // federated-comment rows (§6)
+	// apDisabled marks channels whose activitypub_enabled is false (migration
+	// 0096). Nil-safe: a channel not listed here reads back AP-ENABLED, matching
+	// the DB column default (TRUE) so existing fixtures federate as before.
+	apDisabled map[uuid.UUID]bool
+}
+
+// withAP stamps a fixture channel's activitypub_enabled from the apDisabled set
+// so channels default to enabled (the DB default) and a test opts specific ones
+// out via apDisabled.
+func (f fakeRepo) withAP(c sqlcgen.Channel) sqlcgen.Channel {
+	c.ActivitypubEnabled = !f.apDisabled[c.ID]
+	return c
 }
 
 // fakeRemoteVideo is an in-memory remote_videos row.
@@ -91,7 +103,7 @@ func (f fakeRepo) GetUserActorByUsername(_ context.Context, name string) (sqlcge
 
 func (f fakeRepo) GetChannelByHandle(_ context.Context, handle string) (sqlcgen.Channel, error) {
 	if c, ok := f.channels[strings.ToLower(handle)]; ok {
-		return c, nil
+		return f.withAP(c), nil
 	}
 	return sqlcgen.Channel{}, pgx.ErrNoRows
 }
@@ -281,7 +293,7 @@ func (f fakeRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVide
 
 func (f fakeRepo) GetChannelByID(_ context.Context, id uuid.UUID) (sqlcgen.Channel, error) {
 	if c, ok := f.channelsByID[id]; ok {
-		return c, nil
+		return f.withAP(c), nil
 	}
 	return sqlcgen.Channel{}, pgx.ErrNoRows
 }

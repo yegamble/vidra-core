@@ -129,22 +129,24 @@ func (q *Queries) GetATProtoPostByVideo(ctx context.Context, videoID uuid.UUID) 
 }
 
 const getATProtoPostVideo = `-- name: GetATProtoPostVideo :one
-SELECT v.id, v.title, v.privacy, c.owner_id
+SELECT v.id, v.title, v.privacy, c.owner_id, c.atproto_enabled
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 WHERE v.id = $1
 `
 
 type GetATProtoPostVideoRow struct {
-	ID      uuid.UUID `json:"id"`
-	Title   string    `json:"title"`
-	Privacy string    `json:"privacy"`
-	OwnerID uuid.UUID `json:"owner_id"`
+	ID             uuid.UUID `json:"id"`
+	Title          string    `json:"title"`
+	Privacy        string    `json:"privacy"`
+	OwnerID        uuid.UUID `json:"owner_id"`
+	AtprotoEnabled bool      `json:"atproto_enabled"`
 }
 
 // Resolve the video's owner + title + privacy for the enqueue decision and for
 // building the post record. Joins through the owning channel so the atproto
-// package needs no dependency on the video package.
+// package needs no dependency on the video package. atproto_enabled gates the
+// per-channel cross-post opt-out (migration 0096).
 func (q *Queries) GetATProtoPostVideo(ctx context.Context, id uuid.UUID) (GetATProtoPostVideoRow, error) {
 	row := q.db.QueryRow(ctx, getATProtoPostVideo, id)
 	var i GetATProtoPostVideoRow
@@ -153,6 +155,7 @@ func (q *Queries) GetATProtoPostVideo(ctx context.Context, id uuid.UUID) (GetATP
 		&i.Title,
 		&i.Privacy,
 		&i.OwnerID,
+		&i.AtprotoEnabled,
 	)
 	return i, err
 }

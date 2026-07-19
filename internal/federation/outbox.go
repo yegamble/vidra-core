@@ -23,6 +23,9 @@ func (s *Service) AnnounceVideo(ctx context.Context, videoID uuid.UUID) error {
 	if err != nil || !ok {
 		return err
 	}
+	if !ch.ActivitypubEnabled {
+		return nil // channel opted out of ActivityPub (migration 0096)
+	}
 	if v.Privacy != "public" || v.State != "published" {
 		return nil
 	}
@@ -40,6 +43,9 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID) error {
 	v, ch, ok, err := s.loadVideoAndChannel(ctx, videoID)
 	if err != nil || !ok {
 		return err
+	}
+	if !ch.ActivitypubEnabled {
+		return nil // channel opted out of ActivityPub (migration 0096)
 	}
 	var payload []byte
 	if v.Privacy == "public" && v.State == "published" {
@@ -66,6 +72,9 @@ func (s *Service) DeleteVideo(ctx context.Context, videoID, channelID uuid.UUID,
 			return nil
 		}
 		return err
+	}
+	if !ch.ActivitypubEnabled {
+		return nil // channel opted out of ActivityPub (migration 0096)
 	}
 	payload, err := s.buildDeleteVideo(ch.Handle, videoID)
 	if err != nil {
