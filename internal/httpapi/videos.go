@@ -50,6 +50,10 @@ type createVideoRequest struct {
 	// layered on the instance downloads_enabled gate. Omitted (null) seeds the
 	// instance's default_download_enabled setting.
 	DownloadEnabled *bool `json:"download_enabled"`
+	// PublishAfterTranscode opts the video into the publish-after-transcode hold:
+	// once processed it stays hidden from every public surface until its HLS
+	// transcode completes (default false = publish while transcoding).
+	PublishAfterTranscode bool `json:"publish_after_transcode"`
 }
 
 func (r createVideoRequest) Validate() []FieldError {
@@ -191,6 +195,15 @@ type videoView struct {
 	// flag AND the instance downloads feature (GET /instance features.downloads);
 	// moderators/admins bypass both.
 	DownloadEnabled *bool `json:"download_enabled,omitempty"`
+	// PublishAfterTranscode is the per-video publish-timing opt-in (owner-facing),
+	// present on the create/update/detail views. When true a processed video stays
+	// hidden (state 'transcoding') until its HLS transcode completes.
+	PublishAfterTranscode *bool `json:"publish_after_transcode,omitempty"`
+	// Transcoding is set on the DETAIL view only: true while a transcode job is
+	// still live for this video (the frontend's "still processing" signal under
+	// the player). It becomes false once the last job finishes — at which point
+	// hls_url appears. Omitted (absent = false) elsewhere.
+	Transcoding bool `json:"transcoding,omitempty"`
 	// Category, Language, License are the optional taxonomy ids (see GET
 	// /videos/config); omitted when unset. Populated on create/update/detail.
 	Category *string `json:"category,omitempty"`
@@ -231,27 +244,30 @@ type videoIPFSView struct {
 
 func newVideoView(v sqlcgen.Video) videoView {
 	downloadEnabled := v.DownloadEnabled
+	publishAfterTranscode := v.PublishAfterTranscode
 	return videoView{
-		ID:              v.ID.String(),
-		ChannelID:       v.ChannelID.String(),
-		Title:           v.Title,
-		Description:     v.Description,
-		Privacy:         v.Privacy,
-		State:           v.State,
-		IsSensitive:     v.IsSensitive,
-		CreatedAt:       v.CreatedAt,
-		Category:        v.Category,
-		Language:        v.Language,
-		License:         v.License,
-		PublishAt:       video.TimePtr(v.PublishAt),
-		CommentsPolicy:  v.CommentsPolicy,
-		DownloadEnabled: &downloadEnabled,
+		ID:                    v.ID.String(),
+		ChannelID:             v.ChannelID.String(),
+		Title:                 v.Title,
+		Description:           v.Description,
+		Privacy:               v.Privacy,
+		State:                 v.State,
+		IsSensitive:           v.IsSensitive,
+		CreatedAt:             v.CreatedAt,
+		Category:              v.Category,
+		Language:              v.Language,
+		License:               v.License,
+		PublishAt:             video.TimePtr(v.PublishAt),
+		CommentsPolicy:        v.CommentsPolicy,
+		DownloadEnabled:       &downloadEnabled,
+		PublishAfterTranscode: &publishAfterTranscode,
 	}
 }
 
 func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 	handle, name, author := v.ChannelHandle, v.ChannelDisplayName, v.AuthorDisplayName
 	downloadEnabled := v.DownloadEnabled
+	publishAfterTranscode := v.PublishAfterTranscode
 	view := videoView{
 		ID:          v.ID.String(),
 		ChannelID:   v.ChannelID.String(),
@@ -267,10 +283,11 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 		PublishAt:   video.TimePtr(v.PublishAt),
 		// Detail carries the owning channel so the frontend related-rail can link
 		// and label without a second request (Wave A contract gap).
-		ChannelHandle:      &handle,
-		ChannelDisplayName: &name,
-		CommentsPolicy:     v.CommentsPolicy,
-		DownloadEnabled:    &downloadEnabled,
+		ChannelHandle:         &handle,
+		ChannelDisplayName:    &name,
+		CommentsPolicy:        v.CommentsPolicy,
+		DownloadEnabled:       &downloadEnabled,
+		PublishAfterTranscode: &publishAfterTranscode,
 	}
 	if author != "" {
 		view.AuthorDisplayName = &author
@@ -316,6 +333,8 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 		IsSensitive:     in.IsSensitive,
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
+
+		PublishAfterTranscode: in.PublishAfterTranscode,
 	})
 	if err != nil {
 		return videoError(err) // ErrPasswordRequired → 400
@@ -448,6 +467,11 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	view.Views = &views
 	s.attachVideoTags(c.Request().Context(), &view, id)
 	view.HLSURL, view.Renditions = s.hlsDetail(c, id)
+	// "still processing" signal: true while any transcode job is live for the
+	// video. Flips to false once the last job finishes (hls_url then appears).
+	if s.transcodesvc != nil {
+		view.Transcoding = s.transcodesvc.HasLiveJob(c.Request().Context(), id)
+	}
 	s.attachVideoIPFS(c.Request().Context(), &view, id, v.Privacy, v.State)
 	return c.JSON(http.StatusOK, view)
 }
@@ -775,13 +799,17 @@ type updateVideoRequest struct {
 	// (config-parity W9); nil leaves each unchanged.
 	CommentsPolicy  *string `json:"comments_policy"`
 	DownloadEnabled *bool   `json:"download_enabled"`
+	// PublishAfterTranscode: nil leaves the flag unchanged; a non-nil value sets
+	// it. Setting it true on an already-published, not-yet-public video whose
+	// transcode is still running holds the video until that transcode completes.
+	PublishAfterTranscode *bool `json:"publish_after_transcode"`
 }
 
 func (r updateVideoRequest) Validate() []FieldError {
 	if r.Title == nil && r.Description == nil && r.Privacy == nil &&
 		r.Category == nil && r.Language == nil && r.License == nil && r.Tags == nil &&
 		r.PublishAt == nil && r.IsSensitive == nil &&
-		r.CommentsPolicy == nil && r.DownloadEnabled == nil {
+		r.CommentsPolicy == nil && r.DownloadEnabled == nil && r.PublishAfterTranscode == nil {
 		return []FieldError{{Field: "title", Message: "at least one updatable field is required"}}
 	}
 	var fes []FieldError
@@ -871,6 +899,8 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		IsSensitive:     in.IsSensitive,
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
+
+		PublishAfterTranscode: in.PublishAfterTranscode,
 	}, canManage)
 	if err != nil {
 		if errors.Is(err, video.ErrPublished) {
@@ -926,6 +956,9 @@ func updateVideoFieldNames(in updateVideoRequest) []string {
 	}
 	if in.DownloadEnabled != nil {
 		fields = append(fields, "download_enabled")
+	}
+	if in.PublishAfterTranscode != nil {
+		fields = append(fields, "publish_after_transcode")
 	}
 	return fields
 }
@@ -1305,6 +1338,18 @@ func scheduledHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
 	return !ok || userID != ownerID
 }
 
+// transcodingHidesVideo keeps a publish-after-transcode held video off public
+// surfaces until its transcode completes and the release path publishes it.
+// Owners and moderation staff may inspect it meanwhile (like quarantine — NOT
+// scheduled's owner-only rule).
+func transcodingHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
+	if state != "transcoding" {
+		return false
+	}
+	userID, role, ok := principalFromContext(c)
+	return !ok || (userID != ownerID && role != "admin" && role != "moderator")
+}
+
 // videoHiddenFromViewer combines the moderation visibility rules the media/
 // detail surfaces share: a blocked video is hidden (moderators excepted) and a
 // quarantined one is hidden (owner + moderators excepted). An unknown id is not
@@ -1391,6 +1436,9 @@ func (s *Server) videoReadBase(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVi
 		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	if scheduledHidesVideo(c, v.State, v.OwnerID) {
+		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	if transcodingHidesVideo(c, v.State, v.OwnerID) {
 		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	return v, nil
