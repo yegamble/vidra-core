@@ -475,6 +475,17 @@ SET state      = sqlc.arg('state'),
 WHERE id = sqlc.arg('id')
 RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode;
 
+-- name: PublishTranscodingVideo :execrows
+-- The publish-after-transcode release CAS (0098): flips a HELD video to
+-- published only while it is still in the 'transcoding' state, so concurrent
+-- release triggers (completion hook, terminal-failure hook, stuck sweeper)
+-- transition it exactly once — the caller fires the publish hooks only when the
+-- returned row count says this call won the transition.
+UPDATE videos
+SET state      = 'published',
+    updated_at = now()
+WHERE id = $1 AND state = 'transcoding';
+
 -- name: ListDueScheduledVideos :many
 -- Videos whose scheduled publish time has arrived, joined with their stored
 -- original (a scheduled video always has one — it went through processing).

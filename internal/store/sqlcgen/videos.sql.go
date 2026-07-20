@@ -1214,6 +1214,26 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) 
 	return items, nil
 }
 
+const publishTranscodingVideo = `-- name: PublishTranscodingVideo :execrows
+UPDATE videos
+SET state      = 'published',
+    updated_at = now()
+WHERE id = $1 AND state = 'transcoding'
+`
+
+// The publish-after-transcode release CAS (0098): flips a HELD video to
+// published only while it is still in the 'transcoding' state, so concurrent
+// release triggers (completion hook, terminal-failure hook, stuck sweeper)
+// transition it exactly once — the caller fires the publish hooks only when the
+// returned row count says this call won the transition.
+func (q *Queries) PublishTranscodingVideo(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, publishTranscodingVideo, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const searchPublicVideos = `-- name: SearchPublicVideos :many
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
