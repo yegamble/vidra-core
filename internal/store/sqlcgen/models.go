@@ -823,23 +823,24 @@ type UserPlayerSetting struct {
 }
 
 type Video struct {
-	ID                  uuid.UUID          `json:"id"`
-	ChannelID           uuid.UUID          `json:"channel_id"`
-	Title               string             `json:"title"`
-	Description         string             `json:"description"`
-	Privacy             string             `json:"privacy"`
-	State               string             `json:"state"`
-	CreatedAt           time.Time          `json:"created_at"`
-	UpdatedAt           time.Time          `json:"updated_at"`
-	Category            *string            `json:"category"`
-	Language            *string            `json:"language"`
-	License             *string            `json:"license"`
-	PublishAt           pgtype.Timestamptz `json:"publish_at"`
-	EmbedPrivacy        string             `json:"embed_privacy"`
-	EmbedAllowedDomains []string           `json:"embed_allowed_domains"`
-	IsSensitive         bool               `json:"is_sensitive"`
-	CommentsPolicy      string             `json:"comments_policy"`
-	DownloadEnabled     bool               `json:"download_enabled"`
+	ID                    uuid.UUID          `json:"id"`
+	ChannelID             uuid.UUID          `json:"channel_id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	Privacy               string             `json:"privacy"`
+	State                 string             `json:"state"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	Category              *string            `json:"category"`
+	Language              *string            `json:"language"`
+	License               *string            `json:"license"`
+	PublishAt             pgtype.Timestamptz `json:"publish_at"`
+	EmbedPrivacy          string             `json:"embed_privacy"`
+	EmbedAllowedDomains   []string           `json:"embed_allowed_domains"`
+	IsSensitive           bool               `json:"is_sensitive"`
+	CommentsPolicy        string             `json:"comments_policy"`
+	DownloadEnabled       bool               `json:"download_enabled"`
+	PublishAfterTranscode bool               `json:"publish_after_transcode"`
 }
 
 type VideoBlock struct {
