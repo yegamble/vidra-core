@@ -379,7 +379,8 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		Category: a.Category, Language: a.Language, License: a.License,
 		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive,
 		CommentsPolicy: a.CommentsPolicy, DownloadEnabled: a.DownloadEnabled,
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		PublishAfterTranscode: a.PublishAfterTranscode,
+		CreatedAt:             time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
 		ID: v.ID, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
@@ -387,7 +388,8 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		Category: v.Category, Language: v.Language, License: v.License,
 		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive,
 		CommentsPolicy: v.CommentsPolicy, DownloadEnabled: v.DownloadEnabled,
-		OwnerID: owner,
+		PublishAfterTranscode: v.PublishAfterTranscode,
+		OwnerID:               owner,
 	}
 	return v, nil
 }
@@ -425,6 +427,7 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		Category: r.Category, Language: r.Language, License: r.License, PublishAt: r.PublishAt,
 		IsSensitive: r.IsSensitive, CommentsPolicy: r.CommentsPolicy, DownloadEnabled: r.DownloadEnabled,
+		PublishAfterTranscode: r.PublishAfterTranscode,
 	}
 }
 
@@ -462,6 +465,20 @@ func (f *videoFakeRepo) ListDueScheduledVideos(_ context.Context, limit int32) (
 		rows = rows[:limit]
 	}
 	return rows, nil
+}
+
+func (f *videoFakeRepo) ListStuckTranscodingVideos(_ context.Context, a sqlcgen.ListStuckTranscodingVideosParams) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	for _, r := range f.videos {
+		if r.State == "transcoding" && r.UpdatedAt.Before(a.Cutoff) {
+			ids = append(ids, r.ID)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i].String() < ids[j].String() })
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(ids) {
+		ids = ids[:a.ResultLimit]
+	}
+	return ids, nil
 }
 
 func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error) {
@@ -514,6 +531,9 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	}
 	if a.DownloadEnabled != nil {
 		r.DownloadEnabled = *a.DownloadEnabled
+	}
+	if a.PublishAfterTranscode != nil {
+		r.PublishAfterTranscode = *a.PublishAfterTranscode
 	}
 	f.videos[a.ID] = r
 	return vidRowToVideo(r), nil
