@@ -1352,11 +1352,12 @@ func transcodingHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool
 
 // videoHiddenFromViewer combines the moderation visibility rules the media/
 // detail surfaces share: a blocked video is hidden (moderators excepted) and a
-// quarantined one is hidden (owner + moderators excepted). An unknown id is not
-// "hidden" — the caller's own lookup reports it as 404. It also returns the
-// fetched video row so the caller can apply the password gate without a second
-// GetByID; that row is the zero value when the video is block-hidden or unknown,
-// cases in which the caller returns before ever consulting it.
+// quarantined or transcoding-held one is hidden (owner + moderators excepted).
+// An unknown id is not "hidden" — the caller's own lookup reports it as 404. It
+// also returns the fetched video row so the caller can apply the password gate
+// without a second GetByID; that row is the zero value when the video is
+// block-hidden or unknown, cases in which the caller returns before ever
+// consulting it.
 func (s *Server) videoHiddenFromViewer(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, bool, error) {
 	if hidden, err := s.videoHiddenByBlock(c, videoID); err != nil || hidden {
 		return sqlcgen.GetVideoByIDRow{}, hidden, err
@@ -1365,7 +1366,8 @@ func (s *Server) videoHiddenFromViewer(c echo.Context, videoID uuid.UUID) (sqlcg
 	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, false, nil
 	}
-	return v, quarantineHidesVideo(c, v.State, v.OwnerID), nil
+	hidden := quarantineHidesVideo(c, v.State, v.OwnerID) || transcodingHidesVideo(c, v.State, v.OwnerID)
+	return v, hidden, nil
 }
 
 // videoVisibleForRead resolves a video under the ordinary read/media policy: an

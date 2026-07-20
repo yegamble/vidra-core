@@ -134,3 +134,37 @@ func TestTranscodingHoldDetailVisibility(t *testing.T) {
 		t.Errorf("moderator sees state %q, want transcoding", modView.State)
 	}
 }
+
+// TestPatchFlagOffReleasesHeldVideo proves PATCHing publish_after_transcode
+// back OFF on a held video releases the hold end to end: the response reports
+// state published and the video becomes publicly reachable again.
+func TestPatchFlagOffReleasesHeldVideo(t *testing.T) {
+	srv, _, _, _, repo := videoServerFull(t, testConfig())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"held","privacy":"public","publish_after_transcode":true}`)
+
+	// Drop the video into the held state directly (as the Process hold would).
+	vid := uuid.MustParse(id)
+	row := repo.videos[vid]
+	row.State = "transcoding"
+	repo.videos[vid] = row
+	if rec := getVideo(srv, id, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("anon get held = %d, want 404 before the toggle", rec.Code)
+	}
+
+	up := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id, `{"publish_after_transcode":false}`, tok)
+	if up.Code != http.StatusOK {
+		t.Fatalf("patch flag off = %d; body=%s", up.Code, up.Body.String())
+	}
+	var v videoView
+	_ = json.Unmarshal(up.Body.Bytes(), &v)
+	if v.State != "published" {
+		t.Fatalf("state after toggle off = %q, want published (hold released)", v.State)
+	}
+	if v.PublishAfterTranscode == nil || *v.PublishAfterTranscode {
+		t.Errorf("publish_after_transcode after toggle off = %v, want false", v.PublishAfterTranscode)
+	}
+	if rec := getVideo(srv, id, ""); rec.Code != http.StatusOK {
+		t.Errorf("anon get after release = %d, want 200 (publicly visible again)", rec.Code)
+	}
+}
