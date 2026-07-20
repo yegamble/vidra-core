@@ -47,6 +47,35 @@ func (f *fakeRepo) ListDueScheduledVideos(_ context.Context, limit int32) ([]sql
 	return rows, nil
 }
 
+// ListStuckTranscodingVideos mirrors the stuck-hold sweeper query: held rows
+// whose updated_at predates the cutoff, oldest first.
+func (f *fakeRepo) ListStuckTranscodingVideos(_ context.Context, a sqlcgen.ListStuckTranscodingVideosParams) ([]uuid.UUID, error) {
+	type held struct {
+		id      uuid.UUID
+		updated time.Time
+	}
+	var rows []held
+	for _, r := range f.videos {
+		if r.State == "transcoding" && r.UpdatedAt.Before(a.Cutoff) {
+			rows = append(rows, held{id: r.ID, updated: r.UpdatedAt})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if !rows[i].updated.Equal(rows[j].updated) {
+			return rows[i].updated.Before(rows[j].updated)
+		}
+		return rows[i].id.String() < rows[j].id.String()
+	})
+	ids := make([]uuid.UUID, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.id)
+	}
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(ids) {
+		ids = ids[:a.ResultLimit]
+	}
+	return ids, nil
+}
+
 // scheduleHarness uploads an original for a draft created with in, returning
 // the service (with hook recorders), repo, and the video id.
 func scheduleHarness(t *testing.T, in CreateInput, published *[]uuid.UUID, transcoded *[]string) (*Service, *fakeRepo, uuid.UUID) {
