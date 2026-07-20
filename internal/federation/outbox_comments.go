@@ -45,6 +45,16 @@ func (s *Service) DeleteComment(ctx context.Context, commentID, videoID, authorI
 		}
 		return err
 	}
+	ch, err := s.repo.GetChannelByID(ctx, v.ChannelID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if !ch.ActivitypubEnabled {
+		return nil // channel opted out of ActivityPub (migration 0096)
+	}
 	u, err := s.repo.GetUserActorByID(ctx, authorID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -83,6 +93,9 @@ func (s *Service) federateComment(ctx context.Context, activityType string, comm
 	v, ch, ok, err := s.loadVideoAndChannel(ctx, c.VideoID)
 	if err != nil || !ok {
 		return err
+	}
+	if !ch.ActivitypubEnabled {
+		return nil // channel opted out of ActivityPub (migration 0096)
 	}
 	if v.Privacy != "public" || v.State != "published" {
 		return nil // only public, published videos carry federated interactions
