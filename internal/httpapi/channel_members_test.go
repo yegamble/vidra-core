@@ -178,3 +178,161 @@ func TestEditorContentMatrix(t *testing.T) {
 		t.Errorf("stranger live create = %d, want 403", rec.Code)
 	}
 }
+
+// TestEditorResumableUploadMatrix covers the chunked/resumable upload path for a
+// collaborator (the single-shot multipart path is covered by
+// TestEditorContentMatrix): an editor opens a session, streams the chunks, and
+// completes it — and the stored bytes count against the channel OWNER, not the
+// editor. A stranger cannot open a session for the channel's video.
+func TestEditorResumableUploadMatrix(t *testing.T) {
+	srv := videoServer(t)
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	editorTok, _ := inviteEditor(t, srv, ownerTok, "ada", "bob", "bob@example.test")
+	strangerTok := registerAndToken(t, srv, `{"username":"carol","email":"carol@example.test","password":"supersecret"}`)
+
+	// Editor creates a draft in the channel, then drives the resumable protocol.
+	draft := createVideo(t, srv, editorTok, "ada", `{"title":"chunked draft","privacy":"private"}`)
+
+	// A stranger cannot open a session for the video (existence not leaked → 404).
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+draft+"/upload-session",
+		`{"size":12,"filename":"clip.mp4"}`, strangerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("stranger open session = %d, want 404", rec.Code)
+	}
+
+	payload := []byte("editor-bytes") // 12 bytes → a single 12-byte chunk
+	sess := openUploadSession(t, srv, draft, "clip.mp4", len(payload), editorTok)
+	if rec := putChunkAuth(srv, sess.UploadID, 0, payload, editorTok); rec.Code != http.StatusOK {
+		t.Fatalf("editor put chunk = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	// A stranger cannot see the editor's session either.
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/uploads/"+sess.UploadID, "", strangerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("stranger session status = %d, want 404", rec.Code)
+	}
+	compRec := sendJSONAuth(srv, http.MethodPost, "/api/v1/uploads/"+sess.UploadID+"/complete", "", editorTok)
+	if compRec.Code != http.StatusCreated {
+		t.Fatalf("editor complete = %d; body=%s", compRec.Code, compRec.Body.String())
+	}
+
+	// Owner-attribution: the assembled bytes land against the channel OWNER's
+	// quota, and the editor's own usage stays zero.
+	if st := getMyQuota(t, srv, ownerTok); st.UsedBytes != int64(len(payload)) {
+		t.Errorf("owner used_bytes = %d, want %d (upload attributed to the owner)", st.UsedBytes, len(payload))
+	}
+	if st := getMyQuota(t, srv, editorTok); st.UsedBytes != 0 {
+		t.Errorf("editor used_bytes = %d, want 0 (upload must not count against the editor)", st.UsedBytes)
+	}
+}
+
+// TestEditorLiveManagementMatrix covers the per-stream live surfaces beyond
+// create (which TestEditorContentMatrix already asserts): an editor may update,
+// regenerate the key, read a private stream's details, and delete a channel's
+// live stream. A stranger is refused on each — 404 on the id-scoped routes
+// (existence not leaked) and 403 on the channel-scoped list.
+func TestEditorLiveManagementMatrix(t *testing.T) {
+	srv := videoServer(t)
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	editorTok, _ := inviteEditor(t, srv, ownerTok, "ada", "bob", "bob@example.test")
+	strangerTok := registerAndToken(t, srv, `{"username":"carol","email":"carol@example.test","password":"supersecret"}`)
+
+	// Owner creates a PRIVATE stream so the get-private-details check is meaningful.
+	createRec := postJSONAuth(srv, "/api/v1/channels/ada/live", `{"title":"stream","privacy":"private"}`, ownerTok)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("owner live create = %d; body=%s", createRec.Code, createRec.Body.String())
+	}
+	var created createLiveStreamResponse
+	_ = json.Unmarshal(createRec.Body.Bytes(), &created)
+	streamID := created.LiveStream.ID
+
+	// --- Editor CAN manage the stream ---
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/live/"+streamID, `{"title":"edited","privacy":"private"}`, editorTok); rec.Code != http.StatusOK {
+		t.Errorf("editor live update = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/live/"+streamID+"/key", "", editorTok); rec.Code != http.StatusOK {
+		t.Errorf("editor regenerate key = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	// Editor reads the private stream's details (a stranger would 404 below).
+	if rec := getWithAuth(srv, "/api/v1/live/"+streamID, editorTok); rec.Code != http.StatusOK {
+		t.Errorf("editor get private stream = %d, want 200", rec.Code)
+	}
+	if rec := getWithAuth(srv, "/api/v1/channels/ada/live", editorTok); rec.Code != http.StatusOK {
+		t.Errorf("editor list streams = %d, want 200", rec.Code)
+	}
+
+	// --- Stranger is refused everywhere ---
+	if rec := getWithAuth(srv, "/api/v1/live/"+streamID, strangerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("stranger get private stream = %d, want 404", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/live/"+streamID, `{"title":"hax","privacy":"private"}`, strangerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("stranger live update = %d, want 404", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/live/"+streamID+"/key", "", strangerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("stranger regenerate key = %d, want 404", rec.Code)
+	}
+	if rec := getWithAuth(srv, "/api/v1/channels/ada/live", strangerTok); rec.Code != http.StatusForbidden {
+		t.Errorf("stranger list streams = %d, want 403", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/live/"+streamID, "", strangerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("stranger live delete = %d, want 404", rec.Code)
+	}
+
+	// --- Editor deletes the stream (done last so the checks above still had a target) ---
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/live/"+streamID, "", editorTok); rec.Code != http.StatusNoContent {
+		t.Errorf("editor live delete = %d, want 204", rec.Code)
+	}
+}
+
+// TestEditorImportReplaceThumbnailCaptionMatrix covers the remaining
+// editor-allowed content surfaces with no prior collaborator coverage: URL
+// import, source replace, thumbnail set (image) + select-frame (JSON), and
+// caption delete. A stranger is refused (404, existence not leaked) on each.
+// It uses frameServer so a processed original exists for the frame-pick variant,
+// and enables the (default-off) video_replace feature.
+func TestEditorImportReplaceThumbnailCaptionMatrix(t *testing.T) {
+	frame := []byte("\xff\xd8\xff\xe0framejpeg")
+	srv := frameServer(t, frame)
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada") // first user → admin
+	editorTok, _ := inviteEditor(t, srv, ownerTok, "ada", "bob", "bob@example.test")
+	strangerTok := registerAndToken(t, srv, `{"username":"carol","email":"carol@example.test","password":"supersecret"}`)
+	patchSettings(t, srv, ownerTok, `{"video_replace_enabled":true}`) // owner is admin here
+
+	// --- URL import (editor-allowed; enqueue is 202) ---
+	importVideo := createVideo(t, srv, editorTok, "ada", `{"title":"to import","privacy":"public"}`)
+	enqueueImport(t, srv, importVideo, "https://example.com/clip.mp4", editorTok)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+importVideo+"/import",
+		`{"url":"https://example.com/clip.mp4"}`, strangerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("stranger import = %d, want 404", rec.Code)
+	}
+
+	// --- Source replace (editor-allowed; a published video, feature enabled) ---
+	replaceVideo := publishVideoWithFile(t, srv, ownerTok, "ada", "Clip", "v0 bytes")
+	if rec := replaceVideoFileReq(srv, replaceVideo, "v1.mp4", "video/mp4", "replacement bytes", editorTok); rec.Code != http.StatusOK {
+		t.Errorf("editor replace = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := replaceVideoFileReq(srv, replaceVideo, "v2.mp4", "video/mp4", "hax bytes", strangerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("stranger replace = %d, want 404", rec.Code)
+	}
+
+	// --- Thumbnail: set (image) and select-frame (JSON) ---
+	thumbVideo := publishVideoWithFile(t, srv, ownerTok, "ada", "Poster", "orig bytes")
+	if rec := uploadThumbnail(srv, thumbVideo, "poster.png", "image/png", "\x89PNG\r\n-fake", editorTok); rec.Code != http.StatusCreated {
+		t.Errorf("editor set thumbnail = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := frameThumbnail(srv, thumbVideo, `{"at_seconds":5}`, editorTok); rec.Code != http.StatusCreated {
+		t.Errorf("editor select-frame thumbnail = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := uploadThumbnail(srv, thumbVideo, "poster.png", "image/png", "img", strangerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("stranger set thumbnail = %d, want 404", rec.Code)
+	}
+
+	// --- Caption delete (editor-allowed) ---
+	captionVideo := createVideo(t, srv, editorTok, "ada", `{"title":"captioned","privacy":"private"}`)
+	if rec := uploadCaption(srv, captionVideo, "en", "English", sampleVTT, editorTok, true); rec.Code != http.StatusCreated {
+		t.Fatalf("seed caption = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/videos/"+captionVideo+"/captions/en", "", strangerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("stranger caption delete = %d, want 404", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/videos/"+captionVideo+"/captions/en", "", editorTok); rec.Code != http.StatusNoContent {
+		t.Errorf("editor caption delete = %d, want 204", rec.Code)
+	}
+}
