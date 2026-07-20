@@ -613,6 +613,44 @@ func TestFailureHookDoesNotFireOnSuccess(t *testing.T) {
 	}
 }
 
+// errLiveRepo fails the live-job lookup; every other Repository method is the
+// embedded nil interface (panics if reached — these tests never do).
+type errLiveRepo struct{ Repository }
+
+func (errLiveRepo) HasLiveTranscodeJob(context.Context, uuid.UUID) (bool, error) {
+	return false, errors.New("db down")
+}
+
+// TestLiveJobSurfacesErrorWhereHasLiveJobFailsBusy pins the two failure
+// postures: HasLiveJob reports a lookup error as busy (right for admission —
+// replace-conflict, hold entry), while LiveJob surfaces the error so RELEASE
+// call sites can treat "undetermined" as releasable instead of suppressing a
+// publish-after-transcode release forever.
+func TestLiveJobSurfacesErrorWhereHasLiveJobFailsBusy(t *testing.T) {
+	svc := NewService(errLiveRepo{}, nil)
+	id := uuid.New()
+	if !svc.HasLiveJob(context.Background(), id) {
+		t.Error("HasLiveJob on lookup error = false, want true (fail-busy admission posture)")
+	}
+	live, err := svc.LiveJob(context.Background(), id)
+	if err == nil {
+		t.Fatal("LiveJob swallowed the lookup error, want it surfaced")
+	}
+	if live {
+		t.Error("LiveJob on error reported live=true, want false with the error")
+	}
+
+	// And on a healthy repo the two agree.
+	okRepo := newFakeRepo()
+	okSvc := NewService(okRepo, nil)
+	if okSvc.HasLiveJob(context.Background(), id) {
+		t.Error("HasLiveJob with no jobs = true, want false")
+	}
+	if live, err := okSvc.LiveJob(context.Background(), id); err != nil || live {
+		t.Errorf("LiveJob with no jobs = (%v, %v), want (false, nil)", live, err)
+	}
+}
+
 func TestBackoffDoublesAndCaps(t *testing.T) {
 	cases := []struct {
 		attempts int

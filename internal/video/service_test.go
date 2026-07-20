@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +41,10 @@ type fakeRepo struct {
 	// requiresQuarantine mirrors the UploadRequiresQuarantine gate result for
 	// the test subject's uploads (true = role 'user' without bypass).
 	requiresQuarantine bool
+	// mu guards the release-CAS method (PublishTranscodingVideo), the one path
+	// tests exercise concurrently (racing ReleaseTranscodeHold callers). The
+	// other methods stay unguarded — tests call them from one goroutine.
+	mu sync.Mutex
 }
 
 func captionKeyFor(videoID uuid.UUID, lang string) string { return videoID.String() + "|" + lang }

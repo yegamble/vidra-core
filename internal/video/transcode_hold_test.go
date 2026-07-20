@@ -3,6 +3,7 @@ package video
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,22 @@ import (
 
 func strPtr(s string) *string { return &s }
 func boolPtr(b bool) *bool    { return &b }
+
+// PublishTranscodingVideo mirrors the release CAS: state flips to published only
+// while it is still 'transcoding', reporting whether this call won the
+// transition. Mutex-guarded — the concurrency test races two releasers.
+func (f *fakeRepo) PublishTranscodingVideo(_ context.Context, id uuid.UUID) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.videos[id]
+	if !ok || r.State != "transcoding" {
+		return 0, nil
+	}
+	r.State = "published"
+	r.UpdatedAt = time.Now()
+	f.videos[id] = r
+	return 1, nil
+}
 
 // uploadAndProcess creates a draft under a fresh channel, uploads an original,
 // and runs Process — the full path a real upload takes to a terminal state.
@@ -213,6 +230,7 @@ func TestUpdateHoldsPublishedPrivateWithLiveJob(t *testing.T) {
 	var published []uuid.UUID
 	svc := NewService(repo, memBackend(t),
 		WithPublishHook(func(_ context.Context, id uuid.UUID) { published = append(published, id) }),
+		WithTranscodeReadinessFunc(func() bool { return true }),
 		WithLiveTranscodeChecker(func(_ context.Context, _ uuid.UUID) bool { return true }),
 	)
 	id := uploadAndProcess(t, svc, owner, CreateInput{Title: "fast", Privacy: "private"})
@@ -246,6 +264,7 @@ func TestUpdateStoresFlagWhenAlreadyPublic(t *testing.T) {
 	owner := uuid.New()
 	repo := newFakeRepo(owner)
 	svc := NewService(repo, memBackend(t),
+		WithTranscodeReadinessFunc(func() bool { return true }),
 		WithLiveTranscodeChecker(func(_ context.Context, _ uuid.UUID) bool { return true }),
 	)
 	id := uploadAndProcess(t, svc, owner, CreateInput{Title: "public", Privacy: "public"})
@@ -306,5 +325,160 @@ func TestReleaseStuckTranscodeHolds(t *testing.T) {
 	// Idempotent: nothing stuck now.
 	if n, _ := svc.ReleaseStuckTranscodeHolds(context.Background(), time.Hour, 10); n != 0 {
 		t.Fatalf("second sweep = %d, want 0", n)
+	}
+}
+
+// TestReleaseTranscodeHoldConcurrentFiresHooksOnce proves the release CAS: two
+// goroutines racing ReleaseTranscodeHold (completion hook vs sweeper) transition
+// the video exactly once, so every publish hook fires exactly once — never a
+// duplicate federation/ATProto/search announcement. Repeated to give the race a
+// real chance to interleave.
+func TestReleaseTranscodeHoldConcurrentFiresHooksOnce(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		var hookMu sync.Mutex
+		var published []uuid.UUID
+		var transcoded []string
+		owner := uuid.New()
+		repo := newFakeRepo(owner)
+		svc := NewService(repo, memBackend(t),
+			WithPublishHook(func(_ context.Context, id uuid.UUID) {
+				hookMu.Lock()
+				published = append(published, id)
+				hookMu.Unlock()
+			}),
+			WithTranscodeHook(func(_ context.Context, _ uuid.UUID, key string) { transcoded = append(transcoded, key) }),
+			WithTranscodeReadinessFunc(func() bool { return true }),
+		)
+		id := uploadAndProcess(t, svc, owner, CreateInput{Title: "race", Privacy: "public", PublishAfterTranscode: true})
+		if repo.videos[id].State != "transcoding" {
+			t.Fatalf("precondition state = %q, want transcoding", repo.videos[id].State)
+		}
+
+		var wg sync.WaitGroup
+		for g := 0; g < 2; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := svc.ReleaseTranscodeHold(context.Background(), id); err != nil {
+					t.Errorf("ReleaseTranscodeHold: %v", err)
+				}
+			}()
+		}
+		wg.Wait()
+
+		if got := repo.videos[id].State; got != "published" {
+			t.Fatalf("state after racing releases = %q, want published", got)
+		}
+		if len(published) != 1 || published[0] != id {
+			t.Fatalf("iteration %d: publish hooks fired %d times (%v), want exactly once", i, len(published), published)
+		}
+	}
+}
+
+// TestProcessPublishesWhenEnqueueDoesNotStick proves the enqueue-first hold
+// path: when the transcode enqueue does not result in a live job (enqueue error,
+// or the runtime gate flipped off between the readiness check and the enqueue),
+// the video publishes immediately instead of stranding in a hold nothing will
+// release. publish() re-fires the transcode hook — a deliberate idempotent
+// retry — so the recorder sees two enqueue attempts.
+func TestProcessPublishesWhenEnqueueDoesNotStick(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	var published []uuid.UUID
+	var transcoded []string
+	svc := NewService(repo, memBackend(t),
+		WithPublishHook(func(_ context.Context, id uuid.UUID) { published = append(published, id) }),
+		WithTranscodeHook(func(_ context.Context, _ uuid.UUID, key string) { transcoded = append(transcoded, key) }),
+		WithTranscodeReadinessFunc(func() bool { return true }),
+		// The enqueue "fails": no live job ever appears.
+		WithLiveTranscodeChecker(func(_ context.Context, _ uuid.UUID) bool { return false }),
+	)
+	id := uploadAndProcess(t, svc, owner, CreateInput{Title: "no-job", Privacy: "public", PublishAfterTranscode: true})
+
+	if got := repo.videos[id].State; got != "published" {
+		t.Fatalf("state = %q, want published (an enqueue that did not stick must not hold)", got)
+	}
+	if len(published) != 1 {
+		t.Fatalf("publish hooks = %v, want exactly one", published)
+	}
+	if len(transcoded) != 2 {
+		t.Fatalf("transcode enqueue attempts = %d (%v), want 2 (hold attempt + publish retry)", len(transcoded), transcoded)
+	}
+}
+
+// TestUpdateToggleStrandRaceReleasesImmediately proves the toggle's
+// check-then-hold race is closed: the live-job check passes, the last job
+// completes before the hold write (its completion hook saw 'published' and
+// no-op'd), and the post-write re-check releases the video immediately instead
+// of stranding it until the 12h sweeper.
+func TestUpdateToggleStrandRaceReleasesImmediately(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	var published []uuid.UUID
+	calls := 0
+	svc := NewService(repo, memBackend(t),
+		WithPublishHook(func(_ context.Context, id uuid.UUID) { published = append(published, id) }),
+		WithTranscodeReadinessFunc(func() bool { return true }),
+		// First check (admission): a job is live. Second check (post-hold-write):
+		// it completed in the window.
+		WithLiveTranscodeChecker(func(_ context.Context, _ uuid.UUID) bool {
+			calls++
+			return calls == 1
+		}),
+	)
+	id := uploadAndProcess(t, svc, owner, CreateInput{Title: "fast", Privacy: "private"})
+	publishedAtProcess := len(published) // Process published it (private)
+
+	updated, err := svc.Update(context.Background(), owner, id, UpdateInput{
+		Privacy: strPtr("public"), PublishAfterTranscode: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.State != "published" {
+		t.Fatalf("state after strand-race toggle = %q, want published (released immediately)", updated.State)
+	}
+	if got := repo.videos[id].State; got != "published" {
+		t.Fatalf("stored state = %q, want published", got)
+	}
+	if calls != 2 {
+		t.Fatalf("live-job checks = %d, want 2 (admission + post-write re-check)", calls)
+	}
+	if len(published) != publishedAtProcess+1 {
+		t.Fatalf("publish hooks after release = %d, want %d (exactly one release fire)", len(published), publishedAtProcess+1)
+	}
+}
+
+// TestUpdateToggleOffReleasesHeldVideo proves PATCHing the flag OFF on a held
+// video honors the intent: the hold is released through the CAS (publish hooks
+// fire once) and the flag is stored false.
+func TestUpdateToggleOffReleasesHeldVideo(t *testing.T) {
+	var published []uuid.UUID
+	var transcoded []string
+	svc, repo, id := holdHarness(t, CreateInput{Title: "held", Privacy: "public", PublishAfterTranscode: true},
+		true, &published, &transcoded)
+	if repo.videos[id].State != "transcoding" || len(published) != 0 {
+		t.Fatalf("precondition: state=%q published=%v", repo.videos[id].State, published)
+	}
+	owner := repo.videos[id].OwnerID
+
+	updated, err := svc.Update(context.Background(), owner, id, UpdateInput{PublishAfterTranscode: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.State != "published" {
+		t.Fatalf("state after toggle off = %q, want published (hold released)", updated.State)
+	}
+	if got := repo.videos[id].State; got != "published" {
+		t.Fatalf("stored state = %q, want published", got)
+	}
+	if updated.PublishAfterTranscode {
+		t.Errorf("publish_after_transcode still true after toggle off")
+	}
+	if len(published) != 1 || published[0] != id {
+		t.Errorf("publish hooks after toggle-off release = %v, want [%s] exactly once", published, id)
+	}
+	if len(transcoded) != 1 {
+		t.Errorf("transcode hook re-fired on toggle-off release: %v", transcoded)
 	}
 }

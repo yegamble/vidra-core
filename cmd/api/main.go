@@ -649,34 +649,43 @@ func run() error {
 		transcodesvc *transcode.Service
 		videosvc     *video.Service
 	)
-	// Completion hook, fired per successfully completed job. Always registered: it
-	// preserves the IPFS mirror HLS-tree pin (P19.4, when IPFS is on) AND releases
-	// a publish-after-transcode hold once the video's LAST job finishes (0098) —
-	// HasLiveJob false means this was the last, so publish it through the real
-	// publish transition. Best-effort; a hook failure never fails the job.
+	// releaseHold releases a publish-after-transcode hold once no live job
+	// remains (0098), shared by the completion and terminal-failure hooks. The
+	// no-live-job gate uses LiveJob — the raw check that SURFACES the lookup
+	// error — not HasLiveJob, whose fail-busy posture would let a transient DB
+	// error at last-job completion suppress the release until the stuck sweeper.
+	// "Undetermined" attempts the release instead: the state-guarded CAS inside
+	// ReleaseTranscodeHold makes an over-eager attempt harmless.
+	releaseHold := func(ctx context.Context, videoID uuid.UUID) {
+		if videosvc == nil || transcodesvc == nil {
+			return
+		}
+		if live, err := transcodesvc.LiveJob(ctx, videoID); err == nil && live {
+			return // more jobs still running for this video; the last one releases
+		}
+		if err := videosvc.ReleaseTranscodeHold(ctx, videoID); err != nil {
+			logger.Warn("release transcode hold failed", "video_id", videoID, "error", err)
+		}
+	}
+	// mirrorSync is the IPFS mirror's HLS-tree pin on transcode completion
+	// (P19.4). Gated on the IPFS tiers so it stays a no-op otherwise.
+	mirrorSync := func(ctx context.Context, videoID uuid.UUID) {
+		if !cfg.IPFSEnabled && !privateEnabled {
+			return
+		}
+		if err := ipfsMirror.OnTranscodeComplete(ctx, videoID); err != nil {
+			logger.Warn("ipfs mirror transcode-complete sync failed", "video_id", videoID, "error", err)
+		}
+	}
+	// Completion hook, fired per successfully completed job: release the hold
+	// FIRST, then sync the mirror — see composeTranscodeCompletion for why the
+	// order is load-bearing. Best-effort; a hook failure never fails the job.
 	var tcopts []transcode.Option
-	tcopts = append(tcopts, transcode.WithCompletionHook(func(ctx context.Context, videoID uuid.UUID) {
-		if cfg.IPFSEnabled || privateEnabled {
-			if err := ipfsMirror.OnTranscodeComplete(ctx, videoID); err != nil {
-				logger.Warn("ipfs mirror transcode-complete sync failed", "video_id", videoID, "error", err)
-			}
-		}
-		if videosvc != nil && transcodesvc != nil && !transcodesvc.HasLiveJob(ctx, videoID) {
-			if err := videosvc.ReleaseTranscodeHold(ctx, videoID); err != nil {
-				logger.Warn("release transcode hold on completion failed", "video_id", videoID, "error", err)
-			}
-		}
-	}))
+	tcopts = append(tcopts, transcode.WithCompletionHook(composeTranscodeCompletion(releaseHold, mirrorSync)))
 	// Terminal-failure hook (per dead-lettered job): release a publish-after-
 	// transcode hold so a video whose transcode permanently failed still publishes
 	// from its (playable) original rather than staying hidden forever (0098).
-	tcopts = append(tcopts, transcode.WithFailureHook(func(ctx context.Context, videoID uuid.UUID) {
-		if videosvc != nil && transcodesvc != nil && !transcodesvc.HasLiveJob(ctx, videoID) {
-			if err := videosvc.ReleaseTranscodeHold(ctx, videoID); err != nil {
-				logger.Warn("release transcode hold on terminal failure failed", "video_id", videoID, "error", err)
-			}
-		}
-	}))
+	tcopts = append(tcopts, transcode.WithFailureHook(releaseHold))
 	// Runtime gates (config-parity W10): transcoding_enabled is consulted at
 	// enqueue AND pickup; transcoding_concurrency per drain tick.
 	tcopts = append(tcopts,
@@ -1759,6 +1768,26 @@ func runScheduledPublishWorker(ctx context.Context, logger *slog.Logger, svc *vi
 			if n > 0 {
 				logger.Info("scheduled publish sweep published videos", "count", n)
 			}
+		}
+	}
+}
+
+// composeTranscodeCompletion builds the transcode completion hook: the
+// publish-after-transcode hold release runs BEFORE the IPFS mirror sync, and
+// that order is load-bearing. The mirror routes eligibility on COMMITTED state
+// (internal/ipfsmirror Route: any non-published video → NetworkNone), so
+// syncing while the video is still parked in 'transcoding' would skip the
+// HLS-tree pin — permanently, because the later publish-hook SyncVideo only
+// re-pins single-file refs (videoFileMirrorClass deliberately excludes 'hls').
+// Releasing first is safe for the normal (non-held) path: the release is a
+// state-guarded CAS no-op for any video not in the 'transcoding' state.
+func composeTranscodeCompletion(releaseHold, mirrorSync func(context.Context, uuid.UUID)) func(context.Context, uuid.UUID) {
+	return func(ctx context.Context, videoID uuid.UUID) {
+		if releaseHold != nil {
+			releaseHold(ctx, videoID)
+		}
+		if mirrorSync != nil {
+			mirrorSync(ctx, videoID)
 		}
 	}
 }

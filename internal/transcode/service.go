@@ -224,6 +224,17 @@ func (s *Service) HasLiveJob(ctx context.Context, videoID uuid.UUID) bool {
 	return err != nil || live
 }
 
+// LiveJob is HasLiveJob with the lookup error surfaced, so callers choose their
+// own failure posture. HasLiveJob's fail-busy default is right for ADMISSION
+// decisions (refuse a replacement, enter a hold) but wrong for RELEASE
+// decisions: treating a transient DB error at last-job completion as "still
+// busy" would suppress a publish-after-transcode release until the stuck
+// sweeper. Release call sites treat "undetermined" as releasable instead — the
+// state-guarded release CAS makes an over-eager attempt harmless.
+func (s *Service) LiveJob(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	return s.repo.HasLiveTranscodeJob(ctx, videoID)
+}
+
 // Invalidate drops a video's streaming playlist + derivative rows (config-
 // parity W14): when a source replacement lands while transcoding is
 // unavailable, old HLS and progressive Web Videos must stop serving the

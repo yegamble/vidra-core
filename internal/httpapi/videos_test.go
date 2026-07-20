@@ -481,6 +481,19 @@ func (f *videoFakeRepo) ListStuckTranscodingVideos(_ context.Context, a sqlcgen.
 	return ids, nil
 }
 
+// PublishTranscodingVideo mirrors the release CAS: published only while still
+// held, reporting whether this call won the transition.
+func (f *videoFakeRepo) PublishTranscodingVideo(_ context.Context, id uuid.UUID) (int64, error) {
+	r, ok := f.videos[id]
+	if !ok || r.State != "transcoding" {
+		return 0, nil
+	}
+	r.State = "published"
+	r.UpdatedAt = time.Now()
+	f.videos[id] = r
+	return 1, nil
+}
+
 func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error) {
 	var out []sqlcgen.ListPublicVideosByChannelRow
 	for _, r := range f.videos {
