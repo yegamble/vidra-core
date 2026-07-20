@@ -641,18 +641,42 @@ func run() error {
 	} else if cfg.TranscodingEnabled {
 		logger.Warn("TRANSCODING_ENABLED=true but ffmpeg/ffprobe not on PATH; transcoding disabled")
 	}
-	// IPFS mirror (P19.4): on transcode completion, add+pin the finalized VOD HLS
-	// tree as one directory (car_root) row and refresh the VP9/WebM alternate — for
-	// eligible (public+published) videos only; re-checked in the hook. Best-effort;
-	// registered only when IPFS_ENABLED to avoid a no-op hook.
+	// transcodesvc + videosvc are assigned below; the completion/failure hooks and
+	// the video-service transcode seams only run post-startup (worker goroutines or
+	// request handlers), so these deferred-assignment closures see the built
+	// services. Nil-guarded regardless (mirrors the fedsvc/atprotosvc seam above).
+	var (
+		transcodesvc *transcode.Service
+		videosvc     *video.Service
+	)
+	// Completion hook, fired per successfully completed job. Always registered: it
+	// preserves the IPFS mirror HLS-tree pin (P19.4, when IPFS is on) AND releases
+	// a publish-after-transcode hold once the video's LAST job finishes (0098) —
+	// HasLiveJob false means this was the last, so publish it through the real
+	// publish transition. Best-effort; a hook failure never fails the job.
 	var tcopts []transcode.Option
-	if cfg.IPFSEnabled || privateEnabled {
-		tcopts = append(tcopts, transcode.WithCompletionHook(func(ctx context.Context, videoID uuid.UUID) {
+	tcopts = append(tcopts, transcode.WithCompletionHook(func(ctx context.Context, videoID uuid.UUID) {
+		if cfg.IPFSEnabled || privateEnabled {
 			if err := ipfsMirror.OnTranscodeComplete(ctx, videoID); err != nil {
 				logger.Warn("ipfs mirror transcode-complete sync failed", "video_id", videoID, "error", err)
 			}
-		}))
-	}
+		}
+		if videosvc != nil && transcodesvc != nil && !transcodesvc.HasLiveJob(ctx, videoID) {
+			if err := videosvc.ReleaseTranscodeHold(ctx, videoID); err != nil {
+				logger.Warn("release transcode hold on completion failed", "video_id", videoID, "error", err)
+			}
+		}
+	}))
+	// Terminal-failure hook (per dead-lettered job): release a publish-after-
+	// transcode hold so a video whose transcode permanently failed still publishes
+	// from its (playable) original rather than staying hidden forever (0098).
+	tcopts = append(tcopts, transcode.WithFailureHook(func(ctx context.Context, videoID uuid.UUID) {
+		if videosvc != nil && transcodesvc != nil && !transcodesvc.HasLiveJob(ctx, videoID) {
+			if err := videosvc.ReleaseTranscodeHold(ctx, videoID); err != nil {
+				logger.Warn("release transcode hold on terminal failure failed", "video_id", videoID, "error", err)
+			}
+		}
+	}))
 	// Runtime gates (config-parity W10): transcoding_enabled is consulted at
 	// enqueue AND pickup; transcoding_concurrency per drain tick.
 	tcopts = append(tcopts,
@@ -663,8 +687,20 @@ func run() error {
 			return settingssvc.Int(instancesettings.KeyTranscodingConcurrency)
 		}),
 	)
-	transcodesvc := transcode.NewService(db.Queries(), hlsTranscoder, tcopts...)
+	transcodesvc = transcode.NewService(db.Queries(), hlsTranscoder, tcopts...)
 	opts = append(opts, httpapi.WithTranscodeService(transcodesvc))
+	// Publish-after-transcode seams (0098): whether a transcode will actually run
+	// (so a video is held only when the hold can be released) and whether a live
+	// job exists (the update-toggle edge case). Both consult transcodesvc, which
+	// reports Capable()=false when no ffmpeg-backed transcoder is wired.
+	vopts = append(vopts,
+		video.WithTranscodeReadinessFunc(func() bool {
+			return transcodesvc.Capable() && transcodesvc.Enabled()
+		}),
+		video.WithLiveTranscodeChecker(func(ctx context.Context, videoID uuid.UUID) bool {
+			return transcodesvc.HasLiveJob(ctx, videoID)
+		}),
+	)
 	if hlsTranscoder != nil {
 		vopts = append(vopts, video.WithTranscodeHook(func(ctx context.Context, videoID uuid.UUID, sourceKey string) {
 			// Best-effort: an enqueue failure must never block the publish.
@@ -762,7 +798,7 @@ func run() error {
 			}),
 		)
 	}
-	videosvc := video.NewService(db.Queries(), blobs, vopts...)
+	videosvc = video.NewService(db.Queries(), blobs, vopts...)
 	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(blobs))
 
 	// When federation is on, fan a local comment on a local video out to the
@@ -1198,6 +1234,17 @@ func run() error {
 		defer workerCancel()
 		go runScheduledPublishWorker(workerCtx, logger, videosvc)
 		logger.Info("scheduled publish worker started")
+	}
+
+	// Release publish-after-transcode holds stuck past the timeout (0098). Always
+	// on: the stuck scan is a cheap partial-index lookup. This is the safety net
+	// for crashed workers / lost jobs — the primary release paths are the
+	// transcode completion and terminal-failure hooks.
+	{
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runTranscodeHoldSweepWorker(workerCtx, logger, videosvc, cfg.TranscodeHoldTimeout)
+		logger.Info("transcode hold sweep worker started", "timeout", cfg.TranscodeHoldTimeout)
 	}
 
 	// Drain the URL-import queue in the background (SSRF-guarded fetch → the same
@@ -1711,6 +1758,35 @@ func runScheduledPublishWorker(ctx context.Context, logger *slog.Logger, svc *vi
 			}
 			if n > 0 {
 				logger.Info("scheduled publish sweep published videos", "count", n)
+			}
+		}
+	}
+}
+
+// runTranscodeHoldSweepWorker releases publish-after-transcode videos stuck in
+// the 'transcoding' hold past the timeout (0098): a crashed worker or a lost job
+// would otherwise hide a video forever, so the sweeper publishes it from its
+// (playable) original. Modeled on runScheduledPublishWorker; a rare backstop, so
+// a released batch is logged at warn level.
+func runTranscodeHoldSweepWorker(ctx context.Context, logger *slog.Logger, svc *video.Service, timeout time.Duration) {
+	const (
+		interval = 5 * time.Minute
+		batch    = 20
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := svc.ReleaseStuckTranscodeHolds(ctx, timeout, batch)
+			if err != nil {
+				logger.Warn("transcode hold sweep failed", "error", err)
+				continue
+			}
+			if n > 0 {
+				logger.Warn("transcode hold sweep released stuck videos", "count", n)
 			}
 		}
 	}
