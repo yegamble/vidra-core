@@ -173,6 +173,8 @@ type Repository interface {
 	GetVideoEmbedPrivacy(ctx context.Context, videoID uuid.UUID) (sqlcgen.GetVideoEmbedPrivacyRow, error)
 	SetVideoEmbedPrivacy(ctx context.Context, arg sqlcgen.SetVideoEmbedPrivacyParams) error
 	ListDueScheduledVideos(ctx context.Context, limit int32) ([]sqlcgen.ListDueScheduledVideosRow, error)
+	ListStuckTranscodingVideos(ctx context.Context, arg sqlcgen.ListStuckTranscodingVideosParams) ([]uuid.UUID, error)
+	PublishTranscodingVideo(ctx context.Context, id uuid.UUID) (int64, error)
 	UpsertVideoMetadata(ctx context.Context, arg sqlcgen.UpsertVideoMetadataParams) (sqlcgen.VideoMetadatum, error)
 	GetVideoMetadata(ctx context.Context, videoID uuid.UUID) (sqlcgen.VideoMetadatum, error)
 	IncrementVideoViews(ctx context.Context, videoID uuid.UUID) (int64, error)
@@ -304,6 +306,17 @@ type Service struct {
 	// CreateDraft when the caller leaves a field unset (config-parity W9).
 	// nil = the shipped pre-W9 behaviour.
 	publishDefaults func() PublishDefaults
+	// transcodeWillRun reports whether a publish would actually enqueue a
+	// transcode job that runs — the runtime transcoding_enabled gate AND a wired
+	// transcoder (ffmpeg present). The publish-after-transcode hold consults it so
+	// a video is never parked behind a gate that can't open (transcoding
+	// off/unavailable => publish immediately). nil => treated as "will not run".
+	transcodeWillRun func() bool
+	// hasLiveTranscodeJob reports whether a live (pending/running) transcode job
+	// exists for a video. Wired to transcode.Service.HasLiveJob so the
+	// publish-after-transcode update edge case can decide whether to hold a
+	// just-published, not-yet-public video. nil => treated as "no live job".
+	hasLiveTranscodeJob func(ctx context.Context, videoID uuid.UUID) bool
 }
 
 // Option customises the Service.
@@ -485,6 +498,13 @@ type CreateInput struct {
 	// downloads regardless; instance on => this flag decides. nil seeds the
 	// instance's default_download_enabled.
 	DownloadEnabled *bool
+	// PublishAfterTranscode opts the video into the publish-after-transcode hold:
+	// once processed it parks in 'transcoding' (hidden from every public surface)
+	// until its HLS transcode completes, rather than publishing while transcoding
+	// (the default false — current behavior). Ignored when transcoding is
+	// disabled/unavailable (the video publishes immediately) and when a future
+	// publish_at is set (time-gating takes precedence, v1 scope).
+	PublishAfterTranscode bool
 }
 
 // Per-video comment-policy values (config-parity W9). PeerTube's third tier
@@ -523,6 +543,24 @@ func shippedPublishDefaults() PublishDefaults {
 // so admin changes apply without a restart.
 func WithPublishDefaultsFunc(fn func() PublishDefaults) Option {
 	return func(s *Service) { s.publishDefaults = fn }
+}
+
+// WithTranscodeReadinessFunc wires the "will a transcode actually run" predicate
+// consulted by the publish-after-transcode hold (transcoder wired AND runtime
+// transcoding_enabled). When it returns false the flag is ignored and Process
+// publishes immediately — a video is never stranded behind a hold that can never
+// be released. nil (the default) disables the hold entirely.
+func WithTranscodeReadinessFunc(fn func() bool) Option {
+	return func(s *Service) { s.transcodeWillRun = fn }
+}
+
+// WithLiveTranscodeChecker wires the live-transcode-job predicate consulted by
+// the publish-after-transcode update edge case (a PATCH toggling the flag on an
+// already-published, not-yet-public video with a job still running holds it in
+// 'transcoding' until that job finishes). nil (the default) leaves the flag a
+// pure metadata write with no state change.
+func WithLiveTranscodeChecker(fn func(ctx context.Context, videoID uuid.UUID) bool) Option {
+	return func(s *Service) { s.hasLiveTranscodeJob = fn }
 }
 
 // CreateDraft creates a new draft video under the given channel. Ownership is
@@ -574,6 +612,8 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 		IsSensitive:     in.IsSensitive,
 		CommentsPolicy:  commentsPolicy,
 		DownloadEnabled: downloadEnabled,
+
+		PublishAfterTranscode: in.PublishAfterTranscode,
 	})
 	if err != nil {
 		return sqlcgen.Video{}, err
@@ -942,12 +982,32 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 				return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "quarantined"})
 			}
 		}
+		v, gerr := s.GetByID(ctx, videoID)
 		// Scheduled-publish hold (§17): a future publish_at parks the processed
 		// video in 'scheduled' instead of publishing. No hooks fire yet — the
 		// sweeper (PublishDue) runs them when the video comes due, through the
-		// same publish transition below.
-		if v, err := s.GetByID(ctx, videoID); err == nil && v.PublishAt.Valid && v.PublishAt.Time.After(time.Now()) {
+		// same publish transition below. publish_at takes precedence over the
+		// publish-after-transcode flag (v1 scope: no combined time+transcode gate).
+		if gerr == nil && v.PublishAt.Valid && v.PublishAt.Time.After(time.Now()) {
 			return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "scheduled"})
+		}
+		// Publish-after-transcode hold: enqueue the transcode FIRST (publish()
+		// normally fires this hook; we are deliberately NOT publishing yet), then
+		// park the video in 'transcoding' — hidden from every public surface,
+		// which all filter on state='published' — only if a live job verifiably
+		// exists. An enqueue failure, or the runtime transcoding gate flipping
+		// off between the readiness check and the enqueue, publishes immediately
+		// instead: a video must never strand behind a hold that nothing will
+		// release. The release paths (completion hook, terminal-failure hook,
+		// stuck sweeper) publish it when the transcode finishes.
+		if gerr == nil && v.PublishAfterTranscode && s.transcodeWillRun != nil && s.transcodeWillRun() && s.onTranscode != nil {
+			s.onTranscode(ctx, videoID, originalKey)
+			if s.hasLiveTranscodeJob == nil || s.hasLiveTranscodeJob(ctx, videoID) {
+				return s.enterTranscodeHold(ctx, videoID)
+			}
+			// The enqueue did not stick — fall through to publish(). Its own
+			// transcode-enqueue re-fire is an idempotent no-op for a job that DID
+			// land, or a retry for one that failed.
 		}
 		return s.publish(ctx, videoID, originalKey)
 	}
@@ -957,7 +1017,9 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 // publish is THE publish transition: it flips the state and fires the
 // federation-announce and transcode-enqueue hooks. Both Process (immediate
 // publish) and PublishDue (scheduled publish coming due) run through it, so
-// scheduled videos get the exact same side effects as direct ones.
+// scheduled videos get the exact same side effects as direct ones. (Releasing a
+// publish-after-transcode hold takes the separate CAS path in
+// ReleaseTranscodeHold: same publish hooks, no transcode re-enqueue.)
 func (s *Service) publish(ctx context.Context, videoID uuid.UUID, originalKey string) (sqlcgen.Video, error) {
 	v, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "published"})
 	if err == nil && v.State == "published" {
@@ -971,6 +1033,70 @@ func (s *Service) publish(ctx context.Context, videoID uuid.UUID, originalKey st
 		}
 	}
 	return v, err
+}
+
+// enterTranscodeHold parks a video in the 'transcoding' publish-after-transcode
+// hold, then immediately re-checks for a live job: the transcode may have raced
+// to completion between the caller's live-job check and the hold write — its
+// completion hook saw a non-held state and no-op'd — so without this re-check
+// the video would sit stranded until the stuck sweeper. When no job remains the
+// hold is released on the spot (the CAS in ReleaseTranscodeHold keeps a
+// concurrent release from double-firing hooks).
+func (s *Service) enterTranscodeHold(ctx context.Context, videoID uuid.UUID) (sqlcgen.Video, error) {
+	held, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "transcoding"})
+	if err != nil {
+		return held, err
+	}
+	if s.hasLiveTranscodeJob != nil && !s.hasLiveTranscodeJob(ctx, videoID) {
+		if rerr := s.ReleaseTranscodeHold(ctx, videoID); rerr == nil {
+			held.State = "published"
+		}
+	}
+	return held, nil
+}
+
+// ReleaseTranscodeHold publishes a video held in the 'transcoding' state
+// (publish-after-transcode) so the federation/ATProto/search/IPFS publish hooks
+// fire at true publish time. The transition is a CAS — state flips to published
+// only WHERE it is still 'transcoding', and the hooks fire only when this call
+// won that transition — so the concurrent release triggers (completion hook,
+// terminal-failure hook, stuck sweeper, PATCH flag-off) publish exactly once.
+// A no-op (nil) for a video in any other state, including one already released
+// by a racer. The transcode-enqueue hook is deliberately NOT re-fired: the
+// transcode already ran while the video was held.
+func (s *Service) ReleaseTranscodeHold(ctx context.Context, videoID uuid.UUID) error {
+	n, err := s.repo.PublishTranscodingVideo(ctx, videoID)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil // not held, or a concurrent release won the CAS
+	}
+	for _, hook := range s.onPublish {
+		hook(ctx, videoID)
+	}
+	return nil
+}
+
+// ReleaseStuckTranscodeHolds is the safety-net sweeper: it publishes videos that
+// have been parked in the 'transcoding' hold longer than olderThan (a crashed
+// worker or a lost job), releasing each through ReleaseTranscodeHold. Returns how
+// many were released; a per-video failure is skipped so the next sweep retries.
+func (s *Service) ReleaseStuckTranscodeHolds(ctx context.Context, olderThan time.Duration, limit int32) (int, error) {
+	ids, err := s.repo.ListStuckTranscodingVideos(ctx, sqlcgen.ListStuckTranscodingVideosParams{
+		Cutoff:      time.Now().Add(-olderThan),
+		ResultLimit: limit,
+	})
+	if err != nil {
+		return 0, err
+	}
+	released := 0
+	for _, id := range ids {
+		if err := s.ReleaseTranscodeHold(ctx, id); err == nil {
+			released++
+		}
+	}
+	return released, nil
 }
 
 // QuarantinedVideo is a queue entry in the moderation quarantine review list:
@@ -1535,6 +1661,11 @@ type UpdateInput struct {
 	// DownloadEnabled: nil leaves the per-video download policy unchanged; a
 	// non-nil value sets it.
 	DownloadEnabled *bool
+	// PublishAfterTranscode: nil leaves the flag unchanged; a non-nil value sets
+	// it. Setting it true on an already-published, not-yet-public video with a
+	// live transcode job holds the video in 'transcoding' until that job finishes
+	// (see UpdateForActor). It is otherwise a plain metadata write.
+	PublishAfterTranscode *bool
 }
 
 // Update changes a video's mutable metadata. It preserves the owner-only
@@ -1584,6 +1715,8 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 		IsSensitive:     in.IsSensitive,
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
+
+		PublishAfterTranscode: in.PublishAfterTranscode,
 	})
 	if err != nil {
 		return sqlcgen.Video{}, err
@@ -1597,6 +1730,42 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 			if err := s.repo.InsertVideoTags(ctx, sqlcgen.InsertVideoTagsParams{VideoID: id, Tags: tags}); err != nil {
 				return sqlcgen.Video{}, err
 			}
+		}
+	}
+	// Publish-after-transcode toggle edge cases. v is the pre-update row, so its
+	// State/Privacy are the values "at the start" of this update.
+	//
+	// ON: for a video that is ALREADY published but has never been publicly
+	// visible (privacy was not 'public' at the start) with a live transcode job
+	// AND transcoding actually running (a zombie pending job while the runtime
+	// gate is off must not hold a video nothing will release), park it in
+	// 'transcoding' until that job completes — so the toggle works even when a
+	// fast upload published (auto-created private) before the user hit Publish.
+	// A publicly-visible video is never yanked back to hidden, and a video with
+	// no live job just stores the flag (state unchanged). enterTranscodeHold
+	// re-checks the live job after the hold write: the last job may complete in
+	// the window between the check and the write (its completion hook saw
+	// 'published' and no-op'd), in which case the hold is released immediately
+	// rather than stranding until the sweeper.
+	//
+	// OFF: for a currently HELD video, honor the intent and release the hold now
+	// (the CAS publishes exactly once even against a racing completion hook).
+	if in.PublishAfterTranscode != nil {
+		switch {
+		case *in.PublishAfterTranscode &&
+			v.State == "published" && v.Privacy != "public" &&
+			s.transcodeWillRun != nil && s.transcodeWillRun() &&
+			s.hasLiveTranscodeJob != nil && s.hasLiveTranscodeJob(ctx, id):
+			held, herr := s.enterTranscodeHold(ctx, id)
+			if herr != nil {
+				return sqlcgen.Video{}, herr
+			}
+			updated = held
+		case !*in.PublishAfterTranscode && v.State == "transcoding":
+			if rerr := s.ReleaseTranscodeHold(ctx, id); rerr != nil {
+				return sqlcgen.Video{}, rerr
+			}
+			updated.State = "published"
 		}
 	}
 	for _, hook := range s.onUpdate {

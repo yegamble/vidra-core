@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled;
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -24,7 +24,7 @@ LIMIT $2 OFFSET $3;
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at, v.is_sensitive,
-       v.comments_policy, v.download_enabled,
+       v.comments_policy, v.download_enabled, v.publish_after_transcode,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name
 FROM videos v
@@ -463,16 +463,28 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     is_sensitive = COALESCE(sqlc.narg('is_sensitive'), is_sensitive),
     comments_policy  = COALESCE(sqlc.narg('comments_policy'), comments_policy),
     download_enabled = COALESCE(sqlc.narg('download_enabled'), download_enabled),
+    publish_after_transcode = COALESCE(sqlc.narg('publish_after_transcode'), publish_after_transcode),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode;
+
+-- name: PublishTranscodingVideo :execrows
+-- The publish-after-transcode release CAS (0098): flips a HELD video to
+-- published only while it is still in the 'transcoding' state, so concurrent
+-- release triggers (completion hook, terminal-failure hook, stuck sweeper)
+-- transition it exactly once — the caller fires the publish hooks only when the
+-- returned row count says this call won the transition.
+UPDATE videos
+SET state      = 'published',
+    updated_at = now()
+WHERE id = $1 AND state = 'transcoding';
 
 -- name: ListDueScheduledVideos :many
 -- Videos whose scheduled publish time has arrived, joined with their stored
@@ -484,6 +496,17 @@ JOIN video_files f ON f.video_id = v.id AND f.kind = 'original'
 WHERE v.state = 'scheduled' AND v.publish_at <= now()
 ORDER BY v.publish_at, v.id
 LIMIT $1;
+
+-- name: ListStuckTranscodingVideos :many
+-- Videos stuck in the publish-after-transcode hold past the safety timeout (a
+-- crashed worker or a lost job): the release sweeper publishes them anyway (the
+-- retained original is playable — hiding a video forever is worse). updated_at is
+-- the hold-start moment. Oldest hold first.
+SELECT v.id
+FROM videos v
+WHERE v.state = 'transcoding' AND v.updated_at < sqlc.arg('cutoff')
+ORDER BY v.updated_at, v.id
+LIMIT sqlc.arg('result_limit');
 
 -- name: UploadRequiresQuarantine :one
 -- Whether a finished upload of this video must park in 'quarantined' instead of

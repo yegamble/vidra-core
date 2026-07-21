@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +41,10 @@ type fakeRepo struct {
 	// requiresQuarantine mirrors the UploadRequiresQuarantine gate result for
 	// the test subject's uploads (true = role 'user' without bypass).
 	requiresQuarantine bool
+	// mu guards the release-CAS method (PublishTranscodingVideo), the one path
+	// tests exercise concurrently (racing ReleaseTranscodeHold callers). The
+	// other methods stay unguarded — tests call them from one goroutine.
+	mu sync.Mutex
 }
 
 func captionKeyFor(videoID uuid.UUID, lang string) string { return videoID.String() + "|" + lang }
@@ -227,14 +232,16 @@ func (f *fakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoParams) (
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
 		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive,
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		PublishAfterTranscode: a.PublishAfterTranscode,
+		CreatedAt:             time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
 		ID: v.ID, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 		Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 		Category: v.Category, Language: v.Language, License: v.License,
 		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive,
-		OwnerID: f.owner,
+		PublishAfterTranscode: v.PublishAfterTranscode,
+		OwnerID:               f.owner,
 	}
 	return v, nil
 }
@@ -252,7 +259,7 @@ func rowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		Category: r.Category, Language: r.Language, License: r.License, PublishAt: r.PublishAt,
-		IsSensitive: r.IsSensitive,
+		IsSensitive: r.IsSensitive, PublishAfterTranscode: r.PublishAfterTranscode,
 	}
 }
 
@@ -312,6 +319,9 @@ func (f *fakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoParams) (
 	}
 	if a.PublishAt.Valid {
 		r.PublishAt = a.PublishAt
+	}
+	if a.PublishAfterTranscode != nil {
+		r.PublishAfterTranscode = *a.PublishAfterTranscode
 	}
 	r.UpdatedAt = time.Now()
 	f.videos[a.ID] = r
