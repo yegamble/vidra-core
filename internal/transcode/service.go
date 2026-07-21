@@ -103,6 +103,7 @@ type Service struct {
 	repo       Repository
 	transcoder Transcoder
 	onComplete func(ctx context.Context, videoID uuid.UUID)
+	onFail     func(ctx context.Context, videoID uuid.UUID)
 	// enabledFn is the runtime transcoding_enabled gate (config-parity W10),
 	// consulted at BOTH job enqueue and worker pickup — never at construction
 	// (the boot-baked-worker gotcha: the worker is always wired so a runtime
@@ -124,6 +125,16 @@ type Option func(*Service)
 // failures must not fail the job (the transcode already succeeded).
 func WithCompletionHook(fn func(ctx context.Context, videoID uuid.UUID)) Option {
 	return func(s *Service) { s.onComplete = fn }
+}
+
+// WithFailureHook registers a best-effort callback fired after a transcode job is
+// permanently dead-lettered (state 'failed' after maxAttempts). The
+// publish-after-transcode hold uses it to release a held video even when its
+// transcode never completes — a video hidden forever is worse than one served
+// from its (playable) original. Runs inline on the worker goroutine; it must not
+// block and its failures must not affect the queue.
+func WithFailureHook(fn func(ctx context.Context, videoID uuid.UUID)) Option {
+	return func(s *Service) { s.onFail = fn }
 }
 
 // WithEnabledFunc wires the runtime transcoding_enabled gate (config-parity
@@ -211,6 +222,17 @@ func (s *Service) EnqueueTarget(ctx context.Context, videoID uuid.UUID, sourceKe
 func (s *Service) HasLiveJob(ctx context.Context, videoID uuid.UUID) bool {
 	live, err := s.repo.HasLiveTranscodeJob(ctx, videoID)
 	return err != nil || live
+}
+
+// LiveJob is HasLiveJob with the lookup error surfaced, so callers choose their
+// own failure posture. HasLiveJob's fail-busy default is right for ADMISSION
+// decisions (refuse a replacement, enter a hold) but wrong for RELEASE
+// decisions: treating a transient DB error at last-job completion as "still
+// busy" would suppress a publish-after-transcode release until the stuck
+// sweeper. Release call sites treat "undetermined" as releasable instead — the
+// state-guarded release CAS makes an over-eager attempt harmless.
+func (s *Service) LiveJob(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	return s.repo.HasLiveTranscodeJob(ctx, videoID)
 }
 
 // Invalidate drops a video's streaming playlist + derivative rows (config-
@@ -418,6 +440,12 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTransco
 				MasterKey: "",
 				State:     PlaylistFailed,
 			})
+		}
+		// Best-effort terminal-failure hook: release a publish-after-transcode
+		// hold so the video publishes from its (playable) original rather than
+		// staying hidden forever. Fired only on dead-letter, per completed video.
+		if s.onFail != nil {
+			s.onFail(ctx, row.VideoID)
 		}
 		return
 	}

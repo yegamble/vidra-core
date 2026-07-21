@@ -13216,7 +13216,7 @@ components:
           description: Present on every local video; omitted on remote cards.
         state:
           type: string
-          enum: [draft, processing, scheduled, quarantined, published, failed]
+          enum: [draft, processing, scheduled, quarantined, transcoding, published, failed]
           description: >-
             Publish lifecycle. "scheduled" means the upload finished processing
             but publish_at lies in the future; public surfaces (feed, search,
@@ -13224,8 +13224,12 @@ components:
             like any non-published video. "quarantined" means the instance
             holds new uploads for moderator review (QUARANTINE_NEW_UPLOADS):
             only the owner (studio badge) and moderators can see the video
-            until it is approved (published) or rejected (failed). Present on
-            every local video; omitted on remote cards.
+            until it is approved (published) or rejected (failed).
+            "transcoding" means the video opted into publish_after_transcode and
+            is held off every public surface until its HLS transcode completes;
+            like quarantine, only the owner and moderators can see it meanwhile,
+            and the release publishes it through the normal publish transition.
+            Present on every local video; omitted on remote cards.
         is_sensitive:
           type: boolean
           description: >-
@@ -13342,6 +13346,22 @@ components:
             availability for regular viewers is this flag AND the instance
             downloads feature (GET /instance features.downloads);
             moderators/admins bypass both.
+        publish_after_transcode:
+          type: boolean
+          description: >-
+            The per-video publish-timing opt-in. When true, a processed video is
+            held (state "transcoding") off every public surface until its HLS
+            transcode completes, instead of publishing while it transcodes
+            (default false). Present on the create/update/detail (owner-facing)
+            views; omitted on list/feed views and remote cards.
+        transcoding:
+          type: boolean
+          description: >-
+            DETAIL view only. True while a transcode job is still live for this
+            video — the "still processing" signal shown under the player. It
+            becomes false once the last job finishes, at which point hls_url
+            appears. Independent of publish_after_transcode: it is true for any
+            video with a running transcode. Omitted (absent = false) elsewhere.
         tags:
           type: array
           description: >-
@@ -13805,6 +13825,15 @@ components:
             instance-wide downloads_enabled gate (both must be on for regular
             viewers). Omitted (null) seeds the instance's
             default_download_enabled setting.
+        publish_after_transcode:
+          type: boolean
+          description: >-
+            Opt into publish-after-transcode (default false). When true, the
+            video is held (state "transcoding") off every public surface until
+            its HLS transcode completes, then publishes automatically. Ignored
+            when transcoding is disabled/unavailable (the video publishes
+            immediately) and when publish_at is set (time-gating takes
+            precedence).
     UpdateVideoRequest:
       type: object
       description: Partial update; provide at least one field.
@@ -13859,6 +13888,14 @@ components:
           description: >-
             Set the per-video download policy (omit to leave unchanged),
             layered on the instance-wide downloads_enabled gate.
+        publish_after_transcode:
+          type: boolean
+          description: >-
+            Set the publish-after-transcode opt-in (omit to leave unchanged).
+            Setting it true on an already-published video that has never been
+            publicly visible and still has a live transcode job holds the video
+            (state "transcoding") until that transcode completes; a
+            publicly-visible video is never pulled back to hidden.
     Caption:
       type: object
       description: A WebVTT caption track's metadata (the file is fetched separately).

@@ -560,6 +560,97 @@ func TestCompletionHookFiresOnlyOnSuccess(t *testing.T) {
 	}
 }
 
+// TestFailureHookFiresOnlyOnDeadLetter (0098): the terminal-failure hook fires
+// exactly once, only when a job is permanently dead-lettered (maxAttempts
+// reached) — never on an intermediate retry. It is the seam that releases a
+// publish-after-transcode hold so a video whose transcode never completes still
+// publishes from its playable original.
+func TestFailureHookFiresOnlyOnDeadLetter(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTranscoder{err: errors.New("boom")}
+	var got []uuid.UUID
+	svc := NewService(repo, tc, WithFailureHook(func(_ context.Context, id uuid.UUID) {
+		got = append(got, id)
+	}))
+	if err := svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4"); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	for i := 0; i < maxAttempts; i++ {
+		repo.job(t, videoID).NextAttemptAt = time.Now().Add(-time.Second)
+		if _, err := svc.DrainJobs(context.Background(), 10); err != nil {
+			t.Fatalf("DrainJobs: %v", err)
+		}
+		wantFires := 0
+		if i == maxAttempts-1 {
+			wantFires = 1 // only the final attempt dead-letters
+		}
+		if len(got) != wantFires {
+			t.Fatalf("after attempt %d: failure hook fired %d times, want %d", i+1, len(got), wantFires)
+		}
+	}
+	if len(got) != 1 || got[0] != videoID {
+		t.Fatalf("failure hook fired with %v, want [%s] exactly once at dead-letter", got, videoID)
+	}
+}
+
+// TestFailureHookDoesNotFireOnSuccess proves the terminal-failure hook never
+// fires for a job that completes.
+func TestFailureHookDoesNotFireOnSuccess(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTranscoder{res: media.HLSResult{MasterKey: "streaming-playlists/" + videoID.String() + "/master.m3u8"}}
+	fired := false
+	svc := NewService(repo, tc, WithFailureHook(func(_ context.Context, _ uuid.UUID) { fired = true }))
+	if err := svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4"); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := svc.DrainJobs(context.Background(), 10); err != nil {
+		t.Fatalf("DrainJobs: %v", err)
+	}
+	if fired {
+		t.Error("failure hook fired for a SUCCESSFUL job, want no fire")
+	}
+}
+
+// errLiveRepo fails the live-job lookup; every other Repository method is the
+// embedded nil interface (panics if reached — these tests never do).
+type errLiveRepo struct{ Repository }
+
+func (errLiveRepo) HasLiveTranscodeJob(context.Context, uuid.UUID) (bool, error) {
+	return false, errors.New("db down")
+}
+
+// TestLiveJobSurfacesErrorWhereHasLiveJobFailsBusy pins the two failure
+// postures: HasLiveJob reports a lookup error as busy (right for admission —
+// replace-conflict, hold entry), while LiveJob surfaces the error so RELEASE
+// call sites can treat "undetermined" as releasable instead of suppressing a
+// publish-after-transcode release forever.
+func TestLiveJobSurfacesErrorWhereHasLiveJobFailsBusy(t *testing.T) {
+	svc := NewService(errLiveRepo{}, nil)
+	id := uuid.New()
+	if !svc.HasLiveJob(context.Background(), id) {
+		t.Error("HasLiveJob on lookup error = false, want true (fail-busy admission posture)")
+	}
+	live, err := svc.LiveJob(context.Background(), id)
+	if err == nil {
+		t.Fatal("LiveJob swallowed the lookup error, want it surfaced")
+	}
+	if live {
+		t.Error("LiveJob on error reported live=true, want false with the error")
+	}
+
+	// And on a healthy repo the two agree.
+	okRepo := newFakeRepo()
+	okSvc := NewService(okRepo, nil)
+	if okSvc.HasLiveJob(context.Background(), id) {
+		t.Error("HasLiveJob with no jobs = true, want false")
+	}
+	if live, err := okSvc.LiveJob(context.Background(), id); err != nil || live {
+		t.Errorf("LiveJob with no jobs = (%v, %v), want (false, nil)", live, err)
+	}
+}
+
 func TestBackoffDoublesAndCaps(t *testing.T) {
 	cases := []struct {
 		attempts int

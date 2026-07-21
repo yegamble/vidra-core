@@ -143,6 +143,14 @@ type Config struct {
 	// true fails config validation with a documented defer note.
 	TranscodingAV1Enabled bool
 
+	// TranscodeHoldTimeout bounds how long a publish-after-transcode video may sit
+	// in the 'transcoding' hold before the stuck-hold sweeper publishes it anyway
+	// (a crashed worker or a lost job — the retained original is playable, so
+	// hiding it forever is worse). The sweeper runs every few minutes; this is the
+	// age threshold. Parsed by time.ParseDuration; default 12h. Tunable via
+	// TRANSCODE_HOLD_TIMEOUT.
+	TranscodeHoldTimeout time.Duration
+
 	// WhisperEnabled turns on auto-caption generation (fix_plan P13): a video
 	// owner may request an auto-generated WebVTT caption track, produced by
 	// extracting the audio (ffmpeg → 16 kHz mono WAV) and POSTing it to an
@@ -587,6 +595,7 @@ func Load() (*Config, error) {
 		TranscodingEnabled:             getEnvBool("TRANSCODING_ENABLED", true),
 		TranscodingVP9Enabled:          getEnvBool("TRANSCODING_VP9_ENABLED", false),
 		TranscodingAV1Enabled:          getEnvBool("TRANSCODING_AV1_ENABLED", false),
+		TranscodeHoldTimeout:           getEnvDuration("TRANSCODE_HOLD_TIMEOUT", 12*time.Hour),
 		WhisperEnabled:                 getEnvBool("WHISPER_ENABLED", false),
 		WhisperEndpoint:                strings.TrimRight(getEnv("WHISPER_ENDPOINT", ""), "/"),
 		WhisperDefaultLanguage:         strings.TrimSpace(getEnv("WHISPER_DEFAULT_LANGUAGE", "en")),
