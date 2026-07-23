@@ -293,6 +293,51 @@ func (f *videoFakeRepo) ListWatchHistory(_ context.Context, a sqlcgen.ListWatchH
 	return rows, nil
 }
 
+func (f *videoFakeRepo) ListWatchHistoryInProgress(_ context.Context, a sqlcgen.ListWatchHistoryInProgressParams) ([]sqlcgen.ListWatchHistoryInProgressRow, error) {
+	type entry struct {
+		vid uuid.UUID
+		m   historyMark
+	}
+	var list []entry
+	prefix := a.UserID.String() + "|"
+	for k, m := range f.history {
+		if strings.HasPrefix(k, prefix) {
+			list = append(list, entry{uuid.MustParse(strings.TrimPrefix(k, prefix)), m})
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool { return list[i].m.watchedAt.After(list[j].m.watchedAt) })
+	var rows []sqlcgen.ListWatchHistoryInProgressRow
+	for _, e := range list {
+		r, ok := f.videos[e.vid]
+		if !ok || r.Privacy != "public" || r.State != "published" {
+			continue
+		}
+		// Mirror the SQL filter: started (>= 5s) and not effectively finished
+		// (>= 95% of a known, positive duration).
+		if e.m.position < 5 {
+			continue
+		}
+		var duration *int32
+		if md, ok := f.metadata[e.vid]; ok {
+			duration = md.DurationSeconds
+		}
+		if duration != nil && *duration > 0 && float64(e.m.position)/float64(*duration) >= 0.95 {
+			continue
+		}
+		handle, name := f.channelInfo(r.ChannelID)
+		rows = append(rows, sqlcgen.ListWatchHistoryInProgressRow{
+			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			ChannelHandle: handle, ChannelDisplayName: name,
+			DurationSeconds: duration,
+			IsSensitive:     r.IsSensitive,
+			PositionSeconds: e.m.position, WatchedAt: e.m.watchedAt,
+		})
+	}
+	return rows, nil
+}
+
 func (f *videoFakeRepo) DeleteWatchHistoryEntry(_ context.Context, a sqlcgen.DeleteWatchHistoryEntryParams) error {
 	delete(f.history, a.UserID.String()+"|"+a.VideoID.String())
 	return nil
