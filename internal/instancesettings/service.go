@@ -101,6 +101,21 @@ const (
 	KeyBroadcastLevel       = "broadcast_level"
 	KeyBroadcastDismissable = "broadcast_dismissable"
 
+	// Featured-banner keys (home-featured-banner). An admin-controlled YouTube-
+	// masthead-style slot on the homepage: a toggle, one picked LOCAL video, and
+	// presentation overrides. All pure overlay rows with HARDCODED defaults (no
+	// config/env backing). The frontend fetches the picked video server-side and
+	// renders the banner only when featured_enabled AND the video resolves
+	// public+published (fail-safe: silently absent otherwise). Deferred v2 knobs
+	// (schedule, targeting, custom image/CTA URL, autoplay, carousel, analytics)
+	// are deliberately NOT registered.
+	KeyFeaturedEnabled     = "featured_enabled"
+	KeyFeaturedVideoID     = "featured_video_id" // empty = no pick; else a video UUID
+	KeyFeaturedTitle       = "featured_title"    // override; empty = use the video's title
+	KeyFeaturedDescription = "featured_description"
+	KeyFeaturedCTALabel    = "featured_cta_label"
+	KeyFeaturedLabel       = "featured_label" // featured|sponsored
+
 	KeyDefaultFeedSort                  = "default_feed_sort"
 	KeyDefaultFeedScope                 = "default_feed_scope"
 	KeyDefaultLandingPage               = "default_landing_page"
@@ -335,6 +350,9 @@ const (
 var (
 	// BroadcastLevelOptions styles the W3 broadcast banner (PT parity).
 	BroadcastLevelOptions = []string{"info", "warning", "error"}
+	// FeaturedLabelOptions styles the admin featured-banner chip (home-featured-
+	// banner): an editorial "featured" pick or a "sponsored" placement.
+	FeaturedLabelOptions = []string{"featured", "sponsored"}
 	// FeedSortOptions is vidra's 3-way sort universe (deliberate deviation from
 	// PeerTube's seven sort strings — vidra's feed supports exactly these).
 	FeedSortOptions = []string{"recent", "popular", "trending"}
@@ -359,6 +377,7 @@ var (
 // Default values for the core-config-surface keys.
 const (
 	DefaultBroadcastLevel = "info"
+	DefaultFeaturedLabel  = "featured"
 	DefaultFeedSort       = "recent"
 	DefaultFeedScope      = "local"
 	DefaultLandingPage    = "home-recent"
@@ -566,6 +585,22 @@ var specs = []spec{
 		page: PageGeneral, section: "broadcast"},
 	{key: KeyBroadcastDismissable, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageGeneral, section: "broadcast"},
+	// Featured banner (home-featured-banner). Admin-controlled homepage masthead
+	// slot; the frontend fetches the picked video server-side and renders the
+	// banner only when it resolves public+published.
+	{key: KeyFeaturedEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageHomepage, section: "featured"},
+	{key: KeyFeaturedVideoID, kind: KindString, defString: hardcoded(""), validate: validateOptionalUUID,
+		page: PageHomepage, section: "featured"},
+	{key: KeyFeaturedTitle, kind: KindString, defString: hardcoded(""), validate: maxLen(120),
+		page: PageHomepage, section: "featured"},
+	{key: KeyFeaturedDescription, kind: KindString, defString: hardcoded(""), validate: maxLen(500),
+		page: PageHomepage, section: "featured"},
+	{key: KeyFeaturedCTALabel, kind: KindString, defString: hardcoded(""), validate: maxLen(40),
+		page: PageHomepage, section: "featured"},
+	{key: KeyFeaturedLabel, kind: KindEnum, defString: hardcoded(DefaultFeaturedLabel),
+		options: FeaturedLabelOptions, validate: enumOf(FeaturedLabelOptions),
+		page: PageHomepage, section: "featured"},
 	// Landing & browse defaults (W5 consumes).
 	{key: KeyDefaultFeedSort, kind: KindEnum, defString: hardcoded(DefaultFeedSort),
 		options: FeedSortOptions, validate: enumOf(FeedSortOptions),
@@ -1201,6 +1236,21 @@ func validateOptionalURL(v string) error {
 	u, err := url.Parse(v)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return errors.New("must be an absolute http(s) URL")
+	}
+	return nil
+}
+
+// validateOptionalUUID accepts the empty string (no video picked / clears the
+// pick) or a well-formed UUID — the featured banner's video reference. The
+// referenced video's existence and public+published visibility are enforced at
+// render time (fail-safe), not here, so a picked-then-deleted video is not a
+// validation error.
+func validateOptionalUUID(v string) error {
+	if v == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(v); err != nil {
+		return errors.New("must be a valid video id (UUID) or empty")
 	}
 	return nil
 }
