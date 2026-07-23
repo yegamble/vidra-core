@@ -1,10 +1,15 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 func getProgress(srv *Server, id, token string) *httptest.ResponseRecorder {
@@ -17,6 +22,10 @@ func putProgress(srv *Server, id, body, token string) *httptest.ResponseRecorder
 
 func listHistory(srv *Server, token string) *httptest.ResponseRecorder {
 	return sendJSONAuth(srv, http.MethodGet, "/api/v1/me/history", "", token)
+}
+
+func listHistoryProgress(srv *Server, token string) *httptest.ResponseRecorder {
+	return sendJSONAuth(srv, http.MethodGet, "/api/v1/me/history?progress=in_progress", "", token)
 }
 
 // TestWatchProgressAndHistoryRoundTrip drives the full feature: record progress
@@ -81,6 +90,56 @@ func TestWatchProgressAndHistoryRoundTrip(t *testing.T) {
 	_ = json.Unmarshal(listHistory(srv, tok).Body.Bytes(), &body)
 	if len(body.Videos) != 2 || body.Videos[0].Title != "first" || body.Videos[0].PositionSeconds != 99 {
 		t.Errorf("after re-watch, history[0] = %q pos=%d, want first pos=99", body.Videos[0].Title, body.Videos[0].PositionSeconds)
+	}
+}
+
+// TestWatchHistoryInProgressFilter drives the ?progress=in_progress filter
+// (home-featured-banner A3) end-to-end: a half-watched and an unprobed
+// (NULL-duration) video stay in the "Continue watching" list, while an
+// effectively-finished (>= 95%) one is excluded. The unfiltered list still
+// returns everything.
+func TestWatchHistoryInProgressFilter(t *testing.T) {
+	srv, _, _, _, repo := videoServerFull(t, testConfig())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	halfway := createPublishedVideo(t, srv, tok, "ada", `{"title":"halfway","privacy":"public"}`)
+	finished := createPublishedVideo(t, srv, tok, "ada", `{"title":"finished","privacy":"public"}`)
+	nodur := createPublishedVideo(t, srv, tok, "ada", `{"title":"nodur","privacy":"public"}`)
+
+	// Seed probed durations for the two videos that have a known length; nodur
+	// stays unprobed (LEFT JOIN video_metadata -> NULL duration).
+	d100 := int32(100)
+	for _, id := range []string{halfway, finished} {
+		if _, err := repo.UpsertVideoMetadata(context.Background(), sqlcgen.UpsertVideoMetadataParams{
+			VideoID: uuid.MustParse(id), DurationSeconds: &d100,
+		}); err != nil {
+			t.Fatalf("UpsertVideoMetadata(%s): %v", id, err)
+		}
+	}
+
+	if rec := putProgress(srv, halfway, `{"position_seconds":50}`, tok); rec.Code != http.StatusNoContent {
+		t.Fatalf("put halfway = %d", rec.Code)
+	}
+	if rec := putProgress(srv, finished, `{"position_seconds":96}`, tok); rec.Code != http.StatusNoContent {
+		t.Fatalf("put finished = %d", rec.Code)
+	}
+	if rec := putProgress(srv, nodur, `{"position_seconds":30}`, tok); rec.Code != http.StatusNoContent {
+		t.Fatalf("put nodur = %d", rec.Code)
+	}
+
+	// Unfiltered: all three present.
+	if got := historyTitles(t, listHistory(srv, tok)); len(got) != 3 {
+		t.Fatalf("unfiltered history = %v, want 3 entries", got)
+	}
+
+	// Filtered: finished (96%) is dropped; halfway + nodur remain.
+	got := historyTitles(t, listHistoryProgress(srv, tok))
+	present := map[string]bool{}
+	for _, tt := range got {
+		present[tt] = true
+	}
+	if len(got) != 2 || !present["halfway"] || !present["nodur"] || present["finished"] {
+		t.Errorf("in_progress history = %v, want [halfway, nodur] (no finished)", got)
 	}
 }
 

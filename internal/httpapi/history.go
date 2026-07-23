@@ -120,7 +120,9 @@ type historyListResponse struct {
 
 // handleListHistory returns the caller's watch history as cards, most-recently
 // watched first. Behind requireAuth. Pagination via ?limit (1–100, default 20)
-// and ?offset.
+// and ?offset. The optional ?progress=in_progress filter restricts the list to
+// the "Continue watching" subset (started, not effectively finished); any other
+// value (or absent) returns the full history.
 func (s *Server) handleListHistory(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
@@ -131,7 +133,8 @@ func (s *Server) handleListHistory(c echo.Context) error {
 	if offset < 0 {
 		offset = 0
 	}
-	items, err := s.videosvc.ListHistory(c.Request().Context(), userID, int32(limit), int32(offset))
+	inProgress := c.QueryParam("progress") == "in_progress"
+	items, err := s.videosvc.ListHistory(c.Request().Context(), userID, int32(limit), int32(offset), inProgress)
 	if err != nil {
 		return err
 	}
