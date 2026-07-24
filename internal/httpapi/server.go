@@ -831,6 +831,21 @@ func (s *Server) routes() {
 		s.echo.GET("/accounts/:handle/outbox", s.accountCollection("outbox"))
 	}
 
+	// Distribution surfaces (audit Wave E): RSS 2.0 feed, oEmbed provider, and an
+	// XML sitemap. Root-mounted PUBLIC endpoints (like /healthz and the fediverse
+	// discovery routes above), deliberately OUTSIDE the REST OpenAPI contract and
+	// the frontend generated client — see internal/httpapi/distribution.go. They
+	// build absolute watch/channel URLs from the public origin, so they mount only
+	// when PUBLIC_BASE_URL is configured; that same condition keeps them out of the
+	// OpenAPI drift guard (its testConfig leaves the origin empty), exactly like the
+	// federation/metrics root routes. They sit at the root (no rate limiting), like
+	// the health probes and nodeinfo discovery.
+	if s.cfg.PublicBaseURL != "" && s.videosvc != nil && s.channelsvc != nil {
+		s.echo.GET("/feeds/videos.xml", s.handleVideosFeed)
+		s.echo.GET("/services/oembed", s.handleOEmbed)
+		s.echo.GET("/sitemap.xml", s.handleSitemap)
+	}
+
 	api := s.echo.Group("/api/v1")
 	// Rate limiting guards the API surface only; liveness/readiness/version are
 	// exempt so orchestrator probes are never throttled.
