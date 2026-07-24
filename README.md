@@ -274,4 +274,4 @@ Go 1.26 · Echo v4 · PostgreSQL (pg_trgm, uuid-ossp) · pgx · sqlc · Redis ·
 
 ## License
 
-TBD.
+vidra-core is free software licensed under the [GNU Affero General Public License v3.0](LICENSE).
