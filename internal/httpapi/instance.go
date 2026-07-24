@@ -137,6 +137,19 @@ type instanceBroadcast struct {
 	Dismissable bool   `json:"dismissable"`
 }
 
+// instanceFeatured is the admin featured-banner block (home-featured-banner).
+// The frontend fetches the picked video server-side and renders the masthead
+// banner only when Enabled AND VideoID resolves to a public, published video —
+// so this block reports the raw admin knobs, not a resolved video.
+type instanceFeatured struct {
+	Enabled     bool   `json:"enabled"`
+	VideoID     string `json:"video_id"`    // "" when no video picked
+	Title       string `json:"title"`       // "" = fall back to the video's title
+	Description string `json:"description"` // "" = fall back to the video's description
+	CTALabel    string `json:"cta_label"`   // "" = frontend default ("Watch now")
+	Label       string `json:"label"`       // featured|sponsored
+}
+
 // instanceCustomization references the operator's custom CSS/JS documents by
 // content hash (never inlined; fetch /instance/custom.css?v={css_hash}) plus
 // the primary-color override ("" when unset).
@@ -267,6 +280,7 @@ type instanceResponse struct {
 	Branding      instanceBranding      `json:"branding"`
 	Defaults      instanceDefaults      `json:"defaults"`
 	Broadcast     instanceBroadcast     `json:"broadcast"`
+	Featured      instanceFeatured      `json:"featured"`
 	Customization instanceCustomization `json:"customization"`
 	Social        instanceSocialMeta    `json:"social"`
 	Homepage      instanceHomepage      `json:"homepage"`
@@ -369,6 +383,7 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		Branding:      s.instanceBrandingBlock(),
 		Defaults:      s.instanceDefaultsBlock(),
 		Broadcast:     s.instanceBroadcastBlock(),
+		Featured:      s.instanceFeaturedBlock(),
 		Customization: s.instanceCustomizationBlock(),
 		Social: instanceSocialMeta{
 			TwitterUsername: s.settingString(instancesettings.KeySocialMetaTwitterUsername, ""),
@@ -443,6 +458,17 @@ func (s *Server) instanceBroadcastBlock() instanceBroadcast {
 		Message:     s.settingString(instancesettings.KeyBroadcastMessage, ""),
 		Level:       s.settingString(instancesettings.KeyBroadcastLevel, instancesettings.DefaultBroadcastLevel),
 		Dismissable: s.settingBool(instancesettings.KeyBroadcastDismissable, false),
+	}
+}
+
+func (s *Server) instanceFeaturedBlock() instanceFeatured {
+	return instanceFeatured{
+		Enabled:     s.settingBool(instancesettings.KeyFeaturedEnabled, false),
+		VideoID:     s.settingString(instancesettings.KeyFeaturedVideoID, ""),
+		Title:       s.settingString(instancesettings.KeyFeaturedTitle, ""),
+		Description: s.settingString(instancesettings.KeyFeaturedDescription, ""),
+		CTALabel:    s.settingString(instancesettings.KeyFeaturedCTALabel, ""),
+		Label:       s.settingString(instancesettings.KeyFeaturedLabel, instancesettings.DefaultFeaturedLabel),
 	}
 }
 

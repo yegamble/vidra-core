@@ -146,6 +146,31 @@ func (f *fakeRepo) ListWatchHistory(_ context.Context, a sqlcgen.ListWatchHistor
 	return rows, nil
 }
 
+func (f *fakeRepo) ListWatchHistoryInProgress(_ context.Context, a sqlcgen.ListWatchHistoryInProgressParams) ([]sqlcgen.ListWatchHistoryInProgressRow, error) {
+	var rows []sqlcgen.ListWatchHistoryInProgressRow
+	for vid, m := range f.history {
+		r, ok := f.videos[vid]
+		if !ok || r.Privacy != "public" || r.State != "published" {
+			continue
+		}
+		// Mirror the SQL filter: started (>= 5s) and not effectively finished.
+		if m.position < 5 {
+			continue
+		}
+		if d := f.duration(r.ID); d != nil && *d > 0 && float64(m.position)/float64(*d) >= 0.95 {
+			continue
+		}
+		rows = append(rows, sqlcgen.ListWatchHistoryInProgressRow{
+			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID), DurationSeconds: f.duration(r.ID),
+			PositionSeconds: m.position, WatchedAt: m.watchedAt,
+		})
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].WatchedAt.After(rows[j].WatchedAt) })
+	return rows, nil
+}
+
 func (f *fakeRepo) DeleteWatchHistoryEntry(_ context.Context, a sqlcgen.DeleteWatchHistoryEntryParams) error {
 	delete(f.history, a.VideoID)
 	return nil
@@ -610,7 +635,7 @@ func TestWatchHistoryRecordListAndProgress(t *testing.T) {
 	if err := svc.RecordProgress(ctx, v2, user, 12); err != nil {
 		t.Fatalf("RecordProgress v2: %v", err)
 	}
-	items, err := svc.ListHistory(ctx, user, 20, 0)
+	items, err := svc.ListHistory(ctx, user, 20, 0, false)
 	if err != nil {
 		t.Fatalf("ListHistory: %v", err)
 	}
@@ -627,13 +652,13 @@ func TestWatchHistoryRecordListAndProgress(t *testing.T) {
 	if err := svc.RemoveHistoryEntry(ctx, v2, user); err != nil {
 		t.Fatalf("RemoveHistoryEntry: %v", err)
 	}
-	if items, _ := svc.ListHistory(ctx, user, 20, 0); len(items) != 1 || items[0].Video.ID != v1 {
+	if items, _ := svc.ListHistory(ctx, user, 20, 0, false); len(items) != 1 || items[0].Video.ID != v1 {
 		t.Fatalf("after remove, history = %+v, want [v1]", items)
 	}
 	if err := svc.ClearHistory(ctx, user); err != nil {
 		t.Fatalf("ClearHistory: %v", err)
 	}
-	if items, _ := svc.ListHistory(ctx, user, 20, 0); len(items) != 0 {
+	if items, _ := svc.ListHistory(ctx, user, 20, 0, false); len(items) != 0 {
 		t.Fatalf("after clear, history = %+v, want empty", items)
 	}
 }
@@ -806,12 +831,108 @@ func TestFeedCardsCarryDuration(t *testing.T) {
 	if err := svc.RecordProgress(ctx, withDur.ID, owner, 42); err != nil {
 		t.Fatalf("RecordProgress: %v", err)
 	}
-	hist, err := svc.ListHistory(ctx, owner, 20, 0)
+	hist, err := svc.ListHistory(ctx, owner, 20, 0, false)
 	if err != nil {
 		t.Fatalf("ListHistory: %v", err)
 	}
 	if len(hist) != 1 || hist[0].DurationSeconds == nil || *hist[0].DurationSeconds != 137 {
 		t.Errorf("history card duration = %+v, want a card with duration 137", hist)
+	}
+}
+
+// TestListHistoryInProgressFilter covers the "Continue watching" filter
+// (home-featured-banner A3): a started-but-unfinished video is included, a
+// barely-started (< 5s) one and an effectively-finished (>= 95%) one are
+// excluded, and zero/NULL-duration entries keep the lower-bound-only behaviour.
+// The unfiltered history still returns every recorded entry.
+func TestListHistoryInProgressFilter(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	svc := NewService(repo, nil)
+	ctx := context.Background()
+	ch := uuid.New()
+	user := uuid.New()
+
+	// Five videos with distinct (duration, position) cases.
+	halfway := publishDraft(t, svc, ctx, ch, CreateInput{Title: "halfway", Privacy: "public"})   // 50/100 = 50%
+	finished := publishDraft(t, svc, ctx, ch, CreateInput{Title: "finished", Privacy: "public"}) // 96/100 = 96%
+	barely := publishDraft(t, svc, ctx, ch, CreateInput{Title: "barely", Privacy: "public"})     // 3s, below RESUME_MIN
+	zeroPos := publishDraft(t, svc, ctx, ch, CreateInput{Title: "zeropos", Privacy: "public"})   // 0s (0%)
+	noDur := publishDraft(t, svc, ctx, ch, CreateInput{Title: "nodur", Privacy: "public"})       // 30s, unprobed (NULL duration)
+
+	d100 := int32(100)
+	for _, id := range []uuid.UUID{halfway.ID, finished.ID, barely.ID, zeroPos.ID} {
+		if _, err := repo.UpsertVideoMetadata(ctx, sqlcgen.UpsertVideoMetadataParams{VideoID: id, DurationSeconds: &d100}); err != nil {
+			t.Fatalf("UpsertVideoMetadata: %v", err)
+		}
+	}
+	// noDur stays unprobed (NULL duration).
+
+	positions := map[uuid.UUID]int32{
+		halfway.ID: 50, finished.ID: 96, barely.ID: 3, zeroPos.ID: 0, noDur.ID: 30,
+	}
+	for id, pos := range positions {
+		if err := svc.RecordProgress(ctx, id, user, pos); err != nil {
+			t.Fatalf("RecordProgress: %v", err)
+		}
+	}
+
+	// Unfiltered: every recorded entry is present.
+	all, err := svc.ListHistory(ctx, user, 20, 0, false)
+	if err != nil {
+		t.Fatalf("ListHistory(all): %v", err)
+	}
+	if len(all) != 5 {
+		t.Fatalf("unfiltered history = %d entries, want 5", len(all))
+	}
+
+	// in_progress: halfway + noDur only. finished (>= 95%), barely (< 5s) and
+	// zeroPos (0s) are all excluded.
+	inProg, err := svc.ListHistory(ctx, user, 20, 0, true)
+	if err != nil {
+		t.Fatalf("ListHistory(in_progress): %v", err)
+	}
+	got := map[uuid.UUID]bool{}
+	for _, it := range inProg {
+		got[it.Video.ID] = true
+	}
+	want := map[uuid.UUID]bool{halfway.ID: true, noDur.ID: true}
+	if len(got) != len(want) {
+		t.Fatalf("in_progress history = %d entries %v, want %v", len(got), got, want)
+	}
+	for id := range want {
+		if !got[id] {
+			t.Errorf("in_progress missing expected video %s", id)
+		}
+	}
+	for _, id := range []uuid.UUID{finished.ID, barely.ID, zeroPos.ID} {
+		if got[id] {
+			t.Errorf("in_progress unexpectedly included %s", id)
+		}
+	}
+
+	// Zero-duration edge: a probed 0-second video with a real position is treated
+	// like unknown duration (lower-bound only) and stays in the shelf.
+	zeroDur := publishDraft(t, svc, ctx, ch, CreateInput{Title: "zerodur", Privacy: "public"})
+	zero := int32(0)
+	if _, err := repo.UpsertVideoMetadata(ctx, sqlcgen.UpsertVideoMetadataParams{VideoID: zeroDur.ID, DurationSeconds: &zero}); err != nil {
+		t.Fatalf("UpsertVideoMetadata(zero): %v", err)
+	}
+	if err := svc.RecordProgress(ctx, zeroDur.ID, user, 30); err != nil {
+		t.Fatalf("RecordProgress(zeroDur): %v", err)
+	}
+	inProg2, err := svc.ListHistory(ctx, user, 20, 0, true)
+	if err != nil {
+		t.Fatalf("ListHistory(in_progress) 2: %v", err)
+	}
+	found := false
+	for _, it := range inProg2 {
+		if it.Video.ID == zeroDur.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("zero-duration video with position 30 should appear in Continue watching")
 	}
 }
 

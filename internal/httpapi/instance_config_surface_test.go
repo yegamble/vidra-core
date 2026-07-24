@@ -185,6 +185,11 @@ func TestInstanceConfigBlocksDefaults(t *testing.T) {
 	if body.Broadcast.Enabled || body.Broadcast.Message != "" || body.Broadcast.Level != "info" || body.Broadcast.Dismissable {
 		t.Errorf("broadcast = %+v", body.Broadcast)
 	}
+	// featured banner (home-featured-banner) contract fallback values.
+	if body.Featured.Enabled || body.Featured.VideoID != "" || body.Featured.Title != "" ||
+		body.Featured.Description != "" || body.Featured.CTALabel != "" || body.Featured.Label != "featured" {
+		t.Errorf("featured = %+v", body.Featured)
+	}
 	if body.Customization.CSSHash != "" || body.Customization.JSHash != "" || body.Customization.PrimaryColor != "" {
 		t.Errorf("customization = %+v", body.Customization)
 	}
@@ -214,11 +219,18 @@ func TestInstanceConfigBlocksReflectOverrides(t *testing.T) {
 	before := getInstanceRec(srv)
 	etagBefore := before.Header().Get("ETag")
 
+	featuredVideoID := "11111111-1111-1111-1111-111111111111"
 	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings", `{
 		"broadcast_enabled": true,
 		"broadcast_message": "**Maintenance** tonight",
 		"broadcast_level": "warning",
 		"broadcast_dismissable": true,
+		"featured_enabled": true,
+		"featured_video_id": "`+featuredVideoID+`",
+		"featured_title": "Editor's pick",
+		"featured_description": "Do not miss this",
+		"featured_cta_label": "Play it",
+		"featured_label": "sponsored",
 		"default_feed_sort": "trending",
 		"default_theme": "dark",
 		"default_player_autoplay": false,
@@ -238,6 +250,11 @@ func TestInstanceConfigBlocksReflectOverrides(t *testing.T) {
 	if !body.Broadcast.Enabled || body.Broadcast.Message != "**Maintenance** tonight" ||
 		body.Broadcast.Level != "warning" || !body.Broadcast.Dismissable {
 		t.Errorf("broadcast after patch = %+v", body.Broadcast)
+	}
+	if !body.Featured.Enabled || body.Featured.VideoID != featuredVideoID ||
+		body.Featured.Title != "Editor's pick" || body.Featured.Description != "Do not miss this" ||
+		body.Featured.CTALabel != "Play it" || body.Featured.Label != "sponsored" {
+		t.Errorf("featured after patch = %+v", body.Featured)
 	}
 	if body.Defaults.FeedSort != "trending" || body.Defaults.Theme != "dark" || body.Defaults.PlayerAutoplay {
 		t.Errorf("defaults after patch = %+v", body.Defaults)

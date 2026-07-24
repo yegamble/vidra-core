@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,6 +188,126 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 	}
 	if svc.Bool(KeyVideoCardPreviewsEnabled) || svc.Bool(KeyVideoCardPreviewsDefaultEnabled) {
 		t.Error("delete did not restore video-card preview gate/default off")
+	}
+}
+
+// TestFeaturedBannerRegistry covers the admin featured-banner keys
+// (home-featured-banner): kind, hardcoded default, admin-IA placement,
+// validator boundaries (empty-or-UUID video id, length caps, enum label), the
+// override round-trip, and reset-to-default.
+func TestFeaturedBannerRegistry(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	snap := map[string]Effective{}
+	for _, e := range svc.Snapshot() {
+		snap[e.Key] = e
+	}
+
+	cases := []struct {
+		key     string
+		kind    Kind
+		def     any // bool or string, matching kind
+		page    string
+		section string
+	}{
+		{KeyFeaturedEnabled, KindBool, false, PageHomepage, "featured"},
+		{KeyFeaturedVideoID, KindString, "", PageHomepage, "featured"},
+		{KeyFeaturedTitle, KindString, "", PageHomepage, "featured"},
+		{KeyFeaturedDescription, KindString, "", PageHomepage, "featured"},
+		{KeyFeaturedCTALabel, KindString, "", PageHomepage, "featured"},
+		{KeyFeaturedLabel, KindEnum, DefaultFeaturedLabel, PageHomepage, "featured"},
+	}
+	for _, tc := range cases {
+		e, ok := snap[tc.key]
+		if !ok {
+			t.Errorf("%s missing from snapshot", tc.key)
+			continue
+		}
+		if e.Kind != tc.kind {
+			t.Errorf("%s kind = %q, want %q", tc.key, e.Kind, tc.kind)
+		}
+		if !reflect.DeepEqual(e.Default, tc.def) || !reflect.DeepEqual(e.Value, tc.def) {
+			t.Errorf("%s default/value = %v/%v, want %v", tc.key, e.Default, e.Value, tc.def)
+		}
+		if e.Overridden {
+			t.Errorf("%s overridden = true, want false", tc.key)
+		}
+		if e.Page != tc.page || e.Section != tc.section {
+			t.Errorf("%s placement = %s/%s, want %s/%s", tc.key, e.Page, e.Section, tc.page, tc.section)
+		}
+	}
+	// The label enum exposes its options for the admin UI + OpenAPI.
+	if got := snap[KeyFeaturedLabel].Options; !reflect.DeepEqual(got, FeaturedLabelOptions) {
+		t.Errorf("featured_label options = %v, want %v", got, FeaturedLabelOptions)
+	}
+
+	// Validator boundaries: each rejected before anything is written.
+	by := uuid.New()
+	longTitle := strings.Repeat("x", 121)
+	longDesc := strings.Repeat("x", 501)
+	longCTA := strings.Repeat("x", 41)
+	bad := map[string]map[string]Update{
+		"enabled not boolean":  {KeyFeaturedEnabled: {Value: "yes"}},
+		"video id not a uuid":  {KeyFeaturedVideoID: {Value: "not-a-uuid"}},
+		"title too long":       {KeyFeaturedTitle: {Value: longTitle}},
+		"description too long": {KeyFeaturedDescription: {Value: longDesc}},
+		"cta too long":         {KeyFeaturedCTALabel: {Value: longCTA}},
+		"label not an option":  {KeyFeaturedLabel: {Value: "promoted"}},
+	}
+	for name, updates := range bad {
+		var verr *ValidationError
+		if err := svc.Apply(ctx, updates, by); !errors.As(err, &verr) {
+			t.Errorf("%s: Apply err = %v, want ValidationError", name, err)
+		}
+	}
+
+	// Accepts: an empty video id (no pick), a well-formed UUID, at-cap strings,
+	// and the sponsored label all round-trip.
+	vid := uuid.New().String()
+	if err := svc.Apply(ctx, map[string]Update{
+		KeyFeaturedEnabled:     {Value: "true"},
+		KeyFeaturedVideoID:     {Value: vid},
+		KeyFeaturedTitle:       {Value: strings.Repeat("x", 120)},
+		KeyFeaturedDescription: {Value: strings.Repeat("x", 500)},
+		KeyFeaturedCTALabel:    {Value: strings.Repeat("x", 40)},
+		KeyFeaturedLabel:       {Value: "sponsored"},
+	}, by); err != nil {
+		t.Fatalf("apply valid featured settings: %v", err)
+	}
+	if !svc.Bool(KeyFeaturedEnabled) {
+		t.Error("featured_enabled override did not apply")
+	}
+	if got := svc.String(KeyFeaturedVideoID); got != vid {
+		t.Errorf("featured_video_id = %q, want %q", got, vid)
+	}
+	if got := svc.String(KeyFeaturedLabel); got != "sponsored" {
+		t.Errorf("featured_label = %q, want sponsored", got)
+	}
+
+	// Empty video id clears the pick (valid).
+	if err := svc.Apply(ctx, map[string]Update{KeyFeaturedVideoID: {Value: ""}}, by); err != nil {
+		t.Fatalf("clear video id: %v", err)
+	}
+	if got := svc.String(KeyFeaturedVideoID); got != "" {
+		t.Errorf("featured_video_id after clear = %q, want empty", got)
+	}
+
+	// null-PATCH (Delete) restores the hardcoded defaults.
+	if err := svc.Apply(ctx, map[string]Update{
+		KeyFeaturedEnabled: {Delete: true},
+		KeyFeaturedLabel:   {Delete: true},
+	}, by); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if svc.Bool(KeyFeaturedEnabled) {
+		t.Error("delete did not restore featured_enabled=false")
+	}
+	if got := svc.String(KeyFeaturedLabel); got != DefaultFeaturedLabel {
+		t.Errorf("featured_label after delete = %q, want %q", got, DefaultFeaturedLabel)
 	}
 }
 

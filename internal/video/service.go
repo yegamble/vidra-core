@@ -189,6 +189,7 @@ type Repository interface {
 	UpsertWatchProgress(ctx context.Context, arg sqlcgen.UpsertWatchProgressParams) (sqlcgen.WatchHistory, error)
 	GetWatchProgress(ctx context.Context, arg sqlcgen.GetWatchProgressParams) (sqlcgen.WatchHistory, error)
 	ListWatchHistory(ctx context.Context, arg sqlcgen.ListWatchHistoryParams) ([]sqlcgen.ListWatchHistoryRow, error)
+	ListWatchHistoryInProgress(ctx context.Context, arg sqlcgen.ListWatchHistoryInProgressParams) ([]sqlcgen.ListWatchHistoryInProgressRow, error)
 	DeleteWatchHistoryEntry(ctx context.Context, arg sqlcgen.DeleteWatchHistoryEntryParams) error
 	ClearWatchHistory(ctx context.Context, userID uuid.UUID) error
 }
@@ -2085,8 +2086,32 @@ func (s *Service) Progress(ctx context.Context, videoID, userID uuid.UUID) (int3
 
 // ListHistory returns the user's watch history (public, published videos),
 // most-recently-watched first, as cards carrying the resume position and the
-// time last watched. The caller clamps limit/offset.
-func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]HistoryItem, error) {
+// time last watched. The caller clamps limit/offset. When inProgress is true it
+// returns the "Continue watching" subset: entries with position >= 5s that are
+// not effectively finished (>= 95% of the known duration), excluding
+// barely-started and completed videos.
+func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offset int32, inProgress bool) ([]HistoryItem, error) {
+	if inProgress {
+		rows, err := s.repo.ListWatchHistoryInProgress(ctx, sqlcgen.ListWatchHistoryInProgressParams{
+			UserID:       userID,
+			ResultLimit:  limit,
+			ResultOffset: offset,
+		})
+		if err != nil {
+			return nil, err
+		}
+		items := make([]HistoryItem, 0, len(rows))
+		for _, r := range rows {
+			it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+			it.AuthorDisplayName = r.AuthorDisplayName
+			items = append(items, HistoryItem{
+				FeedItem:        it,
+				PositionSeconds: r.PositionSeconds,
+				WatchedAt:       r.WatchedAt,
+			})
+		}
+		return items, nil
+	}
 	rows, err := s.repo.ListWatchHistory(ctx, sqlcgen.ListWatchHistoryParams{
 		UserID:       userID,
 		ResultLimit:  limit,
