@@ -40,6 +40,38 @@ WHERE wh.user_id = sqlc.arg('user_id')
 ORDER BY wh.updated_at DESC, v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: ListWatchHistoryInProgress :many
+-- The user's IN-PROGRESS watch history (the "Continue watching" shelf): same
+-- shape and ordering as ListWatchHistory, but excludes entries that are barely
+-- started (< RESUME_MIN_SECONDS = 5s) or effectively finished (>= 95% of the
+-- known duration). Videos with no/zero known duration keep the lower-bound-only
+-- behaviour (position >= 5) so they still surface as resumable.
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive,
+       wh.position_seconds, wh.updated_at AS watched_at
+FROM watch_history wh
+JOIN videos v ON v.id = wh.video_id
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE wh.user_id = sqlc.arg('user_id')
+  AND v.privacy = 'public' AND v.state = 'published'
+  AND wh.position_seconds >= 5
+  AND (vm.duration_seconds IS NULL
+       OR vm.duration_seconds <= 0
+       OR wh.position_seconds::float / vm.duration_seconds::float < 0.95)
+ORDER BY wh.updated_at DESC, v.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
 -- name: DeleteWatchHistoryEntry :exec
 -- Remove a single video from the user's history (idempotent). No public-video
 -- check so a user can always clean up an entry.

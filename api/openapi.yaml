@@ -6449,7 +6449,9 @@ paths:
         Returns the caller's watch history as discovery cards, most-recently
         watched first, each carrying the saved resume position (position_seconds)
         and the time last watched (watched_at). Only public, published videos are
-        returned. Paginated via limit (1–100, default 20) and offset.
+        returned. Paginated via limit (1–100, default 20) and offset. The
+        optional progress filter restricts the list to the "Continue watching"
+        subset.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -6469,6 +6471,17 @@ paths:
             type: integer
             minimum: 0
             default: 0
+        - name: progress
+          in: query
+          required: false
+          description: >-
+            When set to in_progress, returns only "Continue watching" entries:
+            videos the caller has started (position_seconds >= 5) but not
+            effectively finished (< 95% of a known duration). Any other value or
+            omission returns the full history.
+          schema:
+            type: string
+            enum: [in_progress]
       responses:
         "200":
           description: A page of watch-history cards (possibly empty).
@@ -12141,8 +12154,8 @@ components:
                  terms_url, privacy_url, contact_email, default_language, categories,
                  moderator_languages, server_country, is_sensitive,
                  sensitive_content_policy, contact_form_enabled, social_links, features,
-                 branding, defaults, broadcast, customization, social, homepage, live,
-                 search]
+                 branding, defaults, broadcast, featured, customization, social, homepage,
+                 live, search]
       properties:
         name:
           type: string
@@ -12504,6 +12517,34 @@ components:
               enum: [info, warning, error]
             dismissable:
               type: boolean
+        featured:
+          type: object
+          description: >-
+            Admin featured-banner slot on the homepage (YouTube-masthead-style).
+            The frontend fetches the picked video server-side and renders the
+            banner only when enabled AND video_id resolves to a public,
+            published video; otherwise the banner is silently absent. This block
+            reports the raw admin knobs, not a resolved video.
+          required: [enabled, video_id, title, description, cta_label, label]
+          properties:
+            enabled:
+              type: boolean
+            video_id:
+              type: string
+              description: Picked video UUID; "" when no video is selected.
+            title:
+              type: string
+              description: Title override; "" falls back to the video's title.
+            description:
+              type: string
+              description: Description override; "" falls back to the video's description.
+            cta_label:
+              type: string
+              description: CTA button label override; "" uses the frontend default.
+            label:
+              type: string
+              enum: [featured, sponsored]
+              description: Chip shown on the banner (editorial pick vs paid placement).
         customization:
           type: object
           description: >-

@@ -156,6 +156,103 @@ func (q *Queries) ListWatchHistory(ctx context.Context, arg ListWatchHistoryPara
 	return items, nil
 }
 
+const listWatchHistoryInProgress = `-- name: ListWatchHistoryInProgress :many
+SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       v.created_at, v.updated_at,
+       COALESCE(vc.views, 0)::bigint AS views,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       au.display_name AS author_display_name,
+       vm.duration_seconds, v.is_sensitive,
+       wh.position_seconds, wh.updated_at AS watched_at
+FROM watch_history wh
+JOIN videos v ON v.id = wh.video_id
+JOIN channels c ON c.id = v.channel_id
+JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE wh.user_id = $1
+  AND v.privacy = 'public' AND v.state = 'published'
+  AND wh.position_seconds >= 5
+  AND (vm.duration_seconds IS NULL
+       OR vm.duration_seconds <= 0
+       OR wh.position_seconds::float / vm.duration_seconds::float < 0.95)
+ORDER BY wh.updated_at DESC, v.id DESC
+LIMIT $3 OFFSET $2
+`
+
+type ListWatchHistoryInProgressParams struct {
+	UserID       uuid.UUID `json:"user_id"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
+}
+
+type ListWatchHistoryInProgressRow struct {
+	ID                 uuid.UUID `json:"id"`
+	ChannelID          uuid.UUID `json:"channel_id"`
+	Title              string    `json:"title"`
+	Description        string    `json:"description"`
+	Privacy            string    `json:"privacy"`
+	State              string    `json:"state"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	Views              int64     `json:"views"`
+	HasThumbnail       bool      `json:"has_thumbnail"`
+	ChannelHandle      string    `json:"channel_handle"`
+	ChannelDisplayName string    `json:"channel_display_name"`
+	AuthorDisplayName  string    `json:"author_display_name"`
+	DurationSeconds    *int32    `json:"duration_seconds"`
+	IsSensitive        bool      `json:"is_sensitive"`
+	PositionSeconds    int32     `json:"position_seconds"`
+	WatchedAt          time.Time `json:"watched_at"`
+}
+
+// The user's IN-PROGRESS watch history (the "Continue watching" shelf): same
+// shape and ordering as ListWatchHistory, but excludes entries that are barely
+// started (< RESUME_MIN_SECONDS = 5s) or effectively finished (>= 95% of the
+// known duration). Videos with no/zero known duration keep the lower-bound-only
+// behaviour (position >= 5) so they still surface as resumable.
+func (q *Queries) ListWatchHistoryInProgress(ctx context.Context, arg ListWatchHistoryInProgressParams) ([]ListWatchHistoryInProgressRow, error) {
+	rows, err := q.db.Query(ctx, listWatchHistoryInProgress, arg.UserID, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWatchHistoryInProgressRow
+	for rows.Next() {
+		var i ListWatchHistoryInProgressRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Title,
+			&i.Description,
+			&i.Privacy,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Views,
+			&i.HasThumbnail,
+			&i.ChannelHandle,
+			&i.ChannelDisplayName,
+			&i.AuthorDisplayName,
+			&i.DurationSeconds,
+			&i.IsSensitive,
+			&i.PositionSeconds,
+			&i.WatchedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertWatchProgress = `-- name: UpsertWatchProgress :one
 INSERT INTO watch_history (user_id, video_id, position_seconds)
 VALUES ($1, $2, $3)
