@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id;
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -23,7 +23,7 @@ LIMIT $2 OFFSET $3;
 
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
-       v.category, v.language, v.license, v.publish_at, v.is_sensitive,
+       v.category, v.language, v.license, v.publish_at, v.is_sensitive, v.sensitive_reason,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name
@@ -56,7 +56,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -76,7 +76,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -105,7 +105,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive
+       feed.is_sensitive, feed.sensitive_reason
 FROM (
     SELECT v.id,
            false AS remote,
@@ -123,7 +123,8 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
-           v.is_sensitive
+           v.is_sensitive,
+           v.sensitive_reason
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     JOIN users au ON au.id = c.owner_id
@@ -165,7 +166,8 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive
+           false AS is_sensitive,
+           ''::text AS sensitive_reason
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE sqlc.arg('include_remote')::bool
@@ -200,7 +202,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive
+       feed.is_sensitive, feed.sensitive_reason
 FROM (
     SELECT v.id,
            false AS remote,
@@ -218,7 +220,8 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
-           v.is_sensitive
+           v.is_sensitive,
+           v.sensitive_reason
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     JOIN users au ON au.id = c.owner_id
@@ -253,7 +256,8 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive
+           false AS is_sensitive,
+           ''::text AS sensitive_reason
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE EXISTS (
@@ -284,7 +288,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive
+       feed.is_sensitive, feed.sensitive_reason
 FROM (
     SELECT v.id,
            false AS remote,
@@ -303,6 +307,7 @@ FROM (
            ''::text AS watch_url,
            NULL::text AS stream_url,
            v.is_sensitive,
+           v.sensitive_reason,
            similarity(v.title, sqlc.arg('query')) AS search_rank
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
@@ -353,6 +358,7 @@ FROM (
            rv.watch_url,
            rv.stream_url,
            false AS is_sensitive,
+           ''::text AS sensitive_reason,
            similarity(rv.title, sqlc.arg('query')) AS search_rank
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -388,7 +394,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -424,7 +430,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason,
        (v.channel_id = sqlc.arg('channel_id'))::bool AS same_channel
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
@@ -461,19 +467,20 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     license     = COALESCE(sqlc.narg('license'), license),
     publish_at  = COALESCE(sqlc.narg('publish_at'), publish_at),
     is_sensitive = COALESCE(sqlc.narg('is_sensitive'), is_sensitive),
+    sensitive_reason = COALESCE(sqlc.narg('sensitive_reason'), sensitive_reason),
     comments_policy  = COALESCE(sqlc.narg('comments_policy'), comments_policy),
     download_enabled = COALESCE(sqlc.narg('download_enabled'), download_enabled),
     publish_after_transcode = COALESCE(sqlc.narg('publish_after_transcode'), publish_after_transcode),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason;
 
 -- name: SetVideoPinnedComment :exec
 -- Set (or clear, when NULL) a video's pinned comment (YouTube-style creator pin,

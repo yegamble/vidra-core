@@ -75,7 +75,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason,
        wh.position_seconds, wh.updated_at AS watched_at
 FROM watch_history wh
 JOIN videos v ON v.id = wh.video_id
@@ -111,6 +111,7 @@ type ListWatchHistoryRow struct {
 	AuthorDisplayName  string    `json:"author_display_name"`
 	DurationSeconds    *int32    `json:"duration_seconds"`
 	IsSensitive        bool      `json:"is_sensitive"`
+	SensitiveReason    string    `json:"sensitive_reason"`
 	PositionSeconds    int32     `json:"position_seconds"`
 	WatchedAt          time.Time `json:"watched_at"`
 }
@@ -143,6 +144,7 @@ func (q *Queries) ListWatchHistory(ctx context.Context, arg ListWatchHistoryPara
 			&i.AuthorDisplayName,
 			&i.DurationSeconds,
 			&i.IsSensitive,
+			&i.SensitiveReason,
 			&i.PositionSeconds,
 			&i.WatchedAt,
 		); err != nil {
@@ -166,7 +168,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason,
        wh.position_seconds, wh.updated_at AS watched_at
 FROM watch_history wh
 JOIN videos v ON v.id = wh.video_id
@@ -206,6 +208,7 @@ type ListWatchHistoryInProgressRow struct {
 	AuthorDisplayName  string    `json:"author_display_name"`
 	DurationSeconds    *int32    `json:"duration_seconds"`
 	IsSensitive        bool      `json:"is_sensitive"`
+	SensitiveReason    string    `json:"sensitive_reason"`
 	PositionSeconds    int32     `json:"position_seconds"`
 	WatchedAt          time.Time `json:"watched_at"`
 }
@@ -240,6 +243,7 @@ func (q *Queries) ListWatchHistoryInProgress(ctx context.Context, arg ListWatchH
 			&i.AuthorDisplayName,
 			&i.DurationSeconds,
 			&i.IsSensitive,
+			&i.SensitiveReason,
 			&i.PositionSeconds,
 			&i.WatchedAt,
 		); err != nil {

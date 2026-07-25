@@ -231,7 +231,7 @@ func (f *videoFakeRepo) ListSavedVideos(_ context.Context, a sqlcgen.ListSavedVi
 			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
-			IsSensitive: r.IsSensitive,
+			IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
 		})
 	}
 	return rows, nil
@@ -287,6 +287,7 @@ func (f *videoFakeRepo) ListWatchHistory(_ context.Context, a sqlcgen.ListWatchH
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			ChannelHandle: handle, ChannelDisplayName: name,
 			IsSensitive:     r.IsSensitive,
+			SensitiveReason: r.SensitiveReason,
 			PositionSeconds: e.m.position, WatchedAt: e.m.watchedAt,
 		})
 	}
@@ -332,6 +333,7 @@ func (f *videoFakeRepo) ListWatchHistoryInProgress(_ context.Context, a sqlcgen.
 			ChannelHandle: handle, ChannelDisplayName: name,
 			DurationSeconds: duration,
 			IsSensitive:     r.IsSensitive,
+			SensitiveReason: r.SensitiveReason,
 			PositionSeconds: e.m.position, WatchedAt: e.m.watchedAt,
 		})
 	}
@@ -365,7 +367,7 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
-				IsSensitive: r.IsSensitive,
+				IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
 			})
 		}
 	}
@@ -422,7 +424,7 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		ID: uuid.New(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
-		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive,
+		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive, SensitiveReason: a.SensitiveReason,
 		CommentsPolicy: a.CommentsPolicy, DownloadEnabled: a.DownloadEnabled,
 		PublishAfterTranscode: a.PublishAfterTranscode,
 		CreatedAt:             time.Now(), UpdatedAt: time.Now(),
@@ -431,7 +433,7 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		ID: v.ID, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 		Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 		Category: v.Category, Language: v.Language, License: v.License,
-		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive,
+		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive, SensitiveReason: v.SensitiveReason,
 		CommentsPolicy: v.CommentsPolicy, DownloadEnabled: v.DownloadEnabled,
 		PublishAfterTranscode: v.PublishAfterTranscode,
 		OwnerID:               owner,
@@ -471,7 +473,8 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		Category: r.Category, Language: r.Language, License: r.License, PublishAt: r.PublishAt,
-		IsSensitive: r.IsSensitive, CommentsPolicy: r.CommentsPolicy, DownloadEnabled: r.DownloadEnabled,
+		IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
+		CommentsPolicy: r.CommentsPolicy, DownloadEnabled: r.DownloadEnabled,
 		PublishAfterTranscode: r.PublishAfterTranscode,
 	}
 }
@@ -483,7 +486,7 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UU
 			out = append(out, sqlcgen.ListVideosByChannelRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				PublishAt: r.PublishAt, IsSensitive: r.IsSensitive,
+				PublishAt: r.PublishAt, IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			})
 		}
@@ -547,7 +550,7 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID u
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
-				IsSensitive: r.IsSensitive,
+				IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
 			})
 		}
 	}
@@ -583,6 +586,9 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	}
 	if a.IsSensitive != nil {
 		r.IsSensitive = *a.IsSensitive
+	}
+	if a.SensitiveReason != nil {
+		r.SensitiveReason = *a.SensitiveReason
 	}
 	if a.CommentsPolicy != nil {
 		r.CommentsPolicy = *a.CommentsPolicy
@@ -715,6 +721,7 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 				AuthorDisplayName: f.authorName(r.ChannelID),
 				IsSensitive:       r.IsSensitive,
+				SensitiveReason:   r.SensitiveReason,
 			})
 		}
 	}
@@ -760,6 +767,7 @@ func (f *videoFakeRepo) ListPublicVideosByIDs(_ context.Context, a sqlcgen.ListP
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			AuthorDisplayName: f.authorName(r.ChannelID), IsSensitive: r.IsSensitive,
+			SensitiveReason: r.SensitiveReason,
 		})
 	}
 	return rows, nil
@@ -788,7 +796,8 @@ func (f *videoFakeRepo) ListRelatedVideosFallback(_ context.Context, a sqlcgen.L
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			AuthorDisplayName: f.authorName(r.ChannelID), IsSensitive: r.IsSensitive,
-			SameChannel: sameChannel,
+			SensitiveReason: r.SensitiveReason,
+			SameChannel:     sameChannel,
 		})
 	}
 	if int(a.ResultLimit) < len(rows) {
@@ -914,6 +923,7 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 				ChannelHandle: ch, ChannelDisplayName: cn,
 				AuthorDisplayName: f.authorName(r.ChannelID),
 				IsSensitive:       r.IsSensitive,
+				SensitiveReason:   r.SensitiveReason,
 			})
 		}
 	}
@@ -1474,6 +1484,161 @@ func TestListChannelVideosOwnerVsPublic(t *testing.T) {
 	}
 	if direct := getVideo(srv, sensitiveID, ""); direct.Code != http.StatusOK {
 		t.Errorf("direct sensitive video read = %d, want 200", direct.Code)
+	}
+}
+
+// applySensitivePolicy sets the instance-wide sensitive_content_policy setting so
+// a test can exercise the effective per-request resolution (0100).
+func applySensitivePolicy(t *testing.T, srv *Server, policy string) {
+	t.Helper()
+	if err := srv.settingssvc.Apply(context.Background(),
+		map[string]instancesettings.Update{
+			instancesettings.KeySensitiveContentPolicy: {Value: policy},
+		}, uuid.New()); err != nil {
+		t.Fatalf("apply sensitive policy %q: %v", policy, err)
+	}
+}
+
+// TestEffectiveSensitivePolicyInListings proves the per-user override (0100)
+// wins over the instance policy on the public feed: a user "hide" hides sensitive
+// videos even when the instance says display, a user "display" reveals them even
+// when the instance says hide, and clearing the override falls back to the
+// instance policy. Anonymous requests always follow the instance policy.
+func TestEffectiveSensitivePolicyInListings(t *testing.T) {
+	srv, _, _, _, _ := videoServerFull(t, testConfig())
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	_ = createPublishedVideo(t, srv, ownerTok, "ada", `{"title":"safe","privacy":"public"}`)
+	_ = createPublishedVideo(t, srv, ownerTok, "ada", `{"title":"spicy","privacy":"public","is_sensitive":true}`)
+	viewer := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	sees := func(tok, title string) bool {
+		rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos", "", tok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("feed = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		var body videoFeedResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		for _, v := range body.Videos {
+			if v.Title == title {
+				return true
+			}
+		}
+		return false
+	}
+	setPolicy := func(tok, policy string) {
+		if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me",
+			`{"sensitive_content_policy":"`+policy+`"}`, tok); rec.Code != http.StatusOK {
+			t.Fatalf("set user policy %q = %d; body=%s", policy, rec.Code, rec.Body.String())
+		}
+	}
+
+	// Instance display: anon and an un-overridden user both see the sensitive video.
+	applySensitivePolicy(t, srv, "display")
+	if !sees("", "spicy") {
+		t.Error("anon under instance display should see the sensitive video")
+	}
+	if !sees(viewer, "spicy") {
+		t.Error("un-overridden user should inherit instance display and see the sensitive video")
+	}
+
+	// User "hide" overrides instance display: the viewer stops seeing it; anon still does.
+	setPolicy(viewer, "hide")
+	if sees(viewer, "spicy") {
+		t.Error("user hide override should hide the sensitive video despite instance display")
+	}
+	if !sees("", "spicy") {
+		t.Error("anon still follows instance display (overrides are per-user)")
+	}
+
+	// Instance hide + user "display" override: the viewer sees it, anon does not.
+	applySensitivePolicy(t, srv, "hide")
+	setPolicy(viewer, "display")
+	if !sees(viewer, "spicy") {
+		t.Error("user display override should reveal the sensitive video despite instance hide")
+	}
+	if sees("", "spicy") {
+		t.Error("anon under instance hide should not see the sensitive video")
+	}
+
+	// Clearing the override falls back to the instance policy (still hide).
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me",
+		`{"sensitive_content_policy":""}`, viewer); rec.Code != http.StatusOK {
+		t.Fatalf("clear user policy = %d", rec.Code)
+	}
+	if sees(viewer, "spicy") {
+		t.Error("cleared override should inherit instance hide and hide the sensitive video")
+	}
+	// The non-sensitive video is always visible regardless of policy.
+	if !sees(viewer, "safe") {
+		t.Error("non-sensitive video should always be visible")
+	}
+}
+
+// TestVideoSensitiveReasonRoundTrip proves the creator content-warning text is
+// accepted on create + update (trimmed, storable regardless of is_sensitive,
+// clearable), surfaces on the detail DTO, and is capped at 280 chars.
+func TestVideoSensitiveReasonRoundTrip(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	rec := postJSONAuth(srv, "/api/v1/channels/ada/videos",
+		`{"title":"warned","privacy":"public","is_sensitive":true,"sensitive_reason":"  graphic content  "}`, tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var created videoView
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.SensitiveReason != "graphic content" {
+		t.Errorf("create response reason = %q, want trimmed \"graphic content\"", created.SensitiveReason)
+	}
+	id := created.ID
+
+	detailReason := func() string {
+		var v videoView
+		_ = json.Unmarshal(getVideo(srv, id, tok).Body.Bytes(), &v)
+		return v.SensitiveReason
+	}
+	if got := detailReason(); got != "graphic content" {
+		t.Errorf("detail reason = %q, want \"graphic content\"", got)
+	}
+
+	// Update replaces it.
+	if u := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id, `{"sensitive_reason":"nudity"}`, tok); u.Code != http.StatusOK {
+		t.Fatalf("update reason = %d; body=%s", u.Code, u.Body.String())
+	}
+	if got := detailReason(); got != "nudity" {
+		t.Errorf("detail reason after update = %q, want nudity", got)
+	}
+
+	// An empty string clears it.
+	if u := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id, `{"sensitive_reason":""}`, tok); u.Code != http.StatusOK {
+		t.Fatalf("clear reason = %d", u.Code)
+	}
+	if got := detailReason(); got != "" {
+		t.Errorf("detail reason after clear = %q, want empty", got)
+	}
+
+	// Storable regardless of is_sensitive (the frontend pairs them).
+	rec2 := postJSONAuth(srv, "/api/v1/channels/ada/videos",
+		`{"title":"noflag","privacy":"public","sensitive_reason":"just in case"}`, tok)
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("create noflag = %d; body=%s", rec2.Code, rec2.Body.String())
+	}
+	var noflag videoView
+	_ = json.Unmarshal(rec2.Body.Bytes(), &noflag)
+	if noflag.IsSensitive || noflag.SensitiveReason != "just in case" {
+		t.Errorf("noflag = is_sensitive %v reason %q, want false + reason stored", noflag.IsSensitive, noflag.SensitiveReason)
+	}
+
+	// The 280-char cap is enforced on create and update.
+	long := strings.Repeat("a", 281)
+	if bad := postJSONAuth(srv, "/api/v1/channels/ada/videos",
+		`{"title":"toolong","sensitive_reason":"`+long+`"}`, tok); bad.Code != http.StatusUnprocessableEntity {
+		t.Errorf("over-cap create = %d, want 422", bad.Code)
+	}
+	if bad := sendJSONAuth(srv, http.MethodPatch, "/api/v1/videos/"+id,
+		`{"sensitive_reason":"`+long+`"}`, tok); bad.Code != http.StatusUnprocessableEntity {
+		t.Errorf("over-cap update = %d, want 422", bad.Code)
 	}
 }
 

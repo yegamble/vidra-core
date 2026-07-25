@@ -474,12 +474,26 @@ type ProfileInput struct {
 	SearchHistoryEnabled               *bool
 	PersonalizedSearchEnabled          *bool
 	PersonalizedRecommendationsEnabled *bool
+	// SensitiveContentPolicy is the per-user sensitive-content policy override
+	// (0100): nil leaves it unchanged; a non-nil value sets it, where the empty
+	// string clears the override (inherit the instance policy) and a non-empty
+	// value (validated by the HTTP layer against the four enum strings) sets it.
+	SensitiveContentPolicy *string
 }
 
 // UpdateProfile updates the authenticated account's presentation fields
 // (display name, bio, unlisted flag). Identity fields (username, email) are
 // intentionally not changed here — those need their own re-verification flow.
 func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in ProfileInput) (sqlcgen.User, error) {
+	// Sensitive-content policy is tri-state (0100): unchanged unless the caller
+	// provided the field, in which case a trimmed enum value sets the override and
+	// an empty string clears it to NULL (inherit). trimPtr already trims; a nil
+	// pointer after trimming means "clear to NULL".
+	setSensitive := in.SensitiveContentPolicy != nil
+	var sensitiveVal *string
+	if trimmed := trimPtr(in.SensitiveContentPolicy); trimmed != nil && *trimmed != "" {
+		sensitiveVal = trimmed
+	}
 	user, err := s.repo.UpdateUserProfile(ctx, sqlcgen.UpdateUserProfileParams{
 		ID:                                 id,
 		DisplayName:                        trimPtr(in.DisplayName),
@@ -490,6 +504,8 @@ func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in ProfileInp
 		SearchHistoryEnabled:               in.SearchHistoryEnabled,
 		PersonalizedSearchEnabled:          in.PersonalizedSearchEnabled,
 		PersonalizedRecommendationsEnabled: in.PersonalizedRecommendationsEnabled,
+		SetSensitiveContentPolicy:          setSensitive,
+		SensitiveContentPolicy:             sensitiveVal,
 	})
 	if err != nil {
 		return sqlcgen.User{}, ErrAccountNotFound

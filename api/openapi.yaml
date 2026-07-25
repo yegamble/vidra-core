@@ -13040,6 +13040,15 @@ components:
           description: >-
             Per-user personalized-recommendations preference (search-service
             W4). Default true.
+        sensitive_content_policy:
+          type: string
+          enum: [hide, warn, blur, display]
+          description: >-
+            Per-user override of the instance sensitive_content_policy. Omitted
+            when the account inherits the instance policy (the default). When
+            set, "hide" is enforced server-side for this user (flagged videos
+            drop out of their feed/search); warn/blur/display are
+            presentation-only. Set or clear it via PATCH /auth/me.
         created_at:
           type: string
           format: date-time
@@ -13108,6 +13117,12 @@ components:
         personalized_recommendations_enabled:
           type: boolean
           description: Toggle the per-user personalized-recommendations preference (search-service W4).
+        sensitive_content_policy:
+          type: string
+          description: >-
+            Set the per-user sensitive-content policy override: one of hide,
+            warn, blur, display, or an empty string to clear the override
+            (inherit the instance policy). Any other value -> 422.
     PublicUserProfile:
       type: object
       required: [id, username, display_name, bio, created_at, has_avatar, has_banner, channels]
@@ -13394,7 +13409,7 @@ components:
             accepted).
     Video:
       type: object
-      required: [id, remote, title, description, is_sensitive, created_at]
+      required: [id, remote, title, description, is_sensitive, sensitive_reason, created_at]
       properties:
         id:
           type: string
@@ -13465,6 +13480,12 @@ components:
             When the instance sensitive_content_policy is "hide", flagged
             videos are excluded from the public feed and search server-side;
             under warn/blur the frontend applies the matching presentation.
+        sensitive_reason:
+          type: string
+          description: >-
+            The creator's optional content-warning text, paired with
+            is_sensitive by the frontend. Always present (empty string when
+            unset, and on remote cards). At most 280 characters.
         created_at:
           type: string
           format: date-time
@@ -14038,6 +14059,13 @@ components:
           description: >-
             Mark the video as sensitive content (defaults to false). See the
             Video schema for how the instance policy treats flagged videos.
+        sensitive_reason:
+          type: string
+          maxLength: 280
+          description: >-
+            Optional creator content-warning text, trimmed and capped at 280
+            characters (-> 422 over the cap). Storable regardless of
+            is_sensitive; the frontend pairs them.
         comments_policy:
           type: string
           enum: [enabled, disabled]
@@ -14103,6 +14131,13 @@ components:
         is_sensitive:
           type: boolean
           description: Set or clear the sensitive-content flag (omit to leave unchanged).
+        sensitive_reason:
+          type: string
+          maxLength: 280
+          description: >-
+            Set the creator content-warning text (omit to leave unchanged; an
+            empty string clears it). Trimmed and capped at 280 characters ->
+            422 over the cap.
         comments_policy:
           type: string
           enum: [enabled, disabled]
