@@ -489,6 +489,10 @@ type CreateInput struct {
 	// excluded from public browse/search when the instance policy is "hide";
 	// otherwise presentation-only.
 	IsSensitive bool
+	// SensitiveReason is the creator's optional content-warning text shown next to
+	// a sensitive video (empty = none). Stored regardless of IsSensitive; the
+	// frontend pairs the two. Trimmed here; the HTTP layer caps its length.
+	SensitiveReason string
 	// CommentsPolicy is the per-video comment policy (config-parity W9), one of
 	// CommentsPolicyEnabled/CommentsPolicyDisabled; "" seeds the instance's
 	// default_comment_policy (via the WithPublishDefaultsFunc seam). The HTTP
@@ -611,6 +615,7 @@ func (s *Service) CreateDraft(ctx context.Context, channelID uuid.UUID, in Creat
 		License:         nilIfEmpty(license),
 		PublishAt:       timestamptz(in.PublishAt),
 		IsSensitive:     in.IsSensitive,
+		SensitiveReason: strings.TrimSpace(in.SensitiveReason),
 		CommentsPolicy:  commentsPolicy,
 		DownloadEnabled: downloadEnabled,
 
@@ -1656,6 +1661,10 @@ type UpdateInput struct {
 	// IsSensitive: nil leaves the sensitive-content flag unchanged; a non-nil
 	// value sets it.
 	IsSensitive *bool
+	// SensitiveReason: nil leaves the content-warning text unchanged; a non-nil
+	// value sets it (an empty string clears it). Trimmed here; the HTTP layer
+	// caps its length.
+	SensitiveReason *string
 	// CommentsPolicy: nil leaves the per-video comment policy unchanged; a
 	// non-nil value (validated by the HTTP layer) sets it (config-parity W9).
 	CommentsPolicy *string
@@ -1714,6 +1723,7 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 		License:         in.License,
 		PublishAt:       timestamptz(in.PublishAt),
 		IsSensitive:     in.IsSensitive,
+		SensitiveReason: trimPtr(in.SensitiveReason),
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
 
@@ -1842,7 +1852,7 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]Fee
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		it.PublishAt = TimePtr(r.PublishAt) // studio view: badge scheduled videos
 		items = append(items, it)
@@ -1863,7 +1873,7 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, 
 		if hideSensitive && r.IsSensitive {
 			continue
 		}
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, it)
 	}
@@ -1904,12 +1914,12 @@ type FeedItem struct {
 // newFeedItem packages a video's columns and card data into a FeedItem. It lets
 // the (structurally identical but distinct) sqlc row types from the feed,
 // search, and channel-list queries share one conversion.
-func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state string, createdAt, updatedAt time.Time, views int64, hasThumbnail bool, channelHandle, channelDisplayName string, durationSeconds *int32, isSensitive bool) FeedItem {
+func newFeedItem(id, channelID uuid.UUID, title, description, privacy, state string, createdAt, updatedAt time.Time, views int64, hasThumbnail bool, channelHandle, channelDisplayName string, durationSeconds *int32, isSensitive bool, sensitiveReason string) FeedItem {
 	return FeedItem{
 		Video: sqlcgen.Video{
 			ID: id, ChannelID: channelID, Title: title, Description: description,
 			Privacy: privacy, State: state, CreatedAt: createdAt, UpdatedAt: updatedAt,
-			IsSensitive: isSensitive,
+			IsSensitive: isSensitive, SensitiveReason: sensitiveReason,
 		},
 		Views:              views,
 		HasThumbnail:       hasThumbnail,
@@ -1990,7 +2000,7 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
@@ -2012,7 +2022,7 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
@@ -2043,7 +2053,7 @@ func (s *Service) ListSaved(ctx context.Context, userID uuid.UUID, limit, offset
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, it)
 	}
@@ -2102,7 +2112,7 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 		}
 		items := make([]HistoryItem, 0, len(rows))
 		for _, r := range rows {
-			it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+			it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 			it.AuthorDisplayName = r.AuthorDisplayName
 			items = append(items, HistoryItem{
 				FeedItem:        it,
@@ -2122,7 +2132,7 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 	}
 	items := make([]HistoryItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, HistoryItem{
 			FeedItem:        it,
@@ -2166,7 +2176,7 @@ func (s *Service) SearchPublic(ctx context.Context, query string, filter FeedFil
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
@@ -2193,7 +2203,7 @@ func (s *Service) HydrateByIDs(ctx context.Context, ids []uuid.UUID, viewerID uu
 	}
 	byID := make(map[uuid.UUID]FeedItem, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		byID[r.ID] = it
 	}
@@ -2224,7 +2234,7 @@ func (s *Service) RelatedFallback(ctx context.Context, videoID, channelID uuid.U
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive)
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, it)
 	}

@@ -338,6 +338,18 @@ var SensitiveContentPolicyOptions = []string{
 	SensitiveContentPolicyDisplay,
 }
 
+// IsSensitiveContentPolicy reports whether v is one of the four sensitive-content
+// policy values (hide|warn|blur|display). Used to validate the per-user override
+// (0100) as well as the instance setting.
+func IsSensitiveContentPolicy(v string) bool {
+	for _, o := range SensitiveContentPolicyOptions {
+		if o == v {
+			return true
+		}
+	}
+	return false
+}
+
 // Hardcoded defaults for the keys with a non-zero default and no config/env
 // backing (spec instance-platform-info: no new env vars).
 const (
