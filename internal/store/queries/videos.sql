@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
 INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -466,14 +466,24 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     publish_after_transcode = COALESCE(sqlc.narg('publish_after_transcode'), publish_after_transcode),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id;
+
+-- name: SetVideoPinnedComment :exec
+-- Set (or clear, when NULL) a video's pinned comment (YouTube-style creator pin,
+-- 0099). The single column holds at most one pin, so setting it atomically
+-- replaces any prior pin. Local metadata only: it deliberately does NOT bump
+-- updated_at (which the transcoding-hold sweeper reads as the hold-start time)
+-- and never federates. Authorized in the HTTP layer (video owner/editor/staff).
+UPDATE videos
+SET pinned_comment_id = sqlc.narg('pinned_comment_id')
+WHERE id = sqlc.arg('video_id');
 
 -- name: PublishTranscodingVideo :execrows
 -- The publish-after-transcode release CAS (0098): flips a HELD video to

@@ -41,7 +41,7 @@ func (q *Queries) CountPublicVideosByChannel(ctx context.Context, channelID uuid
 const createVideo = `-- name: CreateVideo :one
 INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id
 `
 
 type CreateVideoParams struct {
@@ -94,6 +94,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		&i.CommentsPolicy,
 		&i.DownloadEnabled,
 		&i.PublishAfterTranscode,
+		&i.PinnedCommentID,
 	)
 	return i, err
 }
@@ -1417,12 +1418,33 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 	return items, nil
 }
 
+const setVideoPinnedComment = `-- name: SetVideoPinnedComment :exec
+UPDATE videos
+SET pinned_comment_id = $1
+WHERE id = $2
+`
+
+type SetVideoPinnedCommentParams struct {
+	PinnedCommentID pgtype.UUID `json:"pinned_comment_id"`
+	VideoID         uuid.UUID   `json:"video_id"`
+}
+
+// Set (or clear, when NULL) a video's pinned comment (YouTube-style creator pin,
+// 0099). The single column holds at most one pin, so setting it atomically
+// replaces any prior pin. Local metadata only: it deliberately does NOT bump
+// updated_at (which the transcoding-hold sweeper reads as the hold-start time)
+// and never federates. Authorized in the HTTP layer (video owner/editor/staff).
+func (q *Queries) SetVideoPinnedComment(ctx context.Context, arg SetVideoPinnedCommentParams) error {
+	_, err := q.db.Exec(ctx, setVideoPinnedComment, arg.PinnedCommentID, arg.VideoID)
+	return err
+}
+
 const setVideoState = `-- name: SetVideoState :one
 UPDATE videos
 SET state      = $1,
     updated_at = now()
 WHERE id = $2
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id
 `
 
 type SetVideoStateParams struct {
@@ -1452,6 +1474,7 @@ func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (V
 		&i.CommentsPolicy,
 		&i.DownloadEnabled,
 		&i.PublishAfterTranscode,
+		&i.PinnedCommentID,
 	)
 	return i, err
 }
@@ -1471,7 +1494,7 @@ SET title       = COALESCE($1, title),
     publish_after_transcode = COALESCE($11, publish_after_transcode),
     updated_at  = now()
 WHERE id = $12
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id
 `
 
 type UpdateVideoParams struct {
@@ -1524,6 +1547,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		&i.CommentsPolicy,
 		&i.DownloadEnabled,
 		&i.PublishAfterTranscode,
+		&i.PinnedCommentID,
 	)
 	return i, err
 }

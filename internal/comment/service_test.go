@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -23,10 +24,15 @@ type fakeRepo struct {
 	comments   map[uuid.UUID]sqlcgen.Comment
 	authors    map[uuid.UUID]author // user_id -> author identity
 	remoteRows map[uuid.UUID]remoteRowMeta
+	pinned     map[uuid.UUID]uuid.UUID // video_id -> pinned comment_id (0099)
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{comments: map[uuid.UUID]sqlcgen.Comment{}, authors: map[uuid.UUID]author{}}
+	return &fakeRepo{
+		comments: map[uuid.UUID]sqlcgen.Comment{},
+		authors:  map[uuid.UUID]author{},
+		pinned:   map[uuid.UUID]uuid.UUID{},
+	}
 }
 
 func (f *fakeRepo) CreateComment(_ context.Context, a sqlcgen.CreateCommentParams) (sqlcgen.Comment, error) {
@@ -46,14 +52,56 @@ func (f *fakeRepo) ListCommentsByVideo(_ context.Context, a sqlcgen.ListComments
 			meta := f.remoteRows[c.ID]
 			rows = append(rows, sqlcgen.ListCommentsByVideoRow{
 				ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
-				CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+				ParentID: c.ParentID, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 				AuthorUsername: au.username, AuthorDisplayName: au.displayName,
 				RemoteActorUrl: c.RemoteActorUrl, RemoteAuthorName: meta.name, AuthorDomain: meta.domain,
+				Hearted: c.Hearted, Pinned: f.pinned[c.VideoID] == c.ID,
 			})
 		}
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Pinned != rows[j].Pinned {
+			return rows[i].Pinned
+		}
+		return rows[i].CreatedAt.After(rows[j].CreatedAt)
+	})
 	return rows, nil
+}
+
+func (f *fakeRepo) GetCommentWithMeta(_ context.Context, id uuid.UUID) (sqlcgen.GetCommentWithMetaRow, error) {
+	c, ok := f.comments[id]
+	if !ok {
+		return sqlcgen.GetCommentWithMetaRow{}, errors.New("not found")
+	}
+	au := f.authors[uuid.UUID(c.UserID.Bytes)]
+	meta := f.remoteRows[c.ID]
+	return sqlcgen.GetCommentWithMetaRow{
+		ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
+		ParentID: c.ParentID, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		DeletedAt: c.DeletedAt, Hearted: c.Hearted,
+		Pinned:         f.pinned[c.VideoID] == c.ID,
+		AuthorUsername: au.username, AuthorDisplayName: au.displayName,
+		RemoteActorUrl: c.RemoteActorUrl, RemoteAuthorName: meta.name, AuthorDomain: meta.domain,
+	}, nil
+}
+
+func (f *fakeRepo) SetCommentHearted(_ context.Context, a sqlcgen.SetCommentHeartedParams) (sqlcgen.Comment, error) {
+	c, ok := f.comments[a.ID]
+	if !ok {
+		return sqlcgen.Comment{}, errors.New("not found")
+	}
+	c.Hearted = a.Hearted
+	f.comments[a.ID] = c
+	return c, nil
+}
+
+func (f *fakeRepo) SetVideoPinnedComment(_ context.Context, a sqlcgen.SetVideoPinnedCommentParams) error {
+	if a.PinnedCommentID.Valid {
+		f.pinned[a.VideoID] = uuid.UUID(a.PinnedCommentID.Bytes)
+	} else {
+		delete(f.pinned, a.VideoID)
+	}
+	return nil
 }
 
 func (f *fakeRepo) ListAdminComments(_ context.Context, a sqlcgen.ListAdminCommentsParams) ([]sqlcgen.ListAdminCommentsRow, error) {
@@ -242,5 +290,171 @@ func TestEditComment(t *testing.T) {
 	// An unknown comment is ErrNotFound.
 	if _, err := svc.Edit(ctx, uuid.New(), author, "x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown edit = %v, want ErrNotFound", err)
+	}
+}
+
+// TestPinSwapUnpinAndList covers the pin lifecycle: pinning replaces any prior
+// pin, the list returns the pinned comment first, unpin clears it, and unpinning
+// a comment that is NOT the current pin never clobbers a different pin (0099).
+func TestPinSwapUnpinAndList(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+	video, owner := uuid.New(), uuid.New()
+	repo.authors[owner] = author{"ada", "Ada"}
+	a, _ := svc.Create(ctx, video, owner, "A", nil)
+	b, _ := svc.Create(ctx, video, owner, "B", nil)
+
+	if wa, err := svc.Pin(ctx, a.ID); err != nil || !wa.Pinned {
+		t.Fatalf("pin A = %+v, err %v", wa, err)
+	}
+	// Pinning B replaces A atomically.
+	if wa, err := svc.Pin(ctx, b.ID); err != nil || !wa.Pinned {
+		t.Fatalf("pin B = %+v, err %v", wa, err)
+	}
+	if pinned, _ := svc.IsPinned(ctx, a.ID); pinned {
+		t.Error("pinning B should have replaced A, but A is still pinned")
+	}
+	if pinned, _ := svc.IsPinned(ctx, b.ID); !pinned {
+		t.Error("B should be the current pin")
+	}
+
+	// The list returns B first, flagged pinned.
+	items, _ := svc.ListByVideo(ctx, video, uuid.Nil, false, 20, 0)
+	if len(items) != 2 || items[0].Comment.ID != b.ID || !items[0].Pinned {
+		t.Fatalf("list[0] = %+v, want B pinned-first", items[0])
+	}
+
+	// Unpin B.
+	if wa, err := svc.Unpin(ctx, b.ID); err != nil || wa.Pinned {
+		t.Fatalf("unpin B = %+v, err %v", wa, err)
+	}
+	if pinned, _ := svc.IsPinned(ctx, b.ID); pinned {
+		t.Error("B should be unpinned")
+	}
+
+	// Re-pin A, then unpin B (which is not the current pin): A's pin survives.
+	if _, err := svc.Pin(ctx, a.ID); err != nil {
+		t.Fatalf("re-pin A: %v", err)
+	}
+	if _, err := svc.Unpin(ctx, b.ID); err != nil {
+		t.Fatalf("unpin non-pinned B: %v", err)
+	}
+	if pinned, _ := svc.IsPinned(ctx, a.ID); !pinned {
+		t.Error("unpinning a non-pinned comment must not clear A's pin")
+	}
+}
+
+// TestPinRejectsReplyAndTombstone: only a top-level, non-tombstoned comment can
+// be pinned; a tombstoned comment can't be hearted either (0099).
+func TestPinRejectsReplyAndTombstone(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+	video, owner := uuid.New(), uuid.New()
+	repo.authors[owner] = author{"ada", "Ada"}
+	top, _ := svc.Create(ctx, video, owner, "top", nil)
+	reply, _ := svc.Create(ctx, video, owner, "reply", &top.ID)
+
+	if _, err := svc.Pin(ctx, reply.ID); !errors.Is(err, ErrNotTopLevel) {
+		t.Errorf("pin reply = %v, want ErrNotTopLevel", err)
+	}
+
+	// Tombstone the top-level comment.
+	tomb := repo.comments[top.ID]
+	tomb.DeletedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	repo.comments[top.ID] = tomb
+	if _, err := svc.Pin(ctx, top.ID); !errors.Is(err, ErrTombstoned) {
+		t.Errorf("pin tombstoned = %v, want ErrTombstoned", err)
+	}
+	if _, err := svc.Heart(ctx, top.ID); !errors.Is(err, ErrTombstoned) {
+		t.Errorf("heart tombstoned = %v, want ErrTombstoned", err)
+	}
+
+	// Unknown comment.
+	if _, err := svc.Pin(ctx, uuid.New()); !errors.Is(err, ErrNotFound) {
+		t.Errorf("pin unknown = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.Heart(ctx, uuid.New()); !errors.Is(err, ErrNotFound) {
+		t.Errorf("heart unknown = %v, want ErrNotFound", err)
+	}
+}
+
+// TestHeartRoundTripLocalAndRemote: the heart flag round-trips on both local and
+// remote-authored comments (heart is local metadata) and shows in the list.
+func TestHeartRoundTripLocalAndRemote(t *testing.T) {
+	repo := newFakeRepo()
+	repo.remoteRows = map[uuid.UUID]remoteRowMeta{}
+	svc := NewService(repo)
+	ctx := context.Background()
+	video, owner := uuid.New(), uuid.New()
+	repo.authors[owner] = author{"ada", "Ada"}
+
+	local, _ := svc.Create(ctx, video, owner, "local", nil)
+	if wa, err := svc.Heart(ctx, local.ID); err != nil || !wa.Comment.Hearted {
+		t.Fatalf("heart local = %+v, err %v", wa, err)
+	}
+	if wa, err := svc.Unheart(ctx, local.ID); err != nil || wa.Comment.Hearted {
+		t.Fatalf("unheart local = %+v, err %v", wa, err)
+	}
+
+	// A remote-authored comment can still be hearted (local metadata).
+	actor := "https://remote.example/users/bob"
+	remote := sqlcgen.Comment{
+		ID: uuid.New(), VideoID: video, Body: "hi from afar",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(), RemoteActorUrl: &actor,
+	}
+	repo.comments[remote.ID] = remote
+	repo.remoteRows[remote.ID] = remoteRowMeta{name: "bob@remote.example", domain: "remote.example"}
+	wa, err := svc.Heart(ctx, remote.ID)
+	if err != nil || !wa.Comment.Hearted || !wa.Remote || wa.AuthorDomain != "remote.example" {
+		t.Fatalf("heart remote = %+v, err %v", wa, err)
+	}
+
+	items, _ := svc.ListByVideo(ctx, video, uuid.Nil, false, 20, 0)
+	for _, it := range items {
+		if it.Comment.ID == remote.ID && !it.Comment.Hearted {
+			t.Error("remote heart not reflected in the list")
+		}
+	}
+}
+
+// TestPinHeartDoNotFederate: none of pin/unpin/heart/unheart fire the federation
+// Create/Update/Delete{Note} hooks — they are local metadata (0099).
+func TestPinHeartDoNotFederate(t *testing.T) {
+	repo := newFakeRepo()
+	var creates, updates, deletes int
+	svc := NewService(repo,
+		WithCreateHook(func(context.Context, uuid.UUID) { creates++ }),
+		WithUpdateHook(func(context.Context, uuid.UUID) { updates++ }),
+		WithDeleteHook(func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) { deletes++ }),
+	)
+	ctx := context.Background()
+	video, owner := uuid.New(), uuid.New()
+	repo.authors[owner] = author{"ada", "Ada"}
+	c, err := svc.Create(ctx, video, owner, "top", nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Create fired the create hook once; the metadata actions must fire nothing.
+	if creates != 1 {
+		t.Fatalf("create hook = %d, want 1 (from Create)", creates)
+	}
+	creates = 0
+
+	if _, err := svc.Pin(ctx, c.ID); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	if _, err := svc.Heart(ctx, c.ID); err != nil {
+		t.Fatalf("Heart: %v", err)
+	}
+	if _, err := svc.Unheart(ctx, c.ID); err != nil {
+		t.Fatalf("Unheart: %v", err)
+	}
+	if _, err := svc.Unpin(ctx, c.ID); err != nil {
+		t.Fatalf("Unpin: %v", err)
+	}
+	if creates != 0 || updates != 0 || deletes != 0 {
+		t.Errorf("pin/heart federated: create=%d update=%d delete=%d, want 0/0/0", creates, updates, deletes)
 	}
 }
