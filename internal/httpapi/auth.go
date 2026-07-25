@@ -13,6 +13,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -181,8 +182,12 @@ type userView struct {
 	PersonalizedSearchEnabled          bool `json:"personalized_search_enabled"`
 	PersonalizedRecommendationsEnabled bool `json:"personalized_recommendations_enabled"`
 	// ProfilePublic is an explicit opt-in. A false profile returns 404 publicly.
-	ProfilePublic bool      `json:"profile_public"`
-	CreatedAt     time.Time `json:"created_at"`
+	ProfilePublic bool `json:"profile_public"`
+	// SensitiveContentPolicy is the per-user sensitive-content policy override
+	// (0100). Omitted when the user inherits the instance policy (column NULL);
+	// otherwise one of hide|warn|blur|display.
+	SensitiveContentPolicy *string   `json:"sensitive_content_policy,omitempty"`
+	CreatedAt              time.Time `json:"created_at"`
 	// HasAvatar/HasBanner are set on GET/PATCH /auth/me (omitted elsewhere);
 	// when true the image is served at GET /users/{id}/avatar | /banner.
 	HasAvatar *bool `json:"has_avatar,omitempty"`
@@ -204,6 +209,7 @@ func newUserView(u sqlcgen.User) userView {
 		PersonalizedSearchEnabled:          u.PersonalizedSearchEnabled,
 		PersonalizedRecommendationsEnabled: u.PersonalizedRecommendationsEnabled,
 		ProfilePublic:                      u.ProfilePublic,
+		SensitiveContentPolicy:             u.SensitiveContentPolicy,
 		CreatedAt:                          u.CreatedAt,
 	}
 }
@@ -350,12 +356,17 @@ type updateProfileRequest struct {
 	SearchHistoryEnabled               *bool `json:"search_history_enabled"`
 	PersonalizedSearchEnabled          *bool `json:"personalized_search_enabled"`
 	PersonalizedRecommendationsEnabled *bool `json:"personalized_recommendations_enabled"`
+	// SensitiveContentPolicy sets the per-user sensitive-content override (0100):
+	// one of hide|warn|blur|display, or "" to clear it (inherit the instance
+	// policy). Any other value is rejected.
+	SensitiveContentPolicy *string `json:"sensitive_content_policy"`
 }
 
 func (r updateProfileRequest) Validate() []FieldError {
 	var fes []FieldError
 	if r.DisplayName == nil && r.Bio == nil && r.Unlisted == nil && r.HistoryEnabled == nil && r.ProfilePublic == nil &&
-		r.SearchHistoryEnabled == nil && r.PersonalizedSearchEnabled == nil && r.PersonalizedRecommendationsEnabled == nil {
+		r.SearchHistoryEnabled == nil && r.PersonalizedSearchEnabled == nil && r.PersonalizedRecommendationsEnabled == nil &&
+		r.SensitiveContentPolicy == nil {
 		return []FieldError{{Field: "display_name", Message: "at least one profile field is required"}}
 	}
 	if r.DisplayName != nil && len(strings.TrimSpace(*r.DisplayName)) > 50 {
@@ -363,6 +374,13 @@ func (r updateProfileRequest) Validate() []FieldError {
 	}
 	if r.Bio != nil && len(*r.Bio) > 1000 {
 		fes = append(fes, FieldError{Field: "bio", Message: "must be at most 1000 characters"})
+	}
+	// A provided policy must be empty (clear-to-inherit) or one of the four enum
+	// strings; anything else is a validation error.
+	if r.SensitiveContentPolicy != nil {
+		if v := strings.TrimSpace(*r.SensitiveContentPolicy); v != "" && !instancesettings.IsSensitiveContentPolicy(v) {
+			fes = append(fes, FieldError{Field: "sensitive_content_policy", Message: "must be one of hide, warn, blur, display, or empty to inherit"})
+		}
 	}
 	return fes
 }
@@ -386,6 +404,7 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 		SearchHistoryEnabled:               in.SearchHistoryEnabled,
 		PersonalizedSearchEnabled:          in.PersonalizedSearchEnabled,
 		PersonalizedRecommendationsEnabled: in.PersonalizedRecommendationsEnabled,
+		SensitiveContentPolicy:             in.SensitiveContentPolicy,
 	})
 	if err != nil {
 		if errors.Is(err, auth.ErrAccountNotFound) {

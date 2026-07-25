@@ -146,7 +146,9 @@ func (s *Server) handleVideosFeed(c echo.Context) error {
 			}
 			return cerr
 		}
-		items, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, false)
+		// Anonymous surface: honour the INSTANCE sensitive-content policy (0100).
+		// Under "hide", flagged videos never leak into the public feed.
+		items, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.hideSensitiveVideos())
 		if err != nil {
 			return err
 		}
@@ -158,7 +160,9 @@ func (s *Server) handleVideosFeed(c echo.Context) error {
 		selfURL = origin + "/feeds/videos.xml?channel=" + url.QueryEscape(ch.Handle)
 		descText = "Latest public videos from " + ch.DisplayName + " on " + instance
 	} else {
-		items, err = s.videosvc.ListPublic(ctx, "recent", "local", video.FeedFilter{}, uuid.Nil, false, feedItemLimit, 0)
+		// Anonymous surface: honour the INSTANCE sensitive-content policy (0100).
+		items, err = s.videosvc.ListPublic(ctx, "recent", "local",
+			video.FeedFilter{HideSensitive: s.hideSensitiveVideos()}, uuid.Nil, false, feedItemLimit, 0)
 		if err != nil {
 			return err
 		}
@@ -347,7 +351,10 @@ func (s *Server) handleSitemap(c echo.Context) error {
 	ctx := c.Request().Context()
 	origin := s.webOrigin()
 
-	items, err := s.videosvc.ListPublic(ctx, "recent", "local", video.FeedFilter{}, uuid.Nil, false, sitemapVideoLimit, 0)
+	// Anonymous surface: honour the INSTANCE sensitive-content policy (0100), so
+	// flagged videos never leak into the sitemap under the "hide" policy.
+	items, err := s.videosvc.ListPublic(ctx, "recent", "local",
+		video.FeedFilter{HideSensitive: s.hideSensitiveVideos()}, uuid.Nil, false, sitemapVideoLimit, 0)
 	if err != nil {
 		return err
 	}

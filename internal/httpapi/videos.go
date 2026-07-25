@@ -29,6 +29,10 @@ import (
 // the video to already hold >=1 password (else 400 password_required-style).
 var validVideoPrivacy = map[string]bool{"public": true, "unlisted": true, "private": true, "password": true}
 
+// maxSensitiveReasonLen caps the creator's content-warning text (§sensitive
+// content), measured on the trimmed value.
+const maxSensitiveReasonLen = 280
+
 // createVideoRequest is the POST /api/v1/channels/{handle}/videos body.
 type createVideoRequest struct {
 	Title       string     `json:"title"`
@@ -42,6 +46,10 @@ type createVideoRequest struct {
 	// IsSensitive optionally marks the video as sensitive content
 	// (instance-platform-info); defaults to false.
 	IsSensitive bool `json:"is_sensitive"`
+	// SensitiveReason is the creator's optional content-warning text (trimmed,
+	// capped at maxSensitiveReasonLen). Storable regardless of IsSensitive — the
+	// frontend pairs them.
+	SensitiveReason string `json:"sensitive_reason"`
 	// CommentsPolicy is the per-video comment policy (config-parity W9):
 	// enabled|disabled. Omitted/empty seeds the instance's
 	// default_comment_policy setting.
@@ -72,6 +80,9 @@ func (r createVideoRequest) Validate() []FieldError {
 	}
 	if r.CommentsPolicy != "" && !video.IsCommentsPolicy(r.CommentsPolicy) {
 		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled"})
+	}
+	if len(strings.TrimSpace(r.SensitiveReason)) > maxSensitiveReasonLen {
+		fes = append(fes, FieldError{Field: "sensitive_reason", Message: "must be at most 280 characters"})
 	}
 	fes = append(fes, validateTaxonomy(r.Category, r.Language, r.License)...)
 	fes = append(fes, validateTags(r.Tags)...)
@@ -144,7 +155,11 @@ type videoView struct {
 	State       string `json:"state,omitempty"`
 	// IsSensitive marks sensitive content (instance-platform-info). Always
 	// emitted; false for remote cards (no local flag exists for them).
-	IsSensitive     bool      `json:"is_sensitive"`
+	IsSensitive bool `json:"is_sensitive"`
+	// SensitiveReason is the creator's optional content-warning text, paired with
+	// IsSensitive by the frontend. Always emitted (empty string when unset or on
+	// remote cards).
+	SensitiveReason string    `json:"sensitive_reason"`
 	CreatedAt       time.Time `json:"created_at"`
 	DurationSeconds *int32    `json:"duration_seconds,omitempty"`
 	Width           *int32    `json:"width,omitempty"`
@@ -253,6 +268,7 @@ func newVideoView(v sqlcgen.Video) videoView {
 		Privacy:               v.Privacy,
 		State:                 v.State,
 		IsSensitive:           v.IsSensitive,
+		SensitiveReason:       v.SensitiveReason,
 		CreatedAt:             v.CreatedAt,
 		Category:              v.Category,
 		Language:              v.Language,
@@ -269,18 +285,19 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 	downloadEnabled := v.DownloadEnabled
 	publishAfterTranscode := v.PublishAfterTranscode
 	view := videoView{
-		ID:          v.ID.String(),
-		ChannelID:   v.ChannelID.String(),
-		Title:       v.Title,
-		Description: v.Description,
-		Privacy:     v.Privacy,
-		State:       v.State,
-		IsSensitive: v.IsSensitive,
-		CreatedAt:   v.CreatedAt,
-		Category:    v.Category,
-		Language:    v.Language,
-		License:     v.License,
-		PublishAt:   video.TimePtr(v.PublishAt),
+		ID:              v.ID.String(),
+		ChannelID:       v.ChannelID.String(),
+		Title:           v.Title,
+		Description:     v.Description,
+		Privacy:         v.Privacy,
+		State:           v.State,
+		IsSensitive:     v.IsSensitive,
+		SensitiveReason: v.SensitiveReason,
+		CreatedAt:       v.CreatedAt,
+		Category:        v.Category,
+		Language:        v.Language,
+		License:         v.License,
+		PublishAt:       video.TimePtr(v.PublishAt),
 		// Detail carries the owning channel so the frontend related-rail can link
 		// and label without a second request (Wave A contract gap).
 		ChannelHandle:         &handle,
@@ -331,6 +348,7 @@ func (s *Server) handleCreateVideo(c echo.Context) error {
 		Tags:            in.Tags,
 		PublishAt:       in.PublishAt,
 		IsSensitive:     in.IsSensitive,
+		SensitiveReason: in.SensitiveReason,
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
 
@@ -577,8 +595,9 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 		Category: strings.TrimSpace(c.QueryParam("category")),
 		Language: strings.TrimSpace(c.QueryParam("language")),
 		// Sensitive-content policy "hide" is enforced server-side on the public
-		// discovery surfaces only (instance-platform-info).
-		HideSensitive: s.hideSensitiveVideos(),
+		// discovery surfaces only (instance-platform-info), now per-viewer (0100):
+		// a signed-in caller's override wins, else the instance policy.
+		HideSensitive: s.effectiveHideSensitive(c),
 	}
 	var fes []FieldError
 	if len(filter.Tag) > video.MaxTagLen {
@@ -671,8 +690,9 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 		Category: strings.TrimSpace(c.QueryParam("category")),
 		Language: strings.TrimSpace(c.QueryParam("language")),
 		// Sensitive-content policy "hide" is enforced server-side on the public
-		// discovery surfaces only (instance-platform-info).
-		HideSensitive: s.hideSensitiveVideos(),
+		// discovery surfaces only (instance-platform-info), now per-viewer (0100):
+		// a signed-in caller's override wins, else the instance policy.
+		HideSensitive: s.effectiveHideSensitive(c),
 	}
 	var fes []FieldError
 	if len(filter.Tag) > video.MaxTagLen {
@@ -770,7 +790,7 @@ func (s *Server) handleListChannelVideos(c echo.Context) error {
 	if userID, _, ok := principalFromContext(c); ok && s.canManageChannelContent(ctx, userID, ch.ID) {
 		items, err = s.videosvc.ListByChannel(ctx, ch.ID)
 	} else {
-		items, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.hideSensitiveVideos())
+		items, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.effectiveHideSensitive(c))
 	}
 	if err != nil {
 		return err
@@ -795,6 +815,10 @@ type updateVideoRequest struct {
 	Tags        *[]string  `json:"tags"`
 	PublishAt   *time.Time `json:"publish_at"`
 	IsSensitive *bool      `json:"is_sensitive"`
+	// SensitiveReason: nil leaves the content-warning text unchanged; a non-nil
+	// value sets it (an empty string clears it). Trimmed, capped at
+	// maxSensitiveReasonLen.
+	SensitiveReason *string `json:"sensitive_reason"`
 	// CommentsPolicy / DownloadEnabled are the per-video publish policies
 	// (config-parity W9); nil leaves each unchanged.
 	CommentsPolicy  *string `json:"comments_policy"`
@@ -808,7 +832,7 @@ type updateVideoRequest struct {
 func (r updateVideoRequest) Validate() []FieldError {
 	if r.Title == nil && r.Description == nil && r.Privacy == nil &&
 		r.Category == nil && r.Language == nil && r.License == nil && r.Tags == nil &&
-		r.PublishAt == nil && r.IsSensitive == nil &&
+		r.PublishAt == nil && r.IsSensitive == nil && r.SensitiveReason == nil &&
 		r.CommentsPolicy == nil && r.DownloadEnabled == nil && r.PublishAfterTranscode == nil {
 		return []FieldError{{Field: "title", Message: "at least one updatable field is required"}}
 	}
@@ -829,6 +853,9 @@ func (r updateVideoRequest) Validate() []FieldError {
 	}
 	if r.CommentsPolicy != nil && !video.IsCommentsPolicy(*r.CommentsPolicy) {
 		fes = append(fes, FieldError{Field: "comments_policy", Message: "must be one of enabled, disabled"})
+	}
+	if r.SensitiveReason != nil && len(strings.TrimSpace(*r.SensitiveReason)) > maxSensitiveReasonLen {
+		fes = append(fes, FieldError{Field: "sensitive_reason", Message: "must be at most 280 characters"})
 	}
 	// A provided taxonomy field must be a known, non-empty id (clearing to unset
 	// is not supported via update).
@@ -897,6 +924,7 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		Tags:            in.Tags,
 		PublishAt:       in.PublishAt,
 		IsSensitive:     in.IsSensitive,
+		SensitiveReason: in.SensitiveReason,
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
 
@@ -950,6 +978,9 @@ func updateVideoFieldNames(in updateVideoRequest) []string {
 	}
 	if in.IsSensitive != nil {
 		fields = append(fields, "is_sensitive")
+	}
+	if in.SensitiveReason != nil {
+		fields = append(fields, "sensitive_reason")
 	}
 	if in.CommentsPolicy != nil {
 		fields = append(fields, "comments_policy")

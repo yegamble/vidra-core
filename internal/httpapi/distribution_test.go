@@ -461,6 +461,42 @@ func TestSitemap(t *testing.T) {
 	}
 }
 
+// TestDistributionHonoursInstanceSensitivePolicy is the RSS/sitemap leak
+// regression (0100): the anonymous distribution surfaces must honour the INSTANCE
+// sensitive-content policy — a flagged video is excluded under "hide" (the
+// default) and included under "display" — instead of leaking unconditionally.
+func TestDistributionHonoursInstanceSensitivePolicy(t *testing.T) {
+	srv, repo, ada := distributionServer(t)
+	seedVideo(repo, ada, "Normal Clip", "d", "public", "published", 10)
+	spicy := seedVideo(repo, ada, "Spicy Clip", "d", "public", "published", 5)
+	v := repo.videos[spicy]
+	v.IsSensitive = true
+	repo.videos[spicy] = v
+
+	feedBody := func() string { return get(t, srv, "/feeds/videos.xml").Body.String() }
+	sitemapBody := func() string { return get(t, srv, "/sitemap.xml").Body.String() }
+
+	// Default policy "hide": the sensitive video never leaks; the normal one shows.
+	if body := feedBody(); strings.Contains(body, "Spicy Clip") {
+		t.Errorf("RSS leaked a sensitive video under the hide policy:\n%s", body)
+	}
+	if body := feedBody(); !strings.Contains(body, "Normal Clip") {
+		t.Error("RSS dropped the non-sensitive video")
+	}
+	if body := sitemapBody(); strings.Contains(body, spicy.String()) {
+		t.Error("sitemap leaked a sensitive video under the hide policy")
+	}
+
+	// Under "display" the sensitive video is included in both surfaces.
+	applySensitivePolicy(t, srv, "display")
+	if body := feedBody(); !strings.Contains(body, "Spicy Clip") {
+		t.Errorf("RSS excluded a sensitive video under the display policy:\n%s", body)
+	}
+	if body := sitemapBody(); !strings.Contains(body, spicy.String()) {
+		t.Error("sitemap excluded a sensitive video under the display policy")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Route exemption: without a public origin the routes are not mounted, which is
 // exactly what keeps them out of the OpenAPI drift guard (TestOpenAPIContract).
