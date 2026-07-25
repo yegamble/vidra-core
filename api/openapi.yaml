@@ -6092,6 +6092,192 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/comments/{id}/pin:
+    put:
+      operationId: pinComment
+      summary: Pin a comment
+      description: >-
+        Pins a top-level comment as its video's single pinned comment (a
+        YouTube-style creator pin). The caller must be able to manage the
+        comment's video (its channel owner or an editor) or be a
+        moderator/admin. Pinning replaces any existing pin. Only a top-level,
+        non-tombstoned comment can be pinned (422 otherwise). This is local
+        metadata — it never edits the comment body and never federates.
+      tags: [comments]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The pinned comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller cannot manage this video's comments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: A reply or a tombstoned comment cannot be pinned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unpinComment
+      summary: Unpin a comment
+      description: >-
+        Clears the video's pin when this comment is the current pinned one (a
+        no-op otherwise, so it never clears a different pin). Same authorization
+        as pin. Local metadata only — no federation.
+      tags: [comments]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The comment, now unpinned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller cannot manage this video's comments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/comments/{id}/heart:
+    put:
+      operationId: heartComment
+      summary: Heart a comment
+      description: >-
+        Adds the creator heart to a comment (a like from the video's uploader).
+        The caller must be able to manage the comment's video (owner or editor)
+        or be a moderator/admin. Works on comments at any depth, including
+        remote-authored ones (local metadata only, no federation); a tombstoned
+        comment cannot be hearted (422).
+      tags: [comments]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The hearted comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller cannot manage this video's comments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: A tombstoned comment cannot be hearted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unheartComment
+      summary: Remove a comment's heart
+      description: >-
+        Removes the creator heart from a comment. Same authorization as heart.
+        Local metadata only — no federation.
+      tags: [comments]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The comment, now unhearted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller cannot manage this video's comments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/rating:
     get:
       operationId: getVideoRating
@@ -13960,7 +14146,7 @@ components:
             $ref: "#/components/schemas/Caption"
     Comment:
       type: object
-      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, remote, created_at, updated_at, edited, deleted]
+      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, remote, created_at, updated_at, edited, deleted, pinned, hearted]
       properties:
         id:
           type: string
@@ -14010,6 +14196,17 @@ components:
             True for a tombstoned comment: its author's account was
             permanently deleted, the stored body was erased, and body renders
             as "[deleted]" while the reply thread stays intact.
+        pinned:
+          type: boolean
+          description: >-
+            True when this comment is its video's creator-pinned comment.
+            At most one top-level comment per video is pinned, and the list
+            returns it first.
+        hearted:
+          type: boolean
+          description: >-
+            True when the video's creator has hearted this comment (a like
+            from the uploader).
     CommentListResponse:
       type: object
       required: [comments, limit, offset]

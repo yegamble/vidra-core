@@ -1160,6 +1160,12 @@ func (s *Server) routes() {
 			api.POST("/videos/:id/comments", s.handleCreateComment, s.requireAuth)
 			api.PATCH("/comments/:id", s.handleUpdateComment, s.requireAuth)
 			api.DELETE("/comments/:id", s.handleDeleteComment, s.requireAuth)
+			// Creator pin + heart (0099): the video owner/editor (or staff) pins at
+			// most one top-level comment and hearts any number. Local metadata only.
+			api.PUT("/comments/:id/pin", s.handlePinComment, s.requireAuth)
+			api.DELETE("/comments/:id/pin", s.handleUnpinComment, s.requireAuth)
+			api.PUT("/comments/:id/heart", s.handleHeartComment, s.requireAuth)
+			api.DELETE("/comments/:id/heart", s.handleUnheartComment, s.requireAuth)
 			api.GET("/admin/comments", s.handleListAdminComments, s.requireAuth, s.requireRole("admin", "moderator"))
 		}
 

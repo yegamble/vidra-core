@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -42,6 +43,12 @@ type commentView struct {
 	// was hard-deleted, the stored body is empty, and the view renders the
 	// "[deleted]" placeholder while the reply thread stays intact.
 	Deleted bool `json:"deleted"`
+	// Pinned is true when this comment is its video's creator-pinned comment
+	// (0099); at most one top-level comment per video is pinned, and the list
+	// returns it first.
+	Pinned bool `json:"pinned"`
+	// Hearted is true when the video's creator has hearted this comment (0099).
+	Hearted bool `json:"hearted"`
 }
 
 // tombstoneBody is what views render in place of a §1-tombstoned comment body.
@@ -60,6 +67,7 @@ func newCommentView(c sqlcgen.Comment, authorUsername, authorDisplayName string)
 		CreatedAt:         c.CreatedAt,
 		UpdatedAt:         c.UpdatedAt,
 		Edited:            c.UpdatedAt.After(c.CreatedAt),
+		Hearted:           c.Hearted,
 	}
 	if c.DeletedAt.Valid {
 		v.Deleted = true
@@ -232,6 +240,7 @@ func (s *Server) handleListComments(c echo.Context) error {
 		v := newCommentView(it.Comment, it.AuthorUsername, it.AuthorDisplayName)
 		v.Remote = it.Remote
 		v.AuthorDomain = it.AuthorDomain
+		v.Pinned = it.Pinned
 		views = append(views, v)
 	}
 	return c.JSON(http.StatusOK, commentListResponse{Comments: views, Limit: limit, Offset: offset})
@@ -314,5 +323,92 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, newCommentView(updated, author.Username, author.DisplayName))
+	view := newCommentView(updated, author.Username, author.DisplayName)
+	// An edited comment may itself be the video's pinned comment (0099): reflect
+	// that in the response so the client keeps the pin badge. Best-effort — a
+	// lookup failure just leaves pinned false rather than failing the edit.
+	if pinned, perr := s.commentsvc.IsPinned(ctx, updated.ID); perr == nil {
+		view.Pinned = pinned
+	}
+	return c.JSON(http.StatusOK, view)
+}
+
+// canManageCommentVideo reports whether a caller may perform a creator action
+// (pin/heart) on a comment: staff (admin/moderator) via the moderation escape,
+// otherwise the manager of the comment's video (channel owner or editor).
+func (s *Server) canManageCommentVideo(ctx context.Context, userID uuid.UUID, role string, videoID uuid.UUID) bool {
+	if role == "admin" || role == "moderator" {
+		return true
+	}
+	_, ok := s.canManageVideo(ctx, userID, videoID)
+	return ok
+}
+
+// commentCreatorAction is the shared pipeline for the four creator-metadata
+// endpoints (pin/unpin/heart/unheart): authenticate, resolve the comment (404 if
+// unknown), authorize the caller against the comment's video (403 otherwise),
+// run the action, map its validation sentinels to 422, and return the updated
+// comment view (200). None of the actions touch the comment body or fire a
+// federation hook — they are local metadata only.
+func (s *Server) commentCreatorAction(c echo.Context, action func(context.Context, uuid.UUID) (comment.WithAuthor, error)) error {
+	userID, role, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+	}
+	ctx := c.Request().Context()
+	cmt, err := s.commentsvc.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, comment.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		}
+		return err
+	}
+	if !s.canManageCommentVideo(ctx, userID, role, cmt.VideoID) {
+		return echo.NewHTTPError(http.StatusForbidden, "not allowed to manage this video's comments")
+	}
+	wa, err := action(ctx, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, comment.ErrNotFound):
+			return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		case errors.Is(err, comment.ErrNotTopLevel):
+			return &ValidationError{Fields: []FieldError{{Field: "id", Message: "only a top-level comment can be pinned"}}}
+		case errors.Is(err, comment.ErrTombstoned):
+			return &ValidationError{Fields: []FieldError{{Field: "id", Message: "cannot pin or heart a deleted comment"}}}
+		}
+		return err
+	}
+	view := newCommentView(wa.Comment, wa.AuthorUsername, wa.AuthorDisplayName)
+	view.Remote = wa.Remote
+	view.AuthorDomain = wa.AuthorDomain
+	view.Pinned = wa.Pinned
+	return c.JSON(http.StatusOK, view)
+}
+
+// handlePinComment pins a top-level comment as its video's single pinned comment.
+// Behind requireAuth. The caller manages the video (owner/editor) or is staff;
+// pinning replaces any existing pin. A reply or a tombstoned comment is 422.
+func (s *Server) handlePinComment(c echo.Context) error {
+	return s.commentCreatorAction(c, s.commentsvc.Pin)
+}
+
+// handleUnpinComment clears the video's pin when this comment is the current one.
+// Behind requireAuth.
+func (s *Server) handleUnpinComment(c echo.Context) error {
+	return s.commentCreatorAction(c, s.commentsvc.Unpin)
+}
+
+// handleHeartComment adds the creator heart to a comment (any depth, including
+// remote-authored). Behind requireAuth. A tombstoned comment is 422.
+func (s *Server) handleHeartComment(c echo.Context) error {
+	return s.commentCreatorAction(c, s.commentsvc.Heart)
+}
+
+// handleUnheartComment removes the creator heart. Behind requireAuth.
+func (s *Server) handleUnheartComment(c echo.Context) error {
+	return s.commentCreatorAction(c, s.commentsvc.Unheart)
 }
