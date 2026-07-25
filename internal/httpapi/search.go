@@ -182,7 +182,7 @@ func (s *Server) handleSearchSuggestions(c echo.Context) error {
 		SessionID:      sessionIDFromRequest(c),
 		Personalized:   personalized,
 		IncludeHistory: includeHistory,
-		HideSensitive:  s.hideSensitiveVideos(),
+		HideSensitive:  s.effectiveHideSensitive(c),
 	})
 	if err != nil {
 		return c.JSON(http.StatusOK, resp) // silent degrade to empty
@@ -219,14 +219,14 @@ type recommendationsResponse struct {
 // hydrateRankedRecs hydrates a ranked id list to recommendation cards under the
 // canonical predicate, preserving search order and capping at limit. Returns the
 // cards and whether hydration succeeded.
-func (s *Server) hydrateRankedRecs(ctx context.Context, items []searchclient.RecItem, viewerID uuid.UUID, authed bool, limit int) ([]recItemView, bool) {
+func (s *Server) hydrateRankedRecs(ctx context.Context, items []searchclient.RecItem, viewerID uuid.UUID, authed bool, limit int, hideSensitive bool) ([]recItemView, bool) {
 	ids := make([]uuid.UUID, 0, len(items))
 	reasonByID := make(map[uuid.UUID]string, len(items))
 	for _, it := range items {
 		ids = append(ids, it.VideoID)
 		reasonByID[it.VideoID] = it.Reason
 	}
-	feed, err := s.videosvc.HydrateByIDs(ctx, ids, viewerID, authed, s.hideSensitiveVideos())
+	feed, err := s.videosvc.HydrateByIDs(ctx, ids, viewerID, authed, hideSensitive)
 	if err != nil {
 		return nil, false
 	}
@@ -255,6 +255,7 @@ func (s *Server) handleHomeRecommendations(c echo.Context) error {
 	viewerID, _, authed := principalFromContext(c)
 	userID, prefs, _ := s.searchUserPrefs(c)
 	personalized := s.instancePersonalizedRecs() && authed && prefs.PersonalizedRecs
+	hideSensitive := s.effectiveHideSensitive(c)
 
 	if s.useSearchService() {
 		var uid *uuid.UUID
@@ -266,10 +267,10 @@ func (s *Server) handleHomeRecommendations(c echo.Context) error {
 			SessionID:     sessionIDFromRequest(c),
 			Limit:         overfetchCount(0, limit),
 			Personalized:  personalized,
-			HideSensitive: s.hideSensitiveVideos(),
+			HideSensitive: hideSensitive,
 		})
 		if err == nil {
-			if views, ok := s.hydrateRankedRecs(ctx, out.Items, viewerID, authed, limit); ok && len(views) > 0 {
+			if views, ok := s.hydrateRankedRecs(ctx, out.Items, viewerID, authed, limit, hideSensitive); ok && len(views) > 0 {
 				return c.JSON(http.StatusOK, recommendationsResponse{Items: views, Personalized: personalized, Source: "search"})
 			}
 		}
@@ -282,7 +283,7 @@ func (s *Server) handleHomeRecommendations(c echo.Context) error {
 func (s *Server) homeRecommendationsFallback(c echo.Context, limit int, viewerID uuid.UUID, authed bool) error {
 	ctx := c.Request().Context()
 	items, err := s.videosvc.ListPublic(ctx, "trending", "local",
-		video.FeedFilter{HideSensitive: s.hideSensitiveVideos()}, viewerID, authed, int32(limit), 0)
+		video.FeedFilter{HideSensitive: s.effectiveHideSensitive(c)}, viewerID, authed, int32(limit), 0)
 	if err != nil {
 		return err
 	}
@@ -311,6 +312,7 @@ func (s *Server) handleVideoRecommendations(c echo.Context) error {
 	viewerID, _, authed := principalFromContext(c)
 	userID, prefs, _ := s.searchUserPrefs(c)
 	personalized := s.instancePersonalizedRecs() && authed && prefs.PersonalizedRecs
+	hideSensitive := s.effectiveHideSensitive(c)
 
 	if s.useSearchService() {
 		var uid *uuid.UUID
@@ -323,10 +325,10 @@ func (s *Server) handleVideoRecommendations(c echo.Context) error {
 			SessionID:     sessionIDFromRequest(c),
 			Limit:         overfetchCount(0, limit),
 			Personalized:  personalized,
-			HideSensitive: s.hideSensitiveVideos(),
+			HideSensitive: hideSensitive,
 		})
 		if err == nil {
-			if views, ok := s.hydrateRankedRecs(ctx, out.Items, viewerID, authed, limit); ok && len(views) > 0 {
+			if views, ok := s.hydrateRankedRecs(ctx, out.Items, viewerID, authed, limit, hideSensitive); ok && len(views) > 0 {
 				return c.JSON(http.StatusOK, recommendationsResponse{Items: views, Personalized: personalized, Source: "search"})
 			}
 		}
@@ -343,7 +345,7 @@ func (s *Server) videoRecommendationsFallback(c echo.Context, id uuid.UUID, limi
 		// Unknown/invisible source video: an empty rail, not an error.
 		return c.JSON(http.StatusOK, recommendationsResponse{Items: []recItemView{}, Personalized: false, Source: "fallback"})
 	}
-	items, err := s.videosvc.RelatedFallback(ctx, id, v.ChannelID, v.Category, viewerID, authed, s.hideSensitiveVideos(), int32(limit))
+	items, err := s.videosvc.RelatedFallback(ctx, id, v.ChannelID, v.Category, viewerID, authed, s.effectiveHideSensitive(c), int32(limit))
 	if err != nil {
 		return err
 	}

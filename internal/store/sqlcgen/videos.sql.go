@@ -39,9 +39,9 @@ func (q *Queries) CountPublicVideosByChannel(ctx context.Context, channelID uuid
 }
 
 const createVideo = `-- name: CreateVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id
+INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason
 `
 
 type CreateVideoParams struct {
@@ -57,6 +57,7 @@ type CreateVideoParams struct {
 	CommentsPolicy        string             `json:"comments_policy"`
 	DownloadEnabled       bool               `json:"download_enabled"`
 	PublishAfterTranscode bool               `json:"publish_after_transcode"`
+	SensitiveReason       string             `json:"sensitive_reason"`
 }
 
 func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video, error) {
@@ -73,6 +74,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		arg.CommentsPolicy,
 		arg.DownloadEnabled,
 		arg.PublishAfterTranscode,
+		arg.SensitiveReason,
 	)
 	var i Video
 	err := row.Scan(
@@ -95,6 +97,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		&i.DownloadEnabled,
 		&i.PublishAfterTranscode,
 		&i.PinnedCommentID,
+		&i.SensitiveReason,
 	)
 	return i, err
 }
@@ -110,7 +113,7 @@ func (q *Queries) DeleteVideo(ctx context.Context, id uuid.UUID) error {
 
 const getVideoByID = `-- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
-       v.category, v.language, v.license, v.publish_at, v.is_sensitive,
+       v.category, v.language, v.license, v.publish_at, v.is_sensitive, v.sensitive_reason,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name
@@ -134,6 +137,7 @@ type GetVideoByIDRow struct {
 	License               *string            `json:"license"`
 	PublishAt             pgtype.Timestamptz `json:"publish_at"`
 	IsSensitive           bool               `json:"is_sensitive"`
+	SensitiveReason       string             `json:"sensitive_reason"`
 	CommentsPolicy        string             `json:"comments_policy"`
 	DownloadEnabled       bool               `json:"download_enabled"`
 	PublishAfterTranscode bool               `json:"publish_after_transcode"`
@@ -160,6 +164,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.License,
 		&i.PublishAt,
 		&i.IsSensitive,
+		&i.SensitiveReason,
 		&i.CommentsPolicy,
 		&i.DownloadEnabled,
 		&i.PublishAfterTranscode,
@@ -387,7 +392,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -414,6 +419,7 @@ type ListPublicVideosByChannelRow struct {
 	AuthorDisplayName  string    `json:"author_display_name"`
 	DurationSeconds    *int32    `json:"duration_seconds"`
 	IsSensitive        bool      `json:"is_sensitive"`
+	SensitiveReason    string    `json:"sensitive_reason"`
 }
 
 // A channel's public, published videos with discovery-card data.
@@ -442,6 +448,7 @@ func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.
 			&i.AuthorDisplayName,
 			&i.DurationSeconds,
 			&i.IsSensitive,
+			&i.SensitiveReason,
 		); err != nil {
 			return nil, err
 		}
@@ -463,7 +470,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -506,6 +513,7 @@ type ListPublicVideosByIDsRow struct {
 	AuthorDisplayName  string    `json:"author_display_name"`
 	DurationSeconds    *int32    `json:"duration_seconds"`
 	IsSensitive        bool      `json:"is_sensitive"`
+	SensitiveReason    string    `json:"sensitive_reason"`
 }
 
 // Hydrate a set of ranked video ids to discovery cards under the FULL canonical
@@ -539,6 +547,7 @@ func (q *Queries) ListPublicVideosByIDs(ctx context.Context, arg ListPublicVideo
 			&i.AuthorDisplayName,
 			&i.DurationSeconds,
 			&i.IsSensitive,
+			&i.SensitiveReason,
 		); err != nil {
 			return nil, err
 		}
@@ -556,7 +565,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive
+       feed.is_sensitive, feed.sensitive_reason
 FROM (
     SELECT v.id,
            false AS remote,
@@ -574,7 +583,8 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
-           v.is_sensitive
+           v.is_sensitive,
+           v.sensitive_reason
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     JOIN users au ON au.id = c.owner_id
@@ -616,7 +626,8 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive
+           false AS is_sensitive,
+           ''::text AS sensitive_reason
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE $6::bool
@@ -672,6 +683,7 @@ type ListPublicVideosSortedRow struct {
 	WatchUrl           string    `json:"watch_url"`
 	StreamUrl          *string   `json:"stream_url"`
 	IsSensitive        bool      `json:"is_sensitive"`
+	SensitiveReason    string    `json:"sensitive_reason"`
 }
 
 // The public feed, joined with view counts and thumbnail availability so cards
@@ -728,6 +740,7 @@ func (q *Queries) ListPublicVideosSorted(ctx context.Context, arg ListPublicVide
 			&i.WatchUrl,
 			&i.StreamUrl,
 			&i.IsSensitive,
+			&i.SensitiveReason,
 		); err != nil {
 			return nil, err
 		}
@@ -808,7 +821,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason,
        (v.channel_id = $1)::bool AS same_channel
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
@@ -861,6 +874,7 @@ type ListRelatedVideosFallbackRow struct {
 	AuthorDisplayName  string    `json:"author_display_name"`
 	DurationSeconds    *int32    `json:"duration_seconds"`
 	IsSensitive        bool      `json:"is_sensitive"`
+	SensitiveReason    string    `json:"sensitive_reason"`
 	SameChannel        bool      `json:"same_channel"`
 }
 
@@ -902,6 +916,7 @@ func (q *Queries) ListRelatedVideosFallback(ctx context.Context, arg ListRelated
 			&i.AuthorDisplayName,
 			&i.DurationSeconds,
 			&i.IsSensitive,
+			&i.SensitiveReason,
 			&i.SameChannel,
 		); err != nil {
 			return nil, err
@@ -957,7 +972,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive
+       feed.is_sensitive, feed.sensitive_reason
 FROM (
     SELECT v.id,
            false AS remote,
@@ -975,7 +990,8 @@ FROM (
            ''::text AS domain,
            ''::text AS watch_url,
            NULL::text AS stream_url,
-           v.is_sensitive
+           v.is_sensitive,
+           v.sensitive_reason
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     JOIN users au ON au.id = c.owner_id
@@ -1010,7 +1026,8 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive
+           false AS is_sensitive,
+           ''::text AS sensitive_reason
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE EXISTS (
@@ -1056,6 +1073,7 @@ type ListSubscriptionVideosRow struct {
 	WatchUrl           string    `json:"watch_url"`
 	StreamUrl          *string   `json:"stream_url"`
 	IsSensitive        bool      `json:"is_sensitive"`
+	SensitiveReason    string    `json:"sensitive_reason"`
 }
 
 // The "subscriptions" feed (remote-content §3): a UNION of public, published
@@ -1093,6 +1111,7 @@ func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscripti
 			&i.WatchUrl,
 			&i.StreamUrl,
 			&i.IsSensitive,
+			&i.SensitiveReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1147,7 +1166,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -1174,6 +1193,7 @@ type ListVideosByChannelRow struct {
 	AuthorDisplayName  string             `json:"author_display_name"`
 	DurationSeconds    *int32             `json:"duration_seconds"`
 	IsSensitive        bool               `json:"is_sensitive"`
+	SensitiveReason    string             `json:"sensitive_reason"`
 }
 
 // A channel's videos (owner view, all states) with discovery-card data plus
@@ -1204,6 +1224,7 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) 
 			&i.AuthorDisplayName,
 			&i.DurationSeconds,
 			&i.IsSensitive,
+			&i.SensitiveReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1241,7 +1262,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive
+       feed.is_sensitive, feed.sensitive_reason
 FROM (
     SELECT v.id,
            false AS remote,
@@ -1260,6 +1281,7 @@ FROM (
            ''::text AS watch_url,
            NULL::text AS stream_url,
            v.is_sensitive,
+           v.sensitive_reason,
            similarity(v.title, $1) AS search_rank
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
@@ -1310,6 +1332,7 @@ FROM (
            rv.watch_url,
            rv.stream_url,
            false AS is_sensitive,
+           ''::text AS sensitive_reason,
            similarity(rv.title, $1) AS search_rank
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -1361,6 +1384,7 @@ type SearchPublicVideosRow struct {
 	WatchUrl           string    `json:"watch_url"`
 	StreamUrl          *string   `json:"stream_url"`
 	IsSensitive        bool      `json:"is_sensitive"`
+	SensitiveReason    string    `json:"sensitive_reason"`
 }
 
 // Public, published title search with discovery-card data. A local video also
@@ -1407,6 +1431,7 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 			&i.WatchUrl,
 			&i.StreamUrl,
 			&i.IsSensitive,
+			&i.SensitiveReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1444,7 +1469,7 @@ UPDATE videos
 SET state      = $1,
     updated_at = now()
 WHERE id = $2
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason
 `
 
 type SetVideoStateParams struct {
@@ -1475,6 +1500,7 @@ func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (V
 		&i.DownloadEnabled,
 		&i.PublishAfterTranscode,
 		&i.PinnedCommentID,
+		&i.SensitiveReason,
 	)
 	return i, err
 }
@@ -1489,12 +1515,13 @@ SET title       = COALESCE($1, title),
     license     = COALESCE($6, license),
     publish_at  = COALESCE($7, publish_at),
     is_sensitive = COALESCE($8, is_sensitive),
-    comments_policy  = COALESCE($9, comments_policy),
-    download_enabled = COALESCE($10, download_enabled),
-    publish_after_transcode = COALESCE($11, publish_after_transcode),
+    sensitive_reason = COALESCE($9, sensitive_reason),
+    comments_policy  = COALESCE($10, comments_policy),
+    download_enabled = COALESCE($11, download_enabled),
+    publish_after_transcode = COALESCE($12, publish_after_transcode),
     updated_at  = now()
-WHERE id = $12
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id
+WHERE id = $13
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason
 `
 
 type UpdateVideoParams struct {
@@ -1506,6 +1533,7 @@ type UpdateVideoParams struct {
 	License               *string            `json:"license"`
 	PublishAt             pgtype.Timestamptz `json:"publish_at"`
 	IsSensitive           *bool              `json:"is_sensitive"`
+	SensitiveReason       *string            `json:"sensitive_reason"`
 	CommentsPolicy        *string            `json:"comments_policy"`
 	DownloadEnabled       *bool              `json:"download_enabled"`
 	PublishAfterTranscode *bool              `json:"publish_after_transcode"`
@@ -1522,6 +1550,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		arg.License,
 		arg.PublishAt,
 		arg.IsSensitive,
+		arg.SensitiveReason,
 		arg.CommentsPolicy,
 		arg.DownloadEnabled,
 		arg.PublishAfterTranscode,
@@ -1548,6 +1577,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		&i.DownloadEnabled,
 		&i.PublishAfterTranscode,
 		&i.PinnedCommentID,
+		&i.SensitiveReason,
 	)
 	return i, err
 }

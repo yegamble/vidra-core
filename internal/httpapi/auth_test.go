@@ -349,6 +349,9 @@ func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUser
 			if a.PersonalizedRecommendationsEnabled != nil {
 				u.PersonalizedRecommendationsEnabled = *a.PersonalizedRecommendationsEnabled
 			}
+			if a.SetSensitiveContentPolicy {
+				u.SensitiveContentPolicy = a.SensitiveContentPolicy
+			}
 			u.UpdatedAt = time.Now()
 			f.users[k] = u
 			return u, nil
@@ -676,6 +679,57 @@ func TestUpdateMeProfile(t *testing.T) {
 	_ = json.Unmarshal(me.Body.Bytes(), &got)
 	if got.DisplayName != "Ada L." || got.Bio != "hi" {
 		t.Errorf("me did not reflect update: %+v", got)
+	}
+}
+
+// TestUpdateMeSensitiveContentPolicy exercises the per-user sensitive-content
+// policy override (0100): each enum mode round-trips, "" clears it back to
+// inherit (omitted on GET), and an unknown value is a 422.
+func TestUpdateMeSensitiveContentPolicy(t *testing.T) {
+	srv := authServer(t)
+	token := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	// A fresh account inherits the instance policy: the field is omitted.
+	var fresh userView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/auth/me", token).Body.Bytes(), &fresh)
+	if fresh.SensitiveContentPolicy != nil {
+		t.Fatalf("fresh account policy = %v, want nil (inherit)", *fresh.SensitiveContentPolicy)
+	}
+
+	// Each of the four modes round-trips through PATCH and a fresh GET.
+	for _, mode := range []string{"hide", "warn", "blur", "display"} {
+		rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me",
+			`{"sensitive_content_policy":"`+mode+`"}`, token)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("patch %q = %d, want 200; body=%s", mode, rec.Code, rec.Body.String())
+		}
+		var u userView
+		_ = json.Unmarshal(rec.Body.Bytes(), &u)
+		if u.SensitiveContentPolicy == nil || *u.SensitiveContentPolicy != mode {
+			t.Fatalf("patch %q response policy = %v", mode, u.SensitiveContentPolicy)
+		}
+		var got userView
+		_ = json.Unmarshal(getWithAuth(srv, "/api/v1/auth/me", token).Body.Bytes(), &got)
+		if got.SensitiveContentPolicy == nil || *got.SensitiveContentPolicy != mode {
+			t.Errorf("me policy after %q = %v", mode, got.SensitiveContentPolicy)
+		}
+	}
+
+	// "" clears the override back to inherit: GET omits the field again.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me",
+		`{"sensitive_content_policy":""}`, token); rec.Code != http.StatusOK {
+		t.Fatalf("clear patch = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var cleared userView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/auth/me", token).Body.Bytes(), &cleared)
+	if cleared.SensitiveContentPolicy != nil {
+		t.Errorf("policy after clear = %v, want nil (inherit)", *cleared.SensitiveContentPolicy)
+	}
+
+	// An unknown value is rejected.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/auth/me",
+		`{"sensitive_content_policy":"nonsense"}`, token); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("invalid policy = %d, want 422", rec.Code)
 	}
 }
 

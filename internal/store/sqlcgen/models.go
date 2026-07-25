@@ -787,6 +787,7 @@ type User struct {
 	SearchHistoryEnabled               bool               `json:"search_history_enabled"`
 	PersonalizedSearchEnabled          bool               `json:"personalized_search_enabled"`
 	PersonalizedRecommendationsEnabled bool               `json:"personalized_recommendations_enabled"`
+	SensitiveContentPolicy             *string            `json:"sensitive_content_policy"`
 }
 
 type UserBlock struct {
@@ -843,6 +844,7 @@ type Video struct {
 	DownloadEnabled       bool               `json:"download_enabled"`
 	PublishAfterTranscode bool               `json:"publish_after_transcode"`
 	PinnedCommentID       pgtype.UUID        `json:"pinned_comment_id"`
+	SensitiveReason       string             `json:"sensitive_reason"`
 }
 
 type VideoBlock struct {

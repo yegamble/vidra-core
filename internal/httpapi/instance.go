@@ -515,9 +515,34 @@ func (s *Server) sensitiveContentPolicy() string {
 // hideSensitiveVideos reports whether sensitive videos must be excluded from
 // the PUBLIC browse/search surfaces (policy "hide"). Owner/admin surfaces and
 // direct watch-by-id are never filtered; the other policies are
-// presentation-only (frontend).
+// presentation-only (frontend). This is the INSTANCE-level view (no per-user
+// override) — the anonymous surfaces (RSS/sitemap) use it directly.
 func (s *Server) hideSensitiveVideos() bool {
 	return s.sensitiveContentPolicy() == instancesettings.SensitiveContentPolicyHide
+}
+
+// effectiveSensitivePolicy resolves the sensitive-content policy for THIS request
+// (0100): a signed-in caller's non-NULL per-user override wins, else the instance
+// policy. An anonymous request (optionalAuth with no token) resolves to the
+// instance policy, so its behaviour is unchanged.
+func (s *Server) effectiveSensitivePolicy(c echo.Context) string {
+	if userID, _, ok := principalFromContext(c); ok && s.authsvc != nil {
+		if u, err := s.authsvc.UserByID(c.Request().Context(), userID); err == nil &&
+			u.SensitiveContentPolicy != nil {
+			if p := strings.TrimSpace(*u.SensitiveContentPolicy); p != "" {
+				return p
+			}
+		}
+	}
+	return s.sensitiveContentPolicy()
+}
+
+// effectiveHideSensitive is hideSensitiveVideos with the per-user override
+// applied: sensitive videos are excluded only under the server-enforced "hide"
+// policy (warn/blur/display stay presentation-only). Used by the per-viewer
+// browse/search surfaces (all optionalAuth).
+func (s *Server) effectiveHideSensitive(c echo.Context) bool {
+	return s.effectiveSensitivePolicy(c) == instancesettings.SensitiveContentPolicyHide
 }
 
 // contactFormAvailable is the EFFECTIVE contact-form availability: the admin

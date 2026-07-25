@@ -20,7 +20,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason
 FROM saved_videos s
 JOIN videos v ON v.id = s.video_id
 JOIN channels c ON c.id = v.channel_id

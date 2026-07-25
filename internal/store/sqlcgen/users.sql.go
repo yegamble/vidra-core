@@ -24,7 +24,7 @@ SET role       = COALESCE($1, role),
                                ELSE storage_quota_bytes END,
     updated_at = now()
 WHERE id = $7
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
 `
 
 type AdminUpdateUserParams struct {
@@ -75,6 +75,7 @@ func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams
 		&i.SearchHistoryEnabled,
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
+		&i.SensitiveContentPolicy,
 	)
 	return i, err
 }
@@ -128,7 +129,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
 `
 
 type CreateUserParams struct {
@@ -176,6 +177,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.SearchHistoryEnabled,
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
+		&i.SensitiveContentPolicy,
 	)
 	return i, err
 }
@@ -284,7 +286,7 @@ func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (Get
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -314,12 +316,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.SearchHistoryEnabled,
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
+		&i.SensitiveContentPolicy,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
 FROM users
 WHERE id = $1
 `
@@ -349,12 +352,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.SearchHistoryEnabled,
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
+		&i.SensitiveContentPolicy,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
 FROM users
 WHERE lower(username) = lower($1) AND is_active = true
 `
@@ -388,6 +392,7 @@ func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, er
 		&i.SearchHistoryEnabled,
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
+		&i.SensitiveContentPolicy,
 	)
 	return i, err
 }
@@ -493,9 +498,17 @@ SET display_name = COALESCE($1, display_name),
     search_history_enabled = COALESCE($6, search_history_enabled),
     personalized_search_enabled = COALESCE($7, personalized_search_enabled),
     personalized_recommendations_enabled = COALESCE($8, personalized_recommendations_enabled),
+    -- Per-user sensitive-content policy override (0100). Tri-state: unchanged
+    -- unless set_sensitive_content_policy is true, in which case a NULL value
+    -- clears the override (inherit the instance policy) and a non-NULL enum value
+    -- sets it — COALESCE cannot express "set to NULL", so it uses the same CASE
+    -- guard AdminUpdateUser uses for the tri-state quota.
+    sensitive_content_policy = CASE WHEN $9::bool
+                                    THEN $10
+                                    ELSE sensitive_content_policy END,
     updated_at   = now()
-WHERE id = $9
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled
+WHERE id = $11
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
 `
 
 type UpdateUserProfileParams struct {
@@ -507,6 +520,8 @@ type UpdateUserProfileParams struct {
 	SearchHistoryEnabled               *bool     `json:"search_history_enabled"`
 	PersonalizedSearchEnabled          *bool     `json:"personalized_search_enabled"`
 	PersonalizedRecommendationsEnabled *bool     `json:"personalized_recommendations_enabled"`
+	SetSensitiveContentPolicy          bool      `json:"set_sensitive_content_policy"`
+	SensitiveContentPolicy             *string   `json:"sensitive_content_policy"`
 	ID                                 uuid.UUID `json:"id"`
 }
 
@@ -520,6 +535,8 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		arg.SearchHistoryEnabled,
 		arg.PersonalizedSearchEnabled,
 		arg.PersonalizedRecommendationsEnabled,
+		arg.SetSensitiveContentPolicy,
+		arg.SensitiveContentPolicy,
 		arg.ID,
 	)
 	var i User
@@ -545,6 +562,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.SearchHistoryEnabled,
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
+		&i.SensitiveContentPolicy,
 	)
 	return i, err
 }
