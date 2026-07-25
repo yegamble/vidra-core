@@ -27,6 +27,12 @@ var (
 	// ErrParentNotFound means a reply's parent_id does not reference an existing
 	// comment on the same video.
 	ErrParentNotFound = errors.New("comment: parent not found")
+	// ErrNotTopLevel means a pin was attempted on a reply; only a top-level
+	// comment (parent_id IS NULL) can be pinned.
+	ErrNotTopLevel = errors.New("comment: not a top-level comment")
+	// ErrTombstoned means a pin or heart was attempted on a tombstoned comment
+	// (its author's account was deleted; the body is "[deleted]").
+	ErrTombstoned = errors.New("comment: comment is tombstoned")
 )
 
 // Repository is the data access the comment service needs. *sqlcgen.Queries
@@ -38,6 +44,13 @@ type Repository interface {
 	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
 	UpdateComment(ctx context.Context, arg sqlcgen.UpdateCommentParams) (sqlcgen.Comment, error)
 	DeleteComment(ctx context.Context, id uuid.UUID) error
+	// Creator pin + heart (0099): local metadata, no federation. GetCommentWithMeta
+	// resolves a single comment with author identity + heart flag + whether it is
+	// its video's pinned comment; SetCommentHearted flips the heart flag;
+	// SetVideoPinnedComment sets (or clears, with a NULL id) the video's pin.
+	GetCommentWithMeta(ctx context.Context, id uuid.UUID) (sqlcgen.GetCommentWithMetaRow, error)
+	SetCommentHearted(ctx context.Context, arg sqlcgen.SetCommentHeartedParams) (sqlcgen.Comment, error)
+	SetVideoPinnedComment(ctx context.Context, arg sqlcgen.SetVideoPinnedCommentParams) error
 }
 
 // Service holds the comment application logic.
@@ -96,6 +109,33 @@ type WithAuthor struct {
 	AuthorDisplayName string
 	Remote            bool
 	AuthorDomain      string
+	// Pinned is true when this comment is its video's pinned comment (0099). It
+	// is computed per row (not a comment column), so the HTTP layer projects it
+	// onto the view separately, like Remote/AuthorDomain.
+	Pinned bool
+}
+
+// withAuthorFromMeta projects a single-comment GetCommentWithMeta row (author
+// identity + heart flag + pinned flag) into a WithAuthor — the same shape the
+// list path builds, so the pin/heart endpoints render identically to the list.
+func withAuthorFromMeta(r sqlcgen.GetCommentWithMetaRow) WithAuthor {
+	wa := WithAuthor{
+		Comment: sqlcgen.Comment{
+			ID: r.ID, VideoID: r.VideoID, UserID: r.UserID, Body: r.Body,
+			ParentID: r.ParentID, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			RemoteActorUrl: r.RemoteActorUrl, DeletedAt: r.DeletedAt, Hearted: r.Hearted,
+		},
+		AuthorUsername:    r.AuthorUsername,
+		AuthorDisplayName: r.AuthorDisplayName,
+		Pinned:            r.Pinned,
+	}
+	if r.RemoteActorUrl != nil {
+		wa.Remote = true
+		wa.AuthorDomain = r.AuthorDomain
+		wa.AuthorUsername = r.RemoteAuthorName
+		wa.AuthorDisplayName = r.RemoteAuthorName
+	}
+	return wa
 }
 
 // Create posts a comment by userID on videoID. The caller is responsible for
@@ -148,10 +188,11 @@ func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, 
 			Comment: sqlcgen.Comment{
 				ID: r.ID, VideoID: r.VideoID, UserID: r.UserID, Body: r.Body,
 				ParentID: r.ParentID, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				RemoteActorUrl: r.RemoteActorUrl, DeletedAt: r.DeletedAt,
+				RemoteActorUrl: r.RemoteActorUrl, DeletedAt: r.DeletedAt, Hearted: r.Hearted,
 			},
 			AuthorUsername:    r.AuthorUsername,
 			AuthorDisplayName: r.AuthorDisplayName,
+			Pinned:            r.Pinned,
 		}
 		if r.RemoteActorUrl != nil {
 			wa.Remote = true
@@ -207,6 +248,114 @@ func (s *Service) Edit(ctx context.Context, commentID, userID uuid.UUID, body st
 		s.onUpdate(ctx, updated.ID)
 	}
 	return updated, nil
+}
+
+// Get returns a comment by id, or ErrNotFound. The HTTP layer uses it to resolve
+// a comment's video for the video-owner authorization check that guards a pin or
+// heart action, before performing the action.
+func (s *Service) Get(ctx context.Context, commentID uuid.UUID) (sqlcgen.Comment, error) {
+	c, err := s.repo.GetComment(ctx, commentID)
+	if err != nil {
+		return sqlcgen.Comment{}, ErrNotFound
+	}
+	return c, nil
+}
+
+// IsPinned reports whether commentID is currently its video's pinned comment.
+// The HTTP layer uses it to project the correct `pinned` flag onto a single-
+// comment response (e.g. an edit) without re-listing the thread. An unknown
+// comment is ErrNotFound.
+func (s *Service) IsPinned(ctx context.Context, commentID uuid.UUID) (bool, error) {
+	row, err := s.repo.GetCommentWithMeta(ctx, commentID)
+	if err != nil {
+		return false, ErrNotFound
+	}
+	return row.Pinned, nil
+}
+
+// Pin makes commentID its video's single pinned comment (YouTube-style creator
+// pin). The HTTP layer has already authorized the caller (video owner/editor, or
+// staff). The comment must exist (ErrNotFound), be top-level (parent_id IS NULL,
+// else ErrNotTopLevel), and not be tombstoned (ErrTombstoned). The single pin
+// column means setting it atomically replaces any existing pin. Local metadata
+// only — deliberately does NOT go through Edit or fire any federation hook.
+// Returns the updated view (pinned=true).
+func (s *Service) Pin(ctx context.Context, commentID uuid.UUID) (WithAuthor, error) {
+	row, err := s.repo.GetCommentWithMeta(ctx, commentID)
+	if err != nil {
+		return WithAuthor{}, ErrNotFound
+	}
+	if row.DeletedAt.Valid {
+		return WithAuthor{}, ErrTombstoned
+	}
+	if row.ParentID.Valid {
+		return WithAuthor{}, ErrNotTopLevel
+	}
+	if err := s.repo.SetVideoPinnedComment(ctx, sqlcgen.SetVideoPinnedCommentParams{
+		VideoID:         row.VideoID,
+		PinnedCommentID: pgtype.UUID{Bytes: commentID, Valid: true},
+	}); err != nil {
+		return WithAuthor{}, err
+	}
+	row.Pinned = true
+	return withAuthorFromMeta(row), nil
+}
+
+// Unpin clears the video's pin, but ONLY when commentID is the current pin — so
+// it never clobbers a different pinned comment. An unknown comment is
+// ErrNotFound. A no-op when this comment is not pinned. Local metadata only (no
+// federation). Returns the updated view (pinned=false).
+func (s *Service) Unpin(ctx context.Context, commentID uuid.UUID) (WithAuthor, error) {
+	row, err := s.repo.GetCommentWithMeta(ctx, commentID)
+	if err != nil {
+		return WithAuthor{}, ErrNotFound
+	}
+	if row.Pinned {
+		if err := s.repo.SetVideoPinnedComment(ctx, sqlcgen.SetVideoPinnedCommentParams{
+			VideoID:         row.VideoID,
+			PinnedCommentID: pgtype.UUID{}, // NULL = unpin
+		}); err != nil {
+			return WithAuthor{}, err
+		}
+		row.Pinned = false
+	}
+	return withAuthorFromMeta(row), nil
+}
+
+// Heart marks a comment with the creator heart (the video owner "likes" it). The
+// HTTP layer has already authorized the caller. The comment must exist
+// (ErrNotFound) and not be tombstoned (ErrTombstoned); it may be any depth and
+// remote-authored (local metadata only, no federation). Returns the updated
+// view (hearted=true).
+func (s *Service) Heart(ctx context.Context, commentID uuid.UUID) (WithAuthor, error) {
+	row, err := s.repo.GetCommentWithMeta(ctx, commentID)
+	if err != nil {
+		return WithAuthor{}, ErrNotFound
+	}
+	if row.DeletedAt.Valid {
+		return WithAuthor{}, ErrTombstoned
+	}
+	return s.applyHearted(ctx, row, true)
+}
+
+// Unheart removes the creator heart. An unknown comment is ErrNotFound; a
+// tombstoned comment is allowed (removal is always permitted). Local metadata
+// only (no federation). Returns the updated view (hearted=false).
+func (s *Service) Unheart(ctx context.Context, commentID uuid.UUID) (WithAuthor, error) {
+	row, err := s.repo.GetCommentWithMeta(ctx, commentID)
+	if err != nil {
+		return WithAuthor{}, ErrNotFound
+	}
+	return s.applyHearted(ctx, row, false)
+}
+
+// applyHearted writes the heart flag and returns the refreshed view.
+func (s *Service) applyHearted(ctx context.Context, row sqlcgen.GetCommentWithMetaRow, hearted bool) (WithAuthor, error) {
+	if _, err := s.repo.SetCommentHearted(ctx, sqlcgen.SetCommentHeartedParams{ID: row.ID, Hearted: hearted}); err != nil {
+		return WithAuthor{}, err
+	}
+	row.Hearted = hearted
+	return withAuthorFromMeta(row), nil
 }
 
 // AdminComment is a comment as seen in the admin/moderator comments overview:

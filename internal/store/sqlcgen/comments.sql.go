@@ -30,7 +30,7 @@ const createComment = `-- name: CreateComment :one
 INSERT INTO comments (video_id, user_id, body, parent_id)
 VALUES ($1, $2, $3, $4)
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
 `
 
 type CreateCommentParams struct {
@@ -62,6 +62,7 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 		&i.RemoteAuthorName,
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
+		&i.Hearted,
 	)
 	return i, err
 }
@@ -73,7 +74,7 @@ VALUES ($1, $2, $3,
 ON CONFLICT (remote_object_url) DO UPDATE
     SET body = EXCLUDED.body, updated_at = now()
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
 `
 
 type CreateRemoteCommentParams struct {
@@ -111,6 +112,7 @@ func (q *Queries) CreateRemoteComment(ctx context.Context, arg CreateRemoteComme
 		&i.RemoteAuthorName,
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
+		&i.Hearted,
 	)
 	return i, err
 }
@@ -127,7 +129,7 @@ func (q *Queries) DeleteComment(ctx context.Context, id uuid.UUID) error {
 
 const getComment = `-- name: GetComment :one
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
-       remote_actor_url, remote_author_name, remote_object_url, deleted_at
+       remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
 FROM comments
 WHERE id = $1
 `
@@ -147,13 +149,14 @@ func (q *Queries) GetComment(ctx context.Context, id uuid.UUID) (Comment, error)
 		&i.RemoteAuthorName,
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
+		&i.Hearted,
 	)
 	return i, err
 }
 
 const getCommentByRemoteObjectURL = `-- name: GetCommentByRemoteObjectURL :one
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
-       remote_actor_url, remote_author_name, remote_object_url, deleted_at
+       remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
 FROM comments
 WHERE remote_object_url = $1::text
 `
@@ -176,6 +179,67 @@ func (q *Queries) GetCommentByRemoteObjectURL(ctx context.Context, remoteObjectU
 		&i.RemoteAuthorName,
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
+		&i.Hearted,
+	)
+	return i, err
+}
+
+const getCommentWithMeta = `-- name: GetCommentWithMeta :one
+SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at, c.hearted,
+       (c.id IS NOT DISTINCT FROM v.pinned_comment_id)::boolean AS pinned,
+       COALESCE(u.username, '')::text AS author_username,
+       COALESCE(u.display_name, '')::text AS author_display_name,
+       c.remote_actor_url,
+       COALESCE(c.remote_author_name, '')::text AS remote_author_name,
+       COALESCE(ra.domain, '')::text AS author_domain
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+LEFT JOIN users u ON u.id = c.user_id
+LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
+WHERE c.id = $1
+`
+
+type GetCommentWithMetaRow struct {
+	ID                uuid.UUID          `json:"id"`
+	VideoID           uuid.UUID          `json:"video_id"`
+	UserID            pgtype.UUID        `json:"user_id"`
+	Body              string             `json:"body"`
+	ParentID          pgtype.UUID        `json:"parent_id"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	Hearted           bool               `json:"hearted"`
+	Pinned            bool               `json:"pinned"`
+	AuthorUsername    string             `json:"author_username"`
+	AuthorDisplayName string             `json:"author_display_name"`
+	RemoteActorUrl    *string            `json:"remote_actor_url"`
+	RemoteAuthorName  string             `json:"remote_author_name"`
+	AuthorDomain      string             `json:"author_domain"`
+}
+
+// A single comment with its author identity, remote origin, current heart flag,
+// and whether it is its video's pinned comment — the projection the pin/heart
+// endpoints return after acting. No viewer-mute filtering: the caller is the
+// video owner (or staff), authorized in the HTTP layer.
+func (q *Queries) GetCommentWithMeta(ctx context.Context, id uuid.UUID) (GetCommentWithMetaRow, error) {
+	row := q.db.QueryRow(ctx, getCommentWithMeta, id)
+	var i GetCommentWithMetaRow
+	err := row.Scan(
+		&i.ID,
+		&i.VideoID,
+		&i.UserID,
+		&i.Body,
+		&i.ParentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Hearted,
+		&i.Pinned,
+		&i.AuthorUsername,
+		&i.AuthorDisplayName,
+		&i.RemoteActorUrl,
+		&i.RemoteAuthorName,
+		&i.AuthorDomain,
 	)
 	return i, err
 }
@@ -253,13 +317,15 @@ func (q *Queries) ListAdminComments(ctx context.Context, arg ListAdminCommentsPa
 }
 
 const listCommentsByVideo = `-- name: ListCommentsByVideo :many
-SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at,
+SELECT c.id, c.video_id, c.user_id, c.body, c.parent_id, c.created_at, c.updated_at, c.deleted_at, c.hearted,
+       (c.id IS NOT DISTINCT FROM v.pinned_comment_id)::boolean AS pinned,
        COALESCE(u.username, '')::text AS author_username,
        COALESCE(u.display_name, '')::text AS author_display_name,
        c.remote_actor_url,
        COALESCE(c.remote_author_name, '')::text AS remote_author_name,
        COALESCE(ra.domain, '')::text AS author_domain
 FROM comments c
+JOIN videos v ON v.id = c.video_id
 LEFT JOIN users u ON u.id = c.user_id
 LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
 WHERE c.video_id = $1
@@ -278,7 +344,7 @@ WHERE c.video_id = $1
       SELECT 1 FROM muted_instances mi
       WHERE mi.muter_id = $2 AND mi.domain = ra.domain
   )
-ORDER BY c.created_at DESC, c.id DESC
+ORDER BY (c.id IS NOT DISTINCT FROM v.pinned_comment_id) DESC, c.created_at DESC, c.id DESC
 LIMIT $4 OFFSET $3
 `
 
@@ -298,6 +364,8 @@ type ListCommentsByVideoRow struct {
 	CreatedAt         time.Time          `json:"created_at"`
 	UpdatedAt         time.Time          `json:"updated_at"`
 	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	Hearted           bool               `json:"hearted"`
+	Pinned            bool               `json:"pinned"`
 	AuthorUsername    string             `json:"author_username"`
 	AuthorDisplayName string             `json:"author_display_name"`
 	RemoteActorUrl    *string            `json:"remote_actor_url"`
@@ -305,7 +373,9 @@ type ListCommentsByVideoRow struct {
 	AuthorDomain      string             `json:"author_domain"`
 }
 
-// A video's comments, newest first, joined with author identity for display.
+// A video's comments, the creator-pinned one first then newest first, joined with
+// author identity for display. Each row carries the creator-heart flag and a
+// computed `pinned` boolean (whether it is this video's pinned_comment_id).
 // A comment is authored by a local user OR a remote actor (§6): the users join
 // is LEFT and remote rows carry remote_author_name + the origin domain. When
 // viewer_id is provided (an authenticated viewer), comments authored by an
@@ -336,6 +406,8 @@ func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVid
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Hearted,
+			&i.Pinned,
 			&i.AuthorUsername,
 			&i.AuthorDisplayName,
 			&i.RemoteActorUrl,
@@ -350,6 +422,43 @@ func (q *Queries) ListCommentsByVideo(ctx context.Context, arg ListCommentsByVid
 		return nil, err
 	}
 	return items, nil
+}
+
+const setCommentHearted = `-- name: SetCommentHearted :one
+UPDATE comments
+SET hearted = $1
+WHERE id = $2
+RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
+`
+
+type SetCommentHeartedParams struct {
+	Hearted bool      `json:"hearted"`
+	ID      uuid.UUID `json:"id"`
+}
+
+// Toggle the creator-heart flag on a comment (video-owner/staff action;
+// authorized in the HTTP layer). Local metadata only — it never bumps updated_at
+// (so the "edited" marker is unaffected) and never federates. Works on
+// remote-authored comments too. Returns the updated row.
+func (q *Queries) SetCommentHearted(ctx context.Context, arg SetCommentHeartedParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, setCommentHearted, arg.Hearted, arg.ID)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.VideoID,
+		&i.UserID,
+		&i.Body,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.RemoteActorUrl,
+		&i.RemoteAuthorName,
+		&i.RemoteObjectUrl,
+		&i.DeletedAt,
+		&i.Hearted,
+	)
+	return i, err
 }
 
 const tombstoneUserComments = `-- name: TombstoneUserComments :exec
@@ -367,11 +476,12 @@ func (q *Queries) TombstoneUserComments(ctx context.Context, userID pgtype.UUID)
 }
 
 const updateComment = `-- name: UpdateComment :one
+
 UPDATE comments
 SET body = $1, updated_at = now()
 WHERE id = $2
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
-          remote_actor_url, remote_author_name, remote_object_url, deleted_at
+          remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
 `
 
 type UpdateCommentParams struct {
@@ -379,6 +489,8 @@ type UpdateCommentParams struct {
 	ID   uuid.UUID `json:"id"`
 }
 
+// NOTE: keep the column list of the two queries above in lock-step; both project
+// the full comments row so sqlc maps them to the Comment model.
 // Edit a comment's body (author-only; enforced in the service). Bumps updated_at
 // so clients can show an "edited" marker (updated_at > created_at).
 func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (Comment, error) {
@@ -396,6 +508,7 @@ func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (C
 		&i.RemoteAuthorName,
 		&i.RemoteObjectUrl,
 		&i.DeletedAt,
+		&i.Hearted,
 	)
 	return i, err
 }

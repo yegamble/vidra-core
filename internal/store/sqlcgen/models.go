@@ -193,6 +193,7 @@ type Comment struct {
 	RemoteAuthorName *string            `json:"remote_author_name"`
 	RemoteObjectUrl  *string            `json:"remote_object_url"`
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+	Hearted          bool               `json:"hearted"`
 }
 
 type Conversation struct {
@@ -841,6 +842,7 @@ type Video struct {
 	CommentsPolicy        string             `json:"comments_policy"`
 	DownloadEnabled       bool               `json:"download_enabled"`
 	PublishAfterTranscode bool               `json:"publish_after_transcode"`
+	PinnedCommentID       pgtype.UUID        `json:"pinned_comment_id"`
 }
 
 type VideoBlock struct {
