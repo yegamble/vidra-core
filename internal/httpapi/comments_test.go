@@ -26,6 +26,13 @@ type commentFakeRepo struct {
 	userBlocks *blockFakeRepo
 	videos     *videoFakeRepo
 	comments   map[uuid.UUID]sqlcgen.Comment
+	// pinned mirrors videos.pinned_comment_id (0099): video_id -> pinned comment_id.
+	pinned map[uuid.UUID]uuid.UUID
+}
+
+// isPinned reports whether commentID is videoID's current pinned comment.
+func (f *commentFakeRepo) isPinned(videoID, commentID uuid.UUID) bool {
+	return f.pinned != nil && f.pinned[videoID] == commentID
 }
 
 func (f *commentFakeRepo) CreateComment(_ context.Context, a sqlcgen.CreateCommentParams) (sqlcgen.Comment, error) {
@@ -70,10 +77,56 @@ func (f *commentFakeRepo) ListCommentsByVideo(_ context.Context, a sqlcgen.ListC
 			ParentID: c.ParentID, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 			AuthorUsername: username, AuthorDisplayName: display,
 			RemoteActorUrl: c.RemoteActorUrl,
+			Hearted:        c.Hearted,
+			Pinned:         f.isPinned(c.VideoID, c.ID),
 		})
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	// Mirror the real query's pinned-first, then newest-first ordering (0099).
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Pinned != rows[j].Pinned {
+			return rows[i].Pinned
+		}
+		return rows[i].CreatedAt.After(rows[j].CreatedAt)
+	})
 	return rows, nil
+}
+
+func (f *commentFakeRepo) GetCommentWithMeta(_ context.Context, id uuid.UUID) (sqlcgen.GetCommentWithMetaRow, error) {
+	c, ok := f.comments[id]
+	if !ok {
+		return sqlcgen.GetCommentWithMetaRow{}, errors.New("not found")
+	}
+	username, display := f.author(uuid.UUID(c.UserID.Bytes))
+	return sqlcgen.GetCommentWithMetaRow{
+		ID: c.ID, VideoID: c.VideoID, UserID: c.UserID, Body: c.Body,
+		ParentID: c.ParentID, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		DeletedAt: c.DeletedAt, Hearted: c.Hearted,
+		Pinned:         f.isPinned(c.VideoID, c.ID),
+		AuthorUsername: username, AuthorDisplayName: display,
+		RemoteActorUrl: c.RemoteActorUrl,
+	}, nil
+}
+
+func (f *commentFakeRepo) SetCommentHearted(_ context.Context, a sqlcgen.SetCommentHeartedParams) (sqlcgen.Comment, error) {
+	c, ok := f.comments[a.ID]
+	if !ok {
+		return sqlcgen.Comment{}, errors.New("not found")
+	}
+	c.Hearted = a.Hearted
+	f.comments[a.ID] = c
+	return c, nil
+}
+
+func (f *commentFakeRepo) SetVideoPinnedComment(_ context.Context, a sqlcgen.SetVideoPinnedCommentParams) error {
+	if f.pinned == nil {
+		f.pinned = map[uuid.UUID]uuid.UUID{}
+	}
+	if a.PinnedCommentID.Valid {
+		f.pinned[a.VideoID] = uuid.UUID(a.PinnedCommentID.Bytes)
+	} else {
+		delete(f.pinned, a.VideoID)
+	}
+	return nil
 }
 
 func (f *commentFakeRepo) ListAdminComments(_ context.Context, a sqlcgen.ListAdminCommentsParams) ([]sqlcgen.ListAdminCommentsRow, error) {
@@ -335,5 +388,159 @@ func TestCommentEdit(t *testing.T) {
 	// Anonymous → 401.
 	if anon := sendJSONAuth(srv, http.MethodPatch, path, `{"body":"x"}`, ""); anon.Code != http.StatusUnauthorized {
 		t.Errorf("anon edit = %d, want 401", anon.Code)
+	}
+}
+
+// TestCommentPinHeart exercises the creator pin + heart endpoints (0099): the
+// auth matrix (owner OK, non-owner 403, moderator staff-escape OK, unknown 404),
+// the pin swap + unpin, and the pinned/hearted flags round-tripping through the
+// list and single-comment responses.
+func TestCommentPinHeart(t *testing.T) {
+	srv := videoServer(t)
+	// ada is the first registered user → admin. bob owns the video (not staff).
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	ownerTok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	vid := createPublishedVideo(t, srv, ownerTok, "bob", `{"title":"v","privacy":"public"}`)
+	eveTok := registerAndToken(t, srv, `{"username":"eve","email":"eve@example.test","password":"supersecret"}`)
+
+	// Promote mia to moderator and re-login so the role rides her token.
+	_, miaID := registerAndUser(t, srv, `{"username":"mia","email":"mia@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+miaID, `{"role":"moderator"}`, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("promote moderator = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	login := postTo(srv, "/api/v1/auth/login", `{"email":"mia@example.test","password":"supersecret"}`)
+	if login.Code != http.StatusOK {
+		t.Fatalf("moderator login = %d; body=%s", login.Code, login.Body.String())
+	}
+	var mAuth authResponse
+	_ = json.Unmarshal(login.Body.Bytes(), &mAuth)
+	modTok := mAuth.Token
+
+	post := func(tok, body string) commentView {
+		t.Helper()
+		rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/comments", `{"body":"`+body+`"}`, tok)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("post %q = %d; body=%s", body, rec.Code, rec.Body.String())
+		}
+		var cv commentView
+		_ = json.Unmarshal(rec.Body.Bytes(), &cv)
+		return cv
+	}
+	list := func() []commentView {
+		t.Helper()
+		var body commentListResponse
+		_ = json.Unmarshal(listComments(srv, vid).Body.Bytes(), &body)
+		return body.Comments
+	}
+
+	// eve comments twice on bob's video.
+	first := post(eveTok, "first")
+	second := post(eveTok, "second")
+	// A freshly created comment is never pinned or hearted.
+	if first.Pinned || first.Hearted {
+		t.Errorf("new comment pinned/hearted = %v/%v, want false/false", first.Pinned, first.Hearted)
+	}
+
+	pinFirst := "/api/v1/comments/" + first.ID + "/pin"
+	// Non-owner (eve) cannot pin → 403.
+	if rec := sendJSONAuth(srv, http.MethodPut, pinFirst, "", eveTok); rec.Code != http.StatusForbidden {
+		t.Errorf("non-owner pin = %d, want 403", rec.Code)
+	}
+	// Anonymous → 401.
+	if rec := sendJSONAuth(srv, http.MethodPut, pinFirst, "", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anon pin = %d, want 401", rec.Code)
+	}
+	// Unknown comment → 404.
+	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/comments/"+uuid.NewString()+"/pin", "", ownerTok); rec.Code != http.StatusNotFound {
+		t.Errorf("pin unknown = %d, want 404", rec.Code)
+	}
+
+	// Owner pins the first comment → 200, pinned true, and list returns it first.
+	rec := sendJSONAuth(srv, http.MethodPut, pinFirst, "", ownerTok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner pin = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var pinned commentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &pinned)
+	if !pinned.Pinned {
+		t.Errorf("pin response pinned = false, want true")
+	}
+	if got := list(); len(got) != 2 || got[0].ID != first.ID || !got[0].Pinned {
+		t.Fatalf("after pin, list = %+v, want first pinned-first", got)
+	}
+
+	// Moderator staff-escape: mia pins the second comment, replacing the first.
+	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/comments/"+second.ID+"/pin", "", modTok); rec.Code != http.StatusOK {
+		t.Fatalf("moderator pin = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	got := list()
+	if got[0].ID != second.ID || !got[0].Pinned {
+		t.Errorf("after moderator pin, list[0] = %+v, want second pinned", got[0])
+	}
+	for _, cm := range got {
+		if cm.ID == first.ID && cm.Pinned {
+			t.Error("pinning second should have replaced first's pin")
+		}
+	}
+
+	// Owner unpins the second → 200, and nothing is pinned afterward.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/comments/"+second.ID+"/pin", "", ownerTok); rec.Code != http.StatusOK {
+		t.Fatalf("owner unpin = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	for _, cm := range list() {
+		if cm.Pinned {
+			t.Errorf("comment %s still pinned after unpin", cm.ID)
+		}
+	}
+	// Unpinning again (nothing pinned) is a harmless 200.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/comments/"+second.ID+"/pin", "", ownerTok); rec.Code != http.StatusOK {
+		t.Errorf("unpin-when-not-pinned = %d, want 200", rec.Code)
+	}
+
+	// Heart round-trip: owner hearts first → hearted true in the response + list;
+	// unheart clears it.
+	hb := sendJSONAuth(srv, http.MethodPut, "/api/v1/comments/"+first.ID+"/heart", "", ownerTok)
+	if hb.Code != http.StatusOK {
+		t.Fatalf("owner heart = %d; body=%s", hb.Code, hb.Body.String())
+	}
+	var hearted commentView
+	_ = json.Unmarshal(hb.Body.Bytes(), &hearted)
+	if !hearted.Hearted {
+		t.Errorf("heart response hearted = false, want true")
+	}
+	for _, cm := range list() {
+		if cm.ID == first.ID && !cm.Hearted {
+			t.Error("first should be hearted in the list")
+		}
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/comments/"+first.ID+"/heart", "", ownerTok); rec.Code != http.StatusOK {
+		t.Fatalf("owner unheart = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	for _, cm := range list() {
+		if cm.ID == first.ID && cm.Hearted {
+			t.Error("first should no longer be hearted after unheart")
+		}
+	}
+}
+
+// TestCommentPinRejectsReply: only a top-level comment can be pinned (0099).
+func TestCommentPinRejectsReply(t *testing.T) {
+	srv := videoServer(t)
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, ownerTok, "ada", `{"title":"v","privacy":"public"}`)
+
+	topRec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/comments", `{"body":"top"}`, ownerTok)
+	var top commentView
+	_ = json.Unmarshal(topRec.Body.Bytes(), &top)
+	replyRec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/comments", `{"body":"reply","parent_id":"`+top.ID+`"}`, ownerTok)
+	var reply commentView
+	_ = json.Unmarshal(replyRec.Body.Bytes(), &reply)
+
+	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/comments/"+reply.ID+"/pin", "", ownerTok); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("pin reply = %d, want 422", rec.Code)
+	}
+	// The owner can still heart a reply (heart is not top-level-only).
+	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/comments/"+reply.ID+"/heart", "", ownerTok); rec.Code != http.StatusOK {
+		t.Errorf("heart reply = %d, want 200", rec.Code)
 	}
 }
