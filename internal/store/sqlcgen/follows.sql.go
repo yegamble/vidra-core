@@ -80,6 +80,26 @@ func (q *Queries) FollowChannel(ctx context.Context, arg FollowChannelParams) (i
 	return result.RowsAffected(), nil
 }
 
+const getFollowNotificationSetting = `-- name: GetFollowNotificationSetting :one
+SELECT notification_setting FROM channel_follows
+WHERE follower_id = $1 AND channel_id = $2
+`
+
+type GetFollowNotificationSettingParams struct {
+	FollowerID uuid.UUID `json:"follower_id"`
+	ChannelID  uuid.UUID `json:"channel_id"`
+}
+
+// The caller's bell mode for one channel (migration 0101). NO ROW means the
+// caller does not follow the channel at all — callers distinguish that from a
+// muted bell ('none').
+func (q *Queries) GetFollowNotificationSetting(ctx context.Context, arg GetFollowNotificationSettingParams) (string, error) {
+	row := q.db.QueryRow(ctx, getFollowNotificationSetting, arg.FollowerID, arg.ChannelID)
+	var notification_setting string
+	err := row.Scan(&notification_setting)
+	return notification_setting, err
+}
+
 const isFollowingChannel = `-- name: IsFollowingChannel :one
 SELECT EXISTS (
     SELECT 1 FROM channel_follows
@@ -104,7 +124,7 @@ SELECT
     c.id, c.owner_id, c.handle, c.display_name, c.description,
     c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
     (SELECT count(*) FROM channel_follows cf2 WHERE cf2.channel_id = c.id) AS follower_count,
-    cf.created_at AS followed_at
+    cf.created_at AS followed_at, cf.notification_setting
 FROM channel_follows cf
 JOIN channels c ON c.id = cf.channel_id
 WHERE cf.follower_id = $1
@@ -119,22 +139,25 @@ type ListFollowedChannelsParams struct {
 }
 
 type ListFollowedChannelsRow struct {
-	ID                 uuid.UUID `json:"id"`
-	OwnerID            uuid.UUID `json:"owner_id"`
-	Handle             string    `json:"handle"`
-	DisplayName        string    `json:"display_name"`
-	Description        string    `json:"description"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	ActivitypubEnabled bool      `json:"activitypub_enabled"`
-	AtprotoEnabled     bool      `json:"atproto_enabled"`
-	FollowerCount      int64     `json:"follower_count"`
-	FollowedAt         time.Time `json:"followed_at"`
+	ID                  uuid.UUID `json:"id"`
+	OwnerID             uuid.UUID `json:"owner_id"`
+	Handle              string    `json:"handle"`
+	DisplayName         string    `json:"display_name"`
+	Description         string    `json:"description"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	ActivitypubEnabled  bool      `json:"activitypub_enabled"`
+	AtprotoEnabled      bool      `json:"atproto_enabled"`
+	FollowerCount       int64     `json:"follower_count"`
+	FollowedAt          time.Time `json:"followed_at"`
+	NotificationSetting string    `json:"notification_setting"`
 }
 
 // The LOCAL channels the caller follows (the "FOLLOWING" list), most recently
-// followed first. follower_count is each channel's total follower count and
-// followed_at is when the caller followed it. Paginated via limit/offset.
+// followed first. follower_count is each channel's total follower count,
+// followed_at is when the caller followed it, and notification_setting is the
+// caller's bell for that channel (migration 0101) so the list can render its
+// state without an extra request per row. Paginated via limit/offset.
 func (q *Queries) ListFollowedChannels(ctx context.Context, arg ListFollowedChannelsParams) ([]ListFollowedChannelsRow, error) {
 	rows, err := q.db.Query(ctx, listFollowedChannels, arg.FollowerID, arg.Limit, arg.Offset)
 	if err != nil {
@@ -156,6 +179,7 @@ func (q *Queries) ListFollowedChannels(ctx context.Context, arg ListFollowedChan
 			&i.AtprotoEnabled,
 			&i.FollowerCount,
 			&i.FollowedAt,
+			&i.NotificationSetting,
 		); err != nil {
 			return nil, err
 		}
@@ -165,6 +189,29 @@ func (q *Queries) ListFollowedChannels(ctx context.Context, arg ListFollowedChan
 		return nil, err
 	}
 	return items, nil
+}
+
+const setFollowNotificationSetting = `-- name: SetFollowNotificationSetting :execrows
+UPDATE channel_follows
+SET notification_setting = $1
+WHERE follower_id = $2 AND channel_id = $3
+`
+
+type SetFollowNotificationSettingParams struct {
+	NotificationSetting string    `json:"notification_setting"`
+	FollowerID          uuid.UUID `json:"follower_id"`
+	ChannelID           uuid.UUID `json:"channel_id"`
+}
+
+// Set the bell mode on an EXISTING follow. Returns the number of rows updated so
+// the caller can refuse (404) a bell set on a channel the caller does not follow
+// — the bell is a property of a subscription, never a standalone preference.
+func (q *Queries) SetFollowNotificationSetting(ctx context.Context, arg SetFollowNotificationSettingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setFollowNotificationSetting, arg.NotificationSetting, arg.FollowerID, arg.ChannelID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const unfollowChannel = `-- name: UnfollowChannel :exec

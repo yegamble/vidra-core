@@ -132,15 +132,41 @@ Channels: a channel is a publishing identity owned by a user. `POST /api/v1/chan
 (auth) creates one (`handle` 3–30 chars `[A-Za-z0-9_]`, unique case-insensitively →
 `409`); `GET /api/v1/me/channels` (auth) lists the caller's channels;
 `GET /api/v1/channels/{handle}` is the public channel page lookup (`404` when absent).
+Auth on it is **optional**: an anonymous request gets the public projection, while a
+signed-in caller additionally gets their own relationship with the channel —
+`is_following` and, when following, their `notification_setting` — so the channel page
+paints the Follow button and the bell in one request.
 `PATCH /api/v1/channels/{handle}` (owner-only, partial: `display_name`/`description`)
 and `DELETE /api/v1/channels/{handle}` (owner-only) manage it — a non-owner gets `403`.
 The handle is immutable after creation. `POST`/`DELETE /api/v1/channels/{handle}/follow`
 (auth, idempotent `204`) follow/unfollow a channel; every channel view carries a
 `follower_count`. `GET /api/v1/me/subscriptions` (auth, paginated) lists the local
 channels the caller follows — the "FOLLOWING" list — most recently followed first,
-each channel view plus a `followed_at` timestamp; the videos from those channels are a
+each channel view plus a `followed_at` timestamp and the caller's
+`notification_setting`; the videos from those channels are a
 separate feed at `GET /api/v1/me/subscriptions/videos`, and remote-channel follows live
 at `GET /api/v1/me/remote-follows`.
+
+**The notification bell.** `PUT /api/v1/channels/{handle}/follow/notifications` (auth,
+body `{notification_setting}`) sets the caller's bell for a channel they follow: `all`
+notifies them of every new **public** video the channel publishes, `none` mutes those
+notifications while keeping the subscription (the channel stays in their feed). A new
+follow starts at `all`. An unsupported mode is `422` before any write; a caller who
+does not follow the channel gets `404`, exactly as an unknown handle does — the bell is
+part of a subscription, and the two cases are deliberately indistinguishable so the
+endpoint cannot be used to probe which handles exist. There is no "personalized" third
+mode (an INTENTIONAL_DIFFERENCE from YouTube): nothing personalises it here, so
+offering it would be a lie in the UI. The per-user `new_video` notification preference
+(`PATCH /api/v1/me/notification-prefs`) is the master switch layered on top.
+
+Publishing a video fans the `new_video` notification out to the channel's local
+followers in a single set-based statement, from the publish transition — so direct,
+scheduled, post-transcode and moderator-approved publishes all fire it once. A
+follower is told only when the video is published **and** public (unlisted, private and
+password-protected videos are never announced) and unblocked, their bell is `all`,
+their `new_video` preference is not off, they have not muted the channel owner, neither
+side has blocked the other, and they are not the owner. Re-running the fan-out for the
+same video inserts nothing, so a hook that fires twice cannot double-notify.
 
 ### Avatars & banners
 

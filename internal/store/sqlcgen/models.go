@@ -131,9 +131,10 @@ type ChannelActorKey struct {
 }
 
 type ChannelFollow struct {
-	FollowerID uuid.UUID `json:"follower_id"`
-	ChannelID  uuid.UUID `json:"channel_id"`
-	CreatedAt  time.Time `json:"created_at"`
+	FollowerID          uuid.UUID `json:"follower_id"`
+	ChannelID           uuid.UUID `json:"channel_id"`
+	CreatedAt           time.Time `json:"created_at"`
+	NotificationSetting string    `json:"notification_setting"`
 }
 
 type ChannelFollowBack struct {

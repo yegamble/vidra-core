@@ -966,11 +966,14 @@ func (s *Server) routes() {
 
 	if s.channelsvc != nil {
 		api.POST("/channels", s.handleCreateChannel, s.requireAuth)
-		api.GET("/channels/:handle", s.handleGetChannel)
+		// optionalAuth: anonymous callers get the public projection; a signed-in
+		// caller additionally gets their own follow state + notification bell.
+		api.GET("/channels/:handle", s.handleGetChannel, s.optionalAuth)
 		api.PATCH("/channels/:handle", s.handleUpdateChannel, s.requireAuth)
 		api.DELETE("/channels/:handle", s.handleDeleteChannel, s.requireAuth)
 		api.POST("/channels/:handle/follow", s.handleFollowChannel, s.requireAuth)
 		api.DELETE("/channels/:handle/follow", s.handleUnfollowChannel, s.requireAuth)
+		api.PUT("/channels/:handle/follow/notifications", s.handleSetFollowNotifications, s.requireAuth)
 		api.GET("/me/channels", s.handleListMyChannels, s.requireAuth)
 		api.GET("/me/subscriptions", s.handleListFollowedChannels, s.requireAuth)
 		// Channel collaborators (migration 0097): owner manages members; owner +

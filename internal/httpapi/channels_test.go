@@ -24,6 +24,7 @@ import (
 type channelFakeRepo struct {
 	byHandle   map[string]sqlcgen.Channel
 	follows    map[string]bool                  // "followerID|channelID"
+	bells      map[string]string                // follow key -> notification_setting (0101)
 	followedAt map[string]time.Time             // when each follow was created
 	followSeq  []string                         // follow keys in follow order (for stable "newest first")
 	members    map[string]sqlcgen.ChannelMember // "channelID|userID" (migration 0097)
@@ -36,6 +37,7 @@ func newChannelFakeRepo() *channelFakeRepo {
 	return &channelFakeRepo{
 		byHandle:   map[string]sqlcgen.Channel{},
 		follows:    map[string]bool{},
+		bells:      map[string]string{},
 		followedAt: map[string]time.Time{},
 		members:    map[string]sqlcgen.ChannelMember{},
 	}
@@ -141,14 +143,33 @@ func (f *channelFakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChann
 		return 0, nil // already following
 	}
 	f.follows[key] = true
+	f.bells[key] = channel.NotifyAll // the column default a new follow gets
 	f.followedAt[key] = time.Now()
 	f.followSeq = append(f.followSeq, key)
+	return 1, nil
+}
+
+func (f *channelFakeRepo) GetFollowNotificationSetting(_ context.Context, a sqlcgen.GetFollowNotificationSettingParams) (string, error) {
+	key := a.FollowerID.String() + "|" + a.ChannelID.String()
+	if !f.follows[key] {
+		return "", pgx.ErrNoRows
+	}
+	return f.bells[key], nil
+}
+
+func (f *channelFakeRepo) SetFollowNotificationSetting(_ context.Context, a sqlcgen.SetFollowNotificationSettingParams) (int64, error) {
+	key := a.FollowerID.String() + "|" + a.ChannelID.String()
+	if !f.follows[key] {
+		return 0, nil
+	}
+	f.bells[key] = a.NotificationSetting
 	return 1, nil
 }
 
 func (f *channelFakeRepo) UnfollowChannel(_ context.Context, a sqlcgen.UnfollowChannelParams) error {
 	key := a.FollowerID.String() + "|" + a.ChannelID.String()
 	delete(f.follows, key)
+	delete(f.bells, key)
 	delete(f.followedAt, key)
 	for i, k := range f.followSeq {
 		if k == key {
@@ -195,6 +216,7 @@ func (f *channelFakeRepo) ListFollowedChannels(ctx context.Context, a sqlcgen.Li
 			DisplayName: ch.DisplayName, Description: ch.Description,
 			CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt,
 			FollowerCount: count, FollowedAt: f.followedAt[key],
+			NotificationSetting: f.bells[key],
 		})
 		taken++
 	}
@@ -685,4 +707,124 @@ func postJSONAuth(srv *Server, path, body, token string) *httptest.ResponseRecor
 	req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
 	srv.Handler().ServeHTTP(rec, req)
 	return rec
+}
+
+// TestFollowNotificationBellEndpoint exercises PUT
+// /api/v1/channels/{handle}/follow/notifications and the read paths that render
+// the bell: the single channel GET (behind optionalAuth) and the FOLLOWING list.
+func TestFollowNotificationBellEndpoint(t *testing.T) {
+	srv := channelServer(t)
+	ownerTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	followerTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	_ = postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada_makes","display_name":"Ada Makes"}`, ownerTok)
+
+	channelAs := func(token string) channelView {
+		t.Helper()
+		rec := getWithAuth(srv, "/api/v1/channels/ada_makes", token)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get channel = %d, want 200", rec.Code)
+		}
+		var v channelView
+		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+			t.Fatalf("decode channel: %v", err)
+		}
+		return v
+	}
+
+	// Anonymous callers get the public projection only — no relationship fields.
+	anon := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(anon, httptest.NewRequest(http.MethodGet, "/api/v1/channels/ada_makes", nil))
+	var anonBody map[string]any
+	if err := json.Unmarshal(anon.Body.Bytes(), &anonBody); err != nil {
+		t.Fatalf("decode anonymous channel: %v", err)
+	}
+	if _, present := anonBody["is_following"]; present {
+		t.Errorf("anonymous channel view carries is_following: %v", anonBody["is_following"])
+	}
+	if _, present := anonBody["notification_setting"]; present {
+		t.Errorf("anonymous channel view carries notification_setting: %v", anonBody["notification_setting"])
+	}
+
+	// Signed in but not following: is_following=false, no bell.
+	if v := channelAs(followerTok); v.IsFollowing == nil || *v.IsFollowing || v.NotificationSetting != "" {
+		t.Fatalf("before follow: is_following=%v setting=%q, want false and no bell", v.IsFollowing, v.NotificationSetting)
+	}
+	// Setting a bell without following is 404 (as is an unknown handle).
+	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/channels/ada_makes/follow/notifications",
+		`{"notification_setting":"none"}`, followerTok); rec.Code != http.StatusNotFound {
+		t.Fatalf("bell before following = %d, want 404", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/channels/ghost/follow/notifications",
+		`{"notification_setting":"none"}`, followerTok); rec.Code != http.StatusNotFound {
+		t.Fatalf("bell on unknown channel = %d, want 404", rec.Code)
+	}
+	// Auth is required.
+	if rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/channels/ada_makes/follow/notifications",
+		`{"notification_setting":"none"}`, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anon bell = %d, want 401", rec.Code)
+	}
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/ada_makes/follow", "", followerTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("follow = %d, want 204", rec.Code)
+	}
+	// A new follow arrives with the bell on.
+	if v := channelAs(followerTok); v.IsFollowing == nil || !*v.IsFollowing || v.NotificationSetting != channel.NotifyAll {
+		t.Fatalf("after follow: is_following=%v setting=%q, want true/%q", v.IsFollowing, v.NotificationSetting, channel.NotifyAll)
+	}
+
+	// Mute it.
+	rec := sendJSONAuth(srv, http.MethodPut, "/api/v1/channels/ada_makes/follow/notifications",
+		`{"notification_setting":"none"}`, followerTok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mute bell = %d, want 200", rec.Code)
+	}
+	var echoed followNotificationsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &echoed); err != nil {
+		t.Fatalf("decode bell response: %v", err)
+	}
+	if echoed.NotificationSetting != channel.NotifyNone {
+		t.Errorf("bell response = %q, want %q", echoed.NotificationSetting, channel.NotifyNone)
+	}
+	if v := channelAs(followerTok); *v.IsFollowing != true || v.NotificationSetting != channel.NotifyNone {
+		t.Fatalf("after mute: is_following=%v setting=%q, want true/%q", *v.IsFollowing, v.NotificationSetting, channel.NotifyNone)
+	}
+	// Muting the bell is NOT unfollowing.
+	if v := channelAs(followerTok); v.FollowerCount != 1 {
+		t.Errorf("follower_count after muting = %d, want 1", v.FollowerCount)
+	}
+
+	// The FOLLOWING list carries the bell per row.
+	list := getWithAuth(srv, "/api/v1/me/subscriptions", followerTok)
+	if list.Code != http.StatusOK {
+		t.Fatalf("subscriptions = %d, want 200", list.Code)
+	}
+	var followed followedChannelsResponse
+	if err := json.Unmarshal(list.Body.Bytes(), &followed); err != nil {
+		t.Fatalf("decode subscriptions: %v", err)
+	}
+	if len(followed.Channels) != 1 || followed.Channels[0].NotificationSetting != channel.NotifyNone {
+		t.Fatalf("subscriptions bell = %+v, want one row with %q", followed.Channels, channel.NotifyNone)
+	}
+
+	// An unsupported mode is refused and leaves the stored bell alone. YouTube's
+	// "personalized" is the realistic thing a client would send.
+	if bad := sendJSONAuth(srv, http.MethodPut, "/api/v1/channels/ada_makes/follow/notifications",
+		`{"notification_setting":"personalized"}`, followerTok); bad.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unsupported mode = %d, want 422", bad.Code)
+	}
+	if v := channelAs(followerTok); v.NotificationSetting != channel.NotifyNone {
+		t.Errorf("bell after a rejected mode = %q, want %q (unchanged)", v.NotificationSetting, channel.NotifyNone)
+	}
+
+	// Back on, then unfollow drops the relationship and the bell together.
+	if on := sendJSONAuth(srv, http.MethodPut, "/api/v1/channels/ada_makes/follow/notifications",
+		`{"notification_setting":"all"}`, followerTok); on.Code != http.StatusOK {
+		t.Fatalf("unmute = %d, want 200", on.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/channels/ada_makes/follow", "", followerTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("unfollow = %d, want 204", rec.Code)
+	}
+	if v := channelAs(followerTok); *v.IsFollowing || v.NotificationSetting != "" {
+		t.Fatalf("after unfollow: is_following=%v setting=%q, want false and no bell", *v.IsFollowing, v.NotificationSetting)
+	}
 }

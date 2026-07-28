@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -86,6 +88,61 @@ func (f *notifFakeRepo) CreateNotification(_ context.Context, a sqlcgen.CreateNo
 	}
 	f.notifs = append(f.notifs, n)
 	return n, nil
+}
+
+// NotifyFollowersOfNewVideo mirrors the shape of the real set-based fan-out
+// (migration 0101) closely enough to prove the HTTP-level wiring: publishing a
+// video reaches the followers of its channel, honouring the published+public
+// gate, each follower's bell, their global new_video preference, the
+// no-self-notification rule, and one-notification-per-(user,video). Mutes and
+// blocks are join conditions the fake has no repos for; those — and this
+// statement's real behaviour — are proved against a live database in
+// store.TestNewVideoFanOutPersists.
+func (f *notifFakeRepo) NotifyFollowersOfNewVideo(_ context.Context, videoID uuid.UUID) (int64, error) {
+	v, ok := f.videos.videos[videoID]
+	if !ok || v.State != "published" || v.Privacy != "public" {
+		return 0, nil
+	}
+	ch, ok := f.channelByID(v.ChannelID)
+	if !ok {
+		return 0, nil
+	}
+	var notified int64
+	for key, following := range f.channels.follows {
+		if !following || !strings.HasSuffix(key, "|"+v.ChannelID.String()) {
+			continue
+		}
+		follower, err := uuid.Parse(strings.TrimSuffix(key, "|"+v.ChannelID.String()))
+		if err != nil || follower == ch.OwnerID {
+			continue
+		}
+		if f.channels.bells[key] != channel.NotifyAll {
+			continue
+		}
+		if enabled, ok := f.prefs[notifPrefKey(follower, notification.TypeNewVideo)]; ok && !enabled {
+			continue
+		}
+		duplicate := false
+		for _, n := range f.notifs {
+			if n.UserID == follower && n.Type == notification.TypeNewVideo &&
+				n.VideoID.Valid && uuid.UUID(n.VideoID.Bytes) == videoID {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		f.notifs = append(f.notifs, sqlcgen.Notification{
+			ID: uuid.New(), UserID: follower, Type: notification.TypeNewVideo,
+			ActorID:   pgtype.UUID{Bytes: ch.OwnerID, Valid: true},
+			ChannelID: pgtype.UUID{Bytes: v.ChannelID, Valid: true},
+			VideoID:   pgtype.UUID{Bytes: videoID, Valid: true},
+			CreatedAt: time.Now(),
+		})
+		notified++
+	}
+	return notified, nil
 }
 
 func (f *notifFakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotificationsParams) ([]sqlcgen.ListNotificationsRow, error) {

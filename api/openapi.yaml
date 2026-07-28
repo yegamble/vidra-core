@@ -1388,8 +1388,16 @@ paths:
     get:
       operationId: getChannel
       summary: Get a channel by handle
-      description: Public channel page data, looked up by case-insensitive handle.
+      description: >-
+        Public channel page data, looked up by case-insensitive handle. Auth is
+        OPTIONAL: an anonymous request gets the public projection, while a
+        request carrying a valid token additionally gets the caller's own
+        relationship with the channel — is_following and, when following, their
+        notification_setting (bell).
       tags: [channels]
+      security:
+        - {}
+        - bearerAuth: []
       parameters:
         - name: handle
           in: path
@@ -1499,7 +1507,11 @@ paths:
     post:
       operationId: followChannel
       summary: Follow a channel
-      description: The authenticated user follows the channel. Idempotent.
+      description: >-
+        The authenticated user follows the channel. Idempotent. A new follow
+        starts with its notification bell on ("all"): the follower is told about
+        every new public video from the channel until they change it at
+        PUT /api/v1/channels/{handle}/follow/notifications.
       tags: [channels]
       security:
         - bearerAuth: []
@@ -1548,6 +1560,61 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No channel with that handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/channels/{handle}/follow/notifications:
+    put:
+      operationId: setFollowNotifications
+      summary: Set the notification bell for a followed channel
+      description: >
+        Sets the authenticated caller's notification bell for a channel they
+        follow: "all" notifies them of every new PUBLIC video the channel
+        publishes, "none" mutes those notifications while keeping the
+        subscription (the channel stays in their feed). New follows start at
+        "all". The per-user new_video notification preference
+        (PATCH /api/v1/me/notification-prefs) is the master switch layered on
+        top of this per-channel bell. There is deliberately no "personalized"
+        mode — this instance has no personalisation engine behind it.
+        A caller who does not follow the channel gets 404, exactly as an unknown
+        handle does: the bell is part of a subscription.
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetFollowNotificationsRequest"
+      responses:
+        "200":
+          description: The stored bell mode.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FollowNotificationsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No channel with that handle, or the caller does not follow it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: notification_setting is not one of "all" or "none".
           content:
             application/json:
               schema:
@@ -2744,7 +2811,8 @@ paths:
       description: >-
         The authenticated user's "FOLLOWING" list: the LOCAL channels they
         follow, most recently followed first, each with the channel's total
-        follower_count and the followed_at timestamp. Remote-channel follows are
+        follower_count, the followed_at timestamp, and the caller's
+        notification_setting (bell) for it. Remote-channel follows are
         listed separately at GET /me/remote-follows. Paginated via limit (1–100,
         default 20) and offset.
       tags: [channels]
@@ -6928,7 +6996,7 @@ paths:
       summary: Get the caller's notification preferences
       description: >-
         Returns the caller's per-type notification switchboard: every known
-        notification type (caption_ready, comment, follow, message,
+        notification type (caption_ready, comment, follow, message, new_video,
         report_resolved, video_rejected) mapped to whether it is delivered.
         Types never configured default to enabled.
       tags: [notifications]
@@ -13208,6 +13276,21 @@ components:
             The caller's role on this channel, set only on GET /me/channels
             (which spans owned + collaborated channels); omitted on public and
             single-channel views.
+        is_following:
+          type: boolean
+          description: >-
+            Whether the AUTHENTICATED caller follows this channel. Present only
+            on the single-channel GET and only when the request carries a valid
+            token; omitted for anonymous callers and in bulk listings.
+        notification_setting:
+          type: string
+          enum: [all, none]
+          description: >-
+            The caller's notification bell for this channel — "all" (told about
+            every new public video) or "none" (subscription kept, notifications
+            muted). Present wherever the caller demonstrably follows the channel:
+            the single-channel GET when is_following is true, and every row of
+            GET /me/following. Omitted otherwise.
     CreateChannelRequest:
       type: object
       required: [handle, display_name]
@@ -13297,7 +13380,11 @@ components:
           enum: [editor]
           description: The role to grant. Defaults to "editor" when omitted.
     FollowedChannel:
-      description: A channel the caller follows, with the follow timestamp.
+      description: >-
+        A channel the caller follows, with the follow timestamp. Each row also
+        carries the caller's notification_setting (the bell) from the shared
+        Channel schema, so the FOLLOWING list renders bell state without a
+        request per row.
       allOf:
         - $ref: "#/components/schemas/Channel"
         - type: object
@@ -13307,6 +13394,24 @@ components:
               type: string
               format: date-time
               description: When the caller followed this channel.
+    SetFollowNotificationsRequest:
+      type: object
+      required: [notification_setting]
+      properties:
+        notification_setting:
+          type: string
+          enum: [all, none]
+          description: >-
+            The bell mode to store. "all" = notify me about every new public
+            video from this channel; "none" = keep the subscription, mute the
+            notifications.
+    FollowNotificationsResponse:
+      type: object
+      required: [notification_setting]
+      properties:
+        notification_setting:
+          type: string
+          enum: [all, none]
     FollowedChannelsResponse:
       type: object
       required: [channels, limit, offset]
@@ -14769,8 +14874,8 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment, message, report_resolved, video_rejected, caption_ready]
-          description: What happened. follow = someone followed your channel; comment = someone commented on your video; message = someone sent you a direct message; report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one; the moderator's identity is never included); caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
+          enum: [follow, comment, message, new_video, report_resolved, video_rejected, caption_ready]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one; the moderator's identity is never included); caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
         read:
           type: boolean
         created_at:
@@ -14847,7 +14952,7 @@ components:
             this user. Types with no stored preference default to true.
           additionalProperties:
             type: boolean
-          example: { caption_ready: true, comment: true, follow: false, message: true, report_resolved: true, video_rejected: true }
+          example: { caption_ready: true, comment: true, follow: false, message: true, new_video: true, report_resolved: true, video_rejected: true }
     UpdateNotificationPrefsRequest:
       type: object
       required: [prefs]
@@ -14857,8 +14962,8 @@ components:
           description: >-
             Partial map of notification type -> enabled. Only the types present
             are changed. Known types: caption_ready, comment, follow, message,
-            report_resolved, video_rejected. An unknown type rejects the whole
-            update (422).
+            new_video, report_resolved, video_rejected. An unknown type rejects
+            the whole update (422).
           additionalProperties:
             type: boolean
           minProperties: 1

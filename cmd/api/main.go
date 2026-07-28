@@ -720,6 +720,26 @@ func run() error {
 			}
 		}))
 	}
+	// Tell the channel's LOCAL followers that a new public video went live —
+	// the "new video from a channel you follow" notification, one set-based
+	// fan-out per publish. Registered unconditionally (there is no feature flag
+	// on notifications) and best-effort: a fan-out failure is logged and never
+	// touches the publish. notifsvc is built further down, so this takes the
+	// same deferred-service seam as the federation/ATProto hooks below.
+	var notifsvc *notification.Service
+	vopts = append(vopts, video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
+		if notifsvc == nil {
+			return
+		}
+		notified, err := notifsvc.NotifyNewVideo(ctx, videoID)
+		if err != nil {
+			logger.Warn("new-video follower notification failed", "video_id", videoID, "error", err)
+			return
+		}
+		if notified > 0 {
+			logger.Info("notified followers of new video", "video_id", videoID, "followers", notified)
+		}
+	}))
 	// When federation is on, fan a published video out to the channel's remote
 	// followers. fedsvc is assigned below; the hook only runs post-startup so the
 	// closure sees the built service (nil-guarded regardless).
@@ -845,7 +865,7 @@ func run() error {
 	ratingsvc := rating.NewService(db.Queries())
 	opts = append(opts, httpapi.WithRatingService(ratingsvc))
 
-	notifsvc := notification.NewService(db.Queries())
+	notifsvc = notification.NewService(db.Queries())
 	opts = append(opts, httpapi.WithNotificationService(notifsvc))
 
 	playersettingssvc := playersettings.NewService(db.Queries(),

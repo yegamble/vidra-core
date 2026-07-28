@@ -1111,6 +1111,15 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		}
 		return def
 	}))
+	// New-video follower notifications, mirroring cmd/api: THE publish transition
+	// fans the "new video from a channel you follow" notification out to the
+	// channel's followers, best-effort. Wiring it here is what lets the handler
+	// tests prove the whole round trip — publish a video, the follower's
+	// notification list shows it — rather than just the fan-out in isolation.
+	notifsvc := notification.NewService(notifRepo)
+	opts = append(opts, video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
+		_, _ = notifsvc.NotifyNewVideo(ctx, videoID)
+	}))
 	videosvc := video.NewService(repo, blobs, opts...)
 	// DB-backed instance-settings overlay: an in-memory fake repo, seeded with the
 	// config defaults. With no overrides the effective values equal the config, so
@@ -1157,7 +1166,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		WithVideoService(videosvc),
 		WithCommentService(comment.NewService(cmRepo)),
 		WithRatingService(rating.NewService(ratingRepo)),
-		WithNotificationService(notification.NewService(notifRepo)),
+		WithNotificationService(notifsvc),
 		WithPlayerSettingsService(playersettings.NewService(newPlayerSettingsFakeRepo(),
 			playersettings.WithVideoCardPreviewsDefaultEnabledFunc(func() bool {
 				return settingssvc.Bool(instancesettings.KeyVideoCardPreviewsDefaultEnabled)

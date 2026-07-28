@@ -518,3 +518,227 @@ func TestNotificationPrefsPersist(t *testing.T) {
 		t.Fatalf("pref rows after user delete = %d/%v, want 0", count, err)
 	}
 }
+
+// TestNewVideoFanOutOnRealPG is the proof behind the "new video from a channel
+// you follow" fan-out (migration 0101). Every rule that decides WHO gets told
+// lives in the NotifyFollowersOfNewVideo statement rather than in Go, so the
+// service-level unit test can only prove pass-through — this is the test that
+// actually holds the rules. It seeds one channel with a follower per rule and
+// asserts the notified set exactly, because the failure that matters here is
+// silent over-delivery: a muted, blocked, or opted-out user being told anyway
+// is not a cosmetic bug, and a subset assertion would never catch it.
+func TestNewVideoFanOutOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	// mkUser seeds a user and registers its cleanup; every other seeded row
+	// hangs off a user or channel by ON DELETE CASCADE, so deleting the users at
+	// the end takes the whole fixture with it.
+	mkUser := func(name string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+			name+"-"+suffix, name+"-"+suffix+"@example.test",
+		).Scan(&id); err != nil {
+			t.Fatalf("seed user %s: %v", name, err)
+		}
+		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+		return id
+	}
+
+	owner := mkUser("fanout-owner")
+	var channelID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'Fan-out') RETURNING id`,
+		owner, "fanout-"+suffix,
+	).Scan(&channelID); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+
+	follow := func(user uuid.UUID, setting string) {
+		t.Helper()
+		if _, err := st.Pool.Exec(ctx,
+			`INSERT INTO channel_follows (follower_id, channel_id, notification_setting) VALUES ($1, $2, $3)`,
+			user, channelID, setting,
+		); err != nil {
+			t.Fatalf("seed follow: %v", err)
+		}
+	}
+
+	// One follower per rule the statement enforces.
+	plain := mkUser("fanout-plain")          // bell on, nothing in the way  → notified
+	explicitOn := mkUser("fanout-prefon")    // bell on + pref explicitly ON → notified
+	muted := mkUser("fanout-bellnone")       // bell muted                   → not notified
+	prefOff := mkUser("fanout-prefoff")      // new_video turned off globally → not notified
+	muter := mkUser("fanout-muter")          // muted the channel owner      → not notified
+	blocker := mkUser("fanout-blocker")      // blocked the owner            → not notified
+	blocked := mkUser("fanout-blocked")      // blocked BY the owner         → not notified
+	nonFollower := mkUser("fanout-stranger") // does not follow at all       → not notified
+
+	follow(plain, "all")
+	follow(explicitOn, "all")
+	follow(muted, "none")
+	follow(prefOff, "all")
+	follow(muter, "all")
+	follow(blocker, "all")
+	follow(blocked, "all")
+	// The owner following their own channel must not self-notify.
+	follow(owner, "all")
+
+	for _, p := range []struct {
+		user    uuid.UUID
+		enabled bool
+	}{{explicitOn, true}, {prefOff, false}} {
+		if err := q.UpsertNotificationPref(ctx, sqlcgen.UpsertNotificationPrefParams{
+			UserID: p.user, Type: "new_video", Enabled: p.enabled,
+		}); err != nil {
+			t.Fatalf("seed pref: %v", err)
+		}
+	}
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO muted_accounts (muter_id, muted_id) VALUES ($1, $2)`, muter, owner,
+	); err != nil {
+		t.Fatalf("seed mute: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2), ($3, $4)`,
+		blocker, owner, owner, blocked,
+	); err != nil {
+		t.Fatalf("seed blocks: %v", err)
+	}
+
+	mkVideo := func(title, privacy, state string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, $2, $3, $4) RETURNING id`,
+			channelID, title, privacy, state,
+		).Scan(&id); err != nil {
+			t.Fatalf("seed video %s: %v", title, err)
+		}
+		return id
+	}
+	// recipients reads back exactly who holds a new_video notification for a
+	// video, so the assertions can compare whole sets.
+	recipients := func(videoID uuid.UUID) map[uuid.UUID]bool {
+		t.Helper()
+		rows, err := st.Pool.Query(ctx,
+			`SELECT user_id FROM notifications WHERE video_id = $1 AND type = 'new_video'`, videoID)
+		if err != nil {
+			t.Fatalf("read notifications: %v", err)
+		}
+		defer rows.Close()
+		got := map[uuid.UUID]bool{}
+		for rows.Next() {
+			var u uuid.UUID
+			if err := rows.Scan(&u); err != nil {
+				t.Fatalf("scan recipient: %v", err)
+			}
+			got[u] = true
+		}
+		return got
+	}
+
+	published := mkVideo("Published public", "public", "published")
+	notified, err := q.NotifyFollowersOfNewVideo(ctx, published)
+	if err != nil {
+		t.Fatalf("NotifyFollowersOfNewVideo: %v", err)
+	}
+	if notified != 2 {
+		t.Fatalf("notified = %d, want 2 (the unobstructed followers)", notified)
+	}
+	got := recipients(published)
+	want := map[uuid.UUID]bool{plain: true, explicitOn: true}
+	if len(got) != len(want) {
+		t.Fatalf("recipients = %d rows, want %d", len(got), len(want))
+	}
+	for _, excluded := range []struct {
+		id  uuid.UUID
+		why string
+	}{
+		{muted, "bell set to none"},
+		{prefOff, "new_video preference off"},
+		{muter, "muted the channel owner"},
+		{blocker, "blocked the channel owner"},
+		{blocked, "blocked by the channel owner"},
+		{nonFollower, "does not follow the channel"},
+		{owner, "is the channel owner (self-notify)"},
+	} {
+		if got[excluded.id] {
+			t.Errorf("notified a follower who %s", excluded.why)
+		}
+	}
+	for id, why := range map[uuid.UUID]string{
+		plain:      "follows with the bell on",
+		explicitOn: "follows with the bell on and new_video explicitly enabled",
+	} {
+		if !got[id] {
+			t.Errorf("did NOT notify a follower who %s", why)
+		}
+	}
+
+	// A hook that fires twice for the same video (publish-after-transcode
+	// release, moderator approval, a retry) must not double-notify — the partial
+	// unique index in 0101 makes that a database guarantee.
+	again, err := q.NotifyFollowersOfNewVideo(ctx, published)
+	if err != nil {
+		t.Fatalf("second NotifyFollowersOfNewVideo: %v", err)
+	}
+	if again != 0 {
+		t.Fatalf("re-running the fan-out inserted %d rows, want 0", again)
+	}
+	if n := len(recipients(published)); n != 2 {
+		t.Fatalf("recipients after re-run = %d, want 2", n)
+	}
+
+	// Videos that must never reach a follower list at all.
+	for _, tc := range []struct {
+		name, privacy, state string
+		block                bool
+	}{
+		{name: "unlisted", privacy: "unlisted", state: "published"},
+		{name: "private", privacy: "private", state: "published"},
+		{name: "password-protected", privacy: "password", state: "published"},
+		{name: "still a draft", privacy: "public", state: "draft"},
+		{name: "still transcoding", privacy: "public", state: "transcoding"},
+		{name: "scheduled", privacy: "public", state: "scheduled"},
+		{name: "quarantined", privacy: "public", state: "quarantined"},
+		{name: "moderation-blocked", privacy: "public", state: "published", block: true},
+	} {
+		v := mkVideo(tc.name, tc.privacy, tc.state)
+		if tc.block {
+			if _, err := st.Pool.Exec(ctx,
+				`INSERT INTO video_blocks (video_id, reason) VALUES ($1, 'test')`, v,
+			); err != nil {
+				t.Fatalf("seed video block: %v", err)
+			}
+		}
+		n, err := q.NotifyFollowersOfNewVideo(ctx, v)
+		if err != nil {
+			t.Fatalf("fan-out for a %s video: %v", tc.name, err)
+		}
+		if n != 0 {
+			t.Errorf("a %s video notified %d followers, want 0", tc.name, n)
+		}
+	}
+
+	// The dedup index is scoped to type = 'new_video', so the types that
+	// legitimately repeat per video are untouched by it. Two comment
+	// notifications for the same (user, video) must still both land.
+	for i := 0; i < 2; i++ {
+		if _, err := q.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+			UserID: plain, Type: "comment", VideoID: pgtype.UUID{Bytes: published, Valid: true},
+		}); err != nil {
+			t.Fatalf("comment notification %d blocked by the new_video dedup index: %v", i+1, err)
+		}
+	}
+}
