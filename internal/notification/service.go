@@ -24,18 +24,22 @@ const (
 	TypeReportResolved = "report_resolved"
 	TypeVideoRejected  = "video_rejected"
 	TypeCaptionReady   = "caption_ready"
+	// TypeNewVideo tells a follower that a channel they follow published a new
+	// public video. Unlike every other type it is created by a set-based
+	// fan-out (NotifyNewVideo), not one row at a time.
+	TypeNewVideo = "new_video"
 )
 
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeFollow, TypeMessage, TypeReportResolved, TypeVideoRejected}
+	return []string{TypeCaptionReady, TypeComment, TypeFollow, TypeMessage, TypeNewVideo, TypeReportResolved, TypeVideoRejected}
 }
 
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeCaptionReady:
+	case TypeFollow, TypeComment, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeCaptionReady, TypeNewVideo:
 		return true
 	}
 	return false
@@ -61,6 +65,7 @@ type Repository interface {
 	ListNotificationPrefs(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error)
 	UpsertNotificationPref(ctx context.Context, arg sqlcgen.UpsertNotificationPrefParams) error
 	IsNotificationTypeEnabled(ctx context.Context, arg sqlcgen.IsNotificationTypeEnabledParams) (bool, error)
+	NotifyFollowersOfNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 }
 
 // Service holds the notification application logic.
@@ -158,6 +163,34 @@ func (s *Service) NotifyMessage(ctx context.Context, recipientID, actorID, conve
 		ConversationID: pgUUID(conversationID),
 	})
 	return err
+}
+
+// NotifyNewVideo tells the followers of a video's channel that it just went
+// live, and reports how many followers were notified. It is THE fan-out for the
+// "new video from a channel you follow" notification and is wired to the publish
+// transition (video.WithPublishHook), so it runs for direct publishes, scheduled
+// publishes, releases of a publish-after-transcode hold, and moderator approvals
+// alike.
+//
+// Every rule lives in the SQL (see NotifyFollowersOfNewVideo): the video must be
+// published + public + unblocked, the follower's per-channel bell must be 'all',
+// their global new_video preference must not be off, neither mute nor block may
+// stand between them and the owner, and the owner never notifies themselves.
+// Doing it in one statement — rather than a row-per-follower loop through
+// CreateNotification like every other Notify* method — is what keeps a publish
+// to a large follower list a single bounded round trip instead of an N+1 storm.
+// A repeat call for the same video inserts nothing (the partial unique index in
+// migration 0101), so hooks that fire more than once are safe.
+//
+// Best-effort, like the other Notify* methods: the caller treats an error as
+// non-fatal — a notification failure must never fail or reverse a publish.
+//
+// Scale note: the insert is synchronous with the publish. A channel with an
+// extreme follower count therefore pays that insert inside the publishing
+// request; moving the fan-out to the durable job framework is the documented
+// next step if that ever bites (it does not at self-hosted instance scale).
+func (s *Service) NotifyNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error) {
+	return s.repo.NotifyFollowersOfNewVideo(ctx, videoID)
 }
 
 // NotifyReportResolved records that a moderator (actorID) resolved recipientID's

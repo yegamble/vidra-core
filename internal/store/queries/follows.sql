@@ -28,15 +28,32 @@ SELECT EXISTS (
     WHERE follower_id = $1 AND channel_id = $2
 );
 
+-- name: GetFollowNotificationSetting :one
+-- The caller's bell mode for one channel (migration 0101). NO ROW means the
+-- caller does not follow the channel at all — callers distinguish that from a
+-- muted bell ('none').
+SELECT notification_setting FROM channel_follows
+WHERE follower_id = $1 AND channel_id = $2;
+
+-- name: SetFollowNotificationSetting :execrows
+-- Set the bell mode on an EXISTING follow. Returns the number of rows updated so
+-- the caller can refuse (404) a bell set on a channel the caller does not follow
+-- — the bell is a property of a subscription, never a standalone preference.
+UPDATE channel_follows
+SET notification_setting = sqlc.arg('notification_setting')
+WHERE follower_id = sqlc.arg('follower_id') AND channel_id = sqlc.arg('channel_id');
+
 -- name: ListFollowedChannels :many
 -- The LOCAL channels the caller follows (the "FOLLOWING" list), most recently
--- followed first. follower_count is each channel's total follower count and
--- followed_at is when the caller followed it. Paginated via limit/offset.
+-- followed first. follower_count is each channel's total follower count,
+-- followed_at is when the caller followed it, and notification_setting is the
+-- caller's bell for that channel (migration 0101) so the list can render its
+-- state without an extra request per row. Paginated via limit/offset.
 SELECT
     c.id, c.owner_id, c.handle, c.display_name, c.description,
     c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
     (SELECT count(*) FROM channel_follows cf2 WHERE cf2.channel_id = c.id) AS follower_count,
-    cf.created_at AS followed_at
+    cf.created_at AS followed_at, cf.notification_setting
 FROM channel_follows cf
 JOIN channels c ON c.id = cf.channel_id
 WHERE cf.follower_id = $1

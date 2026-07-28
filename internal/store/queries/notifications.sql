@@ -5,6 +5,55 @@ INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, commen
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id;
 
+-- name: NotifyFollowersOfNewVideo :execrows
+-- The "new video from a channel you follow" fan-out (migration 0101), fired by
+-- the publish transition. ONE set-based statement rather than a row-per-follower
+-- loop: a channel's whole follower set is notified in a single round trip, and
+-- every exclusion below is a join condition instead of an N+1 lookup.
+--
+-- Deliberately notified only when ALL of these hold:
+--   * the video is genuinely live and PUBLIC — an unlisted / private /
+--     password-protected video must never be announced to a follower list, and a
+--     video still in draft/processing/transcoding/scheduled/quarantined/failed
+--     state is not published yet;
+--   * the video is not under a moderation block;
+--   * the follower's bell for this channel is 'all';
+--   * the follower has not turned the 'new_video' type off globally (ABSENCE of
+--     a notification_prefs row = enabled, matching the rest of the prefs model);
+--   * the follower has not muted the channel owner, and neither side has blocked
+--     the other;
+--   * the follower is not the channel owner (no self-notification).
+--
+-- ON CONFLICT rides notifications_new_video_unique_idx, so a publish hook that
+-- fires twice for the same video is a no-op the second time.
+INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id)
+SELECT cf.follower_id, 'new_video', ch.owner_id, v.channel_id, v.id
+FROM videos v
+JOIN channels ch ON ch.id = v.channel_id
+JOIN channel_follows cf ON cf.channel_id = v.channel_id
+WHERE v.id = sqlc.arg('video_id')
+  AND v.state = 'published'
+  AND v.privacy = 'public'
+  AND cf.notification_setting = 'all'
+  AND cf.follower_id <> ch.owner_id
+  AND NOT EXISTS (
+      SELECT 1 FROM video_blocks vb WHERE vb.video_id = v.id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = cf.follower_id AND np.type = 'new_video' AND np.enabled = FALSE
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts ma
+      WHERE ma.muter_id = cf.follower_id AND ma.muted_id = ch.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE (ub.blocker_id = cf.follower_id AND ub.blocked_id = ch.owner_id)
+         OR (ub.blocker_id = ch.owner_id AND ub.blocked_id = cf.follower_id)
+  )
+ON CONFLICT (user_id, video_id) WHERE type = 'new_video' DO NOTHING;
+
 -- name: ListNotifications :many
 -- A user's notifications, newest first, joined with the actor's identity and the
 -- context (channel handle/name for follows, video title for comments, report

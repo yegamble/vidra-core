@@ -18,6 +18,7 @@ import (
 type fakeRepo struct {
 	byHandle    map[string]sqlcgen.Channel
 	follows     map[string]bool                  // "followerID|channelID"
+	bells       map[string]string                // follow key -> notification_setting
 	followedAt  map[string]time.Time             // when each follow was created
 	followSeq   []string                         // follow keys in follow order
 	members     map[string]sqlcgen.ChannelMember // "channelID|userID"
@@ -28,6 +29,7 @@ func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
 		byHandle:    map[string]sqlcgen.Channel{},
 		follows:     map[string]bool{},
+		bells:       map[string]string{},
 		followedAt:  map[string]time.Time{},
 		members:     map[string]sqlcgen.ChannelMember{},
 		usersByName: map[string]sqlcgen.User{},
@@ -132,14 +134,33 @@ func (f *fakeRepo) FollowChannel(_ context.Context, a sqlcgen.FollowChannelParam
 		return 0, nil // already following
 	}
 	f.follows[key] = true
+	f.bells[key] = NotifyAll // the column default a new follow gets
 	f.followedAt[key] = time.Now()
 	f.followSeq = append(f.followSeq, key)
+	return 1, nil
+}
+
+func (f *fakeRepo) GetFollowNotificationSetting(_ context.Context, a sqlcgen.GetFollowNotificationSettingParams) (string, error) {
+	key := followKey(a.FollowerID, a.ChannelID)
+	if !f.follows[key] {
+		return "", pgx.ErrNoRows
+	}
+	return f.bells[key], nil
+}
+
+func (f *fakeRepo) SetFollowNotificationSetting(_ context.Context, a sqlcgen.SetFollowNotificationSettingParams) (int64, error) {
+	key := followKey(a.FollowerID, a.ChannelID)
+	if !f.follows[key] {
+		return 0, nil
+	}
+	f.bells[key] = a.NotificationSetting
 	return 1, nil
 }
 
 func (f *fakeRepo) UnfollowChannel(_ context.Context, a sqlcgen.UnfollowChannelParams) error {
 	key := followKey(a.FollowerID, a.ChannelID)
 	delete(f.follows, key)
+	delete(f.bells, key)
 	delete(f.followedAt, key)
 	for i, k := range f.followSeq {
 		if k == key {
@@ -184,6 +205,7 @@ func (f *fakeRepo) ListFollowedChannels(ctx context.Context, a sqlcgen.ListFollo
 			DisplayName: ch.DisplayName, Description: ch.Description,
 			CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt,
 			FollowerCount: count, FollowedAt: f.followedAt[key],
+			NotificationSetting: f.bells[key],
 		})
 		taken++
 	}
@@ -618,5 +640,107 @@ func TestCreateChannelMaxPerUser(t *testing.T) {
 		if _, err := unwired.Create(ctx, owner, CreateInput{Handle: h, DisplayName: h}); err != nil {
 			t.Fatalf("unwired create %d: %v", i, err)
 		}
+	}
+}
+
+// TestFollowNotificationBell covers the per-channel bell (migration 0101): a new
+// follow starts at "all", the mode round-trips through the service, an
+// unsupported mode is refused before any write, and unfollowing takes the bell
+// with it.
+func TestFollowNotificationBell(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+	owner, follower := uuid.New(), uuid.New()
+	_, _ = svc.Create(ctx, owner, CreateInput{Handle: "ada", DisplayName: "Ada"})
+	ch, _ := svc.GetByHandle(ctx, "ada")
+
+	if _, _, err := svc.Follow(ctx, follower, "ada"); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	// A fresh follow means "tell me about new videos".
+	following, setting, err := svc.FollowState(ctx, follower, ch.ID)
+	if err != nil || !following || setting != NotifyAll {
+		t.Fatalf("FollowState after follow = (%v, %q, %v), want (true, %q, nil)", following, setting, err, NotifyAll)
+	}
+
+	if err := svc.SetFollowNotification(ctx, follower, "ada", NotifyNone); err != nil {
+		t.Fatalf("mute bell: %v", err)
+	}
+	following, setting, err = svc.FollowState(ctx, follower, ch.ID)
+	if err != nil || !following || setting != NotifyNone {
+		t.Fatalf("FollowState after mute = (%v, %q, %v), want (true, %q, nil)", following, setting, err, NotifyNone)
+	}
+	// Muting the bell must NOT drop the subscription.
+	if n, _ := svc.FollowerCount(ctx, ch.ID); n != 1 {
+		t.Errorf("follower count after muting the bell = %d, want 1 (a muted bell is still a follow)", n)
+	}
+	if err := svc.SetFollowNotification(ctx, follower, "ada", NotifyAll); err != nil {
+		t.Fatalf("unmute bell: %v", err)
+	}
+
+	// An unsupported mode is refused, and nothing is written.
+	if err := svc.SetFollowNotification(ctx, follower, "ada", "personalized"); !errors.Is(err, ErrInvalidNotificationSetting) {
+		t.Fatalf("err = %v, want ErrInvalidNotificationSetting", err)
+	}
+	if _, setting, _ := svc.FollowState(ctx, follower, ch.ID); setting != NotifyAll {
+		t.Errorf("bell after a rejected mode = %q, want %q (unchanged)", setting, NotifyAll)
+	}
+
+	// Unfollowing clears the relationship AND its bell.
+	if err := svc.Unfollow(ctx, follower, "ada"); err != nil {
+		t.Fatalf("unfollow: %v", err)
+	}
+	following, setting, err = svc.FollowState(ctx, follower, ch.ID)
+	if err != nil || following || setting != "" {
+		t.Fatalf("FollowState after unfollow = (%v, %q, %v), want (false, \"\", nil)", following, setting, err)
+	}
+}
+
+// TestSetFollowNotificationRequiresAFollow proves the bell is a property of a
+// subscription: setting it without following, or on a channel that does not
+// exist, is ErrNotFound either way — the caller cannot use the endpoint to probe
+// which handles exist.
+func TestSetFollowNotificationRequiresAFollow(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	ctx := context.Background()
+	owner, stranger := uuid.New(), uuid.New()
+	_, _ = svc.Create(ctx, owner, CreateInput{Handle: "ada", DisplayName: "Ada"})
+
+	if err := svc.SetFollowNotification(ctx, stranger, "ada", NotifyNone); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("not-following err = %v, want ErrNotFound", err)
+	}
+	if err := svc.SetFollowNotification(ctx, stranger, "ghost", NotifyNone); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown-channel err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestListFollowedCarriesTheBell keeps the FOLLOWING list self-sufficient: each
+// row reports the caller's bell, so the list can render its state without a
+// request per channel.
+func TestListFollowedCarriesTheBell(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	ctx := context.Background()
+	owner, follower := uuid.New(), uuid.New()
+	for _, h := range []string{"ada", "bob"} {
+		_, _ = svc.Create(ctx, owner, CreateInput{Handle: h, DisplayName: h})
+		if _, _, err := svc.Follow(ctx, follower, h); err != nil {
+			t.Fatalf("follow %s: %v", h, err)
+		}
+	}
+	if err := svc.SetFollowNotification(ctx, follower, "ada", NotifyNone); err != nil {
+		t.Fatalf("mute ada: %v", err)
+	}
+
+	followed, err := svc.ListFollowed(ctx, follower, 20, 0)
+	if err != nil {
+		t.Fatalf("ListFollowed: %v", err)
+	}
+	got := map[string]string{}
+	for _, f := range followed {
+		got[f.Channel.Handle] = f.NotificationSetting
+	}
+	if got["ada"] != NotifyNone || got["bob"] != NotifyAll {
+		t.Fatalf("bells = %v, want ada=%s bob=%s", got, NotifyNone, NotifyAll)
 	}
 }

@@ -72,6 +72,15 @@ type channelView struct {
 	// GET /me/channels where the listing spans owned + collaborated channels;
 	// omitted on public/single-channel views.
 	Role string `json:"role,omitempty"`
+	// IsFollowing is the CALLER's relationship with the channel on the single
+	// channel GET: true when the authenticated caller follows it. Omitted (nil)
+	// for anonymous callers and in bulk listings, where it would mean nothing.
+	IsFollowing *bool `json:"is_following,omitempty"`
+	// NotificationSetting is the caller's bell for the channel ("all" | "none",
+	// migration 0101). Set wherever the caller demonstrably follows the channel
+	// — the single GET when is_following is true, and every row of the FOLLOWING
+	// list — and omitted everywhere else: a bell exists only on a subscription.
+	NotificationSetting string `json:"notification_setting,omitempty"`
 }
 
 func newChannelView(c sqlcgen.Channel, followerCount int64) channelView {
@@ -93,11 +102,21 @@ type channelListResponse struct {
 	Channels []channelView `json:"channels"`
 }
 
-// followedChannelView is a channel the caller follows, with the follow time
-// added to the standard channel projection.
+// followedChannelView is a channel the caller follows, with the follow time and
+// the caller's notification bell added to the standard channel projection.
 type followedChannelView struct {
 	channelView
 	FollowedAt time.Time `json:"followed_at"`
+}
+
+// setFollowNotificationsRequest is the bell-mode change body.
+type setFollowNotificationsRequest struct {
+	NotificationSetting string `json:"notification_setting"`
+}
+
+// followNotificationsResponse echoes the stored bell mode back.
+type followNotificationsResponse struct {
+	NotificationSetting string `json:"notification_setting"`
 }
 
 // followedChannelsResponse is a page of the caller's followed channels.
@@ -187,8 +206,12 @@ func (s *Server) handleListFollowedChannels(c echo.Context) error {
 	}
 	views := make([]followedChannelView, 0, len(followed))
 	for _, f := range followed {
+		view := s.channelViewFor(ctx, f.Channel, f.FollowerCount)
+		// Every row here is by definition followed by the caller, so the bell
+		// belongs on it — the FOLLOWING list is where a user manages bells.
+		view.NotificationSetting = f.NotificationSetting
 		views = append(views, followedChannelView{
-			channelView: s.channelViewFor(ctx, f.Channel, f.FollowerCount),
+			channelView: view,
 			FollowedAt:  f.FollowedAt,
 		})
 	}
@@ -311,6 +334,20 @@ func (s *Server) handleGetChannel(c echo.Context) error {
 	}
 	view := s.channelViewFor(ctx, ch, count)
 	view.AtprotoActive = s.atprotoActive(ctx, ch)
+	// Behind optionalAuth: a signed-in caller also learns their own relationship
+	// with the channel (follow state + bell), which is what lets the channel page
+	// paint the Follow button and the bell in their real state without a second
+	// request. Anonymous callers get the unchanged public projection.
+	if userID, _, ok := principalFromContext(c); ok {
+		following, setting, ferr := s.channelsvc.FollowState(ctx, userID, ch.ID)
+		if ferr != nil {
+			return ferr
+		}
+		view.IsFollowing = &following
+		if following {
+			view.NotificationSetting = setting
+		}
+	}
 	return c.JSON(http.StatusOK, view)
 }
 
@@ -363,6 +400,32 @@ func (s *Server) handleFollowChannel(c echo.Context) error {
 		}
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// handleSetFollowNotifications sets the authenticated caller's notification bell
+// for a channel they follow: "all" (told about every new public video) or "none"
+// (subscription kept, notifications muted). 404 when the handle is unknown OR the
+// caller does not follow it — the bell is part of a subscription, so there is
+// nothing to set otherwise, and the two cases are deliberately indistinguishable.
+// 422 for an unsupported mode.
+func (s *Server) handleSetFollowNotifications(c echo.Context) error {
+	userID, _, ok := principalFromContext(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	var in setFollowNotificationsRequest
+	if err := c.Bind(&in); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	err := s.channelsvc.SetFollowNotification(c.Request().Context(), userID, c.Param("handle"), in.NotificationSetting)
+	if err != nil {
+		if errors.Is(err, channel.ErrInvalidNotificationSetting) {
+			return echo.NewHTTPError(http.StatusUnprocessableEntity,
+				`notification_setting must be "all" or "none"`)
+		}
+		return channelError(err)
+	}
+	return c.JSON(http.StatusOK, followNotificationsResponse{NotificationSetting: in.NotificationSetting})
 }
 
 // handleUnfollowChannel removes the authenticated user's follow. Idempotent.

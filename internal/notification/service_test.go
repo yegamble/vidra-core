@@ -18,6 +18,21 @@ type fakeRepo struct {
 	notifs   []sqlcgen.Notification
 	prefs    map[string]bool
 	prefsErr error
+	// fanOut records the videos handed to the new-video fan-out and what the
+	// (SQL-side) statement reported back. The fan-out's real rules live in the
+	// query, so they are proved against a live schema in the integration test —
+	// here we only prove the service passes through faithfully.
+	fanOut    []uuid.UUID
+	fanOutN   int64
+	fanOutErr error
+}
+
+func (f *fakeRepo) NotifyFollowersOfNewVideo(_ context.Context, videoID uuid.UUID) (int64, error) {
+	f.fanOut = append(f.fanOut, videoID)
+	if f.fanOutErr != nil {
+		return 0, f.fanOutErr
+	}
+	return f.fanOutN, nil
 }
 
 func prefKey(userID uuid.UUID, typ string) string { return userID.String() + "\x00" + typ }
@@ -360,5 +375,60 @@ func TestPrefLookupFailureFailsOpen(t *testing.T) {
 	}
 	if len(repo.notifs) != 1 {
 		t.Fatalf("notifs = %d, want 1 (fail-open)", len(repo.notifs))
+	}
+}
+
+// TestNotifyNewVideoPassesThrough proves the service-side contract of the
+// new-video fan-out: the video id reaches the statement unchanged, the number of
+// notified followers is returned to the caller (cmd/api logs it), and a failure
+// surfaces as an error rather than being swallowed — the publish hook is what
+// decides to treat it as best-effort. The fan-out's actual selection rules are
+// SQL and are proved against a real database in TestNewVideoFanOutOnRealPG.
+func TestNotifyNewVideoPassesThrough(t *testing.T) {
+	repo := &fakeRepo{fanOutN: 3}
+	svc := NewService(repo)
+	ctx := context.Background()
+	videoID := uuid.New()
+
+	notified, err := svc.NotifyNewVideo(ctx, videoID)
+	if err != nil {
+		t.Fatalf("NotifyNewVideo: %v", err)
+	}
+	if notified != 3 {
+		t.Fatalf("notified = %d, want 3", notified)
+	}
+	if len(repo.fanOut) != 1 || repo.fanOut[0] != videoID {
+		t.Fatalf("fan-out calls = %v, want [%s]", repo.fanOut, videoID)
+	}
+
+	repo.fanOutErr = context.DeadlineExceeded
+	if _, err := svc.NotifyNewVideo(ctx, videoID); err == nil {
+		t.Fatal("NotifyNewVideo with a failing statement returned nil error")
+	}
+}
+
+// TestNewVideoIsAKnownPreferenceType keeps the notification type registered with
+// the preference model: a type missing from KnownTypes silently cannot be turned
+// off by a user, which is exactly the failure mode the prefs surface exists to
+// prevent.
+func TestNewVideoIsAKnownPreferenceType(t *testing.T) {
+	if !knownType(TypeNewVideo) {
+		t.Fatal("new_video is not a known notification type")
+	}
+	found := false
+	for _, typ := range KnownTypes() {
+		if typ == TypeNewVideo {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("KnownTypes() = %v, missing %s", KnownTypes(), TypeNewVideo)
+	}
+	prefs, err := NewService(&fakeRepo{}).Prefs(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("Prefs: %v", err)
+	}
+	if enabled, ok := prefs[TypeNewVideo]; !ok || !enabled {
+		t.Fatalf("prefs[%s] = (%v, %v), want (true, true) by default", TypeNewVideo, enabled, ok)
 	}
 }

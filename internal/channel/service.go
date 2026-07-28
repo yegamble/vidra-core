@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -32,7 +33,26 @@ var (
 	// ErrAlreadyMember means the invite target already manages the channel — it
 	// is the owner or an existing member (409).
 	ErrAlreadyMember = errors.New("channel: already a member or owner")
+	// ErrInvalidNotificationSetting means a bell mode outside the supported set
+	// was requested (422).
+	ErrInvalidNotificationSetting = errors.New("channel: invalid notification setting")
 )
+
+// Per-channel notification bell modes (migration 0101). NotifyAll is the default
+// a new follow gets: the follower is told about every new public video from the
+// channel. NotifyNone mutes the bell without dropping the subscription — the
+// channel stays in the follower's feed, it just stops generating notifications.
+// YouTube's "personalized" middle mode is deliberately absent: there is no
+// personalisation engine behind it here, so offering it would be a lie.
+const (
+	NotifyAll  = "all"
+	NotifyNone = "none"
+)
+
+// validNotificationSetting reports whether s is a supported bell mode.
+func validNotificationSetting(s string) bool {
+	return s == NotifyAll || s == NotifyNone
+}
 
 // Member roles. The owner is implicit (channels.owner_id) and never stored in
 // channel_members; members carry an explicit role, today only "editor".
@@ -52,6 +72,8 @@ type Repository interface {
 
 	FollowChannel(ctx context.Context, arg sqlcgen.FollowChannelParams) (int64, error)
 	UnfollowChannel(ctx context.Context, arg sqlcgen.UnfollowChannelParams) error
+	GetFollowNotificationSetting(ctx context.Context, arg sqlcgen.GetFollowNotificationSettingParams) (string, error)
+	SetFollowNotificationSetting(ctx context.Context, arg sqlcgen.SetFollowNotificationSettingParams) (int64, error)
 	CountChannelFollowers(ctx context.Context, channelID uuid.UUID) (int64, error)
 	CountFollowersByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.CountFollowersByOwnerRow, error)
 	ListFollowedChannels(ctx context.Context, arg sqlcgen.ListFollowedChannelsParams) ([]sqlcgen.ListFollowedChannelsRow, error)
@@ -223,6 +245,52 @@ func (s *Service) Unfollow(ctx context.Context, followerID uuid.UUID, handle str
 	})
 }
 
+// SetFollowNotification sets the caller's bell mode for a channel they follow
+// (migration 0101). The bell is a property of the subscription, so a caller who
+// does not follow the channel gets ErrNotFound — exactly as an unknown handle
+// does — rather than a silently-stored preference for a channel they left. An
+// unsupported mode is refused before any write with
+// ErrInvalidNotificationSetting.
+func (s *Service) SetFollowNotification(ctx context.Context, followerID uuid.UUID, handle, setting string) error {
+	if !validNotificationSetting(setting) {
+		return ErrInvalidNotificationSetting
+	}
+	ch, err := s.GetByHandle(ctx, handle)
+	if err != nil {
+		return err
+	}
+	rows, err := s.repo.SetFollowNotificationSetting(ctx, sqlcgen.SetFollowNotificationSettingParams{
+		FollowerID:          followerID,
+		ChannelID:           ch.ID,
+		NotificationSetting: setting,
+	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// FollowState reports whether followerID follows channelID and, when they do,
+// their bell mode for it. A non-follower gets (false, "", nil) — not following
+// is an ordinary answer, not an error — so callers can decorate a channel view
+// with the caller's relationship in one lookup.
+func (s *Service) FollowState(ctx context.Context, followerID, channelID uuid.UUID) (bool, string, error) {
+	setting, err := s.repo.GetFollowNotificationSetting(ctx, sqlcgen.GetFollowNotificationSettingParams{
+		FollowerID: followerID,
+		ChannelID:  channelID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, "", nil
+		}
+		return false, "", err
+	}
+	return true, setting, nil
+}
+
 // FollowerCount returns how many followers a channel has.
 func (s *Service) FollowerCount(ctx context.Context, channelID uuid.UUID) (int64, error) {
 	return s.repo.CountChannelFollowers(ctx, channelID)
@@ -245,11 +313,14 @@ func (s *Service) FollowerCountsByOwner(ctx context.Context, ownerID uuid.UUID) 
 }
 
 // Followed is a channel the caller follows, paired with the channel's total
-// follower count and when the caller followed it.
+// follower count, when the caller followed it, and the caller's bell mode for
+// it (migration 0101) so the FOLLOWING list renders bell state without a
+// per-row request.
 type Followed struct {
-	Channel       sqlcgen.Channel
-	FollowerCount int64
-	FollowedAt    time.Time
+	Channel             sqlcgen.Channel
+	FollowerCount       int64
+	FollowedAt          time.Time
+	NotificationSetting string
 }
 
 // ListFollowed returns the local channels followerID follows (the "FOLLOWING"
@@ -278,8 +349,9 @@ func (s *Service) ListFollowed(ctx context.Context, followerID uuid.UUID, limit,
 				CreatedAt:          r.CreatedAt,
 				UpdatedAt:          r.UpdatedAt,
 			},
-			FollowerCount: r.FollowerCount,
-			FollowedAt:    r.FollowedAt,
+			FollowerCount:       r.FollowerCount,
+			FollowedAt:          r.FollowedAt,
+			NotificationSetting: r.NotificationSetting,
 		})
 	}
 	return out, nil
