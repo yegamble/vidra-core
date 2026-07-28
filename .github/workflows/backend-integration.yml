@@ -60,7 +60,7 @@ jobs:
         # ready. Combined with CLAMAV_NO_FRESHCLAM below this makes startup fast
         # and reliable in CI (no dependency on the freshclam mirror). clamd holds
         # the whole DB resident (~1.5-2 GiB RAM), which the runner has.
-        image: clamav/clamav:1.4
+        image: clamav/clamav:1.5
         env:
           # Skip the freshclam signature-DB update on boot. The bundled DB is
           # enough to detect EICAR, and a live download would add a slow, flaky
