@@ -18,8 +18,9 @@ processors:
 
 exporters:
   # Jaeger accepts OTLP directly (all-in-one exposes an OTLP gRPC receiver on
-  # 4317); forward the batched spans there.
-  otlp/jaeger:
+  # 4317); forward the batched spans there. `otlp_grpc` is the current name —
+  # collector 0.157 warns that the bare `otlp` exporter alias is deprecated.
+  otlp_grpc/jaeger:
     endpoint: jaeger:4317
     tls:
       insecure: true
@@ -29,4 +30,4 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/jaeger]
+      exporters: [otlp_grpc/jaeger]
