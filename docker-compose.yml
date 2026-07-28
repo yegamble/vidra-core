@@ -103,7 +103,7 @@ services:
   # than part of the default core stack; a small dev machine can run everything
   # else without paying clamd's memory cost.
   clamav:
-    image: clamav/clamav:1.4
+    image: clamav/clamav:1.5
     profiles: ["scan"]
     ports:
       - "${CLAMAV_PORT:-3310}:3310"
