@@ -399,6 +399,55 @@ func TestProductionAcceptsStrongJWTSecret(t *testing.T) {
 	}
 }
 
+// TestProductionRefusesDevelopmentEscapeHatches locks down the two flags
+// deploy/README.md already claims production refuses. DEV_MAIL_CAPTURE_ENABLED
+// mounts an UNAUTHENTICATED route that hands out a live password-reset token for
+// any address (account takeover in one request); HTTP_IMPORT_ALLOW_PRIVATE_URLS
+// re-opens the SSRF hole the dial-time guard closes. Both are set true by
+// env/qa.env.example and the meta Makefile's e2e target — neither of which sets
+// VIDRA_ENV=production — so the refusal must be keyed on the environment, and a
+// stray copy-paste into a production env file must be a boot failure, not a
+// silent hole.
+func TestProductionRefusesDevelopmentEscapeHatches(t *testing.T) {
+	prod := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("VIDRA_ENV", "production")
+		t.Setenv("DATABASE_URL", "postgres://x")
+		t.Setenv("REDIS_URL", "redis://x")
+		t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.test")
+		t.Setenv("JWT_SECRET", "a-sufficiently-long-production-secret-0001")
+	}
+
+	for _, key := range []string{"DEV_MAIL_CAPTURE_ENABLED", "HTTP_IMPORT_ALLOW_PRIVATE_URLS"} {
+		t.Run(key, func(t *testing.T) {
+			prod(t)
+			t.Setenv(key, "true")
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() accepted %s=true in production, want a boot failure", key)
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("error %q does not name %s — the operator has to be told which key to remove", err, key)
+			}
+		})
+	}
+
+	// The same flags outside production keep working: the backed e2e suite runs
+	// with VIDRA_ENV unset (development) and depends on both.
+	t.Run("development is unaffected", func(t *testing.T) {
+		t.Setenv("VIDRA_ENV", "development")
+		t.Setenv("DEV_MAIL_CAPTURE_ENABLED", "true")
+		t.Setenv("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "true")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() in development: %v", err)
+		}
+		if !cfg.DevMailCaptureEnabled || !cfg.ImportAllowPrivateURLs {
+			t.Error("the development escape hatches must still be settable outside production")
+		}
+	})
+}
+
 func TestLoadInvalidBodyLimit(t *testing.T) {
 	t.Setenv("HTTP_BODY_LIMIT", "not-a-size")
 	if _, err := Load(); err == nil {
@@ -901,24 +950,25 @@ func TestFederationRejectsBadBaseURL(t *testing.T) {
 // only the KEK — so validate()'s only remaining variable is FEDERATION_KEY_KEK.
 func prodFedConfig(kek string) *Config {
 	return &Config{
-		Environment:        "production",
-		LogLevel:           "info",
-		LogFormat:          "json",
-		HTTPPort:           8080,
-		DatabaseURL:        "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable",
-		RedisURL:           "redis://localhost:6379/0",
-		HTTPRequestTimeout: time.Second,
-		HTTPBodyLimit:      "8M",
-		UploadMaxSize:      "64K",
-		JWTSecret:          strings.Repeat("x", 40),
-		JWTAccessTTL:       time.Minute,
-		JWTRefreshTTL:      time.Hour,
-		StorageBackend:     "local",
-		StorageLocalRoot:   "/tmp/vidra",
-		CORSAllowedOrigins: []string{"https://videos.example"},
-		FederationEnabled:  true,
-		PublicBaseURL:      "https://videos.example",
-		FederationKeyKEK:   kek,
+		Environment:              "production",
+		LogLevel:                 "info",
+		LogFormat:                "json",
+		HTTPPort:                 8080,
+		DatabaseURL:              "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable",
+		RedisURL:                 "redis://localhost:6379/0",
+		HTTPRequestTimeout:       time.Second,
+		HTTPStreamRequestTimeout: time.Hour,
+		HTTPBodyLimit:            "8M",
+		UploadMaxSize:            "64K",
+		JWTSecret:                strings.Repeat("x", 40),
+		JWTAccessTTL:             time.Minute,
+		JWTRefreshTTL:            time.Hour,
+		StorageBackend:           "local",
+		StorageLocalRoot:         "/tmp/vidra",
+		CORSAllowedOrigins:       []string{"https://videos.example"},
+		FederationEnabled:        true,
+		PublicBaseURL:            "https://videos.example",
+		FederationKeyKEK:         kek,
 	}
 }
 

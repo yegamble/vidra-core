@@ -15,11 +15,32 @@ import (
 // Redis unreachable) it FAILS OPEN — the request is allowed and the error is
 // logged — so a Redis blip degrades protection rather than availability. Denied
 // requests get a 429 rate_limited envelope with Retry-After.
+//
+// It carries TWO budgets on one mount. Media GETs (mediaRouteTemplates) are
+// cheap, cacheable blob reads that a single page view fans out ~20 of — plus
+// ~10 HLS segments a minute during playback — so charging them to the general
+// API budget 429s an ordinary viewer inside their first minute. They are keyed
+// separately ("media:" vs "ip:") against s.mediaLimit, so a segment burst can
+// never spend the budget the same caller needs for real API calls, and the two
+// ceilings can be tuned independently (RATE_LIMIT_REQUESTS /
+// MEDIA_RATE_LIMIT_REQUESTS). s.mediaLimit falls back to the general limiter
+// when none was wired, so an embedder that only sets WithRateLimiter keeps the
+// old behaviour apart from the key prefix.
+//
+// The client IP itself comes from the Echo IPExtractor installed in New(), which
+// only honours X-Forwarded-For from loopback/private hops — see the comment
+// there. Without that, this and every other per-IP budget is header-spoofable.
 func (s *Server) rateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			key := "ip:" + c.RealIP()
-			res, err := limiter.Allow(c.Request().Context(), key)
+			// Locals, never the captured parameter: reassigning `limiter` here
+			// would permanently swap the general limiter for the media one on the
+			// first media request.
+			active, key := limiter, "ip:"+c.RealIP()
+			if isMediaRoute(c) && s.mediaLimit != nil {
+				active, key = s.mediaLimit, "media:"+c.RealIP()
+			}
+			res, err := active.Allow(c.Request().Context(), key)
 			if err != nil {
 				s.logger.Warn("rate limiter unavailable, failing open",
 					"error", err,

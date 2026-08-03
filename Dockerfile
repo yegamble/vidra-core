@@ -9,8 +9,29 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+
+# Build metadata baked into internal/version so a running container can answer
+# "which build is this?" (GET /api/v1/admin/system, GET /healthz, NodeInfo).
+# The package path and the three variable names MUST stay identical to
+# Makefile:13-14 — -ldflags -X matches on the fully-qualified symbol, so a typo
+# silently no-ops instead of failing the build. Note BUILD_DATE maps onto
+# version.Date (the arg is named for what it is; the symbol is what the linker
+# needs). Defaults are EMPTY on purpose: an empty arg is skipped below, so a
+# plain `docker build` / `make up` / `make dev` keeps the Go-side defaults in
+# internal/version/version.go exactly as before. CI (publish-container.yml)
+# supplies the release tag, short SHA and release timestamp.
+ARG VERSION=""
+ARG COMMIT=""
+ARG BUILD_DATE=""
+
 # Build a static binary so it runs on a minimal final image.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+RUN set -eu; \
+    pkg="github.com/vidra/vidra-core/internal/version"; \
+    ldflags="-s -w"; \
+    if [ -n "$VERSION" ]; then ldflags="$ldflags -X $pkg.Version=$VERSION"; fi; \
+    if [ -n "$COMMIT" ]; then ldflags="$ldflags -X $pkg.Commit=$COMMIT"; fi; \
+    if [ -n "$BUILD_DATE" ]; then ldflags="$ldflags -X $pkg.Date=$BUILD_DATE"; fi; \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="$ldflags" -o /out/api ./cmd/api
 
 # ---- runtime stage ----
 FROM alpine:3.24

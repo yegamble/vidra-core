@@ -74,3 +74,27 @@ func TestDevEmailTokenAbsentWithoutCapture(t *testing.T) {
 		t.Fatalf("route should be unregistered without capture; got %d, want 404", code)
 	}
 }
+
+// TestDevEmailTokenNeverRegisteredInProduction is the second half of the
+// fail-secure. config.validate() already refuses DEV_MAIL_CAPTURE_ENABLED when
+// VIDRA_ENV=production, but this route has NO auth middleware and returns a live
+// password-reset token for ANY address — a one-request account takeover — so its
+// registration is gated on the environment as well. The two checks are
+// independent: a Config literal (or any construction path that skips Load) never
+// runs validate(), and this test is what covers that gap.
+func TestDevEmailTokenNeverRegisteredInProduction(t *testing.T) {
+	cm := auth.NewCaptureMailer()
+	_ = cm.SendPasswordReset(context.Background(), "victim@example.test", "reset-raw-tok")
+
+	cfg := testConfig()
+	cfg.Environment = "production"
+	srv := New(cfg, nil, nil, WithDevMailCapture(cm))
+
+	code, tok := getDevToken(t, srv, "?email=victim@example.test&kind=reset")
+	if code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: the dev token route must not be mounted in production", code)
+	}
+	if tok != "" {
+		t.Fatalf("production leaked a live account-security token (%q)", tok)
+	}
+}

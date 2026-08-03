@@ -40,6 +40,7 @@ import (
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/ipfs"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
+	"github.com/vidra/vidra-core/internal/jobrecovery"
 	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/linkpreview"
 	"github.com/vidra/vidra-core/internal/live"
@@ -268,6 +269,12 @@ func run() error {
 		counter := ratelimit.NewRedisCounter(rdb.Client)
 		limiter := ratelimit.NewLimiter(counter, cfg.RateLimitRequests, cfg.RateLimitWindow)
 		authLimiter := ratelimit.NewLimiter(counter, cfg.AuthRateLimitRequests, cfg.RateLimitWindow)
+		// Media GETs (thumbnails, HLS playlists/segments, storyboards, downloads,
+		// avatars) get their own, much larger budget over the same window: one
+		// home page is a single feed call plus ~20 thumbnails, and playback adds
+		// segment reads on top, so charging them to the API budget 429s an
+		// ordinary viewer within a minute.
+		mediaLimiter := ratelimit.NewLimiter(counter, cfg.MediaRateLimitRequests, cfg.RateLimitWindow)
 		// Per-user DM attachment upload limiter (messaging-v2.md D6): the
 		// compensating anti-abuse control now that DM attachments do not count
 		// against the storage quota. Keyed by user id, its own (longer) window.
@@ -275,11 +282,13 @@ func run() error {
 		opts = append(opts,
 			httpapi.WithRateLimiter(limiter),
 			httpapi.WithAuthRateLimiter(authLimiter),
+			httpapi.WithMediaRateLimiter(mediaLimiter),
 			httpapi.WithAttachmentRateLimiter(attachLimiter),
 		)
 		logger.Info("rate limiting enabled",
 			"requests", cfg.RateLimitRequests,
 			"auth_requests", cfg.AuthRateLimitRequests,
+			"media_requests", cfg.MediaRateLimitRequests,
 			"window", cfg.RateLimitWindow,
 			"attachment_upload_requests", cfg.AttachmentUploadRateLimitRequests,
 			"attachment_upload_window", cfg.AttachmentUploadRateLimitWindow,
@@ -1206,6 +1215,31 @@ func run() error {
 	opts = append(opts, httpapi.WithRemoteVideoService(remotevideosvc))
 	instancemodsvc := instancemod.NewService(db.Queries())
 	opts = append(opts, httpapi.WithInstanceModerationService(instancemodsvc))
+
+	// BOOT-TIME JOB RECOVERY (production-readiness 5d). Every durable queue here
+	// claims work by flipping a row to 'running' and only ever leaves that state
+	// from the worker that claimed it, so a deploy, reboot or OOM kill strands
+	// the in-flight row forever: the partial unique indexes count it as live
+	// (re-enqueue becomes a silent no-op) and HasLiveTranscodeJob keeps 409-ing
+	// the admin re-transcode endpoint. Requeue them once, HERE — before the first
+	// worker goroutine below — because that ordering is exactly what makes
+	// "everything in 'running' is dead" true rather than merely likely. See
+	// internal/jobrecovery for the multi-node caveat.
+	{
+		recoverCtx, recoverCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		for _, r := range jobrecovery.Recover(recoverCtx, db.Queries()) {
+			switch {
+			case r.Err != nil:
+				// Never fatal: a queue that cannot be recovered is a degraded
+				// instance, not a reason to refuse to serve.
+				logger.Error("job recovery failed", "queue", r.Queue, "error", r.Err)
+			case r.Requeued > 0:
+				logger.Warn("requeued jobs stranded by an unclean shutdown",
+					"queue", r.Queue, "requeued", r.Requeued)
+			}
+		}
+		recoverCancel()
+	}
 
 	// Drain the outbound federation delivery queue in the background (signed
 	// Accept/activity delivery with retry + dead-letter). Only when enabled.
