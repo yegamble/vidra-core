@@ -26,8 +26,11 @@ func testConfig() *config.Config {
 		InstanceName:        "Vidra Test",
 		RegistrationEnabled: true,
 		HTTPRequestTimeout:  30 * time.Second,
-		HTTPBodyLimit:       "8M",
-		UploadMaxSize:       "64K",
+		// The byte-streaming budget (chunk PUTs, media GETs) mirrors the production
+		// default so tests exercise the same two-deadline shape the server ships.
+		HTTPStreamRequestTimeout: time.Hour,
+		HTTPBodyLimit:            "8M",
+		UploadMaxSize:            "64K",
 		// Mirror the production batch-upload guard default (UPLOAD-10); well above
 		// what any single-user test holds open, so it is inert unless a test lowers
 		// it. Tests exercising the guard build a config with a small cap.

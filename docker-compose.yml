@@ -178,7 +178,15 @@ services:
       - ./migrations:/migrations:ro
     command:
       - "-path=/migrations"
-      - "-database=postgres://${POSTGRES_USER:-vidra}:${POSTGRES_PASSWORD:-vidra}@postgres:5432/${POSTGRES_DB:-vidra}?sslmode=disable"
+      # DATABASE_URL is an OVERRIDE, not a construction: the default below is the
+      # compose-network postgres this file defines, but a managed-Postgres
+      # deployment (which needs its own host + ?sslmode=require) can replace the
+      # whole DSN from the env file. The migrate service and the api MUST resolve
+      # to the same database, so both read the same ${DATABASE_URL}.
+      # No x-migrations-table param here: core uses golang-migrate's default
+      # `schema_migrations` ledger (the meta repo's search-migrate service is the
+      # one that must carry &x-migrations-table=vidra_search_migrations).
+      - "-database=${DATABASE_URL:-postgres://${POSTGRES_USER:-vidra}:${POSTGRES_PASSWORD:-vidra}@postgres:5432/${POSTGRES_DB:-vidra}?sslmode=disable}"
       - "up"
 
   api:
@@ -216,23 +224,162 @@ services:
         required: false
     environment:
       VIDRA_ENV: ${VIDRA_ENV:-development}
+      # HTTP_HOST is the IN-CONTAINER bind address and must stay 0.0.0.0 —
+      # otherwise Caddy and the frontend container cannot reach the api at all.
+      # Loopback hardening belongs on the compose PORT PUBLISH (a production
+      # overlay binds "127.0.0.1:8080:8080"), never on this bind address.
+      HTTP_HOST: ${HTTP_HOST:-0.0.0.0}
       HTTP_PORT: "8080"
-      DATABASE_URL: postgres://${POSTGRES_USER:-vidra}:${POSTGRES_PASSWORD:-vidra}@postgres:5432/${POSTGRES_DB:-vidra}?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
+      # DATABASE_URL / REDIS_URL are OVERRIDES, not constructions: the defaults are
+      # the compose-network postgres/redis this file defines, but a managed-database
+      # deployment can replace the whole DSN (its own host, credentials and
+      # ?sslmode=require) from the env file. Both are SECRETS once real credentials
+      # are in them — never log or commit a live value. Keep the redis DB index at
+      # /0: vidra-search uses /1 on the same server and the two must not collide.
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-vidra}:${POSTGRES_PASSWORD:-vidra}@postgres:5432/${POSTGRES_DB:-vidra}?sslmode=disable}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       INSTANCE_NAME: ${INSTANCE_NAME:-Vidra (dev)}
+      # Optional about/legal metadata, served publicly at GET /api/v1/instance (and
+      # the contact address is surfaced in NodeInfo). Emitted verbatim — supply full
+      # absolute URLs. Empty is valid.
+      INSTANCE_DESCRIPTION: ${INSTANCE_DESCRIPTION:-}
+      INSTANCE_TERMS_URL: ${INSTANCE_TERMS_URL:-}
+      INSTANCE_PRIVACY_URL: ${INSTANCE_PRIVACY_URL:-}
+      INSTANCE_CONTACT_EMAIL: ${INSTANCE_CONTACT_EMAIL:-}
+      # Logging. Structured JSON is already the default; these exist so an operator
+      # can raise verbosity or switch to human-readable text without editing compose.
+      # LOG_LEVEL is debug|info|warn|error and LOG_FORMAT is json|text — anything
+      # else is a hard boot failure (config validate()).
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      # Prometheus RED metrics at GET /metrics. Opt-in and zero-cost when off.
+      # SECURITY: /metrics is root-mounted with NO authentication, so a reverse
+      # proxy in front of a public deployment must 404 that path before this is
+      # flipped on.
+      METRICS_ENABLED: ${METRICS_ENABLED:-false}
+      # OpenTelemetry tracing (the `otel` profile above runs a local collector +
+      # Jaeger). Pass all four together: when OTEL_ENABLED=true the endpoint becomes
+      # REQUIRED and boot fails without it. The protocol default is grpc, which is
+      # why the collector publishes 4317 — switching to http/protobuf means pointing
+      # at 4318 as well. OTEL_SERVICE_NAME is deliberately core-specific so the
+      # frontend's spans (vidra-user) stay distinguishable in the same trace.
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-vidra-core}
       # Default per-user storage quota in bytes (0/unset = unlimited). Admins can
       # override per account via PATCH /api/v1/admin/users/{id}.
       INSTANCE_DEFAULT_QUOTA_BYTES: ${INSTANCE_DEFAULT_QUOTA_BYTES:-0}
+      # HTTP server timings. HTTP_REQUEST_TIMEOUT is the per-request context
+      # deadline handlers and DB calls observe; it is a HARD cap on slow uploads
+      # and long media reads, so a deployment on residential upstream bandwidth
+      # will want it well above the 30s default (an 8 MiB resumable chunk needs a
+      # sustained ~2.2 Mbit/s to land inside 30s). HTTP_SHUTDOWN_TIMEOUT bounds the
+      # graceful SIGTERM drain — Docker's default stop grace is 10s, so a larger
+      # value only takes effect if the deployment also raises stop_grace_period.
+      # HTTP_READ_TIMEOUT / HTTP_WRITE_TIMEOUT are parsed by config today but not
+      # yet applied to the http.Server; they are passed through so the key has a
+      # consumer and does not silently rot out of the config surface.
+      HTTP_REQUEST_TIMEOUT: ${HTTP_REQUEST_TIMEOUT:-30s}
+      # The longer deadline used INSTEAD of HTTP_REQUEST_TIMEOUT on the streaming
+      # routes (resumable chunk PUTs, direct upload/replace POSTs, DM attachment
+      # uploads, and the media GETs). Those are bounded by the client's link speed
+      # rather than by server work. A deadline is still applied — not none — so a
+      # stalled peer eventually releases its goroutine and pooled DB connection.
+      HTTP_STREAM_REQUEST_TIMEOUT: ${HTTP_STREAM_REQUEST_TIMEOUT:-1h}
+      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-15s}
+      HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:-30s}
+      HTTP_SHUTDOWN_TIMEOUT: ${HTTP_SHUTDOWN_TIMEOUT:-20s}
+      # Max accepted request body (Echo size string). UPLOAD_MAX_SIZE overrides this
+      # on the upload route only; everything else gets 413 past this.
+      HTTP_BODY_LIMIT: ${HTTP_BODY_LIMIT:-8M}
       # Rate limiting is on by default. End-to-end / backend-backed test runs set
       # RATE_LIMIT_ENABLED=false so the auth limiter (10/min per IP) doesn't throttle
       # a suite that makes many register/login calls from one host. Rate limiting
       # has dedicated unit tests, so the e2e suite need not exercise it.
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      # Blanket per-IP budget for the /api/v1 surface, and the window both it and
+      # the auth limiter share. NOTE for real deployments: one home page is a feed
+      # call plus ~20 thumbnail GETs and HLS playback adds ~10 segment GETs a
+      # minute, so 120/1m is easily exceeded by a single ordinary viewer — raise it
+      # (or exempt the media routes) before opening a site to the public.
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-120}
+      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-1m}
+      # Stricter per-IP budget (same window) for login/register/password-reset/
+      # email-verify/MFA-challenge. 10 per window is already the right production
+      # value — do NOT raise it.
+      AUTH_RATE_LIMIT_REQUESTS: ${AUTH_RATE_LIMIT_REQUESTS:-10}
+      # Much larger per-IP budget (same window) for the media GETs — thumbnails,
+      # HLS playlists/segments, storyboards, downloads, avatars/banners. These are
+      # cheap cacheable blob reads that need a ceiling against scraping, not the
+      # API budget; 3000/1m is ~50 reads a second from one IP.
+      MEDIA_RATE_LIMIT_REQUESTS: ${MEDIA_RATE_LIMIT_REQUESTS:-3000}
+      # Per-authenticated-USER (not per-IP) budget for DM attachment uploads, on its
+      # own window. DM attachments do not count against the storage quota, so this
+      # is the compensating anti-abuse control.
+      ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS: ${ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS:-60}
+      ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW: ${ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW:-10m}
+      # Master switch for self-service signup. Default true so local dev and the
+      # e2e suites can register freely. FIRST-BOOT WARNING for real deployments:
+      # the FIRST account created on an empty users table is granted admin, so a
+      # public instance should ship with this false, register the owner account,
+      # and only then flip it on.
+      REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
       # When true, signups file a pending registration request an admin must
       # approve (the registration approval queue). Overridable so approval-mode
       # backed e2e runs can flip it without editing the file. Default off.
       REGISTRATION_REQUIRE_APPROVAL: ${REGISTRATION_REQUIRE_APPROVAL:-false}
+      # When true, uploads by non-privileged users land in 'quarantined' for
+      # moderator approval instead of publishing. A public-launch moderation lever;
+      # off by default.
+      QUARANTINE_NEW_UPLOADS: ${QUARANTINE_NEW_UPLOADS:-false}
+      # Boot-time seeds for the runtime-mutable instance feature flags (admins
+      # change them live via PATCH /api/v1/admin/instance-settings, and the DB
+      # overlay wins once set — these only supply the initial value).
+      # FEATURE_LIVE_ENABLED CAVEAT: it defaults true, but with no RTMP ingest
+      # running (the `media` profile) and LIVE_RTMP_URL empty, creators get a
+      # stream key pointing nowhere and the UI hides the server-URL row — a
+      # deployment without live ingest should set it false.
+      FEATURE_UPLOADS_ENABLED: ${FEATURE_UPLOADS_ENABLED:-true}
+      FEATURE_IMPORTS_ENABLED: ${FEATURE_IMPORTS_ENABLED:-true}
+      FEATURE_LIVE_ENABLED: ${FEATURE_LIVE_ENABLED:-true}
+      FEATURE_COMMENTS_ENABLED: ${FEATURE_COMMENTS_ENABLED:-true}
+      # JWT access tokens (HS256) + the opaque rotating refresh session.
+      #
+      # JWT_SECRET IS THE ONE KEY A PRODUCTION DEPLOYMENT CANNOT BOOT WITHOUT.
+      # This map is an explicit allow-list and there is no env_file: anywhere in
+      # the stack, so before this line existed `--env-file env/production.env`
+      # could only feed compose SUBSTITUTION and JWT_SECRET never reached the
+      # container at all — the api fell back to the dev default and hard-exited.
+      #
+      # Deliberately `:-` and NOT the required `${JWT_SECRET:?...}` form: this file
+      # is `include:`d by the meta repo, whose `make dev`/`make up` and whose CI
+      # (`docker compose --profile core config -q`, the backed-e2e stack) run with
+      # no .env file at all, and a required-variable reference aborts compose
+      # RENDERING outright. Empty is safe because config.Load() treats an empty
+      # value as unset and falls back to the dev constant, which validate()
+      # REJECTS when VIDRA_ENV=production ("JWT_SECRET must be set in production"),
+      # as it also rejects anything under 32 bytes. Production therefore still
+      # fails closed and loudly; it just fails at api boot rather than at render.
+      # A production compose overlay is the right place for a `:?` assertion.
+      JWT_SECRET: ${JWT_SECRET:-}
+      # Issuer/audience are ENFORCED on verification, so changing either invalidates
+      # every outstanding access token — treat a change as logging everyone out.
+      JWT_ISSUER: ${JWT_ISSUER:-vidra}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-vidra}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-720h}
+      # Base64 32-byte KEK that envelope-encrypts TOTP shared secrets at rest.
+      # SILENT-FAILURE WARNING: when this AND FEDERATION_KEY_KEK are both empty,
+      # TOTP secrets are written to the database in PLAINTEXT. There is no boot
+      # error — only a warning in the api log. Empty stays the default so dev keeps
+      # working; any real deployment must set it. NEVER commit a real value.
+      MFA_KEY_KEK: ${MFA_KEY_KEK:-}
+      # Label authenticator apps display for this instance. MUST keep the EMPTY
+      # default: config falls back to INSTANCE_NAME in Go, after this literal is
+      # read, and that fallback cannot be expressed in compose substitution.
+      TOTP_ISSUER: ${TOTP_ISSUER:-}
       # OAuth/OIDC login providers (comma list; disabled when empty). Compose has
       # no wildcard passthrough, so each named provider's OAUTH_<NAME>_ISSUER /
       # _CLIENT_ID / _CLIENT_SECRET (+ optional _SCOPES) must also be added here
@@ -279,6 +426,14 @@ services:
       # TRANSCODING_VP9_ENABLED additionally emits a progressive VP9/WebM alternate
       # per video (surfaced via /download). AV1 is deferred and rejected if enabled.
       TRANSCODING_VP9_ENABLED: ${TRANSCODING_VP9_ENABLED:-false}
+      # AV1 is DEFERRED (fix_plan P6.3): setting this true is a HARD boot failure,
+      # not a no-op. Passed through only so the key has a compose consumer; leave
+      # it false.
+      TRANSCODING_AV1_ENABLED: ${TRANSCODING_AV1_ENABLED:-false}
+      # Age at which the stuck-hold sweeper gives up waiting for a transcode and
+      # publishes a publish-after-transcode video from its original anyway. Lower
+      # values shorten the window in which a crashed worker keeps a video hidden.
+      TRANSCODE_HOLD_TIMEOUT: ${TRANSCODE_HOLD_TIMEOUT:-12h}
       # Auto-caption (Whisper): when WHISPER_ENABLED=true, video owners can request
       # an auto-generated WebVTT caption track; an in-process worker extracts the
       # audio (ffmpeg) and POSTs it to WHISPER_ENDPOINT (whisper.cpp /inference-
@@ -323,6 +478,32 @@ services:
       CHANNEL_SYNC_INTERVAL: ${CHANNEL_SYNC_INTERVAL:-1h}
       CHANNEL_SYNC_MAX_PER_USER: ${CHANNEL_SYNC_MAX_PER_USER:-5}
       CHANNEL_SYNC_BATCH: ${CHANNEL_SYNC_BATCH:-15}
+      # Minimum spacing between manual POST .../sync-now triggers for one channel
+      # (<=0 disables the throttle entirely).
+      CHANNEL_SYNC_COOLDOWN: ${CHANNEL_SYNC_COOLDOWN:-1m}
+      # vidra-search integration. EMPTY DISABLES THE WHOLE INTEGRATION (suggestions
+      # go empty, search/recommendations fall back to local SQL, no outbox or
+      # reconcile worker runs) — deliberately safe degradation.
+      # NOTE: for local development the meta repo's auto-loaded
+      # docker-compose.override.yml pins SEARCH_SERVICE_URL to http://search:8080
+      # and merges AFTER this file, so it still wins and `make dev` is unchanged.
+      # A deployment that uses an explicit `-f` chain does NOT auto-load that
+      # override, so it must set SEARCH_SERVICE_URL itself or it silently loses
+      # search. SEARCH_INTERNAL_SECRET is a SECRET and must equal the search
+      # service's INTERNAL_SECRET; it is required (>=32 chars) in production
+      # whenever the URL is set, so a half-configured deployment fails loudly.
+      SEARCH_SERVICE_URL: ${SEARCH_SERVICE_URL:-}
+      SEARCH_INTERNAL_SECRET: ${SEARCH_INTERNAL_SECRET:-}
+      # Per-endpoint client deadline overrides in ms; 0 means "use the client
+      # default" (250 / 800 / 800 ms) and is equivalent to leaving them unset.
+      SEARCH_SUGGEST_TIMEOUT_MS: ${SEARCH_SUGGEST_TIMEOUT_MS:-0}
+      SEARCH_QUERY_TIMEOUT_MS: ${SEARCH_QUERY_TIMEOUT_MS:-0}
+      SEARCH_RECS_TIMEOUT_MS: ${SEARCH_RECS_TIMEOUT_MS:-0}
+      # Cadence of the full index reconcile sweep, and of the background health
+      # prober (jittered ±20%) that keeps a down search service from costing every
+      # request a full timeout. Both only run when SEARCH_SERVICE_URL is set.
+      SEARCH_RECONCILE_INTERVAL: ${SEARCH_RECONCILE_INTERVAL:-24h}
+      SEARCH_HEALTH_INTERVAL: ${SEARCH_HEALTH_INTERVAL:-15s}
       # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
       # freshly minted stream key (informational; empty by default).
       LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}
@@ -345,10 +526,30 @@ services:
       # Base64 32-byte KEK for actor private-key envelope encryption (required in
       # production when federation is on). NEVER commit a real value.
       FEDERATION_KEY_KEK: ${FEDERATION_KEY_KEK:-}
+      # Outbound Bluesky/atproto cross-posting. Off by default. When true in
+      # production, ATPROTO_KEY_KEK (or FEDERATION_KEY_KEK, which it falls back to)
+      # becomes REQUIRED — enable the flag and the key in the same change or the
+      # api will not boot. ATPROTO_KEY_KEK is a SECRET: it envelope-encrypts linked
+      # Bluesky app passwords at rest, so because of that FEDERATION_KEY_KEK
+      # fallback, rotating the federation KEK silently breaks atproto keys too.
+      ATPROTO_ENABLED: ${ATPROTO_ENABLED:-false}
+      ATPROTO_KEY_KEK: ${ATPROTO_KEY_KEK:-}
+      # "Sign in with Bluesky" is INDEPENDENT of cross-posting: it is identity-only,
+      # keeps no PDS tokens and needs no KEK. When false the /auth/atproto/*
+      # endpoints answer 503.
+      ATPROTO_LOGIN_ENABLED: ${ATPROTO_LOGIN_ENABLED:-false}
       # Media storage backend: local (default) or s3. For s3 against the compose
       # minio service (`--profile storage`), see the header of this file. The S3
       # credentials are secrets — never log or commit real values.
       STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      # Root of the local-disk backend INSIDE the container. The absolute default
+      # below is exactly where the config default "./data/media" already resolved
+      # (the runtime image's WORKDIR is /app) — it is written out so the path no
+      # longer depends on the WORKDIR. DURABILITY WARNING: with STORAGE_BACKEND=local
+      # this lives on the container's writable layer unless a deployment mounts a
+      # volume at /app/data, in which case `up -d` destroys the media while the
+      # database rows survive pointing at nothing.
+      STORAGE_LOCAL_ROOT: ${STORAGE_LOCAL_ROOT:-/app/data/media}
       STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-}
       STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:-}
       STORAGE_S3_ACCESS_KEY: ${STORAGE_S3_ACCESS_KEY:-}
@@ -395,6 +596,38 @@ services:
       # when blank.
       IPFS_PRIVATE_ADD_TIMEOUT: ${IPFS_PRIVATE_ADD_TIMEOUT:-}
       IPFS_PRIVATE_PIN_CONCURRENCY: ${IPFS_PRIVATE_PIN_CONCURRENCY:-}
+      # Max size of one original-file upload (Echo size string); overrides
+      # HTTP_BODY_LIMIT on the upload route only. SIZING COUPLING: transcode
+      # scratch space needs roughly 4x this value per concurrent transcode job, so
+      # raising it without growing the scratch volume fills the disk.
+      UPLOAD_MAX_SIZE: ${UPLOAD_MAX_SIZE:-2G}
+      # Most ACTIVE (unfinished, unexpired) resumable upload sessions one user may
+      # hold at once; 0 disables the cap. Opening one past the cap is a 429 with
+      # the stable code too_many_active_uploads, which batch-upload clients queue on.
+      UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER: ${UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER:-5}
+      # PeerTube import (fix_plan P18). Everything OFF by default; the standalone
+      # cmd/peertube-import CLI takes its own flags and needs none of this — these
+      # configure the ADMIN API path + its worker only. PEERTUBE_IMPORT_ENABLED=true
+      # makes PEERTUBE_SOURCE_DATABASE_URL required.
+      # PEERTUBE_SOURCE_DATABASE_URL and the two S3 keys are SECRETS. Point the DSN
+      # at a restored dump or a read-only replica with a least-privilege role.
+      # PEERTUBE_SOURCE_S3_ENDPOINT is host[:port] with NO scheme and is rejected
+      # for containing "://" even when import is disabled. The conflict policy
+      # (skip|rename|merge|fail) and media mode (copy|reference|none) are likewise
+      # validated unconditionally.
+      PEERTUBE_IMPORT_ENABLED: ${PEERTUBE_IMPORT_ENABLED:-false}
+      PEERTUBE_SOURCE_DATABASE_URL: ${PEERTUBE_SOURCE_DATABASE_URL:-}
+      PEERTUBE_SOURCE_STORAGE_BACKEND: ${PEERTUBE_SOURCE_STORAGE_BACKEND:-local}
+      PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT: ${PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT:-}
+      PEERTUBE_SOURCE_S3_ENDPOINT: ${PEERTUBE_SOURCE_S3_ENDPOINT:-}
+      PEERTUBE_SOURCE_S3_BUCKET: ${PEERTUBE_SOURCE_S3_BUCKET:-}
+      PEERTUBE_SOURCE_S3_ACCESS_KEY: ${PEERTUBE_SOURCE_S3_ACCESS_KEY:-}
+      PEERTUBE_SOURCE_S3_SECRET_KEY: ${PEERTUBE_SOURCE_S3_SECRET_KEY:-}
+      PEERTUBE_SOURCE_S3_REGION: ${PEERTUBE_SOURCE_S3_REGION:-}
+      PEERTUBE_SOURCE_S3_USE_SSL: ${PEERTUBE_SOURCE_S3_USE_SSL:-true}
+      PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE: ${PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE:-false}
+      PEERTUBE_IMPORT_CONFLICT_POLICY: ${PEERTUBE_IMPORT_CONFLICT_POLICY:-skip}
+      PEERTUBE_IMPORT_MEDIA_MODE: ${PEERTUBE_IMPORT_MEDIA_MODE:-copy}
     # Make the host reachable as host.docker.internal on Linux too (Docker Desktop
     # provides it already). Lets a backed e2e point URL import at a media origin
     # served on the host (paired with HTTP_IMPORT_ALLOW_PRIVATE_URLS=true). No

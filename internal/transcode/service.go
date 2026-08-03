@@ -32,6 +32,12 @@ const (
 	maxBackoff = time.Hour
 	// maxLastErrorLen bounds the stored last_error string.
 	maxLastErrorLen = 500
+	// bookkeepingTimeout bounds the queue-state writes that follow a job (see
+	// DrainJobs). They deliberately outlive the request/worker cancellation that
+	// ended the job, so they need a deadline of their own — otherwise a wedged
+	// database would hold shutdown open indefinitely. It must stay comfortably
+	// under HTTP_SHUTDOWN_TIMEOUT (20s) so a clean SIGTERM still drains.
+	bookkeepingTimeout = 10 * time.Second
 )
 
 const (
@@ -283,12 +289,25 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	)
 	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
 		row := rows[i]
+		// The BOOKKEEPING writes (complete / reschedule / dead-letter) must
+		// survive the very cancellation that ends the job. On SIGTERM ctx is
+		// already cancelled by the time runTarget returns, so writing the outcome
+		// through it fails silently — and the row that was just abandoned stays
+		// 'running' forever, which the partial unique index then treats as a live
+		// job (no re-enqueue, permanent 409 on admin re-transcode). Detaching
+		// cancellation keeps the trace/correlation values while giving the write
+		// its own bounded budget; the transcode work itself still honours ctx, so
+		// this does not delay shutdown by more than that budget.
+		bookkeeping, cancelBookkeeping := context.WithTimeout(
+			context.WithoutCancel(ctx), bookkeepingTimeout)
+		defer cancelBookkeeping()
+
 		err := s.runTarget(ctx, row)
 		if err != nil {
-			s.recordFailure(ctx, row, err)
+			s.recordFailure(bookkeeping, row, err)
 			return
 		}
-		_ = s.repo.CompleteTranscodeJob(ctx, row.ID)
+		_ = s.repo.CompleteTranscodeJob(bookkeeping, row.ID)
 		// Best-effort completion hook (IPFS mirror HLS-tree pin, P19.4). A hook
 		// failure must never fail the job — the transcode already succeeded.
 		if s.onComplete != nil {
@@ -421,6 +440,10 @@ func (s *Service) storeWebVideos(ctx context.Context, videoID uuid.UUID, files [
 
 // recordFailure reschedules with backoff, or dead-letters after the cap (also
 // marking the video's playlist failed so the outcome is observable).
+//
+// ctx here is the DETACHED bookkeeping context from DrainJobs, not the worker's:
+// this runs precisely when the job was cancelled, so a cancellation-bound
+// context would drop the reschedule write and strand the row in 'running'.
 func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTranscodeJobsRow, cause error) {
 	attempts := int(row.Attempts) + 1
 	msg := cause.Error()

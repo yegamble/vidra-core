@@ -50,6 +50,17 @@ type Config struct {
 	// HTTPRequestTimeout bounds per-request handler work via a context deadline
 	// (DB/Redis/outbound calls observe it). HTTPWriteTimeout is the hard backstop.
 	HTTPRequestTimeout time.Duration
+	// HTTPStreamRequestTimeout is the deadline used INSTEAD of HTTPRequestTimeout
+	// on the byte-streaming routes: resumable chunk PUTs, the direct upload /
+	// replace POSTs, DM attachment uploads, and the media GETs (thumbnails, HLS,
+	// originals, downloads). Those requests are bounded by the client's link
+	// speed, not by server work — an 8 MiB chunk needs a sustained ~2.2 Mbit/s to
+	// finish inside 30s, so the general deadline makes a typical residential or
+	// mobile upload retry-loop forever, and cuts long downloads mid-stream.
+	// A longer deadline is used rather than NO deadline so a stalled peer still
+	// releases its goroutine and pooled DB connection eventually. The default 1h
+	// covers a 2 GiB UPLOAD_MAX_SIZE at ~4.7 Mbit/s.
+	HTTPStreamRequestTimeout time.Duration
 	// HTTPBodyLimit is the maximum accepted request body size, as an Echo size
 	// string (e.g. "8M", "512K"). Oversized requests are rejected with 413.
 	HTTPBodyLimit string
@@ -324,6 +335,14 @@ type Config struct {
 	// password-reset / email-verify confirmations — to throttle credential
 	// stuffing and token guessing. Gated by RateLimitEnabled.
 	AuthRateLimitRequests int
+	// MediaRateLimitRequests is a much larger per-IP budget applied (over the same
+	// RateLimitWindow) to the media GETs — thumbnails, HLS playlists/segments,
+	// storyboards, downloads, avatars/banners. One home page is a single feed call
+	// plus ~20 thumbnails, and HLS playback adds ~10 segments/minute on top, so a
+	// single ordinary viewer blows the general RateLimitRequests budget inside
+	// their first minute. These are cheap, cacheable blob reads: they need a
+	// ceiling against scraping, not the API budget. Gated by RateLimitEnabled.
+	MediaRateLimitRequests int
 	// AttachmentUploadRateLimitRequests / AttachmentUploadRateLimitWindow bound how
 	// many DM attachment uploads a single user may make per window. DM attachments
 	// do NOT count against the storage quota (messaging-v2.md D6, product-decisions
@@ -631,6 +650,7 @@ func Load() (*Config, error) {
 		HTTPWriteTimeout:               getEnvDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
 		HTTPShutdownTimeout:            getEnvDuration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
 		HTTPRequestTimeout:             getEnvDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+		HTTPStreamRequestTimeout:       getEnvDuration("HTTP_STREAM_REQUEST_TIMEOUT", time.Hour),
 		HTTPBodyLimit:                  getEnv("HTTP_BODY_LIMIT", "8M"),
 		RateLimitEnabled:               getEnvBool("RATE_LIMIT_ENABLED", true),
 		RateLimitWindow:                getEnvDuration("RATE_LIMIT_WINDOW", time.Minute),
@@ -699,6 +719,15 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.AuthRateLimitRequests = authReqs
+
+	// The media budget is deliberately an order of magnitude above the API one:
+	// see MediaRateLimitRequests. 3000/min is ~50 blob reads a second from one
+	// IP — far above any single viewer, far below a useful scrape rate.
+	mediaReqs, err := getEnvInt("MEDIA_RATE_LIMIT_REQUESTS", 3000)
+	if err != nil {
+		return nil, err
+	}
+	cfg.MediaRateLimitRequests = mediaReqs
 
 	attachReqs, err := getEnvInt("ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS", 60)
 	if err != nil {
@@ -835,6 +864,9 @@ func (c *Config) validate() error {
 	if c.HTTPRequestTimeout <= 0 {
 		return fmt.Errorf("config: HTTP_REQUEST_TIMEOUT must be positive")
 	}
+	if c.HTTPStreamRequestTimeout <= 0 {
+		return fmt.Errorf("config: HTTP_STREAM_REQUEST_TIMEOUT must be positive")
+	}
 	if _, err := bytes.Parse(c.HTTPBodyLimit); err != nil {
 		return fmt.Errorf("config: invalid HTTP_BODY_LIMIT %q: %w", c.HTTPBodyLimit, err)
 	}
@@ -847,6 +879,9 @@ func (c *Config) validate() error {
 		}
 		if c.AuthRateLimitRequests <= 0 {
 			return fmt.Errorf("config: AUTH_RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
+		}
+		if c.MediaRateLimitRequests <= 0 {
+			return fmt.Errorf("config: MEDIA_RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
 		}
 		if c.AttachmentUploadRateLimitRequests <= 0 {
 			return fmt.Errorf("config: ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
@@ -900,6 +935,22 @@ func (c *Config) validate() error {
 		}
 		if len(c.JWTSecret) < 32 {
 			return fmt.Errorf("config: JWT_SECRET must be at least 32 bytes in production")
+		}
+		// The two development-only escape hatches are REFUSED in production, not
+		// merely warned about (deploy/README.md already documents this refusal).
+		// DEV_MAIL_CAPTURE_ENABLED mounts GET /api/v1/dev/email-token, which hands
+		// out a live password-reset token for ANY address — an admin-takeover
+		// primitive one copy-pasted env line away (env/qa.env.example and the
+		// meta Makefile's e2e target both set these true, and neither sets
+		// VIDRA_ENV=production). HTTP_IMPORT_ALLOW_PRIVATE_URLS re-opens the SSRF
+		// hole the dial-time guard closes. The route registration is ALSO gated on
+		// the environment in internal/httpapi (defence in depth) — a fail-secure
+		// this important should not rest on a single check.
+		if c.DevMailCaptureEnabled {
+			return fmt.Errorf("config: DEV_MAIL_CAPTURE_ENABLED must not be set in production")
+		}
+		if c.ImportAllowPrivateURLs {
+			return fmt.Errorf("config: HTTP_IMPORT_ALLOW_PRIVATE_URLS must not be set in production")
 		}
 	}
 	if c.Environment == "production" {

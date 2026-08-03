@@ -71,6 +71,12 @@ type Server struct {
 	logger    *slog.Logger
 	limiter   *ratelimit.Limiter
 	authLimit *ratelimit.Limiter
+	// mediaLimit is the (much larger) budget for media GETs — see
+	// mediaRouteTemplates. Derived in New(): the wired limiter
+	// (WithMediaRateLimiter) when present, else the general limiter, so an
+	// unwired server behaves exactly as it did before media routes were split
+	// out. Non-nil only when s.limiter is.
+	mediaLimit *ratelimit.Limiter
 	// unlockLimit throttles POST /videos/{id}/unlock (a password-guessing
 	// surface). Derived in New(): the configured auth limiter when present
 	// (WithAuthRateLimiter), else a built-in, always-on in-memory default so the
@@ -195,6 +201,17 @@ const uploadChunkRoutePath = "/api/v1/uploads/:upload_id/chunks/:n"
 // each attachment at 100 MiB itself (messaging-v2.md D6).
 const attachmentUploadRoutePath = "/api/v1/conversations/:id/attachments"
 
+// adminJobEventsPath is the admin job-events SSE stream. It is the one route
+// that gets neither a request context deadline nor a socket write deadline — it
+// owns a bounded, token-expiry-capped lifetime inside its own handler.
+const adminJobEventsPath = "/api/v1/admin/jobs/events"
+
+// idleTimeout bounds how long an idle keep-alive connection is held open. It is
+// deliberately independent of HTTP_READ_TIMEOUT (which http.Server would
+// otherwise inherit here): a player polling an HLS playlist every few seconds
+// should reuse its connection, while an abandoned one must not be held forever.
+const idleTimeout = 2 * time.Minute
+
 // Option customises the Server during construction.
 type Option func(*Server)
 
@@ -202,6 +219,17 @@ type Option func(*Server)
 // surface. When nil or unset, no rate limiting is applied — handy for unit tests.
 func WithRateLimiter(l *ratelimit.Limiter) Option {
 	return func(s *Server) { s.limiter = l }
+}
+
+// WithMediaRateLimiter gives the media GETs (mediaRouteTemplates) their own,
+// much larger budget — MEDIA_RATE_LIMIT_REQUESTS per RATE_LIMIT_WINDOW, wired in
+// cmd/api. Without it, media shares the general API budget, which one ordinary
+// viewer exhausts in their first minute (a home page is one feed call plus ~20
+// thumbnails, and HLS playback adds segments on top). It keys independently
+// ("media:" + client IP) so a burst of segment reads never spends the budget the
+// caller needs for real API calls.
+func WithMediaRateLimiter(l *ratelimit.Limiter) Option {
+	return func(s *Server) { s.mediaLimit = l }
 }
 
 // WithAuthService mounts the auth endpoints (register/login). ttl is the access
@@ -625,6 +653,55 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
+	// Client-IP extraction. Echo's DEFAULT RealIP() takes the FIRST entry of
+	// X-Forwarded-For from ANY caller, so without this every per-IP budget on the
+	// instance — the auth limiter, the contact-form limiter, the video-password
+	// unlock limiter — is defeated by one attacker-supplied header, and there is
+	// no per-account lockout behind them. ExtractIPFromXFFHeader instead walks the
+	// chain from the RIGHT and returns the nearest UNTRUSTED hop, so:
+	//   - a direct public client that invents an XFF is keyed on its real address
+	//     (its own socket address is untrusted, so the header is ignored);
+	//   - a request relayed by the reverse proxy or by the Next.js SSR container
+	//     (both loopback/private, hence trusted) is keyed on the real visitor's
+	//     address that they appended — which is what stops every server-rendered
+	//     page view from sharing the frontend container's single bucket.
+	// Trust is therefore exactly "loopback + RFC1918/ULA + link-local", i.e. the
+	// compose network and anything on the host. If a deployment ever terminates
+	// TLS on a PUBLIC address (a cloud LB with a routable internal IP), that hop
+	// must be added with echo.TrustIPRange — an untrusted proxy address makes the
+	// proxy itself the client for limiting purposes (fail-safe, not fail-open).
+	// This must be set before routes() so every limiter sees the same key.
+	e.IPExtractor = echo.ExtractIPFromXFFHeader(
+		echo.TrustLoopback(true),
+		echo.TrustPrivateNet(true),
+		echo.TrustLinkLocal(true),
+	)
+	// Server-level socket timeouts. HTTP_READ_TIMEOUT / HTTP_WRITE_TIMEOUT were
+	// parsed but never applied before this (echo.Start used the zero-valued
+	// default http.Server), which left the process with NO slow-loris backstop at
+	// all — the per-request context deadline cannot interrupt a blocking socket
+	// read or write.
+	//
+	// The split matters. ReadHeaderTimeout is the one that can be tight: it bounds
+	// the header phase only, which is independent of body size, and it is the
+	// actual slow-loris vector. ReadTimeout and WriteTimeout are hard socket
+	// deadlines covering the request BODY and the whole RESPONSE, so applying the
+	// configured 15s/30s to them unconditionally would truncate precisely the
+	// traffic this change exists to fix: an 8 MiB resumable chunk PUT and a 2 GiB
+	// download. requestDeadline therefore EXTENDS both to
+	// HTTP_STREAM_REQUEST_TIMEOUT on the streaming routes (and clears them for the
+	// admin SSE stream, which must outlive any write deadline); everywhere else
+	// the tight values stand.
+	//
+	// IdleTimeout is set explicitly because http.Server silently inherits
+	// ReadTimeout when it is zero — leaving it unset would quietly turn
+	// HTTP_READ_TIMEOUT into the keep-alive idle budget too, which is a different
+	// decision with different consequences (connection churn for HLS players
+	// polling a playlist).
+	e.Server.ReadHeaderTimeout = cfg.HTTPReadTimeout
+	e.Server.ReadTimeout = cfg.HTTPReadTimeout
+	e.Server.WriteTimeout = cfg.HTTPWriteTimeout
+	e.Server.IdleTimeout = idleTimeout
 
 	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, startedAt: time.Now(), logger: slog.Default()}
 	// Playback-token signer for password-protected videos (CORE-17). Its key is
@@ -648,6 +725,12 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// (Redis-backed in cmd/api) when present, else an in-memory default.
 	if s.searchResolveLimit == nil {
 		s.searchResolveLimit = ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), defaultSearchResolveRateLimit, defaultSearchResolveRateWindow)
+	}
+	// Media falls back to the general limiter when no dedicated one was wired, so
+	// a server built without WithMediaRateLimiter (unit tests, embedders) behaves
+	// exactly as it did before the split.
+	if s.mediaLimit == nil {
+		s.mediaLimit = s.limiter
 	}
 	e.HTTPErrorHandler = s.httpErrorHandler
 
@@ -681,7 +764,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 		AllowMethods:     []string{echo.GET, echo.POST, echo.PUT, echo.PATCH, echo.DELETE, echo.OPTIONS},
 		AllowCredentials: corsAllowCredentials,
 	}))
-	e.Use(requestDeadline(cfg.HTTPRequestTimeout))
+	e.Use(requestDeadline(cfg.HTTPRequestTimeout, cfg.HTTPStreamRequestTimeout))
 	// The default body limit keeps the JSON API small. The original-file upload
 	// route is exempted here and gets its own (larger) UploadMaxSize limit at
 	// registration, so media uploads have headroom without widening the rest.
@@ -773,21 +856,74 @@ func requestLogPath(c echo.Context) string {
 // server's WriteTimeout is the hard backstop for that. Handlers that honour the
 // context should return ctx.Err() (or a wrapped error), which the central error
 // handler renders as a 503 envelope.
-func requestDeadline(d time.Duration) echo.MiddlewareFunc {
+//
+// Two budgets, because two kinds of request are bounded by different things:
+//
+//   - d (HTTP_REQUEST_TIMEOUT, 30s) for API work, which is bounded by the
+//     SERVER: a request still running after 30s is wedged, not slow.
+//   - stream (HTTP_STREAM_REQUEST_TIMEOUT, 1h) for the byte-streaming routes
+//     (isStreamingRoute), which are bounded by the CLIENT'S LINK: an 8 MiB
+//     resumable chunk needs ~2.2 Mbit/s sustained to land inside 30s, so the
+//     API budget made typical residential and mobile uploads retry forever, and
+//     truncated long downloads mid-stream (videos.go honours the same context).
+//
+// The streaming routes keep a deadline rather than being exempted outright: an
+// unbounded request lets one stalled peer pin a goroutine and a pooled DB
+// connection indefinitely, and that is the failure mode of a slow-loris. Only
+// the admin job-events SSE stream is truly exempt — it owns a bounded,
+// token-expiry-capped lifetime inside its own handler.
+func requestDeadline(d, stream time.Duration) echo.MiddlewareFunc {
+	// Config.validate() guarantees a positive stream budget for anything built by
+	// Load(), but a hand-built Config (tests, embedders) can leave it zero — and
+	// context.WithTimeout(ctx, 0) yields an ALREADY-EXPIRED context, which would
+	// break exactly the routes this exists to protect. Degrade to the general
+	// budget instead: no worse than the old behaviour.
+	if stream <= 0 {
+		stream = d
+	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// SSE owns a bounded (and token-expiry-capped) lifetime in its handler.
-			// Exempt only this exact path; every REST request keeps the normal 30s
-			// deadline and the stream still reconnects/re-authenticates periodically.
-			if c.Request().URL.Path == "/api/v1/admin/jobs/events" {
+			// Exempt only this exact path; every REST request keeps a deadline and
+			// the stream still reconnects/re-authenticates periodically. The socket
+			// deadlines must be cleared as well, or HTTP_WRITE_TIMEOUT would sever
+			// the stream 30s in (before this change no socket deadline was set at
+			// all, so the stream survived by accident).
+			if c.Request().URL.Path == adminJobEventsPath {
+				setSocketDeadlines(c, time.Time{})
 				return next(c)
 			}
-			ctx, cancel := context.WithTimeout(c.Request().Context(), d)
+			timeout := d
+			if isStreamingRoute(c) {
+				timeout = stream
+				// Push the socket deadlines out to match. Without this the context
+				// deadline would be generous while the connection was still cut at
+				// HTTP_READ_TIMEOUT / HTTP_WRITE_TIMEOUT — the very truncation this
+				// exemption exists to prevent.
+				setSocketDeadlines(c, time.Now().Add(stream))
+			}
+			ctx, cancel := context.WithTimeout(c.Request().Context(), timeout)
 			defer cancel()
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
 	}
+}
+
+// setSocketDeadlines overrides this connection's read and write deadlines for
+// the current request (the zero time means "no deadline"). It is how a single
+// route escapes the server-wide HTTP_READ_TIMEOUT / HTTP_WRITE_TIMEOUT without
+// weakening them for everything else.
+//
+// Errors are deliberately ignored: http.ResponseController reports
+// ErrNotSupported for any writer that cannot carry a deadline — notably
+// httptest.ResponseRecorder, which every handler test uses — and a missing
+// deadline extension must never fail a request. On a real connection the
+// underlying *http.response implements both setters.
+func setSocketDeadlines(c echo.Context, t time.Time) {
+	rc := http.NewResponseController(c.Response())
+	_ = rc.SetReadDeadline(t)
+	_ = rc.SetWriteDeadline(t)
 }
 
 func (s *Server) routes() {
@@ -848,7 +984,8 @@ func (s *Server) routes() {
 
 	api := s.echo.Group("/api/v1")
 	// Rate limiting guards the API surface only; liveness/readiness/version are
-	// exempt so orchestrator probes are never throttled.
+	// exempt so orchestrator probes are never throttled. One mount, two budgets:
+	// media GETs are routed to the much larger media budget (see rateLimit).
 	if s.limiter != nil {
 		api.Use(s.rateLimit(s.limiter))
 	}
@@ -958,9 +1095,17 @@ func (s *Server) routes() {
 	}
 
 	// DEV-ONLY: expose captured account-security tokens so e2e tests can complete
-	// the reset/verify flows. Registered only when DEV_MAIL_CAPTURE_ENABLED wired
-	// the capture mailer (never in production). Intentionally not in openapi.yaml.
-	if s.devMailCapture != nil {
+	// the reset/verify flows. Intentionally not in openapi.yaml.
+	//
+	// This route has NO auth middleware and returns a live password-reset token
+	// for ANY address — it is a complete account-takeover primitive, so it is
+	// gated twice: config.validate() refuses DEV_MAIL_CAPTURE_ENABLED in
+	// production (a boot failure), and the registration itself is refused here.
+	// The double gate matters because the two can be reached independently: a
+	// future caller could construct a Server with WithDevMailCapture without
+	// going through Load(), and validate() can be bypassed by anything that
+	// builds a Config literal.
+	if s.devMailCapture != nil && s.cfg.Environment != "production" {
 		api.GET("/dev/email-token", s.handleDevEmailToken)
 	}
 
