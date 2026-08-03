@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/ratelimit"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // fakeCounter is an in-memory Counter for middleware tests.
@@ -92,6 +94,53 @@ func TestRateLimitFailsOpen(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (fail open when limiter errors)", rec.Code)
+	}
+}
+
+// TestMediaGetsUseTheirOwnBudget is the regression test for the browsing
+// failure: one home page is a single feed call plus ~20 thumbnails, and HLS
+// playback adds segments on top, so charging media GETs to the API budget 429s
+// an ordinary viewer inside their first minute. Media must draw on its own,
+// separately keyed budget.
+func TestMediaGetsUseTheirOwnBudget(t *testing.T) {
+	fc := &fakeCounter{}
+	// A deliberately tiny API budget (1) next to a larger media budget (5), so a
+	// leak in either direction is unmissable. The video id is intentionally not a
+	// UUID: the handler rejects it with a clean 404 before touching any
+	// dependency, which keeps this a pure middleware test.
+	srv := New(testConfig(), nil, nil,
+		WithRateLimiter(ratelimit.NewLimiter(fc, 1, time.Minute)),
+		WithMediaRateLimiter(ratelimit.NewLimiter(fc, 5, time.Minute)),
+		WithVideoService(video.NewService(nil, nil)),
+		WithChannelService(channel.NewService(nil)),
+	)
+
+	for i := 1; i <= 4; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/not-a-uuid/thumbnail", nil)
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code == http.StatusTooManyRequests {
+			t.Fatalf("thumbnail request #%d was throttled by the API budget", i)
+		}
+		if got := rec.Header().Get("X-RateLimit-Limit"); got != "5" {
+			t.Fatalf("thumbnail request #%d X-RateLimit-Limit = %q, want the media budget 5", i, got)
+		}
+	}
+
+	// The API budget is untouched by that burst: its single request still lands.
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/nodeinfo", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("API request status = %d, want 200 — media reads must not spend the API budget", rec.Code)
+	}
+
+	// ...and the media budget is genuinely enforced, not merely absent.
+	for i := 5; i <= 6; i++ {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/videos/not-a-uuid/thumbnail", nil))
+		if i == 6 && rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("thumbnail request #%d status = %d, want 429 once the media budget is spent", i, rec.Code)
+		}
 	}
 }
 

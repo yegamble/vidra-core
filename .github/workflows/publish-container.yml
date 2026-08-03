@@ -31,6 +31,14 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
 
+      # The short SHA mirrors what `make build` bakes in locally (Makefile:11), so
+      # the value in GET /api/v1/admin/system reads the same whether the binary
+      # came from a developer laptop or from this workflow. HEAD is the released
+      # tag because the checkout above pinned `ref:` to it.
+      - name: Derive the build metadata baked into the binary
+        id: buildinfo
+        run: echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
@@ -58,6 +66,16 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Injected into internal/version via -ldflags (see Dockerfile). Without
+          # these the released image reports "0.1.0 / unknown / unknown" forever,
+          # which makes "which build is running?" unanswerable during an incident.
+          # BUILD_DATE uses the release's own published_at (already RFC 3339 UTC)
+          # rather than `date -u` so the value is stable per release — a re-run of
+          # this workflow then still hits the Go build layer in the gha cache.
+          build-args: |
+            VERSION=${{ github.event.release.tag_name }}
+            COMMIT=${{ steps.buildinfo.outputs.commit }}
+            BUILD_DATE=${{ github.event.release.published_at }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
