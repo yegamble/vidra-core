@@ -145,6 +145,57 @@ func (f *notifFakeRepo) NotifyFollowersOfNewVideo(_ context.Context, videoID uui
 	return notified, nil
 }
 
+// NotifyStaffOfNewReport mirrors the shape of the real set-based staff fan-out
+// (migration 0103) closely enough to prove the HTTP-level wiring: filing a
+// report reaches every active admin/moderator, honouring the no-self-notify
+// rule, the global new_report preference, and one-notification-per-
+// (user, report). The statement's real behaviour is proved against a live
+// database in store.TestNewReportStaffFanOutOnRealPG. createErr fails the
+// fan-out like any other notification write, for proving best-effort.
+func (f *notifFakeRepo) NotifyStaffOfNewReport(_ context.Context, reportID uuid.UUID) (int64, error) {
+	if f.createErr != nil {
+		return 0, f.createErr
+	}
+	if f.reports == nil {
+		return 0, nil
+	}
+	r, ok := f.reports.reportByID(reportID)
+	if !ok {
+		return 0, nil
+	}
+	var notified int64
+	for _, u := range f.auth.users {
+		if u.Role != "admin" && u.Role != "moderator" {
+			continue
+		}
+		if !u.IsActive || u.DeletedAt.Valid || u.ID == r.reporterID {
+			continue
+		}
+		if enabled, ok := f.prefs[notifPrefKey(u.ID, notification.TypeNewReport)]; ok && !enabled {
+			continue
+		}
+		duplicate := false
+		for _, n := range f.notifs {
+			if n.UserID == u.ID && n.Type == notification.TypeNewReport &&
+				n.ReportID.Valid && uuid.UUID(n.ReportID.Bytes) == reportID {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		f.notifs = append(f.notifs, sqlcgen.Notification{
+			ID: uuid.New(), UserID: u.ID, Type: notification.TypeNewReport,
+			ActorID:   pgtype.UUID{Bytes: r.reporterID, Valid: true},
+			ReportID:  pgtype.UUID{Bytes: reportID, Valid: true},
+			CreatedAt: time.Now(),
+		})
+		notified++
+	}
+	return notified, nil
+}
+
 func (f *notifFakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotificationsParams) ([]sqlcgen.ListNotificationsRow, error) {
 	var rows []sqlcgen.ListNotificationsRow
 	for i := len(f.notifs) - 1; i >= 0; i-- { // newest first

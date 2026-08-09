@@ -25,10 +25,22 @@ type fakeRepo struct {
 	fanOut    []uuid.UUID
 	fanOutN   int64
 	fanOutErr error
+	// reportFanOut records the reports handed to the new-report staff fan-out
+	// (same pass-through contract as fanOut above; rules proved in
+	// store.TestNewReportStaffFanOutOnRealPG).
+	reportFanOut []uuid.UUID
 }
 
 func (f *fakeRepo) NotifyFollowersOfNewVideo(_ context.Context, videoID uuid.UUID) (int64, error) {
 	f.fanOut = append(f.fanOut, videoID)
+	if f.fanOutErr != nil {
+		return 0, f.fanOutErr
+	}
+	return f.fanOutN, nil
+}
+
+func (f *fakeRepo) NotifyStaffOfNewReport(_ context.Context, reportID uuid.UUID) (int64, error) {
+	f.reportFanOut = append(f.reportFanOut, reportID)
 	if f.fanOutErr != nil {
 		return 0, f.fanOutErr
 	}
