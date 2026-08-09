@@ -24,9 +24,10 @@ const (
 // Tokens are held in memory only — never logged, never written to disk or the DB
 // — so a process restart clears them.
 type CaptureMailer struct {
-	mu       sync.Mutex
-	latest   map[string]string
-	contacts []CapturedContact
+	mu           sync.Mutex
+	latest       map[string]string
+	contacts     []CapturedContact
+	reportAlerts []CapturedReportAlert
 }
 
 // CapturedContact is one contact-form message recorded by the capture mailer
@@ -84,6 +85,33 @@ func (c *CaptureMailer) Contacts() []CapturedContact {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]CapturedContact(nil), c.contacts...)
+}
+
+// CapturedReportAlert is one new-report operator alert recorded by the capture
+// mailer instead of being delivered.
+type CapturedReportAlert struct {
+	To         string
+	TargetType string
+	Reason     string
+	QueueURL   string
+}
+
+// SendNewReportAlert records the new-report operator alert instead of mailing
+// it (in memory only — never logged or persisted).
+func (c *CaptureMailer) SendNewReportAlert(_ context.Context, to, targetType, reason, queueURL string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reportAlerts = append(c.reportAlerts, CapturedReportAlert{
+		To: to, TargetType: targetType, Reason: reason, QueueURL: queueURL,
+	})
+	return nil
+}
+
+// ReportAlerts returns a copy of every captured new-report alert, in send order.
+func (c *CaptureMailer) ReportAlerts() []CapturedReportAlert {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]CapturedReportAlert(nil), c.reportAlerts...)
 }
 
 // Latest returns the most recently captured raw token for the (kind, email) and

@@ -170,10 +170,11 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// + video_replace_enabled (config-parity W14) + the video-card preview
 	// playback gate and inherited user default + 7 search & recommendation
 	// keys (search-service W4) + search_service_enabled routing toggle
-	// (search-service W9) + 6 featured-banner keys (home-featured-banner).
+	// (search-service W9) + 6 featured-banner keys (home-featured-banner)
+	// + report_email_alerts_enabled (new-report staff alerts).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 108 {
-		t.Fatalf("settings count = %d, want 108", len(got.Settings))
+	if len(got.Settings) != 109 {
+		t.Fatalf("settings count = %d, want 109", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

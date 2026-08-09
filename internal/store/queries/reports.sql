@@ -1,41 +1,52 @@
--- name: CreateVideoReport :execrows
--- Report a video (idempotent per reporter+video). Returns rows inserted
--- (1 = new, 0 = already reported).
+-- name: CreateVideoReport :one
+-- Report a video (idempotent per reporter+video). Returns the new report's id;
+-- a repeat report by the same reporter inserts nothing and yields no row
+-- (pgx.ErrNoRows), which the service maps to "already reported" so the staff
+-- fan-out fires only for genuinely new reports.
 INSERT INTO reports (reporter_id, target_type, video_id, reason)
 VALUES ($1, 'video', $2, $3)
-ON CONFLICT (reporter_id, video_id) WHERE video_id IS NOT NULL DO NOTHING;
+ON CONFLICT (reporter_id, video_id) WHERE video_id IS NOT NULL DO NOTHING
+RETURNING id;
 
--- name: CreateCommentReport :execrows
--- Report a comment (idempotent per reporter+comment). A non-existent comment
--- raises a foreign-key violation, which the service maps to "invalid target".
+-- name: CreateCommentReport :one
+-- Report a comment (idempotent per reporter+comment; returns the new report's
+-- id, no row on a repeat). A non-existent comment raises a foreign-key
+-- violation, which the service maps to "invalid target".
 INSERT INTO reports (reporter_id, target_type, comment_id, reason)
 VALUES ($1, 'comment', $2, $3)
-ON CONFLICT (reporter_id, comment_id) WHERE comment_id IS NOT NULL DO NOTHING;
+ON CONFLICT (reporter_id, comment_id) WHERE comment_id IS NOT NULL DO NOTHING
+RETURNING id;
 
--- name: CreateAccountReport :execrows
--- Report an account (idempotent per reporter+account). A non-existent target
--- user raises a foreign-key violation, which the service maps to "invalid
--- target". Self-reports are rejected in the service before insert.
+-- name: CreateAccountReport :one
+-- Report an account (idempotent per reporter+account; returns the new report's
+-- id, no row on a repeat). A non-existent target user raises a foreign-key
+-- violation, which the service maps to "invalid target". Self-reports are
+-- rejected in the service before insert.
 INSERT INTO reports (reporter_id, target_type, reported_user_id, reason)
 VALUES ($1, 'account', $2, $3)
-ON CONFLICT (reporter_id, reported_user_id) WHERE reported_user_id IS NOT NULL DO NOTHING;
+ON CONFLICT (reporter_id, reported_user_id) WHERE reported_user_id IS NOT NULL DO NOTHING
+RETURNING id;
 
--- name: CreateRemoteVideoReport :execrows
+-- name: CreateRemoteVideoReport :one
 -- Report a federated remote video (remote-content §8; idempotent per
--- reporter+remote video). A non-existent target raises a foreign-key
--- violation, which the service maps to "invalid target".
+-- reporter+remote video; returns the new report's id, no row on a repeat). A
+-- non-existent target raises a foreign-key violation, which the service maps
+-- to "invalid target".
 INSERT INTO reports (reporter_id, target_type, remote_video_id, reason)
 VALUES ($1, 'remote_video', $2, $3)
-ON CONFLICT (reporter_id, remote_video_id) WHERE remote_video_id IS NOT NULL DO NOTHING;
+ON CONFLICT (reporter_id, remote_video_id) WHERE remote_video_id IS NOT NULL DO NOTHING
+RETURNING id;
 
--- name: CreateMessageReport :execrows
+-- name: CreateMessageReport :one
 -- Report a direct-message message (product-decisions.md §14; idempotent per
--- reporter+message). The body snapshot preserves the reported text for the
--- moderator even after the sender tombstones it. The caller has already verified
--- the reporter is a participant of the message's conversation.
+-- reporter+message; returns the new report's id, no row on a repeat). The body
+-- snapshot preserves the reported text for the moderator even after the sender
+-- tombstones it. The caller has already verified the reporter is a participant
+-- of the message's conversation.
 INSERT INTO reports (reporter_id, target_type, message_id, message_body_snapshot, reason)
 VALUES ($1, 'message', $2, $3, $4)
-ON CONFLICT (reporter_id, message_id) WHERE message_id IS NOT NULL DO NOTHING;
+ON CONFLICT (reporter_id, message_id) WHERE message_id IS NOT NULL DO NOTHING
+RETURNING id;
 
 -- name: ListReports :many
 -- The moderation queue, newest first, with the reporter's username and the

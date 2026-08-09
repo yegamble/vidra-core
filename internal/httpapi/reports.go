@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
 )
@@ -31,6 +32,43 @@ func (r createReportRequest) Validate() []FieldError {
 	return nil
 }
 
+// reportEmailAlertsAvailable is the EFFECTIVE report-email gate: the runtime
+// setting AND an outbound mail path AND a configured operator contact address
+// (an alert nobody can receive is not "on"). Mirrors contactFormAvailable.
+func (s *Server) reportEmailAlertsAvailable() bool {
+	return s.contactMailer != nil &&
+		strings.TrimSpace(s.effectiveContactEmail()) != "" &&
+		s.settingBool(instancesettings.KeyReportEmailAlertsEnabled, true)
+}
+
+// notifyStaffOfReport pushes both halves of the moderation queue's new-report
+// signal for a genuinely new report (reportID != uuid.Nil — an idempotent
+// repeat never notifies): the in-app new_report staff fan-out, and the
+// operator email alert when reportEmailAlertsAvailable. Both are best-effort:
+// a notification or mail failure must never fail the report itself.
+func (s *Server) notifyStaffOfReport(c echo.Context, reportID uuid.UUID, targetType, reason string) {
+	if reportID == uuid.Nil {
+		return
+	}
+	ctx := c.Request().Context()
+	if s.notifsvc != nil {
+		if _, err := s.notifsvc.NotifyNewReport(ctx, reportID); err != nil {
+			s.logger.WarnContext(ctx, "notify staff of new report failed", "error", err, "report_id", reportID)
+		}
+	}
+	if s.reportEmailAlertsAvailable() {
+		queueURL := ""
+		if base := strings.TrimRight(s.cfg.PublicBaseURL, "/"); base != "" {
+			queueURL = base + "/admin"
+		}
+		if err := s.contactMailer.SendNewReportAlert(ctx, strings.TrimSpace(s.effectiveContactEmail()),
+			targetType, reason, queueURL); err != nil {
+			// The mail package's error text never carries addresses or the body.
+			s.logger.WarnContext(ctx, "report email alert failed", "error", err, "report_id", reportID)
+		}
+	}
+}
+
 // handleReportVideo files a report against a public, published video. Behind
 // requireAuth. A non-public/unpublished or unknown video is 404. Idempotent.
 func (s *Server) handleReportVideo(c echo.Context) error {
@@ -46,9 +84,11 @@ func (s *Server) handleReportVideo(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	if err := s.moderationsvc.ReportVideo(c.Request().Context(), userID, videoID, strings.TrimSpace(in.Reason)); err != nil {
+	reportID, err := s.moderationsvc.ReportVideo(c.Request().Context(), userID, videoID, strings.TrimSpace(in.Reason))
+	if err != nil {
 		return err
 	}
+	s.notifyStaffOfReport(c, reportID, moderation.TargetVideo, strings.TrimSpace(in.Reason))
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -67,12 +107,14 @@ func (s *Server) handleReportComment(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	if err := s.moderationsvc.ReportComment(c.Request().Context(), userID, commentID, strings.TrimSpace(in.Reason)); err != nil {
+	reportID, err := s.moderationsvc.ReportComment(c.Request().Context(), userID, commentID, strings.TrimSpace(in.Reason))
+	if err != nil {
 		if errors.Is(err, moderation.ErrInvalidTarget) {
 			return echo.NewHTTPError(http.StatusNotFound, "comment not found")
 		}
 		return err
 	}
+	s.notifyStaffOfReport(c, reportID, moderation.TargetComment, strings.TrimSpace(in.Reason))
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -91,7 +133,8 @@ func (s *Server) handleReportAccount(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	if err := s.moderationsvc.ReportAccount(c.Request().Context(), userID, targetID, strings.TrimSpace(in.Reason)); err != nil {
+	reportID, err := s.moderationsvc.ReportAccount(c.Request().Context(), userID, targetID, strings.TrimSpace(in.Reason))
+	if err != nil {
 		switch {
 		case errors.Is(err, moderation.ErrCannotReportSelf):
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "cannot report yourself")
@@ -100,6 +143,7 @@ func (s *Server) handleReportAccount(c echo.Context) error {
 		}
 		return err
 	}
+	s.notifyStaffOfReport(c, reportID, moderation.TargetAccount, strings.TrimSpace(in.Reason))
 	return c.NoContent(http.StatusNoContent)
 }
 

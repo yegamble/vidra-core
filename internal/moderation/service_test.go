@@ -45,58 +45,62 @@ type fakeRepo struct {
 	remoteBlockOrder []uuid.UUID
 }
 
-func (f *fakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (int64, error) {
+func (f *fakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (uuid.UUID, error) {
 	for _, r := range f.reports {
 		if r.reporterID == a.ReporterID && r.videoID == a.VideoID {
-			return 0, nil // already reported
+			return uuid.Nil, pgx.ErrNoRows // already reported: ON CONFLICT DO NOTHING yields no row
 		}
 	}
+	id := uuid.New()
 	f.reports = append(f.reports, reportRow{
-		id: uuid.New(), reporterID: a.ReporterID, targetType: TargetVideo,
+		id: id, reporterID: a.ReporterID, targetType: TargetVideo,
 		videoID: a.VideoID, reason: a.Reason, status: StatusOpen, createdAt: time.Now(),
 	})
-	return 1, nil
+	return id, nil
 }
 
-func (f *fakeRepo) CreateCommentReport(_ context.Context, a sqlcgen.CreateCommentReportParams) (int64, error) {
+func (f *fakeRepo) CreateCommentReport(_ context.Context, a sqlcgen.CreateCommentReportParams) (uuid.UUID, error) {
 	if f.commentErr != nil {
-		return 0, f.commentErr
+		return uuid.Nil, f.commentErr
 	}
+	id := uuid.New()
 	f.reports = append(f.reports, reportRow{
-		id: uuid.New(), reporterID: a.ReporterID, targetType: TargetComment,
+		id: id, reporterID: a.ReporterID, targetType: TargetComment,
 		commentID: a.CommentID, reason: a.Reason, status: StatusOpen, createdAt: time.Now(),
 	})
-	return 1, nil
+	return id, nil
 }
 
-func (f *fakeRepo) CreateAccountReport(_ context.Context, a sqlcgen.CreateAccountReportParams) (int64, error) {
+func (f *fakeRepo) CreateAccountReport(_ context.Context, a sqlcgen.CreateAccountReportParams) (uuid.UUID, error) {
 	if f.accountErr != nil {
-		return 0, f.accountErr
+		return uuid.Nil, f.accountErr
 	}
 	for _, r := range f.reports {
 		if r.reporterID == a.ReporterID && r.reportedUserID == a.ReportedUserID {
-			return 0, nil // already reported
+			return uuid.Nil, pgx.ErrNoRows // already reported: ON CONFLICT DO NOTHING yields no row
 		}
 	}
+	id := uuid.New()
 	f.reports = append(f.reports, reportRow{
-		id: uuid.New(), reporterID: a.ReporterID, targetType: TargetAccount,
+		id: id, reporterID: a.ReporterID, targetType: TargetAccount,
 		reportedUserID: a.ReportedUserID, reason: a.Reason, status: StatusOpen, createdAt: time.Now(),
 	})
-	return 1, nil
+	return id, nil
 }
 
-func (f *fakeRepo) CreateMessageReport(_ context.Context, a sqlcgen.CreateMessageReportParams) (int64, error) {
+func (f *fakeRepo) CreateMessageReport(_ context.Context, a sqlcgen.CreateMessageReportParams) (uuid.UUID, error) {
 	for _, r := range f.reports {
 		if r.reporterID == a.ReporterID && r.messageID == a.MessageID {
-			return 0, nil // already reported
+			return uuid.Nil, pgx.ErrNoRows // already reported: ON CONFLICT DO NOTHING yields no row
 		}
 	}
+	id := uuid.New()
 	f.reports = append(f.reports, reportRow{
-		id: uuid.New(), reporterID: a.ReporterID, targetType: TargetMessage,
+		id: id, reporterID: a.ReporterID, targetType: TargetMessage,
 		messageID: a.MessageID, messageBody: a.MessageBodySnapshot, reason: a.Reason,
 		status: StatusOpen, createdAt: time.Now(),
 	})
-	return 1, nil
+	return id, nil
 }
 
 func (f *fakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error) {
@@ -193,20 +197,21 @@ func (f *fakeRepo) ListBlockedVideos(_ context.Context, a sqlcgen.ListBlockedVid
 	return rows, nil
 }
 
-func (f *fakeRepo) CreateRemoteVideoReport(_ context.Context, a sqlcgen.CreateRemoteVideoReportParams) (int64, error) {
+func (f *fakeRepo) CreateRemoteVideoReport(_ context.Context, a sqlcgen.CreateRemoteVideoReportParams) (uuid.UUID, error) {
 	if f.remoteVideoErr != nil {
-		return 0, f.remoteVideoErr
+		return uuid.Nil, f.remoteVideoErr
 	}
 	for _, r := range f.reports {
 		if r.reporterID == a.ReporterID && r.remoteVideoID == a.RemoteVideoID {
-			return 0, nil // already reported
+			return uuid.Nil, pgx.ErrNoRows // already reported: ON CONFLICT DO NOTHING yields no row
 		}
 	}
+	id := uuid.New()
 	f.reports = append(f.reports, reportRow{
-		id: uuid.New(), reporterID: a.ReporterID, targetType: TargetRemoteVideo,
+		id: id, reporterID: a.ReporterID, targetType: TargetRemoteVideo,
 		remoteVideoID: a.RemoteVideoID, reason: a.Reason, status: StatusOpen, createdAt: time.Now(),
 	})
-	return 1, nil
+	return id, nil
 }
 
 func (f *fakeRepo) BlockRemoteVideo(_ context.Context, a sqlcgen.BlockRemoteVideoParams) (int64, error) {
@@ -256,13 +261,21 @@ func TestReportListAndDedup(t *testing.T) {
 	ctx := context.Background()
 	reporter, vid, cid := uuid.New(), uuid.New(), uuid.New()
 
-	if err := svc.ReportVideo(ctx, reporter, vid, "spam"); err != nil {
+	firstID, err := svc.ReportVideo(ctx, reporter, vid, "spam")
+	if err != nil {
 		t.Fatalf("ReportVideo: %v", err)
 	}
-	if err := svc.ReportVideo(ctx, reporter, vid, "spam again"); err != nil { // idempotent
+	if firstID == uuid.Nil {
+		t.Fatal("ReportVideo returned uuid.Nil for a new report, want its id")
+	}
+	dupID, err := svc.ReportVideo(ctx, reporter, vid, "spam again") // idempotent
+	if err != nil {
 		t.Fatalf("ReportVideo dup: %v", err)
 	}
-	if err := svc.ReportComment(ctx, reporter, cid, "abuse"); err != nil {
+	if dupID != uuid.Nil {
+		t.Errorf("ReportVideo dup id = %s, want uuid.Nil (no staff re-notify)", dupID)
+	}
+	if _, err := svc.ReportComment(ctx, reporter, cid, "abuse"); err != nil {
 		t.Fatalf("ReportComment: %v", err)
 	}
 
@@ -281,7 +294,7 @@ func TestReportListAndDedup(t *testing.T) {
 
 func TestReportCommentInvalidTarget(t *testing.T) {
 	svc := NewService(&fakeRepo{commentErr: &pgconn.PgError{Code: "23503"}})
-	if err := svc.ReportComment(context.Background(), uuid.New(), uuid.New(), "x"); err != ErrInvalidTarget {
+	if _, err := svc.ReportComment(context.Background(), uuid.New(), uuid.New(), "x"); err != ErrInvalidTarget {
 		t.Errorf("err = %v, want ErrInvalidTarget", err)
 	}
 }
@@ -291,11 +304,11 @@ func TestReportAccount(t *testing.T) {
 	reporter, target := uuid.New(), uuid.New()
 
 	svc := NewService(&fakeRepo{})
-	if err := svc.ReportAccount(ctx, reporter, target, "harassment"); err != nil {
+	if _, err := svc.ReportAccount(ctx, reporter, target, "harassment"); err != nil {
 		t.Fatalf("ReportAccount: %v", err)
 	}
 	// Idempotent: a second report of the same account is a no-op (no error).
-	if err := svc.ReportAccount(ctx, reporter, target, "harassment again"); err != nil {
+	if _, err := svc.ReportAccount(ctx, reporter, target, "harassment again"); err != nil {
 		t.Fatalf("ReportAccount dup: %v", err)
 	}
 	items, err := svc.List(ctx, false, 20, 0)
@@ -310,13 +323,13 @@ func TestReportAccount(t *testing.T) {
 	}
 
 	// Reporting yourself is rejected before any insert.
-	if err := svc.ReportAccount(ctx, reporter, reporter, "me"); err != ErrCannotReportSelf {
+	if _, err := svc.ReportAccount(ctx, reporter, reporter, "me"); err != ErrCannotReportSelf {
 		t.Errorf("self-report err = %v, want ErrCannotReportSelf", err)
 	}
 
 	// An unknown target account (FK violation) → ErrInvalidTarget.
 	fkSvc := NewService(&fakeRepo{accountErr: &pgconn.PgError{Code: "23503"}})
-	if err := fkSvc.ReportAccount(ctx, uuid.New(), uuid.New(), "x"); err != ErrInvalidTarget {
+	if _, err := fkSvc.ReportAccount(ctx, uuid.New(), uuid.New(), "x"); err != ErrInvalidTarget {
 		t.Errorf("unknown target err = %v, want ErrInvalidTarget", err)
 	}
 }
@@ -326,11 +339,11 @@ func TestReportMessage(t *testing.T) {
 	reporter, msgID := uuid.New(), uuid.New()
 	svc := NewService(&fakeRepo{})
 
-	if err := svc.ReportMessage(ctx, reporter, msgID, "the reported text", "abuse"); err != nil {
+	if _, err := svc.ReportMessage(ctx, reporter, msgID, "the reported text", "abuse"); err != nil {
 		t.Fatalf("ReportMessage: %v", err)
 	}
 	// Idempotent per (reporter, message).
-	if err := svc.ReportMessage(ctx, reporter, msgID, "the reported text", "abuse again"); err != nil {
+	if _, err := svc.ReportMessage(ctx, reporter, msgID, "the reported text", "abuse again"); err != nil {
 		t.Fatalf("ReportMessage dup: %v", err)
 	}
 	items, err := svc.List(ctx, false, 20, 0)
@@ -428,7 +441,7 @@ func TestResolveAndNotFound(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 	reporter, vid, mod := uuid.New(), uuid.New(), uuid.New()
-	_ = svc.ReportVideo(ctx, reporter, vid, "spam")
+	_, _ = svc.ReportVideo(ctx, reporter, vid, "spam")
 
 	items, _ := svc.List(ctx, true, 20, 0)
 	id := items[0].ID
@@ -459,7 +472,7 @@ func TestDeleteReport(t *testing.T) {
 	ctx := context.Background()
 	reporter, video := uuid.New(), uuid.New()
 
-	if err := svc.ReportVideo(ctx, reporter, video, "spam"); err != nil {
+	if _, err := svc.ReportVideo(ctx, reporter, video, "spam"); err != nil {
 		t.Fatalf("ReportVideo: %v", err)
 	}
 	items, _ := svc.List(ctx, false, 20, 0)

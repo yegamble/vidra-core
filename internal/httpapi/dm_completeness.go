@@ -233,12 +233,14 @@ func (s *Server) handleReportMessage(c echo.Context) error {
 		}
 		return err
 	}
-	if err := s.moderationsvc.ReportMessage(ctx, userID, msgID, snapshot, strings.TrimSpace(in.Reason)); err != nil {
+	reportID, err := s.moderationsvc.ReportMessage(ctx, userID, msgID, snapshot, strings.TrimSpace(in.Reason))
+	if err != nil {
 		if errors.Is(err, moderation.ErrInvalidTarget) {
 			return echo.NewHTTPError(http.StatusNotFound, "message not found")
 		}
 		return err
 	}
+	s.notifyStaffOfReport(c, reportID, moderation.TargetMessage, strings.TrimSpace(in.Reason))
 	return c.NoContent(http.StatusNoContent)
 }
 

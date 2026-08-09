@@ -895,6 +895,10 @@ func (m *captureResetMailer) SendEmailVerification(_ context.Context, _, token s
 	return nil
 }
 
+func (m *captureResetMailer) SendNewReportAlert(context.Context, string, string, string, string) error {
+	return nil
+}
+
 func (m *captureResetMailer) SendContactForm(context.Context, string, string, string, string, string) error {
 	return nil
 }

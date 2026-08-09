@@ -28,18 +28,22 @@ const (
 	// public video. Unlike every other type it is created by a set-based
 	// fan-out (NotifyNewVideo), not one row at a time.
 	TypeNewVideo = "new_video"
+	// TypeNewReport tells an admin/moderator that a user filed an abuse report
+	// — the moderation queue's push signal. Like new_video it is created by a
+	// set-based fan-out (NotifyNewReport); only staff ever receive it.
+	TypeNewReport = "new_report"
 )
 
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeFollow, TypeMessage, TypeNewVideo, TypeReportResolved, TypeVideoRejected}
+	return []string{TypeCaptionReady, TypeComment, TypeFollow, TypeMessage, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeVideoRejected}
 }
 
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeCaptionReady, TypeNewVideo:
+	case TypeFollow, TypeComment, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeCaptionReady, TypeNewVideo, TypeNewReport:
 		return true
 	}
 	return false
@@ -66,6 +70,7 @@ type Repository interface {
 	UpsertNotificationPref(ctx context.Context, arg sqlcgen.UpsertNotificationPrefParams) error
 	IsNotificationTypeEnabled(ctx context.Context, arg sqlcgen.IsNotificationTypeEnabledParams) (bool, error)
 	NotifyFollowersOfNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
+	NotifyStaffOfNewReport(ctx context.Context, reportID uuid.UUID) (int64, error)
 }
 
 // Service holds the notification application logic.
@@ -191,6 +196,24 @@ func (s *Service) NotifyMessage(ctx context.Context, recipientID, actorID, conve
 // next step if that ever bites (it does not at self-hosted instance scale).
 func (s *Service) NotifyNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error) {
 	return s.repo.NotifyFollowersOfNewVideo(ctx, videoID)
+}
+
+// NotifyNewReport tells every active admin and moderator that a user just
+// filed an abuse report, and reports how many staff members were notified. It
+// is the set-based fan-out behind the moderation queue's push signal, fired by
+// the five report-creation handlers for genuinely new reports only (an
+// idempotent repeat report never reaches it).
+//
+// Every rule lives in the SQL (see NotifyStaffOfNewReport): only active,
+// non-deleted admins/moderators are told, a staff reporter is never told about
+// their own filing, and a recipient who turned the new_report type off is
+// skipped. A repeat call for the same report inserts nothing (the partial
+// unique index in migration 0103).
+//
+// Best-effort, like the other Notify* methods: the caller treats an error as
+// non-fatal — a notification failure must never fail the report itself.
+func (s *Service) NotifyNewReport(ctx context.Context, reportID uuid.UUID) (int64, error) {
+	return s.repo.NotifyStaffOfNewReport(ctx, reportID)
 }
 
 // NotifyReportResolved records that a moderator (actorID) resolved recipientID's

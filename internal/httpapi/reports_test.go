@@ -17,6 +17,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -61,62 +63,66 @@ type modBlockMark struct {
 	at     time.Time
 }
 
-func (f *moderationFakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (int64, error) {
+func (f *moderationFakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (uuid.UUID, error) {
 	for _, r := range f.reports {
 		if r.reporterID == a.ReporterID && r.videoID == a.VideoID {
-			return 0, nil
+			return uuid.Nil, pgx.ErrNoRows // ON CONFLICT DO NOTHING yields no row
 		}
 	}
+	id := uuid.New()
 	f.reports = append(f.reports, modReportRow{
-		id: uuid.New(), reporterID: a.ReporterID, targetType: "video",
+		id: id, reporterID: a.ReporterID, targetType: "video",
 		videoID: a.VideoID, reason: a.Reason, status: "open", createdAt: time.Now(),
 	})
-	return 1, nil
+	return id, nil
 }
 
-func (f *moderationFakeRepo) CreateCommentReport(_ context.Context, a sqlcgen.CreateCommentReportParams) (int64, error) {
+func (f *moderationFakeRepo) CreateCommentReport(_ context.Context, a sqlcgen.CreateCommentReportParams) (uuid.UUID, error) {
 	if _, err := f.comments.GetComment(context.Background(), uuid.UUID(a.CommentID.Bytes)); err != nil {
-		return 0, &pgconn.PgError{Code: "23503"} // foreign-key violation: no such comment
+		return uuid.Nil, &pgconn.PgError{Code: "23503"} // foreign-key violation: no such comment
 	}
 	for _, r := range f.reports {
 		if r.reporterID == a.ReporterID && r.commentID == a.CommentID {
-			return 0, nil
+			return uuid.Nil, pgx.ErrNoRows // ON CONFLICT DO NOTHING yields no row
 		}
 	}
+	id := uuid.New()
 	f.reports = append(f.reports, modReportRow{
-		id: uuid.New(), reporterID: a.ReporterID, targetType: "comment",
+		id: id, reporterID: a.ReporterID, targetType: "comment",
 		commentID: a.CommentID, reason: a.Reason, status: "open", createdAt: time.Now(),
 	})
-	return 1, nil
+	return id, nil
 }
 
-func (f *moderationFakeRepo) CreateAccountReport(_ context.Context, a sqlcgen.CreateAccountReportParams) (int64, error) {
+func (f *moderationFakeRepo) CreateAccountReport(_ context.Context, a sqlcgen.CreateAccountReportParams) (uuid.UUID, error) {
 	if _, err := f.auth.GetUserByID(context.Background(), uuid.UUID(a.ReportedUserID.Bytes)); err != nil {
-		return 0, &pgconn.PgError{Code: "23503"} // foreign-key violation: no such user
+		return uuid.Nil, &pgconn.PgError{Code: "23503"} // foreign-key violation: no such user
 	}
 	for _, r := range f.reports {
 		if r.reporterID == a.ReporterID && r.reportedUserID == a.ReportedUserID {
-			return 0, nil
+			return uuid.Nil, pgx.ErrNoRows // ON CONFLICT DO NOTHING yields no row
 		}
 	}
+	id := uuid.New()
 	f.reports = append(f.reports, modReportRow{
-		id: uuid.New(), reporterID: a.ReporterID, targetType: "account",
+		id: id, reporterID: a.ReporterID, targetType: "account",
 		reportedUserID: a.ReportedUserID, reason: a.Reason, status: "open", createdAt: time.Now(),
 	})
-	return 1, nil
+	return id, nil
 }
 
-func (f *moderationFakeRepo) CreateMessageReport(_ context.Context, a sqlcgen.CreateMessageReportParams) (int64, error) {
+func (f *moderationFakeRepo) CreateMessageReport(_ context.Context, a sqlcgen.CreateMessageReportParams) (uuid.UUID, error) {
 	for _, r := range f.reports {
 		if r.reporterID == a.ReporterID && r.messageID == a.MessageID {
-			return 0, nil
+			return uuid.Nil, pgx.ErrNoRows // ON CONFLICT DO NOTHING yields no row
 		}
 	}
+	id := uuid.New()
 	f.reports = append(f.reports, modReportRow{
-		id: uuid.New(), reporterID: a.ReporterID, targetType: "message",
+		id: id, reporterID: a.ReporterID, targetType: "message",
 		messageID: a.MessageID, reason: a.Reason, status: "open", createdAt: time.Now(),
 	})
-	return 1, nil
+	return id, nil
 }
 
 func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error) {
@@ -165,20 +171,21 @@ func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReport
 	return rows, nil
 }
 
-func (f *moderationFakeRepo) CreateRemoteVideoReport(_ context.Context, a sqlcgen.CreateRemoteVideoReportParams) (int64, error) {
+func (f *moderationFakeRepo) CreateRemoteVideoReport(_ context.Context, a sqlcgen.CreateRemoteVideoReportParams) (uuid.UUID, error) {
 	if _, ok := f.remoteVideos[uuid.UUID(a.RemoteVideoID.Bytes)]; !ok {
-		return 0, &pgconn.PgError{Code: "23503"} // foreign-key violation: no such remote video
+		return uuid.Nil, &pgconn.PgError{Code: "23503"} // foreign-key violation: no such remote video
 	}
 	for _, r := range f.reports {
 		if r.reporterID == a.ReporterID && r.remoteVideoID == a.RemoteVideoID {
-			return 0, nil
+			return uuid.Nil, pgx.ErrNoRows // ON CONFLICT DO NOTHING yields no row
 		}
 	}
+	id := uuid.New()
 	f.reports = append(f.reports, modReportRow{
-		id: uuid.New(), reporterID: a.ReporterID, targetType: "remote_video",
+		id: id, reporterID: a.ReporterID, targetType: "remote_video",
 		remoteVideoID: a.RemoteVideoID, reason: a.Reason, status: "open", createdAt: time.Now(),
 	})
-	return 1, nil
+	return id, nil
 }
 
 func (f *moderationFakeRepo) BlockRemoteVideo(_ context.Context, a sqlcgen.BlockRemoteVideoParams) (int64, error) {
@@ -672,5 +679,172 @@ func TestDeleteReportAdminOnly(t *testing.T) {
 	}
 	if reason, _ := ev["reason"].(string); !strings.Contains(reason, id) {
 		t.Errorf("report delete audit reason = %v, want it to name report %s", ev["reason"], id)
+	}
+}
+
+// TestNewReportNotifiesStaff proves filing a report pushes a new_report
+// notification to every active admin and moderator — the moderation queue's
+// push signal — while the reporter and uninvolved regular users hear nothing,
+// and an idempotent repeat report does not double-notify.
+func TestNewReportNotifiesStaff(t *testing.T) {
+	srv := videoServer(t)
+	// The first registered account ("ada") becomes admin.
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
+	miaTok, miaID := registerAndUser(t, srv, `{"username":"mia","email":"mia@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+miaID, `{"role":"moderator"}`, admin); rec.Code != http.StatusOK {
+		t.Fatalf("promote mia = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	pat := registerAndToken(t, srv, `{"username":"pat","email":"pat@example.test","password":"supersecret"}`)
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"spam"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("report = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var open reportListResponse
+	_ = json.Unmarshal(listReports(srv, "?status=open", admin).Body.Bytes(), &open)
+	if len(open.Reports) != 1 {
+		t.Fatalf("open reports = %d, want 1", len(open.Reports))
+	}
+	reportID := open.Reports[0].ID
+
+	// Both staff members are told, with the report context and the reporter as
+	// the actor (staff see the reporter in the queue anyway).
+	for _, staff := range []struct{ name, token string }{{"admin", admin}, {"moderator", miaTok}} {
+		var body notificationListResponse
+		_ = json.Unmarshal(listNotifications(srv, staff.token).Body.Bytes(), &body)
+		if len(body.Notifications) != 1 {
+			t.Fatalf("%s notifications = %d, want 1", staff.name, len(body.Notifications))
+		}
+		n := body.Notifications[0]
+		if n.Type != "new_report" || n.ReportID != reportID || n.ReportStatus != "open" || n.ReportTargetType != "video" {
+			t.Errorf("%s notification = %+v, want new_report/%s/open/video", staff.name, n, reportID)
+		}
+		if n.Actor == nil || n.Actor.Username != "bob" {
+			t.Errorf("%s notification actor = %+v, want reporter bob", staff.name, n.Actor)
+		}
+	}
+	// Neither the reporter nor an uninvolved regular user hears anything.
+	for _, quiet := range []struct{ name, token string }{{"reporter", bob}, {"regular user", pat}} {
+		if got := unreadCount(t, srv, quiet.token); got != 0 {
+			t.Errorf("unread for %s = %d, want 0", quiet.name, got)
+		}
+	}
+
+	// Idempotent repeat: same reporter, same video → still 204, no second
+	// notification for anyone.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"spam again"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("repeat report = %d", rec.Code)
+	}
+	if got := unreadCount(t, srv, admin); got != 1 {
+		t.Errorf("admin unread after repeat report = %d, want 1", got)
+	}
+	if got := unreadCount(t, srv, miaTok); got != 1 {
+		t.Errorf("moderator unread after repeat report = %d, want 1", got)
+	}
+}
+
+// TestNewReportStaffFanOutEdgeCases: a staff reporter is not self-notified, a
+// staff member who turned the new_report type off hears nothing, and a failing
+// notification store never fails the report itself (best-effort side effect).
+func TestNewReportStaffFanOutEdgeCases(t *testing.T) {
+	srv, _, _, notifRepo := videoServerEnv(t, testConfig())
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
+	miaTok, miaID := registerAndUser(t, srv, `{"username":"mia","email":"mia@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+miaID, `{"role":"moderator"}`, admin); rec.Code != http.StatusOK {
+		t.Fatalf("promote mia = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// mia (staff) reports the video: the admin is told, mia is not.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"spam"}`, miaTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("staff report = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := unreadCount(t, srv, admin); got != 1 {
+		t.Errorf("admin unread = %d, want 1", got)
+	}
+	if got := unreadCount(t, srv, miaTok); got != 0 {
+		t.Errorf("reporting moderator unread = %d, want 0 (no self-notify)", got)
+	}
+
+	// The admin turns the new_report type off; the next report reaches only mia.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/me/notification-prefs", `{"prefs":{"new_report":false}}`, admin); rec.Code != http.StatusOK {
+		t.Fatalf("disable new_report pref = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"other"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("report = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := unreadCount(t, srv, admin); got != 1 {
+		t.Errorf("opted-out admin unread = %d, want still 1", got)
+	}
+	if got := unreadCount(t, srv, miaTok); got != 1 {
+		t.Errorf("moderator unread = %d, want 1", got)
+	}
+
+	// A failing notification store must never fail the report (best-effort).
+	notifRepo.createErr = errors.New("notification store down")
+	pat := registerAndToken(t, srv, `{"username":"pat","email":"pat@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"late"}`, pat); rec.Code != http.StatusNoContent {
+		t.Fatalf("report with failing notifier = %d, want 204 (best-effort)", rec.Code)
+	}
+	var open reportListResponse
+	_ = json.Unmarshal(listReports(srv, "?status=open", admin).Body.Bytes(), &open)
+	if len(open.Reports) != 3 {
+		t.Errorf("open reports = %d, want 3 (report persisted despite notify failure)", len(open.Reports))
+	}
+}
+
+// TestNewReportEmailsOperator proves a new report also emails the operator's
+// contact address (push, not pull) — once per report, never for an idempotent
+// repeat, and not when the report_email_alerts_enabled setting is off.
+func TestNewReportEmailsOperator(t *testing.T) {
+	cfg := testConfig()
+	cfg.InstanceContactEmail = "ops@example.test"
+	settingssvc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
+	if err := settingssvc.Load(context.Background()); err != nil {
+		t.Fatalf("settings load: %v", err)
+	}
+	capture := auth.NewCaptureMailer()
+	srv, _, _, _, _ := videoServerFullWith(t, cfg, []Option{WithSettingsService(settingssvc), WithContactMailer(capture)})
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"spam"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("report = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	alerts := capture.ReportAlerts()
+	if len(alerts) != 1 {
+		t.Fatalf("report alerts = %d, want 1", len(alerts))
+	}
+	if a := alerts[0]; a.To != "ops@example.test" || a.TargetType != "video" || a.Reason != "spam" {
+		t.Errorf("alert = %+v, want to=ops@example.test target=video reason=spam", a)
+	}
+
+	// Idempotent repeat: no second email.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"again"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("repeat report = %d", rec.Code)
+	}
+	if n := len(capture.ReportAlerts()); n != 1 {
+		t.Errorf("alerts after repeat = %d, want 1", n)
+	}
+
+	// The kill switch: report_email_alerts_enabled=false stops the email while
+	// the in-app staff notification path stays untouched.
+	if err := settingssvc.Apply(context.Background(), map[string]instancesettings.Update{
+		instancesettings.KeyReportEmailAlertsEnabled: {Value: instancesettings.FormatBool(false)},
+	}, uuid.Nil); err != nil {
+		t.Fatalf("disable report email alerts: %v", err)
+	}
+	pat := registerAndToken(t, srv, `{"username":"pat","email":"pat@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"other"}`, pat); rec.Code != http.StatusNoContent {
+		t.Fatalf("report with alerts off = %d", rec.Code)
+	}
+	if n := len(capture.ReportAlerts()); n != 1 {
+		t.Errorf("alerts after disabled setting = %d, want still 1", n)
+	}
+	if got := unreadCount(t, srv, admin); got != 2 {
+		t.Errorf("admin unread = %d, want 2 (in-app fan-out unaffected by the email switch)", got)
 	}
 }

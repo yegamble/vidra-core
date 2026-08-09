@@ -4,10 +4,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -150,16 +152,17 @@ func TestDMCompletenessQueries(t *testing.T) {
 		t.Fatalf("after tombstone: %+v", msgs[0])
 	}
 
-	// Message report with body snapshot; idempotent per (reporter, message).
-	if n, err := q.CreateMessageReport(ctx, sqlcgen.CreateMessageReportParams{
+	// Message report with body snapshot; idempotent per (reporter, message) —
+	// a new report returns its id, a repeat yields no row (pgx.ErrNoRows).
+	if id, err := q.CreateMessageReport(ctx, sqlcgen.CreateMessageReportParams{
 		ReporterID: bob, MessageID: pgUUIDVal(msg.ID), MessageBodySnapshot: "the original text", Reason: "abuse",
-	}); err != nil || n != 1 {
-		t.Fatalf("CreateMessageReport = %d (%v)", n, err)
+	}); err != nil || id == uuid.Nil {
+		t.Fatalf("CreateMessageReport = %s (%v), want a new report id", id, err)
 	}
-	if n, _ := q.CreateMessageReport(ctx, sqlcgen.CreateMessageReportParams{
+	if _, err := q.CreateMessageReport(ctx, sqlcgen.CreateMessageReportParams{
 		ReporterID: bob, MessageID: pgUUIDVal(msg.ID), MessageBodySnapshot: "again", Reason: "abuse",
-	}); n != 0 {
-		t.Errorf("duplicate message report inserted = %d, want 0", n)
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("duplicate message report err = %v, want pgx.ErrNoRows", err)
 	}
 	reports, err := q.ListReports(ctx, sqlcgen.ListReportsParams{ResultLimit: 20})
 	if err != nil {

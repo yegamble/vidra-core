@@ -48,10 +48,10 @@ var (
 // Repository is the data access the moderation service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
-	CreateVideoReport(ctx context.Context, arg sqlcgen.CreateVideoReportParams) (int64, error)
-	CreateCommentReport(ctx context.Context, arg sqlcgen.CreateCommentReportParams) (int64, error)
-	CreateAccountReport(ctx context.Context, arg sqlcgen.CreateAccountReportParams) (int64, error)
-	CreateMessageReport(ctx context.Context, arg sqlcgen.CreateMessageReportParams) (int64, error)
+	CreateVideoReport(ctx context.Context, arg sqlcgen.CreateVideoReportParams) (uuid.UUID, error)
+	CreateCommentReport(ctx context.Context, arg sqlcgen.CreateCommentReportParams) (uuid.UUID, error)
+	CreateAccountReport(ctx context.Context, arg sqlcgen.CreateAccountReportParams) (uuid.UUID, error)
+	CreateMessageReport(ctx context.Context, arg sqlcgen.CreateMessageReportParams) (uuid.UUID, error)
 	ListReports(ctx context.Context, arg sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error)
 	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (uuid.UUID, error)
 	DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
@@ -60,7 +60,7 @@ type Repository interface {
 	IsVideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, error)
 	ListBlockedVideos(ctx context.Context, arg sqlcgen.ListBlockedVideosParams) ([]sqlcgen.ListBlockedVideosRow, error)
 	// Remote-video moderation (remote-content §8).
-	CreateRemoteVideoReport(ctx context.Context, arg sqlcgen.CreateRemoteVideoReportParams) (int64, error)
+	CreateRemoteVideoReport(ctx context.Context, arg sqlcgen.CreateRemoteVideoReportParams) (uuid.UUID, error)
 	BlockRemoteVideo(ctx context.Context, arg sqlcgen.BlockRemoteVideoParams) (int64, error)
 	UnblockRemoteVideo(ctx context.Context, remoteVideoID uuid.UUID) (int64, error)
 	ListBlockedRemoteVideos(ctx context.Context, arg sqlcgen.ListBlockedRemoteVideosParams) ([]sqlcgen.ListBlockedRemoteVideosRow, error)
@@ -107,80 +107,93 @@ type Item struct {
 	MessageBody string
 }
 
+// newReportID normalises the Create*Report result for the Report* methods: a
+// genuinely new report returns its id, an idempotent repeat (ON CONFLICT DO
+// NOTHING → pgx.ErrNoRows) returns uuid.Nil with no error, so the caller fires
+// the staff fan-out only for new reports.
+func newReportID(id uuid.UUID, err error) (uuid.UUID, error) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, nil
+	}
+	return id, err
+}
+
 // ReportVideo records reporterID's report of a video (idempotent per
-// reporter+video). The caller confirms the video is reportable first.
-func (s *Service) ReportVideo(ctx context.Context, reporterID, videoID uuid.UUID, reason string) error {
-	_, err := s.repo.CreateVideoReport(ctx, sqlcgen.CreateVideoReportParams{
+// reporter+video). Returns the new report's id, or uuid.Nil when this reporter
+// already reported the video. The caller confirms the video is reportable
+// first.
+func (s *Service) ReportVideo(ctx context.Context, reporterID, videoID uuid.UUID, reason string) (uuid.UUID, error) {
+	return newReportID(s.repo.CreateVideoReport(ctx, sqlcgen.CreateVideoReportParams{
 		ReporterID: reporterID,
 		VideoID:    pgUUID(videoID),
 		Reason:     reason,
-	})
-	return err
+	}))
 }
 
 // ReportComment records reporterID's report of a comment (idempotent per
-// reporter+comment). An unknown comment → ErrInvalidTarget.
-func (s *Service) ReportComment(ctx context.Context, reporterID, commentID uuid.UUID, reason string) error {
-	_, err := s.repo.CreateCommentReport(ctx, sqlcgen.CreateCommentReportParams{
+// reporter+comment; uuid.Nil on a repeat). An unknown comment →
+// ErrInvalidTarget.
+func (s *Service) ReportComment(ctx context.Context, reporterID, commentID uuid.UUID, reason string) (uuid.UUID, error) {
+	id, err := newReportID(s.repo.CreateCommentReport(ctx, sqlcgen.CreateCommentReportParams{
 		ReporterID: reporterID,
 		CommentID:  pgUUID(commentID),
 		Reason:     reason,
-	})
+	}))
 	if isForeignKeyViolation(err) {
-		return ErrInvalidTarget
+		return uuid.Nil, ErrInvalidTarget
 	}
-	return err
+	return id, err
 }
 
 // ReportAccount records reporterID's report of another account (idempotent per
-// reporter+account). Reporting your own account → ErrCannotReportSelf; an unknown
-// target user → ErrInvalidTarget.
-func (s *Service) ReportAccount(ctx context.Context, reporterID, targetUserID uuid.UUID, reason string) error {
+// reporter+account; uuid.Nil on a repeat). Reporting your own account →
+// ErrCannotReportSelf; an unknown target user → ErrInvalidTarget.
+func (s *Service) ReportAccount(ctx context.Context, reporterID, targetUserID uuid.UUID, reason string) (uuid.UUID, error) {
 	if reporterID == targetUserID {
-		return ErrCannotReportSelf
+		return uuid.Nil, ErrCannotReportSelf
 	}
-	_, err := s.repo.CreateAccountReport(ctx, sqlcgen.CreateAccountReportParams{
+	id, err := newReportID(s.repo.CreateAccountReport(ctx, sqlcgen.CreateAccountReportParams{
 		ReporterID:     reporterID,
 		ReportedUserID: pgUUID(targetUserID),
 		Reason:         reason,
-	})
+	}))
 	if isForeignKeyViolation(err) {
-		return ErrInvalidTarget
+		return uuid.Nil, ErrInvalidTarget
 	}
-	return err
+	return id, err
 }
 
 // ReportRemoteVideo records reporterID's report of a federated remote video
-// (remote-content §8; idempotent per reporter+target). An unknown remote video
-// → ErrInvalidTarget.
-func (s *Service) ReportRemoteVideo(ctx context.Context, reporterID, remoteVideoID uuid.UUID, reason string) error {
-	_, err := s.repo.CreateRemoteVideoReport(ctx, sqlcgen.CreateRemoteVideoReportParams{
+// (remote-content §8; idempotent per reporter+target; uuid.Nil on a repeat).
+// An unknown remote video → ErrInvalidTarget.
+func (s *Service) ReportRemoteVideo(ctx context.Context, reporterID, remoteVideoID uuid.UUID, reason string) (uuid.UUID, error) {
+	id, err := newReportID(s.repo.CreateRemoteVideoReport(ctx, sqlcgen.CreateRemoteVideoReportParams{
 		ReporterID:    reporterID,
 		RemoteVideoID: pgUUID(remoteVideoID),
 		Reason:        reason,
-	})
+	}))
 	if isForeignKeyViolation(err) {
-		return ErrInvalidTarget
+		return uuid.Nil, ErrInvalidTarget
 	}
-	return err
+	return id, err
 }
 
 // ReportMessage records reporterID's report of a direct-message message
-// (product-decisions.md §14; idempotent per reporter+message). bodySnapshot is
-// the message body captured at report time so the moderator keeps context even
-// after a sender tombstone. The caller has confirmed the reporter is a
-// participant of the message's conversation.
-func (s *Service) ReportMessage(ctx context.Context, reporterID, messageID uuid.UUID, bodySnapshot, reason string) error {
-	_, err := s.repo.CreateMessageReport(ctx, sqlcgen.CreateMessageReportParams{
+// (product-decisions.md §14; idempotent per reporter+message; uuid.Nil on a
+// repeat). bodySnapshot is the message body captured at report time so the
+// moderator keeps context even after a sender tombstone. The caller has
+// confirmed the reporter is a participant of the message's conversation.
+func (s *Service) ReportMessage(ctx context.Context, reporterID, messageID uuid.UUID, bodySnapshot, reason string) (uuid.UUID, error) {
+	id, err := newReportID(s.repo.CreateMessageReport(ctx, sqlcgen.CreateMessageReportParams{
 		ReporterID:          reporterID,
 		MessageID:           pgUUID(messageID),
 		MessageBodySnapshot: bodySnapshot,
 		Reason:              reason,
-	})
+	}))
 	if isForeignKeyViolation(err) {
-		return ErrInvalidTarget
+		return uuid.Nil, ErrInvalidTarget
 	}
-	return err
+	return id, err
 }
 
 // List returns the moderation queue, newest first. When openOnly is true, only

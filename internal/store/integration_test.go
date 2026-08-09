@@ -12,11 +12,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -740,5 +742,193 @@ func TestNewVideoFanOutOnRealPG(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("comment notification %d blocked by the new_video dedup index: %v", i+1, err)
 		}
+	}
+}
+
+// TestNewReportStaffFanOutOnRealPG is the proof behind the "new abuse report"
+// staff fan-out (migration 0103). Every rule that decides WHO gets told lives
+// in the NotifyStaffOfNewReport statement rather than in Go, so the
+// service-level unit test can only prove pass-through — this is the test that
+// actually holds the rules. It seeds one staff member per rule and asserts the
+// notified set exactly: silent over-delivery (an opted-out, deactivated, or
+// deleted account being told, or a staff reporter told about their own filing)
+// is the failure that matters, and a subset assertion would never catch it.
+func TestNewReportStaffFanOutOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	// mkUser seeds a user with a role and registers its cleanup; the report and
+	// notification rows hang off users by ON DELETE CASCADE.
+	mkUser := func(name, role string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, 'x', $3) RETURNING id`,
+			name+"-"+suffix, name+"-"+suffix+"@example.test", role,
+		).Scan(&id); err != nil {
+			t.Fatalf("seed user %s: %v", name, err)
+		}
+		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+		return id
+	}
+
+	// One staff member per rule the statement enforces.
+	admin := mkUser("nrep-admin", "admin")              // active admin            → notified
+	moderator := mkUser("nrep-mod", "moderator")        // active moderator        → notified
+	plainUser := mkUser("nrep-user", "user")            // not staff               → not notified
+	inactiveAdmin := mkUser("nrep-inactive", "admin")   // deactivated             → not notified
+	deletedMod := mkUser("nrep-deleted", "moderator")   // account deleted         → not notified
+	prefOffAdmin := mkUser("nrep-prefoff", "admin")     // new_report turned off   → not notified
+	reporterMod := mkUser("nrep-reporter", "moderator") // filed the report        → not notified (self)
+
+	if _, err := st.Pool.Exec(ctx, `UPDATE users SET is_active = FALSE WHERE id = $1`, inactiveAdmin); err != nil {
+		t.Fatalf("deactivate admin: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx, `UPDATE users SET deleted_at = now() WHERE id = $1`, deletedMod); err != nil {
+		t.Fatalf("soft-delete moderator: %v", err)
+	}
+	if err := q.UpsertNotificationPref(ctx, sqlcgen.UpsertNotificationPrefParams{
+		UserID: prefOffAdmin, Type: "new_report", Enabled: false,
+	}); err != nil {
+		t.Fatalf("seed pref: %v", err)
+	}
+
+	// reporterMod (staff) reports plainUser's account.
+	reportID, err := q.CreateAccountReport(ctx, sqlcgen.CreateAccountReportParams{
+		ReporterID:     reporterMod,
+		ReportedUserID: pgtype.UUID{Bytes: plainUser, Valid: true},
+		Reason:         "seeded by TestNewReportStaffFanOutOnRealPG",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccountReport: %v", err)
+	}
+
+	notified, err := q.NotifyStaffOfNewReport(ctx, reportID)
+	if err != nil {
+		t.Fatalf("NotifyStaffOfNewReport: %v", err)
+	}
+	// The DB is shared with sibling integration tests, which may leave their
+	// own staff users behind — so assert a floor here, prove exact membership
+	// for the seeded fixture below, and prove the no-over-delivery rules with
+	// the eligibility join (which is exact regardless of leftover rows).
+	if notified < 2 {
+		t.Fatalf("notified = %d, want at least the 2 unobstructed seeded staff members", notified)
+	}
+
+	recipients := func() map[uuid.UUID]bool {
+		t.Helper()
+		rows, err := st.Pool.Query(ctx,
+			`SELECT user_id FROM notifications WHERE report_id = $1 AND type = 'new_report'`, reportID)
+		if err != nil {
+			t.Fatalf("read notifications: %v", err)
+		}
+		defer rows.Close()
+		got := map[uuid.UUID]bool{}
+		for rows.Next() {
+			var u uuid.UUID
+			if err := rows.Scan(&u); err != nil {
+				t.Fatalf("scan recipient: %v", err)
+			}
+			got[u] = true
+		}
+		return got
+	}
+
+	got := recipients()
+	for id, why := range map[uuid.UUID]string{
+		admin:     "is an active admin",
+		moderator: "is an active moderator",
+	} {
+		if !got[id] {
+			t.Errorf("did NOT notify a staff member who %s", why)
+		}
+	}
+	for _, excluded := range []struct {
+		id  uuid.UUID
+		why string
+	}{
+		{plainUser, "is not staff"},
+		{inactiveAdmin, "is deactivated"},
+		{deletedMod, "has a deleted account"},
+		{prefOffAdmin, "turned the new_report type off"},
+		{reporterMod, "filed the report themselves"},
+	} {
+		if got[excluded.id] {
+			t.Errorf("notified a user who %s", excluded.why)
+		}
+	}
+	// No over-delivery, exactly: every recipient row must join back to an
+	// eligible user (active, non-deleted staff, not the reporter, no opt-out).
+	// This holds regardless of what sibling tests left in the shared DB.
+	var violators int
+	if err := st.Pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM notifications n
+		JOIN users u ON u.id = n.user_id
+		WHERE n.report_id = $1 AND n.type = 'new_report'
+		  AND (u.role NOT IN ('admin', 'moderator')
+		       OR NOT u.is_active
+		       OR u.deleted_at IS NOT NULL
+		       OR u.id = $2
+		       OR EXISTS (
+		           SELECT 1 FROM notification_prefs np
+		           WHERE np.user_id = u.id AND np.type = 'new_report' AND np.enabled = FALSE
+		       ))`, reportID, reporterMod).Scan(&violators); err != nil {
+		t.Fatalf("count ineligible recipients: %v", err)
+	}
+	if violators != 0 {
+		t.Errorf("fan-out reached %d ineligible recipients, want 0", violators)
+	}
+
+	// The notification carries the reporter as actor and joins back to the
+	// report's status/target for display.
+	var actorID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`SELECT actor_id FROM notifications WHERE report_id = $1 AND user_id = $2`, reportID, admin,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("read actor: %v", err)
+	}
+	if actorID != reporterMod {
+		t.Errorf("actor = %s, want the reporter %s", actorID, reporterMod)
+	}
+
+	// A fan-out that fires twice for the same report must not double-notify —
+	// the partial unique index in 0103 makes that a database guarantee.
+	firstRoundRecipients := len(got)
+	again, err := q.NotifyStaffOfNewReport(ctx, reportID)
+	if err != nil {
+		t.Fatalf("second NotifyStaffOfNewReport: %v", err)
+	}
+	if again != 0 {
+		t.Fatalf("re-running the fan-out inserted %d rows, want 0", again)
+	}
+	if n := len(recipients()); n != firstRoundRecipients {
+		t.Fatalf("recipients after re-run = %d, want %d (unchanged)", n, firstRoundRecipients)
+	}
+
+	// An idempotent repeat report yields no row (pgx.ErrNoRows), so the caller
+	// never re-fires the fan-out for it.
+	if _, err := q.CreateAccountReport(ctx, sqlcgen.CreateAccountReportParams{
+		ReporterID:     reporterMod,
+		ReportedUserID: pgtype.UUID{Bytes: plainUser, Valid: true},
+		Reason:         "duplicate",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("duplicate CreateAccountReport err = %v, want pgx.ErrNoRows", err)
+	}
+
+	// The dedup index is scoped to type = 'new_report': the reporter's own
+	// report_resolved for the same (user, report) must still land later.
+	if _, err := q.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID: admin, Type: "report_resolved", ReportID: pgtype.UUID{Bytes: reportID, Valid: true},
+	}); err != nil {
+		t.Fatalf("report_resolved notification blocked by the new_report dedup index: %v", err)
 	}
 }

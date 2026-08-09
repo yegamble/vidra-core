@@ -13,10 +13,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createAccountReport = `-- name: CreateAccountReport :execrows
+const createAccountReport = `-- name: CreateAccountReport :one
 INSERT INTO reports (reporter_id, target_type, reported_user_id, reason)
 VALUES ($1, 'account', $2, $3)
 ON CONFLICT (reporter_id, reported_user_id) WHERE reported_user_id IS NOT NULL DO NOTHING
+RETURNING id
 `
 
 type CreateAccountReportParams struct {
@@ -25,21 +26,22 @@ type CreateAccountReportParams struct {
 	Reason         string      `json:"reason"`
 }
 
-// Report an account (idempotent per reporter+account). A non-existent target
-// user raises a foreign-key violation, which the service maps to "invalid
-// target". Self-reports are rejected in the service before insert.
-func (q *Queries) CreateAccountReport(ctx context.Context, arg CreateAccountReportParams) (int64, error) {
-	result, err := q.db.Exec(ctx, createAccountReport, arg.ReporterID, arg.ReportedUserID, arg.Reason)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// Report an account (idempotent per reporter+account; returns the new report's
+// id, no row on a repeat). A non-existent target user raises a foreign-key
+// violation, which the service maps to "invalid target". Self-reports are
+// rejected in the service before insert.
+func (q *Queries) CreateAccountReport(ctx context.Context, arg CreateAccountReportParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createAccountReport, arg.ReporterID, arg.ReportedUserID, arg.Reason)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
-const createCommentReport = `-- name: CreateCommentReport :execrows
+const createCommentReport = `-- name: CreateCommentReport :one
 INSERT INTO reports (reporter_id, target_type, comment_id, reason)
 VALUES ($1, 'comment', $2, $3)
 ON CONFLICT (reporter_id, comment_id) WHERE comment_id IS NOT NULL DO NOTHING
+RETURNING id
 `
 
 type CreateCommentReportParams struct {
@@ -48,20 +50,21 @@ type CreateCommentReportParams struct {
 	Reason     string      `json:"reason"`
 }
 
-// Report a comment (idempotent per reporter+comment). A non-existent comment
-// raises a foreign-key violation, which the service maps to "invalid target".
-func (q *Queries) CreateCommentReport(ctx context.Context, arg CreateCommentReportParams) (int64, error) {
-	result, err := q.db.Exec(ctx, createCommentReport, arg.ReporterID, arg.CommentID, arg.Reason)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// Report a comment (idempotent per reporter+comment; returns the new report's
+// id, no row on a repeat). A non-existent comment raises a foreign-key
+// violation, which the service maps to "invalid target".
+func (q *Queries) CreateCommentReport(ctx context.Context, arg CreateCommentReportParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createCommentReport, arg.ReporterID, arg.CommentID, arg.Reason)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
-const createMessageReport = `-- name: CreateMessageReport :execrows
+const createMessageReport = `-- name: CreateMessageReport :one
 INSERT INTO reports (reporter_id, target_type, message_id, message_body_snapshot, reason)
 VALUES ($1, 'message', $2, $3, $4)
 ON CONFLICT (reporter_id, message_id) WHERE message_id IS NOT NULL DO NOTHING
+RETURNING id
 `
 
 type CreateMessageReportParams struct {
@@ -72,26 +75,27 @@ type CreateMessageReportParams struct {
 }
 
 // Report a direct-message message (product-decisions.md §14; idempotent per
-// reporter+message). The body snapshot preserves the reported text for the
-// moderator even after the sender tombstones it. The caller has already verified
-// the reporter is a participant of the message's conversation.
-func (q *Queries) CreateMessageReport(ctx context.Context, arg CreateMessageReportParams) (int64, error) {
-	result, err := q.db.Exec(ctx, createMessageReport,
+// reporter+message; returns the new report's id, no row on a repeat). The body
+// snapshot preserves the reported text for the moderator even after the sender
+// tombstones it. The caller has already verified the reporter is a participant
+// of the message's conversation.
+func (q *Queries) CreateMessageReport(ctx context.Context, arg CreateMessageReportParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createMessageReport,
 		arg.ReporterID,
 		arg.MessageID,
 		arg.MessageBodySnapshot,
 		arg.Reason,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
-const createRemoteVideoReport = `-- name: CreateRemoteVideoReport :execrows
+const createRemoteVideoReport = `-- name: CreateRemoteVideoReport :one
 INSERT INTO reports (reporter_id, target_type, remote_video_id, reason)
 VALUES ($1, 'remote_video', $2, $3)
 ON CONFLICT (reporter_id, remote_video_id) WHERE remote_video_id IS NOT NULL DO NOTHING
+RETURNING id
 `
 
 type CreateRemoteVideoReportParams struct {
@@ -101,20 +105,21 @@ type CreateRemoteVideoReportParams struct {
 }
 
 // Report a federated remote video (remote-content §8; idempotent per
-// reporter+remote video). A non-existent target raises a foreign-key
-// violation, which the service maps to "invalid target".
-func (q *Queries) CreateRemoteVideoReport(ctx context.Context, arg CreateRemoteVideoReportParams) (int64, error) {
-	result, err := q.db.Exec(ctx, createRemoteVideoReport, arg.ReporterID, arg.RemoteVideoID, arg.Reason)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// reporter+remote video; returns the new report's id, no row on a repeat). A
+// non-existent target raises a foreign-key violation, which the service maps
+// to "invalid target".
+func (q *Queries) CreateRemoteVideoReport(ctx context.Context, arg CreateRemoteVideoReportParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createRemoteVideoReport, arg.ReporterID, arg.RemoteVideoID, arg.Reason)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
-const createVideoReport = `-- name: CreateVideoReport :execrows
+const createVideoReport = `-- name: CreateVideoReport :one
 INSERT INTO reports (reporter_id, target_type, video_id, reason)
 VALUES ($1, 'video', $2, $3)
 ON CONFLICT (reporter_id, video_id) WHERE video_id IS NOT NULL DO NOTHING
+RETURNING id
 `
 
 type CreateVideoReportParams struct {
@@ -123,14 +128,15 @@ type CreateVideoReportParams struct {
 	Reason     string      `json:"reason"`
 }
 
-// Report a video (idempotent per reporter+video). Returns rows inserted
-// (1 = new, 0 = already reported).
-func (q *Queries) CreateVideoReport(ctx context.Context, arg CreateVideoReportParams) (int64, error) {
-	result, err := q.db.Exec(ctx, createVideoReport, arg.ReporterID, arg.VideoID, arg.Reason)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// Report a video (idempotent per reporter+video). Returns the new report's id;
+// a repeat report by the same reporter inserts nothing and yields no row
+// (pgx.ErrNoRows), which the service maps to "already reported" so the staff
+// fan-out fires only for genuinely new reports.
+func (q *Queries) CreateVideoReport(ctx context.Context, arg CreateVideoReportParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createVideoReport, arg.ReporterID, arg.VideoID, arg.Reason)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const deleteReport = `-- name: DeleteReport :execrows

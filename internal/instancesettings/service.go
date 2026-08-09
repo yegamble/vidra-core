@@ -77,6 +77,7 @@ const (
 	KeyHardwareInfo             = "hardware_info"
 	KeyDefaultLanguage          = "default_language"
 	KeyContactFormEnabled       = "contact_form_enabled"
+	KeyReportEmailAlertsEnabled = "report_email_alerts_enabled"
 	KeyInstanceIsSensitive      = "instance_is_sensitive"
 	KeySensitiveContentPolicy   = "sensitive_content_policy"
 	KeyInstanceCategories       = "instance_categories"
@@ -556,6 +557,13 @@ var specs = []spec{
 	{key: KeyDefaultLanguage, kind: KindString, defString: hardcoded(DefaultDefaultLanguage), validate: validateLanguageID,
 		page: PageGeneral, section: "identity"},
 	{key: KeyContactFormEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageGeneral, section: "contact"},
+	// report_email_alerts_enabled gates the operator email sent when a user
+	// files an abuse report. Default ON: the email only ever goes out when an
+	// outbound mail path AND a contact email are configured, so a stock
+	// mail-less deploy sends nothing either way — but an operator who set up
+	// mail almost certainly wants to hear about reports without polling /admin.
+	{key: KeyReportEmailAlertsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
 		page: PageGeneral, section: "contact"},
 	{key: KeyInstanceIsSensitive, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageGeneral, section: "moderation"},
