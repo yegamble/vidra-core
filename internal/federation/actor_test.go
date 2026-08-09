@@ -19,8 +19,14 @@ func newActorRepo() fakeRepo {
 		usersByName: map[string]sqlcgen.GetUserActorByUsernameRow{
 			"ada": {ID: uid, Username: "ada", DisplayName: "Ada L.", Bio: "math"},
 		},
+		usersByID: map[uuid.UUID]sqlcgen.GetUserActorByIDRow{
+			uid: {ID: uid, Username: "ada", DisplayName: "Ada L.", Bio: "math"},
+		},
+		// The channel handle ("films") deliberately differs from the owner
+		// account username ("ada") so tests catch a Group actor that attributes
+		// itself to the channel handle instead of the owner account.
 		channels: map[string]sqlcgen.Channel{
-			"films": {ID: cid, Handle: "films", DisplayName: "Films", Description: "clips"},
+			"films": {ID: cid, OwnerID: uid, Handle: "films", DisplayName: "Films", Description: "clips"},
 		},
 		acctKeys: map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
 		chanKeys: map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
@@ -104,6 +110,61 @@ func TestChannelActorMints(t *testing.T) {
 	}
 	if actor.Type != "Group" || actor.ID != "https://videos.example/video-channels/films" {
 		t.Errorf("type/id = %q/%q", actor.Type, actor.ID)
+	}
+}
+
+// TestChannelActorAttributedToOwnerAccount is the interop fix (PeerTube 8.2):
+// PeerTube's sanitizeAndCheckActorObject rejects any Group whose attributedTo is
+// empty, then findOwner FETCHES each attributedTo entry and requires it to be a
+// same-host Person. The entry must point at the OWNER ACCOUNT's username
+// (/accounts/ada), NOT the channel handle (/video-channels/films) — they differ.
+func TestChannelActorAttributedToOwnerAccount(t *testing.T) {
+	svc := NewService(newActorRepo(), WithBaseURL("https://videos.example"))
+	actor, err := svc.ChannelActor(context.Background(), "films")
+	if err != nil {
+		t.Fatalf("ChannelActor: %v", err)
+	}
+	if len(actor.AttributedTo) != 1 {
+		t.Fatalf("attributedTo = %+v, want exactly one entry", actor.AttributedTo)
+	}
+	got := actor.AttributedTo[0]
+	if got.Type != "Person" {
+		t.Errorf("attributedTo[0].type = %q, want Person", got.Type)
+	}
+	if got.ID != "https://videos.example/accounts/ada" {
+		t.Errorf("attributedTo[0].id = %q, want the owner account URL /accounts/ada (not the channel handle)", got.ID)
+	}
+}
+
+// TestActorURLAndEndpoints asserts both actor types now carry url + the
+// endpoints.sharedInbox block (PeerTube parity), and that the Group-only
+// attributedTo never appears on a Person actor.
+func TestActorURLAndEndpoints(t *testing.T) {
+	svc := NewService(newActorRepo(), WithBaseURL("https://videos.example"))
+
+	person, err := svc.AccountActor(context.Background(), "ada")
+	if err != nil {
+		t.Fatalf("AccountActor: %v", err)
+	}
+	if person.URL != person.ID {
+		t.Errorf("person url = %q, want %q", person.URL, person.ID)
+	}
+	if person.Endpoints == nil || person.Endpoints.SharedInbox != person.ID+"/inbox" {
+		t.Errorf("person endpoints = %+v, want sharedInbox %q", person.Endpoints, person.ID+"/inbox")
+	}
+	if person.AttributedTo != nil {
+		t.Errorf("person attributedTo = %+v, want nil (attributedTo is Group-only)", person.AttributedTo)
+	}
+
+	group, err := svc.ChannelActor(context.Background(), "films")
+	if err != nil {
+		t.Fatalf("ChannelActor: %v", err)
+	}
+	if group.URL != group.ID {
+		t.Errorf("group url = %q, want %q", group.URL, group.ID)
+	}
+	if group.Endpoints == nil || group.Endpoints.SharedInbox != group.ID+"/inbox" {
+		t.Errorf("group endpoints = %+v, want sharedInbox %q", group.Endpoints, group.ID+"/inbox")
 	}
 }
 

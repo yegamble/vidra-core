@@ -36,17 +36,20 @@ var apContext = []string{
 // Actor is an ActivityPub actor document (Person for accounts, Group for
 // channels). Only public data — never the private key.
 type Actor struct {
-	Context           []string  `json:"@context"`
-	ID                string    `json:"id"`
-	Type              string    `json:"type"`
-	PreferredUsername string    `json:"preferredUsername"`
-	Name              string    `json:"name,omitempty"`
-	Summary           string    `json:"summary,omitempty"`
-	Inbox             string    `json:"inbox"`
-	Outbox            string    `json:"outbox"`
-	Followers         string    `json:"followers"`
-	Following         string    `json:"following"`
-	PublicKey         PublicKey `json:"publicKey"`
+	Context           []string         `json:"@context"`
+	ID                string           `json:"id"`
+	Type              string           `json:"type"`
+	PreferredUsername string           `json:"preferredUsername"`
+	Name              string           `json:"name,omitempty"`
+	Summary           string           `json:"summary,omitempty"`
+	URL               string           `json:"url,omitempty"`
+	Inbox             string           `json:"inbox"`
+	Outbox            string           `json:"outbox"`
+	Followers         string           `json:"followers"`
+	Following         string           `json:"following"`
+	Endpoints         *Endpoints       `json:"endpoints,omitempty"`
+	AttributedTo      []AttributedItem `json:"attributedTo,omitempty"`
+	PublicKey         PublicKey        `json:"publicKey"`
 }
 
 // PublicKey is the actor's HTTP-signature public key block.
@@ -54,6 +57,21 @@ type PublicKey struct {
 	ID           string `json:"id"`
 	Owner        string `json:"owner"`
 	PublicKeyPem string `json:"publicKeyPem"`
+}
+
+// Endpoints is the actor's shared-inbox endpoint block. PeerTube reads
+// endpoints.sharedInbox for fan-out delivery; we mirror it for parity.
+type Endpoints struct {
+	SharedInbox string `json:"sharedInbox,omitempty"`
+}
+
+// AttributedItem is one entry of a Group actor's attributedTo array: the owning
+// account. PeerTube's actor validator (sanitizeAndCheckActorObject) rejects a
+// Group whose attributedTo is empty, then findOwner fetches each entry and
+// requires it to be a same-host Person.
+type AttributedItem struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
 }
 
 // JRD is a WebFinger JSON Resource Descriptor (RFC 7033).
@@ -101,11 +119,30 @@ func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, erro
 	if err != nil {
 		return nil, err
 	}
+	// PeerTube's actor validator rejects a Group with an empty attributedTo, then
+	// findOwner FETCHES each entry and requires a same-host Person. Attribute the
+	// Group to its OWNER ACCOUNT (…/accounts/<owner-username>) — which can differ
+	// from the channel handle — whose Person actor is already served, validates,
+	// and is same-host.
+	owner, err := s.repo.GetUserActorByID(ctx, ch.OwnerID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
 	base := s.baseURL + "/video-channels/" + ch.Handle
-	return buildActor(base, "Group", ch.Handle, ch.DisplayName, ch.Description, pub), nil
+	actor := buildActor(base, "Group", ch.Handle, ch.DisplayName, ch.Description, pub)
+	actor.AttributedTo = []AttributedItem{{
+		Type: "Person",
+		ID:   s.baseURL + "/accounts/" + owner.Username,
+	}}
+	return actor, nil
 }
 
-// buildActor assembles an Actor from its base URL and public fields.
+// buildActor assembles an Actor from its base URL and public fields. url and the
+// endpoints.sharedInbox block are emitted for both Person and Group actors,
+// mirroring PeerTube's actor shape.
 func buildActor(base, typ, preferredUsername, name, summary, publicKeyPEM string) *Actor {
 	return &Actor{
 		Context:           apContext,
@@ -114,10 +151,12 @@ func buildActor(base, typ, preferredUsername, name, summary, publicKeyPEM string
 		PreferredUsername: preferredUsername,
 		Name:              name,
 		Summary:           summary,
+		URL:               base,
 		Inbox:             base + "/inbox",
 		Outbox:            base + "/outbox",
 		Followers:         base + "/followers",
 		Following:         base + "/following",
+		Endpoints:         &Endpoints{SharedInbox: base + "/inbox"},
 		PublicKey: PublicKey{
 			ID:           base + "#main-key",
 			Owner:        base,
