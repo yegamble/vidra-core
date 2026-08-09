@@ -87,6 +87,7 @@ type OAuthProvider struct {
 type OAuthRepository interface {
 	GetOAuthIdentity(ctx context.Context, arg sqlcgen.GetOAuthIdentityParams) (sqlcgen.OauthIdentity, error)
 	CreateOAuthIdentity(ctx context.Context, arg sqlcgen.CreateOAuthIdentityParams) (sqlcgen.OauthIdentity, error)
+	UpdateOAuthIdentityHandle(ctx context.Context, arg sqlcgen.UpdateOAuthIdentityHandleParams) error
 	ListOAuthIdentitiesByUser(ctx context.Context, userID uuid.UUID) ([]sqlcgen.OauthIdentity, error)
 	CountOAuthIdentitiesByUser(ctx context.Context, userID uuid.UUID) (int64, error)
 	DeleteOAuthIdentity(ctx context.Context, arg sqlcgen.DeleteOAuthIdentityParams) (int64, error)

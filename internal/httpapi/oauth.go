@@ -300,10 +300,13 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 }
 
 // oauthIdentityView is the public projection of a linked identity. The
-// provider subject is internal plumbing and is not exposed.
+// provider subject (the DID for ATProto) is internal plumbing and is not
+// exposed; the human-readable handle is, so the owner's settings UI can show
+// which Bluesky account is linked. Omitted for providers without a handle.
 type oauthIdentityView struct {
 	Provider  string    `json:"provider"`
 	Email     string    `json:"email"`
+	Handle    *string   `json:"handle,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -324,7 +327,7 @@ func (s *Server) handleListOAuthIdentities(c echo.Context) error {
 	}
 	out := make([]oauthIdentityView, 0, len(idents))
 	for _, id := range idents {
-		out = append(out, oauthIdentityView{Provider: id.Provider, Email: id.Email, CreatedAt: id.CreatedAt})
+		out = append(out, oauthIdentityView{Provider: id.Provider, Email: id.Email, Handle: id.Handle, CreatedAt: id.CreatedAt})
 	}
 	return c.JSON(http.StatusOK, oauthIdentitiesResponse{Identities: out})
 }

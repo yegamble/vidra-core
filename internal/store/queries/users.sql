@@ -1,16 +1,20 @@
 -- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
 FROM users
 WHERE id = $1;
 
 -- name: GetPublicUserProfileByUsername :one
 -- Private, inactive, and unknown accounts deliberately collapse to no rows so
--- the HTTP surface returns the same non-enumerating 404 for all three.
-SELECT id, username, display_name, bio, created_at, profile_public
-FROM users
-WHERE lower(username) = lower($1)
-  AND is_active = TRUE
-  AND profile_public = TRUE;
+-- the HTTP surface returns the same non-enumerating 404 for all three. The
+-- LEFT JOIN surfaces the account's linked ATProto (Bluesky) sign-in handle;
+-- show_bluesky gates whether the HTTP layer actually exposes bluesky_handle.
+SELECT u.id, u.username, u.display_name, u.bio, u.created_at, u.profile_public,
+       u.show_bluesky, oi.handle AS bluesky_handle
+FROM users u
+LEFT JOIN oauth_identities oi ON oi.user_id = u.id AND oi.provider = 'atproto'
+WHERE lower(u.username) = lower($1)
+  AND u.is_active = TRUE
+  AND u.profile_public = TRUE;
 
 -- name: GetUserActorByUsername :one
 -- Minimal, secret-free account fields for the ActivityPub Person actor. Only
@@ -27,7 +31,7 @@ FROM users
 WHERE id = $1 AND is_active = true;
 
 -- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
 FROM users
 WHERE lower(email) = lower($1);
 
@@ -36,7 +40,7 @@ WHERE lower(email) = lower($1);
 -- (deactivated accounts are treated as not found → the caller 404s, so an
 -- inactive account's existence is not leaked differently from an unknown one).
 -- Used to start a DM by username instead of by id.
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
 FROM users
 WHERE lower(username) = lower($1) AND is_active = true;
 
@@ -47,7 +51,7 @@ WHERE lower(username) = lower($1) AND is_active = true;
 -- is seeded from the new_user_history_enabled instance setting.
 INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy;
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky;
 
 -- name: CountUsers :one
 SELECT count(*) FROM users;
@@ -64,6 +68,9 @@ SET display_name = COALESCE(sqlc.narg('display_name'), display_name),
     search_history_enabled = COALESCE(sqlc.narg('search_history_enabled'), search_history_enabled),
     personalized_search_enabled = COALESCE(sqlc.narg('personalized_search_enabled'), personalized_search_enabled),
     personalized_recommendations_enabled = COALESCE(sqlc.narg('personalized_recommendations_enabled'), personalized_recommendations_enabled),
+    -- Per-user opt-in to display the linked Bluesky/ATProto handle on the public
+    -- profile (0102). Partial: a NULL arg leaves it unchanged. Default FALSE.
+    show_bluesky = COALESCE(sqlc.narg('show_bluesky'), show_bluesky),
     -- Per-user sensitive-content policy override (0100). Tri-state: unchanged
     -- unless set_sensitive_content_policy is true, in which case a NULL value
     -- clears the override (inherit the instance policy) and a non-NULL enum value
@@ -74,7 +81,7 @@ SET display_name = COALESCE(sqlc.narg('display_name'), display_name),
                                     ELSE sensitive_content_policy END,
     updated_at   = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy;
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky;
 
 -- name: DeactivateUser :exec
 UPDATE users
@@ -118,7 +125,7 @@ SET role       = COALESCE(sqlc.narg('role'), role),
                                ELSE storage_quota_bytes END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy;
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky;
 
 -- name: AnonymizeDeletedUser :execrows
 -- The §1 hard delete's final step: the users row is anonymised, NOT removed

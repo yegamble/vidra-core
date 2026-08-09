@@ -312,6 +312,8 @@ func (s *ATProtoOAuthService) Complete(ctx context.Context, st ATProtoState, cod
 // identity logs its account in; an unknown DID creates a fresh account. There is
 // no email-linking branch (ATProto login carries no verified email — unlike OIDC).
 func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATProtoState, did, userAgent string) (sqlcgen.User, Tokens, OAuthOutcome, error) {
+	handle := atprotoHandlePtr(st.Handle)
+
 	// Known identity → login.
 	if ident, err := s.repo.GetOAuthIdentity(ctx, sqlcgen.GetOAuthIdentityParams{Provider: atprotoProvider, Subject: did}); err == nil {
 		user, err := s.repo.GetUserByID(ctx, ident.UserID)
@@ -320,6 +322,14 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 		}
 		if !user.IsActive {
 			return sqlcgen.User{}, Tokens{}, "", ErrAccountDisabled
+		}
+		// Refresh the stored display handle: ATProto handles are mutable, so keep
+		// it current on every re-login. Display-only, so a failure here never
+		// blocks the session.
+		if handle != nil && (ident.Handle == nil || *ident.Handle != *handle) {
+			_ = s.repo.UpdateOAuthIdentityHandle(ctx, sqlcgen.UpdateOAuthIdentityHandleParams{
+				Provider: atprotoProvider, Subject: did, Handle: handle,
+			})
 		}
 		tokens, err := s.auth.issueTokens(ctx, user, userAgent)
 		if err != nil {
@@ -363,7 +373,7 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 	// Deliberately NOT SetUserEmailVerified: the synthetic address is unverifiable
 	// by design and the DID — not the email — is the account's identity.
 	if _, err := s.repo.CreateOAuthIdentity(ctx, sqlcgen.CreateOAuthIdentityParams{
-		Provider: atprotoProvider, Subject: did, UserID: user.ID, Email: "",
+		Provider: atprotoProvider, Subject: did, UserID: user.ID, Email: "", Handle: handle,
 	}); err != nil {
 		if isUniqueViolation(err) {
 			return sqlcgen.User{}, Tokens{}, "", ErrConflict
@@ -389,6 +399,17 @@ func mapResolveError(err error) error {
 	default:
 		return ErrATProtoResolution
 	}
+}
+
+// atprotoHandlePtr trims a resolved ATProto handle and returns it as a pointer
+// for the nullable oauth_identities.handle column, or nil when empty (so a
+// missing handle stays NULL rather than an empty string).
+func atprotoHandlePtr(handle string) *string {
+	h := strings.TrimSpace(handle)
+	if h == "" {
+		return nil
+	}
+	return &h
 }
 
 // scopeHasAtproto reports whether a space-delimited OAuth scope grants atproto.

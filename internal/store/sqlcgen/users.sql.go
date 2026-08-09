@@ -24,7 +24,7 @@ SET role       = COALESCE($1, role),
                                ELSE storage_quota_bytes END,
     updated_at = now()
 WHERE id = $7
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
 `
 
 type AdminUpdateUserParams struct {
@@ -76,6 +76,7 @@ func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
+		&i.ShowBluesky,
 	)
 	return i, err
 }
@@ -129,7 +130,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
 `
 
 type CreateUserParams struct {
@@ -178,6 +179,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
+		&i.ShowBluesky,
 	)
 	return i, err
 }
@@ -195,11 +197,13 @@ func (q *Queries) DeactivateUser(ctx context.Context, id uuid.UUID) error {
 }
 
 const getPublicUserProfileByUsername = `-- name: GetPublicUserProfileByUsername :one
-SELECT id, username, display_name, bio, created_at, profile_public
-FROM users
-WHERE lower(username) = lower($1)
-  AND is_active = TRUE
-  AND profile_public = TRUE
+SELECT u.id, u.username, u.display_name, u.bio, u.created_at, u.profile_public,
+       u.show_bluesky, oi.handle AS bluesky_handle
+FROM users u
+LEFT JOIN oauth_identities oi ON oi.user_id = u.id AND oi.provider = 'atproto'
+WHERE lower(u.username) = lower($1)
+  AND u.is_active = TRUE
+  AND u.profile_public = TRUE
 `
 
 type GetPublicUserProfileByUsernameRow struct {
@@ -209,10 +213,14 @@ type GetPublicUserProfileByUsernameRow struct {
 	Bio           string    `json:"bio"`
 	CreatedAt     time.Time `json:"created_at"`
 	ProfilePublic bool      `json:"profile_public"`
+	ShowBluesky   bool      `json:"show_bluesky"`
+	BlueskyHandle *string   `json:"bluesky_handle"`
 }
 
 // Private, inactive, and unknown accounts deliberately collapse to no rows so
-// the HTTP surface returns the same non-enumerating 404 for all three.
+// the HTTP surface returns the same non-enumerating 404 for all three. The
+// LEFT JOIN surfaces the account's linked ATProto (Bluesky) sign-in handle;
+// show_bluesky gates whether the HTTP layer actually exposes bluesky_handle.
 func (q *Queries) GetPublicUserProfileByUsername(ctx context.Context, lower string) (GetPublicUserProfileByUsernameRow, error) {
 	row := q.db.QueryRow(ctx, getPublicUserProfileByUsername, lower)
 	var i GetPublicUserProfileByUsernameRow
@@ -223,6 +231,8 @@ func (q *Queries) GetPublicUserProfileByUsername(ctx context.Context, lower stri
 		&i.Bio,
 		&i.CreatedAt,
 		&i.ProfilePublic,
+		&i.ShowBluesky,
+		&i.BlueskyHandle,
 	)
 	return i, err
 }
@@ -286,7 +296,7 @@ func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (Get
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -317,12 +327,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
+		&i.ShowBluesky,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
 FROM users
 WHERE id = $1
 `
@@ -353,12 +364,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
+		&i.ShowBluesky,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
 FROM users
 WHERE lower(username) = lower($1) AND is_active = true
 `
@@ -393,6 +405,7 @@ func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, er
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
+		&i.ShowBluesky,
 	)
 	return i, err
 }
@@ -498,17 +511,20 @@ SET display_name = COALESCE($1, display_name),
     search_history_enabled = COALESCE($6, search_history_enabled),
     personalized_search_enabled = COALESCE($7, personalized_search_enabled),
     personalized_recommendations_enabled = COALESCE($8, personalized_recommendations_enabled),
+    -- Per-user opt-in to display the linked Bluesky/ATProto handle on the public
+    -- profile (0102). Partial: a NULL arg leaves it unchanged. Default FALSE.
+    show_bluesky = COALESCE($9, show_bluesky),
     -- Per-user sensitive-content policy override (0100). Tri-state: unchanged
     -- unless set_sensitive_content_policy is true, in which case a NULL value
     -- clears the override (inherit the instance policy) and a non-NULL enum value
     -- sets it — COALESCE cannot express "set to NULL", so it uses the same CASE
     -- guard AdminUpdateUser uses for the tri-state quota.
-    sensitive_content_policy = CASE WHEN $9::bool
-                                    THEN $10
+    sensitive_content_policy = CASE WHEN $10::bool
+                                    THEN $11
                                     ELSE sensitive_content_policy END,
     updated_at   = now()
-WHERE id = $11
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy
+WHERE id = $12
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
 `
 
 type UpdateUserProfileParams struct {
@@ -520,6 +536,7 @@ type UpdateUserProfileParams struct {
 	SearchHistoryEnabled               *bool     `json:"search_history_enabled"`
 	PersonalizedSearchEnabled          *bool     `json:"personalized_search_enabled"`
 	PersonalizedRecommendationsEnabled *bool     `json:"personalized_recommendations_enabled"`
+	ShowBluesky                        *bool     `json:"show_bluesky"`
 	SetSensitiveContentPolicy          bool      `json:"set_sensitive_content_policy"`
 	SensitiveContentPolicy             *string   `json:"sensitive_content_policy"`
 	ID                                 uuid.UUID `json:"id"`
@@ -535,6 +552,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		arg.SearchHistoryEnabled,
 		arg.PersonalizedSearchEnabled,
 		arg.PersonalizedRecommendationsEnabled,
+		arg.ShowBluesky,
 		arg.SetSensitiveContentPolicy,
 		arg.SensitiveContentPolicy,
 		arg.ID,
@@ -563,6 +581,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.PersonalizedSearchEnabled,
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
+		&i.ShowBluesky,
 	)
 	return i, err
 }

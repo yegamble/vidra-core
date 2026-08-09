@@ -506,6 +506,7 @@ type OauthIdentity struct {
 	UserID    uuid.UUID `json:"user_id"`
 	Email     string    `json:"email"`
 	CreatedAt time.Time `json:"created_at"`
+	Handle    *string   `json:"handle"`
 }
 
 type PasswordResetToken struct {
@@ -789,6 +790,7 @@ type User struct {
 	PersonalizedSearchEnabled          bool               `json:"personalized_search_enabled"`
 	PersonalizedRecommendationsEnabled bool               `json:"personalized_recommendations_enabled"`
 	SensitiveContentPolicy             *string            `json:"sensitive_content_policy"`
+	ShowBluesky                        bool               `json:"show_bluesky"`
 }
 
 type UserBlock struct {

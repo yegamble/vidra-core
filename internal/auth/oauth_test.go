@@ -45,10 +45,19 @@ func (f *oauthFakeRepo) CreateOAuthIdentity(_ context.Context, a sqlcgen.CreateO
 	}
 	id := sqlcgen.OauthIdentity{
 		ID: uuid.New(), Provider: a.Provider, Subject: a.Subject,
-		UserID: a.UserID, Email: a.Email, CreatedAt: time.Now(),
+		UserID: a.UserID, Email: a.Email, Handle: a.Handle, CreatedAt: time.Now(),
 	}
 	f.identities[identKey(a.Provider, a.Subject)] = id
 	return id, nil
+}
+
+func (f *oauthFakeRepo) UpdateOAuthIdentityHandle(_ context.Context, a sqlcgen.UpdateOAuthIdentityHandleParams) error {
+	key := identKey(a.Provider, a.Subject)
+	if id, ok := f.identities[key]; ok {
+		id.Handle = a.Handle
+		f.identities[key] = id
+	}
+	return nil
 }
 
 func (f *oauthFakeRepo) ListOAuthIdentitiesByUser(_ context.Context, userID uuid.UUID) ([]sqlcgen.OauthIdentity, error) {
