@@ -52,7 +52,7 @@ func (f fakeFedRepo) GetUserActorByUsername(_ context.Context, name string) (sql
 
 func (f fakeFedRepo) GetChannelByHandle(_ context.Context, handle string) (sqlcgen.Channel, error) {
 	if strings.EqualFold(handle, "films") {
-		return sqlcgen.Channel{ID: f.channelID, Handle: "films", DisplayName: "Films", ActivitypubEnabled: true}, nil
+		return sqlcgen.Channel{ID: f.channelID, OwnerID: f.userID, Handle: "films", DisplayName: "Films", ActivitypubEnabled: true}, nil
 	}
 	return sqlcgen.Channel{}, pgx.ErrNoRows
 }
@@ -166,9 +166,12 @@ func (fakeFedRepo) SetRemoteVideoThumbnail(context.Context, sqlcgen.SetRemoteVid
 }
 func (fakeFedRepo) IsInstanceBlocked(context.Context, string) (bool, error) { return false, nil }
 
-// Remote-channel follow stubs: the federation handler suite doesn't exercise
-// follows (see remote_follows_test.go, whose fake overrides these).
-func (fakeFedRepo) GetUserActorByID(context.Context, uuid.UUID) (sqlcgen.GetUserActorByIDRow, error) {
+// GetUserActorByID resolves ada — the owner of the "films" channel — so the
+// served Group actor can attribute itself to the owner account (PeerTube interop).
+func (f fakeFedRepo) GetUserActorByID(_ context.Context, id uuid.UUID) (sqlcgen.GetUserActorByIDRow, error) {
+	if id == f.userID {
+		return sqlcgen.GetUserActorByIDRow{ID: f.userID, Username: "ada", DisplayName: "Ada"}, nil
+	}
 	return sqlcgen.GetUserActorByIDRow{}, pgx.ErrNoRows
 }
 func (fakeFedRepo) UpsertRemoteChannelFollow(context.Context, sqlcgen.UpsertRemoteChannelFollowParams) (sqlcgen.RemoteChannelFollow, error) {

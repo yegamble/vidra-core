@@ -3,6 +3,9 @@
     "https://www.w3.org/ns/activitystreams",
     "https://w3id.org/security/v1"
   ],
+  "endpoints": {
+    "sharedInbox": "https://videos.example/accounts/ada/inbox"
+  },
   "followers": "https://videos.example/accounts/ada/followers",
   "following": "https://videos.example/accounts/ada/following",
   "id": "https://videos.example/accounts/ada",
@@ -16,5 +19,6 @@
     "publicKeyPem": "\u003cpublic-key-pem\u003e"
   },
   "summary": "Field recordings.",
-  "type": "Person"
+  "type": "Person",
+  "url": "https://videos.example/accounts/ada"
 }
