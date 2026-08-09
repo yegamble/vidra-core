@@ -469,6 +469,9 @@ type ProfileInput struct {
 	HistoryEnabled *bool
 	// ProfilePublic controls whether GET /users/{username}/profile exists.
 	ProfilePublic *bool
+	// ShowBluesky toggles displaying the account's linked Bluesky/ATProto handle
+	// on its public profile (0102). nil leaves it unchanged; default false.
+	ShowBluesky *bool
 	// Search & recommendation preferences (search-service W4): the user half of
 	// the two-factor personalization gate. nil leaves each unchanged.
 	SearchHistoryEnabled               *bool
@@ -501,6 +504,7 @@ func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in ProfileInp
 		Unlisted:                           in.Unlisted,
 		HistoryEnabled:                     in.HistoryEnabled,
 		ProfilePublic:                      in.ProfilePublic,
+		ShowBluesky:                        in.ShowBluesky,
 		SearchHistoryEnabled:               in.SearchHistoryEnabled,
 		PersonalizedSearchEnabled:          in.PersonalizedSearchEnabled,
 		PersonalizedRecommendationsEnabled: in.PersonalizedRecommendationsEnabled,

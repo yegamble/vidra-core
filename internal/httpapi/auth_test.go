@@ -248,6 +248,7 @@ func (f *authFakeRepo) GetPublicUserProfileByUsername(_ context.Context, usernam
 			return sqlcgen.GetPublicUserProfileByUsernameRow{
 				ID: u.ID, Username: u.Username, DisplayName: u.DisplayName,
 				Bio: u.Bio, CreatedAt: u.CreatedAt, ProfilePublic: true,
+				ShowBluesky: u.ShowBluesky,
 			}, nil
 		}
 	}
@@ -339,6 +340,9 @@ func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUser
 			}
 			if a.ProfilePublic != nil {
 				u.ProfilePublic = *a.ProfilePublic
+			}
+			if a.ShowBluesky != nil {
+				u.ShowBluesky = *a.ShowBluesky
 			}
 			if a.SearchHistoryEnabled != nil {
 				u.SearchHistoryEnabled = *a.SearchHistoryEnabled

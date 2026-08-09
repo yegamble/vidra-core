@@ -178,10 +178,35 @@ func (f *oauthHTTPFakeRepo) CreateOAuthIdentity(_ context.Context, a sqlcgen.Cre
 	}
 	id := sqlcgen.OauthIdentity{
 		ID: uuid.New(), Provider: a.Provider, Subject: a.Subject,
-		UserID: a.UserID, Email: a.Email, CreatedAt: time.Now(),
+		UserID: a.UserID, Email: a.Email, Handle: a.Handle, CreatedAt: time.Now(),
 	}
 	f.identities[key] = id
 	return id, nil
+}
+
+func (f *oauthHTTPFakeRepo) UpdateOAuthIdentityHandle(_ context.Context, a sqlcgen.UpdateOAuthIdentityHandleParams) error {
+	key := a.Provider + "\x00" + a.Subject
+	if id, ok := f.identities[key]; ok {
+		id.Handle = a.Handle
+		f.identities[key] = id
+	}
+	return nil
+}
+
+// GetPublicUserProfileByUsername mirrors the real LEFT JOIN oauth_identities on
+// provider='atproto' so the fake surfaces the linked Bluesky handle the same way.
+func (f *oauthHTTPFakeRepo) GetPublicUserProfileByUsername(ctx context.Context, username string) (sqlcgen.GetPublicUserProfileByUsernameRow, error) {
+	row, err := f.authFakeRepo.GetPublicUserProfileByUsername(ctx, username)
+	if err != nil {
+		return row, err
+	}
+	for _, id := range f.identities {
+		if id.UserID == row.ID && id.Provider == "atproto" {
+			row.BlueskyHandle = id.Handle
+			break
+		}
+	}
+	return row, nil
 }
 
 func (f *oauthHTTPFakeRepo) ListOAuthIdentitiesByUser(_ context.Context, userID uuid.UUID) ([]sqlcgen.OauthIdentity, error) {

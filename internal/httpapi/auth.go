@@ -183,6 +183,9 @@ type userView struct {
 	PersonalizedRecommendationsEnabled bool `json:"personalized_recommendations_enabled"`
 	// ProfilePublic is an explicit opt-in. A false profile returns 404 publicly.
 	ProfilePublic bool `json:"profile_public"`
+	// ShowBluesky is the per-user opt-in to display the linked Bluesky/ATProto
+	// handle on the public profile (0102). Default false.
+	ShowBluesky bool `json:"show_bluesky"`
 	// SensitiveContentPolicy is the per-user sensitive-content policy override
 	// (0100). Omitted when the user inherits the instance policy (column NULL);
 	// otherwise one of hide|warn|blur|display.
@@ -209,6 +212,7 @@ func newUserView(u sqlcgen.User) userView {
 		PersonalizedSearchEnabled:          u.PersonalizedSearchEnabled,
 		PersonalizedRecommendationsEnabled: u.PersonalizedRecommendationsEnabled,
 		ProfilePublic:                      u.ProfilePublic,
+		ShowBluesky:                        u.ShowBluesky,
 		SensitiveContentPolicy:             u.SensitiveContentPolicy,
 		CreatedAt:                          u.CreatedAt,
 	}
@@ -352,6 +356,9 @@ type updateProfileRequest struct {
 	// HistoryEnabled toggles the per-user watch-history preference (W7).
 	HistoryEnabled *bool `json:"history_enabled"`
 	ProfilePublic  *bool `json:"profile_public"`
+	// ShowBluesky toggles displaying the linked Bluesky/ATProto handle on the
+	// public profile (0102). Default false.
+	ShowBluesky *bool `json:"show_bluesky"`
 	// Search & recommendation preferences (search-service W4).
 	SearchHistoryEnabled               *bool `json:"search_history_enabled"`
 	PersonalizedSearchEnabled          *bool `json:"personalized_search_enabled"`
@@ -365,6 +372,7 @@ type updateProfileRequest struct {
 func (r updateProfileRequest) Validate() []FieldError {
 	var fes []FieldError
 	if r.DisplayName == nil && r.Bio == nil && r.Unlisted == nil && r.HistoryEnabled == nil && r.ProfilePublic == nil &&
+		r.ShowBluesky == nil &&
 		r.SearchHistoryEnabled == nil && r.PersonalizedSearchEnabled == nil && r.PersonalizedRecommendationsEnabled == nil &&
 		r.SensitiveContentPolicy == nil {
 		return []FieldError{{Field: "display_name", Message: "at least one profile field is required"}}
@@ -401,6 +409,7 @@ func (s *Server) handleUpdateMe(c echo.Context) error {
 		Unlisted:                           in.Unlisted,
 		HistoryEnabled:                     in.HistoryEnabled,
 		ProfilePublic:                      in.ProfilePublic,
+		ShowBluesky:                        in.ShowBluesky,
 		SearchHistoryEnabled:               in.SearchHistoryEnabled,
 		PersonalizedSearchEnabled:          in.PersonalizedSearchEnabled,
 		PersonalizedRecommendationsEnabled: in.PersonalizedRecommendationsEnabled,

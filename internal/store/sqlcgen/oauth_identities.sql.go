@@ -23,9 +23,9 @@ func (q *Queries) CountOAuthIdentitiesByUser(ctx context.Context, userID uuid.UU
 }
 
 const createOAuthIdentity = `-- name: CreateOAuthIdentity :one
-INSERT INTO oauth_identities (provider, subject, user_id, email)
-VALUES ($1, $2, $3, $4)
-RETURNING id, provider, subject, user_id, email, created_at
+INSERT INTO oauth_identities (provider, subject, user_id, email, handle)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, provider, subject, user_id, email, created_at, handle
 `
 
 type CreateOAuthIdentityParams struct {
@@ -33,14 +33,17 @@ type CreateOAuthIdentityParams struct {
 	Subject  string    `json:"subject"`
 	UserID   uuid.UUID `json:"user_id"`
 	Email    string    `json:"email"`
+	Handle   *string   `json:"handle"`
 }
 
+// handle is the display-only remote handle (ATProto sign-in); NULL for OIDC.
 func (q *Queries) CreateOAuthIdentity(ctx context.Context, arg CreateOAuthIdentityParams) (OauthIdentity, error) {
 	row := q.db.QueryRow(ctx, createOAuthIdentity,
 		arg.Provider,
 		arg.Subject,
 		arg.UserID,
 		arg.Email,
+		arg.Handle,
 	)
 	var i OauthIdentity
 	err := row.Scan(
@@ -50,6 +53,7 @@ func (q *Queries) CreateOAuthIdentity(ctx context.Context, arg CreateOAuthIdenti
 		&i.UserID,
 		&i.Email,
 		&i.CreatedAt,
+		&i.Handle,
 	)
 	return i, err
 }
@@ -75,7 +79,7 @@ func (q *Queries) DeleteOAuthIdentity(ctx context.Context, arg DeleteOAuthIdenti
 }
 
 const getOAuthIdentity = `-- name: GetOAuthIdentity :one
-SELECT id, provider, subject, user_id, email, created_at
+SELECT id, provider, subject, user_id, email, created_at, handle
 FROM oauth_identities
 WHERE provider = $1 AND subject = $2
 `
@@ -97,12 +101,13 @@ func (q *Queries) GetOAuthIdentity(ctx context.Context, arg GetOAuthIdentityPara
 		&i.UserID,
 		&i.Email,
 		&i.CreatedAt,
+		&i.Handle,
 	)
 	return i, err
 }
 
 const listOAuthIdentitiesByUser = `-- name: ListOAuthIdentitiesByUser :many
-SELECT id, provider, subject, user_id, email, created_at
+SELECT id, provider, subject, user_id, email, created_at, handle
 FROM oauth_identities
 WHERE user_id = $1
 ORDER BY created_at ASC, id ASC
@@ -125,6 +130,7 @@ func (q *Queries) ListOAuthIdentitiesByUser(ctx context.Context, userID uuid.UUI
 			&i.UserID,
 			&i.Email,
 			&i.CreatedAt,
+			&i.Handle,
 		); err != nil {
 			return nil, err
 		}
@@ -134,6 +140,26 @@ func (q *Queries) ListOAuthIdentitiesByUser(ctx context.Context, userID uuid.UUI
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateOAuthIdentityHandle = `-- name: UpdateOAuthIdentityHandle :exec
+UPDATE oauth_identities
+SET handle = $3
+WHERE provider = $1 AND subject = $2
+`
+
+type UpdateOAuthIdentityHandleParams struct {
+	Provider string  `json:"provider"`
+	Subject  string  `json:"subject"`
+	Handle   *string `json:"handle"`
+}
+
+// Refresh the stored display handle for a link. Remote handles are mutable, so
+// an ATProto re-login re-resolves and rewrites it. Keyed by the stable
+// (provider, subject) identity; a no-op if the link is absent.
+func (q *Queries) UpdateOAuthIdentityHandle(ctx context.Context, arg UpdateOAuthIdentityHandleParams) error {
+	_, err := q.db.Exec(ctx, updateOAuthIdentityHandle, arg.Provider, arg.Subject, arg.Handle)
+	return err
 }
 
 const usernameExists = `-- name: UsernameExists :one

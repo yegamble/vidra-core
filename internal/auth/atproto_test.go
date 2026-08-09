@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/atproto"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // fakeATProtoFlow fakes the whole ATProto protocol so the login service is tested
@@ -149,6 +150,45 @@ func TestATProtoCompleteCreatesThenLogsIn(t *testing.T) {
 	}
 	if n, _ := repo.CountUsers(ctx); n != 1 {
 		t.Errorf("users = %d, want 1 (login must not duplicate)", n)
+	}
+}
+
+// TestATProtoCompleteCapturesAndRefreshesHandle proves the resolved handle is
+// persisted on the oauth_identities link at creation time and refreshed on a
+// later re-login (remote handles are mutable). The DID stays the identity key.
+func TestATProtoCompleteCapturesAndRefreshesHandle(t *testing.T) {
+	repo := newOAuthFakeRepo()
+	flow := defaultFlow()
+	s := newATProtoTestService(repo, flow, true)
+	ctx := context.Background()
+
+	_, st, err := s.Begin(ctx, "alice.example", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, outcome, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); err != nil || outcome != OAuthCreated {
+		t.Fatalf("create: outcome=%v err=%v", outcome, err)
+	}
+	ident, err := repo.GetOAuthIdentity(ctx, sqlcgen.GetOAuthIdentityParams{Provider: "atproto", Subject: "did:plc:alice"})
+	if err != nil {
+		t.Fatalf("identity not stored: %v", err)
+	}
+	if ident.Handle == nil || *ident.Handle != "alice.example" {
+		t.Fatalf("handle captured at link = %v, want alice.example", ident.Handle)
+	}
+
+	// The handle moved upstream; a re-login (same DID) must refresh the stored copy.
+	flow.identity.Handle = "alice.moved.example"
+	_, st2, err := s.Begin(ctx, "alice.moved.example", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, outcome, err := s.Complete(ctx, st2, "code2", st2.Issuer, "ua"); err != nil || outcome != OAuthLogin {
+		t.Fatalf("re-login: outcome=%v err=%v", outcome, err)
+	}
+	ident2, _ := repo.GetOAuthIdentity(ctx, sqlcgen.GetOAuthIdentityParams{Provider: "atproto", Subject: "did:plc:alice"})
+	if ident2.Handle == nil || *ident2.Handle != "alice.moved.example" {
+		t.Fatalf("handle after re-login = %v, want alice.moved.example (refreshed)", ident2.Handle)
 	}
 }
 
