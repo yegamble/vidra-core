@@ -117,10 +117,14 @@ jobs:
           # All three are derived from the resolved tag and the commit it points
           # at, so a release and a workflow_dispatch re-publish of that same tag
           # produce identical images.
+          # YTDLP_VERSION bakes a pinned yt-dlp (+python3) into the release image
+          # (Dockerfile's opt-in ARG). Runtime use is still gated separately by
+          # YTDLP_IMPORT_ENABLED. Bump the pin deliberately; never use "latest".
           build-args: |
             VERSION=${{ steps.tag.outputs.tag }}
             COMMIT=${{ steps.buildinfo.outputs.commit }}
             BUILD_DATE=${{ steps.buildinfo.outputs.date }}
+            YTDLP_VERSION=2026.07.04
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
