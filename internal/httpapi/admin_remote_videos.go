@@ -34,12 +34,14 @@ func (s *Server) handleReportRemoteVideo(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	if err := s.moderationsvc.ReportRemoteVideo(c.Request().Context(), userID, remoteVideoID, strings.TrimSpace(in.Reason)); err != nil {
+	reportID, err := s.moderationsvc.ReportRemoteVideo(c.Request().Context(), userID, remoteVideoID, strings.TrimSpace(in.Reason))
+	if err != nil {
 		if errors.Is(err, moderation.ErrInvalidTarget) {
 			return echo.NewHTTPError(http.StatusNotFound, "remote video not found")
 		}
 		return err
 	}
+	s.notifyStaffOfReport(c, reportID, moderation.TargetRemoteVideo, strings.TrimSpace(in.Reason))
 	return c.NoContent(http.StatusNoContent)
 }
 

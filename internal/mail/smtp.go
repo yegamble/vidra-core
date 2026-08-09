@@ -121,6 +121,22 @@ func (s *SMTP) SendContactForm(ctx context.Context, to, fromName, fromEmail, sub
 	return s.send(ctx, to, fromEmail, subj, msg)
 }
 
+// SendNewReportAlert tells the operator a user filed an abuse report — the
+// push half of the moderation queue (the in-app staff notification is the
+// other half). targetType names what was reported; the reporter's identity is
+// deliberately NOT included (it lives in the queue, and this message may
+// transit third-party relays). The reason is the reporter's free text and
+// rides in the body only, never in a header.
+func (s *SMTP) SendNewReportAlert(ctx context.Context, to, targetType, reason, queueURL string) error {
+	subj := "[" + s.cfg.InstanceName + "] New " + sanitizeHeader(targetType) + " report"
+	msg := "A new " + targetType + " abuse report was filed on " + s.cfg.InstanceName + ".\n\n" +
+		"Reason: " + reason + "\n"
+	if queueURL != "" {
+		msg += "\nReview it in the moderation queue: " + queueURL + "\n"
+	}
+	return s.send(ctx, to, "", subj, msg)
+}
+
 // SendPasswordReset delivers a password-reset token. The token appears only in
 // the message body; it is never logged.
 func (s *SMTP) SendPasswordReset(ctx context.Context, email, token string) error {

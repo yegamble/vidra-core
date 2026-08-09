@@ -54,6 +54,37 @@ WHERE v.id = sqlc.arg('video_id')
   )
 ON CONFLICT (user_id, video_id) WHERE type = 'new_video' DO NOTHING;
 
+-- name: NotifyStaffOfNewReport :execrows
+-- The "new abuse report" staff fan-out (migration 0103), fired when a report is
+-- filed. ONE set-based statement, mirroring NotifyFollowersOfNewVideo: every
+-- active admin and moderator is notified in a single round trip. The reporter
+-- is stored as the actor — staff see the reporter's identity in the moderation
+-- queue anyway, and it lets the notification read "bob reported a video".
+--
+-- Deliberately notified only when ALL of these hold:
+--   * the recipient is an active, non-deleted admin or moderator;
+--   * the recipient is not the reporter (a staff member filing a report must
+--     not be told about their own filing);
+--   * the recipient has not turned the 'new_report' type off globally (ABSENCE
+--     of a notification_prefs row = enabled, matching the rest of the prefs
+--     model).
+--
+-- ON CONFLICT rides notifications_new_report_unique_idx, so a fan-out that
+-- fires twice for the same report is a no-op the second time.
+INSERT INTO notifications (user_id, type, actor_id, report_id)
+SELECT u.id, 'new_report', r.reporter_id, r.id
+FROM reports r
+JOIN users u ON u.role IN ('admin', 'moderator')
+WHERE r.id = sqlc.arg('report_id')
+  AND u.id <> r.reporter_id
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'new_report' AND np.enabled = FALSE
+  )
+ON CONFLICT (user_id, report_id) WHERE type = 'new_report' DO NOTHING;
+
 -- name: ListNotifications :many
 -- A user's notifications, newest first, joined with the actor's identity and the
 -- context (channel handle/name for follows, video title for comments, report

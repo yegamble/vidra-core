@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/comment"
@@ -177,16 +178,17 @@ func TestRemoteVideoModerationPersists(t *testing.T) {
 		t.Fatalf("UpsertRemoteVideo: %v", err)
 	}
 
-	// Reporting: FK-checked, idempotent per reporter+target.
-	if n, err := q.CreateRemoteVideoReport(ctx, sqlcgen.CreateRemoteVideoReportParams{
+	// Reporting: FK-checked, idempotent per reporter+target — a new report
+	// returns its id, a repeat yields no row (pgx.ErrNoRows).
+	if id, err := q.CreateRemoteVideoReport(ctx, sqlcgen.CreateRemoteVideoReportParams{
 		ReporterID: u.ID, RemoteVideoID: pgtype.UUID{Bytes: rv.ID, Valid: true}, Reason: "spam",
-	}); err != nil || n != 1 {
-		t.Fatalf("CreateRemoteVideoReport = %d (err=%v), want 1", n, err)
+	}); err != nil || id == uuid.Nil {
+		t.Fatalf("CreateRemoteVideoReport = %s (err=%v), want a new report id", id, err)
 	}
-	if n, _ := q.CreateRemoteVideoReport(ctx, sqlcgen.CreateRemoteVideoReportParams{
+	if _, err := q.CreateRemoteVideoReport(ctx, sqlcgen.CreateRemoteVideoReportParams{
 		ReporterID: u.ID, RemoteVideoID: pgtype.UUID{Bytes: rv.ID, Valid: true}, Reason: "again",
-	}); n != 0 {
-		t.Errorf("duplicate report inserted %d rows, want 0", n)
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("duplicate report err = %v, want pgx.ErrNoRows", err)
 	}
 	if _, err := q.CreateRemoteVideoReport(ctx, sqlcgen.CreateRemoteVideoReportParams{
 		ReporterID: u.ID, RemoteVideoID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, Reason: "ghost",

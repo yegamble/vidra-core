@@ -18,6 +18,13 @@ type Mailer interface {
 	// address `to`, identifying the visitor by fromName/fromEmail (surfaced as
 	// Reply-To by real transports, never as the envelope sender).
 	SendContactForm(ctx context.Context, to, fromName, fromEmail, subject, body string) error
+	// SendNewReportAlert tells the operator address `to` that a user filed an
+	// abuse report: targetType is what was reported (video, comment, account,
+	// remote_video, message), reason is the reporter's free text, queueURL
+	// links to the moderation queue ("" when no public base URL is set). The
+	// reporter's identity is deliberately NOT included — it lives in the
+	// queue, not in email.
+	SendNewReportAlert(ctx context.Context, to, targetType, reason, queueURL string) error
 }
 
 // noopMailer is the default mailer. With no email provider configured it drops
@@ -29,5 +36,8 @@ type noopMailer struct{}
 func (noopMailer) SendPasswordReset(context.Context, string, string) error     { return nil }
 func (noopMailer) SendEmailVerification(context.Context, string, string) error { return nil }
 func (noopMailer) SendContactForm(context.Context, string, string, string, string, string) error {
+	return nil
+}
+func (noopMailer) SendNewReportAlert(context.Context, string, string, string, string) error {
 	return nil
 }
