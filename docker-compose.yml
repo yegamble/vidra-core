@@ -717,7 +717,7 @@ services:
   # This is a permanent public-disclosure decision (spec §7/§12): switching it back
   # off cannot erase blocks that another peer already fetched or re-pinned.
   ipfs:
-    image: ipfs/kubo:v0.42.0
+    image: ipfs/kubo:v0.43.0
     profiles: ["ipfs", "full"]
     environment:
       # "server" disables local-network (mDNS) discovery. The init hook below
@@ -764,7 +764,7 @@ services:
   # In production you generate it once, distribute the SAME key to every node, mount it
   # read-only, and NEVER commit it (see README / .env.example, "Private IPFS tier").
   kubo-private:
-    image: ipfs/kubo:v0.42.0
+    image: ipfs/kubo:v0.43.0
     profiles: ["ipfs-private", "ipfs-private-cluster"]
     # Root prelude that makes the root-owned `ipfs_private_key` volume writable by the
     # unprivileged `ipfs` user BEFORE kubo drops privileges — without it the dev-key
@@ -803,7 +803,7 @@ services:
   # kubo-private (Routing=none ⇒ peers are pinned, not discovered). No host ports — it is
   # reachable only inside the compose network / via the cluster peer.
   kubo-private-2:
-    image: ipfs/kubo:v0.42.0
+    image: ipfs/kubo:v0.43.0
     profiles: ["ipfs-private-cluster"]
     # Same root prelude as kubo-private (writable /private-key before the privilege drop).
     entrypoint: ["/bin/sh", "/usr/local/bin/private-key-perms.sh"]
