@@ -131,10 +131,20 @@ func downloadArgs(cfg Config, url, outTemplate string) []string {
 	if cfg.MaxBytesFn != nil {
 		maxBytes = cfg.MaxBytesFn()
 	}
-	format := "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best[ext=webm]/best"
+	// The bestvideo+bestaudio alternative WITHOUT an audio-ext constraint is
+	// load-bearing: a PeerTube instance with "split audio and video streams"
+	// transcoding exposes only video-only mp4 formats (its static web videos
+	// carry UNKNOWN codecs, so best[ext=mp4] happily selects a silent file) plus
+	// a separate audio rendition whose ext is not m4a. Merging any bestaudio
+	// must be tried before every single-file fallback or such imports come down
+	// silent.
+	format := "bestvideo[ext=mp4]+bestaudio[ext=m4a]/" +
+		"bestvideo[ext=mp4]+bestaudio/" +
+		"best[ext=mp4]/best[ext=webm]/best"
 	if maxHeight > 0 {
 		h := strconv.Itoa(maxHeight)
 		format = "bestvideo[height<=" + h + "][ext=mp4]+bestaudio[ext=m4a]/" +
+			"bestvideo[height<=" + h + "][ext=mp4]+bestaudio/" +
 			"best[height<=" + h + "][ext=mp4]/best[height<=" + h + "][ext=webm]/best[height<=" + h + "]"
 	}
 	args := []string{
@@ -144,6 +154,11 @@ func downloadArgs(cfg Config, url, outTemplate string) []string {
 		"--restrict-filenames", // ASCII-only, no shell metacharacters in names
 		"--no-part",
 		"-f", format,
+		// Merged downloads prefer an mp4 container, falling back to mkv when
+		// yt-dlp cannot prove mp4 compatibility (e.g. an HLS audio rendition
+		// whose codec is unknown until downloaded). .mkv is in the accepted
+		// container set, and the HLS transcode re-encodes to H.264/AAC anyway.
+		"--merge-output-format", "mp4/mkv",
 		"-o", outTemplate,
 	}
 	if maxBytes > 0 {

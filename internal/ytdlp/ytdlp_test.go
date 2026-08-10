@@ -88,6 +88,31 @@ func TestDownloadArgsOverlayFuncs(t *testing.T) {
 	}
 }
 
+// TestDownloadArgsMergeSplitAudio pins the format selector against the
+// PeerTube split-audio regression: an instance with "split audio and video
+// streams" transcoding exposes only video-only mp4 formats (its static web
+// videos carry UNKNOWN codecs, so best[ext=mp4] happily picks a silent file)
+// plus a separate audio rendition whose ext is NOT m4a. The selector must try
+// merging that audio (bestvideo+bestaudio with no ext constraint) BEFORE any
+// single-file fallback, and the merge container must prefer mp4, falling back
+// to mkv when yt-dlp cannot prove mp4 compatibility.
+func TestDownloadArgsMergeSplitAudio(t *testing.T) {
+	args := downloadArgs(baseCfg(), "https://example.com/v", "/tmp/j/media.%(ext)s")
+	wantCapped := "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/" +
+		"bestvideo[height<=1080][ext=mp4]+bestaudio/" +
+		"best[height<=1080][ext=mp4]/best[height<=1080][ext=webm]/best[height<=1080]"
+	mustHavePair(t, args, "-f", wantCapped)
+	mustHavePair(t, args, "--merge-output-format", "mp4/mkv")
+
+	cfg := Config{Path: "yt-dlp", Timeout: time.Minute}
+	args = downloadArgs(cfg, "https://example.com/v", "/tmp/j/media.%(ext)s")
+	wantUncapped := "bestvideo[ext=mp4]+bestaudio[ext=m4a]/" +
+		"bestvideo[ext=mp4]+bestaudio/" +
+		"best[ext=mp4]/best[ext=webm]/best"
+	mustHavePair(t, args, "-f", wantUncapped)
+	mustHavePair(t, args, "--merge-output-format", "mp4/mkv")
+}
+
 // TestProxyThreadedWhenSet: the operator egress proxy is passed as --proxy on
 // both phases when configured, and omitted otherwise.
 func TestProxyThreadedWhenSet(t *testing.T) {
