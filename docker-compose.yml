@@ -678,7 +678,7 @@ services:
   # required by tests. otel-collector receives OTLP from the api and forwards to
   # jaeger; browse traces at http://localhost:16686.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.157.0
+    image: otel/opentelemetry-collector-contrib:0.158.0
     profiles: ["otel"]
     command: ["--config=/etc/otel-collector.yaml"]
     volumes:
