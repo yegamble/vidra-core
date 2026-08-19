@@ -50,7 +50,13 @@ curl -sX PUT localhost:8080/api/v1/me/atproto -H 'authorization: Bearer <token>'
 curl -s localhost:8080/api/v1/me/atproto -H 'authorization: Bearer <token>'       # status (never the password)
 curl -sX DELETE localhost:8080/api/v1/me/atproto -H 'authorization: Bearer <token>' # unlink
 
-# Auth (returns {token, token_type, expires_in, user}):
+# Auth (returns {token, token_type, expires_in, user}). On a FRESH instance
+# every signup path is 403 owner_claim_required until the boot-logged one-time
+# setup token is redeemed for THE admin account (accounts never gain admin by
+# registering first; GET /api/v1/instance reports owner_claim_pending):
+curl -sX POST localhost:8080/api/v1/setup/claim-owner \
+  -H 'content-type: application/json' \
+  -d '{"token":"<setup token from the boot log>","username":"ada","email":"ada@example.test","password":"supersecret"}'
 curl -sX POST localhost:8080/api/v1/auth/register \
   -H 'content-type: application/json' \
   -d '{"username":"ada","email":"ada@example.test","password":"supersecret"}'
@@ -316,7 +322,8 @@ curl -sX POST localhost:8080/api/v1/conversations/<id>/messages -H 'authorizatio
   -H 'content-type: application/json' -d '{"body":"hello"}'                              # send -> 201 {..,sender_username} (>5000 chars -> 422; non-participant -> 404; block between users -> 403); best-effort notifies the recipient (type=message)
 curl -s 'localhost:8080/api/v1/conversations/<id>/messages?limit=20' -H 'authorization: Bearer <token>'  # messages, newest first (non-participant -> 404)
 
-# Admin user management (admin-only; the first registered account is admin):
+# Admin user management (admin-only; the admin is created by the one-time
+# owner claim at POST /api/v1/setup/claim-owner — never by registering first):
 curl -s 'localhost:8080/api/v1/admin/users?q=ada&limit=20' -H 'authorization: Bearer <admin-token>'  # list/search accounts (no password hash)
 curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer <admin-token>' \
   -H 'content-type: application/json' -d '{"role":"moderator"}'                        # change role (user|moderator|admin)
@@ -327,8 +334,8 @@ curl -sX PATCH localhost:8080/api/v1/admin/users/<id> -H 'authorization: Bearer 
 
 # Registration approval queue (admin-only; only meaningful when
 # REGISTRATION_REQUIRE_APPROVAL=true, in which case /auth/register returns 202
-# {"status":"pending"} with no token instead of creating an account). Bootstrap
-# the first admin BEFORE enabling approval.
+# {"status":"pending"} with no token instead of creating an account). Claim the
+# owner (admin) account via the boot-logged setup token BEFORE enabling approval.
 curl -s 'localhost:8080/api/v1/admin/registration-requests?status=pending' -H 'authorization: Bearer <admin-token>'  # queue (no password hash)
 curl -sX POST localhost:8080/api/v1/admin/registration-requests/<id>/approve -H 'authorization: Bearer <admin-token>'  # create the account -> 204 (unknown 404, taken 409)
 curl -sX POST localhost:8080/api/v1/admin/registration-requests/<id>/reject  -H 'authorization: Bearer <admin-token>' \

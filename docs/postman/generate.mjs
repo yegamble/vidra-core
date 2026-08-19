@@ -91,7 +91,10 @@ const requests = [
     ],
   },
 
-  // ---- Auth (happy + error paths; token chained onward) ----
+  // ---- Auth (happy + error paths; token chained onward). NB: a brand-new
+  // instance answers 403 owner_claim_required on every register until the
+  // owner is claimed (POST /api/v1/setup/claim-owner with the boot-logged
+  // setup token) — claim first, then run the collection. ----
   {
     folder: "Auth",
     name: "Register (happy) → captures token",
@@ -156,7 +159,9 @@ const requests = [
     ],
   },
 
-  // ---- Admin (first registered account is admin on a fresh DB) ----
+  // ---- Admin (the admin is created only by the first-run owner claim at
+  // POST /api/v1/setup/claim-owner — the randomised registrant above is a
+  // plain user, so 403 is the normal outcome) ----
   {
     folder: "Admin",
     name: "System status (build + rate_limits)",
@@ -164,7 +169,7 @@ const requests = [
     path: "/api/v1/admin/system",
     bearer: true,
     tests: [
-      // 200 when the caller is an admin (first account on a fresh DB); 403 otherwise.
+      // 200 when the presented token belongs to an admin; 403 otherwise.
       `pm.test("200 (admin) or 403 (non-admin)", () => pm.expect([200, 403]).to.include(pm.response.code));`,
       `if (pm.response.code === 200) {`,
       `  const j = pm.response.json();`,

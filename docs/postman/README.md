@@ -42,8 +42,13 @@ npx --yes newman run docs/postman/vidra-core.postman_collection.json \
 
 The Auth folder registers a randomised account (safe to re-run against a
 persistent DB), captures its bearer token, and reuses it for `GET /auth/me` and
-`GET /admin/system`. The admin request asserts `200` (when the caller is an admin
-— the first account on a fresh DB) **or** `403`, so the run stays green
+`GET /admin/system`. Registered accounts are always plain users — the admin is
+created only by the first-run owner claim (`POST /api/v1/setup/claim-owner`
+with the boot-logged setup token). On a brand-new instance claim the owner
+before running the collection: until then every register answers `403
+owner_claim_required` and the Auth folder fails. The admin request asserts
+`200` (when the presented token happens to belong to an admin) **or** `403`
+(the normal outcome for the randomised registrant), so the run stays green
 regardless of DB state; on `200` it also checks the effective `rate_limits` block.
 
 ## Full every-endpoint collection
